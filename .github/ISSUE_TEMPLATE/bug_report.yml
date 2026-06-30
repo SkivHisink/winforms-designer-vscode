@@ -1,0 +1,91 @@
+name: 🐛 Bug report
+description: Something rendered wrong, an edit was lost, or the designer misbehaved.
+title: "[Bug]: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! A few tips that make bugs much faster to fix:
+        - Run **WinForms: Export Designer Diagnostics** (Command Palette) and paste the result below.
+        - A **minimal `.Designer.cs`** that reproduces the issue is the single most helpful thing you can attach.
+        - Please confirm you searched existing issues first.
+  - type: checkboxes
+    id: preconditions
+    attributes:
+      label: Preconditions
+      options:
+        - label: I searched [existing issues](https://github.com/SkivHisink/winforms-designer-vscode/issues) and this isn't a duplicate.
+          required: true
+        - label: The workspace is **trusted** (the extension is disabled in untrusted workspaces).
+          required: true
+        - label: I'm on **Windows** with the **.NET 9 SDK** installed.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected instead.
+      placeholder: When I select the OK button and change its Text, the preview shows the old value until I reopen the form…
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps so we can reproduce it.
+      placeholder: |
+        1. Open `MyForm.cs`
+        2. Click the …
+        3. Edit …
+        4. See …
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Minimal `.Designer.cs` (if possible)
+      description: The smallest form that reproduces the problem. This will be formatted as code.
+      render: csharp
+    validations:
+      required: false
+  - type: input
+    id: ext-version
+    attributes:
+      label: Extension version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      description: Help → About (or `code --version`).
+      placeholder: "1.95.0"
+    validations:
+      required: true
+  - type: input
+    id: dotnet-version
+    attributes:
+      label: .NET SDK version
+      description: Output of `dotnet --version`.
+      placeholder: "9.0.308"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: false
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics / engine logs
+      description: |
+        Paste the output of **WinForms: Export Designer Diagnostics**, and/or relevant lines
+        from the **WinForms Designer** output channel. This will be formatted as code.
+      render: text
+    validations:
+      required: false

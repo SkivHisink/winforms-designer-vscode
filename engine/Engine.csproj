@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>WinFormsDesigner.Engine</AssemblyName>
+    <RootNamespace>WinFormsDesigner.Engine</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <PackageReference Include="StreamJsonRpc" Version="2.19.27" />
+    <!-- CodeCompileUnit / TypeCodeDomSerializer / CSharpCodeProvider: code GENERATION
+         works on .NET (only Parse is unimplemented). Used by the save-direction serializer. -->
+    <PackageReference Include="System.CodeDom" Version="9.0.0" />
+  </ItemGroup>
+
+  <!-- sample .Designer.cs files are DATA fixtures to render, not engine source -->
+  <ItemGroup>
+    <Compile Remove="samples/**/*.cs" />
+    <None Include="samples/**/*.cs" />
+  </ItemGroup>
+
+</Project>

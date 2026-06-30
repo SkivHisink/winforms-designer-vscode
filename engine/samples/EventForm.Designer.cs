@@ -1,0 +1,27 @@
+namespace WinFormsDesigner.Samples
+{
+    // Fixture for the Events tab: event wirings (this.X.Event += new EventHandler(this.method)) on both a
+    // child control and the root form. The engine parses these into ComponentInfo.Events[].Handler.
+    partial class EventForm
+    {
+        private void InitializeComponent()
+        {
+            this.okButton = new System.Windows.Forms.Button();
+            this.SuspendLayout();
+            this.okButton.Location = new System.Drawing.Point(40, 40);
+            this.okButton.Name = "okButton";
+            this.okButton.Size = new System.Drawing.Size(100, 30);
+            this.okButton.Text = "OK";
+            this.okButton.Click += new System.EventHandler(this.okButton_Click);
+            this.okButton.MouseEnter += new System.EventHandler(this.okButton_MouseEnter);
+            this.Controls.Add(this.okButton);
+            this.ClientSize = new System.Drawing.Size(300, 150);
+            this.Name = "EventForm";
+            this.Text = "EventForm";
+            this.Load += new System.EventHandler(this.EventForm_Load);
+            this.ResumeLayout(false);
+        }
+
+        private System.Windows.Forms.Button okButton;
+    }
+}

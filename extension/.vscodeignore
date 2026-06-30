@@ -1,0 +1,30 @@
+# Everything here is excluded from the packaged .vsix.
+# The extension ships only the bundled output + media + manifest/docs.
+
+.vscode/**
+src/**
+tmp/**
+node_modules/**
+
+# Build tooling / config
+build.mjs
+tsconfig.json
+**/tsconfig.json
+.gitignore
+.eslintrc*
+*.map
+dist/e2e.cjs
+dist/**/*.map
+
+# Tests / scratch
+**/*.test.*
+e2e-render.png
+bash.exe.stackdump
+
+# Bundled engine (published into engine/ at package time) — ship the runtime, not debug symbols
+engine/**/*.pdb
+engine/**/*.xml
+
+# Source control noise
+.github/**
+**/.DS_Store

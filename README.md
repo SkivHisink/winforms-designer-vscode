@@ -1,0 +1,164 @@
+<div align="center">
+
+# WinForms Designer for VS Code
+
+**A Visual Studio–style WinForms form designer, running natively inside VS Code.**
+
+Render, click-select, edit and lay out `.Designer.cs` forms — live — without leaving the editor.
+
+[![CI](https://github.com/SkivHisink/winforms-designer-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/SkivHisink/winforms-designer-vscode/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![VS Code Engine](https://img.shields.io/badge/VS%20Code-%5E1.84-007ACC?logo=visualstudiocode)](https://code.visualstudio.com/)
+[![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![Preview](https://img.shields.io/badge/status-preview-orange.svg)](#-status)
+
+</div>
+
+<div align="center">
+
+![The WinForms designer surface running inside VS Code](docs/images/canvas.png)
+
+</div>
+
+---
+
+## What is this?
+
+VS Code has no native WinForms designer — to draw a `Form` you normally have to open Visual Studio. **WinForms Designer for VS Code** brings that designer surface into VS Code:
+
+- Open a form's `Form1.cs` (with its generated `Form1.Designer.cs` sibling) and a **live preview of the rendered form** appears — exactly as Visual Studio shows the designer.
+- **Click any control** to select it; a **property grid** and **toolbox** dock alongside the canvas.
+- **Edit properties, drag/resize controls, align, set tab order, wire events** — changes are written back into `.Designer.cs` as **minimal, byte-surgical text edits** (the rest of your file is preserved byte-for-byte).
+
+The rendering is real: a headless .NET host actually instantiates your controls (including custom/3rd-party ones) and paints them with their real `OnPaint`, so the preview matches runtime.
+
+## 📸 Screenshots
+
+| Property grid | Toolbox |
+| :---: | :---: |
+| ![Visual Studio-style property grid](docs/images/properties.png) | ![Toolbox grouped into VS categories](docs/images/toolbox.png) |
+
+**Choose Toolbox Items** — browse framework and project controls, just like Visual Studio:
+
+![Choose Toolbox Items dialog](docs/images/choose-items.png)
+
+> 🎬 _Animated GIFs of the live edit/drag/resize loop are on the way (see [issues](https://github.com/SkivHisink/winforms-designer-vscode/issues))._
+
+## ✨ Features
+
+- **Live form rendering** from `.Designer.cs` — full frame plus fast per-control dirty-region patches.
+- **Visual Studio–style workflow** — opening `Form.cs` opens the designer; *View Code* switches back to text.
+- **Property grid** — primitives, enums, and complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`), composite expansion (`Size → Width/Height`), standard-value dropdowns.
+- **Toolbox** — auto-populated from `System.Windows.Forms` (~39 controls in VS categories) plus controls discovered from your project assembly. Add controls to the surface.
+- **Direct manipulation** — select, move, resize (8 handles), multi-select (Ctrl/Shift + rubber-band), group move/delete, align toolbar, tab-order editor, snaplines.
+- **Events** — describe, wire / unwire / rewire handlers, generate a handler stub, and navigate to the handler body in the `.cs` partner.
+- **Component tray** & **document outline** for non-visual components and the control hierarchy.
+- **Safe save** — edits are applied as targeted text splices guarded by representability and statement-diff gates; everything outside the changed span is preserved exactly (encoding/BOM included).
+- **Zero-config assembly resolution** — finds your build output via MSBuild design-time evaluation (with multi-target support), or set an explicit assembly path.
+- **Export Diagnostics** command for easy bug reports.
+
+## 🏗️ Architecture
+
+```
+  Form1.cs  ─────────────┐
+  Form1.Designer.cs ─────┤
+                         ▼
+        ┌──────────────────────────────────┐
+        │  .NET 9 engine (C#)               │
+        │  Roslyn parse → safe interpret →  │
+        │  WinForms host → DrawToBitmap     │   render • describe • edit
+        └──────────────────────────────────┘
+                         ▲  JSON-RPC over a named pipe
+                         │  (StreamJsonRpc, camelCase DTOs)
+                         ▼
+        ┌──────────────────────────────────┐
+        │  VS Code extension (TypeScript)   │
+        │  custom editor + dockable panel   │
+        └──────────────────────────────────┘
+                         ▲  postMessage
+                         ▼
+        ┌──────────────────────────────────┐
+        │  Webview (canvas preview +        │
+        │  property grid / toolbox / tree)  │
+        └──────────────────────────────────┘
+```
+
+| Part | Folder | Tech |
+|------|--------|------|
+| Rendering / editing engine | [`engine/`](engine/) | C# · .NET 9 (`net9.0-windows`) · WinForms · Roslyn · StreamJsonRpc |
+| VS Code extension | [`extension/`](extension/) | TypeScript · esbuild · VS Code Custom Editor API |
+| Webview UI | [`extension/media/`](extension/media/) | Plain JS (canvas + DOM) |
+| Sample forms / fixtures | [`engine/samples/`](engine/samples/), [`samples/`](samples/) | `.Designer.cs` forms |
+
+## 📦 Requirements
+
+- **Windows** — WinForms is Windows-only, so both the engine and the rendered preview require Windows.
+- **[.NET 9 SDK](https://dotnet.microsoft.com/download)** (`net9.0-windows`) to build and run the engine.
+- **VS Code** `^1.84`.
+- A **trusted workspace** — see [Security](#-security--workspace-trust).
+
+## 🚀 Installing
+
+> The extension is in **preview** and is not on the Marketplace yet. For now, build from source (below). Once published, install it from the VS Code Marketplace by searching **“WinForms Designer”**.
+
+### Build & run from source
+
+```bash
+# 1. Build the .NET engine
+dotnet build engine -c Release
+
+# 2. Build the extension
+cd extension
+npm ci
+npm run build
+```
+
+Then open the `extension/` folder in VS Code and press **F5**. A *Extension Development Host* opens on the `engine/samples` folder with all other extensions disabled. Open **`SampleForm.cs`** to see the designer.
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev loop, tests, and architecture notes.
+
+## 🧭 Usage
+
+1. Open a form's **`Form1.cs`** (it must have a sibling generated **`Form1.Designer.cs`**). The designer opens automatically — like Visual Studio.
+   - You can also right-click a `.cs` file → **Reopen Editor With… → WinForms Designer**.
+2. **Click a control** on the canvas to select it. Use the **Properties** panel to edit values, or drag/resize directly.
+3. Drop new controls from the **Toolbox**.
+4. Press **F4** to focus the Properties panel; use **View Code** to switch back to the text editor.
+5. **Save** (the toolbar Save button / `Ctrl+S`) writes minimal edits back into `.Designer.cs`.
+
+### Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `winformsDesigner.autoOpenDesigner` | `true` | Open the designer automatically when a form's `.cs` becomes active. |
+| `winformsDesigner.assemblyPath` | `""` | Explicit path to the built control assembly. Leave empty for auto-discovery; set it for multi-target / custom `OutputPath` / not-yet-built projects. |
+
+## 🔒 Security & Workspace Trust
+
+Rendering a designer **loads and runs your project's control assemblies** — control constructors and `OnPaint` execute when the preview is built. For that reason:
+
+- The extension is **disabled in untrusted workspaces** (Workspace Trust).
+- The engine **interprets `.Designer.cs` through strict allowlists** (only known-safe constructors, static calls, and property reads) — it does not execute arbitrary code from the file.
+
+Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SECURITY.md)**.
+
+## 🗺️ Status
+
+This project is in **active preview**.
+
+- ✅ **Done & verified:** the core render → select → edit → save loop, property grid, toolbox, direct manipulation, events, and safe save (see the feature list above).
+- 🚧 **In progress:** layout-parity polish (anchor/dock glyphs, `TableLayoutPanel`/`SplitContainer` editing, equal-spacing snaplines), `UITypeEditor` modals, accessibility mirror-tree.
+- 🔭 **Not started:** `.NET Framework` (net48) hosting, smart-tags / `DesignerActionList`, advanced `.resx`, localization/RTL.
+
+The webview UI is primarily validated headless; some interactions are best confirmed with a live run. Expect rough edges and please [file issues](https://github.com/SkivHisink/winforms-designer-vscode/issues).
+
+## 🤝 Contributing
+
+Contributions are very welcome! Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** — it covers the repo layout, build/test commands, the F5 dev loop, and the **security gates that must not be weakened**. Please also read the **[Code of Conduct](CODE_OF_CONDUCT.md)**.
+
+- 🐛 Found a bug? Use the **Bug report** issue template (the **WinForms: Export Designer Diagnostics** command produces a ready-to-paste report).
+- 💡 Have an idea? Open a **Feature request**.
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 SkivHisink

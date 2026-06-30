@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Resolver test fixture. Two non-trivial traits that defeat the lightweight bin/ search and
+    exercise MSBuild design-time evaluation:
+      1. Multi-target (net8.0-windows;net9.0-windows) — the resolver must pick a host-loadable TFM
+         (net9.0-windows) rather than guess by mtime.
+      2. <BaseOutputPath> redirects output OUT of bin/ — the lightweight resolver finds nothing,
+         MSBuild's TargetPath finds it.
+    Build only the host TFM for the test: `dotnet build -f net9.0-windows -c Debug`. The net8 TFM
+    is never materialized (no net8 targeting pack needed); it only proves TFM selection.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFrameworks>net8.0-windows;net9.0-windows</TargetFrameworks>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <BaseOutputPath>build-out\</BaseOutputPath>
+  </PropertyGroup>
+
+</Project>

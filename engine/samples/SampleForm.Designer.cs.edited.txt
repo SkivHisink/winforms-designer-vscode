@@ -1,0 +1,105 @@
+namespace SampleApp
+{
+    partial class SampleForm
+    {
+        private System.ComponentModel.IContainer components = null;
+        private System.Windows.Forms.Label nameLabel;
+        private System.Windows.Forms.TextBox nameTextBox;
+        private System.Windows.Forms.CheckBox agreeCheck;
+        private System.Windows.Forms.Button okButton;
+        private System.Windows.Forms.Button cancelButton;
+        private System.Windows.Forms.GroupBox optionsGroup;
+        private System.Windows.Forms.RadioButton optionA;
+        private System.Windows.Forms.RadioButton optionB;
+
+        private void InitializeComponent()
+        {
+            this.nameLabel = new System.Windows.Forms.Label();
+            this.nameTextBox = new System.Windows.Forms.TextBox();
+            this.agreeCheck = new System.Windows.Forms.CheckBox();
+            this.okButton = new System.Windows.Forms.Button();
+            this.cancelButton = new System.Windows.Forms.Button();
+            this.optionsGroup = new System.Windows.Forms.GroupBox();
+            this.optionA = new System.Windows.Forms.RadioButton();
+            this.optionB = new System.Windows.Forms.RadioButton();
+            this.optionsGroup.SuspendLayout();
+            this.SuspendLayout();
+            //
+            // nameLabel
+            //
+            this.nameLabel.Location = new System.Drawing.Point(24, 24);
+            this.nameLabel.Name = "nameLabel";
+            this.nameLabel.Size = new System.Drawing.Size(80, 20);
+            this.nameLabel.Text = "Your name:";
+            //
+            // nameTextBox
+            //
+            this.nameTextBox.Location = new System.Drawing.Point(110, 22);
+            this.nameTextBox.Name = "nameTextBox";
+            this.nameTextBox.Size = new System.Drawing.Size(220, 23);
+            this.nameTextBox.Text = "Ada Lovelace";
+            //
+            // agreeCheck
+            //
+            this.agreeCheck.Location = new System.Drawing.Point(110, 56);
+            this.agreeCheck.Name = "agreeCheck";
+            this.agreeCheck.Size = new System.Drawing.Size(220, 24);
+            this.agreeCheck.Text = "I agree to the terms";
+            this.agreeCheck.Checked = true;
+            //
+            // optionsGroup
+            //
+            this.optionsGroup.Controls.Add(this.optionA);
+            this.optionsGroup.Controls.Add(this.optionB);
+            this.optionsGroup.Location = new System.Drawing.Point(24, 96);
+            this.optionsGroup.Name = "optionsGroup";
+            this.optionsGroup.Size = new System.Drawing.Size(306, 90);
+            this.optionsGroup.Text = "Delivery";
+            //
+            // optionA
+            //
+            this.optionA.Location = new System.Drawing.Point(16, 24);
+            this.optionA.Name = "optionA";
+            this.optionA.Size = new System.Drawing.Size(160, 24);
+            this.optionA.Text = "Standard (free)";
+            this.optionA.Checked = true;
+            //
+            // optionB
+            //
+            this.optionB.Location = new System.Drawing.Point(16, 52);
+            this.optionB.Name = "optionB";
+            this.optionB.Size = new System.Drawing.Size(160, 24);
+            this.optionB.Text = "Express ($9.99)";
+            //
+            // okButton
+            //
+            this.okButton.Location = new System.Drawing.Point(150, 204);
+            this.okButton.Name = "okButton";
+            this.okButton.Size = new System.Drawing.Size(85, 30);
+            this.okButton.Text = "OK";
+            this.okButton.BackColor = System.Drawing.Color.Empty;
+            //
+            // cancelButton
+            //
+            this.cancelButton.Location = new System.Drawing.Point(245, 204);
+            this.cancelButton.Name = "cancelButton";
+            this.cancelButton.Size = new System.Drawing.Size(85, 30);
+            this.cancelButton.Text = "Cancel";
+            //
+            // SampleForm
+            //
+            this.ClientSize = new System.Drawing.Size(354, 252);
+            this.Controls.Add(this.nameLabel);
+            this.Controls.Add(this.nameTextBox);
+            this.Controls.Add(this.agreeCheck);
+            this.Controls.Add(this.optionsGroup);
+            this.Controls.Add(this.okButton);
+            this.Controls.Add(this.cancelButton);
+            this.Name = "SampleForm";
+            this.Text = "Sample Form";
+            this.optionsGroup.ResumeLayout(false);
+            this.ResumeLayout(false);
+            this.PerformLayout();
+        }
+    }
+}

@@ -1,0 +1,45 @@
+name: 💡 Feature request
+description: Suggest a capability, a control, or a Visual Studio-parity improvement.
+title: "[Feature]: "
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! This project aims for Visual Studio designer parity inside VS Code,
+        so describing **how Visual Studio does it** (if it does) is very helpful.
+  - type: checkboxes
+    id: preconditions
+    attributes:
+      label: Preconditions
+      options:
+        - label: I searched [existing issues](https://github.com/SkivHisink/winforms-designer-vscode/issues) and this isn't a duplicate.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do, and what's missing or painful today?
+      placeholder: I can't edit anchoring visually — I have to type values in the property grid…
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: vs-parity
+    attributes:
+      label: How does Visual Studio handle this? (if applicable)
+      description: A screenshot or description of the equivalent VS behavior helps a lot.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
