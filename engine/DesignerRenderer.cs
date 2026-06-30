@@ -289,6 +289,8 @@ namespace WinFormsDesigner.Engine
                     Height = isRoot ? frameH : Math.Max(ctrl.Height, 1),
                     Depth = depth,
                     TabIndex = isRoot ? -1 : ctrl.TabIndex,
+                    Anchor = isRoot ? "None" : ctrl.Anchor.ToString(),
+                    Dock = isRoot ? "None" : ctrl.Dock.ToString(),
                 });
             }
 
@@ -1337,10 +1339,20 @@ namespace WinFormsDesigner.Engine
                 else if (comps.TryGetValue(targetChain[0], out var pc) && pc is Control pctl) parent = pctl;
                 else { why = "Controls.Add on unknown parent: " + ma.Expression; return false; }
 
-                var argChain = Flatten(inv.ArgumentList.Arguments[0].Expression);
+                var addArgs = inv.ArgumentList.Arguments;
+                var argChain = Flatten(addArgs[0].Expression);
                 if (argChain.Count == 1 && comps.TryGetValue(argChain[0], out var child) && child is Control cctl)
                 {
                     parent.Controls.Add(cctl);
+                    // TableLayoutPanel uses the 3-arg overload Controls.Add(child, column, row): honor the cell so
+                    // the child lands where it was designed. The plain Add above would auto-flow it (rendering the
+                    // form wrong — children pile into the first cells). Column/row are int literals (Eval with an
+                    // int target); any other shape is ignored and the child stays auto-flowed.
+                    if (addArgs.Count == 3 && parent is System.Windows.Forms.TableLayoutPanel tlp)
+                    {
+                        if (Eval(addArgs[1].Expression, typeof(int), userAsms) is int col) tlp.SetColumn(cctl, col);
+                        if (Eval(addArgs[2].Expression, typeof(int), userAsms) is int row) tlp.SetRow(cctl, row);
+                    }
                     return true;
                 }
                 why = "Controls.Add unknown child: " + inv.ArgumentList.Arguments[0];

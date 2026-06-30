@@ -6,11 +6,11 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 
 > ⚠️ **Preview.** This extension is under active development. It requires **Windows** and the **.NET 9 SDK**. See [Status & limitations](#status--limitations).
 
-![The WinForms designer surface running inside VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/main/docs/images/canvas.png)
+![The WinForms designer surface running inside VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/docs/images/canvas.png)
 
 | Property grid | Toolbox |
 | :---: | :---: |
-| ![Visual Studio-style property grid](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/main/docs/images/properties.png) | ![Toolbox grouped into VS categories](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/main/docs/images/toolbox.png) |
+| ![Visual Studio-style property grid](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/docs/images/properties.png) | ![Toolbox grouped into VS categories](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/docs/images/toolbox.png) |
 
 ## Features
 
@@ -54,4 +54,4 @@ This is a **preview**. The core render → select → edit → save loop works; 
 ## Links
 
 - **Source, issues & contributing:** https://github.com/SkivHisink/winforms-designer-vscode
-- **License:** [MIT](https://github.com/SkivHisink/winforms-designer-vscode/blob/main/LICENSE)
+- **License:** [MIT](https://github.com/SkivHisink/winforms-designer-vscode/blob/master/LICENSE)

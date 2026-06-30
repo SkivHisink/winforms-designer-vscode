@@ -447,6 +447,58 @@
     var valTd = document.createElement('td'); valTd.className = 'val'; valTd.appendChild(editInput(label, value, onCommit));
     tr.appendChild(nameTd); tr.appendChild(valTd); return tr;
   }
+
+  // ---- Anchor/Dock visual editors (Phase 2): a VS-style glyph picker instead of a raw text/enum field.
+  // Each commits an invariant string ("Top, Left" / "Fill" / "None"); the host turns it into a C# enum/flags
+  // expression via toCSharpExpression and applies it through the proven setProperty path. ----
+  var ANCHOR_TYPE = 'System.Windows.Forms.AnchorStyles';
+  var DOCK_TYPE = 'System.Windows.Forms.DockStyle';
+  function parseAnchor(value) {
+    var set = {};
+    String(value == null ? '' : value).split(',').forEach(function (s) { var k = s.trim(); if (k && k !== 'None') set[k] = true; });
+    return set; // keys among Top/Bottom/Left/Right; "None" → empty
+  }
+  function composeAnchor(set) {
+    var out = []; ['Top', 'Bottom', 'Left', 'Right'].forEach(function (s) { if (set[s]) out.push(s); });
+    return out.length ? out.join(', ') : 'None';
+  }
+  function anchorEditor(value, onCommit) {
+    var set = parseAnchor(value);
+    var wrap = document.createElement('div'); wrap.className = 'anchorEd';
+    var box = document.createElement('div'); box.className = 'anchorBox';
+    box.title = 'Anchor — click a bar to tether/untether that edge';
+    ['Top', 'Bottom', 'Left', 'Right'].forEach(function (side) {
+      var bar = document.createElement('span');
+      bar.className = 'aBar a' + side + (set[side] ? ' on' : '');
+      bar.addEventListener('click', function () {
+        set[side] = !set[side];
+        bar.className = 'aBar a' + side + (set[side] ? ' on' : '');
+        onCommit(composeAnchor(set));
+      });
+      box.appendChild(bar);
+    });
+    var center = document.createElement('span'); center.className = 'aCenter';
+    box.appendChild(center); wrap.appendChild(box);
+    return wrap;
+  }
+  function dockEditor(value, onCommit) {
+    var cur = String(value == null ? '' : value).trim() || 'None';
+    var wrap = document.createElement('div'); wrap.className = 'dockEd';
+    var box = document.createElement('div'); box.className = 'dockBox';
+    [['Top', 'dTop'], ['Left', 'dLeft'], ['Fill', 'dFill'], ['Right', 'dRight'], ['Bottom', 'dBottom']].forEach(function (z) {
+      var el = document.createElement('span'); el.className = 'dZone ' + z[1] + (cur === z[0] ? ' on' : '');
+      el.title = 'Dock ' + z[0];
+      el.addEventListener('click', function () { onCommit(z[0]); });
+      box.appendChild(el);
+    });
+    wrap.appendChild(box);
+    var none = document.createElement('button'); none.type = 'button'; none.className = 'dNone' + (cur === 'None' ? ' on' : '');
+    none.textContent = 'None'; none.title = 'Dock None';
+    none.addEventListener('click', function () { onCommit('None'); });
+    wrap.appendChild(none);
+    return wrap;
+  }
+
   function propRow(c, p, t) {
     var comp = editable(p) ? COMPOSITE[p.type] : null;
     var parts = comp ? parseParts(p.value, comp.fields.length) : null;
@@ -471,7 +523,11 @@
     var valTd = document.createElement('td');
     if (editable(p)) {
       valTd.className = 'val';
-      if (p.standardValues && p.standardValues.length && !isOpen) {
+      if (p.type === ANCHOR_TYPE) {
+        valTd.appendChild(anchorEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
+      } else if (p.type === DOCK_TYPE) {
+        valTd.appendChild(dockEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
+      } else if (p.standardValues && p.standardValues.length && !isOpen) {
         valTd.appendChild(editSelect(p.standardValues, !!p.standardValuesExclusive, p.value, p.type + editHint(p), function (v) { sendEdit(c.id, p, v); }));
       } else {
         valTd.appendChild(editInput(p.type + editHint(p), p.value, function (v) { sendEdit(c.id, p, v); }));

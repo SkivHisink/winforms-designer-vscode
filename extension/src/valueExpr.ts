@@ -24,8 +24,12 @@ export const COMPLEX_TYPE_SET = new Set(COMPLEX_TYPES);
 /** Convert a raw grid value to a C# expression by property type (null = not editable here). */
 export function toCSharpExpression(type: string, isEnum: boolean, raw: string): string | null {
   if (isEnum) {
-    const m = raw.trim();
-    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(m) ? `${type}.${m}` : null;
+    // single member → Type.Member; comma-separated (a [Flags] enum like AnchorStyles) → Type.A | Type.B | …
+    // (one C# expression, accepted by the engine's single-expression gate and read back via its bitwise-or Eval).
+    const members = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+    if (!members.length) return null;
+    if (!members.every((m) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(m))) return null;
+    return members.map((m) => `${type}.${m}`).join(' | ');
   }
   if (type === 'System.String') {
     return JSON.stringify(raw); // valid C# string literal for the common escapes

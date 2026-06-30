@@ -79,6 +79,30 @@ async function main(): Promise<void> {
       console.log(`e2e: §7.1 standard-values verified — FlatStyle enum exclusive (${flat.standardValues.length}), Boolean True/False, BackColor non-exclusive (${back.standardValues.length}), flags Anchor left as text`);
     }
 
+    // Anchor/Dock visual editors (Phase 2): the glyph picker emits an invariant string ("Bottom, Right" / "Fill");
+    // the host composes a C# enum/flags expression (toCSharpExpression) and the engine must accept & round-trip it.
+    // Exercise the engine side directly — a [Flags] AnchorStyles bitwise-or, and a single DockStyle member.
+    {
+      const anchorExpr = 'System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right';
+      const aEd = await setProperty(engine, designer, 'okButton', 'Anchor', anchorExpr);
+      if (!aEd.safe || aEd.text === null) throw new Error('Anchor flags setProperty rejected: ' + aEd.reason);
+      const dEd = await setProperty(engine, designer, 'okButton', 'Dock', 'System.Windows.Forms.DockStyle.Fill');
+      if (!dEd.safe || dEd.text === null) throw new Error('Dock setProperty rejected: ' + dEd.reason);
+      const tmpA = path.join(os.tmpdir(), `wfd-e2e-anchor-${process.pid}.Designer.cs`);
+      const tmpD = path.join(os.tmpdir(), `wfd-e2e-dock-${process.pid}.Designer.cs`);
+      fs.writeFileSync(tmpA, aEd.text, 'utf8');
+      fs.writeFileSync(tmpD, dEd.text, 'utf8');
+      try {
+        const av = (await describeComponent(engine, tmpA, 'okButton'))?.properties?.find((p) => p.name === 'Anchor')?.value;
+        if (av !== 'Bottom, Right') throw new Error(`Anchor flags round-trip: okButton.Anchor="${av}" (expected "Bottom, Right")`);
+        const dv = (await describeComponent(engine, tmpD, 'okButton'))?.properties?.find((p) => p.name === 'Dock')?.value;
+        if (dv !== 'Fill') throw new Error(`Dock round-trip: okButton.Dock="${dv}" (expected "Fill")`);
+        console.log(`e2e: Anchor/Dock editors verified — Anchor flags → described "${av}", Dock → described "${dv}"`);
+      } finally {
+        try { fs.unlinkSync(tmpA); fs.unlinkSync(tmpD); } catch { /* ignore */ }
+      }
+    }
+
     const edit = await setProperty(engine, designer, 'agreeCheck', 'Text', '"Changed by grid"');
     if (!edit.safe || edit.text === null) throw new Error('setProperty rejected: ' + edit.reason);
     const tmp2 = path.join(os.tmpdir(), `wfd-e2e-edit-${process.pid}.Designer.cs`);
@@ -287,6 +311,12 @@ async function main(): Promise<void> {
         throw new Error('layout: root must sort last (innermost-first) so empty-form clicks select the form');
       }
       if (lOk.parentId !== 'this') throw new Error('layout: okButton parentId should be "this"');
+      // anchor/dock strings feed the canvas anchor-tether overlay (Phase 2): every control carries them,
+      // the root is "None".
+      if (typeof lOk.anchor !== 'string' || !lOk.anchor.length || typeof lOk.dock !== 'string' || !lOk.dock.length) {
+        throw new Error(`layout: okButton must carry anchor/dock strings (anchor=${JSON.stringify(lOk.anchor)}, dock=${JSON.stringify(lOk.dock)})`);
+      }
+      if (root.anchor !== 'None' || root.dock !== 'None') throw new Error('layout: root anchor/dock must be "None"');
       const optA = layout.controls.find((c) => c.id === 'optionA');
       if (!optA || optA.parentId !== 'optionsGroup' || optA.depth !== 2) {
         throw new Error('layout: optionA should be nested in optionsGroup at depth 2');
@@ -304,7 +334,7 @@ async function main(): Promise<void> {
       // a click on empty form chrome (top-left of the frame, above the client area) selects the form
       const corner = hit(1, 1);
       if (corner !== 'this') throw new Error(`layout hit-test at frame corner → ${corner} (expected the form "this")`);
-      console.log(`e2e: layout hit-test map verified — okButton rect == patch (${lOk.x},${lOk.y},${lOk.width},${lOk.height}); root full-frame & last; center→okButton, corner→form`);
+      console.log(`e2e: layout hit-test map verified — okButton rect == patch (${lOk.x},${lOk.y},${lOk.width},${lOk.height}) anchor="${lOk.anchor}"/dock="${lOk.dock}"; root full-frame & last; center→okButton, corner→form`);
 
       // ---- combined render+layout RPC (one graph load) ----
       // RenderWithLayout folds renderDesigner + describeLayout into a SINGLE graph load (perf on large
@@ -335,7 +365,7 @@ async function main(): Promise<void> {
       for (let i = 0; i < layout.controls.length; i++) {
         const a = combined.controls[i], b = layout.controls[i];
         if (a.id !== b.id || a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height ||
-            a.parentId !== b.parentId || a.depth !== b.depth || a.isRoot !== b.isRoot) {
+            a.parentId !== b.parentId || a.depth !== b.depth || a.isRoot !== b.isRoot || a.anchor !== b.anchor || a.dock !== b.dock) {
           throw new Error(`renderWithLayout: control[${i}] "${a.id}" (${a.x},${a.y},${a.width},${a.height}) != describeLayout "${b.id}" (${b.x},${b.y},${b.width},${b.height})`);
         }
       }
@@ -405,6 +435,27 @@ async function main(): Promise<void> {
       } finally {
         try { fs.unlinkSync(tmpHidden); } catch { /* ignore */ }
       }
+    }
+
+    // ---- TableLayoutPanel cell placement (Phase 2) ----
+    // VS emits children via the 3-arg overload Controls.Add(child, column, row). The interpreter must honor the
+    // cell or the children auto-flow and the form renders wrong (piled into the first cells). Assert the designed
+    // grid: cellButton (col 1) sits RIGHT of cellLabel (col 0), and cellText (row 1) sits BELOW it.
+    const tlpForm = path.join(repo, 'engine', 'samples', 'TableLayoutForm.Designer.cs');
+    if (fs.existsSync(tlpForm)) {
+      const tl = await describeLayout(engine, tlpForm);
+      const lbl = tl.controls.find((c) => c.id === 'cellLabel');
+      const btn = tl.controls.find((c) => c.id === 'cellButton');
+      const txt = tl.controls.find((c) => c.id === 'cellText');
+      if (!lbl || !btn || !txt) throw new Error('TLP: cell children missing from layout (3-arg Controls.Add not parented?)');
+      if (btn.parentId !== 'tableLayoutPanel1' || lbl.parentId !== 'tableLayoutPanel1' || txt.parentId !== 'tableLayoutPanel1') {
+        throw new Error('TLP: cell children should be parented into tableLayoutPanel1');
+      }
+      if (!(btn.x > lbl.x)) throw new Error(`TLP: cellButton (col 1) must be right of cellLabel (col 0): btn.x=${btn.x} lbl.x=${lbl.x}`);
+      if (!(txt.y > lbl.y)) throw new Error(`TLP: cellText (row 1) must be below cellLabel (row 0): txt.y=${txt.y} lbl.y=${lbl.y}`);
+      console.log(`e2e: TableLayoutPanel cells verified — 3-arg Controls.Add honored (cellButton right of cellLabel x ${btn.x}>${lbl.x}, cellText below y ${txt.y}>${lbl.y})`);
+    } else {
+      console.log('e2e: TableLayoutPanel cells SKIPPED — engine/samples/TableLayoutForm.Designer.cs missing');
     }
 
     // ---- ToolStrip / .NET-9 serialize limit (graceful read-only, not a crash) ----

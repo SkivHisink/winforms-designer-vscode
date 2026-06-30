@@ -159,6 +159,8 @@ export interface LayoutControl {
   height: number;
   depth: number;       // nesting from root (root = 0); higher wins a hit-test
   tabIndex: number;    // control's TabIndex for the tab-order overlay (root = -1)
+  anchor: string;      // anchor edges ("Top, Left" / "None") for the canvas anchor-tether overlay
+  dock: string;        // dock style ("Fill"/"Top"/… / "None") for the canvas dock indicator
 }
 
 /** A non-visual component for the tray (§7.3): Timer/ToolTip/ErrorProvider/ImageList/BindingSource/… */

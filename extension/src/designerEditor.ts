@@ -519,6 +519,7 @@ class DesignerSession {
     type: string; id?: string; mode?: string; x?: number; y?: number; width?: number; height?: number;
     ids?: string[]; dx?: number; dy?: number; prop?: string; propType?: string; isEnum?: boolean; value?: string;
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
+    sizeEdits?: Array<{ id: string; width: number; height: number }>;
   }): Promise<void> {
     try {
       if (m.type === 'ready') {
@@ -536,6 +537,8 @@ class DesignerSession {
         await this.editFromGrid(m.id, m.prop, m.propType ?? '', !!m.isEnum, m.value ?? '');
       } else if (m.type === 'alignControls' && Array.isArray(m.edits)) {
         await this.applyAlign(m.edits);
+      } else if (m.type === 'resizeControls' && Array.isArray(m.sizeEdits)) {
+        await this.applyResize(m.sizeEdits);
       } else if (m.type === 'dropControl' && m.controlType) {
         // toolbox drag → canvas drop: place into the container under the cursor (or the form) at the drop point
         await this.applyAddControl(m.controlType, this.containerParentFor(m.hitId ?? 'this'), m.x, m.y);
@@ -903,6 +906,34 @@ class DesignerSession {
     this.output.appendLine(`aligned ${applied} controls (unsaved)`);
     await this.fullRender();
     this.post({ type: 'status', message: `aligned ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
+  }
+
+  /**
+   * Make-same-size (Phase 2): apply a target Size to each control, chained into ONE undoable edit + a single
+   * re-render — like applyAlign but writing Size instead of Location. Layout-managed controls (no representable
+   * Size assignment anchor) are skipped by the engine's targeted-edit gate.
+   */
+  private async applyResize(edits: Array<{ id: string; width: number; height: number }>): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const wanted = edits.filter((e) => e.id && e.id !== 'this' && Math.round(e.width) > 0 && Math.round(e.height) > 0);
+    if (!wanted.length) return;
+    const eng = await this.ensureEngine();
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    let text = before;
+    let applied = 0;
+    for (const e of wanted) {
+      const expr = await convertValue(eng, 'System.Drawing.Size', `${Math.round(e.width)}, ${Math.round(e.height)}`);
+      if (expr === null) continue;
+      const res = await setProperty(eng, this.designerFile, e.id, 'Size', expr, text);
+      if (res.safe && res.text !== null) { text = res.text; applied++; }
+    }
+    if (!applied) { this.post({ type: 'status', message: 'nothing resized (layout-managed?)' }); await this.loadProps(this.currentId); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); await this.loadProps(this.currentId); return; }
+    this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`);
+    this.output.appendLine(`resized ${applied} controls (unsaved)`);
+    await this.fullRender();
+    this.post({ type: 'status', message: `resized ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
   }
 
   /**
@@ -1553,6 +1584,17 @@ ${cspMeta(webview, nonce)}
   .snapguide { position: absolute; pointer-events: none; z-index: 6; }
   .snapguide.vert { border-left: 1px solid #ff4d9d; }
   .snapguide.horz { border-top: 1px solid #ff4d9d; }
+  /* equal-spacing guides — distinct (teal, dashed) from the magenta alignment snaplines */
+  .snapguide.equal.vert { border-left: 1px dashed #25c2c2; }
+  .snapguide.equal.horz { border-top: 1px dashed #25c2c2; }
+  /* anchor tethers (Phase 2): dashed orange lines from a selected control's anchored edges to the parent */
+  .anchortether { position: absolute; pointer-events: none; z-index: 6; }
+  .anchortether.vert { border-left: 1px dashed #ffa033; }
+  .anchortether.horz { border-top: 1px dashed #ffa033; }
+  .dockBadge { position: absolute; pointer-events: none; z-index: 7; font-size: 11px; padding: 0 4px; border-radius: 2px;
+    background: rgba(255,160,51,.9); color: #1e1e1e; white-space: nowrap; }
+  /* small visual separator between toolbar button groups */
+  .tbsep { display: inline-block; width: 1px; align-self: stretch; margin: 1px 4px; background: var(--vscode-panel-border, #444); }
   /* rubber-band selection rectangle */
   .rubberband { position: absolute; border: 1px dashed #4ea1ff; background: rgba(78,161,255,.12); pointer-events: none; z-index: 6; box-sizing: border-box; }
   #status { padding: 4px 8px; min-height: 1em; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-panel-border, #333); }
@@ -1598,13 +1640,20 @@ ${cspMeta(webview, nonce)}
       <button id="zoomIn" title="Zoom in (Ctrl+=)">+</button>
       <button id="zoomFit" title="Fit the form to the view">Fit</button>
     </span>
-    <span id="align" class="zoomgrp" style="display:none" title="Align the selected controls to the primary selection">
+    <span id="align" class="zoomgrp" style="display:none" title="Arrange the selected controls relative to the primary selection">
       <button id="alignLeft" title="Align lefts">⊢</button>
       <button id="alignRight" title="Align rights">⊣</button>
       <button id="alignTop" title="Align tops">⊤</button>
       <button id="alignBottom" title="Align bottoms">⊥</button>
       <button id="alignCenterH" title="Align horizontal centers">↔</button>
       <button id="alignCenterV" title="Align vertical centers">↕</button>
+      <span class="tbsep"></span>
+      <button id="distH" title="Distribute horizontally — equalize the gaps (needs 3+)">⇆</button>
+      <button id="distV" title="Distribute vertically — equalize the gaps (needs 3+)">⇅</button>
+      <span class="tbsep"></span>
+      <button id="sameW" title="Make same width as the primary selection">=W</button>
+      <button id="sameH" title="Make same height as the primary selection">=H</button>
+      <button id="sameWH" title="Make same size as the primary selection">=□</button>
     </span>
     <button id="tabOrder" title="Toggle tab-order editing: click controls in order to renumber TabIndex">Tab Order</button>
     <button id="rulerToggle" title="Показать/скрыть линейку (pixel ruler)">Показать линейку</button>
@@ -1680,6 +1729,30 @@ ${cspMeta(webview, nonce)}
   td select { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, #555); }
   .evtwrap { display: block; }
   input.evt { margin-bottom: 0; padding: 1px 3px; width: 100%; box-sizing: border-box; }
+  /* Anchor glyph editor (Phase 2): a frame with 4 toggle bars tethering the inner box to each edge */
+  .anchorEd { padding: 3px 4px; }
+  .anchorBox { position: relative; width: 48px; height: 34px; border: 1px solid var(--vscode-panel-border, #555); background: var(--vscode-input-background); }
+  .aCenter { position: absolute; left: 50%; top: 50%; width: 14px; height: 10px; transform: translate(-50%, -50%); background: var(--vscode-descriptionForeground, #888); }
+  .aBar { position: absolute; background: var(--vscode-panel-border, #777); cursor: pointer; }
+  .aBar:hover { background: var(--vscode-list-hoverBackground, #5a5d5e); }
+  .aBar.on { background: var(--vscode-focusBorder, #4ea1ff); }
+  .aTop { left: 50%; top: 1px; width: 4px; height: 9px; transform: translateX(-50%); }
+  .aBottom { left: 50%; bottom: 1px; width: 4px; height: 9px; transform: translateX(-50%); }
+  .aLeft { top: 50%; left: 1px; height: 4px; width: 11px; transform: translateY(-50%); }
+  .aRight { top: 50%; right: 1px; height: 4px; width: 11px; transform: translateY(-50%); }
+  /* Dock zone picker (Phase 2): 4 edge zones + a center Fill, plus an explicit None */
+  .dockEd { padding: 3px 4px; display: flex; align-items: center; gap: 6px; }
+  .dockBox { position: relative; width: 40px; height: 40px; border: 1px solid var(--vscode-panel-border, #555); background: var(--vscode-input-background); flex: 0 0 auto; }
+  .dZone { position: absolute; background: var(--vscode-panel-border, #777); cursor: pointer; }
+  .dZone:hover { background: var(--vscode-list-hoverBackground, #5a5d5e); }
+  .dZone.on { background: var(--vscode-focusBorder, #4ea1ff); }
+  .dTop { top: 1px; left: 9px; right: 9px; height: 8px; }
+  .dBottom { bottom: 1px; left: 9px; right: 9px; height: 8px; }
+  .dLeft { left: 1px; top: 9px; bottom: 9px; width: 7px; }
+  .dRight { right: 1px; top: 9px; bottom: 9px; width: 7px; }
+  .dFill { left: 9px; right: 9px; top: 10px; bottom: 10px; }
+  .dNone { padding: 1px 6px; font-size: 11px; flex: 0 0 auto; }
+  .dNone.on { background: var(--vscode-focusBorder, #4ea1ff); color: #fff; }
   td.cat { font-weight: bold; color: var(--vscode-foreground); cursor: pointer; user-select: none;
            background: var(--vscode-sideBarSectionHeader-background, rgba(255,255,255,.045)); padding: 3px 5px; }
   td.cat:hover { color: var(--vscode-foreground); }

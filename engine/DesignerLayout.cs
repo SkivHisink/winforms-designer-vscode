@@ -26,6 +26,11 @@ namespace WinFormsDesigner.Engine
         public int Depth { get; init; }
         /// <summary>The control's TabIndex (for the tab-order editor overlay). Root = -1 (no tab order).</summary>
         public int TabIndex { get; init; }
+        /// <summary>Anchor edges as an invariant string ("Top, Left" / "None") — feeds the canvas anchor-tether
+        /// overlay (Phase 2). Root = "None".</summary>
+        public string Anchor { get; init; } = "None";
+        /// <summary>Dock style ("Fill"/"Top"/… / "None") — feeds the canvas dock indicator. Root = "None".</summary>
+        public string Dock { get; init; } = "None";
     }
 
     /// <summary>One non-visual component for the component tray (§7.3): Timer, ToolTip, ErrorProvider,

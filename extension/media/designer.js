@@ -62,12 +62,20 @@
   // overlay pools (children of surfaceWrap, positioned in DISPLAY px = surface px × zoom)
   var secBoxes = [];   // outline boxes for non-primary selected controls
   var guideEls = [];   // snapline guides
+  var anchorEls = [];  // anchor tethers for the single selected control (Phase 2)
+  var dockBadge = null; // dock indicator badge
   var bandEl = null;   // rubber-band rectangle
   function secBox(i) {
     while (secBoxes.length <= i) { var d = document.createElement('div'); d.className = 'selsec'; d.style.display = 'none'; surfaceWrap.appendChild(d); secBoxes.push(d); }
     return secBoxes[i];
   }
   function clearGuides() { for (var i = 0; i < guideEls.length; i++) guideEls[i].style.display = 'none'; }
+  function clearAnchors() { for (var i = 0; i < anchorEls.length; i++) anchorEls[i].style.display = 'none'; }
+  function anchorEl(i) {
+    while (anchorEls.length <= i) { var d = document.createElement('div'); d.className = 'anchortether'; d.style.display = 'none'; surfaceWrap.appendChild(d); anchorEls.push(d); }
+    return anchorEls[i];
+  }
+  function getDockBadge() { if (!dockBadge) { dockBadge = document.createElement('div'); dockBadge.className = 'dockBadge'; dockBadge.style.display = 'none'; surfaceWrap.appendChild(dockBadge); } return dockBadge; }
 
   function findControl(id) { for (var i = 0; i < controls.length; i++) { if (controls[i].id === id) return controls[i]; } return null; }
   function findTray(id) { for (var i = 0; i < tray.length; i++) { if (tray[i].id === id) return tray[i]; } return null; }
@@ -240,6 +248,41 @@
     if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0;
     if (alignEl) alignEl.style.display = (selection.length >= 2) ? '' : 'none';
     renderTabBadges();
+    renderAnchors();
+  }
+
+  // ---- anchor/dock overlay (Phase 2): for a single selected control, draw tether lines from each anchored
+  // edge to the parent edge (VS-style), or a Dock badge when docked. Display-only; editing is the property
+  // grid's anchor/dock glyph. Tethers reach the parent's window-space rect (form chrome inset is a v1 gap). ----
+  function renderAnchors() {
+    clearAnchors();
+    var badge = getDockBadge(); badge.style.display = 'none';
+    if (tabOrderMode || drag || selection.length !== 1) return;
+    var c = current ? findControl(current) : null;
+    if (!c || c.isRoot || c.id === 'this') return;
+    if (c.dock && c.dock !== 'None') { // a docked control ignores Anchor at runtime — show the dock instead
+      badge.style.display = 'block';
+      badge.textContent = '⬓ Dock: ' + c.dock;
+      badge.style.left = (c.x * zoom) + 'px';
+      badge.style.top = (Math.max(0, c.y) * zoom) + 'px';
+      return;
+    }
+    var parent = c.parentId != null ? findControl(c.parentId) : null;
+    if (!parent) return;
+    var px = parent.x, py = parent.y, pr = parent.x + parent.width, pb = parent.y + parent.height;
+    var cmx = c.x + c.width / 2, cmy = c.y + c.height / 2;
+    var set = {}; String(c.anchor || '').split(',').forEach(function (s) { var k = s.trim(); if (k) set[k] = true; });
+    var segs = [];
+    if (set.Top) segs.push({ vert: true, x: cmx, a: py, b: c.y });
+    if (set.Bottom) segs.push({ vert: true, x: cmx, a: c.y + c.height, b: pb });
+    if (set.Left) segs.push({ vert: false, y: cmy, a: px, b: c.x });
+    if (set.Right) segs.push({ vert: false, y: cmy, a: c.x + c.width, b: pr });
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i], el = anchorEl(i); el.style.display = 'block';
+      var lo = Math.min(s.a, s.b), len = Math.abs(s.b - s.a);
+      if (s.vert) { el.className = 'anchortether vert'; el.style.left = (s.x * zoom) + 'px'; el.style.top = (lo * zoom) + 'px'; el.style.height = (len * zoom) + 'px'; el.style.width = '0px'; }
+      else { el.className = 'anchortether horz'; el.style.top = (s.y * zoom) + 'px'; el.style.left = (lo * zoom) + 'px'; el.style.width = (len * zoom) + 'px'; el.style.height = '0px'; }
+    }
   }
 
   // ---- tab-order overlay (Phase 2): a numbered badge on each control at its top-left ----
@@ -289,6 +332,60 @@
     if (el) el.addEventListener('click', function () { alignSelected(pair[1]); });
   });
 
+  // ---- distribute (Phase 2): equalize the gaps between 3+ selected controls along one axis. First and last
+  // keep their place; the middle ones move so every inter-control gap is identical. Reuses applyAlign (per-control
+  // window-space deltas → chained Location edits, one undo). ----
+  function distributeSelected(axis) { // axis: 'h' (horizontal gaps) | 'v' (vertical gaps)
+    var sel = [];
+    for (var i = 0; i < selection.length; i++) {
+      var id = selection[i]; if (id === 'this') continue;
+      var c = findControl(id); if (c) sel.push(c);
+    }
+    if (sel.length < 3) { setStatus('select 3+ controls to distribute'); return; }
+    var sk = (axis === 'h') ? 'x' : 'y';            // start coord
+    var zk = (axis === 'h') ? 'width' : 'height';   // size along the axis
+    sel.sort(function (a, b) { return a[sk] - b[sk]; });
+    var first = sel[0], last = sel[sel.length - 1];
+    var span = (last[sk] + last[zk]) - first[sk];
+    var sumSize = 0; for (var i = 0; i < sel.length; i++) sumSize += sel[i][zk];
+    var gap = (span - sumSize) / (sel.length - 1);
+    if (gap < 0) { setStatus('controls overlap — cannot distribute'); return; }
+    var edits = [], cursor = first[sk];
+    for (var i = 0; i < sel.length; i++) {
+      var c = sel[i], newStart = Math.round(cursor), delta = newStart - c[sk];
+      if (i !== 0 && i !== sel.length - 1 && delta !== 0) {
+        edits.push((axis === 'h') ? { id: c.id, dx: delta, dy: 0 } : { id: c.id, dx: 0, dy: delta });
+      }
+      cursor += c[zk] + gap;
+    }
+    if (edits.length) vscode.postMessage({ type: 'alignControls', edits: edits });
+  }
+  [['distH', 'h'], ['distV', 'v']].forEach(function (pair) {
+    var el = document.getElementById(pair[0]);
+    if (el) el.addEventListener('click', function () { distributeSelected(pair[1]); });
+  });
+
+  // ---- make-same-size (Phase 2): resize every selected control to the primary selection's width/height/both. ----
+  function sameSizeSelected(dim) { // dim: 'w' | 'h' | 'wh'
+    if (selection.length < 2) return;
+    var anchor = findControl(current); if (!anchor) return;
+    var edits = [];
+    for (var i = 0; i < selection.length; i++) {
+      var id = selection[i]; if (id === 'this' || id === anchor.id) continue;
+      var c = findControl(id); if (!c) continue;
+      var w = (dim.indexOf('w') >= 0) ? anchor.width : c.width;
+      var h = (dim.indexOf('h') >= 0) ? anchor.height : c.height;
+      if (Math.round(w) !== Math.round(c.width) || Math.round(h) !== Math.round(c.height)) {
+        edits.push({ id: id, width: Math.round(w), height: Math.round(h) });
+      }
+    }
+    if (edits.length) vscode.postMessage({ type: 'resizeControls', sizeEdits: edits });
+  }
+  [['sameW', 'w'], ['sameH', 'h'], ['sameWH', 'wh']].forEach(function (pair) {
+    var el = document.getElementById(pair[0]);
+    if (el) el.addEventListener('click', function () { sameSizeSelected(pair[1]); });
+  });
+
   function hitTest(px, py) {
     for (var i = 0; i < controls.length; i++) {
       var c = controls[i];
@@ -299,6 +396,44 @@
 
   // ---- snaplines: align the moving control's edges/centers to siblings within a threshold ----
   var SNAP_T = 6; // surface px
+  function overlap1d(a0, a1, b0, b1) { return Math.min(a1, b1) > Math.max(a0, b0); }
+
+  // Equal-spacing candidate: if the moving control sits between a left and a right flanker (siblings that
+  // vertically overlap it), offer the X that makes the left gap == the right gap. Returns null when there is no
+  // pair of flankers, they overlap the moving control, or the centered X is farther than SNAP_T.
+  function equalSpaceX(nx, ny, w, h, movingId, parentId) {
+    var left = null, right = null;
+    for (var i = 0; i < controls.length; i++) {
+      var s = controls[i];
+      if (s.id === movingId || s.parentId !== parentId || selection.indexOf(s.id) >= 0) continue;
+      if (!overlap1d(ny, ny + h, s.y, s.y + s.height)) continue;
+      if (s.x + s.width <= nx + 1) { if (!left || s.x + s.width > left.x + left.width) left = s; }
+      else if (s.x >= nx + w - 1) { if (!right || s.x < right.x) right = s; }
+    }
+    if (!left || !right) return null;
+    var space = (right.x - (left.x + left.width) - w) / 2;
+    if (space < 0) return null;
+    var targetX = left.x + left.width + space, d = targetX - nx;
+    if (Math.abs(d) > SNAP_T) return null;
+    return { delta: d, left: left, right: right };
+  }
+  function equalSpaceY(nx, ny, w, h, movingId, parentId) {
+    var top = null, bottom = null;
+    for (var i = 0; i < controls.length; i++) {
+      var s = controls[i];
+      if (s.id === movingId || s.parentId !== parentId || selection.indexOf(s.id) >= 0) continue;
+      if (!overlap1d(nx, nx + w, s.x, s.x + s.width)) continue;
+      if (s.y + s.height <= ny + 1) { if (!top || s.y + s.height > top.y + top.height) top = s; }
+      else if (s.y >= ny + h - 1) { if (!bottom || s.y < bottom.y) bottom = s; }
+    }
+    if (!top || !bottom) return null;
+    var space = (bottom.y - (top.y + top.height) - h) / 2;
+    if (space < 0) return null;
+    var targetY = top.y + top.height + space, d = targetY - ny;
+    if (Math.abs(d) > SNAP_T) return null;
+    return { delta: d, top: top, bottom: bottom };
+  }
+
   function computeSnap(nx, ny, w, h, movingId) {
     var moving = findControl(movingId);
     var parentId = moving ? moving.parentId : null;
@@ -315,10 +450,28 @@
         }
       }
     }
-    var sx = nx + (bestX ? bestX.delta : 0), sy = ny + (bestY ? bestY.delta : 0);
+    // equal-spacing wins an axis only when it is at least as close as the best edge/center snap on that axis
+    var eqX = equalSpaceX(nx, ny, w, h, movingId, parentId);
+    var eqY = equalSpaceY(nx, ny, w, h, movingId, parentId);
+    var useEqX = eqX && (!bestX || Math.abs(eqX.delta) <= Math.abs(bestX.delta));
+    var useEqY = eqY && (!bestY || Math.abs(eqY.delta) <= Math.abs(bestY.delta));
+    var sx = nx + (useEqX ? eqX.delta : (bestX ? bestX.delta : 0));
+    var sy = ny + (useEqY ? eqY.delta : (bestY ? bestY.delta : 0));
     var guides = [];
-    if (bestX) guides.push({ vert: true, x: bestX.line, a: Math.min(sy, bestX.s.y), b: Math.max(sy + h, bestX.s.y + bestX.s.height) });
-    if (bestY) guides.push({ vert: false, y: bestY.line, a: Math.min(sx, bestY.s.x), b: Math.max(sx + w, bestY.s.x + bestY.s.width) });
+    if (useEqX) {
+      var cy = sy + h / 2; // two horizontal bars in the equal gaps, at the moving control's vertical center
+      guides.push({ equal: true, vert: false, y: cy, a: eqX.left.x + eqX.left.width, b: sx });
+      guides.push({ equal: true, vert: false, y: cy, a: sx + w, b: eqX.right.x });
+    } else if (bestX) {
+      guides.push({ vert: true, x: bestX.line, a: Math.min(sy, bestX.s.y), b: Math.max(sy + h, bestX.s.y + bestX.s.height) });
+    }
+    if (useEqY) {
+      var cx = sx + w / 2; // two vertical bars in the equal gaps, at the moving control's horizontal center
+      guides.push({ equal: true, vert: true, x: cx, a: eqY.top.y + eqY.top.height, b: sy });
+      guides.push({ equal: true, vert: true, x: cx, a: sy + h, b: eqY.bottom.y });
+    } else if (bestY) {
+      guides.push({ vert: false, y: bestY.line, a: Math.min(sx, bestY.s.x), b: Math.max(sx + w, bestY.s.x + bestY.s.width) });
+    }
     return { x: sx, y: sy, guides: guides };
   }
   function drawGuides(guides) {
@@ -327,8 +480,9 @@
       var g = guides[i], el = guideEls[i];
       if (!el) { el = document.createElement('div'); el.className = 'snapguide'; surfaceWrap.appendChild(el); guideEls.push(el); }
       el.style.display = 'block';
-      if (g.vert) { el.className = 'snapguide vert'; el.style.left = (g.x * zoom) + 'px'; el.style.top = (g.a * zoom) + 'px'; el.style.width = '0px'; el.style.height = ((g.b - g.a) * zoom) + 'px'; }
-      else { el.className = 'snapguide horz'; el.style.top = (g.y * zoom) + 'px'; el.style.left = (g.a * zoom) + 'px'; el.style.height = '0px'; el.style.width = ((g.b - g.a) * zoom) + 'px'; }
+      var base = 'snapguide' + (g.equal ? ' equal' : '');
+      if (g.vert) { el.className = base + ' vert'; el.style.left = (g.x * zoom) + 'px'; el.style.top = (Math.min(g.a, g.b) * zoom) + 'px'; el.style.width = '0px'; el.style.height = (Math.abs(g.b - g.a) * zoom) + 'px'; }
+      else { el.className = base + ' horz'; el.style.top = (g.y * zoom) + 'px'; el.style.left = (Math.min(g.a, g.b) * zoom) + 'px'; el.style.height = '0px'; el.style.width = (Math.abs(g.b - g.a) * zoom) + 'px'; }
     }
   }
 
