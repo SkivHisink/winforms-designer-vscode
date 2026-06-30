@@ -52,5 +52,6 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 .claude/
 docs/plans/
+docs/handoffs/
 run-codex.cmd
 test_handler_regex.js
