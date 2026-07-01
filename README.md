@@ -30,7 +30,7 @@ VS Code has no native WinForms designer — to draw a `Form` you normally have t
 - **Click any control** to select it; a **property grid** and **toolbox** dock alongside the canvas.
 - **Edit properties, drag/resize controls, align, set tab order, wire events** — changes are written back into `.Designer.cs` as **minimal, byte-surgical text edits** (the rest of your file is preserved byte-for-byte).
 
-The rendering is real: a headless .NET host actually instantiates your controls (including custom/3rd-party ones) and paints them with their real `OnPaint`, so the preview matches runtime.
+The rendering is real: a headless .NET host actually instantiates your controls (including custom/3rd-party ones) and paints them with their real `OnPaint`, so the preview matches runtime. Two engines are bundled — a **.NET 9** engine for modern projects and a **.NET Framework 4.8** engine for classic `net4x` / DevExpress projects — and each form is routed to the right one automatically.
 
 ## 📸 Screenshots
 
@@ -47,6 +47,7 @@ The rendering is real: a headless .NET host actually instantiates your controls 
 ## ✨ Features
 
 - **Live form rendering** from `.Designer.cs` — full frame plus fast per-control dirty-region patches.
+- **.NET Framework & DevExpress support (experimental)** — `net4x` forms render on a bundled **.NET Framework 4.8** engine that instantiates the compiled controls (so DevExpress `XtraUserControl` & co. look pixel-accurate); the extension auto-routes each form to the right engine, and the property grid, drag/resize/align, add/remove and z-order apply live. _(Cut/paste on this engine is not available yet.)_
 - **Visual Studio–style workflow** — opening `Form.cs` opens the designer; *View Code* switches back to text.
 - **Property grid** — primitives, enums, and complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`), composite expansion (`Size → Width/Height`), and standard-value dropdowns. VS-style **Color** (tabbed palette), **Font** (expandable name/size/style), **flags-enum**, **Anchor/Dock**, and **image** editors.
 - **Images & `.resx`** — images stored in a form's sibling `.resx` are rendered in the preview; **import** or **clear** `Image` / `BackgroundImage` / `Icon` and the change is written back into both the `.Designer.cs` and the `.resx`.
@@ -66,11 +67,15 @@ The rendering is real: a headless .NET host actually instantiates your controls 
   Form1.cs  ─────────────┐
   Form1.Designer.cs ─────┤
                          ▼
-        ┌──────────────────────────────────┐
-        │  .NET 9 engine (C#)               │
-        │  Roslyn parse → safe interpret →  │
-        │  WinForms host → DrawToBitmap     │   render • describe • edit
-        └──────────────────────────────────┘
+        ┌──────────────────────────────────────────────┐
+        │  Engine host — routed per form:                │
+        │  • .NET 9 engine (C#)                          │
+        │      Roslyn parse → safe interpret →           │  render • describe • edit
+        │      WinForms host → DrawToBitmap              │
+        │  • .NET Framework 4.8 engine (C#)              │
+        │      instantiate compiled net4x / DevExpress   │  (experimental)
+        │      controls → DrawToBitmap                   │
+        └──────────────────────────────────────────────┘
                          ▲  JSON-RPC over a named pipe
                          │  (StreamJsonRpc, camelCase DTOs)
                          ▼
@@ -88,15 +93,17 @@ The rendering is real: a headless .NET host actually instantiates your controls 
 
 | Part | Folder | Tech |
 |------|--------|------|
-| Rendering / editing engine | [`engine/`](engine/) | C# · .NET 9 (`net9.0-windows`) · WinForms · Roslyn · StreamJsonRpc |
+| Rendering / editing engine (.NET 9) | [`engine/`](engine/) | C# · .NET 9 (`net9.0-windows`) · WinForms · Roslyn · StreamJsonRpc |
+| .NET Framework engine (experimental) | [`engine-net48/`](engine-net48/) | C# · .NET Framework 4.8 (`net48`) · WinForms · compiled-control render · StreamJsonRpc |
 | VS Code extension | [`extension/`](extension/) | TypeScript · esbuild · VS Code Custom Editor API |
 | Webview UI | [`extension/media/`](extension/media/) | Plain JS (canvas + DOM) |
 | Sample forms / fixtures | [`engine/samples/`](engine/samples/), [`samples/`](samples/) | `.Designer.cs` forms |
 
 ## 📦 Requirements
 
-- **Windows** — WinForms is Windows-only, so both the engine and the rendered preview require Windows.
-- **[.NET 9 SDK](https://dotnet.microsoft.com/download)** (`net9.0-windows`) to build and run the engine.
+- **Windows** — WinForms is Windows-only, so both engines and the rendered preview require Windows.
+- **[.NET 9 SDK](https://dotnet.microsoft.com/download)** (`net9.0-windows`) to build and run the primary engine.
+- **.NET Framework 4.8** — for rendering `net4x` / DevExpress projects. The runtime ships with Windows; building the `engine-net48/` engine from source needs the .NET Framework 4.8 targeting pack.
 - **VS Code** `^1.84`.
 - A **trusted workspace** — see [Security](#-security--workspace-trust).
 
@@ -152,8 +159,9 @@ Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SEC
 This project is in **active preview**.
 
 - ✅ **Done & verified:** the core render → select → edit → save loop; property grid (incl. Color / Font / flags / Anchor-Dock / image editors); toolbox with icons and *Choose Toolbox Items*; control-source selection; direct manipulation (move / resize / reparent / z-order / copy-paste / align / snaplines); layout-panel editing (`TableLayoutPanel` / `SplitContainer` / `FlowLayoutPanel`); `.resx` image import & render; events; safe save; accessibility mirror-tree.
+- 🧪 **Experimental (new in 0.3.0):** **.NET Framework (net48) compiled preview** for `net4x` / DevExpress forms — render is proven; live property / drag / resize / align / add / remove / z-order edits are wired (persisted as `.Designer.cs` text via the .NET 9 splice) but not yet covered by automated tests. Cut/paste on this engine is not available yet.
 - 🚧 **In progress:** `UITypeEditor` / collection-editor modals, richer multi-assembly control sources, and further VS-parity polish.
-- 🔭 **Not started:** `.NET Framework` (net48) hosting, smart-tags / `DesignerActionList`, advanced `.resx` (non-image resources, `ApplyResources`), localization / RTL.
+- 🔭 **Not started:** smart-tags / `DesignerActionList`, advanced `.resx` (non-image resources, `ApplyResources`), localization / RTL.
 
 The webview UI is primarily validated headless; some interactions are best confirmed with a live run. Expect rough edges and please [file issues](https://github.com/SkivHisink/winforms-designer-vscode/issues).
 

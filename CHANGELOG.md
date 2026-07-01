@@ -8,6 +8,19 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-07-01
+
+Documentation-only patch — no functional changes to the designer. Refreshes the
+Marketplace listing and repository docs, which still described .NET Framework hosting as
+*not started* after the net48 engine shipped in 0.3.0.
+
+### Changed
+- **Docs** — the READMEs (repository + Marketplace) and `CONTRIBUTING` now document the
+  **.NET Framework (net48) engine**: the experimental compiled preview for `net4x` /
+  DevExpress forms, its requirements, the two-engine architecture, the `engine-net48/`
+  repository layout, and its status — instead of listing .NET Framework hosting as *not
+  started*.
+
 ## [0.3.0] — 2026-07-01
 
 Adds a **second rendering engine for .NET Framework projects**, so forms built on
@@ -187,7 +200,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/releases/tag/v0.1.0

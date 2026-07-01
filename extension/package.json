@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "Visualize and edit WinForms .Designer.cs forms live inside VS Code — a Visual Studio-style designer surface, property grid, toolbox and event wiring, powered by a .NET 9 rendering engine.",
   "publisher": "SkivHisink",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "preview": true,
   "license": "MIT",
   "author": {

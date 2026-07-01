@@ -15,6 +15,7 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 ## Features
 
 - **Live form rendering** from `.Designer.cs` — your controls (including custom/3rd-party ones) are really instantiated and painted, so the preview matches runtime.
+- **.NET Framework & DevExpress support (experimental)** — forms whose controls target **.NET Framework** (`net4x`) render on a dedicated bundled **.NET Framework 4.8** engine that instantiates the compiled controls, so classic component suites (e.g. **DevExpress**) look pixel-accurate. Each form is auto-routed to the right engine; the property grid, drag/resize/align, add/remove and z-order apply live. _(Cut/paste on this engine is not available yet.)_
 - **VS Code–native workflow** — opening `Form.cs` opens the designer; **View Code** switches back to text.
 - **Property grid** — primitives, enums, complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`), composite expansion, and standard-value dropdowns, plus VS-style **Color**, **Font** (expandable), **flags-enum**, **Anchor/Dock**, and **image** editors.
 - **Images & `.resx`** — render images from a form's sibling `.resx`, and import / clear `Image` / `BackgroundImage` / `Icon` back into both files.
@@ -29,6 +30,7 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 
 - **Windows** (WinForms is Windows-only).
 - **[.NET 9 SDK](https://dotnet.microsoft.com/download)**.
+- **.NET Framework projects** (`net4x`, e.g. DevExpress) render through a **bundled .NET Framework 4.8 engine** — its runtime ships with Windows, so no extra install is needed.
 - A **trusted workspace** (see below).
 
 ## Getting started
@@ -51,7 +53,7 @@ Rendering a designer **loads and runs your project's control assemblies** (const
 
 ## Status & limitations
 
-This is a **preview**. The core render → select → edit → save loop, property grid (with Color / Font / flags / image editors), toolbox, layout-panel editing, `.resx` image support, and safe save all work; `UITypeEditor` / collection-editor modals, `.NET Framework` hosting, and advanced `.resx` are still in progress. Please report issues — the **WinForms: Export Designer Diagnostics** command generates a ready-to-paste bug report.
+This is a **preview**. The core render → select → edit → save loop, property grid (with Color / Font / flags / image editors), toolbox, layout-panel editing, `.resx` image support, and safe save all work. **.NET Framework (net48) hosting is new in 0.3.0 as an experimental compiled preview** — render plus live property / drag / add / remove / z-order edits for `net4x` / DevExpress forms (cut/paste there is not available yet). `UITypeEditor` / collection-editor modals and advanced `.resx` are still in progress. Please report issues — the **WinForms: Export Designer Diagnostics** command generates a ready-to-paste bug report.
 
 ## Links
 

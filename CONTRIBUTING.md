@@ -8,8 +8,9 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 | Path | What it is |
 |------|------------|
-| [`engine/`](engine/) | The C# rendering/editing engine (`net9.0-windows`). Parses `.Designer.cs` with Roslyn, safely interprets it, hosts the controls in WinForms, renders with `DrawToBitmap`, and applies edits. Talks JSON-RPC over a named pipe. |
-| [`extension/`](extension/) | The VS Code extension (TypeScript). Custom editor, dockable panel, and the JSON-RPC client to the engine. |
+| [`engine/`](engine/) | The primary C# rendering/editing engine (`net9.0-windows`). Parses `.Designer.cs` with Roslyn, safely interprets it, hosts the controls in WinForms, renders with `DrawToBitmap`, and applies edits. Talks JSON-RPC over a named pipe. |
+| [`engine-net48/`](engine-net48/) | The experimental **.NET Framework 4.8** engine (`net48`) for `net4x` / DevExpress forms the net9 engine can't load. Instantiates the *compiled* control types from the project's build output and renders them; the extension routes a form here when its control assembly targets .NET Framework. Same JSON-RPC surface. |
+| [`extension/`](extension/) | The VS Code extension (TypeScript). Custom editor, dockable panel, two-engine routing/lifecycle, and the JSON-RPC client to the engines. |
 | `extension/media/` | Webview UI scripts (plain JS): `designer.js` (canvas), `panel.js` (properties + toolbox + outline). |
 | `engine/samples/`, `samples/` | Sample `.Designer.cs` forms used as fixtures and for the F5 dev loop. |
 
@@ -17,6 +18,7 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 - **Windows** (WinForms is Windows-only).
 - **[.NET 9 SDK](https://dotnet.microsoft.com/download)** — the repo pins it via [`global.json`](global.json).
+- **.NET Framework 4.8 targeting pack** — only needed to build the experimental `engine-net48/` engine (ships with the Visual Studio Build Tools; the runtime itself is part of Windows).
 - **Node.js 20+** and npm.
 - **VS Code** `^1.84`.
 
@@ -26,6 +28,10 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 # Engine (C#)
 dotnet build engine -c Release
 #   → engine/bin/Release/net9.0-windows/WinFormsDesigner.Engine.dll
+
+# .NET Framework 4.8 engine (experimental — net4x / DevExpress forms)
+dotnet build engine-net48 -c Release
+#   → engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe
 
 # Extension (from extension/)
 cd extension
