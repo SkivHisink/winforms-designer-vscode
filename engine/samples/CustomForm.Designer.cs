@@ -38,14 +38,14 @@ namespace SampleApp
             //
             // refreshButton
             //
-            this.refreshButton.Location = new System.Drawing.Point(350, 158);
+            this.refreshButton.Location = new System.Drawing.Point(343, 172);
             this.refreshButton.Name = "refreshButton";
-            this.refreshButton.Size = new System.Drawing.Size(90, 27);
+            this.refreshButton.Size = new System.Drawing.Size(101, 27);
             this.refreshButton.Text = "Текст";
             //
             // CustomForm
             //
-            this.ClientSize = new System.Drawing.Size(468, 231);
+            this.ClientSize = new System.Drawing.Size(504, 263);
             this.Controls.Add(this.headerLabel);
             this.Controls.Add(this.cpuGauge);
             this.Controls.Add(this.memGauge);

@@ -21,9 +21,60 @@ const autoOpening = new Set<string>();
  */
 const autoOpenedOnce = new Set<string>();
 
+/** The active extension context — backs the per-form control-source overrides (workspaceState) so
+ *  `getAssemblyOverride` (a free function) can read them without threading context everywhere. */
+let extContext: vscode.ExtensionContext | undefined;
+/** Status bar item showing the active designer's control source; click → select a project/assembly. */
+let controlStatus: vscode.StatusBarItem | undefined;
+
+/** Per-form explicit control-assembly choices, keyed by the .Designer.cs path (case-insensitive on Windows). */
+function controlSourceMap(): Record<string, string> {
+  return extContext?.workspaceState.get<Record<string, string>>('controlSources', {}) ?? {};
+}
+function csKey(file: string): string { return process.platform === 'win32' ? file.toLowerCase() : file; }
+/** The user's explicit control assembly for a form, or undefined (auto). A stale (deleted) path is ignored. */
+function getControlSource(file: string): string | undefined {
+  const p = controlSourceMap()[csKey(file)];
+  return p && fs.existsSync(p) ? p : undefined;
+}
+async function setControlSource(file: string, dll: string | undefined): Promise<void> {
+  const m = { ...controlSourceMap() };
+  if (dll) m[csKey(file)] = dll; else delete m[csKey(file)];
+  await extContext?.workspaceState.update('controlSources', m);
+}
+
+/** Reflect the active designer's control source in the status bar (explicit override, or the auto-resolved dll). */
+function updateControlStatus(): void {
+  if (!controlStatus) return;
+  const file = DesignerHub.instance.activeSession?.designerFilePath ?? null;
+  if (!file) { controlStatus.hide(); return; }
+  const explicit = getControlSource(file);
+  if (explicit) {
+    controlStatus.text = '$(package) Controls: ' + path.basename(explicit);
+    controlStatus.tooltip = 'WinForms control source (explicit): ' + explicit + '\nClick to change.';
+    controlStatus.show();
+    return;
+  }
+  controlStatus.text = '$(package) Controls: auto';
+  controlStatus.tooltip = 'WinForms control source: auto-detected from the project. Click to override.';
+  controlStatus.show();
+  // best-effort: fill in the resolved dll name in the background (don't block the status update on the engine)
+  void (async () => {
+    try {
+      if (!extContext) return;
+      const r = await resolveAssembly(await getEngine(extContext), file);
+      if (r && controlStatus && DesignerHub.instance.activeSession?.designerFilePath === file && !getControlSource(file)) {
+        controlStatus.text = '$(package) Controls: ' + path.basename(r) + ' (auto)';
+        controlStatus.tooltip = 'WinForms control source (auto-detected): ' + r + '\nClick to override.';
+      }
+    } catch { /* engine not up / unresolved — leave the neutral "auto" label */ }
+  })();
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel('WinForms Designer');
   context.subscriptions.push(output);
+  extContext = context;
 
   // Persist the user's "Choose Items" toolbox additions across sessions (global, like VS toolbox customization).
   DesignerHub.instance.initState(context.globalState);
@@ -87,6 +138,20 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('winformsDesigner.exportDiagnostics', () => exportDiagnostics(context)),
   );
+
+  // "Select Control Assembly": point the active form at the project/assembly that builds its (custom) controls.
+  // Reuses the engine's single-assembly override — the chosen dll's controls then populate the toolbox
+  // (Project Controls) and render, exactly like an auto-resolved project. Persisted per form (workspaceState).
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.selectControlAssembly', () => selectControlAssembly(context)),
+  );
+
+  // Status bar: show which assembly is providing controls for the focused form; click → change it.
+  controlStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
+  controlStatus.command = 'winformsDesigner.selectControlAssembly';
+  context.subscriptions.push(controlStatus);
+  context.subscriptions.push(DesignerHub.instance.onDidChangeActive(() => updateControlStatus()));
+  updateControlStatus();
 
   // Auto-open the designer when a form .cs becomes the active editor (VS-style: open Form1.cs → designer).
   context.subscriptions.push(
@@ -290,7 +355,74 @@ const warnedAssemblyPaths = new Set<string>();
  * fallback to auto-discovery) rather than letting a typo silently render the wrong assembly. (Env-var
  * expansion is intentionally not done — see the setting's description.)
  */
+/**
+ * Prompt the user to select the control source (project or assembly) for the ACTIVE designer, and apply it.
+ * A project (.csproj) is resolved to its build output via the engine; a .dll is used directly. Cleared → the
+ * engine auto-detects again. The choice is persisted per form and takes effect immediately (re-render).
+ */
+async function selectControlAssembly(context: vscode.ExtensionContext): Promise<void> {
+  const session = DesignerHub.instance.activeSession;
+  const file = session?.designerFilePath ?? null;
+  if (!file || !session) {
+    void vscode.window.showInformationMessage('Open a WinForms designer first, then choose its control source.');
+    return;
+  }
+  const PROJECT = '$(project) Use a project (.csproj)…';
+  const BROWSE = '$(file-binary) Browse for a control assembly (.dll)…';
+  const CLEAR = '$(clear-all) Auto-detect (clear the override)';
+  const cur = getControlSource(file);
+  const choice = await vscode.window.showQuickPick([PROJECT, BROWSE, CLEAR], {
+    title: 'WinForms — control source for this form',
+    placeHolder: cur ? 'Current: ' + path.basename(cur) : 'Current: auto-detect',
+  });
+  if (!choice) return;
+
+  let dll: string | undefined;
+  if (choice === CLEAR) {
+    dll = undefined;
+  } else if (choice === BROWSE) {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false, openLabel: 'Use as control source',
+      title: "Select the .dll that builds this form's controls", filters: { Assemblies: ['dll'] },
+    });
+    if (!picked || !picked.length) return;
+    dll = picked[0].fsPath;
+  } else {
+    const csprojs = await vscode.workspace.findFiles('**/*.csproj', '**/{bin,obj,node_modules}/**', 200);
+    if (!csprojs.length) {
+      void vscode.window.showWarningMessage('No .csproj found in the workspace — use "Browse" to pick a .dll instead.');
+      return;
+    }
+    const proj = await vscode.window.showQuickPick(
+      csprojs.map((u) => ({ label: '$(project) ' + path.basename(u.fsPath), description: vscode.workspace.asRelativePath(u), uri: u })),
+      { title: 'Select the project that provides the controls', placeHolder: 'Its build output becomes the control source' },
+    );
+    if (!proj) return;
+    try {
+      const resolved = await resolveAssembly(await getEngine(context), proj.uri.fsPath);
+      if (!resolved || !fs.existsSync(resolved)) {
+        void vscode.window.showWarningMessage(
+          `Could not resolve ${path.basename(proj.uri.fsPath)}'s build output — build the project, or use "Browse" to pick its .dll directly.`,
+        );
+        return;
+      }
+      dll = resolved;
+    } catch (e) {
+      void vscode.window.showWarningMessage('Failed to resolve the project output: ' + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+  }
+
+  await setControlSource(file, dll);
+  void vscode.window.showInformationMessage(dll ? 'Control source: ' + path.basename(dll) : 'Control source cleared — using auto-detection.');
+  await session.reloadControlSource();
+  updateControlStatus();
+}
+
 export function getAssemblyOverride(file: string): string | undefined {
+  // an explicit per-form choice (Select Control Assembly) wins over the config setting and auto-detection.
+  const picked = getControlSource(file);
+  if (picked) return picked;
   const uri = vscode.Uri.file(file);
   const raw = vscode.workspace.getConfiguration('winformsDesigner', uri).get<string>('assemblyPath');
   if (!raw || !raw.trim()) {

@@ -30,6 +30,21 @@ namespace WinFormsDesigner.Engine
         public bool Safe => NewText != null && Mode != EditMode.Failed && ParseOk && Minimal;
     }
 
+    /// <summary>Result of <see cref="DesignerPropertyEditor.ResetProperty"/> (VS "Reset" / Dock↔Anchor
+    /// mutual-exclusivity): delete a property's assignment(s) so it reverts to its default.</summary>
+    public sealed class PropertyResetResult
+    {
+        /// <summary>The edited text with the (comp, prop) assignment(s) removed. Null both when nothing changed
+        /// (already default) and when the reset was rejected — use <see cref="Changed"/>/<see cref="Ok"/>.</summary>
+        public string? NewText { get; init; }
+        /// <summary>True when an assignment existed AND was removed cleanly (<see cref="NewText"/> carries the result).</summary>
+        public bool Changed { get; init; }
+        /// <summary>Safe to apply: a clean removal OR a no-op (the property had no assignment, already default).
+        /// False only when an assignment existed but the edit failed the parse/gate check.</summary>
+        public bool Ok { get; init; }
+        public string Reason { get; init; } = "";
+    }
+
     /// <summary>
     /// Targeted single-property edit (plan §6.3 sentinel / byte-zero-diff): change one property's
     /// value directly in the existing .Designer.cs as a MINIMAL text edit, instead of regenerating
@@ -126,6 +141,79 @@ namespace WinFormsDesigner.Engine
             return MultisetEqual(origNon, editNon);
         }
 
+        /// <summary>
+        /// Reset a property to its default by DELETING its assignment statement(s) from InitializeComponent —
+        /// the mechanism behind VS's "Reset" and Dock↔Anchor mutual exclusivity (setting Dock clears Anchor and
+        /// vice versa). NOTHING is interpolated into the source: only whole target-statement lines are removed,
+        /// so this has no value-injection surface. A property with no explicit assignment is already default →
+        /// a safe no-op (<see cref="PropertyResetResult.Changed"/> false, <see cref="PropertyResetResult.NewText"/>
+        /// null). <see cref="OnlyPropertyReset"/> verifies the edit removed ONLY the target (comp, prop) assignments
+        /// and changed nothing else. The root form uses comp "this".
+        /// </summary>
+        public static PropertyResetResult ResetProperty(string sourceText, string componentName, string propertyName)
+        {
+            bool isRoot = componentName is "this" or "";
+            if (!isRoot && !DesignerControlEditor.IsValidIdentifier(componentName))
+                return new PropertyResetResult { Reason = "invalid component id: " + componentName };
+            if (!DesignerControlEditor.IsValidIdentifier(propertyName))
+                return new PropertyResetResult { Reason = "invalid property name: " + propertyName };
+
+            var init = FindInitializeComponent(sourceText);
+            if (init?.Body == null)
+                return new PropertyResetResult { Reason = "InitializeComponent not found" };
+
+            var targets = new List<StatementSyntax>();
+            foreach (var st in init.Body.Statements)
+                if (IsTargetAssignment(st, componentName, propertyName, isRoot))
+                    targets.Add(st);
+
+            // no explicit assignment → already default → safe no-op (nothing to remove)
+            if (targets.Count == 0)
+                return new PropertyResetResult { Ok = true, Changed = false, NewText = null, Reason = "property has no explicit assignment (already default)" };
+
+            var ranges = new List<(int s, int e)>();
+            foreach (var st in targets) ranges.Add(LineRange(sourceText, st.SpanStart, st.Span.End));
+            ranges.Sort((a, b) => b.s.CompareTo(a.s)); // descending so earlier splices don't shift later offsets
+            string text = sourceText;
+            // Merge overlapping/duplicate ranges before splicing: two target assignments sharing ONE physical line
+            // (a hand-edited "this.x.P = a; this.x.P = b;") yield the IDENTICAL whole-line span, so each physical
+            // line must be deleted at most once — otherwise the second splice re-applies the stale (s,e) and eats
+            // the bytes that FOLLOW the line (which the gate only sometimes catches, e.g. not a pure-trivia comment).
+            int lastStart = int.MaxValue;
+            foreach (var (s, e) in ranges)
+            {
+                if (e > lastStart) continue; // overlaps a line already removed (a lower/equal range) → skip
+                text = text.Substring(0, s) + text.Substring(e);
+                lastStart = s;
+            }
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(text).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool gated = OnlyPropertyReset(sourceText, text, componentName, propertyName);
+            bool ok = parseOk && gated;
+            return new PropertyResetResult
+            {
+                Ok = ok,
+                Changed = ok,
+                NewText = ok ? text : null,
+                Reason = ok ? "" : (!parseOk ? "reset text has syntax errors" : "reset changed more than the target property"),
+            };
+        }
+
+        /// <summary>§6.5 gate for a property reset: the source HAD at least one (comp, prop) assignment, the edit
+        /// removed ALL of them (none remain), every OTHER InitializeComponent statement is the same multiset, and
+        /// the field declarations are unchanged. A shared-line statement dragged along by the whole-line delete
+        /// changes the non-target multiset → rejected (the reset never corrupts, it only declines).</summary>
+        public static bool OnlyPropertyReset(string original, string edited, string componentName, string propertyName)
+        {
+            bool isRoot = componentName is "this" or "";
+            var (origNon, origTgt) = Classify(original, componentName, propertyName, isRoot);
+            var (editNon, editTgt) = Classify(edited, componentName, propertyName, isRoot);
+            if (origTgt == 0) return false;                       // nothing was there to reset
+            if (editTgt != 0) return false;                       // every target assignment must be gone
+            if (!MultisetEqual(origNon, editNon)) return false;   // no other statement changed
+            return MultisetEqual(FieldNames(original), FieldNames(edited)); // fields untouched
+        }
+
         // ---- classification ----
 
         private static (List<string> nonTarget, int targetCount) Classify(string code, string comp, string prop, bool isRoot)
@@ -152,8 +240,12 @@ namespace WinFormsDesigner.Engine
             isRoot ? (chain.Count == 1 && chain[0] == prop)
                    : (chain.Count == 2 && chain[0] == comp && chain[1] == prop);
 
+        // An insert anchor is any statement that names the component: for a child, either its property assignment
+        // `this.comp.X = …` (chain [comp, X]) OR its own creation `this.comp = new …` (chain [comp]) — so setting
+        // the FIRST property on a component whose only statement is the `new` line still finds an anchor (e.g.
+        // importing an Image onto a freshly-added tray component) instead of failing with "no anchor".
         private static bool OwnerMatches(List<string> chain, string comp, bool isRoot) =>
-            isRoot ? chain.Count == 1 : (chain.Count == 2 && chain[0] == comp);
+            isRoot ? chain.Count == 1 : ((chain.Count == 1 || chain.Count == 2) && chain[0] == comp);
 
         // ---- helpers ----
 
@@ -213,6 +305,33 @@ namespace WinFormsDesigner.Engine
         }
 
         private static string NormalizeStmt(string s) => new string(s.Where(c => !char.IsWhiteSpace(c)).ToArray());
+
+        /// <summary>The whole-line span [start, end) covering a statement — from the start of the line its span
+        /// begins on to the start of the line after its span ends (so a multi-line assignment is removed entirely).</summary>
+        private static (int s, int e) LineRange(string src, int spanStart, int spanEnd)
+        {
+            int start = src.LastIndexOf('\n', Math.Max(0, spanStart - 1)) + 1;
+            int nl = src.IndexOf('\n', spanEnd);
+            int end = nl < 0 ? src.Length : nl + 1;
+            return (start, end);
+        }
+
+        /// <summary>Field-declaration names of the class that declares InitializeComponent — used by
+        /// <see cref="OnlyPropertyReset"/> to assert a reset touched no field declaration.</summary>
+        private static List<string> FieldNames(string code)
+        {
+            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
+            var list = new List<string>();
+            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
+            {
+                if (!cls.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent")) continue;
+                foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
+                    foreach (var v in f.Declaration.Variables)
+                        list.Add(v.Identifier.Text);
+                break;
+            }
+            return list;
+        }
 
         private static string LeadingIndent(string text, int pos)
         {

@@ -48,11 +48,14 @@ The rendering is real: a headless .NET host actually instantiates your controls 
 
 - **Live form rendering** from `.Designer.cs` — full frame plus fast per-control dirty-region patches.
 - **Visual Studio–style workflow** — opening `Form.cs` opens the designer; *View Code* switches back to text.
-- **Property grid** — primitives, enums, and complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`), composite expansion (`Size → Width/Height`), standard-value dropdowns.
-- **Toolbox** — auto-populated from `System.Windows.Forms` (~39 controls in VS categories) plus controls discovered from your project assembly. Add controls to the surface.
-- **Direct manipulation** — select, move, resize (8 handles), multi-select (Ctrl/Shift + rubber-band), group move/delete, align toolbar, tab-order editor, snaplines.
+- **Property grid** — primitives, enums, and complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`), composite expansion (`Size → Width/Height`), and standard-value dropdowns. VS-style **Color** (tabbed palette), **Font** (expandable name/size/style), **flags-enum**, **Anchor/Dock**, and **image** editors.
+- **Images & `.resx`** — images stored in a form's sibling `.resx` are rendered in the preview; **import** or **clear** `Image` / `BackgroundImage` / `Icon` and the change is written back into both the `.Designer.cs` and the `.resx`.
+- **Layout panels** — edit `TableLayoutPanel` cells and column/row styles, `SplitContainer` splitter distance, and `FlowLayoutPanel` order, with anchor tethers drawn on the canvas.
+- **Toolbox** — auto-populated from `System.Windows.Forms` (~39 controls in VS categories, with their native icons) plus controls discovered from your project. **Choose Toolbox Items** to browse framework / project / other assemblies. Add controls to the surface.
+- **Control sources** — pick which project (`.csproj`) or assembly (`.dll`) supplies your custom / 3rd-party controls; dropping a control from an unreferenced assembly offers to add the project reference.
+- **Direct manipulation** — select, move, resize (8 handles), multi-select (Ctrl/Shift + rubber-band), group move/delete, reparent, z-order, copy/paste, align + distribute + make-same-size, tab-order editor, snaplines, and a VS-style right-click menu.
 - **Events** — describe, wire / unwire / rewire handlers, generate a handler stub, and navigate to the handler body in the `.cs` partner.
-- **Component tray** & **document outline** for non-visual components and the control hierarchy.
+- **Component tray** & **document outline** (ARIA-accessible) for non-visual components and the control hierarchy.
 - **Safe save** — edits are applied as targeted text splices guarded by representability and statement-diff gates; everything outside the changed span is preserved exactly (encoding/BOM included).
 - **Zero-config assembly resolution** — finds your build output via MSBuild design-time evaluation (with multi-target support), or set an explicit assembly path.
 - **Export Diagnostics** command for easy bug reports.
@@ -99,7 +102,9 @@ The rendering is real: a headless .NET host actually instantiates your controls 
 
 ## 🚀 Installing
 
-> The extension is in **preview** and is not on the Marketplace yet. For now, build from source (below). Once published, install it from the VS Code Marketplace by searching **“WinForms Designer”**.
+Install from the **VS Code Marketplace** — search for **“WinForms Designer”**, or open the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=SkivHisink.winforms-designer-vscode).
+
+> The extension is in **preview** — expect rough edges. It requires **Windows** and the **.NET 9 SDK** (see [Requirements](#-requirements)).
 
 ### Build & run from source
 
@@ -146,9 +151,9 @@ Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SEC
 
 This project is in **active preview**.
 
-- ✅ **Done & verified:** the core render → select → edit → save loop, property grid, toolbox, direct manipulation, events, and safe save (see the feature list above).
-- 🚧 **In progress:** layout-parity polish (anchor/dock glyphs, `TableLayoutPanel`/`SplitContainer` editing, equal-spacing snaplines), `UITypeEditor` modals, accessibility mirror-tree.
-- 🔭 **Not started:** `.NET Framework` (net48) hosting, smart-tags / `DesignerActionList`, advanced `.resx`, localization/RTL.
+- ✅ **Done & verified:** the core render → select → edit → save loop; property grid (incl. Color / Font / flags / Anchor-Dock / image editors); toolbox with icons and *Choose Toolbox Items*; control-source selection; direct manipulation (move / resize / reparent / z-order / copy-paste / align / snaplines); layout-panel editing (`TableLayoutPanel` / `SplitContainer` / `FlowLayoutPanel`); `.resx` image import & render; events; safe save; accessibility mirror-tree.
+- 🚧 **In progress:** `UITypeEditor` / collection-editor modals, richer multi-assembly control sources, and further VS-parity polish.
+- 🔭 **Not started:** `.NET Framework` (net48) hosting, smart-tags / `DesignerActionList`, advanced `.resx` (non-image resources, `ApplyResources`), localization / RTL.
 
 The webview UI is primarily validated headless; some interactions are best confirmed with a live run. Expect rough edges and please [file issues](https://github.com/SkivHisink/winforms-designer-vscode/issues).
 

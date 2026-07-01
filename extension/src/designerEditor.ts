@@ -12,12 +12,18 @@ import {
   renderControl,
   setProperty,
   convertValue,
+  setTableCell,
+  resetProperty,
+  setImageResource,
   generateEventHandler,
   listHandlerCandidates,
   setEventWiring,
   addControl,
+  addComponent,
   listToolboxItems,
   ToolboxItemInfo,
+  getDesignerPalette,
+  DesignerPaletteInfo,
   listToolboxCandidates,
   scanToolboxAssembly,
   removeControl,
@@ -26,6 +32,7 @@ import {
   moveZOrder,
 } from './engineClient';
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
+import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj } from './csprojRef';
 
 type EnsureEngine = () => Promise<EngineHandle>;
 type AssemblyOverride = (file: string) => string | undefined;
@@ -108,6 +115,24 @@ export class DesignerHub {
   /** Framework palette items the user UNCHECKED in "Choose Items" — filtered out of the toolbox. */
   private hidden = new Set<string>();
 
+  /** The color/font palette (KnownColors + installed fonts + unit suffixes). Engine-wide static, so it's
+   *  fetched once by the first session and reused by all — cached here, re-pushed to the panel on refresh. */
+  private palette: DesignerPaletteInfo | undefined;
+  /** In-flight fetch, memoized so concurrent first-renders (two sessions, or refreshToolbox+fullRender racing)
+   *  issue exactly ONE GetDesignerPalette RPC instead of duplicating the round-trip. */
+  private paletteFetch: Promise<DesignerPaletteInfo> | undefined;
+  get hasPalette(): boolean { return this.palette !== undefined; }
+  /** Fetch the palette once (engine-wide static, machine-global) and cache it. Idempotent; a failed fetch
+   *  clears the latch so a later call retries. */
+  async ensurePalette(fetch: () => Promise<DesignerPaletteInfo>): Promise<void> {
+    if (this.palette) return;
+    if (!this.paletteFetch) this.paletteFetch = fetch();
+    try { this.palette = await this.paletteFetch; }
+    catch { this.paletteFetch = undefined; /* let a later call retry */ }
+  }
+  /** Push the cached palette to the panel if this session is the mirrored one (no-op until fetched). */
+  pushPaletteTo(s: DesignerSession): void { if (this.palette) this.pushPanel(s, { type: 'palette', palette: this.palette }); }
+
   isHidden(fqn: string): boolean { return this.hidden.has(fqn); }
   get hiddenFqns(): string[] { return [...this.hidden]; }
 
@@ -128,10 +153,15 @@ export class DesignerHub {
 
   get activeSession(): DesignerSession | null { return this.active; }
 
+  /** Fires when the mirrored (focused) designer changes — the status bar reflects the active form's control source. */
+  private readonly _onActive = new vscode.EventEmitter<void>();
+  readonly onDidChangeActive = this._onActive.event;
+
   setActive(s: DesignerSession | null): void {
     this.active = s;
     if (s) s.refreshViews();
     else this.toPanel({ type: 'clear' });
+    this._onActive.fire();
   }
   /** When a session closes: if it owned the panel, blank it (another focus will re-populate). */
   clearIfActive(s: DesignerSession): void { if (this.active === s) this.setActive(null); }
@@ -303,18 +333,22 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     DesignerHub.instance.panel = view.webview;
     view.webview.onDidReceiveMessage(async (m: {
       type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string;
-      event?: string; handler?: string | null; controlType?: string; tab?: string;
+      event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
     }) => {
       const s = DesignerHub.instance.activeSession;
       try {
         if (m?.type === 'ready') { s?.refreshViews(); }
         else if (m?.type === 'pick' && m.id) { await s?.pick(m.id); }
         else if (m?.type === 'edit' && m.id && m.prop && m.propType !== undefined) { await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? ''); }
+        else if (m?.type === 'importImage' && m.id && m.prop && m.propType) { await s?.importImageFromGrid(m.id, m.prop, m.propType); }
+        else if (m?.type === 'clearImage' && m.id && m.prop) { await s?.clearImageFromGrid(m.id, m.prop); }
+        else if (m?.type === 'setTableCell' && m.id && m.cell) { await s?.tableCellFromGrid(m.id, m.cell, m.value ?? ''); }
         else if (m?.type === 'setHandler' && m.id && m.event) { await s?.setHandler(m.id, m.event, m.handler ?? ''); }
         else if (m?.type === 'createHandler' && m.id && m.event) { await s?.createHandler(m.id, m.event, m.handler || undefined); }
         else if (m?.type === 'navigateHandler' && m.id) { await s?.navigateToHandler(m.id, m.event ?? '', m.handler ?? undefined); }
         else if (m?.type === 'listHandlers' && m.id) { await s?.sendCandidates(m.id); }
         else if (m?.type === 'addControl' && m.controlType) { await s?.addControlFromToolbox(m.controlType); }
+        else if (m?.type === 'addComponent' && m.componentType) { await s?.addComponentFromToolbox(m.componentType); }
         else if (m?.type === 'deleteSelected') { s?.deleteSelectedFromPanel(); }
         else if (m?.type === 'chooseItems') { s?.openChooseItems(m.tab); }
       } catch { /* edit/handler/add failures already report on the canvas status line */ }
@@ -337,10 +371,16 @@ class DesignerSession {
   private gotReady = false;
   /** Auto-populated toolbox palette (§7.2) — fetched once, then mirrored to the Toolbox view. */
   private toolboxItems: ToolboxItemInfo[] | undefined;
+  /** One-shot latch: we prompt "select a control source" at most once per form (until it renders clean or the
+   *  user picks one), so a form with unresolved custom controls isn't nagging on every re-render. */
+  private promptedForSource = false;
   /** The big "Choose Toolbox Items" window (a separate editor-area webview panel), if open. */
   private chooseItemsPanel: vscode.WebviewPanel | undefined;
   /** Assemblies the user added via the Choose-Items "Browse…" button (accumulated across clicks). */
   private browsedDlls: string[] = [];
+  /** (project, assembly) pairs we've already offered a <Reference> for — ask at most once each per session,
+   *  whatever the user answered, so adding several controls from one library doesn't nag repeatedly. */
+  private readonly offeredReferences = new Set<string>();
   /** The toolbox tab the open Choose-Items window targets (checked items land here); undefined = none. */
   private chooseItemsTab: string | undefined;
 
@@ -422,6 +462,21 @@ class DesignerSession {
     return this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined;
   }
 
+  /** The .Designer.cs this session renders (the key the control-source override is stored under). */
+  get designerFilePath(): string | null { return this.designerFile; }
+
+  /** The control assembly currently in effect (explicit override, or null = engine auto-discovery). */
+  get controlAssembly(): string | undefined { return this.asm(); }
+
+  /** Re-render after the user changed the control source (Select Control Assembly): drop the cached toolbox so
+   *  Project Controls re-discover against the NEW assembly, then a full render (loads the new controls). */
+  async reloadControlSource(): Promise<void> {
+    this.toolboxItems = undefined;
+    this.promptedForSource = true; // an explicit choice was made — don't nag about this form again
+    await this.fullRender();
+    this.refreshViews();
+  }
+
   /** Post to THIS editor's canvas webview (render/layout/patch/select/manip/status/dirty/error/loading). */
   private post(message: unknown): void {
     void this.panel.webview.postMessage(message);
@@ -445,6 +500,19 @@ class DesignerSession {
       try { this.toolboxItems = await listToolboxItems(await this.ensureEngine(), this.designerFile, this.asm()); } catch { /* ignore */ }
     }
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
+    await this.refreshPalette();
+  }
+
+  /** Fetch the color/font palette once (engine-wide static, cached on the hub) and push it to the panel so
+   *  the Color dropdown + Font editor have their swatches / font families / unit suffixes. Best-effort:
+   *  a fetch failure just leaves those editors on their text-input fallback. */
+  private async refreshPalette(): Promise<void> {
+    if (this.disposed || !this.designerFile) return;
+    const hub = DesignerHub.instance;
+    if (!hub.hasPalette) {
+      try { const eng = await this.ensureEngine(); await hub.ensurePalette(() => getDesignerPalette(eng)); } catch { /* palette optional */ }
+    }
+    hub.pushPaletteTo(this);
   }
   refreshProperties(): void {
     if (this.controls.length) {
@@ -604,9 +672,11 @@ class DesignerSession {
   openChooseItems(tab?: string): void {
     if (this.disposed) return;
     this.chooseItemsTab = tab;
-    if (this.chooseItemsPanel) { this.chooseItemsPanel.reveal(); void this.pushCandidates(this.chooseItemsPanel); return; }
+    // show the target tab right in the editor-tab title so it's unmistakable which toolbox tab items land in.
+    const title = 'Choose Toolbox Items' + (tab ? ' → ' + tab : '');
+    if (this.chooseItemsPanel) { this.chooseItemsPanel.title = title; this.chooseItemsPanel.reveal(); void this.pushCandidates(this.chooseItemsPanel); return; }
     const panel = vscode.window.createWebviewPanel(
-      'winformsDesigner.chooseItems', 'Choose Toolbox Items', vscode.ViewColumn.Active,
+      'winformsDesigner.chooseItems', title, vscode.ViewColumn.Active,
       { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')] },
     );
     this.chooseItemsPanel = panel;
@@ -622,7 +692,7 @@ class DesignerSession {
 
   /** Fetch the Choose-Items rows (framework + project + browsed .dlls) → the dialog, with the target tab and
    *  which of its items are currently in the toolbox (so the checkboxes start in the right state). */
-  private async pushCandidates(panel: vscode.WebviewPanel): Promise<void> {
+  private async pushCandidates(panel: vscode.WebviewPanel, autoCheck?: string[]): Promise<void> {
     const hub = DesignerHub.instance;
     const tab = this.chooseItemsTab ?? null;
     // "chosen" sent to the dialog = the fqns CURRENTLY in the toolbox (framework-not-hidden + added) → so the
@@ -631,14 +701,17 @@ class DesignerSession {
       ...(this.toolboxItems ?? []).filter((c) => !hub.isHidden(c.fqn)).map((c) => c.fqn),
       ...hub.chosenItems.map((c) => c.fqn),
     ];
-    if (this.disposed || !this.designerFile) { void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox() }); return; }
+    // `check` = fqns to auto-tick this round (a just-browsed assembly's items) so the user doesn't have to hand-
+    // check every row after loading a library — like VS, which checks a browsed assembly's items on add.
+    const check = autoCheck ?? [];
+    if (this.disposed || !this.designerFile) { void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox(), check }); return; }
     try {
       const eng = await this.ensureEngine();
       if (!this.toolboxItems) { try { this.toolboxItems = await listToolboxItems(eng, this.designerFile, this.asm()); } catch { /* ignore */ } }
       const items = await listToolboxCandidates(eng, this.designerFile, this.asm(), this.browsedDlls.length ? this.browsedDlls : undefined);
-      void panel.webview.postMessage({ type: 'items', items, tab, chosen: inToolbox() });
+      void panel.webview.postMessage({ type: 'items', items, tab, chosen: inToolbox(), check });
     } catch (err) {
-      void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox() });
+      void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox(), check });
       this.output.appendLine('choose-items enumeration failed: ' + errMsg(err));
     }
   }
@@ -669,6 +742,10 @@ class DesignerSession {
       }
     }
     hub.setToolboxCustomization(chosen, [...hidden]);
+    // setToolboxCustomization re-pushes via the ACTIVE session, but the Choose-Items dialog holds editor focus, so
+    // that gated push can be dropped → the added items wouldn't show until a refocus. Push the merged toolbox
+    // DIRECTLY (ungated) so they appear in the palette immediately, which is exactly the point of clicking OK.
+    hub.toPanel({ type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !hub.isHidden(it.fqn)), ...hub.chosenItems] });
     this.post({ type: 'status', message: `toolbox updated (${chosen.length} added, ${hidden.size} hidden)` });
   }
 
@@ -686,6 +763,7 @@ class DesignerSession {
     if (!picked || !picked.length) { await this.pushCandidates(panel); return; } // cancel → just clear "loading"
     const eng = await this.ensureEngine();
     const notes: string[] = [];
+    const scannedFqns: string[] = []; // fqns from the just-browsed assemblies → auto-checked in the dialog
     let added = 0;
     let okCount = 0;
     for (const u of picked) {
@@ -694,6 +772,7 @@ class DesignerSession {
         const res = await scanToolboxAssembly(eng, u.fsPath);
         if (res.items.length) {
           added += res.items.length; okCount++;
+          for (const c of res.items) scannedFqns.push(c.namespace ? c.namespace + '.' + c.name : c.name);
           if (!this.browsedDlls.includes(u.fsPath)) this.browsedDlls.push(u.fsPath);
         } else {
           notes.push(`${base}: ${res.error || 'no toolbox components'}`);
@@ -702,9 +781,11 @@ class DesignerSession {
         notes.push(`${base}: ${errMsg(e)}`);
       }
     }
-    await this.pushCandidates(panel);
+    // re-post the merged list WITH the just-scanned fqns pre-checked, so the loaded library's items are ready to
+    // add on OK (VS auto-checks a browsed assembly's items) instead of appearing as an unchecked list expansion.
+    await this.pushCandidates(panel, scannedFqns);
     const parts: string[] = [];
-    if (added) parts.push(`Added ${added} component${added > 1 ? 's' : ''} from ${okCount} assembl${okCount > 1 ? 'ies' : 'y'}`);
+    if (added) parts.push(`Loaded ${added} item${added > 1 ? 's' : ''} from ${okCount} assembl${okCount > 1 ? 'ies' : 'y'} (pre-checked — click OK to add them)`);
     if (notes.length) parts.push(notes.join('; '));
     void panel.webview.postMessage({ type: 'browseResult', message: parts.join(' — ') || 'No components added.' });
   }
@@ -742,6 +823,7 @@ class DesignerSession {
       try { this.toolboxItems = await listToolboxItems(eng, this.designerFile, this.asm()); } catch { /* ignore */ }
     }
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
+    void this.refreshPalette();
     this.post({ type: 'loading', message: 'Rendering…' });
     const asm = this.asm();
     const text = await this.currentText();
@@ -768,6 +850,25 @@ class DesignerSession {
     await this.loadProps(this.currentId);
     await this.postDirty();
     this.pushClipboardState();
+    this.maybePromptForControlSource(result.unrepresentable, asm);
+  }
+
+  /** If the form references controls the engine couldn't resolve (no assembly holds their type) AND no control
+   *  source is set yet, prompt the user ONCE to point the designer at the project/assembly that provides them —
+   *  the "you must specify a project to use your controls" guidance. Silent when a source is already chosen. */
+  private maybePromptForControlSource(unrepresentable: string[] | undefined, asm: string | undefined): void {
+    if (this.promptedForSource || asm) return; // already chose a source (or was told) → don't nag
+    const unresolved = (unrepresentable ?? [])
+      .map((u) => /unresolved type\)?\s+([\w.]+)/.exec(u)?.[1])
+      .filter((t): t is string => !!t);
+    if (!unresolved.length) return;
+    this.promptedForSource = true;
+    const uniq = [...new Set(unresolved)];
+    const shown = uniq.slice(0, 3).join(', ') + (uniq.length > 3 ? ', …' : '');
+    void vscode.window.showWarningMessage(
+      `This form uses controls that couldn't be loaded (${shown}). Select the project or assembly that provides them.`,
+      'Select control source…',
+    ).then((pick) => { if (pick) void vscode.commands.executeCommand('winformsDesigner.selectControlAssembly'); });
   }
 
   /** Describe the selected component → push its grid to the Properties view + its manipulability to the canvas. */
@@ -1008,17 +1109,175 @@ class DesignerSession {
       await this.loadProps(id);
       return;
     }
+    let finalText = res.text;
+    // VS layout mutual-exclusivity: Dock and Anchor override each other. Setting a non-None Dock (or any Anchor)
+    // clears the stale conjugate assignment so the grid + serialized source reflect the effective layout. The
+    // reset is folded into the SAME commit (one undo step). engine ResetProperty is §6.5-gated and no-op-safe:
+    // when the conjugate has no assignment it returns safe with text === null → we keep finalText unchanged.
+    const conjugate = prop === 'Dock' ? 'Anchor' : prop === 'Anchor' ? 'Dock' : null;
+    const clearConjugate = prop === 'Anchor' || (prop === 'Dock' && raw.trim() !== '' && raw.trim() !== 'None');
+    if (conjugate && clearConjugate) {
+      const cleared = await resetProperty(eng, this.designerFile, id, conjugate, finalText);
+      // a no-op reset (conjugate had no assignment) is `safe` with a null/undefined text (C# null → TS undefined) —
+      // use loose `!= null` so we only replace finalText on a real removal, never with undefined.
+      if (cleared.safe && cleared.text != null) {
+        finalText = cleared.text;
+        this.output.appendLine(`cleared ${id}.${conjugate} (mutually exclusive with ${prop})`);
+      }
+    }
+
     if (this.doc.rev !== revBefore) {
       this.post({ type: 'status', message: 'document changed during edit — try again' });
       await this.loadProps(id);
       return;
     }
 
-    this.commit(before, res.text, `Set ${id}.${prop}`);
+    this.commit(before, finalText, `Set ${id}.${prop}`);
     this.output.appendLine(`set ${id}.${prop} = ${expr} (${res.mode}, unsaved)`);
     this.post({ type: 'status', message: `set ${id}.${prop} — unsaved` });
 
     await this.patchOrRerender(id, prop);
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** The sibling .resx for the current designer file (Foo.Designer.cs / Foo.cs → Foo.resx). */
+  private resxUri(): vscode.Uri {
+    const f = this.designerFile!;
+    const base = /\.Designer\.cs$/i.test(f) ? f.slice(0, -'.Designer.cs'.length)
+      : /\.cs$/i.test(f) ? f.slice(0, -'.cs'.length) : f;
+    return vscode.Uri.file(base + '.resx');
+  }
+
+  /** Read a text file's UTF-8 content (BOM stripped), or null when it doesn't exist. */
+  private async readTextIfExists(uri: vscode.Uri): Promise<string | null> {
+    try {
+      const b = await vscode.workspace.fs.readFile(uri);
+      let s = Buffer.from(b).toString('utf8');
+      if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1); // strip a leading BOM so the XML parser is happy
+      return s;
+    } catch { return null; } // ENOENT → no .resx yet (the engine creates one)
+  }
+
+  /**
+   * Import an image into a resx-backed image/icon property ("Import…"): pick a file, embed it into the form's
+   * sibling .resx and write the `resources.GetObject` assignment. The .resx is written to disk immediately (a
+   * resource file, like VS); the .Designer.cs edit is the undoable in-memory thing. On undo, the assignment
+   * reverts and the image drops from the render; the .resx entry is left as a harmless orphan.
+   */
+  async importImageFromGrid(id: string, prop: string, propType: string): Promise<void> {
+    if (!this.designerFile) return;
+    const isIcon = propType === 'System.Drawing.Icon';
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false, openLabel: 'Import',
+      title: `Import ${isIcon ? 'an icon' : 'an image'} for ${id}.${prop}`,
+      filters: isIcon ? { Icons: ['ico'] } : { Images: ['png', 'jpg', 'jpeg', 'bmp', 'gif'] },
+    });
+    if (!picked || !picked.length) return; // cancelled
+    try {
+      const bytes = await vscode.workspace.fs.readFile(picked[0]);
+      if (bytes.byteLength > 16 * 1024 * 1024) { this.post({ type: 'status', message: 'image is too large (max 16 MB)' }); return; }
+      const imageBase64 = Buffer.from(bytes).toString('base64');
+      const eng = await this.ensureEngine();
+      const resxUri = this.resxUri();
+      const resxText = await this.readTextIfExists(resxUri);
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+
+      const res = await setImageResource(eng, this.designerFile, id, prop, propType, imageBase64, resxText, before);
+      if (!res.safe || res.designerText === null || res.resxText === null) {
+        this.post({ type: 'status', message: `import rejected: ${res.reason || 'unsafe'}` });
+        await this.loadProps(id);
+        return;
+      }
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: 'document changed during import — try again' });
+        await this.loadProps(id);
+        return;
+      }
+
+      // write the .resx to disk FIRST (the engine reads it from disk on render), then commit the designer edit.
+      await vscode.workspace.fs.writeFile(resxUri, Buffer.from(res.resxText, 'utf8'));
+      this.commit(before, res.designerText, `Import ${id}.${prop} image`);
+      this.output.appendLine(`imported image into ${id}.${prop} → ${res.resxKey} (${res.mode}; .resx written, designer unsaved)`);
+      this.post({ type: 'status', message: `imported image for ${id}.${prop} — unsaved (.resx written)` });
+
+      await this.fullRender(); // a new resx image + assignment → full re-render (not a single-control patch)
+      await this.loadProps(id);
+      await this.postDirty();
+    } catch (err) {
+      this.post({ type: 'status', message: `import failed: ${errMsg(err)}` });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  /** Clear an image property ("(none)"): delete its assignment via the §6.5-gated ResetProperty. The .resx
+   *  entry is left as a harmless orphan (mirrors VS, which also doesn't prune unused resources on clear). */
+  async clearImageFromGrid(id: string, prop: string): Promise<void> {
+    if (!this.designerFile) return;
+    try {
+      const eng = await this.ensureEngine();
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+      const res = await resetProperty(eng, this.designerFile, id, prop, before);
+      if (!res.safe) { this.post({ type: 'status', message: `clear rejected: ${res.reason || 'unsafe'}` }); await this.loadProps(id); return; }
+      if (res.text == null) { this.post({ type: 'status', message: `${id}.${prop} is already (none)` }); await this.loadProps(id); return; }
+      if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: 'document changed — try again' }); await this.loadProps(id); return; }
+      this.commit(before, res.text, `Clear ${id}.${prop} image`);
+      this.output.appendLine(`cleared image ${id}.${prop} (resx entry left as an orphan — harmless)`);
+      this.post({ type: 'status', message: `cleared ${id}.${prop} — unsaved` });
+      await this.fullRender();
+      await this.loadProps(id);
+      await this.postDirty();
+    } catch (err) {
+      this.post({ type: 'status', message: `clear failed: ${errMsg(err)}` });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  /** Grid edit of a TableLayoutPanel child's Column/Row — routed here (not applyEdit) because the cell lives in
+   *  the 3-arg Controls.Add, not a property assignment. Mirrors editFromGrid's error/restore handling. */
+  async tableCellFromGrid(id: string, cell: string, value: string): Promise<void> {
+    try {
+      await this.applyTableCell(id, cell, value);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyTableCell(id: string, cell: string, raw: string): Promise<void> {
+    if (!this.designerFile) return;
+    const n = Number.parseInt(String(raw).trim(), 10);
+    if (!Number.isInteger(n) || n < 0) {
+      this.post({ type: 'status', message: `${cell} must be a non-negative integer` });
+      await this.loadProps(id);
+      return;
+    }
+    const eng = await this.ensureEngine();
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const column = cell === 'Column' ? n : null;
+    const row = cell === 'Row' ? n : null;
+    const res = await setTableCell(eng, this.designerFile, id, column, row, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: `cell edit rejected: ${res.reason || 'unsafe'}` });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: 'document changed during edit — try again' });
+      await this.loadProps(id);
+      return;
+    }
+
+    this.commit(before, res.text, `Set ${id}.${cell}`);
+    this.output.appendLine(`set ${id}.${cell} = ${n} (table cell, unsaved)`);
+    this.post({ type: 'status', message: `set ${id}.${cell} — unsaved` });
+
+    // a cell move repositions the control and can re-flow its siblings → full re-render, not a single-control patch
+    await this.fullRender();
     await this.loadProps(id);
     await this.postDirty();
   }
@@ -1219,7 +1478,8 @@ class DesignerSession {
         locY = Math.max(0, Math.round(dropY - (par ? par.y : 0)));
       }
     }
-    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, this.asm());
+    const asm = this.asm();
+    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, asm);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'add rejected: ' + (res.reason || 'unsafe') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     this.commit(before, res.newText, `Add ${controlType}`);
@@ -1227,6 +1487,97 @@ class DesignerSession {
     this.output.appendLine(`added ${controlType} → ${res.name} (unsaved)`);
     await this.fullRender();
     this.post({ type: 'status', message: `added ${res.name} — unsaved` });
+    // A control from the chosen control-source assembly won't compile until the project references it — offer to add one.
+    await this.maybeOfferProjectReference(controlType, asm);
+  }
+
+  /**
+   * After adding a control that came from the chosen control-source assembly (a browsed .dll, or a resolved
+   * project other than the form's own), the generated `new Ns.Foo()` won't compile until the form's project
+   * references that assembly — Visual Studio adds a <Reference> in this situation, so we offer to as well.
+   * Skips framework controls, the form's own project output, and assemblies already referenced. Best-effort:
+   * a probe failure just means no offer (never blocks or breaks the add). Asked at most once per (project,
+   * assembly) per session.
+   */
+  private async maybeOfferProjectReference(controlType: string, asm: string | undefined): Promise<void> {
+    try {
+      if (!asm || !this.designerFile || !fs.existsSync(asm)) return;
+      // Only controls that came FROM the override assembly (the "Project Controls") need a reference; a
+      // framework control (fromProject false) is always resolvable, and an unknown key is nothing we added.
+      const item = [...(this.toolboxItems ?? []), ...DesignerHub.instance.chosenItems]
+        .find((it) => it.name === controlType || it.fqn === controlType);
+      if (!item?.fromProject) return;
+
+      const wsFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.designerFile))?.uri.fsPath;
+      const csproj = findNearestCsproj(path.dirname(this.designerFile), wsFolder);
+      if (!csproj) return;
+      const asmName = path.basename(asm).replace(/\.dll$/i, '');
+      if (!asmName) return;
+      const latchKey = normalize(csproj) + '|' + asmName.toLowerCase();
+      if (this.offeredReferences.has(latchKey)) return;
+
+      let text: string;
+      try { text = fs.readFileSync(csproj, 'utf8'); } catch { return; }
+      // The form's own project builds these controls → no self-reference; already referenced (incl. via a
+      // <ProjectReference> whose target <AssemblyName> matches) → nothing to do.
+      if (projectAssemblyName(text, csproj).toLowerCase() === asmName.toLowerCase()) return;
+      if (projectReferencesAssembly(text, csproj, asmName)) return;
+
+      this.offeredReferences.add(latchKey); // count the offer whatever the answer, so we ask only once
+      const projBase = path.basename(csproj);
+      const pick = await vscode.window.showInformationMessage(
+        `${asmName} isn't referenced by ${projBase}. Add a reference so the added control compiles?`,
+        'Add reference', 'Not now',
+      );
+      if (pick !== 'Add reference') return;
+      await this.addProjectReference(csproj, asmName, asm);
+    } catch (e) {
+      this.output.appendLine('offer project reference failed: ' + errMsg(e));
+    }
+  }
+
+  /** Insert a `<Reference Include="name"><HintPath>…dll</HintPath></Reference>` into the .csproj as an
+   *  undoable edit (a HintPath relative to the project, like VS's "Add Reference → Browse"). Saves the file
+   *  only when it wasn't already dirty — so the reference takes effect without flushing the user's unrelated
+   *  in-progress .csproj edits to disk. */
+  private async addProjectReference(csproj: string, includeName: string, dll: string): Promise<void> {
+    let doc: vscode.TextDocument;
+    try { doc = await vscode.workspace.openTextDocument(csproj); }
+    catch { this.post({ type: 'status', message: 'cannot open ' + path.basename(csproj) }); return; }
+    const before = doc.getText();
+    if (projectReferencesAssembly(before, csproj, includeName)) return; // added by something else since we checked
+    // MSBuild accepts native separators; path.relative gives backslashes on Windows (matching VS-authored .csproj).
+    const hintPath = path.relative(path.dirname(csproj), dll) || dll;
+    const after = addReferenceToCsproj(before, includeName, hintPath);
+    if (!projectReferencesAssembly(after, csproj, includeName)) { // defensive: the snippet must actually register
+      this.post({ type: 'status', message: `could not add the reference to ${path.basename(csproj)} — add it manually` });
+      return;
+    }
+    const wasDirty = doc.isDirty;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(before.length)), after);
+    if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: 'could not update ' + path.basename(csproj) }); return; }
+    // Don't force-save over the user's own unsaved .csproj edits — if it was already dirty, leave saving to them.
+    if (!wasDirty) { try { await doc.save(); } catch { /* leave it dirty for the user to save manually */ } }
+    this.output.appendLine(`added <Reference Include="${includeName}"> (HintPath ${hintPath}) → ${path.basename(csproj)}${wasDirty ? ' (unsaved)' : ''}`);
+    this.post({ type: 'status', message: `referenced ${includeName} in ${path.basename(csproj)}${wasDirty ? ' — review & save it' : ''}` });
+  }
+
+  /** Toolbox add for a non-visual component (Timer/ToolTip/dialog…) — a bare `new T()` that lands in the tray.
+   *  No parent/position (unlike a control); mirrors applyAddControl's commit/rerender. */
+  async addComponentFromToolbox(componentType: string): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const eng = await this.ensureEngine();
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const res = await addComponent(eng, this.designerFile, componentType, before);
+    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'add rejected: ' + (res.reason || 'unsafe') }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    this.commit(before, res.newText, `Add ${componentType}`);
+    this.currentId = res.name;
+    this.output.appendLine(`added component ${componentType} → ${res.name} (unsaved)`);
+    await this.fullRender();
+    this.post({ type: 'status', message: `added ${res.name} to the tray — unsaved` });
   }
 
   private async applyRemoveControl(id: string): Promise<void> {
@@ -1616,6 +1967,11 @@ ${cspMeta(webview, nonce)}
   .ruler .lab { position: absolute; font-size: 8px; line-height: 1; }
   .rulerH .lab { top: 1px; }
   .rulerV .lab { left: 1px; }
+  /* object-bounds markers on the rulers: a highlighted band spanning the selected/dragging control's extent,
+     with dashed edges at its boundaries — so the ruler shows where the object is (and follows it while moving) */
+  .rulerMark { position: absolute; z-index: 9; pointer-events: none; box-sizing: border-box; background: rgba(78, 161, 255, .20); }
+  .rulerMarkH { top: -22px; height: 18px; border-left: 1px dashed var(--vscode-focusBorder, #4ea1ff); border-right: 1px dashed var(--vscode-focusBorder, #4ea1ff); }
+  .rulerMarkV { left: -28px; width: 24px; border-top: 1px dashed var(--vscode-focusBorder, #4ea1ff); border-bottom: 1px dashed var(--vscode-focusBorder, #4ea1ff); }
   /* right-click context menu (HTML; native VS Code menus aren't reachable inside a webview) */
   .ctxmenu { display: none; position: fixed; z-index: 50; min-width: 200px; padding: 4px 0; background: var(--vscode-menu-background, #252526);
     color: var(--vscode-menu-foreground, #ccc); border: 1px solid var(--vscode-menu-border, #454545); border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.4); font-size: 12px; user-select: none; }
@@ -1656,7 +2012,7 @@ ${cspMeta(webview, nonce)}
       <button id="sameWH" title="Make same size as the primary selection">=□</button>
     </span>
     <button id="tabOrder" title="Toggle tab-order editing: click controls in order to renumber TabIndex">Tab Order</button>
-    <button id="rulerToggle" title="Показать/скрыть линейку (pixel ruler)">Показать линейку</button>
+    <button id="rulerToggle" title="Show/hide the pixel ruler">Show ruler</button>
     <span id="dirty" class="dirty" title="Unsaved designer changes"></span>
   </div>
   <div id="ctxMenu" class="ctxmenu"></div>
@@ -1753,6 +2109,58 @@ ${cspMeta(webview, nonce)}
   .dFill { left: 9px; right: 9px; top: 10px; bottom: 10px; }
   .dNone { padding: 1px 6px; font-size: 11px; flex: 0 0 auto; }
   .dNone.on { background: var(--vscode-focusBorder, #4ea1ff); color: #fff; }
+  /* Color editor: swatch + free-text input + dropdown button (opens the tabbed palette popup) */
+  .colorEd { display: flex; align-items: center; height: 20px; }
+  .colorEd .colorInp { flex: 1 1 auto; min-width: 0; background: transparent; color: var(--vscode-foreground);
+    border: 1px solid transparent; padding: 1px 4px; height: 20px; box-sizing: border-box; }
+  .colorEd .colorInp:hover { background: var(--vscode-input-background); }
+  .colorEd .colorInp:focus { background: var(--vscode-input-background); border-color: var(--vscode-focusBorder, #4ea1ff); outline: none; }
+  .swatch { flex: 0 0 auto; width: 13px; height: 13px; margin: 0 4px; border: 1px solid var(--vscode-panel-border, #555); box-sizing: border-box; }
+  .swatch.none { background: repeating-conic-gradient(#888 0% 25%, #ccc 0% 50%) 50% / 8px 8px; }
+  /* dropdown button shared by the Color + Flags editors */
+  .ddBtn { flex: 0 0 auto; width: 16px; text-align: center; cursor: pointer; color: var(--vscode-descriptionForeground);
+    user-select: none; font-size: 10px; line-height: 20px; }
+  .ddBtn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.12)); color: var(--vscode-foreground); }
+  /* Flags-enum editor: read-only summary + dropdown of member checkboxes */
+  .flagsEd { display: flex; align-items: center; height: 20px; }
+  .flagsEd .flagsInp { flex: 1 1 auto; min-width: 0; background: transparent; color: var(--vscode-foreground);
+    border: 1px solid transparent; padding: 1px 4px; height: 20px; box-sizing: border-box; cursor: default; }
+  /* Image/Icon editor: preview swatch + label + Import…/(none) buttons (resx-backed) */
+  .imageEd { display: flex; align-items: center; height: 20px; gap: 4px; }
+  .imgSwatch { flex: 0 0 auto; width: 16px; height: 16px; border: 1px solid var(--vscode-panel-border, #555);
+    box-sizing: border-box; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .imgSwatch.none { background: repeating-conic-gradient(#888 0% 25%, #ccc 0% 50%) 50% / 8px 8px; }
+  .imgThumb { max-width: 16px; max-height: 16px; display: block; }
+  .imgLabel { flex: 1 1 auto; min-width: 0; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imgBtn { flex: 0 0 auto; background: transparent; color: var(--vscode-textLink-foreground, #4ea1ff); border: none;
+    padding: 0 4px; cursor: pointer; font-size: 11px; line-height: 20px; }
+  .imgBtn:hover { text-decoration: underline; }
+  /* floating popup surface (color picker / flags checkboxes) — on <body>, position:fixed so #grid can't clip it */
+  .propPopup { position: fixed; z-index: 70; background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-foreground);
+    border: 1px solid var(--vscode-widget-border, #454545); border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.5); font-size: 12px; }
+  .popTabs { display: flex; border-bottom: 1px solid var(--vscode-widget-border, #454545); }
+  .popTab { flex: 1 1 0; text-align: center; padding: 4px 10px; cursor: pointer; color: var(--vscode-descriptionForeground);
+    user-select: none; border-right: 1px solid var(--vscode-widget-border, #454545); }
+  .popTab:last-child { border-right: none; }
+  .popTab:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.08)); }
+  .popTab.active { color: var(--vscode-foreground); box-shadow: inset 0 -2px 0 var(--vscode-focusBorder, #4ea1ff); }
+  .popBody { padding: 6px; }
+  .colorPop { width: 220px; }
+  .swGrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+  .swCell { width: 100%; padding-top: 100%; border: 1px solid var(--vscode-panel-border, #555); box-sizing: border-box; cursor: pointer; }
+  .swCell.none { background: repeating-conic-gradient(#888 0% 25%, #ccc 0% 50%) 50% / 8px 8px; }
+  .swCell:hover { outline: 1px solid var(--vscode-focusBorder, #4ea1ff); }
+  .swCell.sel { outline: 2px solid var(--vscode-focusBorder, #4ea1ff); }
+  .swList { max-height: 262px; overflow: auto; }
+  .swRow { display: flex; align-items: center; gap: 6px; padding: 2px 4px; cursor: pointer; white-space: nowrap; }
+  .swRow:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  .swRow.sel { background: var(--vscode-list-activeSelectionBackground, #094771); color: var(--vscode-list-activeSelectionForeground, #fff); }
+  .swRow .swatch { margin: 0; }
+  .swName { overflow: hidden; text-overflow: ellipsis; }
+  .flagsPop { min-width: 150px; padding: 4px 0; }
+  .flagRow { display: flex; align-items: center; gap: 6px; padding: 3px 12px; cursor: pointer; white-space: nowrap; }
+  .flagRow:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  .flagRow input { width: auto; }
   td.cat { font-weight: bold; color: var(--vscode-foreground); cursor: pointer; user-select: none;
            background: var(--vscode-sideBarSectionHeader-background, rgba(255,255,255,.045)); padding: 3px 5px; }
   td.cat:hover { color: var(--vscode-foreground); }
@@ -1766,7 +2174,10 @@ ${cspMeta(webview, nonce)}
   #tbBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   #tbHeader { flex: 0 0 auto; padding: 4px; }
   #tbSearch { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, #555); }
-  #tbList { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 2px 0; }
+  /* a plain block scroll container — NOT a flex column: as a flex column, an overflow:hidden header (.tbCat,
+     min-height:auto → 0) gets shrunk to a thin textless strip when every category is expanded and the content
+     overflows. display:block keeps each child at its natural height and lets overflow:auto scroll instead. */
+  #tbList { flex: 1 1 auto; min-height: 0; overflow: auto; display: block; padding: 2px 0; }
   .tbCat { font-weight: bold; color: var(--vscode-foreground); cursor: pointer; user-select: none; padding: 4px 6px;
     background: var(--vscode-sideBarSectionHeader-background, rgba(255,255,255,.045)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tbCat:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
@@ -1778,8 +2189,15 @@ ${cspMeta(webview, nonce)}
   .tbItem { font-size: 12px; padding: 3px 8px 3px 20px; position: relative; border-radius: 2px; cursor: pointer; user-select: none;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--vscode-foreground); }
   .tbItem::before { content: "\\25aa"; position: absolute; left: 7px; top: 50%; transform: translateY(-50%); color: var(--vscode-icon-foreground, #8a8a8a); }
+  /* real [ToolboxBitmap] icon (16×16) replaces the generic ::before glyph for items that carry one */
+  .tbItem.ic::before { display: none; }
+  .tbItem .tbIcon { position: absolute; left: 3px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; image-rendering: pixelated; pointer-events: none; }
   .tbItem:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
   .tbItems.icons .tbItem { padding: 3px 6px 3px 18px; }
+  .tbItems.icons .tbItem .tbIcon { left: 2px; }
+  /* throwaway drag image for a toolbox item — a clean single-name chip (kept off-screen until the drag uses it) */
+  .tbDragImage { position: absolute; top: -1000px; left: -1000px; padding: 2px 8px; font-size: 12px; white-space: nowrap;
+    background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff); border-radius: 3px; }
   .tbEmptyCat { color: var(--vscode-descriptionForeground); font-style: italic; padding: 2px 10px 5px 20px; font-size: 11px; }
   /* right-click context menu (HTML; native VS Code menus aren't reachable inside a webview) */
   .ctxmenu { display: none; position: fixed; z-index: 50; min-width: 190px; padding: 4px 0; background: var(--vscode-menu-background, #252526);

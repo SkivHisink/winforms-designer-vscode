@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "Visualize and edit WinForms .Designer.cs forms live inside VS Code — a Visual Studio-style designer surface, property grid, toolbox and event wiring, powered by a .NET 9 rendering engine.",
   "publisher": "SkivHisink",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "preview": true,
   "license": "MIT",
   "author": {
@@ -26,10 +26,20 @@
   },
   "keywords": [
     "winforms",
-    "designer",
     "windows forms",
+    "c#",
+    "csharp",
+    "designer",
+    "form designer",
+    "ui designer",
+    "visual designer",
+    "gui",
+    "forms",
+    ".net",
     "dotnet",
-    "csharp"
+    "net9",
+    "wysiwyg",
+    "drag and drop"
   ],
   "engines": {
     "vscode": "^1.84.0"
@@ -37,6 +47,9 @@
   "categories": [
     "Visualization",
     "Other"
+  ],
+  "extensionKind": [
+    "workspace"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -101,6 +114,11 @@
       {
         "command": "winformsDesigner.exportDiagnostics",
         "title": "WinForms: Export Designer Diagnostics"
+      },
+      {
+        "command": "winformsDesigner.selectControlAssembly",
+        "title": "WinForms: Select Control Assembly / Project…",
+        "icon": "$(package)"
       }
     ],
     "keybindings": [
@@ -119,6 +137,10 @@
         {
           "command": "winformsDesigner.viewCode",
           "when": "activeCustomEditorId == winformsDesigner.designer"
+        },
+        {
+          "command": "winformsDesigner.selectControlAssembly",
+          "when": "activeCustomEditorId == winformsDesigner.designer"
         }
       ],
       "editor/title": [
@@ -129,6 +151,11 @@
         },
         {
           "command": "winformsDesigner.viewCode",
+          "when": "activeCustomEditorId == winformsDesigner.designer",
+          "group": "navigation"
+        },
+        {
+          "command": "winformsDesigner.selectControlAssembly",
           "when": "activeCustomEditorId == winformsDesigner.designer",
           "group": "navigation"
         }
@@ -158,7 +185,8 @@
     "e2e": "node dist/e2e.cjs",
     "bundle-engine": "dotnet publish ../engine -c Release -o engine",
     "copy-license": "node -e \"require('fs').copyFileSync('../LICENSE','LICENSE')\"",
-    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run copy-license"
+    "copy-changelog": "node -e \"require('fs').copyFileSync('../CHANGELOG.md','CHANGELOG.md')\"",
+    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run copy-license && npm run copy-changelog"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.45",

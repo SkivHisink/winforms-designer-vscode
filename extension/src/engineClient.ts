@@ -199,6 +199,8 @@ export interface RenderLayout {
   rootType: string;
   controls: LayoutControl[]; // innermost-first (deepest, then smallest area) — same as describeLayout
   tray: TrayComponent[];     // non-visual components (§7.3)
+  unrepresentable: string[]; // statements the interpreter couldn't run — incl. "unresolved type X" for a control
+                             // whose assembly isn't loaded (drives the "select a control source" prompt)
 }
 
 /**
@@ -215,7 +217,7 @@ export async function renderWithLayout(
 ): Promise<RenderLayout> {
   const raw = await engine.connection.sendRequest<{
     png: string; width: number; height: number; clientWidth: number; clientHeight: number;
-    rootType: string; controls: LayoutControl[]; tray: TrayComponent[];
+    rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; unrepresentable?: string[];
   }>('RenderWithLayout', designerFilePath, ...asmTextTail(controlAssemblyPath, sourceText));
   return {
     png: Buffer.from(raw.png ?? '', 'base64'),
@@ -226,6 +228,7 @@ export async function renderWithLayout(
     rootType: raw.rootType,
     controls: raw.controls ?? [],
     tray: raw.tray ?? [],
+    unrepresentable: raw.unrepresentable ?? [],
   };
 }
 
@@ -244,6 +247,21 @@ export interface PropertyDesc {
   standardValues?: string[] | null;
   /** True → closed set (render a <select>); false → editable combobox (datalist). */
   standardValuesExclusive?: boolean;
+  /** For a [Flags] enum: the individual single-bit member names (e.g. Top/Bottom/Left/Right), so the grid
+   * can render a checkbox dropdown that composes "Top, Left". Null/absent for non-flags. */
+  flagsMembers?: string[] | null;
+  /** For a [Flags] enum: the name of its zero-valued member (e.g. "None") — committed when all are
+   * unchecked. Null/absent when the enum has no zero member. */
+  flagsZero?: string | null;
+  /** True for a TableLayoutPanel child's Column/Row extender — edited via SetTableCell (rewrites the 3-arg
+   * Controls.Add cell args), NOT a normal property assignment. */
+  tableCell?: boolean;
+  /** True when the property's value type is an image/icon (System.Drawing.Image/Bitmap/Icon) — the grid renders
+   * a preview swatch + Import…/(none) editor (resx-backed) instead of a text field. `value` stays null. */
+  isImage?: boolean;
+  /** A small base64 PNG thumbnail of the current image value (max 64×64), or null/absent when unset / not an
+   * image. Display-only. */
+  imagePreview?: string | null;
 }
 
 export interface EventDesc {
@@ -311,6 +329,35 @@ export function serializeDesigner(engine: EngineHandle, designerFilePath: string
  */
 export function convertValue(engine: EngineHandle, typeName: string, invariantValue: string): Promise<string | null> {
   return engine.connection.sendRequest<string | null>('ConvertValue', typeName, invariantValue);
+}
+
+/** One color-dropdown swatch: a KnownColor name + its opaque RRGGBB hex (theme-accurate for system colors). */
+export interface ColorSwatch {
+  name: string;
+  argb: string; // 6-hex RRGGBB, no leading '#'
+}
+
+/** A GraphicsUnit member + the exact suffix the installed FontConverter emits (Point → "pt"). */
+export interface FontUnitInfo {
+  name: string;
+  suffix: string;
+}
+
+/** Static palette for the Color dropdown + Font editor (see GetDesignerPalette). */
+export interface DesignerPaletteInfo {
+  webColors: ColorSwatch[];
+  systemColors: ColorSwatch[];
+  fontFamilies: string[];
+  fontUnits: FontUnitInfo[];
+}
+
+/**
+ * The KnownColor palette (web + system, with ARGB for swatches), installed font families, and the
+ * authoritative FontConverter unit suffixes — data for the property grid's Color dropdown and Font
+ * editor. Static engine-wide (independent of any designer file); the host fetches it once and caches it.
+ */
+export function getDesignerPalette(engine: EngineHandle): Promise<DesignerPaletteInfo> {
+  return engine.connection.sendRequest<DesignerPaletteInfo>('GetDesignerPalette');
 }
 
 /**
@@ -437,6 +484,18 @@ export function addControl(
   return engine.connection.sendRequest<ControlAddResult>('AddControl', designerFilePath, parentId, controlTypeKey, ...tail);
 }
 
+/** Toolbox add-component: add a non-visual component (Timer/ToolTip/dialog…) — a bare `new T()` that lands in the
+ * component tray (no parent/location). componentTypeKey must be a toolbox component key. Host applies the returned text. */
+export function addComponent(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentTypeKey: string,
+  sourceText?: string,
+): Promise<ControlAddResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlAddResult>('AddComponent', designerFilePath, componentTypeKey, ...tail);
+}
+
 /** The toolbox's available control type keys (e.g. "Button", "Label", …). */
 export function listControlTypes(engine: EngineHandle): Promise<string[]> {
   return engine.connection.sendRequest<string[]>('ListControlTypes');
@@ -448,6 +507,11 @@ export interface ToolboxItemInfo {
   fqn: string;
   category: string;
   fromProject: boolean;
+  /** 16×16 toolbox bitmap (the control's own [ToolboxBitmap]) as a base64 PNG, or null/absent when none was
+   * found. Display-only; the palette renders it as a data: image, falling back to a generic glyph when absent. */
+  iconPng?: string | null;
+  /** True for a non-visual component (Timer/ToolTip/dialog…) — added via addComponent (lands in the tray), not addControl. */
+  isComponent?: boolean;
 }
 
 /** The auto-populated toolbox palette (§7.2): framework controls, plus the resolved project assembly's own
@@ -583,6 +647,19 @@ export function moveZOrder(
   return engine.connection.sendRequest<ControlReorderResult>('MoveZOrder', designerFilePath, controlId, toFront, ...tail);
 }
 
+/** §7.4 reparent: move a leaf control into a different container (newParentId "this" = root). Minimal text edit
+ * (rewrites only the child's Controls.Add receiver). The host applies newText like a removeControl/moveZOrder edit. */
+export function reparentControl(
+  engine: EngineHandle,
+  designerFilePath: string,
+  childId: string,
+  newParentId: string,
+  sourceText?: string,
+): Promise<ControlReorderResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlReorderResult>('Reparent', designerFilePath, childId, newParentId, ...tail);
+}
+
 /** Compute a targeted property edit (no write) — returns the would-be-saved file text. */
 export function setProperty(
   engine: EngineHandle,
@@ -594,4 +671,106 @@ export function setProperty(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetProperty', designerFilePath, componentId, propertyName, newValueExpr, ...tail);
+}
+
+/** §6.5 grid-cell edit: move a TableLayoutPanel child to a new column/row (rewrites the cell args of its 3-arg
+ * Controls.Add). Pass null for a coordinate to leave it unchanged. The host applies the returned text like setProperty. */
+export function setTableCell(
+  engine: EngineHandle,
+  designerFilePath: string,
+  childId: string,
+  column: number | null,
+  row: number | null,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetTableCell', designerFilePath, childId, column, row, ...tail);
+}
+
+/** Reset a property to its default by deleting its assignment(s) (VS "Reset"; the engine side of Dock↔Anchor
+ * mutual exclusivity). Nothing is interpolated. The host applies the returned text like setProperty; `text` is
+ * null on a no-op (already default, mode "Noop") — that is still `safe` — or on a reject (`safe` false). */
+export function resetProperty(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('ResetProperty', designerFilePath, componentId, propertyName, ...tail);
+}
+
+/** Result of SetImageResource: the new .Designer.cs text (resources.GetObject assignment) AND the new sibling
+ * .resx text (image embedded). Both null when rejected. The host writes `resxText` to the .resx and applies
+ * `designerText` as an undoable edit. */
+export interface ImageEditPreview {
+  safe: boolean;
+  mode: string;              // Replace | Insert | Failed
+  designerText: string | null;
+  resxText: string | null;
+  resxKey: string;
+  reason: string;
+}
+
+/**
+ * Import an image into a resx-backed image/icon property ("Import…"): embed the image bytes into the form's
+ * sibling .resx and write the `resources.GetObject("key")` assignment into InitializeComponent. `imageBase64`
+ * is the raw file bytes base64-encoded; `propertyTypeName` is the declared property type (System.Drawing.Image
+ * /Bitmap/Icon — the engine allowlists it). `resxText` is the current .resx content (null ⇒ the engine creates
+ * it). `sourceText` is the unsaved designer buffer. The engine never writes files — it returns both new texts.
+ */
+export function setImageResource(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  propertyTypeName: string,
+  imageBase64: string,
+  resxText: string | null,
+  sourceText: string | null,
+): Promise<ImageEditPreview> {
+  return engine.connection.sendRequest<ImageEditPreview>(
+    'SetImageResource', designerFilePath, componentId, propertyName, propertyTypeName, imageBase64, resxText, sourceText,
+  );
+}
+
+/** One TableLayoutPanel column/row sizing style (read side for the style editor). */
+export interface TableStyleInfo {
+  axis: string;      // "Column" | "Row"
+  index: number;     // ordinal within its axis (= column/row index)
+  sizeType: string;  // "Absolute" | "Percent" | "AutoSize"
+  value: number;     // size (percent or pixels); 0 for AutoSize
+}
+export interface TableStylesResult {
+  found: boolean;
+  styles: TableStyleInfo[];
+}
+
+/** Read a TableLayoutPanel's ordered column + row sizing styles. Pure text parse (no graph load). */
+export function readTableStyles(
+  engine: EngineHandle,
+  designerFilePath: string,
+  panelId: string,
+  sourceText?: string,
+): Promise<TableStylesResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<TableStylesResult>('ReadTableStyles', designerFilePath, panelId, ...tail);
+}
+
+/** §6.5 TableLayoutPanel size-style edit: set the Nth Column/Row style's SizeType and/or value. Pass null for
+ * sizeType or value to keep the existing one (they occupy fixed positional slots before the optional sourceText).
+ * The host applies the returned text like setProperty. */
+export function setTableStyle(
+  engine: EngineHandle,
+  designerFilePath: string,
+  panelId: string,
+  axis: 'Column' | 'Row',
+  index: number,
+  sizeType: string | null,
+  value: number | null,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetTableStyle', designerFilePath, panelId, axis, index, sizeType, value, ...tail);
 }

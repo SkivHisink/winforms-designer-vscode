@@ -104,6 +104,8 @@
       // seed the checkboxes from the tab's current membership ONCE; keep the user's in-progress checks across
       // Browse re-fetches (a Browse re-posts 'items' and we must not wipe what they already ticked).
       if (!inited) { selected = {}; (m.chosen || []).forEach(function (f) { selected[f] = true; }); inited = true; }
+      // auto-tick the just-browsed assembly's items so a loaded library is one OK-click from the toolbox.
+      (m.check || []).forEach(function (f) { selected[f] = true; });
       if (loadNameEl) loadNameEl.textContent = (items[0] && items[0].assemblyName) ? items[0].assemblyName + '.dll' : 'assemblies…';
       setStatus();
       // brief shimmer so it reads like VS's "Loading items…" scan, then reveal the (updated) list

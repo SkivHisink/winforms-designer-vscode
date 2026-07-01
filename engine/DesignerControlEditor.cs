@@ -70,6 +70,14 @@ namespace WinFormsDesigner.Engine
         public string Fqn { get; init; } = "";
         public string Category { get; init; } = "";
         public bool FromProject { get; init; }
+        /// <summary>The control's 16×16 toolbox bitmap (the icon VS shows in the palette) as a base64 PNG, or
+        /// null when none is embedded / extraction failed. Sourced from the type's own <c>[ToolboxBitmap]</c>
+        /// (the framework's shipped icon for that control) — no external asset. Display only.</summary>
+        public string? IconPng { get; init; }
+        /// <summary>True for a NON-visual component (Timer/ToolTip/ErrorProvider/dialogs…) — added via AddComponent
+        /// (a bare <c>new T()</c> that lands in the component tray) rather than AddControl (which also emits
+        /// Location/Size/Controls.Add). Lets the palette route the add to the right §6.5 path.</summary>
+        public bool IsComponent { get; init; }
     }
 
     /// <summary>One row of the "Choose Toolbox Items" dialog — a richer, LISTING-only view than the palette: any
@@ -176,7 +184,7 @@ namespace WinFormsDesigner.Engine
             foreach (var t in types)
             {
                 if (t == null || !IsEligibleToolboxControl(t)) continue;
-                list.Add(new ToolboxItemInfo { Name = t.Name, Fqn = t.FullName!, Category = CategoryFor(t.Name), FromProject = false });
+                list.Add(new ToolboxItemInfo { Name = t.Name, Fqn = t.FullName!, Category = CategoryFor(t.Name), FromProject = false, IconPng = ToolboxIconPng(t) });
             }
             // dedup with the SAME comparer ResolveSpec matches with (OrdinalIgnoreCase) so resolution is
             // deterministic even if the framework ever ships two control types differing only in case.
@@ -205,19 +213,147 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>Build a "Project Controls" palette item for a project-assembly control type (§7.2 Increment 2).</summary>
         public static ToolboxItemInfo MakeProjectInfo(Type t) =>
-            new() { Name = t.Name, Fqn = t.FullName!, Category = "Project Controls", FromProject = true };
+            new() { Name = t.Name, Fqn = t.FullName!, Category = "Project Controls", FromProject = true, IconPng = ToolboxIconPng(t) };
+
+        /// <summary>The control type's 16×16 toolbox bitmap (the icon VS shows in the palette) as a base64 PNG,
+        /// or null when none is embedded / extraction fails. Read via the type's own <c>[ToolboxBitmap]</c> —
+        /// this resolves the bitmap the framework ships for that control (same source VS uses), so no external
+        /// icon asset is needed. Fully guarded: any failure degrades to no icon, never throws.</summary>
+        private static string? ToolboxIconPng(Type t)
+        {
+            try
+            {
+                var tba = (System.Drawing.ToolboxBitmapAttribute?)
+                    System.ComponentModel.TypeDescriptor.GetAttributes(t)[typeof(System.Drawing.ToolboxBitmapAttribute)];
+                using var img = tba?.GetImage(t, false); // small (16×16) variant
+                if (img == null) return null;
+                using var bmp = new System.Drawing.Bitmap(img);
+                using var ms = new System.IO.MemoryStream();
+                bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                return Convert.ToBase64String(ms.ToArray());
+            }
+            catch { return null; }
+        }
+
+        // Lazily-discovered, process-stable framework NON-visual components (Timer/ToolTip/ErrorProvider/ImageList/
+        // BindingSource/NotifyIcon/HelpProvider + the common dialogs). Strings only (§9 reload-safety).
+        private static List<ToolboxItemInfo>? _components;
+
+        /// <summary>Reflect <c>System.Windows.Forms</c> for every toolbox-eligible NON-visual component (§7.2 Components/
+        /// Dialogs): public, concrete, IComponent but NOT a Control, parameterless- or IContainer-constructible, not
+        /// <c>[ToolboxItem(false)]</c>/<c>[DesignTimeVisible(false)]</c>. CommonDialog-derived → "Dialogs", else
+        /// "Components". These are added via <see cref="AddComponent"/> (a bare <c>new T()</c> that lands in the tray).</summary>
+        public static List<ToolboxItemInfo> DiscoverComponents()
+        {
+            if (_components != null) return _components;
+            var list = new List<ToolboxItemInfo>();
+            Type[] types;
+            try { types = typeof(System.Windows.Forms.Control).Assembly.GetTypes(); }
+            catch (System.Reflection.ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }
+            foreach (var t in types)
+            {
+                if (t == null || !IsEligibleToolboxComponent(t)) continue;
+                bool isDialog = typeof(System.Windows.Forms.CommonDialog).IsAssignableFrom(t);
+                list.Add(new ToolboxItemInfo
+                {
+                    Name = t.Name,
+                    Fqn = t.FullName!,
+                    Category = isDialog ? "Dialogs" : "Components",
+                    FromProject = false,
+                    IconPng = ToolboxIconPng(t),
+                    IsComponent = true,
+                });
+            }
+            _components = list.GroupBy(i => i.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
+                              .OrderBy(i => i.Name, StringComparer.Ordinal).ToList();
+            return _components;
+        }
+
+        /// <summary>Toolbox-eligibility for a NON-visual component: public, concrete, IComponent but NOT Control,
+        /// constructible parameterless or with an IContainer (the two shapes the designer uses), not
+        /// <c>[ToolboxItem(false)]</c>/<c>[DesignTimeVisible(false)]</c>, and not a base/utility type.</summary>
+        public static bool IsEligibleToolboxComponent(Type t)
+        {
+            if (!t.IsPublic || !t.IsClass || t.IsAbstract || t.IsGenericTypeDefinition || t.IsNested) return false;
+            if (!typeof(System.ComponentModel.IComponent).IsAssignableFrom(t)) return false;
+            if (typeof(System.Windows.Forms.Control).IsAssignableFrom(t)) return false; // visual controls go the AddControl path
+            // collection sub-items belong to a parent's collection editor (ToolStrip.Items, DataGridView.Columns), NOT
+            // the form/tray — they aren't standalone toolbox components, so drop them.
+            if (typeof(System.Windows.Forms.ToolStripItem).IsAssignableFrom(t)) return false;
+            if (typeof(System.Windows.Forms.DataGridViewColumn).IsAssignableFrom(t)) return false;
+            // AddComponent emits `new T()`, so a parameterless ctor is REQUIRED (a ctor(IContainer)-only type would
+            // produce non-compiling source). All the offered components/dialogs have one; the container ctor, when
+            // present, is preferred at emit time for disposal fidelity.
+            if (t.GetConstructor(Type.EmptyTypes) == null) return false;
+            if (IsToolboxDisabled(t) || IsDesignTimeInvisible(t)) return false;
+            if (BaseClassDenylist.Contains(t.Name)) return false;
+            if (string.IsNullOrEmpty(t.FullName) || t.FullName!.IndexOf('+') >= 0) return false;
+            return true;
+        }
+
+        /// <summary>Add a NON-visual component (Timer/ToolTip/dialog…) to a .Designer.cs as a MINIMAL text edit: a
+        /// new field declaration + a single <c>this.X = new T();</c> (NO Location/Size/Controls.Add — it lives in the
+        /// component tray, named after its field). The type must be in the discovered component set (no arbitrary
+        /// type name reaches <c>new</c>); safety reuses <see cref="OnlyControlAdded"/> (original statements preserved,
+        /// every added statement references the new component, exactly one field added).</summary>
+        public static ControlAddResult AddComponent(string src, string componentTypeKey)
+        {
+            var info = DiscoverComponents().FirstOrDefault(i =>
+                string.Equals(i.Name, componentTypeKey, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(i.Fqn, componentTypeKey, StringComparison.Ordinal));
+            if (info == null)
+                return new ControlAddResult { Safe = false, Reason = "unknown component type: " + componentTypeKey };
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = FindClassWithIC(root);
+            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            if (cls == null || init?.Body == null)
+                return new ControlAddResult { Safe = false, Reason = "InitializeComponent not found" };
+
+            var names = GatherFieldNames(cls);
+            string name = UniqueName(ShortName(info.Fqn).ToLowerInvariant(), names);
+            if (!IsValidIdentifier(name))
+                return new ControlAddResult { Safe = false, Reason = "could not generate a valid component name" };
+
+            string nl = src.Contains("\r\n") ? "\r\n" : "\n";
+            string indent = BodyIndent(src, init);
+            // VS-fidelity/disposal: site the component in the form's `components` container when the form has an
+            // INITIALIZED one and the type accepts an IContainer ctor — so components.Dispose() disposes it. Else a
+            // bare new T() (still tray-representable; the interpreter ignores the ctor arg either way).
+            var compType = typeof(System.Windows.Forms.Control).Assembly.GetType(info.Fqn);
+            bool useContainer = names.Contains("components")
+                && System.Text.RegularExpressions.Regex.IsMatch(src, @"this\s*\.\s*components\s*=\s*new\b")
+                && compType?.GetConstructor(new[] { typeof(System.ComponentModel.IContainer) }) != null;
+            string stmt = indent + $"this.{name} = new {info.Fqn}({(useContainer ? "this.components" : "")});" + nl;
+
+            int insertPos = InitInsertPos(src, init);
+            string withStmts = src.Substring(0, insertPos) + stmt + src.Substring(insertPos);
+
+            string fieldLine = FieldIndent(src, cls) + $"private {info.Fqn} {name};" + nl;
+            string? finalText = InsertField(withStmts, fieldLine);
+            if (finalText == null)
+                return new ControlAddResult { Safe = false, Reason = "could not place the field declaration" };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(finalText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool gateOk = OnlyControlAdded(src, finalText, name);
+            if (!parseOk || !gateOk)
+                return new ControlAddResult { Safe = false, Name = name, Reason = !parseOk ? "added text has syntax errors" : "edit changed more than the new component" };
+            return new ControlAddResult { Safe = true, Name = name, NewText = finalText };
+        }
 
         /// <summary>Broader eligibility for the "Choose Toolbox Items" LISTING dialog: a public, concrete,
         /// parameterless-ctor type that is a Control OR an IComponent (so non-visual components — Timer, the
-        /// dialogs, providers — are listed like in VS), excluding Forms / ToolStripDropDown menus and the
-        /// base/utility/editing-helper types. Listing only — NEVER gates construction (AddControl has its own gate).</summary>
+        /// dialogs, providers — are listed like in VS), excluding Forms / ToolStripDropDown menus, the
+        /// base/utility/editing-helper types, and anything the author marked hidden from the designer
+        /// (<c>[ToolboxItem(false)]</c> / <c>[DesignTimeVisible(false)]</c>). Listing only — NEVER gates
+        /// construction (AddControl has its own gate).</summary>
         public static bool IsToolboxDialogEligible(Type t)
         {
             if (!t.IsPublic || !t.IsClass || t.IsAbstract || t.IsGenericTypeDefinition || t.IsNested) return false;
             if (!typeof(System.Windows.Forms.Control).IsAssignableFrom(t) && !typeof(System.ComponentModel.IComponent).IsAssignableFrom(t)) return false;
             if (typeof(System.Windows.Forms.Form).IsAssignableFrom(t) || typeof(System.Windows.Forms.ToolStripDropDown).IsAssignableFrom(t)) return false;
             if (t.GetConstructor(Type.EmptyTypes) == null) return false;
-            if (IsToolboxDisabled(t)) return false;
+            if (IsToolboxDisabled(t) || IsDesignTimeInvisible(t)) return false; // respect [ToolboxItem(false)] AND [DesignTimeVisible(false)], like VS
             if (BaseClassDenylist.Contains(t.Name) || t.Name.EndsWith("EditingControl", StringComparison.Ordinal)) return false;
             if (string.IsNullOrEmpty(t.FullName) || t.FullName!.IndexOf('+') >= 0) return false;
             return true;
@@ -1000,6 +1136,155 @@ namespace WinFormsDesigner.Engine
             var oF = Counter(FieldDeclNames(oRoot)); var eF = Counter(FieldDeclNames(eRoot));
             if (oF.Count != eF.Count) return false;
             foreach (var kv in oF) if (!eF.TryGetValue(kv.Key, out var n) || n != kv.Value) return false;
+            return true;
+        }
+
+        // ---- reparent (§7.4: move a control into a different container / the root) ----
+
+        /// <summary>
+        /// Reparent a LEAF control into a different container (or the root form). Rewrites ONLY the receiver of the
+        /// child's single 1-arg <c>&lt;oldParent&gt;.Controls.Add(this.&lt;child&gt;)</c> to
+        /// <c>&lt;newParent&gt;.Controls.Add(...)</c> (newParent "this"/"" = root). A minimal, byte-local text edit — the
+        /// child keeps its Location value (now interpreted relative to the new parent). Refuses the root, a child sitting
+        /// in a TableLayoutPanel cell (3-arg Add — reparent via the grid), a container WITH children (leaf-only v1, so
+        /// no parent cycle is possible), a missing/self new parent, or a no-op (already there). The edit is verified by
+        /// <see cref="OnlyReparented"/> (only that one Add's parent changed).
+        /// </summary>
+        public static ControlReorderResult Reparent(string src, string childId, string newParentId)
+        {
+            if (childId is "this" or "") return new ControlReorderResult { Safe = false, Reason = "cannot reparent the root form" };
+            if (!IsValidIdentifier(childId)) return new ControlReorderResult { Safe = false, Reason = "invalid control id: " + childId };
+            bool toRoot = newParentId is "this" or "";
+            if (!toRoot && !IsValidIdentifier(newParentId)) return new ControlReorderResult { Safe = false, Reason = "invalid parent id: " + newParentId };
+            if (!toRoot && newParentId == childId) return new ControlReorderResult { Safe = false, Reason = "cannot reparent a control into itself" };
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = FindClassWithIC(root);
+            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            if (cls == null || init?.Body == null) return new ControlReorderResult { Safe = false, Reason = "InitializeComponent not found" };
+            var names = GatherFieldNames(cls);
+            if (!names.Contains(childId)) return new ControlReorderResult { Safe = false, Reason = "unknown control: " + childId };
+            if (!toRoot && !names.Contains(newParentId)) return new ControlReorderResult { Safe = false, Reason = "unknown parent: " + newParentId };
+
+            // The new parent must be a WinForms container that accepts a DIRECT Controls.Add(child), validated by its
+            // DECLARED TYPE (this editor is pure-text — no type resolution). Rejects a non-Control field (ToolTip/Timer/
+            // ImageList → would emit non-compiling `<field>.Controls.Add(...)`) and a special-add container
+            // (SplitContainer→Panel1/2, TableLayoutPanel→3-arg cell, TabControl→TabPages, ToolStrip→Items → whose
+            // Controls throws at load and silently detaches the child). A CUSTOM container subclass is not recognized
+            // here (declined, never corrupted) — the host, which knows resolved types, can offer richer drop targets.
+            if (!toRoot)
+            {
+                string? ptype = FieldTypeShortName(cls, newParentId);
+                if (ptype == null || !DirectAddContainers.Contains(ptype))
+                    return new ControlReorderResult { Safe = false, Reason = "target is not a container that accepts a direct child (use Panel/GroupBox/FlowLayoutPanel/…) — cannot reparent here" };
+            }
+
+            // the child's single parenting Add (1-arg) — a 3-arg TableLayoutPanel cell child does not match → declined
+            StatementSyntax? add = null; List<string>? curParent = null;
+            foreach (var st in init.Body.Statements)
+                if (IsControlsAddOf(st, out var pchain, out var child) && child == childId) { add = st; curParent = pchain; break; }
+            if (add == null || curParent == null)
+                return new ControlReorderResult { Safe = false, Reason = "control is not parented by a 1-arg Controls.Add (a TableLayoutPanel cell?) — cannot reparent" };
+
+            // leaf-only (cycle-safe): refuse a child that itself parents ANY children — via any Controls.Add /
+            // Controls.AddRange rooted at the child, in ANY form: 1-arg, a TableLayoutPanel 3-arg cell Add, or a
+            // nested SplitContainer Panel1/Panel2 add. Catching every form keeps reparent cycle-free (a true leaf
+            // has no descendants, so the new parent can never lie inside it).
+            foreach (var st in init.Body.Statements)
+                if (ParentsAChild(st, childId))
+                    return new ControlReorderResult { Safe = false, Reason = "control is a container with children — reparent them first (leaf-only)" };
+
+            bool sameParent = toRoot ? curParent.Count == 0 : (curParent.Count == 1 && curParent[0] == newParentId);
+            if (sameParent) return new ControlReorderResult { Safe = true, NewText = src }; // already there → no-op
+
+            var inv = (InvocationExpressionSyntax)((ExpressionStatementSyntax)add).Expression;
+            var recv = ((MemberAccessExpressionSyntax)inv.Expression).Expression; // the "<X>.Controls" before ".Add"
+            string newRecv = toRoot ? "this.Controls" : "this." + newParentId + ".Controls";
+            string text = src.Substring(0, recv.SpanStart) + newRecv + src.Substring(recv.Span.End);
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(text).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            if (!parseOk || !OnlyReparented(src, text, childId, newParentId))
+                return new ControlReorderResult { Safe = false, Reason = !parseOk ? "reparented text has syntax errors" : "edit changed more than the control's parent" };
+            return new ControlReorderResult { Safe = true, NewText = text };
+        }
+
+        /// <summary>§6.5 gate for a reparent: every statement EXCEPT the child's single Controls.Add is byte-identical
+        /// (multiset), the child is parented by exactly one 1-arg Controls.Add before and after, that Add now targets
+        /// <paramref name="newParentId"/> ("this"/"" = root), and the field declarations are unchanged.</summary>
+        public static bool OnlyReparented(string original, string edited, string childId, string newParentId)
+        {
+            bool toRoot = newParentId is "this" or "";
+            var (oNon, oTgts) = ClassifyReparent(original, childId);
+            var (eNon, eTgts) = ClassifyReparent(edited, childId);
+            if (oTgts.Count != 1 || eTgts.Count != 1) return false;
+            if (!MultisetEqual(oNon, eNon)) return false;
+            if (!IsControlsAddOf(eTgts[0], out var chain, out var child) || child != childId) return false;
+            bool chainOk = toRoot ? chain.Count == 0 : (chain.Count == 1 && chain[0] == newParentId);
+            if (!chainOk) return false;
+            return MultisetEqual(FieldDeclNames(CSharpSyntaxTree.ParseText(original).GetRoot()),
+                                 FieldDeclNames(CSharpSyntaxTree.ParseText(edited).GetRoot()));
+        }
+
+        /// <summary>WinForms container types whose <c>Controls.Add(child)</c> accepts a plain Control DIRECTLY (the
+        /// only valid reparent targets besides the root). Excludes SplitContainer/TableLayoutPanel/TabControl/ToolStrip
+        /// (special add paths) and every non-Control component. Matched by the field's declared type SHORT name — a
+        /// custom subclass is not recognized (reparent declines rather than emit source that breaks compile/load).</summary>
+        private static readonly HashSet<string> DirectAddContainers = new(StringComparer.Ordinal)
+        {
+            "Panel", "GroupBox", "FlowLayoutPanel", "TabPage", "UserControl",
+            "ContainerControl", "ScrollableControl", "SplitterPanel", "ToolStripContentPanel", "ToolStripPanel",
+        };
+
+        /// <summary>The declared type's SHORT name (last dotted segment) of the field named <paramref name="fieldName"/>
+        /// in <paramref name="cls"/>, or null when absent — e.g. "System.Windows.Forms.Panel" → "Panel".</summary>
+        private static string? FieldTypeShortName(ClassDeclarationSyntax cls, string fieldName)
+        {
+            foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
+                foreach (var v in f.Declaration.Variables)
+                    if (v.Identifier.Text == fieldName)
+                    {
+                        string t = f.Declaration.Type.ToString();
+                        int i = t.LastIndexOf('.');
+                        return (i < 0 ? t : t.Substring(i + 1)).Trim();
+                    }
+            return null;
+        }
+
+        /// <summary>True when <paramref name="st"/> is a <c>Controls.Add</c>/<c>Controls.AddRange</c> whose receiver is
+        /// rooted at <paramref name="id"/> (any form: <c>id.Controls.Add(x)</c>, a 3-arg cell add, or a nested
+        /// <c>id.Panel1.Controls.Add(x)</c>) — i.e. <paramref name="id"/> parents at least one child.</summary>
+        private static bool ParentsAChild(StatementSyntax st, string id)
+        {
+            if (st is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }) return false;
+            if (inv.Expression is not MemberAccessExpressionSyntax ma) return false;
+            string method = ma.Name.Identifier.Text;
+            if (method != "Add" && method != "AddRange") return false;
+            var chain = Flatten(ma.Expression);
+            return chain.Count >= 1 && chain[0] == id && chain.Contains("Controls");
+        }
+
+        /// <summary>Split InitializeComponent into (non-target statements, the child's 1-arg Controls.Add calls).</summary>
+        private static (List<string> non, List<StatementSyntax> tgts) ClassifyReparent(string code, string childId)
+        {
+            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
+            var cls = FindClassWithIC(root);
+            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var non = new List<string>(); var tgts = new List<StatementSyntax>();
+            if (init?.Body != null)
+                foreach (var st in init.Body.Statements)
+                {
+                    if (IsControlsAddOf(st, out _, out var c) && c == childId) tgts.Add(st);
+                    else non.Add(NormalizeStmt(st.ToString()));
+                }
+            return (non, tgts);
+        }
+
+        private static bool MultisetEqual(List<string> a, List<string> b)
+        {
+            if (a.Count != b.Count) return false;
+            var ca = Counter(a); var cb = Counter(b);
+            if (ca.Count != cb.Count) return false;
+            foreach (var kv in ca) if (!cb.TryGetValue(kv.Key, out var n) || n != kv.Value) return false;
             return true;
         }
 

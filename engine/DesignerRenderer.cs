@@ -464,6 +464,96 @@ namespace WinFormsDesigner.Engine
             };
         }
 
+        /// <summary>§6.5 grid-cell edit: move a TableLayoutPanel child to a new column/row by swapping the cell
+        /// args of its 3-arg <c>Controls.Add(this.child, col, row)</c>. Mirrors <see cref="ApplyPropertyEdit"/>
+        /// (buffer-or-disk source, parse-check + <see cref="DesignerTableCellEditor.OnlyTableCellChanged"/> gate);
+        /// column/row are plain ints, so no source is interpolated. Either may be null to keep the existing value.</summary>
+        public static PropertyEditResult ApplyTableCellEdit(string designerFilePath, string childId, int? column, int? row, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerTableCellEditor.SetCell(src, childId, column, row);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics()
+                .Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerTableCellEditor.OnlyTableCellChanged(src, edit.NewText, childId);
+            bool safe = parseOk && minimal;
+
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target cell"),
+            };
+        }
+
+        /// <summary>Reset one property to its default by deleting its assignment(s) — the engine side of VS's
+        /// "Reset" and of Dock↔Anchor mutual exclusivity. Mirrors <see cref="ApplyPropertyEdit"/> (buffer-or-disk
+        /// source; §6.5 <see cref="DesignerPropertyEditor.OnlyPropertyReset"/> gate). Nothing is interpolated —
+        /// only whole target-statement lines are removed. A property with no assignment is a safe no-op.</summary>
+        public static PropertyResetResult ApplyPropertyReset(string designerFilePath, string componentName, string propertyName, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerPropertyEditor.ResetProperty(src, componentName, propertyName);
+        }
+
+        /// <summary>Import side of image/icon properties: embed the bytes into the form's sibling .resx and emit the
+        /// <c>resources.GetObject</c> assignment (ensuring the resources local). Mirrors <see cref="ApplyPropertyEdit"/>
+        /// (buffer-or-disk designer source; the host passes the current .resx text and applies both returned texts).
+        /// Pure text + GDI+ decode-validation — no graph load / STA. See <see cref="DesignerImageEditor"/>.</summary>
+        public static ImageResourceResult ApplyImageResource(string designerFilePath, string componentName, string propertyName,
+            string propertyTypeName, byte[] imageBytes, string? resxText, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerImageEditor.SetImageResource(src, componentName, propertyName, propertyTypeName, imageBytes, resxText);
+        }
+
+        /// <summary>§6.5 TableLayoutPanel column/row size-style edit: rewrite the Nth ColumnStyle/RowStyle ctor args to
+        /// (SizeType, value). Mirrors <see cref="ApplyTableCellEdit"/> (buffer-or-disk, parse-check +
+        /// <see cref="DesignerTableStyleEditor.OnlyTableStyleChanged"/> gate); SizeType is a validated enum member and
+        /// value a plain number, so no source is interpolated. sizeType/value may be null to keep the existing one.</summary>
+        public static PropertyEditResult ApplyTableStyleEdit(string designerFilePath, string panelId, string axis, int index, string? sizeType, double? value, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerTableStyleEditor.SetStyle(src, panelId, axis, index, sizeType, value);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerTableStyleEditor.OnlyTableStyleChanged(src, edit.NewText, panelId, axis, index);
+            bool safe = parseOk && minimal;
+
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target style"),
+            };
+        }
+
+        /// <summary>Read a TableLayoutPanel's ordered column + row sizing styles (read side for a style editor).
+        /// Pure text parse of the InitializeComponent — no graph load / STA.</summary>
+        public static TableStylesResult ReadTableStyles(string designerFilePath, string panelId, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerTableStyleEditor.ReadStyles(src, panelId);
+        }
+
         /// <summary>
         /// VS-style "create event handler": for the given component+event, add the wiring statement to
         /// InitializeComponent (.Designer.cs) AND a matching empty handler stub to the code-behind (.cs),
@@ -654,11 +744,20 @@ namespace WinFormsDesigner.Engine
         public static IReadOnlyList<ToolboxItemInfo> ToolboxItems(string? designerFilePath = null, string? controlAssemblyPath = null)
         {
             var items = new List<ToolboxItemInfo>(DesignerControlEditor.ToolboxItems);
+            items.AddRange(DesignerControlEditor.DiscoverComponents());   // §7.2 Components/Dialogs (non-visual)
             if (!string.IsNullOrEmpty(designerFilePath) || !string.IsNullOrEmpty(controlAssemblyPath))
             {
                 items.AddRange(EnumerateProjectControls(ResolveAsmForList(designerFilePath, controlAssemblyPath)));
             }
             return items;
+        }
+
+        /// <summary>Add a non-visual component (Timer/ToolTip/dialog…) to the .Designer.cs — the tray counterpart of
+        /// <see cref="AddControl"/>. Pure text edit, no assembly load (components are framework-discovered).</summary>
+        public static ControlAddResult AddComponent(string designerFilePath, string componentTypeKey, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            return DesignerControlEditor.AddComponent(src, componentTypeKey);
         }
 
         /// <summary>Resolve the assembly to enumerate project controls from: an explicit override if it exists,
@@ -802,6 +901,15 @@ namespace WinFormsDesigner.Engine
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             return DesignerControlEditor.RemoveControl(src, controlId);
+        }
+
+        /// <summary>Reparent a leaf control into a different container / the root (§7.4) as a MINIMAL text edit —
+        /// rewrites only the receiver of its Controls.Add. Pure text, no graph load. See
+        /// <see cref="DesignerControlEditor.Reparent"/>.</summary>
+        public static ControlReorderResult ReparentControl(string designerFilePath, string childId, string newParentId, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            return DesignerControlEditor.Reparent(src, childId, newParentId);
         }
 
         /// <summary>Copy a leaf control to an opaque clipboard blob (field type + its InitializeComponent
@@ -999,7 +1107,10 @@ namespace WinFormsDesigner.Engine
                     throw new InvalidOperationException("DesignSurface failed to load root " + rootType.FullName);
                 }
                 var host = (IDesignerHost)surface.GetService(typeof(IDesignerHost))!;
-                var (total, ok, unrep, explicitMembers) = Interpret(cls, host, userAsms);
+                // resolve resources.GetObject(...) against the form's sibling .resx (image/icon properties).
+                // null when there is no .resx → forms without resources are entirely unaffected.
+                var resx = ResxResolver.TryLoadForDesigner(designerFilePath);
+                var (total, ok, unrep, explicitMembers) = Interpret(cls, host, userAsms, resx);
 
                 return new LoadedGraph
                 {
@@ -1156,8 +1267,13 @@ namespace WinFormsDesigner.Engine
             };
         }
 
+        /// <summary>The active resx resolution context (the `resources` local var name(s) + the loaded .resx),
+        /// set for the duration of <see cref="Interpret"/>. Thread-static + scoped because the interpreter runs
+        /// serialized on the single STA thread; <see cref="Eval"/> reads it to resolve resources.GetObject(...).</summary>
+        [ThreadStatic] private static (HashSet<string> vars, ResxResolver? resolver)? _resx;
+
         private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers) Interpret(
-            ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms)
+            ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms, ResxResolver? resx = null)
         {
             var root = (Control)host.RootComponent;
             var comps = new Dictionary<string, IComponent>(StringComparer.Ordinal);
@@ -1189,33 +1305,62 @@ namespace WinFormsDesigner.Engine
                 return (0, 0, unrep, explicitMembers);
             }
 
+            // find the `[System.ComponentModel.]ComponentResourceManager resources = new ...(typeof(Form))` local(s)
+            // so Eval can resolve `resources.GetObject("...")` against the loaded .resx (image/icon properties).
+            var resxVars = new HashSet<string>(StringComparer.Ordinal);
             foreach (var stmt in init.Body.Statements)
             {
-                total++;
-                try
+                // match ONLY ComponentResourceManager — the exact form the WinForms designer emits. A bare
+                // System.Resources.ResourceManager local could target a DIFFERENT resource set than the sibling
+                // .resx, so routing its lookups here would render a wrong value.
+                if (stmt is LocalDeclarationStatementSyntax lds
+                    && LastTypeSegment(lds.Declaration.Type.ToString()) == "ComponentResourceManager")
                 {
-                    if (stmt is ExpressionStatementSyntax es)
+                    foreach (var v in lds.Declaration.Variables) resxVars.Add(v.Identifier.Text);
+                }
+            }
+
+            var prevResx = _resx;
+            _resx = (resxVars, resx);
+            try
+            {
+                foreach (var stmt in init.Body.Statements)
+                {
+                    total++;
+                    try
                     {
-                        if (es.Expression is AssignmentExpressionSyntax asg)
+                        if (stmt is ExpressionStatementSyntax es)
                         {
-                            HandleAssignment(asg, host, root, comps, fieldNames, containerNames, userAsms, explicitMembers);
+                            if (es.Expression is AssignmentExpressionSyntax asg)
+                            {
+                                HandleAssignment(asg, host, root, comps, fieldNames, containerNames, userAsms, explicitMembers);
+                                ok++;
+                                continue;
+                            }
+                            if (es.Expression is InvocationExpressionSyntax inv)
+                            {
+                                if (HandleInvocation(inv, root, comps, userAsms, out string? why)) ok++;
+                                else unrep.Add(why ?? stmt.ToString().Trim());
+                                continue;
+                            }
+                        }
+                        // the `resources = new ComponentResourceManager(...)` declaration is representable — its
+                        // effect (resource lookups) is honored via the .resx; it creates no component to drop.
+                        if (stmt is LocalDeclarationStatementSyntax ld
+                            && ld.Declaration.Variables.Any(v => resxVars.Contains(v.Identifier.Text)))
+                        {
                             ok++;
                             continue;
                         }
-                        if (es.Expression is InvocationExpressionSyntax inv)
-                        {
-                            if (HandleInvocation(inv, root, comps, userAsms, out string? why)) ok++;
-                            else unrep.Add(why ?? stmt.ToString().Trim());
-                            continue;
-                        }
+                        unrep.Add(stmt.ToString().Trim());
                     }
-                    unrep.Add(stmt.ToString().Trim());
-                }
-                catch (Exception ex)
-                {
-                    unrep.Add(stmt.ToString().Trim() + "  [" + ex.GetType().Name + ": " + ex.Message + "]");
+                    catch (Exception ex)
+                    {
+                        unrep.Add(stmt.ToString().Trim() + "  [" + ex.GetType().Name + ": " + ex.Message + "]");
+                    }
                 }
             }
+            finally { _resx = prevResx; }
             return (total, ok, unrep, explicitMembers);
         }
 
@@ -1336,26 +1481,79 @@ namespace WinFormsDesigner.Engine
             {
                 Control parent;
                 if (targetChain.Count == 1) parent = root;
-                else if (comps.TryGetValue(targetChain[0], out var pc) && pc is Control pctl) parent = pctl;
+                else if (comps.TryGetValue(targetChain[0], out var pc) && pc is Control)
+                {
+                    // walk intermediate property segments between the component and the trailing "Controls" so a
+                    // child added to a sub-container exposed as a PROPERTY lands in the right place — e.g.
+                    // splitContainer1.Panel1.Controls.Add(child) must parent into Panel1 (a SplitterPanel), not the
+                    // SplitContainer itself (which rejects a direct Controls.Add). With no intermediate segments
+                    // (panel1.Controls.Add) the loop is a no-op and the owner is just the resolved component.
+                    object? owner = pc;
+                    for (int i = 1; i < targetChain.Count - 1 && owner != null; i++)
+                        owner = TypeDescriptor.GetProperties(owner)[targetChain[i]]?.GetValue(owner);
+                    if (owner is Control opctl) parent = opctl;
+                    else { why = "Controls.Add on unresolved parent: " + ma.Expression; return false; }
+                }
                 else { why = "Controls.Add on unknown parent: " + ma.Expression; return false; }
 
                 var addArgs = inv.ArgumentList.Arguments;
+                if (addArgs.Count == 0) { why = "Controls.Add with no arguments: " + inv.ToString().Trim(); return false; }
                 var argChain = Flatten(addArgs[0].Expression);
                 if (argChain.Count == 1 && comps.TryGetValue(argChain[0], out var child) && child is Control cctl)
                 {
-                    parent.Controls.Add(cctl);
-                    // TableLayoutPanel uses the 3-arg overload Controls.Add(child, column, row): honor the cell so
-                    // the child lands where it was designed. The plain Add above would auto-flow it (rendering the
-                    // form wrong — children pile into the first cells). Column/row are int literals (Eval with an
-                    // int target); any other shape is ignored and the child stays auto-flowed.
-                    if (addArgs.Count == 3 && parent is System.Windows.Forms.TableLayoutPanel tlp)
+                    // a normal Controls.Add takes ONE arg; only a TableLayoutPanel uses the 3-arg cell overload
+                    // Controls.Add(child, column, row). Anything else (extra args, or 3-arg Add to a non-TLP) is
+                    // malformed/unsupported → unrepresentable rather than silently dropping the extra args.
+                    bool tlpCell = addArgs.Count == 3 && parent is System.Windows.Forms.TableLayoutPanel;
+                    if (addArgs.Count != 1 && !tlpCell)
                     {
+                        why = "Controls.Add unexpected arg count (" + addArgs.Count + "): " + inv.ToString().Trim();
+                        return false;
+                    }
+                    parent.Controls.Add(cctl);
+                    // honor the TLP cell so the child lands where it was designed (a plain Add would auto-flow it,
+                    // piling children into the first cells). Column/row are int literals (Eval with an int target).
+                    if (tlpCell)
+                    {
+                        var tlp = (System.Windows.Forms.TableLayoutPanel)parent;
                         if (Eval(addArgs[1].Expression, typeof(int), userAsms) is int col) tlp.SetColumn(cctl, col);
                         if (Eval(addArgs[2].Expression, typeof(int), userAsms) is int row) tlp.SetRow(cctl, row);
                     }
                     return true;
                 }
                 why = "Controls.Add unknown child: " + inv.ArgumentList.Arguments[0];
+                return false;
+            }
+
+            // collection single-add: <owner>.<…>.<CollectionProp>.Add(<element>) — the .Add counterpart of the
+            // AddRange path below. <element> is either a named component (this.fileMenuItem) or an inline value
+            // built via Eval (gated by IsConstructionAllowed). Chief use: TableLayoutPanel.ColumnStyles /
+            // RowStyles.Add(new ColumnStyle/RowStyle(SizeType.X, n)) → applies the designed column/row sizing so
+            // the grid renders with the right proportions instead of equal-sized cells. (Controls.Add is handled
+            // above and returns; a single .Add on any other resolvable IList property lands here.)
+            if (method == "Add" && (inv.ArgumentList?.Arguments.Count ?? 0) == 1
+                && targetChain.Count >= 2 && targetChain[^1] != "Controls")
+            {
+                object? coll;
+                int cStart;
+                if (comps.TryGetValue(targetChain[0], out var owner)) { coll = owner; cStart = 1; }
+                else { coll = root; cStart = 0; }
+                for (int i = cStart; i < targetChain.Count && coll != null; i++)
+                {
+                    var pdc = TypeDescriptor.GetProperties(coll)[targetChain[i]];
+                    if (pdc == null) { coll = null; break; }
+                    coll = pdc.GetValue(coll);
+                }
+                if (coll is System.Collections.IList clist)
+                {
+                    var argExpr = inv.ArgumentList!.Arguments[0].Expression;
+                    var elChain = Flatten(argExpr);
+                    object? elem = (elChain.Count == 1 && comps.TryGetValue(elChain[0], out var item))
+                        ? item                                   // named component (mirrors the AddRange path)
+                        : Eval(argExpr, null, userAsms);         // inline value — IsConstructionAllowed-gated
+                    if (elem != null) { clist.Add(elem); return true; }
+                }
+                why = "collection Add: unsupported " + inv.ToString().Trim();
                 return false;
             }
 
@@ -1505,6 +1703,21 @@ namespace WinFormsDesigner.Engine
 
                 case InvocationExpressionSyntax invk when invk.Expression is MemberAccessExpressionSyntax mai:
                     {
+                        // resx lookup: `resources.GetObject("comp.Prop")` / `resources.GetString("...")` — resolve
+                        // against the form's .resx (safe, type-allowlisted reader). Checked BEFORE type resolution
+                        // because `resources` is a LOCAL variable, not a type (ResolveType would fail). Returns null
+                        // for a missing/unsafe/absent-resx entry → the property stays unset, form still renders.
+                        if (_resx is { } rx && rx.resolver != null
+                            && mai.Expression is IdentifierNameSyntax rid && rx.vars.Contains(rid.Identifier.Text)
+                            && (mai.Name.Identifier.Text is "GetObject" or "GetString")
+                            && invk.ArgumentList.Arguments.Count == 1
+                            && invk.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax rlit
+                            && rlit.IsKind(SyntaxKind.StringLiteralExpression))
+                        {
+                            string key = rlit.Token.ValueText;
+                            return mai.Name.Identifier.Text == "GetString" ? rx.resolver.GetString(key) : rx.resolver.GetObject(key);
+                        }
+
                         // static factory call: Type.Method(args) — e.g. System.Drawing.Color.FromArgb(64, 128, 255),
                         // which the value-converter emits for non-named colors and real VS designer files contain.
                         var t = ResolveType(mai.Expression.ToString(), userAsms)
@@ -1657,6 +1870,10 @@ namespace WinFormsDesigner.Engine
             "System.Windows.Forms.Padding",
             "System.Drawing.Font",
             "System.Drawing.FontFamily",
+            // TableLayoutPanel column/row sizing — pure value initializers (SizeType enum + float), side-effect
+            // free like Padding. Constructed inline in ColumnStyles/RowStyles.Add(new ColumnStyle/RowStyle(...)).
+            "System.Windows.Forms.ColumnStyle",
+            "System.Windows.Forms.RowStyle",
         };
 
         private static bool IsConstructionAllowed(Type t) =>

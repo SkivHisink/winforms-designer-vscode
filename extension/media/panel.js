@@ -42,7 +42,7 @@
     'Components', 'Printing', 'Dialogs', 'WPF Interoperability', 'Data'];
   // Categories that need the (deferred) non-Control component-tray add path before they can be populated —
   // shown as visible "coming soon" sections, mirroring VS's category list (Codex Q2 = increment B).
-  var DEFERRED_TABS = ['Components', 'Dialogs', 'WPF Interoperability'];
+  var DEFERRED_TABS = ['WPF Interoperability'];
 
   // Persisted toolbox UI state (survives reloads via vscode.setState). customTabs: [{name, items:[fqn]}].
   var tbState = loadTbState();
@@ -97,8 +97,13 @@
     if (!toolboxItems.length) { tbEmptyEl.style.display = 'block'; tbBodyEl.style.display = 'none'; return; }
     tbEmptyEl.style.display = 'none'; tbBodyEl.style.display = '';
     var q = (tbSearchEl.value || '').trim().toLowerCase();
+    var rendered = 0;
     tabOrder().forEach(function (tab) {
       var items = tabItems(tab);
+      // during an active search, drop categories with no matching controls entirely (no header, no hint) —
+      // showing empty "no matching controls" sections while filtering is just noise.
+      if (q && !items.length) return;
+      rendered++;
       var isCustom = !!findCustom(tab);
       var collapsed = !!tbState.collapsed[tab] && !q; // an active search forces expand
       var head = document.createElement('div');
@@ -109,25 +114,57 @@
       tbListEl.appendChild(head);
       if (collapsed) return;
       if (!items.length) {
+        // reached only when NOT searching (empty categories are filtered above during search)
         var e = document.createElement('div'); e.className = 'tbEmptyCat';
-        e.textContent = q ? 'no matching controls' : (DEFERRED_TABS.indexOf(tab) >= 0 ? 'coming soon' : 'no items');
+        e.textContent = DEFERRED_TABS.indexOf(tab) >= 0 ? 'coming soon' : 'no items';
         tbListEl.appendChild(e); return;
       }
       var box = document.createElement('div'); box.className = 'tbItems' + (tbState.listView ? '' : ' icons');
       items.forEach(function (it) { box.appendChild(makeTbItem(it)); });
       tbListEl.appendChild(box);
     });
+    // a search that filters out every category → one hint instead of a blank pane
+    if (q && !rendered) {
+      var none = document.createElement('div'); none.className = 'tbEmptyCat'; none.textContent = 'no matching controls';
+      tbListEl.appendChild(none);
+    }
   }
   function makeTbItem(it) {
-    var b = document.createElement('div'); b.className = 'tbItem'; b.textContent = it.name;
-    b.title = it.fqn + ' — click to add, or drag onto the form';
-    b.addEventListener('click', function () { vscode.postMessage({ type: 'addControl', controlType: it.name }); });
+    var b = document.createElement('div'); b.className = 'tbItem';
+    // The control's own [ToolboxBitmap] (same icon VS shows), sent by the engine as a base64 PNG. When absent
+    // (e.g. a "Choose Items" addition) the .tbItem keeps its generic ::before glyph as a fallback.
+    if (it.iconPng) {
+      b.classList.add('ic');
+      var img = document.createElement('img');
+      img.className = 'tbIcon'; img.alt = '';
+      img.draggable = false;            // images are draggable by default → would hijack the .tbItem drag with their own
+      img.src = 'data:image/png;base64,' + it.iconPng;
+      b.appendChild(img);
+    }
+    var lbl = document.createElement('span'); lbl.className = 'tbLabel'; lbl.textContent = it.name;
+    b.appendChild(lbl);
+    // non-visual components (Timer/ToolTip/dialog…) go to the component tray — click-to-add only (no position), via
+    // the AddComponent path. Visual controls support click-to-add AND drag onto the form at a position.
+    b.title = it.fqn + (it.isComponent ? ' — click to add to the component tray' : ' — click to add, or drag onto the form');
+    b.addEventListener('click', function () {
+      if (it.isComponent) vscode.postMessage({ type: 'addComponent', componentType: it.name });
+      else vscode.postMessage({ type: 'addControl', controlType: it.name });
+    });
+    if (it.isComponent) return b;   // components aren't draggable (no on-form position)
     // cross-webview drag → canvas drop (custom MIME, NOT text/uri-list). Click-to-add is the reliable fallback.
     b.draggable = true;
     b.addEventListener('dragstart', function (ev) {
       if (!ev.dataTransfer) return;
       ev.dataTransfer.setData('application/vnd.winforms-toolbox-item', it.name);
       ev.dataTransfer.effectAllowed = 'copy';
+      // give the drag a clean single-item image — the default drag snapshot in this host can balloon to look like
+      // the whole list is being dragged. A throwaway off-screen chip with just the control name fixes the visual.
+      try {
+        var di = document.createElement('div'); di.className = 'tbDragImage'; di.textContent = it.name;
+        document.body.appendChild(di);
+        ev.dataTransfer.setDragImage(di, 12, 10);
+        setTimeout(function () { if (di.parentNode) di.parentNode.removeChild(di); }, 0);
+      } catch (_e) { /* setDragImage unsupported → fall back to the default image */ }
     });
     return b;
   }
@@ -174,7 +211,7 @@
     tbMenuEl.style.top = Math.max(2, Math.min(y, window.innerHeight - h - 4)) + 'px';
   }
   document.addEventListener('click', function (e) { if (tbMenuEl && tbMenuEl.classList.contains('open') && !tbMenuEl.contains(e.target)) closeTbMenu(); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeTbMenu(); closePrompt(); closeChoose(); } });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeTbMenu(); closePrompt(); closeChoose(); closePopup(); } });
 
   // ---- custom-tab management (Add/Rename/Delete/Move Up/Down) ----
   function addTab() {
@@ -255,6 +292,23 @@
   var NUM = new Set(['System.Int32', 'System.Int64', 'System.Int16', 'System.Byte', 'System.SByte', 'System.UInt16', 'System.UInt32', 'System.UInt64', 'System.Single', 'System.Double', 'System.Decimal']);
   // keep in sync with COMPLEX_TYPES in src/valueExpr.ts
   var COMPLEX = new Set(['System.Drawing.Point', 'System.Drawing.Size', 'System.Drawing.Color', 'System.Drawing.Rectangle', 'System.Windows.Forms.Padding', 'System.Drawing.Font']);
+  var COLOR_TYPE = 'System.Drawing.Color';
+  var FONT_TYPE = 'System.Drawing.Font';
+
+  // The color/font palette pushed by the host (engine GetDesignerPalette). Feeds the Color dropdown swatches,
+  // the Font Name combobox, and the authoritative FontConverter unit suffixes. Null until it arrives → the
+  // Color/Font editors gracefully fall back to plain text inputs.
+  var palette = null;
+  var colorByName = {};   // lowercased KnownColor name -> "#rrggbb"
+  var unitBySuffix = {};  // FontConverter suffix ("pt") -> GraphicsUnit name ("Point")
+  var unitByName = {};    // GraphicsUnit name ("Point") -> suffix ("pt")
+  function applyPalette(p) {
+    palette = p || null;
+    colorByName = {}; unitBySuffix = {}; unitByName = {};
+    if (!palette) return;
+    (palette.webColors || []).concat(palette.systemColors || []).forEach(function (c) { colorByName[String(c.name).toLowerCase()] = '#' + c.argb; });
+    (palette.fontUnits || []).forEach(function (u) { unitBySuffix[u.suffix] = u.name; unitByName[u.name] = u.suffix; });
+  }
 
   function shortType(t) { var i = t.lastIndexOf('.'); return i < 0 ? t : t.slice(i + 1); }
   function repeat(s, n) { var r = ''; for (var i = 0; i < n; i++) r += s; return r; }
@@ -295,6 +349,10 @@
   var outlineCollapsed = {}; // control id -> true when collapsed
   function renderOutline() {
     if (!outlineEl) return;
+    // a11y mirror-tree (§18): the outline IS the accessible mirror of the design surface — expose it as an ARIA
+    // tree so a screen reader announces the control hierarchy, selection and expand state.
+    outlineEl.setAttribute('role', 'tree');
+    outlineEl.setAttribute('aria-label', 'Designer control hierarchy');
     outlineEl.innerHTML = '';
     if (!controls.length) {
       var empty = document.createElement('div'); empty.className = 'paneEmpty';
@@ -314,9 +372,16 @@
     }
     function emit(c, level) {
       var children = kids[c.id] || [];
+      var isSel = c.id === currentId;
       var node = document.createElement('div');
-      node.className = 'treeNode' + (c.id === currentId ? ' sel' : '');
+      node.className = 'treeNode' + (isSel ? ' sel' : '');
       node.style.paddingLeft = (4 + level * 14) + 'px';
+      node.setAttribute('role', 'treeitem');
+      node.setAttribute('aria-level', String(level + 1));
+      node.setAttribute('aria-selected', isSel ? 'true' : 'false');
+      if (children.length) node.setAttribute('aria-expanded', outlineCollapsed[c.id] ? 'false' : 'true');
+      node.tabIndex = isSel ? 0 : -1;          // roving tabindex — one tab stop, arrows move within the tree
+      node.dataset.id = c.id;
       var tw = document.createElement('span'); tw.className = 'tw';
       if (children.length) {
         tw.textContent = (outlineCollapsed[c.id] ? '▸ ' : '▾ ');
@@ -327,15 +392,33 @@
       label.textContent = (c.isRoot ? c.name + ' (form)' : c.name) + ' : ' + shortType(c.type);
       node.appendChild(label);
       node.title = c.id + ' : ' + c.type;
-      node.addEventListener('click', function () {
-        currentId = c.id; if (treeEl) treeEl.value = c.id;
-        vscode.postMessage({ type: 'pick', id: c.id }); renderOutline();
-      });
+      node.addEventListener('click', function () { pickOutline(c.id); });
       outlineEl.appendChild(node);
       if (!outlineCollapsed[c.id]) children.forEach(function (ch) { emit(ch, level + 1); });
     }
     roots.forEach(function (r) { emit(r, 0); });
+    // when nothing is selected, keep the tree Tab-reachable by giving the first node the tab stop
+    if (!currentId && outlineEl.firstChild && outlineEl.firstChild.setAttribute) outlineEl.firstChild.tabIndex = 0;
   }
+  function pickOutline(id) {
+    currentId = id; if (treeEl) treeEl.value = id;
+    vscode.postMessage({ type: 'pick', id: id }); renderOutline();
+  }
+  // keyboard navigation for the ARIA tree (§18): Up/Down move between visible items, Right/Left expand/collapse,
+  // Enter/Space select. Attached once to the container; nodes are re-created each render but delegation persists.
+  if (outlineEl) outlineEl.addEventListener('keydown', function (e) {
+    var nodes = Array.prototype.slice.call(outlineEl.querySelectorAll('.treeNode'));
+    if (!nodes.length) return;
+    var idx = nodes.indexOf(document.activeElement);
+    if (idx < 0) { for (var i = 0; i < nodes.length; i++) { if (nodes[i].classList.contains('sel')) { idx = i; break; } } }
+    function focusAt(j) { var n = nodes[j]; if (!n) return; nodes.forEach(function (x) { x.tabIndex = -1; }); n.tabIndex = 0; n.focus(); }
+    var aid = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.id : null;
+    if (e.key === 'ArrowDown') { e.preventDefault(); focusAt(idx < 0 ? 0 : Math.min(nodes.length - 1, idx + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); focusAt(idx <= 0 ? 0 : idx - 1); }
+    else if (e.key === 'ArrowRight') { if (aid && outlineCollapsed[aid]) { e.preventDefault(); outlineCollapsed[aid] = false; renderOutline(); } }
+    else if (e.key === 'ArrowLeft') { if (aid && !outlineCollapsed[aid]) { e.preventDefault(); outlineCollapsed[aid] = true; renderOutline(); } }
+    else if (e.key === 'Enter' || e.key === ' ') { if (aid) { e.preventDefault(); pickOutline(aid); } }
+  });
 
   var collapsed = { props: new Set(), events: new Set() };
   function catRow(t, label, tabKey) {
@@ -398,6 +481,12 @@
     return arr;
   }
   function sendEdit(id, prop, value) {
+    // a TableLayoutPanel child's Column/Row is not a property assignment — it lives in the 3-arg Controls.Add, so
+    // route it to the SetTableCell path (which rewrites the cell args) instead of the normal setProperty edit.
+    if (prop.tableCell) {
+      vscode.postMessage({ type: 'setTableCell', id: id, cell: prop.name, value: value });
+      return;
+    }
     vscode.postMessage({ type: 'edit', id: id, prop: prop.name, propType: prop.type, isEnum: prop.isEnum, value: value });
   }
   function editInput(title, value, onCommit) {
@@ -445,6 +534,24 @@
     var tr = document.createElement('tr');
     var nameTd = document.createElement('td'); nameTd.className = 'name sub'; nameTd.textContent = label;
     var valTd = document.createElement('td'); valTd.className = 'val'; valTd.appendChild(editInput(label, value, onCommit));
+    tr.appendChild(nameTd); tr.appendChild(valTd); return tr;
+  }
+  // a composite sub-row whose value cell is a <select> (exclusive combobox) — used by the expanded
+  // Anchor (per-edge True/False) and Dock (DockStyle) editors.
+  function subSelectRow(label, value, values, onCommit) {
+    var tr = document.createElement('tr');
+    var nameTd = document.createElement('td'); nameTd.className = 'name sub'; nameTd.textContent = label;
+    var valTd = document.createElement('td'); valTd.className = 'val';
+    valTd.appendChild(editSelect(values, true, value, label, onCommit));
+    tr.appendChild(nameTd); tr.appendChild(valTd); return tr;
+  }
+  // a composite sub-row whose value cell is an editable combobox (datalist) — accepts a listed value OR free
+  // text. Used by the expanded Font editor's Name row (installed families as suggestions, custom name allowed).
+  function subComboRow(label, value, values, onCommit) {
+    var tr = document.createElement('tr');
+    var nameTd = document.createElement('td'); nameTd.className = 'name sub'; nameTd.textContent = label;
+    var valTd = document.createElement('td'); valTd.className = 'val';
+    valTd.appendChild(editSelect(values, false, value, label, onCommit));
     tr.appendChild(nameTd); tr.appendChild(valTd); return tr;
   }
 
@@ -499,10 +606,283 @@
     return wrap;
   }
 
+  // ---- floating popup (VS-style dropdown surface: color picker, flags checkboxes). Appended to <body> and
+  // position:fixed so #grid's overflow can't clip it. One at a time; closes on outside-click / Esc / re-open. ----
+  var popupEl = null;
+  var popupAnchor = null;
+  function closePopup() {
+    if (!popupEl) return;
+    if (popupEl.parentNode) popupEl.parentNode.removeChild(popupEl);
+    popupEl = null; popupAnchor = null;
+    document.removeEventListener('mousedown', onPopupOutside, true);
+  }
+  // Close on a mousedown that is neither inside the popup NOR on its own anchor button — the anchor is excluded
+  // so ddButton's click handler can toggle the popup shut itself (otherwise the capture-phase mousedown would
+  // pre-close it and the following click would reopen it — the "flicker-reopen" bug).
+  function onPopupOutside(e) {
+    if (!popupEl) return;
+    if (popupEl.contains(e.target)) return;
+    if (popupAnchor && popupAnchor.contains(e.target)) return;
+    closePopup();
+  }
+  function openPopup(anchorEl, build) {
+    closePopup();
+    popupEl = document.createElement('div'); popupEl.className = 'propPopup';
+    popupAnchor = anchorEl;
+    build(popupEl);
+    document.body.appendChild(popupEl);
+    var r = anchorEl.getBoundingClientRect();
+    var w = popupEl.offsetWidth, h = popupEl.offsetHeight;
+    var left = Math.max(2, Math.min(r.left, window.innerWidth - w - 4));
+    var top = r.bottom + 2;
+    if (top + h > window.innerHeight - 4) top = Math.max(2, r.top - h - 2); // flip above the anchor if no room below
+    popupEl.style.left = left + 'px';
+    popupEl.style.top = top + 'px';
+    // register after this click's event cycle so the opening click doesn't immediately close it
+    setTimeout(function () { document.addEventListener('mousedown', onPopupOutside, true); }, 0);
+  }
+  function ddButton(title, onClick) {
+    var b = document.createElement('span'); b.className = 'ddBtn'; b.textContent = '▾'; b.title = title || '';
+    // toggle: a second click on the arrow that owns the open popup closes it (standard dropdown contract)
+    b.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (popupEl && popupAnchor === b) { closePopup(); return; }
+      onClick(b);
+    });
+    return b;
+  }
+
+  // ---- Color editor (VS-style): swatch + free-text input + a dropdown to a tabbed palette (Custom/Web/System).
+  // Commits an invariant string ("Red" / "255, 128, 0" / "Control"); the engine's convertValue disambiguates
+  // named vs system vs ARGB. Falls back to the raw text input when the palette hasn't arrived. ----
+  function colorToHex(value) {
+    if (value == null) return null;
+    var v = String(value).trim();
+    if (!v) return null;
+    // Transparent is the one KnownColor with alpha 0; the palette reports it as opaque white (alpha is stripped
+    // from the RRGGBB swatch), so surface it as the checkerboard "no color" swatch rather than a white block.
+    if (v.toLowerCase() === 'transparent') return null;
+    var parts = v.split(',').map(function (s) { return s.trim(); });
+    if (parts.length === 3 || parts.length === 4) {
+      // "R, G, B" or "A, R, G, B" — every part must be an integer 0..255
+      if (!parts.every(function (s) { return /^\d{1,3}$/.test(s) && Number(s) <= 255; })) return null;
+      var off = parts.length === 4 ? 1 : 0; // skip the alpha component for the swatch
+      return '#' + [off, off + 1, off + 2].map(function (i) { return ('0' + Number(parts[i]).toString(16)).slice(-2); }).join('');
+    }
+    return colorByName[v.toLowerCase()] || null; // named / system color
+  }
+  function swatchSpan(hex) {
+    var s = document.createElement('span'); s.className = 'swatch' + (hex ? '' : ' none');
+    if (hex) s.style.background = hex;
+    return s;
+  }
+  // A compact, fixed common-color grid for the "Custom" tab (all standard KnownColor names → resolve to swatches).
+  var CUSTOM_COLORS = [
+    'White', 'Silver', 'Gray', 'DimGray', 'Black', 'Red', 'Maroon', 'Orange',
+    'Gold', 'Yellow', 'Olive', 'Lime', 'Green', 'Aqua', 'Teal', 'Blue',
+    'Navy', 'Fuchsia', 'Purple', 'Pink', 'HotPink', 'Crimson', 'OrangeRed', 'Coral',
+    'Khaki', 'Tan', 'Brown', 'Chocolate', 'ForestGreen', 'SeaGreen', 'Turquoise', 'SteelBlue',
+    'CornflowerBlue', 'RoyalBlue', 'MediumBlue', 'Indigo', 'Violet', 'Plum', 'LightGray', 'Transparent'];
+  function colorEditor(value, onCommit) {
+    var wrap = document.createElement('div'); wrap.className = 'colorEd';
+    var sw = swatchSpan(colorToHex(value));
+    var inp = document.createElement('input'); inp.className = 'colorInp'; inp.value = value == null ? '' : value;
+    inp.title = 'Color — a name, "R, G, B" / "A, R, G, B", or pick from the dropdown';
+    inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); } });
+    inp.addEventListener('change', function () { onCommit(inp.value); });
+    wrap.appendChild(sw); wrap.appendChild(inp);
+    wrap.appendChild(ddButton('Pick a color', function (btn) { openColorPopup(btn, value, onCommit); }));
+    return wrap;
+  }
+  function colorSwatchGrid(container, names, curVal, onPick) {
+    var cur = String(curVal == null ? '' : curVal).trim().toLowerCase();
+    var grid = document.createElement('div'); grid.className = 'swGrid';
+    names.forEach(function (name) {
+      var hex = colorByName[name.toLowerCase()];
+      var cell = document.createElement('span'); cell.className = 'swCell' + (cur === name.toLowerCase() ? ' sel' : '');
+      if (hex && name.toLowerCase() !== 'transparent') cell.style.background = hex; else cell.classList.add('none');
+      cell.title = name;
+      cell.addEventListener('click', function () { onPick(name); });
+      grid.appendChild(cell);
+    });
+    container.appendChild(grid);
+  }
+  function colorSwatchList(container, swatches, curVal, onPick) {
+    var cur = String(curVal == null ? '' : curVal).trim().toLowerCase();
+    var list = document.createElement('div'); list.className = 'swList';
+    (swatches || []).forEach(function (c) {
+      var row = document.createElement('div'); row.className = 'swRow' + (cur === String(c.name).toLowerCase() ? ' sel' : '');
+      var s = document.createElement('span'); s.className = 'swatch';
+      if (String(c.name).toLowerCase() === 'transparent') s.classList.add('none'); else s.style.background = '#' + c.argb;
+      var lbl = document.createElement('span'); lbl.className = 'swName'; lbl.textContent = c.name;
+      row.appendChild(s); row.appendChild(lbl);
+      row.addEventListener('click', function () { onPick(c.name); });
+      list.appendChild(row);
+    });
+    container.appendChild(list);
+  }
+  function openColorPopup(anchor, curVal, onCommit) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('colorPop');
+      var tabs = document.createElement('div'); tabs.className = 'popTabs';
+      var body = document.createElement('div'); body.className = 'popBody';
+      var which = 'custom';
+      function pick(name) { closePopup(); onCommit(name); }
+      function render() {
+        body.innerHTML = '';
+        if (which === 'custom') colorSwatchGrid(body, CUSTOM_COLORS, curVal, pick);
+        else if (which === 'web') colorSwatchList(body, palette && palette.webColors, curVal, pick);
+        else colorSwatchList(body, palette && palette.systemColors, curVal, pick);
+        Array.prototype.forEach.call(tabs.children, function (t) { t.className = 'popTab' + (t.getAttribute('data-k') === which ? ' active' : ''); });
+      }
+      [['custom', 'Custom'], ['web', 'Web'], ['system', 'System']].forEach(function (t) {
+        var b = document.createElement('span'); b.className = 'popTab'; b.setAttribute('data-k', t[0]); b.textContent = t[1];
+        b.addEventListener('click', function () { which = t[0]; render(); });
+        tabs.appendChild(b);
+      });
+      pop.appendChild(tabs); pop.appendChild(body);
+      render();
+    });
+  }
+
+  // ---- Font editor: expandable sub-rows (Name/Size/Unit/Bold/Italic/Underline/Strikeout) that compose the
+  // FontConverter invariant string ("Segoe UI, 9pt, style=Bold, Italic"), which the engine's convertValue turns
+  // into new Font(...). Unit suffixes come from the palette (authoritative, not hardcoded). ----
+  function parseFont(value) {
+    var out = { name: '', size: '', unit: 'Point', styles: {} };
+    if (value == null || String(value).trim() === '') return out;
+    var v = String(value);
+    var firstComma = v.indexOf(',');
+    if (firstComma < 0) { out.name = v.trim(); return out; }
+    out.name = v.slice(0, firstComma).trim();
+    var rest = v.slice(firstComma + 1);
+    var sizePart = rest;
+    var si = rest.indexOf('style=');
+    if (si >= 0) {
+      rest.slice(si + 6).split(',').forEach(function (s) { var k = s.trim(); if (k && k !== 'Regular') out.styles[k] = true; });
+      sizePart = rest.slice(0, si).replace(/,\s*$/, '');
+    }
+    var m = /^([0-9.]+)\s*(.*)$/.exec(sizePart.trim());
+    if (m) { out.size = m[1]; out.unit = unitBySuffix[m[2].trim()] || 'Point'; }
+    return out;
+  }
+  function composeFont(f) {
+    var suffix = unitByName[f.unit] || 'pt';
+    var s = (f.name || '') + ', ' + (f.size || '') + suffix;
+    var styleList = ['Bold', 'Italic', 'Underline', 'Strikeout'].filter(function (k) { return f.styles[k]; });
+    if (styleList.length) s += ', style=' + styleList.join(', ');
+    return s;
+  }
+  function fontSubRows(c, p, t) {
+    var f = parseFont(p.value);
+    var fams = (palette && palette.fontFamilies) || [];
+    var unitNames = ((palette && palette.fontUnits) || []).map(function (u) { return u.name; });
+    if (!unitNames.length) unitNames = ['Point'];
+    // commit only a COMPLETE, valid font: a non-empty family AND a numeric size. This prevents a size-less
+    // ("Name, pt") or family-less (", 9pt") string — both of which FontConverter silently DEFAULTS rather
+    // than rejects (→ would drop the size to 8.25pt or rewrite the family). Normalize a comma decimal
+    // ("9,75" → "9.75") so comma-locale users can type sizes; the invariant string needs a '.' separator.
+    function commitFont() {
+      var name = (f.name || '').trim();
+      var size = (f.size || '').trim().replace(',', '.');
+      if (!name || !/^[0-9]+(\.[0-9]+)?$/.test(size)) return; // incomplete/invalid → leave the value unchanged
+      sendEdit(c.id, p, composeFont({ name: name, size: size, unit: f.unit, styles: f.styles }));
+    }
+    t.appendChild(subComboRow('Name', f.name, fams, function (v) { f.name = v; commitFont(); }));
+    t.appendChild(subRow('Size', f.size, function (v) { f.size = v; commitFont(); }));
+    t.appendChild(subSelectRow('Unit', f.unit, unitNames, function (v) { f.unit = v; commitFont(); }));
+    ['Bold', 'Italic', 'Underline', 'Strikeout'].forEach(function (st) {
+      t.appendChild(subSelectRow(st, f.styles[st] ? 'True' : 'False', ['True', 'False'], function (v) {
+        f.styles[st] = (v === 'True'); commitFont();
+      }));
+    });
+  }
+
+  // ---- Flags-enum editor (generic [Flags] enums other than Anchor, which keeps its glyph editor): a read-only
+  // summary + a dropdown of member checkboxes. Composes "Top, Left"; empty → the enum's zero member (usually
+  // "None"). The popup stays open across toggles (it lives on <body>, surviving the grid re-render). ----
+  function parseFlagSet(value) {
+    var set = {};
+    String(value == null ? '' : value).split(',').forEach(function (s) { var k = s.trim(); if (k) set[k] = true; });
+    return set;
+  }
+  function flagsEditor(p, value, onCommit) {
+    var wrap = document.createElement('div'); wrap.className = 'flagsEd';
+    var inp = document.createElement('input'); inp.className = 'flagsInp'; inp.value = value == null ? '' : value; inp.readOnly = true;
+    inp.title = 'Flags — click the arrow to toggle members';
+    wrap.appendChild(inp);
+    wrap.appendChild(ddButton('Toggle members', function (btn) { openFlagsPopup(btn, p, value, onCommit); }));
+    return wrap;
+  }
+  function openFlagsPopup(anchor, p, value, onCommit) {
+    var members = p.flagsMembers || [];
+    var set = parseFlagSet(value);
+    openPopup(anchor, function (pop) {
+      pop.classList.add('flagsPop');
+      members.forEach(function (name) {
+        var row = document.createElement('label'); row.className = 'flagRow';
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!set[name];
+        var lbl = document.createElement('span'); lbl.textContent = name;
+        cb.addEventListener('change', function () {
+          set[name] = cb.checked;
+          var chosen = members.filter(function (mm) { return set[mm]; });
+          if (chosen.length) { onCommit(chosen.join(', ')); return; }
+          // all unchecked → commit the zero member. If the enum has none (rare — most flags define None=0),
+          // we can't represent "cleared" as a member name without emitting an invalid Type.None, so leave the
+          // value unchanged rather than corrupt the source. Re-check the box to reflect that.
+          if (p.flagsZero) { onCommit(p.flagsZero); return; }
+          cb.checked = true; set[name] = true;
+        });
+        row.appendChild(cb); row.appendChild(lbl); pop.appendChild(row);
+      });
+    });
+  }
+
+  // ---- Image/Icon editor (Slice 2/5): a preview swatch + "Import…" (host opens a file picker → embeds the
+  // image into the form's sibling .resx and writes the resources.GetObject assignment) + "(none)" (clears the
+  // assignment via ResetProperty). The value isn't a literal, so there's no text field — engine sets p.isImage
+  // and p.imagePreview (a base64 thumbnail of the current value, or null when unset). ----
+  function imageEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'imageEd';
+    var sw = document.createElement('span'); sw.className = 'imgSwatch' + (p.imagePreview ? '' : ' none');
+    if (p.imagePreview) {
+      var img = document.createElement('img'); img.className = 'imgThumb'; img.alt = ''; img.draggable = false;
+      img.src = 'data:image/png;base64,' + p.imagePreview;
+      sw.appendChild(img);
+    }
+    sw.title = p.type;
+    wrap.appendChild(sw);
+    var lbl = document.createElement('span'); lbl.className = 'imgLabel';
+    lbl.textContent = p.imagePreview ? shortType(p.type) : '(none)';
+    wrap.appendChild(lbl);
+    if (!p.readOnly) {
+      var imp = document.createElement('button'); imp.type = 'button'; imp.className = 'imgBtn'; imp.textContent = 'Import…';
+      imp.title = 'Import an image file into the form’s resources';
+      imp.addEventListener('click', function () { vscode.postMessage({ type: 'importImage', id: c.id, prop: p.name, propType: p.type }); });
+      wrap.appendChild(imp);
+      // "(none)" clears an image that is actually set in the source (has a preview or an explicit assignment).
+      if (p.imagePreview || p.sourceExplicit) {
+        var clr = document.createElement('button'); clr.type = 'button'; clr.className = 'imgBtn'; clr.textContent = '(none)';
+        clr.title = 'Clear the image (reset to none)';
+        clr.addEventListener('click', function () { vscode.postMessage({ type: 'clearImage', id: c.id, prop: p.name }); });
+        wrap.appendChild(clr);
+      }
+    }
+    return wrap;
+  }
+
   function propRow(c, p, t) {
     var comp = editable(p) ? COMPOSITE[p.type] : null;
     var parts = comp ? parseParts(p.value, comp.fields.length) : null;
-    var canExpand = !!parts;
+    // Anchor/Dock are expandable too: collapsed shows the visual glyph editor (value cell), expanded adds
+    // combobox sub-rows — Anchor → a True/False <select> per edge, Dock → a single DockStyle <select>.
+    var isAnchor = editable(p) && p.type === ANCHOR_TYPE;
+    var isDock = editable(p) && p.type === DOCK_TYPE;
+    var isColor = editable(p) && p.type === COLOR_TYPE;
+    var isFont = editable(p) && p.type === FONT_TYPE;
+    // generic [Flags] enums (Anchor keeps its dedicated glyph editor) → checkbox dropdown
+    var isFlags = editable(p) && p.isEnum && !isAnchor && p.flagsMembers && p.flagsMembers.length;
+    var canExpand = !!parts || isAnchor || isDock || isFont;
     var isOpen = canExpand && expandedProps.has(p.name);
 
     var tr = document.createElement('tr');
@@ -521,15 +901,24 @@
     }
 
     var valTd = document.createElement('td');
-    if (editable(p)) {
+    if (p.isImage) {
+      // Image/Icon properties (resx-backed): preview swatch + Import…/(none) — no text field (value isn't a literal)
       valTd.className = 'val';
-      if (p.type === ANCHOR_TYPE) {
+      valTd.appendChild(imageEditor(c, p));
+    } else if (editable(p)) {
+      valTd.className = 'val';
+      if (isAnchor) {
         valTd.appendChild(anchorEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
-      } else if (p.type === DOCK_TYPE) {
+      } else if (isDock) {
         valTd.appendChild(dockEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
+      } else if (isColor) {
+        valTd.appendChild(colorEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
+      } else if (isFlags) {
+        valTd.appendChild(flagsEditor(p, p.value, function (v) { sendEdit(c.id, p, v); }));
       } else if (p.standardValues && p.standardValues.length && !isOpen) {
         valTd.appendChild(editSelect(p.standardValues, !!p.standardValuesExclusive, p.value, p.type + editHint(p), function (v) { sendEdit(c.id, p, v); }));
       } else {
+        // collapsed Font (and Point/Size/etc.) show the whole invariant string as a text input; expand for sub-rows
         valTd.appendChild(editInput(p.type + editHint(p), p.value, function (v) { sendEdit(c.id, p, v); }));
       }
     } else {
@@ -540,7 +929,7 @@
     addColSplit(nameTd);
     tr.appendChild(nameTd); tr.appendChild(valTd); t.appendChild(tr);
 
-    if (isOpen) {
+    if (isOpen && comp) {
       if (comp.all) {
         var allVal = (parts[0] === parts[1] && parts[1] === parts[2] && parts[2] === parts[3]) ? parts[0] : '';
         t.appendChild(subRow('All', allVal, function (v) { sendEdit(c.id, p, [v, v, v, v].join(', ')); }));
@@ -552,6 +941,21 @@
           }));
         })(k);
       }
+    } else if (isOpen && isAnchor) {
+      // one True/False <select> per edge; recompose the full "Top, Left"/"None" flags string on change
+      var aset = parseAnchor(p.value);
+      ['Top', 'Bottom', 'Left', 'Right'].forEach(function (side) {
+        t.appendChild(subSelectRow(side, aset[side] ? 'True' : 'False', ['True', 'False'], function (v) {
+          aset[side] = (v === 'True'); sendEdit(c.id, p, composeAnchor(aset));
+        }));
+      });
+    } else if (isOpen && isDock) {
+      var curDock = String(p.value == null ? '' : p.value).trim() || 'None';
+      t.appendChild(subSelectRow('Dock', curDock, ['None', 'Top', 'Bottom', 'Left', 'Right', 'Fill'], function (v) {
+        sendEdit(c.id, p, v);
+      }));
+    } else if (isOpen && isFont) {
+      fontSubRows(c, p, t);
     }
   }
 
@@ -646,6 +1050,7 @@
     else renderEvents(currentComponent, searchEl.value);
   }
   function setTab(tab) {
+    closePopup();
     activeTab = tab;
     tabPropsEl.className = tab === 'props' ? 'active' : '';
     tabEventsEl.className = tab === 'events' ? 'active' : '';
@@ -683,19 +1088,26 @@
     var m = e.data;
     if (m.type === 'toolbox') {
       toolboxItems = m.items || []; renderToolbox();
+    } else if (m.type === 'palette') {
+      applyPalette(m.palette);
+      // a late palette (color swatches / font families) → close any popup opened before it arrived (its
+      // swatches were empty) and re-render so the Color/Font editors pick up the palette
+      closePopup();
+      if (currentComponent) renderActiveTab();
     } else if (m.type === 'showTab') {
       showMainTab(m.tab); // F4 → reveal Properties
     } else if (m.type === 'layout') {
       controls = m.controls || [];
       rebuildTree(); renderOutline();
     } else if (m.type === 'select') {
+      if (m.id !== currentId) closePopup(); // selection moved to another control → drop any open dropdown
       currentId = m.id;
       if (treeEl) treeEl.value = m.id;
       renderOutline();
     } else if (m.type === 'props') {
       if (m.id !== currentId) return;
       var compId = m.component ? m.component.id : null;
-      if (!currentComponent || currentComponent.id !== compId) { eventCandidates = {}; candFetchedFor = null; }
+      if (!currentComponent || currentComponent.id !== compId) { closePopup(); eventCandidates = {}; candFetchedFor = null; }
       currentComponent = m.component;
       setEmpty(!m.component);
       renderActiveTab();
@@ -703,6 +1115,7 @@
     } else if (m.type === 'candidates') {
       if (currentComponent && currentComponent.id === m.id) { eventCandidates = m.map || {}; if (activeTab === 'events') renderActiveTab(); }
     } else if (m.type === 'clear') {
+      closePopup();
       controls = []; currentId = null; currentComponent = null; eventCandidates = {}; candFetchedFor = null;
       toolboxItems = []; renderToolbox();
       rebuildTree(); renderOutline(); setEmpty(true);

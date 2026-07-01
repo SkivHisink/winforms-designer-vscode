@@ -292,6 +292,90 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
+            if (Has(args, "--reset-prop", out string? rpFile) && rpFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "this";
+                string? prop = ArgAfter(args, "--prop");
+                if (prop == null)
+                {
+                    Console.WriteLine("usage: --reset-prop <file> [--comp <name>] --prop <name>");
+                    return 2;
+                }
+                try
+                {
+                    var res = DesignerRenderer.ApplyPropertyReset(rpFile, comp, prop);
+                    Console.WriteLine("== engine reset-property (delete the assignment → default)");
+                    Console.WriteLine("   target : " + comp + "." + prop);
+                    Console.WriteLine("   ok: " + res.Ok + " | changed: " + res.Changed + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Ok)
+                    {
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    Console.WriteLine("RESULT: PASS" + (res.Changed ? " (assignment removed)" : " (no-op — already default)"));
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-image", out string? siFile) && siFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "this";
+                string? prop = ArgAfter(args, "--prop");
+                string propType = ArgAfter(args, "--propType") ?? "System.Drawing.Image";
+                string? imagePath = ArgAfter(args, "--image");
+                bool write = Has(args, "--write", out _);
+                if (prop == null || imagePath == null)
+                {
+                    Console.WriteLine("usage: --set-image <designerFile> [--comp <id>] --prop <name> [--propType <type>] --image <imageFile> [--write]");
+                    return 2;
+                }
+                try
+                {
+                    string resxPath = ResxPathBeside(siFile);
+                    string? resxText = File.Exists(resxPath) ? File.ReadAllText(resxPath) : null;
+                    byte[] bytes = File.ReadAllBytes(imagePath);
+                    var res = DesignerRenderer.ApplyImageResource(siFile, comp, prop, propType, bytes, resxText);
+                    Console.WriteLine("== engine set-image (embed into .resx + resources.GetObject assignment)");
+                    Console.WriteLine("   target : " + comp + "." + prop + " : " + propType);
+                    Console.WriteLine("   image  : " + imagePath + " (" + bytes.Length + " bytes)");
+                    Console.WriteLine("   mode   : " + res.Mode + " | key: " + res.ResxKey + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Ok || res.DesignerText == null || res.ResxText == null)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        File.WriteAllText(resxPath, res.ResxText, new System.Text.UTF8Encoding(false));
+                        string bak = siFile + ".bak";
+                        File.Copy(siFile, bak, overwrite: true);
+                        File.WriteAllText(siFile, res.DesignerText, new System.Text.UTF8Encoding(false));
+                        Console.WriteLine("   APPLIED: wrote " + siFile + " + " + resxPath + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        File.WriteAllText(siFile + ".edited.txt", res.DesignerText, new System.Text.UTF8Encoding(false));
+                        File.WriteAllText(resxPath + ".preview.txt", res.ResxText, new System.Text.UTF8Encoding(false));
+                        Console.WriteLine("   dry-run: wrote previews " + siFile + ".edited.txt + " + resxPath + ".preview.txt (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
             if (Has(args, "--convert", out string? convType) && convType != null)
             {
                 string? value = ArgAfter(args, "--value");
@@ -442,7 +526,7 @@ namespace WinFormsDesigner.Engine
                 {
                     Console.WriteLine($"-- {g.Key} ({g.Count()})");
                     foreach (var i in g.OrderBy(i => i.Name, StringComparer.Ordinal))
-                        Console.WriteLine($"   {i.Name,-22} {i.Fqn}");
+                        Console.WriteLine($"   {i.Name,-22} {(i.IconPng != null ? "[icon]" : "[    ]")} {i.Fqn}");
                 }
                 return 0;
             }
@@ -457,6 +541,21 @@ namespace WinFormsDesigner.Engine
                 foreach (var i in items.Take(25))
                     Console.WriteLine($"   {i.Name,-26} {i.Namespace,-32} {i.AssemblyName} {i.Version}");
                 return 0;
+            }
+
+            if (Has(args, "--palette", out _))
+            {
+                var pal = DesignerPalette.Build();
+                Console.WriteLine($"== designer palette (color dropdown + font editor)");
+                Console.WriteLine($"   web colors    : {pal.WebColors.Count}");
+                Console.WriteLine($"   system colors : {pal.SystemColors.Count}");
+                Console.WriteLine($"   font families : {pal.FontFamilies.Count}");
+                Console.WriteLine($"   font units    : {string.Join(", ", pal.FontUnits.Select(u => u.Name + "=" + u.Suffix))}");
+                foreach (var c in pal.WebColors.Take(5)) Console.WriteLine($"   web   {c.Name,-20} #{c.Argb}");
+                foreach (var c in pal.SystemColors.Take(5)) Console.WriteLine($"   sys   {c.Name,-20} #{c.Argb}");
+                bool ok = pal.WebColors.Count > 0 && pal.FontFamilies.Count > 0 && pal.FontUnits.Count > 0;
+                Console.WriteLine(ok ? "RESULT: PASS" : "RESULT: FAIL");
+                return ok ? 0 : 1;
             }
 
             if (Has(args, "--pipe", out string? pipeName) && pipeName != null)
@@ -487,9 +586,24 @@ namespace WinFormsDesigner.Engine
             Console.WriteLine("       Engine --layout <designerFile> [--asm <dll>]   (control window-space bounds for click-to-select)");
             Console.WriteLine("       Engine --render-layout <designerFile> [--asm <dll>] [--out <png>]   (combined full-frame PNG + hit-test map, one graph load)");
             Console.WriteLine("       Engine --convert <typeName> --value <invariantValue>");
+            Console.WriteLine("       Engine --palette   (color dropdown + font editor palette: known colors, installed fonts, unit suffixes)");
             Console.WriteLine("       Engine --resolve <designerFile>   (print MSBuild-resolved output assembly)");
             Console.WriteLine("       Engine --pipe <name>");
             return 2;
+        }
+
+        /// <summary>The sibling .resx path for a designer file (Foo.Designer.cs / Foo.cs → Foo.resx) — mirrors
+        /// ResxResolver's derivation, for the --set-image CLI.</summary>
+        private static string ResxPathBeside(string designerFilePath)
+        {
+            string dir = Path.GetDirectoryName(designerFilePath) ?? ".";
+            string name = Path.GetFileName(designerFilePath);
+            string @base = name.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)
+                ? name.Substring(0, name.Length - ".Designer.cs".Length)
+                : name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+                    ? name.Substring(0, name.Length - ".cs".Length)
+                    : name;
+            return Path.Combine(dir, @base + ".resx");
         }
 
         /// <summary>Count distinct pixel colors (capped) — a blank capture has 1; used to verify a render isn't empty.</summary>
@@ -664,6 +778,59 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
+        /// <summary>§6.5 grid-cell edit: move a TableLayoutPanel child to column/row by swapping the cell args of
+        /// its 3-arg Controls.Add. Either column or row may be null to leave that coordinate unchanged.</summary>
+        public EditPreview SetTableCell(string designerFilePath, string childId, int? column, int? row, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyTableCellEdit(designerFilePath, childId, column, row, sourceText);
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Reset a property to its default by deleting its assignment(s) (VS "Reset"; the engine side of
+        /// Dock↔Anchor mutual exclusivity). Nothing is interpolated. Host applies <see cref="EditPreview.Text"/> as
+        /// a WorkspaceEdit. Mode: "Remove" (removed), "Noop" (already default → Text null), "Failed" (rejected).</summary>
+        public EditPreview ResetProperty(string designerFilePath, string componentName, string propertyName, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyPropertyReset(designerFilePath, componentName, propertyName, sourceText);
+            return new EditPreview { Safe = r.Ok, Mode = r.Ok ? (r.Changed ? "Remove" : "Noop") : "Failed", Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Import an image into a resx-backed image/icon property: embed the (base64) bytes into the form's
+        /// sibling .resx and write the <c>resources.GetObject</c> assignment into InitializeComponent. Returns BOTH
+        /// new texts — the host writes <see cref="ImageEditPreview.ResxText"/> to the .resx and applies
+        /// <see cref="ImageEditPreview.DesignerText"/> as an undoable edit. resxText is the current .resx content
+        /// (null/blank ⇒ create it). Pure text + GDI+ decode-validation — no STA. See <see cref="DesignerImageEditor"/>.</summary>
+        public ImageEditPreview SetImageResource(string designerFilePath, string componentName, string propertyName,
+            string propertyTypeName, string imageBase64, string? resxText = null, string? sourceText = null)
+        {
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(imageBase64 ?? ""); }
+            catch { return new ImageEditPreview { Safe = false, Mode = "Failed", Reason = "image data is not valid base64" }; }
+            var r = DesignerRenderer.ApplyImageResource(designerFilePath, componentName, propertyName, propertyTypeName, bytes, resxText, NullIfBlank(sourceText));
+            return new ImageEditPreview
+            {
+                Safe = r.Ok,
+                Mode = r.Mode.ToString(),
+                DesignerText = r.DesignerText,
+                ResxText = r.ResxText,
+                ResxKey = r.ResxKey,
+                Reason = r.Reason,
+            };
+        }
+
+        /// <summary>Read a TableLayoutPanel's ordered column + row sizing styles (read side for the style editor).</summary>
+        public TableStylesResult ReadTableStyles(string designerFilePath, string panelId, string? sourceText = null)
+            => DesignerRenderer.ReadTableStyles(designerFilePath, panelId, sourceText);
+
+        /// <summary>§6.5 TableLayoutPanel size-style edit: set the Nth Column/Row style's SizeType and/or value.
+        /// SizeType is a validated enum member (Absolute/Percent/AutoSize) and value a plain number — nothing is
+        /// interpolated. Either may be null to keep the existing one. Host applies Text as a WorkspaceEdit.</summary>
+        public EditPreview SetTableStyle(string designerFilePath, string panelId, string axis, int index, string? sizeType, double? value, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyTableStyleEdit(designerFilePath, panelId, axis, index, sizeType, value, sourceText);
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
         /// <summary>Enumerate the form's controls and their properties (read side for a property grid).
         /// controlAssemblyPath optionally overrides project auto-discovery (see <see cref="RenderDesigner"/>).</summary>
         public DescribeResult DescribeDesigner(string designerFilePath, string? controlAssemblyPath = null)
@@ -737,6 +904,13 @@ namespace WinFormsDesigner.Engine
             return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath));
         }
 
+        /// <summary>Add a non-visual component (Timer/ToolTip/dialog…) — the tray counterpart of AddControl. No
+        /// parent/location; the component is created and appears in the component tray.</summary>
+        public ControlAddResult AddComponent(string designerFilePath, string componentTypeKey, string? sourceText = null)
+        {
+            return DesignerRenderer.AddComponent(designerFilePath, componentTypeKey, sourceText);
+        }
+
         /// <summary>The toolbox's available control type keys (e.g. "Button", "Label", …).</summary>
         public List<string> ListControlTypes() => DesignerRenderer.ControlTypes().ToList();
 
@@ -784,6 +958,11 @@ namespace WinFormsDesigner.Engine
         public ControlReorderResult MoveZOrder(string designerFilePath, string controlId, bool toFront, string? sourceText = null) =>
             DesignerRenderer.MoveZOrder(designerFilePath, controlId, toFront, sourceText);
 
+        /// <summary>§7.4 reparent: move a leaf control into a different container (or the root form, newParentId
+        /// "this"/""). Minimal text edit — rewrites only the child's Controls.Add receiver. See DesignerControlEditor.Reparent.</summary>
+        public ControlReorderResult Reparent(string designerFilePath, string childId, string newParentId, string? sourceText = null) =>
+            DesignerRenderer.ReparentControl(designerFilePath, childId, newParentId, sourceText);
+
         /// <summary>
         /// Build a C# initializer expression for a complex framework property value (Point/Size/Color/…)
         /// from its invariant-string form, so the grid can edit types it otherwise shows read-only.
@@ -793,6 +972,12 @@ namespace WinFormsDesigner.Engine
         /// </summary>
         public string? ConvertValue(string typeName, string invariantValue) =>
             DesignerValueConverter.ToExpression(typeName, invariantValue);
+
+        /// <summary>Static palette for the property grid's Color dropdown and Font editor: the KnownColor
+        /// palette split web/system (theme-accurate ARGB), installed font families, and the authoritative
+        /// FontConverter unit suffixes. Pure reflection/GDI — runs on the RPC thread, no STA/Prewarm
+        /// (like <see cref="ConvertValue"/>). Independent of any designer file.</summary>
+        public DesignerPaletteInfo GetDesignerPalette() => DesignerPalette.Build();
     }
 
     /// <summary>DTO for the no-write save preview RPC.</summary>
@@ -818,6 +1003,19 @@ namespace WinFormsDesigner.Engine
         public bool Safe { get; set; }
         public string Mode { get; set; } = "";
         public string? Text { get; set; }
+        public string Reason { get; set; } = "";
+    }
+
+    /// <summary>DTO for the image-import RPC (<see cref="EngineApi.SetImageResource"/>): the new .Designer.cs text
+    /// AND the new sibling .resx text (both null when rejected). The host writes the .resx and applies the designer
+    /// text as an undoable edit.</summary>
+    public sealed class ImageEditPreview
+    {
+        public bool Safe { get; set; }
+        public string Mode { get; set; } = "";        // Replace | Insert | Failed
+        public string? DesignerText { get; set; }
+        public string? ResxText { get; set; }
+        public string ResxKey { get; set; } = "";
         public string Reason { get; set; } = "";
     }
 

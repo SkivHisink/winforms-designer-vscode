@@ -180,7 +180,7 @@
     }
   }
   function renderRuler() {
-    if (rulerToggleEl) { rulerToggleEl.className = rulerOn ? 'active' : ''; rulerToggleEl.textContent = rulerOn ? 'Скрыть линейку' : 'Показать линейку'; }
+    if (rulerToggleEl) { rulerToggleEl.className = rulerOn ? 'active' : ''; rulerToggleEl.textContent = rulerOn ? 'Hide ruler' : 'Show ruler'; }
     if (!rulerOn) {
       if (rulerHEl) rulerHEl.style.display = 'none';
       if (rulerVEl) rulerVEl.style.display = 'none';
@@ -199,7 +199,22 @@
     rulerOn = !rulerOn;
     try { var s = (vscode.getState && vscode.getState()) || {}; s.ruler = rulerOn; if (vscode.setState) vscode.setState(s); } catch (_e) {}
     renderRuler();
+    renderSelection(); // refresh the on-ruler object-bounds markers for the current selection
   });
+  // ruler object-bounds markers: highlight the selected (or dragging) control's extent on the H/V rulers with
+  // dashed edges, so the ruler actually shows where the object is. Kept as surfaceWrap siblings (not ruler
+  // children) so makeTicks' innerHTML reset can't wipe them.
+  var rulerHMark = null, rulerVMark = null;
+  function ensureRulerMarks() {
+    if (!rulerHMark) { rulerHMark = document.createElement('div'); rulerHMark.className = 'rulerMark rulerMarkH'; rulerHMark.style.display = 'none'; surfaceWrap.appendChild(rulerHMark); }
+    if (!rulerVMark) { rulerVMark = document.createElement('div'); rulerVMark.className = 'rulerMark rulerMarkV'; rulerVMark.style.display = 'none'; surfaceWrap.appendChild(rulerVMark); }
+  }
+  function updateRulerMarks(rect) {
+    ensureRulerMarks();
+    if (!rulerOn || !rect) { rulerHMark.style.display = 'none'; rulerVMark.style.display = 'none'; return; }
+    rulerHMark.style.display = 'block'; rulerHMark.style.left = (rect.x * zoom) + 'px'; rulerHMark.style.width = Math.max(1, rect.w * zoom) + 'px';
+    rulerVMark.style.display = 'block'; rulerVMark.style.top = (rect.y * zoom) + 'px'; rulerVMark.style.height = Math.max(1, rect.h * zoom) + 'px';
+  }
   document.addEventListener('keydown', function (e) {
     if (!e.ctrlKey && !e.metaKey) return;
     var ae = document.activeElement;
@@ -246,9 +261,12 @@
     else if (pc) selName.textContent = (pc.isRoot ? pc.name + ' (form)' : pc.name) + ' : ' + shortType(pc.type);
     else { var ti = current ? findTray(current) : null; selName.textContent = ti ? (ti.name + ' : ' + shortType(ti.type)) : '—'; }
     if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0;
-    if (alignEl) alignEl.style.display = (selection.length >= 2) ? '' : 'none';
+    // the align/distribute/same-size tools apply only to a live 2+ selection on a rendered form — never show
+    // them before the first render or while (re)loading (a stale retained selection would otherwise flash them)
+    if (alignEl) alignEl.style.display = (hasRendered && selection.length >= 2) ? '' : 'none';
     renderTabBadges();
     renderAnchors();
+    updateRulerMarks(pc && !pc.isRoot ? { x: pc.x, y: pc.y, w: pc.width, h: pc.height } : null);
   }
 
   // ---- anchor/dock overlay (Phase 2): for a single selected control, draw tether lines from each anchored
@@ -578,6 +596,7 @@
         drag.delta = { dx: sdx, dy: sdy };
         drag.cur = { x: nx, y: ny, w: drag.orig.w, h: drag.orig.h };
         drawGuides(snap.guides);
+        updateRulerMarks(drag.cur); // keep the ruler bounds-markers tracking the object as it moves
         // ghost: translate the primary box and every secondary box by the snapped delta
         selBox.style.left = (nx * zoom) + 'px'; selBox.style.top = (ny * zoom) + 'px';
         var n = 0;
@@ -599,6 +618,7 @@
         drag.cur = { x: rx, y: ry, w: rw, h: rh };
         selBox.style.left = (rx * zoom) + 'px'; selBox.style.top = (ry * zoom) + 'px';
         selBox.style.width = Math.max(0, rw * zoom - 2) + 'px'; selBox.style.height = Math.max(0, rh * zoom - 2) + 'px';
+        updateRulerMarks(drag.cur); // track bounds on the ruler during resize too
         setStatus('resize → ' + Math.round(rw) + ' × ' + Math.round(rh));
       }
       return;
@@ -817,6 +837,9 @@
     } else if (m.type === 'manip') {
       if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; renderSelection(); }
     } else if (m.type === 'loading') {
+      // hide the align tools while (re)loading — the retained-context DOM can still show them from a prior
+      // multi-selection; they'll reappear via renderSelection only if a 2+ selection survives the render
+      if (alignEl) alignEl.style.display = 'none';
       if (!hasRendered) showOverlay(m.message, false);
     } else if (m.type === 'status') {
       setStatus(m.message);

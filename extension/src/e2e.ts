@@ -1,10 +1,31 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeComponent, describeLayout, serializeDesigner, setProperty, convertValue, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder } from './engineClient';
+import * as zlib from 'zlib';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl } from './engineClient';
+import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj } from './csprojRef';
 
 const isPng = (b: Buffer): boolean =>
   b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+
+/** Build a minimal valid PNG declaring the given IHDR dimensions (header-only decodable). Used to craft a
+ *  "pixel bomb" (tiny file, huge declared dimensions) for the image-import DoS-guard regression test. */
+function pngWithDims(w: number, h: number): Buffer {
+  const crc32 = (b: Buffer): number => {
+    let c = ~0;
+    for (let i = 0; i < b.length; i++) { c ^= b[i]; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)); }
+    return (~c) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const t = Buffer.from(type, 'ascii');
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([t, data])));
+    return Buffer.concat([len, t, data, crc]);
+  };
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.from([0, 0, 0, 0]))), chunk('IEND', Buffer.alloc(0))]);
+}
 
 /**
  * Headless end-to-end proof of the extension's engine-client side (no VS Code GUI):
@@ -12,14 +33,90 @@ const isPng = (b: Buffer): boolean =>
  * then prove the live-update path: a content change yields a different render. The final
  * check inside the actual VS Code Extension Host (F5) is left to the user.
  */
+/**
+ * Headless proof of the "auto-add a project reference when a control from a non-referenced assembly is
+ * dropped" helpers (src/csprojRef.ts). Pure string/fs logic — the vscode glue (prompt + WorkspaceEdit) in
+ * designerEditor.ts stays F5-only, but the risky parsing/insertion is verified here against a REAL .csproj.
+ */
+function verifyCsprojHelpers(repo: string): void {
+  const engineCsproj = path.join(repo, 'engine', 'Engine.csproj');
+  if (!fs.existsSync(engineCsproj)) throw new Error('csprojRef: fixture missing — ' + engineCsproj);
+  const engineText = fs.readFileSync(engineCsproj, 'utf8');
+
+  // projectAssemblyName: reads <AssemblyName>, falls back to the file name.
+  if (projectAssemblyName(engineText, engineCsproj) !== 'WinFormsDesigner.Engine') throw new Error('csprojRef: projectAssemblyName did not read <AssemblyName>');
+  if (projectAssemblyName('<Project></Project>', '/x/Foo.Bar.csproj') !== 'Foo.Bar') throw new Error('csprojRef: projectAssemblyName fallback to file name broken');
+
+  // csprojReferencesAssembly: a PackageReference is detected (any name form); an absent one is not.
+  if (!csprojReferencesAssembly(engineText, 'StreamJsonRpc')) throw new Error('csprojRef: existing PackageReference not detected');
+  if (!csprojReferencesAssembly(engineText, 'streamjsonrpc')) throw new Error('csprojRef: reference match must be case-insensitive');
+  if (csprojReferencesAssembly(engineText, 'PgmUiControls')) throw new Error('csprojRef: false positive for an unreferenced assembly');
+  // strong-named <Reference> (simple name before the comma) and <ProjectReference> path (file base name).
+  if (!csprojReferencesAssembly('<Reference Include="MyControls, Version=1.0.0.0, Culture=neutral" />', 'MyControls')) throw new Error('csprojRef: strong-named Reference simple-name match broken');
+  if (!csprojReferencesAssembly('<ProjectReference Include="..\\Lib\\MyControls.csproj" />', 'MyControls')) throw new Error('csprojRef: ProjectReference base-name match broken');
+
+  // findNearestCsproj: walks up from engine/samples to engine/Engine.csproj, bounded by the repo root.
+  const found = findNearestCsproj(path.join(repo, 'engine', 'samples'), repo);
+  if (!found || path.normalize(found).toLowerCase() !== path.normalize(engineCsproj).toLowerCase()) throw new Error('csprojRef: findNearestCsproj did not locate engine/Engine.csproj, got ' + found);
+
+  // addReferenceToCsproj: inserts a well-formed ItemGroup before the single </Project>, and the result then
+  // reports the assembly as referenced (round-trip). Original content and the closing tag are preserved.
+  const added = addReferenceToCsproj(engineText, 'PgmUiControls', '..\\PgmUi\\bin\\PgmUiControls.dll');
+  if (!/<Reference Include="PgmUiControls">/.test(added)) throw new Error('csprojRef: addReferenceToCsproj did not add the <Reference>');
+  if (!/<HintPath>\.\.\\PgmUi\\bin\\PgmUiControls\.dll<\/HintPath>/.test(added)) throw new Error('csprojRef: addReferenceToCsproj did not add the HintPath');
+  if ((added.match(/<\/Project>/g) || []).length !== 1) throw new Error('csprojRef: addReferenceToCsproj must keep exactly one </Project>');
+  if (added.indexOf(engineText.slice(0, engineText.lastIndexOf('</Project>'))) !== 0) throw new Error('csprojRef: addReferenceToCsproj altered the original body');
+  if (!csprojReferencesAssembly(added, 'PgmUiControls')) throw new Error('csprojRef: added reference is not detected by csprojReferencesAssembly (round-trip)');
+  // idempotent guard direction: XML special chars are escaped in the include name.
+  if (addReferenceToCsproj('<Project></Project>', 'A&B', 'x.dll').indexOf('Include="A&amp;B"') < 0) throw new Error('csprojRef: include name is not XML-escaped');
+  // EOL preservation: a CRLF project stays CRLF (no stray lone \n introduced by the insert).
+  const crlf = '<Project Sdk="Microsoft.NET.Sdk">\r\n  <PropertyGroup>\r\n  </PropertyGroup>\r\n</Project>\r\n';
+  const crlfOut = addReferenceToCsproj(crlf, 'X', 'x.dll');
+  if (/[^\r]\n/.test(crlfOut)) throw new Error('csprojRef: addReferenceToCsproj introduced a lone \\n into a CRLF file');
+
+  // review fix (#5, nit): a mostly-LF file with one stray CRLF must NOT gain CRLFs (snippet follows the majority LF).
+  const mixed = '<Project>\r\n<PropertyGroup>\n</PropertyGroup>\n</Project>\n';
+  const mixedOut = addReferenceToCsproj(mixed, 'M', 'm.dll');
+  if ((mixedOut.match(/\r\n/g) || []).length !== (mixed.match(/\r\n/g) || []).length) throw new Error('csprojRef: mixed-EOL insert changed the CRLF count (should follow the majority LF)');
+
+  // review fix (#3, low): a trailing comment that contains "</Project>" must NOT divert the insert into the comment.
+  const trailing = '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup />\n</Project>\n<!-- legacy </Project> -->\n';
+  const trailingOut = addReferenceToCsproj(trailing, 'Z', 'z.dll');
+  if (!csprojReferencesAssembly(trailingOut, 'Z')) throw new Error('csprojRef: reference not registered — insert diverted into a trailing comment');
+  if (trailingOut.indexOf('<Reference Include="Z">') > trailingOut.indexOf('<!--')) throw new Error('csprojRef: <Reference> inserted after the root </Project> (into the trailing comment)');
+
+  // review fix (#1/#2, high): projectReferencesAssembly resolves a <ProjectReference> to a project whose
+  // <AssemblyName> differs from its file name, so an existing reference is detected (no redundant <Reference>).
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-csprojref-'));
+  try {
+    fs.writeFileSync(path.join(tmpDir, 'LibA.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><AssemblyName>Contoso.Controls</AssemblyName></PropertyGroup></Project>');
+    const formCsproj = path.join(tmpDir, 'FormProj.csproj');
+    const formText = '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="LibA.csproj" /></ItemGroup></Project>';
+    fs.writeFileSync(formCsproj, formText);
+    if (!projectReferencesAssembly(formText, formCsproj, 'Contoso.Controls')) throw new Error('csprojRef: projectReferencesAssembly did not resolve a ProjectReference by its target <AssemblyName>');
+    if (!projectReferencesAssembly(formText, formCsproj, 'contoso.controls')) throw new Error('csprojRef: projectReferencesAssembly must be case-insensitive');
+    if (projectReferencesAssembly(formText, formCsproj, 'Unrelated')) throw new Error('csprojRef: projectReferencesAssembly false positive for an unreferenced assembly');
+    if (!projectReferencesAssembly(engineText, engineCsproj, 'StreamJsonRpc')) throw new Error('csprojRef: projectReferencesAssembly must still match a name-level (Package) reference');
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
+  console.log('e2e: csprojRef helpers verified — projectAssemblyName; csprojReferencesAssembly (Package+strong-name+ProjectReference, case-insensitive, no false positive); projectReferencesAssembly resolves a ProjectReference by target <AssemblyName>; findNearestCsproj walks up to engine/Engine.csproj; addReferenceToCsproj inserts a valid <Reference>+HintPath before the ROOT </Project> (round-trip, XML-escaped, majority-EOL, comment-safe)');
+}
+
 async function main(): Promise<void> {
   const repo = path.resolve(__dirname, '..', '..');
-  const dll = path.join(repo, 'engine', 'bin', 'Release', 'net9.0-windows', 'WinFormsDesigner.Engine.dll');
+  // WFD_ENGINE_DLL lets a run point at a freshly-built engine in an alternate output dir (e.g. when the default
+  // bin/Release copy is locked by a live Dev-Host); defaults to the standard build output.
+  const dll = process.env.WFD_ENGINE_DLL || path.join(repo, 'engine', 'bin', 'Release', 'net9.0-windows', 'WinFormsDesigner.Engine.dll');
   const designer = path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs');
   const outPng = path.resolve(__dirname, '..', 'e2e-render.png');
 
   if (!fs.existsSync(dll)) throw new Error('engine dll not found: ' + dll);
   if (!fs.existsSync(designer)) throw new Error('sample not found: ' + designer);
+
+  // The auto-add-project-reference helpers are pure string/fs functions (no engine) — verify them up front.
+  verifyCsprojHelpers(repo);
 
   console.log('e2e: starting engine…');
   const engine = await startEngine(dll, { onLog: (l) => console.error(l) });
@@ -199,6 +296,181 @@ async function main(): Promise<void> {
       console.log('e2e: charset-Font guard verified — GdiCharSet 204 font is read-only, plain font editable');
     } finally {
       try { fs.unlinkSync(tmpCs); } catch { /* ignore */ }
+    }
+
+    // ---- designer palette (Color dropdown + Font editor data) ----
+    // The Color dropdown's swatches, the Font Name combobox, and the Font Unit dropdown are all fed by the
+    // GetDesignerPalette RPC. Assert the palette is non-empty and internally consistent: a known web color
+    // resolves to a 6-hex swatch, a system color is present, at least one installed font family exists, and
+    // the Point unit maps to the "pt" suffix the Font editor composes with.
+    {
+      const pal = await getDesignerPalette(engine);
+      if (!pal.webColors.length) throw new Error('palette: no web colors');
+      if (!pal.systemColors.length) throw new Error('palette: no system colors');
+      if (!pal.fontFamilies.length) throw new Error('palette: no font families');
+      if (!pal.fontUnits.length) throw new Error('palette: no font units');
+      const red = pal.webColors.find((c) => c.name === 'Red');
+      if (!red || !/^[0-9A-Fa-f]{6}$/.test(red.argb)) throw new Error(`palette: Red swatch malformed (${red?.argb})`);
+      if (!pal.systemColors.some((c) => c.name === 'Control')) throw new Error('palette: system color "Control" missing');
+      const pt = pal.fontUnits.find((u) => u.name === 'Point');
+      if (!pt || pt.suffix !== 'pt') throw new Error(`palette: Point unit suffix "${pt?.suffix}" (expected "pt")`);
+      // the exact unit suffixes the Font editor composes with must be present & valid (Display is not
+      // constructible for a Font → must be absent, not emitted with a bogus suffix)
+      if (pal.fontUnits.some((u) => u.name === 'Display')) throw new Error('palette: Display unit should be omitted (invalid for Font)');
+      console.log(`e2e: designer palette verified — ${pal.webColors.length} web / ${pal.systemColors.length} system colors, ${pal.fontFamilies.length} fonts, units [${pal.fontUnits.map((u) => u.name + '=' + u.suffix).join(', ')}]`);
+    }
+
+    // ---- flags-enum members (generic [Flags] checkbox dropdown) ----
+    // A [Flags] property (Anchor = AnchorStyles) must carry its single-bit member names + zero member so the
+    // grid can build a checkbox dropdown that composes "Top, Left" and, when cleared, commits the zero member.
+    {
+      const okc = await describeComponent(engine, designer, 'okButton');
+      const anchor = okc?.properties?.find((p) => p.name === 'Anchor');
+      if (!anchor) throw new Error('flags: okButton.Anchor not described');
+      const fm = anchor.flagsMembers ?? [];
+      for (const m of ['Top', 'Bottom', 'Left', 'Right']) {
+        if (!fm.includes(m)) throw new Error(`flags: AnchorStyles.${m} missing from flagsMembers [${fm.join(', ')}]`);
+      }
+      if (fm.includes('None')) throw new Error('flags: zero member "None" must NOT be in flagsMembers');
+      if (anchor.flagsZero !== 'None') throw new Error(`flags: AnchorStyles zero member "${anchor.flagsZero}" (expected "None")`);
+      // a non-flags enum (a plain enum with a standard-values dropdown) must NOT get flagsMembers
+      const dock = okc?.properties?.find((p) => p.name === 'Dock');
+      if (dock && dock.flagsMembers) throw new Error('flags: non-flags enum Dock should have null flagsMembers');
+      console.log(`e2e: flags-enum members verified — AnchorStyles [${fm.join(', ')}] zero=${anchor.flagsZero}, Dock (non-flags) has none`);
+    }
+
+    // ---- resx image resolution (BackgroundImage / PictureBox.Image via resources.GetObject) ----
+    // ImageForm assigns pictureBox1.Image and $this.BackgroundImage from its sibling ImageForm.resx (embedded
+    // 16x16 bitmaps). The interpreter must resolve resources.GetObject(...) through the safe ResxResolver: every
+    // statement (incl. the two GetObject assignments + the `resources` decl) must be representable (none throw),
+    // the form must render, and pictureBox1 must be present at its declared size. Pins the read-side of the
+    // image pipeline; the SAFETY of the reader (no BinaryFormatter, no file-refs) is covered by its allowlist.
+    {
+      const imageForm = path.join(repo, 'engine', 'samples', 'ImageForm.Designer.cs');
+      const desc = await describeDesigner(engine, imageForm);
+      if (desc.unrepresentable.length !== 0) {
+        throw new Error(`resx: ImageForm has unrepresentable statements (resources.GetObject not resolved?): ${desc.unrepresentable.join(' | ')}`);
+      }
+      if (desc.representable !== desc.totalStatements) {
+        throw new Error(`resx: ImageForm representable ${desc.representable}/${desc.totalStatements}`);
+      }
+      const rl = await renderWithLayout(engine, imageForm);
+      if (rl.png.length < 200) throw new Error('resx: ImageForm render is blank/too small');
+      const pic = rl.controls.find((c) => c.id === 'pictureBox1');
+      if (!pic) throw new Error('resx: pictureBox1 missing from layout');
+      if (pic.width !== 64 || pic.height !== 64) throw new Error(`resx: pictureBox1 size ${pic.width}x${pic.height} (expected 64x64)`);
+      // Slice 2 (describe + preview): the image prop is flagged isImage and carries a valid PNG thumbnail.
+      const pcComp = await describeComponent(engine, imageForm, 'pictureBox1');
+      const imgP = pcComp?.properties?.find((p) => p.name === 'Image');
+      if (!imgP?.isImage) throw new Error('resx: pictureBox1.Image should be flagged isImage');
+      if (!imgP.imagePreview || !isPng(Buffer.from(imgP.imagePreview, 'base64'))) throw new Error('resx: pictureBox1.Image has no valid preview thumbnail');
+      console.log(`e2e: resx image resolution verified — ImageForm ${desc.representable}/${desc.totalStatements} representable, rendered ${rl.png.length}B, pictureBox1 ${pic.width}x${pic.height}, preview ${imgP.imagePreview.length}B base64`);
+    }
+
+    // ---- resx image WRITE pipeline (Import… + (none)) ----
+    // SetImageResource embeds a chosen image into the form's sibling .resx and writes the resources.GetObject
+    // assignment (ensuring the resources local). The round-trip must then RENDER the image and the preview must
+    // read it back; ResetProperty clears it. Also pins the write-side SAFETY: a non-allowlisted property type
+    // and non-image bytes are both refused. The .resx is created when absent and appended-to when present.
+    {
+      const BLUE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAdSURBVDhPY1BIOPCfEsyALkAqHjVg1IBRAwaLAQDB4j8ffOS2lgAAAABJRU5ErkJggg==';
+      const base = path.join(os.tmpdir(), `wfd-e2e-imgwrite-${process.pid}`);
+      const designerTmp = base + '.Designer.cs';
+      const resxTmp = base + '.resx';
+      const src = [
+        'namespace SampleApp {',
+        '    partial class E2eImageForm {',
+        '        private void InitializeComponent() {',
+        '            this.pictureBox1 = new System.Windows.Forms.PictureBox();',
+        '            this.SuspendLayout();',
+        '            this.pictureBox1.Location = new System.Drawing.Point(20, 20);',
+        '            this.pictureBox1.Name = "pictureBox1";',
+        '            this.pictureBox1.Size = new System.Drawing.Size(48, 48);',
+        '            this.pictureBox1.TabIndex = 0;',
+        '            this.ClientSize = new System.Drawing.Size(200, 150);',
+        '            this.Controls.Add(this.pictureBox1);',
+        '            this.Name = "E2eImageForm";',
+        '            this.ResumeLayout(false);',
+        '        }',
+        '        private System.Windows.Forms.PictureBox pictureBox1;',
+        '    }',
+        '}',
+      ].join('\n');
+      fs.writeFileSync(designerTmp, src, 'utf8');
+      try {
+        // (a) child image prop pictureBox1.Image — .resx CREATED (resxText null), assignment + resources local INSERTED
+        const w1 = await setImageResource(engine, designerTmp, 'pictureBox1', 'Image', 'System.Drawing.Image', BLUE_PNG, null, src);
+        if (!w1.safe || w1.designerText === null || w1.resxText === null) throw new Error(`resx-write: pictureBox1.Image rejected: ${w1.reason}`);
+        if (w1.resxKey !== 'pictureBox1.Image') throw new Error(`resx-write: wrong child key ${w1.resxKey}`);
+        if (!/resources\.GetObject\("pictureBox1\.Image"\)/.test(w1.designerText)) throw new Error('resx-write: GetObject assignment missing from designer text');
+        if (!/ComponentResourceManager\s+resources\s*=/.test(w1.designerText)) throw new Error('resx-write: resources local not inserted');
+        if (!w1.resxText.includes('name="pictureBox1.Image"') || !w1.resxText.includes(BLUE_PNG)) throw new Error('resx-write: resx missing the entry/payload');
+
+        // (b) form image prop this.BackgroundImage — .resx now EXISTS (pass w1.resxText); key "$this.BackgroundImage"
+        const w2 = await setImageResource(engine, designerTmp, 'this', 'BackgroundImage', 'System.Drawing.Image', BLUE_PNG, w1.resxText, w1.designerText);
+        if (!w2.safe || w2.designerText === null || w2.resxText === null) throw new Error(`resx-write: BackgroundImage rejected: ${w2.reason}`);
+        if (w2.resxKey !== '$this.BackgroundImage') throw new Error(`resx-write: wrong form key ${w2.resxKey}`);
+        if ((w2.designerText.match(/ComponentResourceManager\s+resources\s*=/g) || []).length !== 1) throw new Error('resx-write: resources local duplicated on the 2nd import');
+        if (!w2.resxText.includes('name="$this.BackgroundImage"') || !w2.resxText.includes('name="pictureBox1.Image"')) throw new Error('resx-write: 2nd upsert dropped the 1st entry');
+
+        // write BOTH files → prove the round-trip RENDERS the images and the preview reads them back
+        fs.writeFileSync(designerTmp, w2.designerText, 'utf8');
+        fs.writeFileSync(resxTmp, w2.resxText, 'utf8');
+        const desc2 = await describeDesigner(engine, designerTmp);
+        if (desc2.unrepresentable.length !== 0) throw new Error(`resx-write: round-trip has unrepresentable statements: ${desc2.unrepresentable.join(' | ')}`);
+        const rl2 = await renderWithLayout(engine, designerTmp);
+        if (rl2.png.length < 200) throw new Error('resx-write: round-trip render is blank/too small');
+        const pcAfter = await describeComponent(engine, designerTmp, 'pictureBox1');
+        const imgAfter = pcAfter?.properties?.find((p) => p.name === 'Image');
+        if (!imgAfter?.isImage) throw new Error('resx-write: pictureBox1.Image not flagged isImage after write');
+        if (!imgAfter.imagePreview || !isPng(Buffer.from(imgAfter.imagePreview, 'base64'))) throw new Error('resx-write: no valid preview after write (round-trip read failed)');
+
+        // (c) Clear ((none)) via ResetProperty — the assignment is removed
+        const cleared = await resetProperty(engine, designerTmp, 'pictureBox1', 'Image', w2.designerText);
+        if (!cleared.safe || cleared.text == null) throw new Error(`resx-write: clear failed: ${cleared.reason}`);
+        if (/resources\.GetObject\("pictureBox1\.Image"\)/.test(cleared.text)) throw new Error('resx-write: clear did not remove the assignment');
+
+        // (d) SECURITY: a non-allowlisted property type is refused
+        const badType = await setImageResource(engine, designerTmp, 'pictureBox1', 'Tag', 'System.Object', BLUE_PNG, w2.resxText, w2.designerText);
+        if (badType.safe) throw new Error('resx-write: a non-image property type must be refused');
+        // (e) SECURITY: non-image bytes are refused
+        const notImg = Buffer.from('this is definitely not an image file, just plain text').toString('base64');
+        const badBytes = await setImageResource(engine, designerTmp, 'pictureBox1', 'Image', 'System.Drawing.Image', notImg, w2.resxText, w2.designerText);
+        if (badBytes.safe) throw new Error('resx-write: non-image bytes must be refused');
+
+        // (f) SECURITY: a pixel bomb (tiny file declaring 19999x19999 = 400M px) is refused by the pixel/dimension
+        // bound from a header-only decode — never materializes the ~1.6 GB raster.
+        const bomb = pngWithDims(19999, 19999).toString('base64');
+        const bombRes = await setImageResource(engine, designerTmp, 'pictureBox1', 'Image', 'System.Drawing.Image', bomb, w2.resxText, w2.designerText);
+        if (bombRes.safe) throw new Error('resx-write: a pixel-bomb image must be refused');
+        if (!/dimension/i.test(bombRes.reason)) throw new Error(`resx-write: pixel bomb refused for the wrong reason: ${bombRes.reason}`);
+
+        // (g) ANCHOR: a component whose only InitializeComponent statement is its `new` line still finds an
+        // insert anchor (its own creation) — imports on a freshly-added tray component don't dead-end.
+        const bareSrc = [
+          'namespace S { partial class Bare {',
+          '  private void InitializeComponent() {',
+          '    this.pb = new System.Windows.Forms.PictureBox();',
+          '    this.Controls.Add(this.pb); this.Name = "Bare"; }',
+          '  private System.Windows.Forms.PictureBox pb; } }',
+        ].join('\n');
+        const bareRes = await setImageResource(engine, designerTmp, 'pb', 'Image', 'System.Drawing.Image', BLUE_PNG, null, bareSrc);
+        if (!bareRes.safe || bareRes.mode !== 'Insert') throw new Error(`resx-write: a creation-only component should Insert, got ${bareRes.mode}: ${bareRes.reason}`);
+
+        // (h) FIDELITY: upserting into a resx that already holds a multi-line (LF) string and a whitespace-only
+        // value preserves both verbatim (no LF->CRLF churn, no whitespace collapse).
+        const richResx = '<?xml version="1.0" encoding="utf-8"?>\n<root>\n  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>\n  <data name="multi" xml:space="preserve"><value>a\nb\nc</value></data>\n  <data name="spacer"><value>   </value></data>\n</root>\n';
+        const fid = await setImageResource(engine, designerTmp, 'pictureBox1', 'Image', 'System.Drawing.Image', BLUE_PNG, richResx, w2.designerText);
+        if (!fid.safe || fid.resxText === null) throw new Error(`resx-write: fidelity upsert rejected: ${fid.reason}`);
+        const mMatch = /<data name="multi"[^>]*>\s*<value>([\s\S]*?)<\/value>/.exec(fid.resxText);
+        if (!mMatch || mMatch[1] !== 'a\nb\nc') throw new Error(`resx-write: multi-line LF value mangled: ${JSON.stringify(mMatch && mMatch[1])}`);
+        const sMatch = /<data name="spacer"[^>]*>\s*<value>([\s\S]*?)<\/value>/.exec(fid.resxText);
+        if (!sMatch || sMatch[1] !== '   ') throw new Error(`resx-write: whitespace-only value not preserved: ${JSON.stringify(sMatch && sMatch[1])}`);
+
+        console.log(`e2e: resx image WRITE pipeline verified — SetImageResource embeds pictureBox1.Image + $this.BackgroundImage (single resources local, .resx created then appended), round-trip renders ${rl2.png.length}B + preview reads back, ResetProperty clears; SECURITY: non-image type/bytes + pixel-bomb refused, creation-only anchor works, LF/whitespace resx fidelity preserved`);
+      } finally {
+        for (const f of [designerTmp, resxTmp]) { try { fs.unlinkSync(f); } catch { /* ignore */ } }
+      }
     }
 
     // ---- explicit control-assembly override (RPC asm fallback) ----
@@ -453,9 +725,212 @@ async function main(): Promise<void> {
       }
       if (!(btn.x > lbl.x)) throw new Error(`TLP: cellButton (col 1) must be right of cellLabel (col 0): btn.x=${btn.x} lbl.x=${lbl.x}`);
       if (!(txt.y > lbl.y)) throw new Error(`TLP: cellText (row 1) must be below cellLabel (row 0): txt.y=${txt.y} lbl.y=${lbl.y}`);
-      console.log(`e2e: TableLayoutPanel cells verified — 3-arg Controls.Add honored (cellButton right of cellLabel x ${btn.x}>${lbl.x}, cellText below y ${txt.y}>${lbl.y})`);
+      // ColumnStyles/RowStyles applied (slice c): col0 = ColumnStyle(Percent, 25) and row0 = RowStyle(Absolute, 40),
+      // so the col0/col1 boundary (cellButton.x) sits well left of center and the row0/row1 boundary (cellText.y)
+      // well above the middle — both ≈25-27%, not the ≈50% they'd be if the styles were dropped (equal-sized cells).
+      const tlp = tl.controls.find((c) => c.id === 'tableLayoutPanel1');
+      if (!tlp) throw new Error('TLP: tableLayoutPanel1 missing from layout');
+      const colFrac = (btn.x - tlp.x) / tlp.width;
+      const rowFrac = (txt.y - tlp.y) / tlp.height;
+      if (!(colFrac < 0.4)) throw new Error(`TLP: ColumnStyle(Percent,25) not applied — col0/col1 boundary at ${(colFrac * 100).toFixed(0)}% (equal cells = 50%)`);
+      if (!(rowFrac < 0.4)) throw new Error(`TLP: RowStyle(Absolute,40) not applied — row0/row1 boundary at ${(rowFrac * 100).toFixed(0)}% (equal cells = 50%)`);
+      console.log(`e2e: TableLayoutPanel cells verified — 3-arg Controls.Add honored (btn right of lbl x ${btn.x}>${lbl.x}, txt below lbl y ${txt.y}>${lbl.y}); ColumnStyle/RowStyle applied (col0 ${(colFrac * 100).toFixed(0)}%, row0 ${(rowFrac * 100).toFixed(0)}% — not equal 50%)`);
+
+      // grid-cell edit (slice b): the Column/Row extenders surface for a TLP child, and SetTableCell relocates it.
+      const cellInfo = await describeComponent(engine, tlpForm, 'cellLabel');
+      const colProp = cellInfo?.properties.find((p) => p.name === 'Column');
+      const rowProp = cellInfo?.properties.find((p) => p.name === 'Row');
+      if (!colProp || !rowProp) throw new Error('TLP: Column/Row extenders not surfaced for the cell child');
+      if (!colProp.tableCell || !rowProp.tableCell) throw new Error('TLP: Column/Row must be flagged tableCell (edit-routing signal)');
+      if (colProp.value !== '0' || rowProp.value !== '0') throw new Error(`TLP: cellLabel should start at col 0/row 0, got col=${colProp.value} row=${rowProp.value}`);
+      const diskTlp = fs.readFileSync(tlpForm, 'utf8');
+      // full move: cellLabel (0,0) → the empty bottom-right cell (1,1) — must shift right (col 1) AND down (row 1).
+      const e1 = await setTableCell(engine, tlpForm, 'cellLabel', 1, 1, diskTlp);
+      if (!e1.safe || e1.text === null) throw new Error('SetTableCell(cellLabel, 1, 1) rejected: ' + e1.reason);
+      if (!e1.text.includes('this.cellLabel, 1, 1')) throw new Error('SetTableCell did not rewrite the cell args to (1, 1)');
+      const ml = await describeLayout(engine, tlpForm, undefined, e1.text);
+      const lbl2 = ml.controls.find((c) => c.id === 'cellLabel');
+      if (!lbl2) throw new Error('TLP: cellLabel missing after cell move');
+      if (!(lbl2.x > lbl.x + 40 && lbl2.y > lbl.y + 20)) throw new Error(`TLP: cellLabel should move to col1/row1: (${lbl.x},${lbl.y}) → (${lbl2.x},${lbl2.y})`);
+      // partial edit (row = null keeps the existing row): cellText (0,1) → column 1, still row 1.
+      const e2 = await setTableCell(engine, tlpForm, 'cellText', 1, null, diskTlp);
+      if (!e2.safe || e2.text === null) throw new Error('SetTableCell(cellText, col=1, keep row) rejected: ' + e2.reason);
+      if (!e2.text.includes('this.cellText, 1, 1')) throw new Error('SetTableCell partial (col-only) must keep the existing row → expected "this.cellText, 1, 1"');
+      // §6.5 gate: reject a negative cell, and reject an unknown child (no matching 3-arg Add)
+      if ((await setTableCell(engine, tlpForm, 'cellLabel', -1, null, diskTlp)).safe) throw new Error('SetTableCell must reject a negative column');
+      if ((await setTableCell(engine, tlpForm, 'noSuchChild', 1, null, diskTlp)).safe) throw new Error('SetTableCell must reject an unknown child');
+      console.log(`e2e: TableLayoutPanel grid-cell edit verified — Column/Row surfaced (tableCell); SetTableCell moved cellLabel (0,0)→(1,1) [(${lbl.x},${lbl.y})→(${lbl2.x},${lbl2.y})], partial col-only keeps row, negative & unknown rejected`);
+
+      // §6.5 column/row SIZE-STYLE edit: read the 2 col + 2 row styles, then rewrite one style's args.
+      const styles = await readTableStyles(engine, tlpForm, 'tableLayoutPanel1');
+      if (!styles.found || styles.styles.length !== 4) throw new Error('TLP styles: expected 4 (2 col + 2 row), got ' + styles.styles.length);
+      const sc0 = styles.styles.find((s) => s.axis === 'Column' && s.index === 0);
+      const sr0 = styles.styles.find((s) => s.axis === 'Row' && s.index === 0);
+      if (!sc0 || sc0.sizeType !== 'Percent' || Math.round(sc0.value) !== 25) throw new Error(`TLP styles: col0 should be Percent/25, got ${sc0?.sizeType}/${sc0?.value}`);
+      if (!sr0 || sr0.sizeType !== 'Absolute' || Math.round(sr0.value) !== 40) throw new Error(`TLP styles: row0 should be Absolute/40, got ${sr0?.sizeType}/${sr0?.value}`);
+      const diskTlp2 = fs.readFileSync(tlpForm, 'utf8');
+      // edit col0 value 25 → 60 (keep Percent); only that ctor's args change, sibling col1 (75F) untouched.
+      const st1 = await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 0, null, 60, diskTlp2);
+      if (!st1.safe || st1.text == null) throw new Error('SetTableStyle(col0 → 60%) rejected: ' + st1.reason);
+      if (!/ColumnStyle\(System\.Windows\.Forms\.SizeType\.Percent,\s*60F\)/.test(st1.text)) throw new Error('SetTableStyle did not rewrite col0 to (Percent, 60F)');
+      if (!st1.text.includes('75F')) throw new Error('SetTableStyle over-touched sibling column style (75F gone)');
+      const reread = await readTableStyles(engine, tlpForm, 'tableLayoutPanel1', st1.text);
+      const nc0 = reread.styles.find((s) => s.axis === 'Column' && s.index === 0);
+      if (!nc0 || Math.round(nc0.value) !== 60) throw new Error('SetTableStyle: re-read col0 not 60');
+      // the edited buffer still interprets: col0 now 60/(60+75) ≈ 44% → the col boundary shifts right of the prior ~26%.
+      const styLay = await describeLayout(engine, tlpForm, undefined, st1.text);
+      const sBtn = styLay.controls.find((c) => c.id === 'cellButton');
+      const sTlp = styLay.controls.find((c) => c.id === 'tableLayoutPanel1');
+      if (sBtn && sTlp) {
+        const frac = (sBtn.x - sTlp.x) / sTlp.width;
+        if (!(frac > 0.35)) throw new Error(`SetTableStyle: col0→60% should push the col boundary right (~44%), got ${(frac * 100).toFixed(0)}%`);
+      }
+      // change a Row style's TYPE Percent→AutoSize (drops the value arg → 1-arg ctor).
+      const st2 = await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Row', 1, 'AutoSize', null, diskTlp2);
+      if (!st2.safe || st2.text == null) throw new Error('SetTableStyle(row1 → AutoSize) rejected: ' + st2.reason);
+      if (!/RowStyle\(System\.Windows\.Forms\.SizeType\.AutoSize\)/.test(st2.text)) throw new Error('SetTableStyle did not rewrite row1 to AutoSize (1-arg)');
+      // the 1-arg AutoSize ctor still interprets (the engine builds the TLP from the edited buffer without error).
+      const st2Lay = await describeLayout(engine, tlpForm, undefined, st2.text);
+      if (!st2Lay.controls.find((c) => c.id === 'tableLayoutPanel1')) throw new Error('SetTableStyle: AutoSize-edited buffer failed to interpret');
+      // no-op: re-applying a style's CURRENT value is a safe no-op (byte-identical), like SetTableCell/ResetProperty.
+      const noop = await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 0, 'Percent', 25, diskTlp2);
+      if (!noop.safe || noop.text == null) throw new Error('SetTableStyle no-op (set current value) should be safe, got: ' + noop.reason);
+      if (noop.text !== diskTlp2) throw new Error('SetTableStyle no-op should return byte-identical text');
+      // §6.5 gate: out-of-range index, bogus size type, negative value — all rejected.
+      if ((await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 9, null, 10, diskTlp2)).safe) throw new Error('SetTableStyle must reject an out-of-range index');
+      if ((await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 0, 'Bogus', 10, diskTlp2)).safe) throw new Error('SetTableStyle must reject an invalid size type');
+      if ((await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 0, null, -5, diskTlp2)).safe) throw new Error('SetTableStyle must reject a negative value');
+      console.log('e2e: TableLayoutPanel style edit verified — 4 styles read (col0 Percent/25, row0 Absolute/40); col0→60% rewrites only that ctor (sibling 75F intact) and re-flows the boundary right; row1→AutoSize drops the value arg; out-of-range/bad-type/negative rejected');
     } else {
       console.log('e2e: TableLayoutPanel cells SKIPPED — engine/samples/TableLayoutForm.Designer.cs missing');
+    }
+
+    // ---- Reset property (VS "Reset" / Dock↔Anchor mutual-exclusivity) ----
+    // ResetProperty deletes a property's assignment(s) so it reverts to default. Nothing is interpolated — only
+    // whole target-statement lines are removed, §6.5-gated (OnlyPropertyReset): ONLY the (comp, prop) assignments
+    // may go, everything else must be byte-identical. panel1 carries a MULTI-LINE Anchor (cast + bitwise-or split
+    // across 3 lines) among Location/Size/Name/TabIndex/Padding; btn2 carries both Dock and Anchor (the conjugate).
+    const adForm = path.join(repo, 'engine', 'samples', 'AnchorDockForm.Designer.cs');
+    if (fs.existsSync(adForm)) {
+      const adDisk = fs.readFileSync(adForm, 'utf8');
+      // (1) remove the multi-line panel1.Anchor; siblings and other controls stay intact.
+      const r1 = await resetProperty(engine, adForm, 'panel1', 'Anchor', adDisk);
+      if (!r1.safe || r1.text == null) throw new Error('ResetProperty(panel1, Anchor) rejected: ' + r1.reason);
+      if (/this\.panel1\.Anchor\s*=/.test(r1.text)) throw new Error('ResetProperty must remove the panel1.Anchor assignment (all 3 lines)');
+      if (!r1.text.includes('this.panel1.Padding') || !r1.text.includes('this.panel1.Size = new System.Drawing.Size(200, 100)')) {
+        throw new Error('ResetProperty removed a NON-target panel1 statement (over-deleted)');
+      }
+      if (!/this\.btn2\.Anchor\s*=/.test(r1.text) || !/this\.btn2\.Dock\s*=/.test(r1.text)) throw new Error('ResetProperty must not touch other controls');
+      // the buffer still parses + interprets, and Anchor is now default (no longer source-explicit)
+      const desc = await describeComponent(engine, adForm, 'panel1', undefined, r1.text);
+      const anchorP = desc?.properties.find((p) => p.name === 'Anchor');
+      if (anchorP && anchorP.sourceExplicit) throw new Error('panel1.Anchor should not be source-explicit after reset');
+      // (2) conjugate proof: resetting btn2.Dock removes ONLY the Dock line, leaving btn2.Anchor.
+      const r2 = await resetProperty(engine, adForm, 'btn2', 'Dock', adDisk);
+      if (!r2.safe || r2.text == null) throw new Error('ResetProperty(btn2, Dock) rejected: ' + r2.reason);
+      if (/this\.btn2\.Dock\s*=/.test(r2.text)) throw new Error('ResetProperty must remove the btn2.Dock assignment');
+      if (!/this\.btn2\.Anchor\s*=/.test(r2.text)) throw new Error('ResetProperty(Dock) must leave btn2.Anchor intact (conjugate)');
+      // (3) no-op: resetting an already-default property is safe with mode "Noop" and no text (C# null → TS undefined).
+      const r3 = await resetProperty(engine, adForm, 'panel1', 'Anchor', r1.text);
+      if (!r3.safe) throw new Error('ResetProperty of an already-default property must be a safe no-op');
+      if (r3.text != null || r3.mode !== 'Noop') throw new Error('ResetProperty no-op must return no text (mode Noop), got mode=' + r3.mode);
+      const r4 = await resetProperty(engine, adForm, 'panel1', 'Nonexistent', adDisk);
+      if (!r4.safe || r4.text != null) throw new Error('ResetProperty of an unset property must be a safe no-op');
+      // (4) reject an invalid component identifier (guards against a crafted id reaching the gate).
+      if ((await resetProperty(engine, adForm, 'bad id!', 'Anchor', adDisk)).safe) throw new Error('ResetProperty must reject an invalid component id');
+      // (5) same-line DUPLICATE targets (hand-edited): both assignments share one physical line → identical
+      //     whole-line span. The merge must delete that line EXACTLY ONCE (not twice) so following trivia — the
+      //     KEEP comment — survives. (Adversarial review found the un-merged loop over-deleted the comment.)
+      const dupBuf = [
+        'namespace S { partial class F {',
+        '    private System.Windows.Forms.Panel p;',
+        '    private void InitializeComponent() {',
+        '        this.p = new System.Windows.Forms.Panel();',
+        '        this.p.Dock = System.Windows.Forms.DockStyle.Right; this.p.Dock = System.Windows.Forms.DockStyle.Left;',
+        '        // KEEP THIS COMMENT LINE — long enough to be over-deleted by the stale-offset bug',
+        '        this.p.Name = "p";',
+        '        this.Controls.Add(this.p);',
+        '    }',
+        '} }',
+        '',
+      ].join('\n');
+      const rDup = await resetProperty(engine, adForm, 'p', 'Dock', dupBuf);
+      if (!rDup.safe || rDup.text == null) throw new Error('ResetProperty of same-line duplicate targets should still be safe: ' + rDup.reason);
+      if (/this\.p\.Dock\s*=/.test(rDup.text)) throw new Error('ResetProperty must remove BOTH same-line Dock assignments');
+      if (!rDup.text.includes('// KEEP THIS COMMENT LINE')) throw new Error('ResetProperty over-deleted the following comment (stale-offset bug not fixed)');
+      if (!/this\.p\.Name\s*=\s*"p"/.test(rDup.text)) throw new Error('ResetProperty over-deleted the following statement');
+      console.log('e2e: ResetProperty verified — panel1.Anchor (multi-line) removed with siblings + other controls intact; btn2.Dock reset leaves Anchor (conjugate); same-line duplicate removed once (following comment survives); no-op & invalid-id handled');
+    } else {
+      console.log('e2e: ResetProperty SKIPPED — engine/samples/AnchorDockForm.Designer.cs missing');
+    }
+
+    // ---- SplitContainer cell placement (slice e) ----
+    // Children are added via a sub-container PROPERTY: splitContainer1.Panel1.Controls.Add(child). The interpreter
+    // must walk the intermediate "Panel1"/"Panel2" segment and parent into the SplitterPanel (not the container,
+    // which rejects a direct Controls.Add). The bug left both children piled at the form's client origin. Assert
+    // they land in opposite panels and that SplitterDistance=120 took effect (boundary ~120, not the ~50% default).
+    const splitForm = path.join(repo, 'engine', 'samples', 'SplitterForm.Designer.cs');
+    if (fs.existsSync(splitForm)) {
+      const sl = await describeLayout(engine, splitForm);
+      const sc = sl.controls.find((c) => c.id === 'splitContainer1');
+      const lb = sl.controls.find((c) => c.id === 'leftButton');
+      const rl = sl.controls.find((c) => c.id === 'rightLabel');
+      if (!sc || !lb || !rl) throw new Error('SplitContainer: controls missing from layout (Panel1/Panel2 Controls.Add not parented?)');
+      if (!(rl.x - lb.x > 100)) throw new Error(`SplitContainer: children must sit in opposite panels (well apart), got lb.x=${lb.x} rl.x=${rl.x} (bug piles both at the form origin)`);
+      if (!(lb.x - sc.x < 60)) throw new Error(`SplitContainer: leftButton should be near Panel1 left: lb.x=${lb.x} sc.x=${sc.x}`);
+      if (!(rl.x - sc.x >= 120 && rl.x - sc.x < 170)) throw new Error(`SplitContainer: rightLabel should sit just past SplitterDistance=120, not the ~50% (≈198) default: rl.x-sc.x=${rl.x - sc.x}`);
+      console.log(`e2e: SplitContainer verified — leftButton→Panel1 (x ${lb.x}), rightLabel→Panel2 (x ${rl.x}); SplitterDistance=120 applied (panel boundary ≈${rl.x - sc.x}px from container, not ~50%)`);
+    } else {
+      console.log('e2e: SplitContainer SKIPPED — engine/samples/SplitterForm.Designer.cs missing');
+    }
+
+    // ---- FlowLayoutPanel reorder (slice d) ----
+    // A FlowLayoutPanel positions children by the order of their Controls.Add — exactly what MoveZOrder (gate
+    // OnlyReordered) relocates. So "reorder a flow child" reuses the z-order path: Bring to Front moves a child's
+    // Controls.Add first → it now flows first (leftmost). Verify the flow follows Add order and that MoveZOrder
+    // (on a NON-root parent's child) re-flows it.
+    const flowForm = path.join(repo, 'engine', 'samples', 'FlowForm.Designer.cs');
+    if (fs.existsSync(flowForm)) {
+      const diskFlow = fs.readFileSync(flowForm, 'utf8');
+      const fb = await describeLayout(engine, flowForm);
+      const a0 = fb.controls.find((c) => c.id === 'btnA');
+      const c0 = fb.controls.find((c) => c.id === 'btnC');
+      if (!a0 || !c0) throw new Error('Flow: btnA/btnC missing from layout');
+      if (!(a0.x < c0.x)) throw new Error(`Flow: initial flow order should be A left of C: a=${a0.x} c=${c0.x}`);
+      const moved = await moveZOrder(engine, flowForm, 'btnC', true, diskFlow);
+      if (!moved.safe || moved.newText === null) throw new Error('Flow: MoveZOrder(btnC, front) rejected — a flow child (non-root parent) must reorder: ' + moved.reason);
+      const fa = await describeLayout(engine, flowForm, undefined, moved.newText);
+      const a1 = fa.controls.find((c) => c.id === 'btnA');
+      const c1 = fa.controls.find((c) => c.id === 'btnC');
+      if (!a1 || !c1) throw new Error('Flow: controls missing after reorder');
+      if (!(c1.x < a1.x)) throw new Error(`Flow: after Bring-to-Front, btnC must flow before btnA: c=${c1.x} a=${a1.x}`);
+      console.log(`e2e: FlowLayoutPanel reorder verified — flow follows Add order (A@${a0.x}<C@${c0.x}); MoveZOrder(front) re-flows btnC first (C@${c1.x}<A@${a1.x})`);
+    } else {
+      console.log('e2e: FlowLayoutPanel reorder SKIPPED — engine/samples/FlowForm.Designer.cs missing');
+    }
+
+    // ---- DataGridView + BindingSource resilience (§11 fragile fixtures golden) ----
+    // DataGridView (Columns.AddRange + ISupportInitialize BeginInit/EndInit) and a tray BindingSource are
+    // "fragile": full normalize-save can't round-trip them (BinaryFormatter/CodeDom limits) → safe=false. But the
+    // INTERACTIVE path must work: the form renders, both columns + the binding source describe, the BindingSource
+    // sits in the component tray, and a targeted property edit succeeds (the resilient path that skips full serialize).
+    const gridForm = path.join(repo, 'engine', 'samples', 'GridForm.Designer.cs');
+    if (fs.existsSync(gridForm)) {
+      const gl = await renderWithLayout(engine, gridForm);
+      if (!isPng(gl.png)) throw new Error('§11 GridForm did not render');
+      for (const n of ['dataGridView1', 'nameColumn', 'valueColumn', 'bindingSource1']) {
+        if (!(await describeComponent(engine, gridForm, n))) throw new Error('§11 GridForm: component dropped from describe: ' + n);
+      }
+      const glay = await describeLayout(engine, gridForm);
+      const gtray = (glay as unknown as { tray?: Array<{ id: string }> }).tray || [];
+      if (!gtray.some((t) => t.id === 'bindingSource1')) throw new Error('§11 GridForm: bindingSource1 should be in the component tray, not the visual layout');
+      const gdisk = fs.readFileSync(gridForm, 'utf8');
+      const ge = await setProperty(engine, gridForm, 'refreshButton', 'Text', '"Reload"', gdisk);
+      if (!ge.safe || ge.text === null) throw new Error('§11 GridForm: a targeted edit must work even on a fragile form: ' + ge.reason);
+      const gser = await serializeDesigner(engine, gridForm);
+      console.log(`e2e: §11 fragile fixtures verified — GridForm renders (${gl.png.length}B), DataGridView columns + tray BindingSource described, targeted edit works, full-serialize degrades (safe=${gser.safe})`);
+    } else {
+      console.log('e2e: §11 fragile fixtures SKIPPED — engine/samples/GridForm.Designer.cs missing');
     }
 
     // ---- ToolStrip / .NET-9 serialize limit (graceful read-only, not a crash) ----
@@ -597,7 +1072,17 @@ async function main(): Promise<void> {
       if (exLayout.controls.some((c) => c.id === 'toolTip1')) throw new Error('§7.3: a non-visual component must NOT be in the visual layout');
       const es = await serializeDesigner(engine, extenderForm);
       if (es.safe !== false) throw new Error('extender serialize should degrade to read-only on .NET 9 (BinaryFormatter)');
-      console.log(`e2e: extender providers verified — ToolTip/SetToolTip interpreted & rendered (${ep.length}B), in tray (§7.3), serialize degrades read-only`);
+      // §7.3 delete-tray: RemoveControl removes a NON-visual tray component (its field + ctor + SetToolTip wiring),
+      // and the control it provided a tooltip for (helpButton) survives — the engine side of "delete from the tray".
+      const exDisk = fs.readFileSync(extenderForm, 'utf8');
+      const rmTray = await removeControl(engine, extenderForm, 'toolTip1', exDisk);
+      if (!rmTray.safe || rmTray.newText == null) throw new Error('§7.3 delete-tray: RemoveControl(toolTip1) rejected: ' + rmTray.reason);
+      if (/\btoolTip1\b/.test(rmTray.newText)) throw new Error('§7.3 delete-tray: toolTip1 field/statements/wiring not fully removed');
+      if (!/\bhelpButton\b/.test(rmTray.newText)) throw new Error('§7.3 delete-tray: the provided-to control (helpButton) must survive');
+      const trayGone = await describeLayout(engine, extenderForm, undefined, rmTray.newText);
+      if (trayGone.tray.some((t) => t.id === 'toolTip1')) throw new Error('§7.3 delete-tray: toolTip1 still in tray after removal');
+      if (!trayGone.controls.some((c) => c.id === 'helpButton')) throw new Error('§7.3 delete-tray: helpButton missing after tray removal');
+      console.log(`e2e: extender providers verified — ToolTip/SetToolTip interpreted & rendered (${ep.length}B), in tray (§7.3), serialize degrades read-only; delete-tray removes toolTip1 (helpButton survives)`);
     } else {
       console.log('e2e: extender providers SKIPPED — engine/samples/ExtenderForm.Designer.cs missing');
     }
@@ -653,6 +1138,14 @@ async function main(): Promise<void> {
       }
       if (byName.get('Button')!.category !== 'Common Controls') throw new Error('Button miscategorized: ' + byName.get('Button')!.category);
       if (byName.get('TabControl')!.category !== 'Containers') throw new Error('TabControl miscategorized: ' + byName.get('TabControl')!.category);
+      // toolbox icons (§7.2): each framework control carries its own [ToolboxBitmap] as a base64 PNG, and the
+      // icons are control-specific (not one shared generic glyph) — assert presence + a valid PNG + distinctness.
+      const PNG_B64 = 'iVBORw0KGgo'; // base64 of the PNG magic bytes (\x89PNG\r\n)
+      for (const n of ['Button', 'Label', 'TextBox', 'TreeView']) {
+        const ic = byName.get(n)!.iconPng;
+        if (!ic || !ic.startsWith(PNG_B64)) throw new Error(`toolbox icon missing/!PNG for ${n}: ${ic ? ic.slice(0, 16) : '<none>'}`);
+      }
+      if (byName.get('Button')!.iconPng === byName.get('Label')!.iconPng) throw new Error('toolbox icons not control-specific (Button === Label)');
       // base/utility classes must NOT leak into the palette
       for (const bad of ['Control', 'ContainerControl', 'ScrollableControl', 'UserControl', 'Form']) {
         if (byName.has(bad)) throw new Error('listToolboxItems must not expose base/utility type ' + bad);
@@ -679,6 +1172,40 @@ async function main(): Promise<void> {
         throw new Error(`AddControl(SplitContainer): ${addSc.name} missing from layout — swallowed by the Container heuristic`);
       }
       console.log(`e2e: toolbox §7.2 auto-population verified — ${items.length} controls in ${new Set(items.map((i) => i.category)).size} categories; TreeView add+render (no explicit Size) & SplitContainer materializes (not Container-swallowed)`);
+    }
+
+    // ---- toolbox non-visual components/dialogs + AddComponent (§7.2, F5 #4) ----
+    {
+      const items = await listToolboxItems(engine);
+      const timer = items.find((i) => i.name === 'Timer');
+      const dlg = items.find((i) => i.name === 'OpenFileDialog');
+      if (!timer || !timer.isComponent || timer.category !== 'Components') throw new Error('toolbox: Timer should be a Components item flagged isComponent');
+      if (!dlg || !dlg.isComponent || dlg.category !== 'Dialogs') throw new Error('toolbox: OpenFileDialog should be a Dialogs item flagged isComponent');
+      // collection sub-items (ToolStrip items, DataGridView columns) must NOT leak into the palette
+      for (const bad of ['ToolStripButton', 'ToolStripMenuItem', 'DataGridViewTextBoxColumn']) {
+        if (items.some((i) => i.name === bad)) throw new Error('toolbox: collection sub-item leaked into the palette: ' + bad);
+      }
+      const diskSrc = fs.readFileSync(designer, 'utf8');
+      const addT = await addComponent(engine, designer, 'Timer', diskSrc);
+      if (!addT.safe || addT.newText === null) throw new Error('AddComponent(Timer) rejected: ' + addT.reason);
+      if (!/private System\.Windows\.Forms\.Timer \w+;/.test(addT.newText)) throw new Error('AddComponent did not add a Timer field');
+      if (!/this\.\w+ = new System\.Windows\.Forms\.Timer\((this\.components)?\);/.test(addT.newText)) throw new Error('AddComponent did not construct the Timer');
+      // the new component lands in the component tray (and the form still renders), NOT the visual layout
+      const lay = await describeLayout(engine, designer, undefined, addT.newText);
+      const tray = (lay as unknown as { tray?: Array<{ id: string; type: string }> }).tray || [];
+      if (!tray.some((t) => t.type.endsWith('Timer'))) throw new Error('AddComponent(Timer): the component must appear in the tray');
+      if (lay.controls.some((c) => c.type.endsWith('Timer'))) throw new Error('AddComponent(Timer): a non-visual component must NOT be in the visual layout');
+      // container fidelity: a form WITH an initialized `components` container sites the component in it (disposal)
+      const gridFormP = path.join(repo, 'engine', 'samples', 'GridForm.Designer.cs');
+      if (fs.existsSync(gridFormP)) {
+        const addG = await addComponent(engine, gridFormP, 'Timer', fs.readFileSync(gridFormP, 'utf8'));
+        if (!addG.safe || addG.newText === null) throw new Error('AddComponent(Timer) on GridForm rejected: ' + addG.reason);
+        if (!/new System\.Windows\.Forms\.Timer\(this\.components\);/.test(addG.newText)) throw new Error('AddComponent should site the component in the form\'s existing components container (disposal fidelity)');
+      }
+      // gate: reject an unknown type and a visual control (Button is not a tray component)
+      if ((await addComponent(engine, designer, 'NotAComponent', diskSrc)).safe) throw new Error('AddComponent must reject an unknown component');
+      if ((await addComponent(engine, designer, 'Button', diskSrc)).safe) throw new Error('AddComponent must reject a visual control (Button)');
+      console.log(`e2e: toolbox components/dialogs verified — Timer/OpenFileDialog are tray components (isComponent), sub-items excluded; AddComponent(Timer) → field + new Timer(), lands in tray not layout, unknown/control rejected`);
     }
 
     // ---- add control (toolbox) — engine AddControl: field decl + InitializeComponent statements ----
@@ -822,6 +1349,46 @@ async function main(): Promise<void> {
       const withAddRange = tinyForm('    this.Controls.AddRange(new System.Windows.Forms.Control[] { this.a });\n    this.Controls.Add(this.b);');
       if ((await moveZOrder(engine, designer, 'b', true, withAddRange)).safe) throw new Error('MoveZOrder must refuse a container that uses Controls.AddRange');
       console.log('e2e: z-order verified — front/back relocate the Controls.Add (front < first sibling, back > last); control set preserved; no-op at ends; refuse root; visual proof front≠back; refuse shared-line & AddRange containers');
+    }
+
+    // ---- §7.4 reparent: move a leaf control into a different container / back to the root ----
+    {
+      const rpDisk = fs.readFileSync(designer, 'utf8'); // SampleForm: okButton (root leaf), optionsGroup (container of optionA/optionB)
+      const rp1 = await reparentControl(engine, designer, 'okButton', 'optionsGroup', rpDisk);
+      if (!rp1.safe || rp1.newText == null) throw new Error('§7.4 reparent(okButton → optionsGroup) rejected: ' + rp1.reason);
+      if (!/this\.optionsGroup\.Controls\.Add\(this\.okButton\)/.test(rp1.newText)) throw new Error('reparent: okButton not re-parented into optionsGroup');
+      if (/this\.Controls\.Add\(this\.okButton\)/.test(rp1.newText)) throw new Error('reparent: the old root Controls.Add(okButton) must be gone');
+      const rpLay = await describeLayout(engine, designer, undefined, rp1.newText);
+      const okc = rpLay.controls.find((c) => c.id === 'okButton');
+      if (!okc || okc.parentId !== 'optionsGroup') throw new Error(`reparent: okButton.parentId should reflow to optionsGroup, got ${okc?.parentId}`);
+      // reverse the move (→ root) and confirm it reproduces the original file byte-for-byte (receiver-only edit).
+      const rp2 = await reparentControl(engine, designer, 'okButton', 'this', rp1.newText);
+      if (!rp2.safe || rp2.newText == null) throw new Error('§7.4 reparent(okButton → root) rejected: ' + rp2.reason);
+      if (rp2.newText !== rpDisk) throw new Error('reparent there-and-back should reproduce the original bytes');
+      // §6.5 gate refusals: the root, a self-parent, an unknown parent.
+      if ((await reparentControl(engine, designer, 'this', 'optionsGroup', rpDisk)).safe) throw new Error('reparent must refuse the root form');
+      if ((await reparentControl(engine, designer, 'okButton', 'okButton', rpDisk)).safe) throw new Error('reparent must refuse a self-parent');
+      if ((await reparentControl(engine, designer, 'okButton', 'noSuchParent', rpDisk)).safe) throw new Error('reparent must refuse an unknown parent');
+      // container-with-children (leaf-only): reparenting optionsGroup (holds optionA/optionB) even to the root is
+      // refused by the leaf check (root skips the target-type check, so this exercises leaf-only directly).
+      if ((await reparentControl(engine, designer, 'optionsGroup', 'this', rpDisk)).safe) throw new Error('reparent must refuse a container with children (leaf-only)');
+      // review fix — the target must be a container that accepts a DIRECT child: a leaf Control (CheckBox) is refused.
+      if ((await reparentControl(engine, designer, 'okButton', 'agreeCheck', rpDisk)).safe) throw new Error('reparent must refuse a non-container target (agreeCheck is a CheckBox)');
+      if (fs.readFileSync(designer, 'utf8') !== rpDisk) throw new Error('reparent must not touch disk (buffer path)');
+      // review fix (MED) — reparenting into a NON-Control tray field (ToolTip) is refused: it would emit
+      // non-compiling `toolTip1.Controls.Add(...)`.
+      const extForm = path.join(repo, 'engine', 'samples', 'ExtenderForm.Designer.cs');
+      if (fs.existsSync(extForm)) {
+        const extDisk2 = fs.readFileSync(extForm, 'utf8');
+        if ((await reparentControl(engine, extForm, 'helpButton', 'toolTip1', extDisk2)).safe) throw new Error('reparent must refuse a non-Control (tray component) target — would not compile');
+      }
+      // review fix (LOW) / cycle-safety — a TableLayoutPanel's 3-arg cell children still make it a container, so
+      // reparenting it (even to root) is refused by the robust leaf check.
+      if (fs.existsSync(tlpForm)) {
+        const tlpDisk2 = fs.readFileSync(tlpForm, 'utf8');
+        if ((await reparentControl(engine, tlpForm, 'tableLayoutPanel1', 'this', tlpDisk2)).safe) throw new Error('reparent must refuse a TableLayoutPanel with 3-arg cell children (leaf-only/cycle-safe)');
+      }
+      console.log('e2e: §7.4 reparent verified — okButton → optionsGroup (parentId reflows) and back to root (byte-identical); refuses root/self/unknown/container-with-children/non-container target/non-Control tray target/TLP-cells; disk untouched');
     }
 
     // ---- group move (multi-select): chain setProperty(Location) over several controls (applyGroupMove core) ----
