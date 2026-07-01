@@ -68,7 +68,8 @@ jobs:
           $required = @(
             'extension/engine/WinFormsDesigner.Engine.dll',
             'extension/engine/WinFormsDesigner.Engine.deps.json',
-            'extension/engine/WinFormsDesigner.Engine.runtimeconfig.json'
+            'extension/engine/WinFormsDesigner.Engine.runtimeconfig.json',
+            'extension/engine-net48/WinFormsDesigner.Engine.Net48.exe'
           )
           $missing = @()
           foreach ($r in $required) {
@@ -88,12 +89,39 @@ jobs:
           if-no-files-found: error
 
       # The publish/release steps only run for a real tag push (v*).
+
+      # Curated body = the matching version section from CHANGELOG.md (the single source of truth).
+      # gh then appends the auto-generated "What's Changed" / new contributors / full-changelog link.
+      - name: Extract release notes from CHANGELOG
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $changelog = Get-Content -Raw -Path CHANGELOG.md
+          # Section = "## [X.Y.Z] …" up to (but excluding) the next "## [" heading or end-of-file.
+          $pattern = "(?ms)^##\s*\[$([regex]::Escape($version))\][^\r\n]*\r?\n(.*?)(?=^##\s*\[|\z)"
+          $m = [regex]::Match($changelog, $pattern)
+          if ($m.Success -and $m.Groups[1].Value.Trim()) {
+            $body = $m.Groups[1].Value.Trim()
+          } else {
+            $body = "See the [changelog](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for details."
+            Write-Host "::warning::No CHANGELOG.md section found for $version — falling back to a changelog link."
+          }
+          $notesPath = Join-Path "${{ github.workspace }}" 'release-notes.md'
+          Set-Content -Path $notesPath -Value $body -Encoding utf8
+          Write-Host "----- release notes for $version -----"
+          Write-Host $body
+
       - name: Create GitHub Release
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         working-directory: extension
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" winforms-designer.vsix --title "${{ github.ref_name }}" --generate-notes
+        run: >
+          gh release create "${{ github.ref_name }}" winforms-designer.vsix
+          --title "${{ github.ref_name }}"
+          --notes-file "${{ github.workspace }}/release-notes.md"
+          --generate-notes
 
       - name: Publish to VS Code Marketplace
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')

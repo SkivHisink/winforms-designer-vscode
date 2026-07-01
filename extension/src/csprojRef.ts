@@ -85,6 +85,51 @@ export function projectReferencesAssembly(csprojText: string, csprojPath: string
   return false;
 }
 
+/** The project's <TargetFramework> (or first of <TargetFrameworks>), or null. e.g. "net48", "net9.0-windows". */
+export function projectTargetFramework(csprojText: string): string | null {
+  const single = /<TargetFramework>\s*([^<]+?)\s*<\/TargetFramework>/i.exec(csprojText);
+  if (single) return single[1].trim();
+  const multi = /<TargetFrameworks>\s*([^<]+?)\s*<\/TargetFrameworks>/i.exec(csprojText);
+  if (multi) return multi[1].split(';').map((s) => s.trim()).filter(Boolean)[0] ?? null;
+  return null;
+}
+
+/** True for a .NET Framework TFM (net4x / net35 / net20) — the projects the net48 engine renders. */
+export function isFrameworkTfm(tfm: string | null | undefined): boolean {
+  return !!tfm && /^net(2|3|4)\d?\d?$/i.test(tfm.trim());
+}
+
+/**
+ * Locate a project's build output (`<AssemblyName>.exe|dll`, freshest under bin/) — used for .NET Framework
+ * projects, whose output the net9 engine's resolver deliberately refuses (can't load net4x) and whose bin
+ * search only looks for `.dll`. This covers OutputType=Exe (net48 WinForms apps), so a Framework control
+ * source resolves for the net48 engine — and fixes the "Could not resolve build output" the user hit picking
+ * a net48 project. Returns undefined when nothing built yet.
+ */
+export function resolveFrameworkOutput(csprojPath: string): string | undefined {
+  let text: string;
+  try { text = fs.readFileSync(csprojPath, 'utf8'); } catch { return undefined; }
+  const asm = projectAssemblyName(text, csprojPath).toLowerCase();
+  const binDir = path.join(path.dirname(csprojPath), 'bin');
+  const hits: { p: string; m: number }[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(full, depth + 1); continue; }
+      const lower = e.name.toLowerCase();
+      if (lower === asm + '.exe' || lower === asm + '.dll') {
+        try { hits.push({ p: full, m: fs.statSync(full).mtimeMs }); } catch { /* ignore */ }
+      }
+    }
+  };
+  walk(binDir, 0);
+  hits.sort((a, b) => b.m - a.m); // freshest build wins (Debug vs Release)
+  return hits[0]?.p;
+}
+
 function xmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

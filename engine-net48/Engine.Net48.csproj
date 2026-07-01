@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Second engine host: renders .NET Framework + DevExpress(PGMUI) controls the net9 engine can't load.
+       Approach (proven by spike S5): instantiate the COMPILED control type on an STA thread and DrawToBitmap.
+       Isolation: the user's assembly graph loads in a child AppDomain (ShadowCopy + the app's own .config
+       binding redirects), so it can't clash with this host's StreamJsonRpc/Newtonsoft stack, and can be
+       unloaded/reloaded when the project is rebuilt. Same JSON-RPC/named-pipe contract as the net9 engine. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
+    <AssemblyName>WinFormsDesigner.Engine.Net48</AssemblyName>
+    <RootNamespace>WinFormsDesigner.Engine.Net48</RootNamespace>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StreamJsonRpc" Version="2.19.27" />
+    <!-- Roslyn parse (root type-name resolution today; interpret/edit reuse later). netstandard2.0 → net48 OK. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+
+</Project>

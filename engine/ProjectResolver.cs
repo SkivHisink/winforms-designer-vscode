@@ -409,8 +409,10 @@ namespace WinFormsDesigner.Engine
             {
                 return null;
             }
-            // freshest bin/**/<asmName>.dll
+            // freshest bin/**/<asmName>.{dll,exe} — .exe covers OutputType=Exe projects (WinForms apps), whose
+            // build output the .dll-only search used to miss (a cause of "could not resolve build output").
             return Directory.EnumerateFiles(bin, asmName + ".dll", SearchOption.AllDirectories)
+                .Concat(Directory.EnumerateFiles(bin, asmName + ".exe", SearchOption.AllDirectories))
                 .Select(p => new FileInfo(p))
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .Select(f => f.FullName)

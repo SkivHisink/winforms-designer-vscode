@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "Visualize and edit WinForms .Designer.cs forms live inside VS Code — a Visual Studio-style designer surface, property grid, toolbox and event wiring, powered by a .NET 9 rendering engine.",
   "publisher": "SkivHisink",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "preview": true,
   "license": "MIT",
   "author": {
@@ -184,9 +184,10 @@
     "typecheck": "tsc --noEmit",
     "e2e": "node dist/e2e.cjs",
     "bundle-engine": "dotnet publish ../engine -c Release -o engine",
+    "bundle-engine-net48": "dotnet publish ../engine-net48 -c Release -o engine-net48",
     "copy-license": "node -e \"require('fs').copyFileSync('../LICENSE','LICENSE')\"",
     "copy-changelog": "node -e \"require('fs').copyFileSync('../CHANGELOG.md','CHANGELOG.md')\"",
-    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run copy-license && npm run copy-changelog"
+    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run bundle-engine-net48 && npm run copy-license && npm run copy-changelog"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.45",

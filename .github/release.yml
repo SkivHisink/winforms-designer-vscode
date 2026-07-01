@@ -1,0 +1,36 @@
+# Configures the "What's Changed" section GitHub auto-generates for a release
+# (appended after the curated notes the Release workflow pulls from CHANGELOG.md).
+# Categories are matched by pull-request label, top to bottom; the first match wins.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - duplicate
+      - invalid
+      - wontfix
+    authors:
+      - dependabot
+      - github-actions
+  categories:
+    - title: ✨ Enhancements
+      labels:
+        - enhancement
+        - feature
+    - title: 🐛 Fixes
+      labels:
+        - bug
+        - fix
+        - regression
+    - title: 🧹 Code Health & Maintenance
+      labels:
+        - chore
+        - refactor
+        - performance
+        - test
+        - ci
+        - build
+        - documentation
+        - docs
+    - title: 🔄 Other Changes
+      labels:
+        - "*"

@@ -7,6 +7,15 @@ import {
   LayoutControl,
   ComponentDesc,
   renderWithLayout,
+  renderCompiledWithLayout,
+  describeCompiledComponent,
+  setCompiledPropertyLive,
+  applyCompiledEdits,
+  removeCompiledControls,
+  setCompiledZOrder,
+  addCompiledControl,
+  CompiledEdit,
+  RenderLayout,
   describeLayout,
   describeComponent,
   renderControl,
@@ -34,8 +43,28 @@ import {
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
 import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj } from './csprojRef';
 
-type EnsureEngine = () => Promise<EngineHandle>;
+export type EngineKind = 'net9' | 'net48';
+type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
 type AssemblyOverride = (file: string) => string | undefined;
+
+/** A .NET (Core/5+) build always emits `<name>.deps.json` (apps also `.runtimeconfig.json`) beside the
+ *  assembly; a .NET Framework build emits neither. That sidecar's presence cleanly says which engine can load
+ *  the control assembly: none → net48 (Framework/DevExpress compiled preview), else → net9. No assembly → net9. */
+function detectEngineKind(assemblyPath: string | undefined): EngineKind {
+  if (!assemblyPath) return 'net9';
+  const base = assemblyPath.replace(/\.(dll|exe)$/i, '');
+  try {
+    if (fs.existsSync(base + '.deps.json') || fs.existsSync(base + '.runtimeconfig.json')) return 'net9';
+  } catch { /* fall through to Framework */ }
+  return 'net48';
+}
+
+/** Canvas messages the net48 compiled preview doesn't support YET (drag/add/remove/z-order — later increments).
+ *  Property-grid edits ('edit') ARE supported: net9 splices the text, net48 mutates the live instance for the
+ *  picture. 'save' is allowed (it just flushes the committed .Designer.cs text). */
+const NET48_READONLY_BLOCKED = new Set<string>([
+  'cut', 'cutControls', 'paste',
+]);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
  *  diffs these against the current toolbox membership to add/remove/hide items. */
 type ChooseRow = { fqn: string; name: string; namespace?: string; assemblyName?: string; fromProject?: boolean; checked: boolean };
@@ -165,6 +194,9 @@ export class DesignerHub {
   }
   /** When a session closes: if it owned the panel, blank it (another focus will re-populate). */
   clearIfActive(s: DesignerSession): void { if (this.active === s) this.setActive(null); }
+  /** Re-fire the active-changed signal so the status bar re-reads the active session (e.g. after a render
+   *  determines the engine kind / compiled-preview badge). */
+  refreshStatus(): void { this._onActive.fire(); }
 
   toPanel(msg: unknown): void { void this.panel?.postMessage(msg); }
   /** From a session — forward to the panel only if it's the one currently mirrored. */
@@ -366,6 +398,9 @@ class DesignerSession {
   private controls: LayoutControl[] = [];
   private rootClient: { w: number; h: number } | null = null;
   private rootFrame: { w: number; h: number } | null = null;
+  /** Which engine renders THIS form — detected per render from the resolved control assembly's runtime
+   *  (net48 = .NET Framework/DevExpress compiled preview). Drives engine routing + edit gating + the badge. */
+  private engineKind: EngineKind = 'net9';
   private debounce?: ReturnType<typeof setTimeout>;
   private disposed = false;
   private gotReady = false;
@@ -465,6 +500,9 @@ class DesignerSession {
   /** The .Designer.cs this session renders (the key the control-source override is stored under). */
   get designerFilePath(): string | null { return this.designerFile; }
 
+  /** True when this form is rendered by the net48 engine — a read-only compiled preview. */
+  get isCompiledPreview(): boolean { return this.engineKind === 'net48'; }
+
   /** The control assembly currently in effect (explicit override, or null = engine auto-discovery). */
   get controlAssembly(): string | undefined { return this.asm(); }
 
@@ -497,7 +535,8 @@ class DesignerSession {
   async refreshToolbox(): Promise<void> {
     if (this.disposed || !this.designerFile) return;
     if (!this.toolboxItems) {
-      try { this.toolboxItems = await listToolboxItems(await this.ensureEngine(), this.designerFile, this.asm()); } catch { /* ignore */ }
+      const tAsm = this.engineKind === 'net48' ? undefined : this.asm(); // net48: framework-only toolbox
+      try { this.toolboxItems = await listToolboxItems(await this.ensureEngine(), this.designerFile, tAsm); } catch { /* ignore */ }
     }
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
     await this.refreshPalette();
@@ -590,6 +629,10 @@ class DesignerSession {
     sizeEdits?: Array<{ id: string; width: number; height: number }>;
   }): Promise<void> {
     try {
+      if (this.engineKind === 'net48' && NET48_READONLY_BLOCKED.has(m.type)) {
+        this.post({ type: 'status', message: 'Cut/Paste isn’t supported yet in the .NET Framework compiled preview.' });
+        return;
+      }
       if (m.type === 'ready') {
         this.gotReady = true;
         this.output.appendLine('[designer] webview ready: ' + this.designerFile);
@@ -811,27 +854,40 @@ class DesignerSession {
     this.output.appendLine(`[designer] render #${seq} starting: ${this.designerFile}`);
     this.post({ type: 'loading', message: 'Starting engine…' });
 
+    const asm = this.asm();
+    // Route by the control assembly's runtime: a Framework/DevExpress assembly (no .deps.json sidecar) renders
+    // on the net48 compiled-preview engine; everything else on the net9 engine.
+    const prevKind = this.engineKind;
+    this.engineKind = detectEngineKind(asm);
+    if (this.engineKind !== prevKind) DesignerHub.instance.refreshStatus();
+
     let eng: EngineHandle;
     try {
-      eng = await this.withTimeout(this.ensureEngine(), 12000, 'engine did not start (is the .NET SDK / dotnet on PATH?)');
+      eng = await this.withTimeout(this.ensureEngine(this.engineKind), 12000, 'engine did not start (is the .NET SDK / dotnet on PATH?)');
     } catch (err) {
       if (seq === this.renderSeq && !this.disposed) this.fail(err);
       return;
     }
     if (seq !== this.renderSeq || this.disposed) return;
-    if (!this.toolboxItems) { // auto-populated palette (§7.2 framework + project controls) → fetch once
-      try { this.toolboxItems = await listToolboxItems(eng, this.designerFile, this.asm()); } catch { /* ignore */ }
+    // Toolbox: net9 shows framework + project controls (needs the assembly); net48 shows framework-only (its
+    // assembly can't load in the net9 enumerator, and only framework controls can be dropped onto the preview).
+    if (!this.toolboxItems) {
+      const toolboxAsm = this.engineKind === 'net48' ? undefined : asm;
+      try { this.toolboxItems = await listToolboxItems(await this.ensureEngine('net9'), this.designerFile, toolboxAsm); } catch { /* ignore */ }
     }
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
     void this.refreshPalette();
     this.post({ type: 'loading', message: 'Rendering…' });
-    const asm = this.asm();
     const text = await this.currentText();
     let result: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
-      result = await this.withTimeout(
-        renderWithLayout(eng, this.designerFile, asm, text),
-        20000, 'engine render timed out — it may be stuck (first-run / MSBuild)');
+      result = this.engineKind === 'net48'
+        ? await this.withTimeout(
+            renderCompiledWithLayout(eng, this.designerFile, asm as string),
+            20000, 'engine render timed out — it may be stuck (first-run)')
+        : await this.withTimeout(
+            renderWithLayout(eng, this.designerFile, asm, text),
+            20000, 'engine render timed out — it may be stuck (first-run / MSBuild)');
     } catch (err) {
       if (seq === this.renderSeq && !this.disposed) this.fail(err);
       return;
@@ -874,6 +930,19 @@ class DesignerSession {
   /** Describe the selected component → push its grid to the Properties view + its manipulability to the canvas. */
   private async loadProps(id: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
+    if (this.engineKind === 'net48') { // compiled preview: describe the LIVE instance, not the net9 graph
+      const asm48 = this.asm();
+      let comp: ComponentDesc | null = null;
+      if (asm48) {
+        try { comp = await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm48, id); }
+        catch { comp = null; }
+      }
+      if (this.disposed) return;
+      DesignerHub.instance.pushPanel(this, { type: 'props', id, component: comp });
+      const manip = this.manipFor(id, comp); // single drag/resize is live (net9 splices Location/Size, net48 mutates)
+      this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
+      return;
+    }
     const eng = await this.ensureEngine();
     const component = await describeComponent(eng, this.designerFile, id, this.asm(), await this.currentText());
     if (this.disposed) return;
@@ -922,8 +991,7 @@ class DesignerSession {
     if (mode === 'resize') {
       const movedTopLeft = Math.round(winX) !== Math.round(old.x) || Math.round(winY) !== Math.round(old.y);
       if (movedTopLeft) {
-        const eng = await this.ensureEngine();
-        const comp = await describeComponent(eng, this.designerFile, id, this.asm(), await this.currentText());
+        const comp = await this.describeFor(id);
         const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
         if (loc) {
           const nx = loc[0] + Math.round(winX - old.x);
@@ -937,8 +1005,7 @@ class DesignerSession {
       }
       await this.applyEdit(id, 'Size', 'System.Drawing.Size', false, `${Math.round(w)}, ${Math.round(h)}`);
     } else {
-      const eng = await this.ensureEngine();
-      const comp = await describeComponent(eng, this.designerFile, id, this.asm(), await this.currentText());
+      const comp = await this.describeFor(id);
       const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
       if (!loc) return;
       const nx = loc[0] + Math.round(winX - old.x);
@@ -960,21 +1027,24 @@ class DesignerSession {
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     let text = before;
+    const live48Edits: CompiledEdit[] = [];
     let applied = 0;
     for (const id of movable) {
-      const comp = await describeComponent(eng, this.designerFile, id, this.asm(), text);
+      const comp = this.engineKind === 'net48' ? await this.describeFor(id) : await describeComponent(eng, this.designerFile, id, this.asm(), text);
       const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
       if (!loc) continue; // layout-managed / no representable Location → skip
-      const expr = await convertValue(eng, 'System.Drawing.Point', `${loc[0] + Math.round(dx)}, ${loc[1] + Math.round(dy)}`);
+      const value = `${loc[0] + Math.round(dx)}, ${loc[1] + Math.round(dy)}`;
+      const expr = await convertValue(eng, 'System.Drawing.Point', value);
       if (expr === null) continue;
       const res = await setProperty(eng, this.designerFile, id, 'Location', expr, text);
-      if (res.safe && res.text !== null) { text = res.text; applied++; }
+      if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: id, propName: 'Location', rawValue: value }); }
     }
     if (!applied) { this.post({ type: 'status', message: 'nothing moved (layout-managed?)' }); await this.loadProps(this.currentId); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); await this.loadProps(this.currentId); return; }
     this.commit(before, text, `Move ${applied} control${applied > 1 ? 's' : ''}`);
     this.output.appendLine(`moved ${applied} controls by (${Math.round(dx)}, ${Math.round(dy)}) (unsaved)`);
-    await this.fullRender();
+    if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits));
+    else await this.fullRender();
     this.post({ type: 'status', message: `moved ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
   }
 
@@ -991,21 +1061,24 @@ class DesignerSession {
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     let text = before;
+    const live48Edits: CompiledEdit[] = [];
     let applied = 0;
     for (const e of wanted) {
-      const comp = await describeComponent(eng, this.designerFile, e.id, this.asm(), text);
+      const comp = this.engineKind === 'net48' ? await this.describeFor(e.id) : await describeComponent(eng, this.designerFile, e.id, this.asm(), text);
       const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
       if (!loc) continue; // layout-managed / no representable Location → skip
-      const expr = await convertValue(eng, 'System.Drawing.Point', `${loc[0] + Math.round(e.dx)}, ${loc[1] + Math.round(e.dy)}`);
+      const value = `${loc[0] + Math.round(e.dx)}, ${loc[1] + Math.round(e.dy)}`;
+      const expr = await convertValue(eng, 'System.Drawing.Point', value);
       if (expr === null) continue;
       const res = await setProperty(eng, this.designerFile, e.id, 'Location', expr, text);
-      if (res.safe && res.text !== null) { text = res.text; applied++; }
+      if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: e.id, propName: 'Location', rawValue: value }); }
     }
     if (!applied) { this.post({ type: 'status', message: 'nothing aligned (layout-managed?)' }); await this.loadProps(this.currentId); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); await this.loadProps(this.currentId); return; }
     this.commit(before, text, `Align ${applied} control${applied > 1 ? 's' : ''}`);
     this.output.appendLine(`aligned ${applied} controls (unsaved)`);
-    await this.fullRender();
+    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
+    else await this.fullRender();
     this.post({ type: 'status', message: `aligned ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
   }
 
@@ -1022,18 +1095,21 @@ class DesignerSession {
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     let text = before;
+    const live48Edits: CompiledEdit[] = [];
     let applied = 0;
     for (const e of wanted) {
-      const expr = await convertValue(eng, 'System.Drawing.Size', `${Math.round(e.width)}, ${Math.round(e.height)}`);
+      const value = `${Math.round(e.width)}, ${Math.round(e.height)}`;
+      const expr = await convertValue(eng, 'System.Drawing.Size', value);
       if (expr === null) continue;
       const res = await setProperty(eng, this.designerFile, e.id, 'Size', expr, text);
-      if (res.safe && res.text !== null) { text = res.text; applied++; }
+      if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: e.id, propName: 'Size', rawValue: value }); }
     }
     if (!applied) { this.post({ type: 'status', message: 'nothing resized (layout-managed?)' }); await this.loadProps(this.currentId); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); await this.loadProps(this.currentId); return; }
     this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`);
     this.output.appendLine(`resized ${applied} controls (unsaved)`);
-    await this.fullRender();
+    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
+    else await this.fullRender();
     this.post({ type: 'status', message: `resized ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
   }
 
@@ -1049,17 +1125,19 @@ class DesignerSession {
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     let text = before;
-    let applied = 0;
+    const removed: string[] = [];
     for (const id of removable) {
       const res = await removeControl(eng, this.designerFile, id, text);
-      if (res.safe && res.newText !== null) { text = res.newText; applied++; }
+      if (res.safe && res.newText !== null) { text = res.newText; removed.push(id); }
     }
+    const applied = removed.length;
     if (!applied) { this.post({ type: 'status', message: 'remove rejected: nothing removable' }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     this.commit(before, text, `Remove ${applied} control${applied > 1 ? 's' : ''}`);
     this.currentId = 'this';
     this.output.appendLine(`removed ${applied} controls (unsaved)`);
-    await this.fullRender();
+    if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, removed));
+    else await this.fullRender();
     this.post({ type: 'status', message: `removed ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
   }
 
@@ -1136,9 +1214,63 @@ class DesignerSession {
     this.output.appendLine(`set ${id}.${prop} = ${expr} (${res.mode}, unsaved)`);
     this.post({ type: 'status', message: `set ${id}.${prop} — unsaved` });
 
-    await this.patchOrRerender(id, prop);
+    // net9 re-renders the interpreted graph from the edited text; net48 can't (it renders the compiled assembly),
+    // so it mutates the LIVE instance for an immediate picture — the text edit above is what persists on save.
+    if (this.engineKind === 'net48') {
+      await this.liveEdit48(id, prop, raw);
+    } else {
+      await this.patchOrRerender(id, prop);
+    }
     await this.loadProps(id);
     await this.postDirty();
+  }
+
+  /** net48 compiled preview: after the text edit is committed, mutate the live instance so the picture updates
+   *  immediately (the net9 interpreter path can't render this DevExpress/Framework control). Best-effort — an
+   *  unconvertible/read-only value leaves the picture on the built value with a note; the committed text still
+   *  renders after a rebuild. */
+  private async liveEdit48(id: string, prop: string, raw: string): Promise<void> {
+    const asm = this.asm();
+    if (!asm || !this.designerFile) return;
+    await this.live48((eng) => setCompiledPropertyLive(eng, this.designerFile!, asm, id, prop, raw));
+  }
+
+  /** Push a net48 live-op's render result to the canvas (shared by property edit / drag / remove / z-order). */
+  private show48(res: RenderLayout, seq: number): void {
+    if (seq !== this.renderSeq || this.disposed) return;
+    this.controls = res.controls;
+    this.rootClient = { w: res.clientWidth, h: res.clientHeight };
+    this.rootFrame = { w: res.width, h: res.height };
+    this.post({ type: 'render', png: res.png.toString('base64'), width: res.width, height: res.height, gen: seq });
+    this.postLayout(res.controls);
+    this.post({ type: 'tray', items: res.tray });
+    if (res.applied === false) {
+      this.post({ type: 'status', message: `preview partial — ${res.diagnostics || 'some edits not applied live'}; saved, renders fully after a rebuild` });
+    }
+  }
+
+  /** Run a net48 live-op (already text-committed by net9) with the session's net48 engine and render its result. */
+  private async live48(op: (eng: EngineHandle) => Promise<RenderLayout>): Promise<void> {
+    if (!this.designerFile || !this.asm()) return;
+    const seq = ++this.renderSeq;
+    try {
+      const res = await op(await this.ensureEngine('net48'));
+      this.show48(res, seq);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+    }
+  }
+
+  /** Describe a component from the engine that owns this session (net48 live instance, or the net9 graph). */
+  private async describeFor(id: string): Promise<ComponentDesc | null> {
+    if (!this.designerFile) return null;
+    const asm = this.asm();
+    if (this.engineKind === 'net48') {
+      if (!asm) return null;
+      try { return await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm, id); }
+      catch { return null; }
+    }
+    return describeComponent(await this.ensureEngine(), this.designerFile, id, asm, await this.currentText());
   }
 
   /** The sibling .resx for the current designer file (Foo.Designer.cs / Foo.cs → Foo.resx). */
@@ -1314,7 +1446,12 @@ class DesignerSession {
     }
     this.commit(before, text, `Set ${id} (${edits.length} properties)`);
     this.output.appendLine(`set ${id} ${edits.map((e) => e.prop).join('+')} (${edits.length} edits, unsaved)`);
-    await this.patchOrRerender(id, edits[edits.length - 1].prop);
+    if (this.engineKind === 'net48') {
+      await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!,
+        edits.map((ed) => ({ componentId: id, propName: ed.prop, rawValue: ed.value }))));
+    } else {
+      await this.patchOrRerender(id, edits[edits.length - 1].prop);
+    }
     await this.loadProps(id);
     await this.postDirty();
   }
@@ -1479,13 +1616,16 @@ class DesignerSession {
       }
     }
     const asm = this.asm();
-    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, asm);
+    // net48's toolbox is framework-only → a pure-text add (no project-control resolution / assembly load).
+    const addAsm = this.engineKind === 'net48' ? undefined : asm;
+    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'add rejected: ' + (res.reason || 'unsafe') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     this.commit(before, res.newText, `Add ${controlType}`);
     this.currentId = res.name;
     this.output.appendLine(`added ${controlType} → ${res.name} (unsaved)`);
-    await this.fullRender();
+    if (this.engineKind === 'net48') await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', controlType, res.name, locX, locY));
+    else await this.fullRender();
     this.post({ type: 'status', message: `added ${res.name} — unsaved` });
     // A control from the chosen control-source assembly won't compile until the project references it — offer to add one.
     await this.maybeOfferProjectReference(controlType, asm);
@@ -1591,7 +1731,8 @@ class DesignerSession {
     this.commit(before, res.newText, `Remove ${id}`);
     this.currentId = 'this';
     this.output.appendLine(`removed ${id} (unsaved)`);
-    await this.fullRender();
+    if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, [id]));
+    else await this.fullRender();
     this.post({ type: 'status', message: `removed ${id} — unsaved` });
   }
 
@@ -1694,7 +1835,8 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     this.commit(before, text, toFront ? 'Bring to Front' : 'Send to Back');
     this.output.appendLine(`${toFront ? 'brought to front' : 'sent to back'} ${applied} control(s) (unsaved)`);
-    await this.fullRender();
+    if (this.engineKind === 'net48') await this.live48((e) => setCompiledZOrder(e, this.designerFile!, this.asm()!, targets, toFront));
+    else await this.fullRender();
     this.post({ type: 'status', message: `${toFront ? 'brought to front' : 'sent to back'} — unsaved` });
   }
 

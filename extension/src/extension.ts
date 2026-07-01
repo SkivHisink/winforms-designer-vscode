@@ -3,10 +3,14 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { startEngine, EngineHandle, ping, resolveAssembly, describeDesigner, listToolboxItems } from './engineClient';
-import { WinFormsDesignerProvider, DesignerPanelViewProvider, DesignerHub, hasDesignerSibling, canOpenDesigner, resolveOpenTarget, resolveDesignerFile } from './designerEditor';
+import { WinFormsDesignerProvider, DesignerPanelViewProvider, DesignerHub, hasDesignerSibling, canOpenDesigner, resolveOpenTarget, resolveDesignerFile, EngineKind } from './designerEditor';
+import { resolveFrameworkOutput } from './csprojRef';
 
-let engine: EngineHandle | undefined;
-let engineStart: Promise<EngineHandle> | undefined;
+// Two engine processes, started lazily and keyed by kind: 'net9' (the default WinForms/Roslyn engine) and
+// 'net48' (the .NET Framework compiled-render engine for DevExpress/Framework projects). A form routes to one
+// by the runtime of its resolved control assembly (see DesignerSession.engineKind).
+const engines = new Map<EngineKind, EngineHandle>();
+const engineStarts = new Map<EngineKind, Promise<EngineHandle>>();
 let output: vscode.OutputChannel;
 
 /** Files the user explicitly chose to view as code — auto-open must not re-hijack them into the designer. */
@@ -48,15 +52,20 @@ function updateControlStatus(): void {
   if (!controlStatus) return;
   const file = DesignerHub.instance.activeSession?.designerFilePath ?? null;
   if (!file) { controlStatus.hide(); return; }
+  // A form rendered by the net48 engine is a read-only compiled preview — surface that in the badge.
+  const preview = DesignerHub.instance.activeSession?.isCompiledPreview
+    ? ' · $(lock) preview' : '';
+  const previewTip = DesignerHub.instance.activeSession?.isCompiledPreview
+    ? '\n.NET Framework compiled preview — property edits are live; drag/add and manual source edits reflect after a rebuild.' : '';
   const explicit = getControlSource(file);
   if (explicit) {
-    controlStatus.text = '$(package) Controls: ' + path.basename(explicit);
-    controlStatus.tooltip = 'WinForms control source (explicit): ' + explicit + '\nClick to change.';
+    controlStatus.text = '$(package) Controls: ' + path.basename(explicit) + preview;
+    controlStatus.tooltip = 'WinForms control source (explicit): ' + explicit + previewTip + '\nClick to change.';
     controlStatus.show();
     return;
   }
-  controlStatus.text = '$(package) Controls: auto';
-  controlStatus.tooltip = 'WinForms control source: auto-detected from the project. Click to override.';
+  controlStatus.text = '$(package) Controls: auto' + preview;
+  controlStatus.tooltip = 'WinForms control source: auto-detected from the project.' + previewTip + '\nClick to override.';
   controlStatus.show();
   // best-effort: fill in the resolved dll name in the background (don't block the status update on the engine)
   void (async () => {
@@ -85,7 +94,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       WinFormsDesignerProvider.viewType,
-      new WinFormsDesignerProvider(context, () => getEngine(context), getAssemblyOverride, output, doViewCode),
+      new WinFormsDesignerProvider(context, (kind?: EngineKind) => getEngine(context, kind), getAssemblyOverride, output, doViewCode),
       { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false },
     ),
   );
@@ -317,32 +326,35 @@ function hasOpenDesignerTab(key: string): boolean {
  * Start the engine at most once even under concurrent renders, and self-heal if it dies.
  * Without the shared startup promise two first-renders could each spawn an engine and leak one.
  */
-async function getEngine(context: vscode.ExtensionContext): Promise<EngineHandle> {
-  if (engine) {
-    return engine;
+async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'net9'): Promise<EngineHandle> {
+  const running = engines.get(kind);
+  if (running) {
+    return running;
   }
-  if (!engineStart) {
-    const dll = resolveEngineDll(context);
+  let start = engineStarts.get(kind);
+  if (!start) {
+    const dll = resolveEngineDll(context, kind);
     output.show(true); // reveal the log on first engine start so startup/render issues are visible
-    output.appendLine('starting engine: ' + dll);
-    engineStart = startEngine(dll, { onLog: (l) => output.appendLine(l) })
+    output.appendLine(`starting ${kind} engine: ` + dll);
+    start = startEngine(dll, { onLog: (l) => output.appendLine(l) })
       .then((handle) => {
-        engine = handle;
+        engines.set(kind, handle);
         handle.process.once('exit', () => {
-          if (engine === handle) {
-            engine = undefined;
-            engineStart = undefined;
-            output.appendLine('[engine] handle cleared after process exit');
+          if (engines.get(kind) === handle) {
+            engines.delete(kind);
+            engineStarts.delete(kind);
+            output.appendLine(`[engine:${kind}] handle cleared after process exit`);
           }
         });
         return handle;
       })
       .catch((err) => {
-        engineStart = undefined; // allow a retry on the next render
+        engineStarts.delete(kind); // allow a retry on the next render
         throw err;
       });
+    engineStarts.set(kind, start);
   }
-  return engineStart;
+  return start;
 }
 
 const warnedAssemblyPaths = new Set<string>();
@@ -383,7 +395,7 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
   } else if (choice === BROWSE) {
     const picked = await vscode.window.showOpenDialog({
       canSelectMany: false, openLabel: 'Use as control source',
-      title: "Select the .dll that builds this form's controls", filters: { Assemblies: ['dll'] },
+      title: "Select the assembly that builds this form's controls", filters: { Assemblies: ['dll', 'exe'] },
     });
     if (!picked || !picked.length) return;
     dll = picked[0].fsPath;
@@ -399,7 +411,12 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
     );
     if (!proj) return;
     try {
-      const resolved = await resolveAssembly(await getEngine(context), proj.uri.fsPath);
+      // The net9 engine resolves .NET (Core) output; for a .NET Framework project (net4x, often OutputType=Exe)
+      // it returns null by design — fall back to the Framework output finder so a net48 control source resolves.
+      let resolved = await resolveAssembly(await getEngine(context), proj.uri.fsPath);
+      if (!resolved || !fs.existsSync(resolved)) {
+        resolved = resolveFrameworkOutput(proj.uri.fsPath) ?? null;
+      }
       if (!resolved || !fs.existsSync(resolved)) {
         void vscode.window.showWarningMessage(
           `Could not resolve ${path.basename(proj.uri.fsPath)}'s build output — build the project, or use "Browse" to pick its .dll directly.`,
@@ -455,7 +472,19 @@ function warnMissingAssembly(resolved: string): void {
   );
 }
 
-function resolveEngineDll(context: vscode.ExtensionContext): string {
+function resolveEngineDll(context: vscode.ExtensionContext, kind: EngineKind = 'net9'): string {
+  if (kind === 'net48') {
+    // The net48 engine is a native .exe. Dev builds are Debug by default; prefer Release, then Debug, then bundled.
+    const devRel = context.asAbsolutePath(path.join('..', 'engine-net48', 'bin', 'Release', 'net48', 'WinFormsDesigner.Engine.Net48.exe'));
+    const devDbg = context.asAbsolutePath(path.join('..', 'engine-net48', 'bin', 'Debug', 'net48', 'WinFormsDesigner.Engine.Net48.exe'));
+    if (context.extensionMode === vscode.ExtensionMode.Development) {
+      if (fs.existsSync(devRel)) return devRel;
+      if (fs.existsSync(devDbg)) return devDbg;
+    }
+    const bundled48 = context.asAbsolutePath(path.join('engine-net48', 'WinFormsDesigner.Engine.Net48.exe'));
+    if (fs.existsSync(bundled48)) return bundled48;
+    return fs.existsSync(devRel) ? devRel : devDbg;
+  }
   // Dev layout: <repo>/extension and <repo>/engine are siblings — run the Release build directly.
   const dev = context.asAbsolutePath(
     path.join('..', 'engine', 'bin', 'Release', 'net9.0-windows', 'WinFormsDesigner.Engine.dll'),
@@ -483,7 +512,9 @@ function normalize(fsPath: string): string {
 }
 
 export function deactivate(): void {
-  engine?.dispose();
-  engine = undefined;
-  engineStart = undefined;
+  for (const handle of engines.values()) {
+    try { handle.dispose(); } catch { /* ignore */ }
+  }
+  engines.clear();
+  engineStarts.clear();
 }

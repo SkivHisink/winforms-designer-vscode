@@ -21,9 +21,11 @@ dist/**/*.map
 e2e-render.png
 bash.exe.stackdump
 
-# Bundled engine (published into engine/ at package time) — ship the runtime, not debug symbols
+# Bundled engines (published into engine/ + engine-net48/ at package time) — ship the runtime, not debug symbols
 engine/**/*.pdb
 engine/**/*.xml
+engine-net48/**/*.pdb
+engine-net48/**/*.xml
 
 # Source control noise
 .github/**

@@ -8,6 +8,49 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-01
+
+Adds a **second rendering engine for .NET Framework projects**, so forms built on
+classic WinForms component suites (e.g. **DevExpress** and other `net4x` control
+libraries) that the .NET 9 engine cannot load now render — and can be edited — inside the
+designer. The extension runs both engines side by side and routes each form to the right
+one automatically.
+
+### Added
+
+#### .NET Framework (net48) engine — *experimental*
+- **Compiled preview for Framework forms** — forms whose controls target .NET Framework
+  (`net4x`) are rendered by a dedicated **.NET Framework 4.8** engine that **instantiates
+  the compiled control types** from the project's build output and paints them, so vendor
+  controls (DevExpress `XtraUserControl`, …) look pixel-accurate — the same fidelity the
+  .NET 9 engine gives modern controls.
+- **Automatic engine routing** — the extension now runs **two engine processes** and picks
+  one per form from the resolved control assembly's runtime: a Framework assembly (no
+  `.deps.json` / `.runtimeconfig.json` sidecar) → the net48 engine; everything else → the
+  .NET 9 engine. Each engine starts lazily and self-heals if its process exits.
+- **Live editing on the compiled preview** — the **property grid**, **drag / move / resize
+  / align**, **add / remove**, and **z-order** all apply **live** against the instantiated
+  instance; the change is persisted as `.Designer.cs` text (via the .NET 9 splice) and
+  re-renders on the next build. A **compiled-preview badge** (🔒 *preview*) appears in the
+  status bar. *Cut / paste and dropping project-specific (non-framework) controls are not
+  supported on this engine yet — manual source edits appear after a rebuild.*
+
+### Changed
+- **Control-source resolution for Framework projects** — choosing a `.csproj` or browsing
+  for a control source now resolves **`OutputType=Exe`** projects (a net48 WinForms app's
+  `.exe`, not only a `.dll`) and picks the freshest build under `bin/`, fixing
+  *"Could not resolve build output"* for Framework projects. The **Browse** dialog now
+  accepts `.exe` as well as `.dll`.
+
+### Fixed
+- **Root-type detection via the sibling `.cs`** — the base type (`Form` vs `UserControl`,
+  including vendor bases such as `XtraUserControl` that derive from `UserControl`) is now
+  read from a form's main `.cs` when its `.Designer.cs` partial omits the base clause, so a
+  `UserControl` opened through its `.Designer.cs` is no longer mis-rendered as a `Form`.
+- The .NET 9 project resolver's `bin/**` search now also matches `<AssemblyName>.exe`
+  (not just `.dll`), another cause of *"could not resolve build output"* on `OutputType=Exe`
+  projects.
+
 ## [0.2.0] — 2026-07-01
 
 Second preview — a large round of Visual Studio-parity work in the property grid,
@@ -144,6 +187,7 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/releases/tag/v0.1.0

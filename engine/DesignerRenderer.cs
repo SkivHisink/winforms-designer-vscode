@@ -1096,7 +1096,7 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
-            Type rootType = DetectRootType(cls);
+            Type rootType = DetectRootType(cls, designerFilePath);
 
             var surface = new DesignSurface();
             try
@@ -1194,15 +1194,52 @@ namespace WinFormsDesigner.Engine
             }
         }
 
-        private static Type DetectRootType(ClassDeclarationSyntax cls)
+        private static Type DetectRootType(ClassDeclarationSyntax cls, string designerFilePath)
         {
-            if (cls.BaseList != null)
+            Type? fromDesigner = FromBaseList(cls.BaseList);
+            if (fromDesigner != null) return fromDesigner;
+
+            // The .Designer.cs partial almost never carries the base clause — the base type (UserControl / Form,
+            // or a vendor base like XtraUserControl) is declared in the sibling main .cs (Foo.Designer.cs → Foo.cs).
+            // Consult it so a UserControl opened via its .Designer.cs isn't mis-typed (and rendered) as a Form.
+            try
             {
-                string bases = cls.BaseList.ToString();
-                if (bases.Contains("UserControl")) return typeof(UserControl);
-                if (bases.Contains("Form")) return typeof(Form);
+                string? sibling = SiblingMainFile(designerFilePath);
+                if (sibling != null && File.Exists(sibling))
+                {
+                    var sRoot = CSharpSyntaxTree.ParseText(File.ReadAllText(sibling)).GetRoot();
+                    string name = cls.Identifier.Text;
+                    var match = sRoot.DescendantNodes().OfType<ClassDeclarationSyntax>()
+                        .FirstOrDefault(c => c.Identifier.Text == name && c.BaseList != null);
+                    Type? fromSibling = FromBaseList(match?.BaseList);
+                    if (fromSibling != null) return fromSibling;
+                }
             }
+            catch { /* unreadable sibling → fall back to Form */ }
+
             return typeof(Form);
+        }
+
+        // A base list mentioning UserControl (incl. vendor bases like XtraUserControl, which derive from it)
+        // → UserControl surface; Form → Form; anything else → null (undetermined).
+        private static Type? FromBaseList(BaseListSyntax? baseList)
+        {
+            if (baseList == null) return null;
+            string bases = baseList.ToString();
+            if (bases.Contains("UserControl")) return typeof(UserControl);
+            if (bases.Contains("Form")) return typeof(Form);
+            return null;
+        }
+
+        // Foo.Designer.cs → Foo.cs (the main partial holding the base clause). Null when not a .Designer.cs name.
+        private static string? SiblingMainFile(string designerFilePath)
+        {
+            const string suffix = ".Designer.cs";
+            if (designerFilePath.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return designerFilePath.Substring(0, designerFilePath.Length - suffix.Length) + ".cs";
+            }
+            return null;
         }
 
         // ---- interpreter (from S2b, with user-assembly type resolution) ----

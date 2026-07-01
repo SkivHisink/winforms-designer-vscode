@@ -29,9 +29,14 @@ export async function startEngine(engineDllPath: string, opts: StartOptions = {}
   const log = opts.onLog ?? ((l: string) => console.error(l));
   const pipeName = `winforms-designer-${process.pid}-${Date.now()}`;
 
-  const proc = spawn(dotnet, [engineDllPath, '--pipe', pipeName], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  // The net9 engine is a framework-dependent DLL launched via the dotnet muxer; the net48 engine is a native
+  // .NET Framework .exe launched directly (there is no `dotnet <net48.exe>`). Pick the spawn form by extension.
+  const isExe = /\.exe$/i.test(engineDllPath);
+  const proc = spawn(
+    isExe ? engineDllPath : dotnet,
+    isExe ? ['--pipe', pipeName] : [engineDllPath, '--pipe', pipeName],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
   proc.stdout.on('data', (d: Buffer) => log('[engine] ' + d.toString().trimEnd()));
   proc.stderr.on('data', (d: Buffer) => log('[engine] ' + d.toString().trimEnd()));
   proc.on('exit', (code) => log('[engine] exited ' + code));
@@ -201,6 +206,11 @@ export interface RenderLayout {
   tray: TrayComponent[];     // non-visual components (§7.3)
   unrepresentable: string[]; // statements the interpreter couldn't run — incl. "unresolved type X" for a control
                              // whose assembly isn't loaded (drives the "select a control source" prompt)
+  /** net48 compiled engine only: for a live property edit, whether the value was applied to the live instance
+   *  (picture reflects it). Absent/true for a plain render. */
+  applied?: boolean;
+  /** net48 compiled engine only: why a live edit wasn't applied (or other non-fatal note). */
+  diagnostics?: string;
 }
 
 /**
@@ -230,6 +240,131 @@ export async function renderWithLayout(
     tray: raw.tray ?? [],
     unrepresentable: raw.unrepresentable ?? [],
   };
+}
+
+/**
+ * Render a Framework/DevExpress control via the net48 engine by INSTANTIATING the compiled control type
+ * (RenderCompiledWithLayout) — the render-first path for projects the net9 engine can't load. assemblyPath is
+ * REQUIRED (the design-host project's build output); sourceText is intentionally absent (the compiled render
+ * reflects the built assembly, not the unsaved buffer). The result shape matches renderWithLayout so the
+ * session's render pipeline is unchanged. rootTypeName/probeDirs are optional (the engine derives/defaults them).
+ */
+export async function renderCompiledWithLayout(
+  engine: EngineHandle,
+  designerFilePath: string,
+  assemblyPath: string,
+  rootTypeName?: string,
+  probeDirs?: string[],
+  width?: number,
+  height?: number,
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'RenderCompiledWithLayout', designerFilePath, assemblyPath, rootTypeName ?? null, probeDirs ?? null, width ?? 0, height ?? 0);
+  return fromCompiledRaw(raw);
+}
+
+interface CompiledRenderRaw {
+  png: string; width: number; height: number; clientWidth: number; clientHeight: number;
+  rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; unrepresentable?: string[];
+  applied?: boolean; diagnostics?: string;
+}
+
+function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
+  return {
+    png: Buffer.from(raw.png ?? '', 'base64'),
+    width: raw.width,
+    height: raw.height,
+    clientWidth: raw.clientWidth,
+    clientHeight: raw.clientHeight,
+    rootType: raw.rootType,
+    controls: raw.controls ?? [],
+    tray: raw.tray ?? [],
+    unrepresentable: raw.unrepresentable ?? [],
+    applied: raw.applied ?? true,
+    diagnostics: raw.diagnostics ?? '',
+  };
+}
+
+/** Property-grid + events for ONE control of the net48 live compiled instance ("this" = root, else its
+ *  .Designer.cs field name). Same ComponentDesc shape as the net9 describeComponent. null when not found. */
+export function describeCompiledComponent(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<ComponentDesc | null> {
+  return engine.connection.sendRequest<ComponentDesc | null>(
+    'DescribeCompiledComponent', designerFilePath, assemblyPath, componentId, rootTypeName ?? null, probeDirs ?? null);
+}
+
+/** Apply ONE property edit to the net48 live instance + re-render (live preview for a designer-originated edit).
+ *  The persisted TEXT write is separate (net9 splice); this is only the picture. `applied` is false when the
+ *  value couldn't be set live (unconvertible/read-only) — the text edit still shows after a rebuild. */
+export async function setCompiledPropertyLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
+  propName: string, rawValue: string, rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'SetCompiledPropertyLive', designerFilePath, assemblyPath, componentId, propName, rawValue, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** One live property edit for the net48 batch-mutate (drag/resize/align). */
+export interface CompiledEdit { componentId: string; propName: string; rawValue: string; }
+
+/** Apply a BATCH of property edits to the net48 live instance + re-render once (drag/resize/align). */
+export async function applyCompiledEdits(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, edits: CompiledEdit[],
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'ApplyCompiledEdits', designerFilePath, assemblyPath, edits, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** Remove field-backed controls from the net48 live instance + re-render. */
+export async function removeCompiledControls(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, ids: string[],
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'RemoveCompiledControls', designerFilePath, assemblyPath, ids, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** Bring-to-front / send-to-back the given controls of the net48 live instance + re-render. */
+export async function setCompiledZOrder(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, ids: string[], toFront: boolean,
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'SetCompiledZOrder', designerFilePath, assemblyPath, ids, toFront, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** Add a control (controlTypeKey) to parentId at (locX,locY), registered under newId, on the net48 live
+ *  instance + re-render (the persisted declaration is the host's net9 splice). */
+export async function addCompiledControl(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, parentId: string,
+  controlTypeKey: string, newId: string, locX?: number, locY?: number, rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'AddCompiledControl', designerFilePath, assemblyPath, parentId, controlTypeKey, newId,
+    locX ?? -1, locY ?? -1, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** An engine's self-description (GetCapabilities) — drives edit-affordance gating + the "compiled preview" badge. */
+export interface EngineCapabilities {
+  engine: string;
+  render: boolean;
+  edit: boolean;
+  livePreviewUnsavedEdits: boolean;
+  runtime: string;
+  notes: string;
+}
+
+/** Ask an engine what it supports. The net9 engine (no such method) rejects → callers treat that as full edit. */
+export function getCapabilities(engine: EngineHandle): Promise<EngineCapabilities> {
+  return engine.connection.sendRequest<EngineCapabilities>('GetCapabilities');
 }
 
 // ---- describe / edit (property-grid data + write side) ----
