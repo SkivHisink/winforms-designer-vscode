@@ -123,6 +123,9 @@ jobs:
           --notes-file "${{ github.workspace }}/release-notes.md"
           --generate-notes
 
+      # Publishing occasionally dies on a transient network reset (read ECONNRESET) against the
+      # Marketplace API — retry a few times, and treat an "already published" error as success in
+      # case a prior attempt actually landed before the connection dropped.
       - name: Publish to VS Code Marketplace
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         working-directory: extension
@@ -130,7 +133,16 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           if (-not $env:VSCE_PAT) { Write-Host 'VSCE_PAT secret not set - skipping Marketplace publish.'; exit 0 }
-          npx --yes @vscode/vsce publish --packagePath winforms-designer.vsix
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "Marketplace publish attempt $i/3..."
+            $out = & npx --yes @vscode/vsce publish --packagePath winforms-designer.vsix 2>&1 | Out-String
+            Write-Host $out
+            if ($LASTEXITCODE -eq 0) { Write-Host 'Published to Marketplace.'; exit 0 }
+            if ($out -match 'already exists') { Write-Host 'Version already published - treating as success.'; exit 0 }
+            Write-Host "::warning::Marketplace publish attempt $i failed (exit $LASTEXITCODE)."
+            if ($i -lt 3) { Start-Sleep -Seconds (15 * $i) }
+          }
+          Write-Error 'Marketplace publish failed after 3 attempts.'; exit 1
 
       - name: Publish to Open VSX
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
@@ -139,4 +151,13 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           if (-not $env:OVSX_PAT) { Write-Host 'OVSX_PAT secret not set - skipping Open VSX publish.'; exit 0 }
-          npx --yes ovsx publish winforms-designer.vsix -p $env:OVSX_PAT
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "Open VSX publish attempt $i/3..."
+            $out = & npx --yes ovsx publish winforms-designer.vsix -p $env:OVSX_PAT 2>&1 | Out-String
+            Write-Host $out
+            if ($LASTEXITCODE -eq 0) { Write-Host 'Published to Open VSX.'; exit 0 }
+            if ($out -match 'already exists') { Write-Host 'Version already published - treating as success.'; exit 0 }
+            Write-Host "::warning::Open VSX publish attempt $i failed (exit $LASTEXITCODE)."
+            if ($i -lt 3) { Start-Sleep -Seconds (15 * $i) }
+          }
+          Write-Error 'Open VSX publish failed after 3 attempts.'; exit 1

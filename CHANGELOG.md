@@ -8,6 +8,20 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-07-01
+
+Patch release. Completes the Marketplace refresh begun in 0.3.1 — whose Marketplace
+publish failed on a transient network error (`ECONNRESET`), so the listing had not yet
+picked up the net48 documentation — and adds discoverability keywords plus a more
+resilient publish step.
+
+### Changed
+- **Discoverability** — added Marketplace keywords for the .NET Framework engine:
+  `net framework`, `net48`, `devexpress`.
+- **Release reliability** — the Marketplace / Open VSX publish steps now **retry** on
+  transient network failures (e.g. `ECONNRESET`), so a flaky connection no longer fails a
+  release.
+
 ## [0.3.1] — 2026-07-01
 
 Documentation-only patch — no functional changes to the designer. Refreshes the
@@ -200,7 +214,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.1.0...v0.2.0
