@@ -166,6 +166,7 @@ export interface LayoutControl {
   tabIndex: number;    // control's TabIndex for the tab-order overlay (root = -1)
   anchor: string;      // anchor edges ("Top, Left" / "None") for the canvas anchor-tether overlay
   dock: string;        // dock style ("Fill"/"Top"/… / "None") for the canvas dock indicator
+  isTabHost?: boolean; // net48 compiled preview: control is a tab host (TabControl/XtraTabControl) → header clicks switch tabs
 }
 
 /** A non-visual component for the tray (§7.3): Timer/ToolTip/ErrorProvider/ImageList/BindingSource/… */
@@ -338,6 +339,28 @@ export async function setCompiledZOrder(
   const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
     'SetCompiledZOrder', designerFilePath, assemblyPath, ids, toFront, rootTypeName ?? null, probeDirs ?? null);
   return fromCompiledRaw(raw);
+}
+
+/** Switch the active tab of the net48 live tab host at hostId to the header under window-space (x,y) + re-render.
+ *  `applied` is true only when the active tab actually changed (a header of a DIFFERENT tab was hit). */
+export async function selectCompiledTabAt(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, hostId: string, x: number, y: number,
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'SelectCompiledTabAt', designerFilePath, assemblyPath, hostId, x, y, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** The tab page (field id + current Text) whose header is under window-space (x,y) on the net48 live tab host —
+ *  for renaming a tab. `pageId` is "" when the point isn't on a header of a field-backed page. */
+export interface TabHit { pageId: string; text: string; }
+export function hitTestCompiledTab(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, hostId: string, x: number, y: number,
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<TabHit> {
+  return engine.connection.sendRequest<TabHit>(
+    'HitTestCompiledTab', designerFilePath, assemblyPath, hostId, x, y, rootTypeName ?? null, probeDirs ?? null);
 }
 
 /** Add a control (controlTypeKey) to parentId at (locX,locY), registered under newId, on the net48 live
@@ -608,15 +631,56 @@ export function addControl(
   locX?: number,
   locY?: number,
   controlAssemblyPath?: string,
+  /** For a net48/DevExpress form: the project-control FQNs the net48 engine enumerated. net9 can't load that
+   *  assembly, so it trusts these (validated engine-side) to emit `new <Fqn>()` as pure text. */
+  projectControlFqns?: string[],
 ): Promise<ControlAddResult> {
   // optional positional tail: each earlier slot must be filled (with null) once a later one is supplied.
   const hasLoc = locX !== undefined && locY !== undefined;
   const hasAsm = controlAssemblyPath !== undefined && controlAssemblyPath !== null;
-  const tail: (string | number | null)[] = [];
-  if (sourceText !== undefined || hasLoc || hasAsm) tail.push(sourceText ?? null);
-  if (hasLoc || hasAsm) tail.push(hasLoc ? (locX as number) : null, hasLoc ? (locY as number) : null);
-  if (hasAsm) tail.push(controlAssemblyPath as string);
+  const hasFqns = projectControlFqns !== undefined && projectControlFqns !== null;
+  const tail: (string | number | null | string[])[] = [];
+  if (sourceText !== undefined || hasLoc || hasAsm || hasFqns) tail.push(sourceText ?? null);
+  if (hasLoc || hasAsm || hasFqns) tail.push(hasLoc ? (locX as number) : null, hasLoc ? (locY as number) : null);
+  if (hasAsm || hasFqns) tail.push((controlAssemblyPath as string) ?? null);
+  if (hasFqns) tail.push(projectControlFqns as string[]);
   return engine.connection.sendRequest<ControlAddResult>('AddControl', designerFilePath, parentId, controlTypeKey, ...tail);
+}
+
+/** Enumerate the project/vendor (DevExpress/net4x) assembly's own toolbox-eligible controls via the net48 engine
+ *  (the ones the net9 enumerator can't load). The host merges these — category "Project Controls" — with the net9
+ *  framework palette so a net48 form's toolbox offers the vendor controls. [] on any failure. */
+export function listCompiledToolboxControls(engine: EngineHandle, assemblyPath: string, probeDirs?: string[]): Promise<ToolboxItemInfo[]> {
+  return engine.connection.sendRequest<ToolboxItemInfo[]>('ListCompiledToolboxControls', assemblyPath, probeDirs ?? null);
+}
+
+/** Add a new empty tab page to a tab host (pure net9 text edit; pageTypeFqn is the page type, derived by the host
+ *  from an existing page). Host applies the returned text, then the net48 engine live-adds the page to the picture. */
+export function addTabPage(
+  engine: EngineHandle, designerFilePath: string, hostId: string, pageTypeFqn: string, sourceText?: string,
+): Promise<ControlAddResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlAddResult>('AddTabPage', designerFilePath, hostId, pageTypeFqn, ...tail);
+}
+
+/** Add a new empty tab page (pageTypeFqn) to the net48 live tab host, registered under newId, + re-render. */
+export async function addCompiledTab(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, hostId: string, pageTypeFqn: string, newId: string,
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'AddCompiledTab', designerFilePath, assemblyPath, hostId, pageTypeFqn, newId, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** Remove tab page pageId from the net48 live tab host + re-render (the persisted removal is the host's net9 text edit). */
+export async function removeCompiledTab(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, hostId: string, pageId: string,
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'RemoveCompiledTab', designerFilePath, assemblyPath, hostId, pageId, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
 }
 
 /** Toolbox add-component: add a non-visual component (Timer/ToolTip/dialog…) — a bare `new T()` that lands in the
@@ -716,6 +780,23 @@ export function removeControl(
   return engine.connection.sendRequest<ControlRemoveResult>('RemoveControl', designerFilePath, controlId, ...tail);
 }
 
+/**
+ * Remove a whole tab page (the page + its entire subtree) from a tab host (pure net9 text edit): deletes the
+ * subtree's fields/statements and detaches the page from the host's tab collection (whole Controls.Add/TabPages.Add,
+ * or a trimmed TabPages.AddRange element). Refuses when the subtree is referenced from outside it. The host applies
+ * the returned text as an unsaved edit, then the net48 engine live-removes the page from the picture.
+ */
+export function removeTabPage(
+  engine: EngineHandle,
+  designerFilePath: string,
+  hostId: string,
+  pageId: string,
+  sourceText?: string,
+): Promise<ControlRemoveResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlRemoveResult>('RemoveTabPage', designerFilePath, hostId, pageId, ...tail);
+}
+
 /** Result of CopyControl: an OPAQUE clipboard blob the host stores and hands back to pasteControl. */
 export interface ControlCopyResult {
   safe: boolean;
@@ -737,12 +818,17 @@ export function copyControl(
   return engine.connection.sendRequest<ControlCopyResult>('CopyControl', designerFilePath, controlId, ...tail);
 }
 
-/** Result of PasteControl: the new .Designer.cs text with the pasted clone, and its generated name. */
+/** Result of PasteControl: the new .Designer.cs text with the pasted clone, and its generated name.
+ *  `typeName` / `x` / `y` let the net48 compiled-preview host live-instantiate the clone (the text splice alone
+ *  isn't in the compiled instance). `x`/`y` are the nudged Location, or -1 when the clip has no integer Location. */
 export interface ControlPasteResult {
   safe: boolean;
   reason: string;
   newText: string | null;
   name: string;
+  typeName: string;
+  x: number;
+  y: number;
 }
 
 /**

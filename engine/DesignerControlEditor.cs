@@ -41,13 +41,19 @@ namespace WinFormsDesigner.Engine
 
     /// <summary>Result of <see cref="DesignerControlEditor.PasteControl"/>: the new .Designer.cs text with the
     /// pasted clone (a fresh field + renamed/offset statements + a Controls.Add into the target), and its
-    /// generated name. Null on reject.</summary>
+    /// generated name. Null on reject. <see cref="TypeName"/> / <see cref="X"/> / <see cref="Y"/> let the net48
+    /// compiled-preview host mirror the paste by live-instantiating the clone (the net9 splice only produces the
+    /// text; the compiled instance needs the type + location to add it live). <see cref="X"/>/<see cref="Y"/> are
+    /// the nudged Location, or -1 when the clip has no representable integer Location.</summary>
     public sealed class ControlPasteResult
     {
         public bool Safe { get; init; }
         public string Reason { get; init; } = "";
         public string? NewText { get; init; }
         public string Name { get; init; } = "";
+        public string TypeName { get; init; } = "";
+        public int X { get; init; } = -1;
+        public int Y { get; init; } = -1;
     }
 
     /// <summary>Result of <see cref="DesignerControlEditor.MoveZOrder"/> (Bring to Front / Send to Back): the
@@ -548,6 +554,55 @@ namespace WinFormsDesigner.Engine
             return new ControlAddResult { Safe = true, Name = name, NewText = finalText };
         }
 
+        /// <summary>
+        /// Add a NEW empty tab page to a tab host (WinForms TabControl / DevExpress XtraTabControl). Emits a field +
+        /// <c>this.&lt;page&gt; = new &lt;pageTypeFqn&gt;();</c> + Name/Text + <c>this.&lt;host&gt;.TabPages.Add(this.&lt;page&gt;);</c>
+        /// (a plain <c>.Add</c> appends after any existing <c>AddRange</c>). <paramref name="pageTypeFqn"/> is the tab
+        /// page type (the host derives it from an existing page's type) — validated as a bare dotted name so it can't
+        /// inject a member. Safety reuses <see cref="OnlyControlAdded"/> (originals preserved, added statements
+        /// reference only the new page, exactly one new field/member).
+        /// </summary>
+        public static ControlAddResult AddTabPage(string src, string hostId, string pageTypeFqn)
+        {
+            if (!IsValidIdentifier(hostId)) return new ControlAddResult { Safe = false, Reason = "invalid tab host id: " + hostId };
+            if (!IsValidTypeName(pageTypeFqn)) return new ControlAddResult { Safe = false, Reason = "invalid tab page type: " + pageTypeFqn };
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = FindClassWithIC(root);
+            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            if (cls == null || init?.Body == null) return new ControlAddResult { Safe = false, Reason = "InitializeComponent not found" };
+
+            var names = GatherFieldNames(cls);
+            if (!names.Contains(hostId)) return new ControlAddResult { Safe = false, Reason = "unknown tab host: " + hostId };
+
+            string baseName = ShortName(pageTypeFqn).ToLowerInvariant();
+            if (!IsValidIdentifier(baseName)) baseName = "tabPage";
+            string name = UniqueName(baseName, names);
+            if (!IsValidIdentifier(name)) return new ControlAddResult { Safe = false, Reason = "could not generate a valid tab name" };
+
+            string nl = src.Contains("\r\n") ? "\r\n" : "\n";
+            string indent = BodyIndent(src, init);
+            var sb = new StringBuilder();
+            void S(string s) { sb.Append(indent).Append(s).Append(nl); }
+            S($"this.{name} = new {pageTypeFqn}();");
+            S($"this.{name}.Name = \"{name}\";");
+            S($"this.{name}.Text = \"{name}\";");
+            S($"this.{hostId}.TabPages.Add(this.{name});");
+
+            int insertPos = InitInsertPos(src, init);
+            string withStmts = src.Substring(0, insertPos) + sb.ToString() + src.Substring(insertPos);
+
+            string fieldLine = FieldIndent(src, cls) + $"private {pageTypeFqn} {name};" + nl;
+            string? finalText = InsertField(withStmts, fieldLine);
+            if (finalText == null) return new ControlAddResult { Safe = false, Reason = "could not place the field declaration" };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(finalText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool gateOk = OnlyControlAdded(src, finalText, name);
+            if (!parseOk || !gateOk)
+                return new ControlAddResult { Safe = false, Name = name, Reason = !parseOk ? "added text has syntax errors" : "edit changed more than the new tab" };
+            return new ControlAddResult { Safe = true, Name = name, NewText = finalText };
+        }
+
         /// <summary>§6.5 gate: every ORIGINAL InitializeComponent statement is preserved unchanged, every EXTRA
         /// statement references only the new control, exactly ONE field declaration was added (the new one),
         /// and all original fields are preserved.</summary>
@@ -703,6 +758,336 @@ namespace WinFormsDesigner.Engine
             // defense-in-depth: NO surviving statement may still reference the removed control (no dangling ref)
             foreach (var s in eInit) if (RefsIdToken(s, id)) return false;
             return true;
+        }
+
+        // ---- remove an entire tab page (the page + its whole subtree) ----
+
+        /// <summary>
+        /// Remove tab page <paramref name="pageId"/> from tab host <paramref name="hostId"/>, deleting the page AND its
+        /// ENTIRE subtree (every descendant control's field declaration + InitializeComponent statements) and detaching
+        /// the page from the host's tab collection: a 1-arg <c>&lt;host&gt;.Controls.Add(this.&lt;page&gt;)</c> /
+        /// <c>&lt;host&gt;.TabPages.Add(this.&lt;page&gt;)</c> is removed whole; an element inside a
+        /// <c>&lt;host&gt;.TabPages.AddRange(new[]{…})</c> is TRIMMED (the whole AddRange goes only if the page was its
+        /// sole element). Refuses (never risks a bad edit) when the subtree is referenced from OUTSIDE it (an
+        /// extender/event/assignment whose receiver is not in the subtree), when a field decl mixes subtree + external
+        /// fields, or when the parenting AddRange has a non-trivial (non-<c>this.&lt;id&gt;</c>) element. Verified by
+        /// <see cref="OnlyTabSubtreeRemoved"/> (only subtree fields removed, no surviving statement references the
+        /// subtree, at most the one trimmed AddRange changed).
+        /// </summary>
+        public static ControlRemoveResult RemoveTabPage(string src, string hostId, string pageId)
+        {
+            if (pageId is "this" or "") return new ControlRemoveResult { Safe = false, Reason = "cannot remove the root form" };
+            if (!IsValidIdentifier(hostId)) return new ControlRemoveResult { Safe = false, Reason = "invalid tab host id: " + hostId };
+            if (!IsValidIdentifier(pageId)) return new ControlRemoveResult { Safe = false, Reason = "invalid tab page id: " + pageId };
+            if (pageId == hostId) return new ControlRemoveResult { Safe = false, Reason = "page and host are the same control" };
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = FindClassWithIC(root);
+            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            if (cls == null || init?.Body == null) return new ControlRemoveResult { Safe = false, Reason = "InitializeComponent not found" };
+            var names = GatherFieldNames(cls);
+            if (!names.Contains(hostId)) return new ControlRemoveResult { Safe = false, Reason = "unknown tab host: " + hostId };
+            if (!names.Contains(pageId)) return new ControlRemoveResult { Safe = false, Reason = "unknown tab page: " + pageId };
+
+            // (1) the parenting statement — how the page attaches to the host (1-arg Add, or an element of an AddRange).
+            StatementSyntax? parenting = null;
+            bool parentingIsAddRange = false;
+            foreach (var st in init.Body.Statements)
+                if (IsTabAddOfHost(st, hostId, pageId)) { parenting = st; break; }
+            if (parenting == null)
+                foreach (var st in init.Body.Statements)
+                    if (IsTabAddRangeOfHostContaining(st, hostId, pageId)) { parenting = st; parentingIsAddRange = true; break; }
+            if (parenting == null)
+                return new ControlRemoveResult { Safe = false, Reason = "page is not attached to host " + hostId + " (no Controls.Add / TabPages.Add[Range])" };
+
+            // (2) the subtree closure — the page plus everything transitively Add/AddRange-ed under it.
+            var closure = ComputeSubtreeClosure(init, pageId, names);
+
+            // (3) classify every statement into whole-remove / AddRange-surgery / keep, refusing external entanglement.
+            var wholeRemove = new List<StatementSyntax>();
+            StatementSyntax? surgeryStmt = null;
+            List<ExpressionSyntax>? surgeryTrim = null;
+            foreach (var st in init.Body.Statements)
+            {
+                if (parentingIsAddRange && st == parenting)
+                {
+                    if (!TryPlanAddRangeSurgery(st, closure, out var trim, out bool removeWhole, out string? why))
+                        return new ControlRemoveResult { Safe = false, Reason = why! };
+                    if (removeWhole) wholeRemove.Add(st);
+                    else { surgeryStmt = st; surgeryTrim = trim; }
+                    continue;
+                }
+                var refs = ClosureRefs(st, closure);
+                if (refs.Count == 0) continue;                       // untouched — references nothing in the subtree
+                string? recvRoot = ReceiverRoot(st);
+                if (recvRoot != null && closure.Contains(recvRoot)) { wholeRemove.Add(st); continue; } // internal to the subtree
+                if (st == parenting) { wholeRemove.Add(st); continue; }                                 // the page's 1-arg parenting Add
+                // the HOST referencing a to-be-deleted page — e.g. `this.<host>.SelectedTabPage = this.<page>` (the
+                // active-tab selection). Safe to drop ONLY when the statement references NO surviving control besides
+                // the host: dropping it removes just the deleted page's mention. If it ALSO names a surviving page (a
+                // second TabPages.AddRange holding the other pages, a host method taking two pages, …), whole-removing
+                // it would silently detach that survivor — so refuse instead.
+                if (recvRoot == hostId)
+                {
+                    var otherRefs = ReferencedFieldIds(st, names);
+                    otherRefs.Remove(hostId);
+                    otherRefs.ExceptWith(closure);
+                    if (otherRefs.Count == 0) { wholeRemove.Add(st); continue; }
+                    return new ControlRemoveResult { Safe = false, Reason = "the host statement also references a control outside this tab (" + string.Join(", ", otherRefs) + ") — remove that reference first" };
+                }
+                // anything else that references the subtree from OUTSIDE it (a sibling / a form-level extender / an
+                // event wired from elsewhere) → decline rather than risk a bad edit.
+                return new ControlRemoveResult { Safe = false, Reason = "a control on this tab is referenced elsewhere (" + (recvRoot ?? "?") + ") — remove that reference first" };
+            }
+
+            // (4) field declarations — one per subtree control; refuse a decl that mixes a subtree + an external field.
+            var fieldDecls = new List<FieldDeclarationSyntax>();
+            foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
+            {
+                var vars = f.Declaration.Variables.Select(v => v.Identifier.Text).ToList();
+                if (!vars.Any(closure.Contains)) continue;
+                if (!vars.All(closure.Contains))
+                    return new ControlRemoveResult { Safe = false, Reason = "a tab control shares a field declaration with a control outside the tab — cannot remove" };
+                fieldDecls.Add(f);
+            }
+
+            // (5) apply the edits: the AddRange surgery (span replace) + whole-removes + field decls (line ranges),
+            // descending by start offset so earlier splices don't shift later ones.
+            var edits = new List<(int s, int e, string repl)>();
+            if (surgeryStmt != null && surgeryTrim != null)
+            {
+                var initializer = FindArrayInitializer(surgeryStmt);
+                if (initializer == null) return new ControlRemoveResult { Safe = false, Reason = "tab AddRange has no array initializer — cannot trim" };
+                var newInit = initializer.RemoveNodes(surgeryTrim, SyntaxRemoveOptions.KeepNoTrivia)!;
+                var newStmt = surgeryStmt.ReplaceNode(initializer, newInit);
+                edits.Add((surgeryStmt.SpanStart, surgeryStmt.Span.End, newStmt.ToString()));
+            }
+            foreach (var st in wholeRemove) { var (s, e) = LineRange(src, st.SpanStart, st.Span.End); edits.Add((s, e, "")); }
+            foreach (var f in fieldDecls) { var (s, e) = LineRange(src, f.SpanStart, f.Span.End); edits.Add((s, e, "")); }
+            edits.Sort((a, b) => b.s.CompareTo(a.s));
+            for (int i = 1; i < edits.Count; i++)
+                if (edits[i].e > edits[i - 1].s) return new ControlRemoveResult { Safe = false, Reason = "overlapping edits — declined" };
+            string text = src;
+            foreach (var (s, e, repl) in edits) text = text.Substring(0, s) + repl + text.Substring(e);
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(text).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool gateOk = OnlyTabSubtreeRemoved(src, text, closure);
+            if (!parseOk || !gateOk)
+                return new ControlRemoveResult { Safe = false, Reason = !parseOk ? "edited text has syntax errors" : "edit changed more than the tab subtree" };
+            return new ControlRemoveResult { Safe = true, NewText = text };
+        }
+
+        /// <summary>True when <paramref name="st"/> is <c>this.&lt;host&gt;.(Controls|TabPages).Add(this.&lt;page&gt;)</c>
+        /// (1-arg) — the page's whole-statement parenting under the host.</summary>
+        private static bool IsTabAddOfHost(StatementSyntax st, string hostId, string pageId)
+        {
+            if (st is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }) return false;
+            if (inv.Expression is not MemberAccessExpressionSyntax ma || ma.Name.Identifier.Text != "Add") return false;
+            var chain = Flatten(ma.Expression);
+            if (chain.Count < 2 || chain[0] != hostId) return false;
+            if (!chain.Contains("Controls") && !chain.Contains("TabPages")) return false;
+            if (inv.ArgumentList.Arguments.Count != 1) return false;
+            var arg = Flatten(inv.ArgumentList.Arguments[0].Expression);
+            return arg.Count == 1 && arg[0] == pageId;
+        }
+
+        /// <summary>True when <paramref name="st"/> is <c>this.&lt;host&gt;.(Controls|TabPages).AddRange(new[]{…})</c>
+        /// and the array initializer contains an element <c>this.&lt;page&gt;</c> — the page attaches via an AddRange.</summary>
+        private static bool IsTabAddRangeOfHostContaining(StatementSyntax st, string hostId, string pageId)
+        {
+            if (st is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }) return false;
+            if (inv.Expression is not MemberAccessExpressionSyntax ma || ma.Name.Identifier.Text != "AddRange") return false;
+            var chain = Flatten(ma.Expression);
+            if (chain.Count < 2 || chain[0] != hostId) return false;
+            if (!chain.Contains("Controls") && !chain.Contains("TabPages")) return false;
+            var initializer = FindArrayInitializer(st);
+            if (initializer == null) return false;
+            foreach (var e in initializer.Expressions)
+            { var f = Flatten(e); if (f.Count == 1 && f[0] == pageId) return true; }
+            return false;
+        }
+
+        /// <summary>The array-initializer of a single-argument <c>X.AddRange(new T[]{…})</c> / <c>X.AddRange(new[]{…})</c>
+        /// statement (explicit or implicit array creation), or null when the argument isn't a fresh array literal.</summary>
+        private static InitializerExpressionSyntax? FindArrayInitializer(StatementSyntax st)
+        {
+            if (st is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }) return null;
+            if (inv.ArgumentList.Arguments.Count != 1) return null;
+            return inv.ArgumentList.Arguments[0].Expression switch
+            {
+                ArrayCreationExpressionSyntax a => a.Initializer,
+                ImplicitArrayCreationExpressionSyntax ia => ia.Initializer,
+                _ => null,
+            };
+        }
+
+        /// <summary>The transitive set of controls parented under <paramref name="pageId"/> (INCLUSIVE): BFS over
+        /// InitializeComponent, following every <c>&lt;P&gt;.….Add(this.&lt;X&gt;)</c> (first arg — covers a 1-arg and a
+        /// TableLayoutPanel 3-arg cell add) and <c>&lt;P&gt;.….AddRange(new[]{ this.&lt;X&gt;, … })</c> whose receiver is
+        /// rooted at a control already in the set. Only ids that are real fields are included.</summary>
+        private static HashSet<string> ComputeSubtreeClosure(MethodDeclarationSyntax init, string pageId, HashSet<string> names)
+        {
+            var closure = new HashSet<string>(StringComparer.Ordinal) { pageId };
+            var work = new Queue<string>();
+            work.Enqueue(pageId);
+            var stmts = init.Body!.Statements;
+            while (work.Count > 0)
+            {
+                string p = work.Dequeue();
+                foreach (var st in stmts)
+                    foreach (var child in ChildAddsUnder(st, p))
+                        if (names.Contains(child) && closure.Add(child)) work.Enqueue(child);
+            }
+            return closure;
+        }
+
+        /// <summary>The child ids that statement <paramref name="st"/> adds into a sub-collection of
+        /// <paramref name="parentId"/>: an <c>Add</c> whose receiver is rooted at parentId yields its FIRST
+        /// <c>this.&lt;id&gt;</c> argument; an <c>AddRange</c> yields every <c>this.&lt;id&gt;</c> array element.</summary>
+        private static IEnumerable<string> ChildAddsUnder(StatementSyntax st, string parentId)
+        {
+            if (st is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }) yield break;
+            if (inv.Expression is not MemberAccessExpressionSyntax ma) yield break;
+            string method = ma.Name.Identifier.Text;
+            if (method != "Add" && method != "AddRange") yield break;
+            var chain = Flatten(ma.Expression);
+            if (chain.Count == 0 || chain[0] != parentId) yield break;
+            if (method == "Add")
+            {
+                if (inv.ArgumentList.Arguments.Count >= 1)
+                {
+                    var f = Flatten(inv.ArgumentList.Arguments[0].Expression); // first arg = the control (1-arg or TLP 3-arg cell)
+                    if (f.Count == 1) yield return f[0];
+                }
+                yield break;
+            }
+            var initializer = FindArrayInitializer(st);
+            if (initializer == null) yield break;
+            foreach (var e in initializer.Expressions)
+            { var f = Flatten(e); if (f.Count == 1) yield return f[0]; }
+        }
+
+        /// <summary>The subtree ids that <paramref name="st"/> references anywhere — <c>this.&lt;id&gt;</c> OR a bare
+        /// <c>&lt;id&gt;</c>. (Delegates to <see cref="ReferencedFieldIds"/>; the discovery side, Flatten, is
+        /// this-agnostic, so the classifier must be too — else a bare-id statement is wrongly treated as untouched.)</summary>
+        private static HashSet<string> ClosureRefs(StatementSyntax st, HashSet<string> closure) => ReferencedFieldIds(st, closure);
+
+        /// <summary>Field ids (from <paramref name="universe"/>) that <paramref name="node"/> references — as either a
+        /// THIS-qualified access (<c>this.&lt;id&gt;…</c>) OR a BARE identifier (<c>&lt;id&gt;.X</c> / <c>&lt;id&gt;</c>
+        /// alone / as an argument), but NOT as the member NAME of an unrelated access (the <c>id</c> in
+        /// <c>foo.id</c>). Covers both the VS <c>this.</c>-qualified idiom and hand/tool-written bare-id source, so the
+        /// classifier and the safety gate see the SAME references the discovery side (Flatten) follows — without this,
+        /// a bare <c>&lt;id&gt;.X = …</c> statement survives while its field is deleted (a dangling CS0103).</summary>
+        private static HashSet<string> ReferencedFieldIds(SyntaxNode node, ISet<string> universe)
+        {
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var n in node.DescendantNodesAndSelf())
+            {
+                if (n is MemberAccessExpressionSyntax ma && ma.Expression is ThisExpressionSyntax && universe.Contains(ma.Name.Identifier.Text))
+                    set.Add(ma.Name.Identifier.Text);
+                else if (n is IdentifierNameSyntax idn && universe.Contains(idn.Identifier.Text))
+                {
+                    // skip when it's the member NAME of an access (`foo.<id>` / the `<id>` inside `this.<id>` — the
+                    // this-qualified case is already caught by the MemberAccess branch above)
+                    if (idn.Parent is MemberAccessExpressionSyntax p && p.Name == idn) continue;
+                    set.Add(idn.Identifier.Text);
+                }
+            }
+            return set;
+        }
+
+        /// <summary>The root control id a statement OPERATES ON — the first identifier of an assignment's LHS
+        /// (<c>this.&lt;id&gt;… = …</c>) or an invocation's receiver (<c>this.&lt;id&gt;….M(…)</c>), or null.</summary>
+        private static string? ReceiverRoot(StatementSyntax st)
+        {
+            if (st is not ExpressionStatementSyntax es) return null;
+            ExpressionSyntax? target = es.Expression switch
+            {
+                AssignmentExpressionSyntax asg => asg.Left,
+                InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax ma } => ma.Expression,
+                _ => null,
+            };
+            if (target == null) return null;
+            var chain = Flatten(target);
+            return chain.Count >= 1 ? chain[0] : null;
+        }
+
+        /// <summary>Plan the surgery on the page's parenting <c>AddRange(new[]{…})</c>: every element must be a simple
+        /// <c>this.&lt;id&gt;</c>; the subtree elements are trimmed. <paramref name="removeWhole"/> is true when EVERY
+        /// element is in the subtree (the whole AddRange goes). Returns false (with a reason) for a non-trivial element.</summary>
+        private static bool TryPlanAddRangeSurgery(StatementSyntax st, HashSet<string> closure,
+            out List<ExpressionSyntax> trim, out bool removeWhole, out string? why)
+        {
+            trim = new List<ExpressionSyntax>(); removeWhole = false; why = null;
+            var initializer = FindArrayInitializer(st);
+            if (initializer == null) { why = "tab AddRange has no array initializer — cannot trim"; return false; }
+            int nonSubtree = 0;
+            foreach (var e in initializer.Expressions)
+            {
+                var f = Flatten(e);
+                if (f.Count != 1) { why = "tab AddRange has a non-trivial element — cannot trim safely"; return false; }
+                if (closure.Contains(f[0])) trim.Add(e); else nonSubtree++;
+            }
+            if (trim.Count == 0) { why = "tab AddRange does not contain the page"; return false; }
+            removeWhole = nonSubtree == 0;
+            return true;
+        }
+
+        /// <summary>§6.5 gate for a tab-subtree removal: (1) NO surviving reference to a subtree control ANYWHERE in the
+        /// InitializeComponent-bearing class — bare OR this-qualified, and across EVERY method (Dispose / helpers), not
+        /// just InitializeComponent — so no dangling CS0103 slips through the parse-only check; (2) every REMOVED
+        /// InitializeComponent statement referenced a subtree control (so no bystander was over-deleted); (3) at most
+        /// ONE statement changed (the trimmed AddRange — must still say "AddRange"); (4) exactly the subtree's field
+        /// declarations were removed (none added, all survivors were originals).</summary>
+        public static bool OnlyTabSubtreeRemoved(string original, string edited, HashSet<string> closure)
+        {
+            var oRoot = CSharpSyntaxTree.ParseText(original).GetRoot();
+            var eRoot = CSharpSyntaxTree.ParseText(edited).GetRoot();
+
+            // (1) no surviving reference to a removed control, whole-class + bare-aware (defeats bare-id dangling AND
+            // a reference in Dispose()/a hand-written helper that a parse-only check can't see).
+            var eCls = FindClassWithIC(eRoot);
+            if (eCls == null) return false;
+            if (ReferencedFieldIds(eCls, closure).Count > 0) return false;
+
+            // (2) every removed InitializeComponent statement referenced the subtree (AST + bare-aware, so we don't
+            // demand `this.` and don't miss an over-deleted bystander on a shared line).
+            var oNodes = InitStatementNodes(oRoot);
+            var oNorm = oNodes.Select(n => NormalizeStmt(n.ToString())).ToList();
+            var eNorm = InitStatements(eRoot);
+            var oCount = Counter(oNorm);
+            var eCount = Counter(eNorm);
+            foreach (var kv in oCount)
+            {
+                int e = eCount.TryGetValue(kv.Key, out var c) ? c : 0;
+                if (e < kv.Value)                                    // some instances of this statement were removed
+                {
+                    var node = oNodes[oNorm.IndexOf(kv.Key)];
+                    if (ReferencedFieldIds(node, closure).Count == 0) return false; // removed something unrelated to the subtree
+                }
+            }
+
+            // (3) at most one CHANGED statement, and it is the trimmed AddRange
+            var added = MultisetSubtract(eNorm, oNorm).ToList();
+            if (added.Count > 1) return false;
+            if (added.Count == 1 && added[0].IndexOf("AddRange", StringComparison.Ordinal) < 0) return false;
+
+            // (4) fields: exactly the subtree removed, nothing added
+            var oF = FieldDeclNames(oRoot);
+            var eF = FieldDeclNames(eRoot);
+            foreach (var id in closure) { if (!oF.Contains(id)) return false; if (eF.Contains(id)) return false; }
+            if (eF.Count != oF.Count - closure.Count) return false;
+            foreach (var f in eF) if (!oF.Contains(f)) return false;
+            return true;
+        }
+
+        /// <summary>The InitializeComponent statements of the IC-bearing class as AST nodes (the node counterpart of
+        /// <see cref="InitStatements"/>, which returns their normalized text).</summary>
+        private static List<StatementSyntax> InitStatementNodes(SyntaxNode root)
+        {
+            var cls = FindClassWithIC(root);
+            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            return init?.Body != null ? init.Body.Statements.ToList() : new List<StatementSyntax>();
         }
 
         // ---- copy / paste (clipboard) ----
@@ -887,7 +1272,29 @@ namespace WinFormsDesigner.Engine
             bool gateOk = OnlyControlAdded(src, finalText, newName);
             if (!parseOk || !gateOk)
                 return new ControlPasteResult { Safe = false, Name = newName, Reason = !parseOk ? "pasted text has syntax errors" : "paste changed more than the new control" };
-            return new ControlPasteResult { Safe = true, Name = newName, NewText = finalText };
+            // Surface the clone's type + nudged Location so the net48 compiled-preview host can live-instantiate it
+            // (the text splice above is enough for the net9 renderer, but the compiled instance is mutated directly).
+            (int px, int py) = PastedLocation(clip.Statements);
+            return new ControlPasteResult { Safe = true, Name = newName, NewText = finalText, TypeName = clip.Fqn, X = px, Y = py };
+        }
+
+        /// <summary>Read the copied control's integer Location from the clip statements and apply the same
+        /// <see cref="PasteOffset"/> nudge <see cref="ProcessPastedStatement"/> emits, so the net48 host places the
+        /// live clone where the pasted text puts it. Returns (-1,-1) when there is no representable Location
+        /// (the net48 AddControl then leaves the control at its default position).</summary>
+        private static (int, int) PastedLocation(List<string> statements)
+        {
+            foreach (var raw in statements)
+            {
+                if (SyntaxFactory.ParseStatement(raw) is ExpressionStatementSyntax es
+                    && es.Expression is AssignmentExpressionSyntax asg
+                    && asg.Left is MemberAccessExpressionSyntax ma && ma.Name.Identifier.Text == "Location"
+                    && asg.Right is ObjectCreationExpressionSyntax oce && oce.ArgumentList?.Arguments.Count == 2
+                    && TryConstInt(oce.ArgumentList.Arguments[0].Expression, out int x)
+                    && TryConstInt(oce.ArgumentList.Arguments[1].Expression, out int y))
+                    return (Math.Max(0, x + PasteOffset), Math.Max(0, y + PasteOffset));
+            }
+            return (-1, -1);
         }
 
         /// <summary>Validate + rename + retouch ONE cloned statement on the AST, returning the emit text or null to

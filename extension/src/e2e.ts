@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl } from './engineClient';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj } from './csprojRef';
 
 const isPng = (b: Buffer): boolean =>
@@ -805,6 +805,138 @@ async function main(): Promise<void> {
       console.log('e2e: TableLayoutPanel cells SKIPPED — engine/samples/TableLayoutForm.Designer.cs missing');
     }
 
+    // ---- Tabs: net9 hidden-tab hit-test filter (#3 parity) + add-tab text splice (#2) ----
+    // TabForm: tabControl1 with tabPage1 (active, holds pageButton1) + tabPage2 (holds pageLabel2). The layout must
+    // DROP controls on the non-active tab (pageLabel2) so a click can't hit them under the active page; AddTabPage
+    // must splice a new field + `TabPages.Add` past the OnlyControlAdded gate and still render.
+    const tabForm = path.join(repo, 'engine', 'samples', 'TabForm.Designer.cs');
+    if (fs.existsSync(tabForm)) {
+      const tabDisk = fs.readFileSync(tabForm, 'utf8');
+      const layout = await describeLayout(engine, tabForm, undefined, tabDisk);
+      const ids = layout.controls.map((c) => c.id);
+      if (!ids.includes('pageButton1')) throw new Error('hidden-tab filter dropped the ACTIVE tab control pageButton1: ' + ids.join(','));
+      if (ids.includes('pageLabel2')) throw new Error('hidden-tab filter must drop pageLabel2 (on the non-active tabPage2): ' + ids.join(','));
+      if (!ids.includes('tabControl1')) throw new Error('tab host tabControl1 missing from the layout');
+
+      const at = await addTabPage(engine, tabForm, 'tabControl1', 'System.Windows.Forms.TabPage', tabDisk);
+      if (!at.safe || at.newText === null) throw new Error('AddTabPage rejected: ' + at.reason);
+      if (at.newText.indexOf(`private System.Windows.Forms.TabPage ${at.name};`) < 0) throw new Error('add-tab missing field declaration for ' + at.name);
+      if (at.newText.indexOf(`this.${at.name} = new System.Windows.Forms.TabPage();`) < 0) throw new Error('add-tab missing ctor for ' + at.name);
+      if (at.newText.indexOf(`this.tabControl1.TabPages.Add(this.${at.name});`) < 0) throw new Error('add-tab missing TabPages.Add for ' + at.name);
+      if (fs.readFileSync(tabForm, 'utf8') !== tabDisk) throw new Error('add-tab must NOT modify the file on disk');
+      const afterAdd = await renderWithLayout(engine, tabForm, undefined, at.newText);
+      if (!isPng(afterAdd.png)) throw new Error('add-tab: form did not render with the new tab');
+      if (!afterAdd.controls.some((c) => c.id === 'tabControl1')) throw new Error('add-tab: tab host lost after add');
+      console.log(`e2e: tabs verified — hidden-tab filter drops non-active-page controls (pageLabel2 gone, pageButton1 kept); AddTabPage splices field + TabPages.Add (${at.name}) past the gate & renders; disk untouched`);
+
+      // Delete-tab (Controls.Add idiom): removing tabPage2 must drop the page AND its subtree (pageLabel2) — field
+      // decls + statements + the tabControl1.Controls.Add(this.tabPage2) parenting — while tabPage1/pageButton1 stay.
+      const del = await removeTabPage(engine, tabForm, 'tabControl1', 'tabPage2', tabDisk);
+      if (!del.safe || del.newText === null) throw new Error('RemoveTabPage(tabControl1, tabPage2) rejected: ' + del.reason);
+      if (/\bthis\.tabPage2\b/.test(del.newText)) throw new Error('delete-tab left a reference to this.tabPage2');
+      if (/\bthis\.pageLabel2\b/.test(del.newText)) throw new Error('delete-tab left a reference to this.pageLabel2 (subtree not removed)');
+      if (del.newText.indexOf('private System.Windows.Forms.TabPage tabPage2;') >= 0) throw new Error('delete-tab left the tabPage2 field');
+      if (del.newText.indexOf('private System.Windows.Forms.Label pageLabel2;') >= 0) throw new Error('delete-tab left the pageLabel2 field');
+      if (!/\bthis\.tabPage1\b/.test(del.newText) || del.newText.indexOf('this.tabControl1.Controls.Add(this.tabPage1)') < 0) {
+        throw new Error('delete-tab must keep the OTHER page tabPage1 and its parenting');
+      }
+      if (!/\bthis\.pageButton1\b/.test(del.newText)) throw new Error('delete-tab dropped pageButton1 (on the surviving tab)');
+      if (fs.readFileSync(tabForm, 'utf8') !== tabDisk) throw new Error('delete-tab must NOT modify the file on disk');
+      const afterDel = await renderWithLayout(engine, tabForm, undefined, del.newText);
+      if (!isPng(afterDel.png)) throw new Error('delete-tab: form did not render after removing tabPage2');
+      const delIds = afterDel.controls.map((c) => c.id);
+      if (delIds.includes('tabPage2') || delIds.includes('pageLabel2')) throw new Error('delete-tab: removed page still in the layout: ' + delIds.join(','));
+      if (!delIds.includes('tabControl1')) throw new Error('delete-tab: tab host lost after delete');
+      // Refusals: an unknown page, and the host itself, must be declined (never a bad edit).
+      if ((await removeTabPage(engine, tabForm, 'tabControl1', 'nope', tabDisk)).safe) throw new Error('RemoveTabPage must refuse an unknown page');
+      if ((await removeTabPage(engine, tabForm, 'tabControl1', 'this', tabDisk)).safe) throw new Error('RemoveTabPage must refuse the root form');
+      console.log('e2e: delete-tab verified — tabPage2 + subtree (pageLabel2) removed, tabPage1/pageButton1 kept, disk untouched, renders; unknown/root refused');
+    } else {
+      console.log('e2e: tabs SKIPPED — engine/samples/TabForm.Designer.cs missing');
+    }
+
+    // ---- Delete-tab AddRange surgery (DevExpress XtraTabControl idiom): TabPages.AddRange(new[]{ A, B, C }) ----
+    // Deleting the MIDDLE page B must TRIM only its element from the array (A & C survive as tabs) and remove B's
+    // whole subtree (bLabel). Pure text edit — no interpreter needed, so this leg is text-only.
+    const tabAddRange = path.join(repo, 'engine', 'samples', 'TabAddRangeForm.Designer.cs');
+    if (fs.existsSync(tabAddRange)) {
+      const arDisk = fs.readFileSync(tabAddRange, 'utf8');
+      const delB = await removeTabPage(engine, tabAddRange, 'tabControl1', 'tabPageB', arDisk);
+      if (!delB.safe || delB.newText === null) throw new Error('RemoveTabPage(AddRange, tabPageB) rejected: ' + delB.reason);
+      if (/\bthis\.tabPageB\b/.test(delB.newText)) throw new Error('AddRange delete left a reference to this.tabPageB');
+      if (/\bthis\.bLabel\b/.test(delB.newText)) throw new Error('AddRange delete left a reference to this.bLabel (subtree not removed)');
+      if (delB.newText.indexOf('TabPage tabPageB;') >= 0 || delB.newText.indexOf('Label bLabel;') >= 0) throw new Error('AddRange delete left a subtree field');
+      if (delB.newText.indexOf('AddRange') < 0) throw new Error('AddRange delete must KEEP the AddRange (A & C remain)');
+      if (!/\bthis\.tabPageA\b/.test(delB.newText) || !/\bthis\.tabPageC\b/.test(delB.newText)) throw new Error('AddRange delete dropped a sibling page (A/C)');
+      if (!/\bthis\.aButton\b/.test(delB.newText) || !/\bthis\.cButton\b/.test(delB.newText)) throw new Error('AddRange delete dropped a sibling page control');
+      // the trimmed array must list exactly A and C (B gone), any whitespace between.
+      if (!/new\s+System\.Windows\.Forms\.TabPage\[\]\s*\{[\s\S]*this\.tabPageA[\s\S]*this\.tabPageC[\s\S]*\}/.test(delB.newText)) {
+        throw new Error('AddRange delete: trimmed array must still contain tabPageA and tabPageC');
+      }
+      if (fs.readFileSync(tabAddRange, 'utf8') !== arDisk) throw new Error('AddRange delete must NOT modify the file on disk');
+      console.log('e2e: delete-tab AddRange surgery verified — tabPageB trimmed from TabPages.AddRange, subtree (bLabel) removed, A & C kept, disk untouched');
+    } else {
+      console.log('e2e: delete-tab AddRange SKIPPED — engine/samples/TabAddRangeForm.Designer.cs missing');
+    }
+
+    // ---- Delete-tab adversarial guards (codify the corruption holes an adversarial review found + fixed) ----
+    // All three use an inline sourceText override (RemoveTabPage is pure text — the path is a dummy). anyTab is a
+    // valid .Designer.cs; each case bends ONE way that used to corrupt or over-delete.
+    {
+      const dummy = path.join(repo, 'engine', 'samples', 'TabForm.Designer.cs'); // path only; sourceText drives it
+      const head = 'namespace S { partial class F {\n' +
+        '  private System.ComponentModel.IContainer components = null;\n' +
+        '  private System.Windows.Forms.TabControl tc;\n' +
+        '  private System.Windows.Forms.TabPage pa;\n' +
+        '  private System.Windows.Forms.TabPage pb;\n' +
+        '  private System.Windows.Forms.Button ba;\n';
+      // (1) BARE (non-this.) reference to a subtree control must be REMOVED with the subtree — not left dangling.
+      const bareSrc = head +
+        '  private void InitializeComponent() {\n' +
+        '    this.tc = new System.Windows.Forms.TabControl();\n' +
+        '    this.pa = new System.Windows.Forms.TabPage();\n' +
+        '    this.pb = new System.Windows.Forms.TabPage();\n' +
+        '    this.ba = new System.Windows.Forms.Button();\n' +
+        '    this.tc.Controls.Add(this.pa);\n' +
+        '    this.tc.Controls.Add(this.pb);\n' +
+        '    this.pa.Controls.Add(this.ba);\n' +
+        '    ba.Text = "bare-ref-no-this";\n' +           // the corruption trigger: bare id
+        '    this.pa.Name = "pa";\n' +
+        '  }\n} }\n';
+      const bare = await removeTabPage(engine, dummy, 'tc', 'pa', bareSrc);
+      if (!bare.safe || bare.newText === null) throw new Error('delete-tab bare-id: should delete cleanly, got: ' + bare.reason);
+      if (/\bba\b/.test(bare.newText) || /\bpa\b/.test(bare.newText)) throw new Error('delete-tab bare-id: left a dangling bare reference to the removed subtree');
+      if (!/\bthis\.pb\b/.test(bare.newText)) throw new Error('delete-tab bare-id: dropped the surviving page pb');
+
+      // (2) a host-rooted statement that ALSO names a SURVIVING page must NOT be whole-removed → refuse.
+      const survSrc = head +
+        '  private void InitializeComponent() {\n' +
+        '    this.tc = new System.Windows.Forms.TabControl();\n' +
+        '    this.pa = new System.Windows.Forms.TabPage();\n' +
+        '    this.pb = new System.Windows.Forms.TabPage();\n' +
+        '    this.tc.TabPages.Add(this.pa);\n' +                                                   // 1-arg parenting (found first)
+        '    this.tc.TabPages.AddRange(new System.Windows.Forms.TabPage[] { this.pa, this.pb });\n' + // host-rooted, holds survivor pb
+        '    this.pa.Name = "pa";\n' +
+        '  }\n} }\n';
+      const surv = await removeTabPage(engine, dummy, 'tc', 'pa', survSrc);
+      if (surv.safe) throw new Error('delete-tab host-survivor: must REFUSE (would orphan the surviving page pb), but returned safe');
+
+      // (3) a reference to the page in ANOTHER method of the class (Dispose) must be caught → refuse.
+      const dispSrc = head +
+        '  private void InitializeComponent() {\n' +
+        '    this.tc = new System.Windows.Forms.TabControl();\n' +
+        '    this.pa = new System.Windows.Forms.TabPage();\n' +
+        '    this.pb = new System.Windows.Forms.TabPage();\n' +
+        '    this.tc.Controls.Add(this.pa);\n' +
+        '    this.tc.Controls.Add(this.pb);\n' +
+        '  }\n' +
+        '  protected override void Dispose(bool disposing) { this.pa.Dispose(); base.Dispose(disposing); }\n} }\n';
+      const disp = await removeTabPage(engine, dummy, 'tc', 'pa', dispSrc);
+      if (disp.safe) throw new Error('delete-tab outside-IC: must REFUSE (Dispose still references pa), but returned safe');
+
+      console.log('e2e: delete-tab adversarial guards verified — bare-id ref removed (not dangling); host-survivor & outside-InitializeComponent refs refused');
+    }
+
     // ---- Reset property (VS "Reset" / Dock↔Anchor mutual-exclusivity) ----
     // ResetProperty deletes a property's assignment(s) so it reverts to default. Nothing is interpolated — only
     // whole target-statement lines are removed, §6.5-gated (OnlyPropertyReset): ONLY the (comp, prop) assignments
@@ -1273,6 +1405,9 @@ async function main(): Promise<void> {
       const ps = await pasteControl(engine, designer, cp.clip, 'this', diskCp);
       if (!ps.safe || ps.newText === null) throw new Error('PasteControl rejected: ' + ps.reason);
       if (ps.name !== 'button1') throw new Error('PasteControl unexpected name: ' + ps.name);
+      // net48-preview hints: the clone's type + nudged Location (150,204 → 158,212) so the compiled host can live-add it
+      if (ps.typeName !== 'System.Windows.Forms.Button') throw new Error('PasteControl did not surface the clone type for net48 live-add: ' + ps.typeName);
+      if (ps.x !== 158 || ps.y !== 212) throw new Error(`PasteControl did not surface the nudged Location for net48 live-add: (${ps.x},${ps.y})`);
       if (ps.newText.indexOf('private System.Windows.Forms.Button button1;') < 0) throw new Error('paste missing field declaration');
       if (ps.newText.indexOf('this.button1 = new System.Windows.Forms.Button();') < 0) throw new Error('paste missing ctor statement');
       if (ps.newText.indexOf('this.button1.Name = "button1";') < 0) throw new Error('paste did not sync the Name property to the new field name');
@@ -1309,7 +1444,10 @@ async function main(): Promise<void> {
       const litPaste = await pasteControl(engine, designer, litClip, 'this', diskCp);
       if (!litPaste.safe || litPaste.newText === null) throw new Error('paste of a literal-bearing clip rejected: ' + litPaste.reason);
       if (litPaste.newText.indexOf('"see this.x now"') < 0 || litPaste.newText.indexOf('see this.button1 now') >= 0) throw new Error('AST rename corrupted a string literal containing "this.<id>"');
-      console.log(`e2e: copy/paste verified — clone (${ps.name}) renames+offsets & renders (+1); original survives; refuse root/container/bad-clip; paste into a container parents; SECURITY: reject Fqn-injection, non-designer call, sibling-ref; AST rename preserves string literals; disk untouched`);
+      // net48-preview hint: a clip with no representable integer Location yields (-1,-1) → net48 AddControl leaves the default position
+      if (litPaste.typeName !== 'System.Windows.Forms.Button') throw new Error('PasteControl did not surface the clone type for a Location-less clip: ' + litPaste.typeName);
+      if (litPaste.x !== -1 || litPaste.y !== -1) throw new Error(`PasteControl should report (-1,-1) for a clip without an integer Location: (${litPaste.x},${litPaste.y})`);
+      console.log(`e2e: copy/paste verified — clone (${ps.name}) renames+offsets & renders (+1); original survives; refuse root/container/bad-clip; paste into a container parents; net48 live-add hints (type=${ps.typeName}, loc ${ps.x},${ps.y}; Location-less clip → -1,-1); SECURITY: reject Fqn-injection, non-designer call, sibling-ref; AST rename preserves string literals; disk untouched`);
     }
 
     // ---- z-order (Bring to Front / Send to Back) — engine MoveZOrder: relocate Controls.Add among siblings ----

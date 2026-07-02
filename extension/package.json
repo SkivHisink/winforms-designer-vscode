@@ -1,9 +1,9 @@
 {
   "name": "winforms-designer-vscode",
   "displayName": "WinForms Designer for VS Code",
-  "description": "Visualize and edit WinForms .Designer.cs forms live inside VS Code — a Visual Studio-style designer surface, property grid, toolbox and event wiring, powered by a .NET 9 rendering engine.",
+  "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "preview": true,
   "license": "MIT",
   "author": {
@@ -61,14 +61,14 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "Rendering a designer loads and executes the project's control assemblies (constructors / OnPaint run on preview), so the extension is disabled in untrusted workspaces."
+      "description": "%untrusted.description%"
     }
   },
   "contributes": {
     "customEditors": [
       {
         "viewType": "winformsDesigner.designer",
-        "displayName": "WinForms Designer",
+        "displayName": "%editor.displayName%",
         "selector": [
           {
             "filenamePattern": "*.cs"
@@ -81,7 +81,7 @@
       "activitybar": [
         {
           "id": "winformsDesigner",
-          "title": "WinForms Designer",
+          "title": "%viewsContainers.title%",
           "icon": "media/winforms-activity.svg"
         }
       ]
@@ -91,7 +91,7 @@
         {
           "type": "webview",
           "id": "winformsDesigner.panel",
-          "name": "Designer"
+          "name": "%view.name%"
         }
       ]
     },
@@ -104,23 +104,23 @@
     "commands": [
       {
         "command": "winformsDesigner.open",
-        "title": "WinForms: Open Designer"
+        "title": "%command.open.title%"
       },
       {
         "command": "winformsDesigner.viewCode",
-        "title": "WinForms: View Code"
+        "title": "%command.viewCode.title%"
       },
       {
         "command": "winformsDesigner.showProperties",
-        "title": "WinForms: Show Properties"
+        "title": "%command.showProperties.title%"
       },
       {
         "command": "winformsDesigner.exportDiagnostics",
-        "title": "WinForms: Export Designer Diagnostics"
+        "title": "%command.exportDiagnostics.title%"
       },
       {
         "command": "winformsDesigner.selectControlAssembly",
-        "title": "WinForms: Select Control Assembly / Project…",
+        "title": "%command.selectControlAssembly.title%",
         "icon": "$(package)"
       }
     ],
@@ -165,19 +165,49 @@
       ]
     },
     "configuration": {
-      "title": "WinForms Designer",
+      "title": "%configuration.title%",
       "properties": {
         "winformsDesigner.autoOpenDesigner": {
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "markdownDescription": "Automatically open the WinForms designer when a form's `.cs` (one that has a generated `.Designer.cs` partner) becomes the active editor — mirroring Visual Studio, where opening `Form1.cs` shows the designer. Use **View Code** to switch a form back to its `.cs` text (auto-open won't re-hijack it until you reopen the file). Disable this to keep the C# text editor and open the designer manually via **WinForms: Open Designer** or *Reopen Editor With…*."
+          "markdownDescription": "%config.autoOpenDesigner.description%"
         },
         "winformsDesigner.assemblyPath": {
           "type": "string",
           "default": "",
           "scope": "resource",
-          "markdownDescription": "Explicit path to the project's built control assembly (`.dll`) used to resolve custom/3rd-party controls. Leave empty to auto-discover the project's build output. Set this only when auto-discovery fails (e.g. multi-target, a custom `OutputPath`, or a not-yet-built project).\n\n- A leading `~` expands to your home directory; a relative path resolves against the workspace folder (or the file's own directory when no folder is open). Environment variables (`%VAR%`, `${env:VAR}`, `$VAR`) are **not** expanded.\n- If the resolved path does not exist, a warning is shown and auto-discovery is used instead.\n- **The assembly is loaded and its control constructors / `OnPaint` run when a designer is previewed**, so it is honored only in a trusted workspace."
+          "markdownDescription": "%config.assemblyPath.description%"
+        },
+        "winformsDesigner.language": {
+          "type": "string",
+          "default": "en",
+          "scope": "window",
+          "enum": [
+            "en",
+            "ru",
+            "zh-cn",
+            "fr",
+            "de",
+            "es"
+          ],
+          "enumItemLabels": [
+            "English",
+            "Русский",
+            "简体中文",
+            "Français",
+            "Deutsch",
+            "Español"
+          ],
+          "markdownEnumDescriptions": [
+            "English",
+            "Russian — Русский",
+            "Chinese (Simplified) — 简体中文",
+            "French — Français",
+            "German — Deutsch",
+            "Spanish — Español"
+          ],
+          "markdownDescription": "%config.language.description%"
         }
       }
     }
@@ -186,6 +216,7 @@
     "build": "node ./build.mjs",
     "typecheck": "tsc --noEmit",
     "e2e": "node dist/e2e.cjs",
+    "l10n:parity": "node ../scripts/ci-l10n-parity.mjs",
     "bundle-engine": "dotnet publish ../engine -c Release -o engine",
     "bundle-engine-net48": "dotnet publish ../engine-net48 -c Release -o engine-net48",
     "copy-license": "node -e \"require('fs').copyFileSync('../LICENSE','LICENSE')\"",

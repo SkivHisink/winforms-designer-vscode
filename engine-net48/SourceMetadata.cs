@@ -1,0 +1,138 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace WinFormsDesigner.Engine.Net48
+{
+    /// <summary>
+    /// Parses a compiled control's .Designer.cs (pure Roslyn — no instantiation, so it works for DevExpress/any
+    /// library the render domain can't load) to recover the two facts the LIVE TypeDescriptor describe can't see:
+    /// which properties were assigned in source (the grid's "set in source" bold) and which event handlers were
+    /// wired (the Events tab). Runs in the HOST domain (like <see cref="RootTypeResolver"/>, keeping Roslyn out of
+    /// the render child domain): <see cref="Apply"/> post-processes the marshaled <see cref="ComponentDesc"/>.
+    /// This is the net48 counterpart of the net9 engine's interpret-time explicitMembers + ExtractEventWirings.
+    /// </summary>
+    public static class SourceMetadata
+    {
+        /// <summary>Set <c>SourceExplicit</c> on properties assigned in source and <c>Handler</c> on wired events for
+        /// the component <c>desc.Id</c> ("this" = root, else the .Designer.cs field name). Best-effort: a missing or
+        /// unparsable file (or any failure) leaves the describe's defaults (false / null) untouched.</summary>
+        public static void Apply(ComponentDesc? desc, string? designerFilePath)
+        {
+            if (desc == null || string.IsNullOrEmpty(designerFilePath) || !File.Exists(designerFilePath)) return;
+            try
+            {
+                var (explicitProps, handlers) = Parse(File.ReadAllText(designerFilePath), desc.Id);
+                if (desc.Properties != null)
+                    foreach (var p in desc.Properties)
+                        if (p != null && explicitProps.Contains(p.Name)) p.SourceExplicit = true;
+                if (desc.Events != null)
+                    foreach (var e in desc.Events)
+                        if (e != null && handlers.TryGetValue(e.Name, out var h)) e.Handler = h;
+            }
+            catch { /* best effort — leave the live-describe defaults */ }
+        }
+
+        /// <summary>Headless test hook (pure text, no assembly): the explicit props + event→handler wirings parsed
+        /// for <paramref name="id"/> in <paramref name="designerFilePath"/>. Used by the <c>--parse-meta</c> CLI.</summary>
+        public static (List<string> explicitProps, List<KeyValuePair<string, string>> handlers) Dump(string designerFilePath, string id)
+        {
+            var (props, handlers) = Parse(File.ReadAllText(designerFilePath), id);
+            return (props.OrderBy(s => s, StringComparer.Ordinal).ToList(), handlers.OrderBy(kv => kv.Key, StringComparer.Ordinal).ToList());
+        }
+
+        /// <summary>For component <paramref name="id"/>: the set of assigned property names (the FIRST hop after the
+        /// owner — <c>this.&lt;id&gt;.&lt;prop&gt; = …</c> and nested <c>this.&lt;id&gt;.&lt;prop&gt;.X = …</c> both record
+        /// <c>prop</c>, matching net9) and the event→handler wirings (<c>this.&lt;id&gt;.&lt;evt&gt; += …</c>) found in
+        /// InitializeComponent.</summary>
+        private static (HashSet<string> explicitProps, Dictionary<string, string> handlers) Parse(string code, string id)
+        {
+            var props = new HashSet<string>(StringComparer.Ordinal);
+            var handlers = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
+            // Parse the SAME class the live describe instantiates: RootTypeResolver picks the FIRST class in the
+            // file unconditionally, so we must too — otherwise Apply would decorate the first class's live grid with
+            // facts scavenged from a different sibling class. (Real .Designer.cs files hold one partial class.)
+            var cls = root.DescendantNodes().OfType<ClassDeclarationSyntax>().FirstOrDefault();
+            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            if (cls == null || init?.Body == null) return (props, handlers);
+
+            // field names, so a `this.<field> = new …` field CONSTRUCTION isn't mistaken for a root property set (a
+            // one-segment `this.<X> =` is either a real root prop or a child-field construction — the latter is a field).
+            var fields = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
+                foreach (var v in f.Declaration.Variables)
+                    fields.Add(v.Identifier.Text);
+
+            foreach (var stmt in init.Body.Statements)
+            {
+                if (stmt is not ExpressionStatementSyntax es || es.Expression is not AssignmentExpressionSyntax asg) continue;
+                if (asg.Left is not MemberAccessExpressionSyntax lhs) continue;
+                var (owner, member) = OwnerAndMember(lhs);
+                if (owner == null || owner != id) continue;
+
+                if (asg.OperatorToken.IsKind(SyntaxKind.PlusEqualsToken))
+                {
+                    var h = ExtractHandlerName(asg.Right);
+                    if (h != null) handlers[member] = h;
+                }
+                else if (asg.OperatorToken.IsKind(SyntaxKind.EqualsToken))
+                {
+                    // a one-segment `this.<field> = new …()` is a child-field CONSTRUCTION, not a root property set
+                    // (mirrors net9's ObjectCreation-only construction branch); a literal/other RHS to a field-named
+                    // root property, or a root event `+=` (handled above), IS a genuine set and must be recorded.
+                    if (owner == "this" && fields.Contains(member) && asg.Right is ObjectCreationExpressionSyntax) continue;
+                    props.Add(member);
+                }
+            }
+            return (props, handlers);
+        }
+
+        /// <summary>The owning component id + the FIRST member hop after it, for an assignment LHS of any depth —
+        /// mirroring the net9 engine's Flatten + HandleAssignment(chain[propStart]): <c>this.&lt;member&gt;</c> →
+        /// ("this", member); <c>this.&lt;id&gt;.&lt;X&gt;[.&lt;Y&gt;…]</c> or bare <c>&lt;id&gt;.&lt;X&gt;[.…]</c> →
+        /// (id, X) so a nested sub-object set like <c>this.grid.Appearance.Font = …</c> records ("grid","Appearance")
+        /// and bolds the Appearance row (the common DevExpress idiom). An unrecognized receiver (cast, invocation, …)
+        /// yields a "?" sentinel → (null, …) so it's skipped, exactly as net9 drops its phantom chain key.</summary>
+        private static (string? owner, string member) OwnerAndMember(MemberAccessExpressionSyntax lhs)
+        {
+            var chain = new List<string>();
+            void Walk(ExpressionSyntax e)
+            {
+                switch (e)
+                {
+                    case MemberAccessExpressionSyntax m: Walk(m.Expression); chain.Add(m.Name.Identifier.Text); break;
+                    case IdentifierNameSyntax idn: chain.Add(idn.Identifier.Text); break;
+                    case ThisExpressionSyntax: break;                 // contributes nothing (mirrors net9 Flatten)
+                    case ParenthesizedExpressionSyntax p: Walk(p.Expression); break;
+                    default: chain.Add("?"); break;                  // unknown receiver — won't match a real id
+                }
+            }
+            Walk(lhs);
+            if (chain.Count == 0 || chain.Contains("?")) return (null, lhs.Name.Identifier.Text);
+            if (chain.Count == 1) return ("this", chain[0]);         // this.<member>  (root direct)
+            return (chain[0], chain[1]);                             // <id>.<firstHop>[.…]  →  (id, firstHop)
+        }
+
+        /// <summary>Handler method name from the RHS of an event wiring: <c>new EventHandler(this.M)</c>,
+        /// <c>this.M</c>, or a bare <c>M</c> → "M"; null if not a recognizable method reference. (Mirrors the net9
+        /// engine's ExtractHandlerName.)</summary>
+        private static string? ExtractHandlerName(ExpressionSyntax rhs)
+        {
+            ExpressionSyntax e = rhs;
+            if (e is ObjectCreationExpressionSyntax oce && oce.ArgumentList is { Arguments: { Count: > 0 } } al)
+                e = al.Arguments[0].Expression;
+            return e switch
+            {
+                MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
+                IdentifierNameSyntax id => id.Identifier.Text,
+                _ => null,
+            };
+        }
+    }
+}

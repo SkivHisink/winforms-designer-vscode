@@ -23,6 +23,26 @@ namespace WinFormsDesigner.Engine.Net48
         public string Notes { get; set; } = "";
     }
 
+    /// <summary>One toolbox palette entry. Mirrors WinFormsDesigner.Engine.ToolboxItemInfo (→ TS ToolboxItemInfo)
+    /// so the merged palette JSON is identical regardless of which engine enumerated it. The net48 engine fills
+    /// these for the project/vendor (DevExpress) assembly's own controls — the ones the net9 enumerator can't load —
+    /// which the host merges with the net9 framework controls. Crosses the child-AppDomain boundary, so [Serializable]
+    /// with plain get/set.</summary>
+    [Serializable]
+    public sealed class ToolboxItemInfo
+    {
+        public string Name { get; set; } = "";
+        public string Fqn { get; set; } = "";
+        public string Category { get; set; } = "";
+        public bool FromProject { get; set; }
+        /// <summary>The control's 16×16 [ToolboxBitmap] icon as a base64 PNG, or null when none is embedded /
+        /// extraction failed. Display only.</summary>
+        public string? IconPng { get; set; }
+        /// <summary>True for a non-visual component (added to the tray). Always false here — net48 enumerates
+        /// visual controls only — carried for DTO-shape parity with the net9 engine.</summary>
+        public bool IsComponent { get; set; }
+    }
+
     /// <summary>One control's window-space placement + minimal tree info — the click-to-select hit-test unit.
     /// Mirrors WinFormsDesigner.Engine.LayoutControl.</summary>
     [Serializable]
@@ -41,6 +61,18 @@ namespace WinFormsDesigner.Engine.Net48
         public int TabIndex { get; set; }
         public string Anchor { get; set; } = "None";
         public string Dock { get; set; } = "None";
+        /// <summary>True when this control is a tab host (has a TabPages collection + a SelectedTab/Page) — the
+        /// webview uses it to route a header click to <c>SelectCompiledTabAt</c> so clicking a tab switches it.</summary>
+        public bool IsTabHost { get; set; }
+    }
+
+    /// <summary>Result of a tab-header hit-test (rename): the .Designer.cs field id of the tab page under the point
+    /// and its current Text. PageId is "" when no field-backed page was hit.</summary>
+    [Serializable]
+    public sealed class TabHit
+    {
+        public string PageId { get; set; } = "";
+        public string Text { get; set; } = "";
     }
 
     /// <summary>One property edit for the live batch-mutate (drag/resize/align): set componentId.propName to the

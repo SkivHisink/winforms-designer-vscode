@@ -1,0 +1,16 @@
+{
+  "description": "Visualice y edite formularios .Designer.cs de WinForms en vivo dentro de VS Code — una superficie de diseño al estilo de Visual Studio, cuadrícula de propiedades, cuadro de herramientas y vinculación de eventos, con la tecnología de un motor de renderizado de .NET 9.",
+  "editor.displayName": "WinForms Designer",
+  "viewsContainers.title": "WinForms Designer",
+  "view.name": "Diseñador",
+  "command.open.title": "WinForms: Abrir el diseñador",
+  "command.viewCode.title": "WinForms: Ver código",
+  "command.showProperties.title": "WinForms: Mostrar propiedades",
+  "command.exportDiagnostics.title": "WinForms: Exportar diagnósticos del diseñador",
+  "command.selectControlAssembly.title": "WinForms: Seleccionar ensamblado o proyecto de controles…",
+  "configuration.title": "WinForms Designer",
+  "untrusted.description": "Renderizar un diseñador carga y ejecuta los ensamblados de controles del proyecto (los constructores / OnPaint se ejecutan en la vista previa), por lo que la extensión se deshabilita en áreas de trabajo que no son de confianza.",
+  "config.autoOpenDesigner.description": "Abre automáticamente el diseñador de WinForms cuando el `.cs` de un formulario (uno que tiene un `.Designer.cs` generado asociado) se convierte en el editor activo — replicando Visual Studio, donde abrir `Form1.cs` muestra el diseñador. Use **Ver código** para volver a mostrar el texto `.cs` de un formulario (la apertura automática no lo volverá a acaparar hasta que reabra el archivo). Deshabilite esto para mantener el editor de texto de C# y abrir el diseñador manualmente mediante **WinForms: Abrir el diseñador** o *Reabrir editor con…*.",
+  "config.assemblyPath.description": "Ruta explícita al ensamblado de controles compilado del proyecto (`.dll`) usado para resolver controles personalizados o de terceros. Déjelo vacío para detectar automáticamente la salida de compilación del proyecto. Establezca esto solo cuando la detección automática falle (p. ej. multidestino, un `OutputPath` personalizado o un proyecto aún no compilado).\n\n- Un `~` inicial se expande a su directorio de inicio; una ruta relativa se resuelve respecto a la carpeta del área de trabajo (o al directorio propio del archivo cuando no hay ninguna carpeta abierta). Las variables de entorno (`%VAR%`, `${env:VAR}`, `$VAR`) **no** se expanden.\n- Si la ruta resuelta no existe, se muestra una advertencia y se usa la detección automática en su lugar.\n- **El ensamblado se carga y sus constructores de controles / `OnPaint` se ejecutan cuando se previsualiza un diseñador**, por lo que solo se respeta en un área de trabajo de confianza.",
+  "config.language.description": "Idioma de la interfaz de usuario del diseñador de WinForms — la superficie de diseño, la cuadrícula de propiedades, el cuadro de herramientas, los cuadros de diálogo y los mensajes. Se elige **aquí**, en la configuración de la extensión; **no** sigue automáticamente el idioma de visualización de VS Code. Predeterminado: **English**.\n\n- Cambiar esto surte pleno efecto tras **Volver a cargar la ventana** (se le pedirá que lo haga).\n- Nota: los títulos de la **paleta de comandos** de VS Code (p. ej. *WinForms: Abrir el diseñador*) y esta propia página de configuración siguen el *Idioma de visualización* propio de VS Code, no esta configuración — una limitación de la plataforma."
+}

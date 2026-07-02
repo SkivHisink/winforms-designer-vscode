@@ -47,16 +47,17 @@ The rendering is real: a headless .NET host actually instantiates your controls 
 ## ✨ Features
 
 - **Live form rendering** from `.Designer.cs` — full frame plus fast per-control dirty-region patches.
-- **.NET Framework & DevExpress support (experimental)** — `net4x` forms render on a bundled **.NET Framework 4.8** engine that instantiates the compiled controls (so DevExpress `XtraUserControl` & co. look pixel-accurate); the extension auto-routes each form to the right engine, and the property grid, drag/resize/align, add/remove and z-order apply live. _(Cut/paste on this engine is not available yet.)_
+- **.NET Framework & DevExpress support (experimental)** — `net4x` forms render on a bundled **.NET Framework 4.8** engine that instantiates the compiled controls (so DevExpress `XtraUserControl` & co. look pixel-accurate); the extension auto-routes each form to the right engine, and the property grid, drag/resize/align, add/remove, z-order, cut/paste, tab-page add/rename/delete, and dropping the project's own vendor controls from the toolbox all apply live.
 - **Visual Studio–style workflow** — opening `Form.cs` opens the designer; *View Code* switches back to text.
 - **Property grid** — primitives, enums, and complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`), composite expansion (`Size → Width/Height`), and standard-value dropdowns. VS-style **Color** (tabbed palette), **Font** (expandable name/size/style), **flags-enum**, **Anchor/Dock**, and **image** editors.
 - **Images & `.resx`** — images stored in a form's sibling `.resx` are rendered in the preview; **import** or **clear** `Image` / `BackgroundImage` / `Icon` and the change is written back into both the `.Designer.cs` and the `.resx`.
 - **Layout panels** — edit `TableLayoutPanel` cells and column/row styles, `SplitContainer` splitter distance, and `FlowLayoutPanel` order, with anchor tethers drawn on the canvas.
 - **Toolbox** — auto-populated from `System.Windows.Forms` (~39 controls in VS categories, with their native icons) plus controls discovered from your project. **Choose Toolbox Items** to browse framework / project / other assemblies. Add controls to the surface.
 - **Control sources** — pick which project (`.csproj`) or assembly (`.dll`) supplies your custom / 3rd-party controls; dropping a control from an unreferenced assembly offers to add the project reference.
-- **Direct manipulation** — select, move, resize (8 handles), multi-select (Ctrl/Shift + rubber-band), group move/delete, reparent, z-order, copy/paste, align + distribute + make-same-size, tab-order editor, snaplines, and a VS-style right-click menu.
+- **Direct manipulation** — select, move, resize (8 handles), multi-select (Ctrl/Shift + rubber-band), group move/delete, reparent, z-order, copy/paste, align + distribute + make-same-size, tab-order editor, snaplines, on-canvas **smart-tags**, and a VS-style right-click menu.
 - **Events** — describe, wire / unwire / rewire handlers, generate a handler stub, and navigate to the handler body in the `.cs` partner.
 - **Component tray** & **document outline** (ARIA-accessible) for non-visual components and the control hierarchy.
+- **Localized UI (6 languages)** — the designer surface, dialogs and messages follow the `winformsDesigner.language` setting: English, Русский, 简体中文, Français, Deutsch, Español.
 - **Safe save** — edits are applied as targeted text splices guarded by representability and statement-diff gates; everything outside the changed span is preserved exactly (encoding/BOM included).
 - **Zero-config assembly resolution** — finds your build output via MSBuild design-time evaluation (with multi-target support), or set an explicit assembly path.
 - **Export Diagnostics** command for easy bug reports.
@@ -158,10 +159,10 @@ Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SEC
 
 This project is in **active preview**.
 
-- ✅ **Done & verified:** the core render → select → edit → save loop; property grid (incl. Color / Font / flags / Anchor-Dock / image editors); toolbox with icons and *Choose Toolbox Items*; control-source selection; direct manipulation (move / resize / reparent / z-order / copy-paste / align / snaplines); layout-panel editing (`TableLayoutPanel` / `SplitContainer` / `FlowLayoutPanel`); `.resx` image import & render; events; safe save; accessibility mirror-tree.
-- 🧪 **Experimental (new in 0.3.0):** **.NET Framework (net48) compiled preview** for `net4x` / DevExpress forms — render is proven; live property / drag / resize / align / add / remove / z-order edits are wired (persisted as `.Designer.cs` text via the .NET 9 splice) but not yet covered by automated tests. Cut/paste on this engine is not available yet.
+- ✅ **Done & verified:** the core render → select → edit → save loop; property grid (incl. Color / Font / flags / Anchor-Dock / image editors); toolbox with icons and *Choose Toolbox Items*; control-source selection; direct manipulation (move / resize / reparent / z-order / copy-paste / align / snaplines / on-canvas smart-tags); layout-panel editing (`TableLayoutPanel` / `SplitContainer` / `FlowLayoutPanel`); `.resx` image import & render; events; safe save; accessibility mirror-tree; 6-language UI localization.
+- 🧪 **Experimental (net48 compiled preview):** **.NET Framework (net48) compiled preview** for `net4x` / DevExpress forms — render is proven; live property / drag / resize / align / add / remove / z-order / cut / paste edits, tab-page add / rename / delete / switch, dropping the project's own vendor controls, and source-set (bold) properties / wired events are all wired (edits persisted as `.Designer.cs` text via the .NET 9 splice). The webview interactions are primarily validated headless — confirm the live flow with an F5 run.
 - 🚧 **In progress:** `UITypeEditor` / collection-editor modals, richer multi-assembly control sources, and further VS-parity polish.
-- 🔭 **Not started:** smart-tags / `DesignerActionList`, advanced `.resx` (non-image resources, `ApplyResources`), localization / RTL.
+- 🔭 **Not started:** `DesignerActionList` / vendor smart-tag action lists, advanced `.resx` (non-image resources, `ApplyResources`), RTL.
 
 The webview UI is primarily validated headless; some interactions are best confirmed with a live run. Expect rough edges and please [file issues](https://github.com/SkivHisink/winforms-designer-vscode/issues).
 

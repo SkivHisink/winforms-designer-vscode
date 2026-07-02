@@ -259,6 +259,12 @@ namespace WinFormsDesigner.Engine
                 if (comp is not Control ctrl) continue;
                 bool isRoot = ReferenceEquals(ctrl, root);
 
+                // A control on a NON-active tab page is not on the shown surface (VS shows only the active tab's
+                // contents; you switch tabs to reach the rest). Its rect stacks under the active page, so keeping it
+                // would let it steal a hit-test from the control the user clicked. This is the tab-SELECTION case —
+                // distinct from the Visible shadowing noted below (we still do NOT filter on ctrl.Visible).
+                if (!isRoot && IsOnHiddenTab(ctrl, root)) continue;
+
                 // NOTE: every Control is included (no Visible filter). On a design surface ControlDesigner
                 // SHADOWS Visible/Enabled, so a design-time Visible=false control still has runtime
                 // Visible==true and is still painted by DrawToBitmap (verified: render is byte-identical
@@ -305,6 +311,36 @@ namespace WinFormsDesigner.Engine
             });
 
             return controls;
+        }
+
+        /// <summary>True when the control descends through a tab page that is NOT the tab host's selected one — i.e.
+        /// it's on a hidden tab and shouldn't be in the hit-test map. Reflective (TabPages collection + a
+        /// SelectedTab/SelectedTabPage/SelectedPage) so it covers WinForms TabControl and any XtraTabControl-style
+        /// host without a compile-time reference. Deliberately does NOT consider ctrl.Visible (design-time shadowing
+        /// makes that a no-op / wrongly drops painted controls). Any reflection failure → false (keep the control).</summary>
+        private static bool IsOnHiddenTab(Control ctrl, Control root)
+        {
+            try
+            {
+                for (Control? c = ctrl; c != null && !ReferenceEquals(c, root); c = c.Parent)
+                {
+                    var parent = c.Parent;
+                    if (parent == null) break;
+                    var pagesProp = parent.GetType().GetProperty("TabPages");
+                    var selProp = parent.GetType().GetProperty("SelectedTab")
+                        ?? parent.GetType().GetProperty("SelectedTabPage")
+                        ?? parent.GetType().GetProperty("SelectedPage");
+                    if (pagesProp == null || selProp == null) continue;
+                    if (pagesProp.GetValue(parent) is not System.Collections.IEnumerable pages) continue;
+                    bool cIsPage = false;
+                    foreach (var pg in pages) if (ReferenceEquals(pg, c)) { cIsPage = true; break; }
+                    if (!cIsPage) continue;                       // c is an internal part, not one of the pages
+                    var active = selProp.GetValue(parent) as Control;
+                    if (active != null && !ReferenceEquals(active, c)) return true; // c is a non-selected page
+                }
+            }
+            catch { return false; }
+            return false;
         }
 
         /// <summary>
@@ -721,17 +757,40 @@ namespace WinFormsDesigner.Engine
         /// statements are interpreted by the existing engine on the next render, which creates the control via
         /// host.CreateComponent). parentId "this" = the root form. The host applies the returned text unsaved.
         /// </summary>
-        public static ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null)
+        public static ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, IReadOnlyList<string>? projectControlFqns = null)
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             // Fast path (curated/framework): pure text, NO assembly load. Only a project-control key (§7.2
-            // Increment 2) needs the project assembly enumerated to validate + resolve its full type name.
+            // Increment 2) needs the project set to validate + resolve its full type name.
             IReadOnlyList<ToolboxItemInfo>? projectControls = null;
             if (!DesignerControlEditor.CanResolveWithoutProject(controlTypeKey))
             {
-                projectControls = EnumerateProjectControls(ResolveAsmForList(designerFilePath, controlAssemblyPath));
+                if (projectControlFqns != null)
+                {
+                    // net48 (DevExpress/net4x) path: net9 can't load the vendor assembly, so the net48 engine
+                    // enumerated its controls and handed their FQNs here. Trust those (each validated as a
+                    // well-formed dotted type name — defense-in-depth so no crafted string reaches `new`) instead
+                    // of a futile net9 ALC load. The emit stays pure text (`new <Fqn>()`) guarded by OnlyControlAdded.
+                    var list = new List<ToolboxItemInfo>();
+                    foreach (var f in projectControlFqns)
+                        if (DesignerControlEditor.IsValidTypeName(f))
+                            list.Add(new ToolboxItemInfo { Fqn = f, Name = f.Substring(f.LastIndexOf('.') + 1), Category = "Project Controls", FromProject = true });
+                    projectControls = list;
+                }
+                else
+                {
+                    projectControls = EnumerateProjectControls(ResolveAsmForList(designerFilePath, controlAssemblyPath));
+                }
             }
             return DesignerControlEditor.AddControl(src, parentId, controlTypeKey, projectControls, locX, locY);
+        }
+
+        /// <summary>Add a new empty tab page to a tab host (pure text edit; the caller supplies the page type,
+        /// derived from an existing page). See <see cref="DesignerControlEditor.AddTabPage"/>.</summary>
+        public static ControlAddResult AddTabPage(string designerFilePath, string hostId, string pageTypeFqn, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            return DesignerControlEditor.AddTabPage(src, hostId, pageTypeFqn);
         }
 
         /// <summary>The toolbox's available control type keys (e.g. "Button", "Label", …).</summary>
@@ -901,6 +960,16 @@ namespace WinFormsDesigner.Engine
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             return DesignerControlEditor.RemoveControl(src, controlId);
+        }
+
+        /// <summary>Remove a whole tab page (the page + its entire subtree) from a tab host as a MINIMAL text edit —
+        /// deletes the subtree's fields/statements and detaches the page from the host's tab collection (whole
+        /// Controls.Add/TabPages.Add, or a trimmed TabPages.AddRange element). Pure text, no graph load. See
+        /// <see cref="DesignerControlEditor.RemoveTabPage"/>.</summary>
+        public static ControlRemoveResult RemoveTabPage(string designerFilePath, string hostId, string pageId, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            return DesignerControlEditor.RemoveTabPage(src, hostId, pageId);
         }
 
         /// <summary>Reparent a leaf control into a different container / the root (§7.4) as a MINIMAL text edit —

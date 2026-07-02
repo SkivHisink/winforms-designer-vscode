@@ -1,0 +1,16 @@
+{
+  "description": "在 VS Code 中实时可视化并编辑 WinForms .Designer.cs 窗体 — 提供 Visual Studio 风格的设计器界面、属性网格、工具箱和事件关联，由 .NET 9 渲染引擎驱动。",
+  "editor.displayName": "WinForms Designer",
+  "viewsContainers.title": "WinForms Designer",
+  "view.name": "设计器",
+  "command.open.title": "WinForms: Open Designer",
+  "command.viewCode.title": "WinForms: View Code",
+  "command.showProperties.title": "WinForms: Show Properties",
+  "command.exportDiagnostics.title": "WinForms: Export Designer Diagnostics",
+  "command.selectControlAssembly.title": "WinForms: Select Control Assembly / Project…",
+  "configuration.title": "WinForms Designer",
+  "untrusted.description": "渲染设计器会加载并执行项目的控件程序集(构造函数 / OnPaint 会在预览时运行)，因此在不受信任的工作区中会禁用此扩展。",
+  "config.autoOpenDesigner.description": "当窗体的 `.cs`(带有生成的 `.Designer.cs` 配套文件)成为活动编辑器时，自动打开 WinForms 设计器 — 这与 Visual Studio 一致，即打开 `Form1.cs` 会显示设计器。使用 **View Code** 可将窗体切换回其 `.cs` 文本(在你重新打开该文件之前，自动打开不会再次接管它)。禁用此项可保持 C# 文本编辑器，并通过 **WinForms: Open Designer** 或 *Reopen Editor With…* 手动打开设计器。",
+  "config.assemblyPath.description": "指向项目已生成的控件程序集 (`.dll`) 的显式路径，用于解析自定义/第三方控件。留空则自动发现项目的生成输出。仅在自动发现失败时(例如多目标、自定义 `OutputPath` 或尚未生成的项目)才设置此项。\n\n- 前导 `~` 会展开为你的主目录；相对路径将相对于工作区文件夹解析(未打开文件夹时则相对于文件自身的目录)。环境变量 (`%VAR%`、`${env:VAR}`、`$VAR`) **不会**被展开。\n- 如果解析后的路径不存在，将显示警告并改用自动发现。\n- **预览设计器时，会加载该程序集并运行其控件构造函数 / `OnPaint`**，因此仅在受信任的工作区中生效。",
+  "config.language.description": "WinForms 设计器用户界面的语言 — 包括设计器界面、属性网格、工具箱、对话框和消息。此项在**此处**(即扩展设置中)选择；它**不会**自动跟随 VS Code 的显示语言。默认值：**English**。\n\n- 更改此项需在 **Reload Window** 后完全生效(届时会提示你)。\n- 注意：VS Code **命令面板**中的标题(例如 *WinForms: Open Designer*)以及此设置页面本身会跟随 VS Code 自身的 *Display Language*，而非此设置 — 这是平台限制。"
+}

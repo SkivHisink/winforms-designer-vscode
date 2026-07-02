@@ -14,6 +14,8 @@ import {
   removeCompiledControls,
   setCompiledZOrder,
   addCompiledControl,
+  selectCompiledTabAt,
+  hitTestCompiledTab,
   CompiledEdit,
   RenderLayout,
   describeLayout,
@@ -30,6 +32,7 @@ import {
   addControl,
   addComponent,
   listToolboxItems,
+  listCompiledToolboxControls,
   ToolboxItemInfo,
   getDesignerPalette,
   DesignerPaletteInfo,
@@ -39,9 +42,14 @@ import {
   copyControl,
   pasteControl,
   moveZOrder,
+  addTabPage,
+  addCompiledTab,
+  removeTabPage,
+  removeCompiledTab,
 } from './engineClient';
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
-import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj } from './csprojRef';
+import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, projectTargetFramework, isFrameworkTfm } from './csprojRef';
+import { t, tn, injectL10nScript } from './i18n';
 
 export type EngineKind = 'net9' | 'net48';
 type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
@@ -59,12 +67,11 @@ function detectEngineKind(assemblyPath: string | undefined): EngineKind {
   return 'net48';
 }
 
-/** Canvas messages the net48 compiled preview doesn't support YET (drag/add/remove/z-order — later increments).
- *  Property-grid edits ('edit') ARE supported: net9 splices the text, net48 mutates the live instance for the
- *  picture. 'save' is allowed (it just flushes the committed .Designer.cs text). */
-const NET48_READONLY_BLOCKED = new Set<string>([
-  'cut', 'cutControls', 'paste',
-]);
+/** Canvas messages the net48 compiled preview doesn't support (kept for future ops that can't be mirrored on the
+ *  live compiled instance). Currently EMPTY: every edit — property grid, drag/resize, add, remove, z-order, and
+ *  now cut/paste — is mirrored (net9 splices the text; net48 mutates the live instance for the picture). 'save'
+ *  just flushes the committed .Designer.cs text. */
+const NET48_READONLY_BLOCKED = new Set<string>([]);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
  *  diffs these against the current toolbox membership to add/remove/hide items. */
 type ChooseRow = { fqn: string; name: string; namespace?: string; assemblyName?: string; fromProject?: boolean; checked: boolean };
@@ -132,6 +139,10 @@ export class DesignerHub {
   private active: DesignerSession | null = null;
   /** The single dockable WebviewView hosting BOTH the Properties and Toolbox tabs (switched at its bottom). */
   panel: vscode.Webview | null = null;
+  /** extensionUri captured when the panel resolved — needed to re-emit its HTML on a live language switch. */
+  private panelExtensionUri: vscode.Uri | undefined;
+  /** Every open designer canvas session — so a live language switch can re-emit them all (not just the active). */
+  private readonly openSessions = new Set<DesignerSession>();
 
   private memento: vscode.Memento | undefined;
   /** The designer clipboard (Cut/Copy → Paste), shared across all open designer editors like VS. Each entry is
@@ -201,6 +212,23 @@ export class DesignerHub {
   toPanel(msg: unknown): void { void this.panel?.postMessage(msg); }
   /** From a session — forward to the panel only if it's the one currently mirrored. */
   pushPanel(s: DesignerSession, msg: unknown): void { if (this.active === s) this.toPanel(msg); }
+
+  /** Called by the panel provider when its WebviewView resolves — remember the webview + its extensionUri so a
+   *  live language switch can re-emit the panel HTML with the new locale's injected catalog. */
+  attachPanel(webview: vscode.Webview, extensionUri: vscode.Uri): void {
+    this.panel = webview;
+    this.panelExtensionUri = extensionUri;
+  }
+  registerSession(s: DesignerSession): void { this.openSessions.add(s); }
+  unregisterSession(s: DesignerSession): void { this.openSessions.delete(s); }
+  /** Live language switch (`winformsDesigner.language` changed): re-emit the panel + every open designer canvas so
+   *  their injected catalog + host-built HTML pick up the new locale immediately. Each reloaded webview re-sends
+   *  `ready`, which rehydrates it (panel → refreshViews, canvas → fullRender). The manifest "chrome" (command
+   *  palette, settings page) still needs a window reload — that's what the accompanying toast offers. */
+  rebuildOpenWebviews(): void {
+    if (this.panel && this.panelExtensionUri) this.panel.html = panelHtml(this.panel, this.panelExtensionUri);
+    for (const s of [...this.openSessions]) s.rebuildHtml();
+  }
 }
 
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -362,7 +390,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(view: vscode.WebviewView): void {
     view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')] };
     view.webview.html = panelHtml(view.webview, this.extensionUri);
-    DesignerHub.instance.panel = view.webview;
+    DesignerHub.instance.attachPanel(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage(async (m: {
       type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string;
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
@@ -409,6 +437,11 @@ class DesignerSession {
   /** One-shot latch: we prompt "select a control source" at most once per form (until it renders clean or the
    *  user picks one), so a form with unresolved custom controls isn't nagging on every re-render. */
   private promptedForSource = false;
+  /** Control assembly auto-resolved for a .NET Framework/DevExpress project when NO explicit source is set —
+   *  set by the last render's routing (undefined for a .NET project, whose output the net9 engine finds itself).
+   *  `asm()` returns it as the effective source so the net48 render AND its live edit ops all target the same
+   *  compiled assembly, and only a net9 form (autoAsm undefined) keeps engine-side auto-discovery. */
+  private autoAsm: string | undefined;
   /** The big "Choose Toolbox Items" window (a separate editor-area webview panel), if open. */
   private chooseItemsPanel: vscode.WebviewPanel | undefined;
   /** Assemblies the user added via the Choose-Items "Browse…" button (accumulated across clicks). */
@@ -437,6 +470,7 @@ class DesignerSession {
     this.doc = document;
     this.documentUri = document.uri;
     this.designerFile = document.designerFile;
+    DesignerHub.instance.registerSession(this); // so a live language switch can re-emit this canvas too
     panel.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')],
@@ -458,9 +492,7 @@ class DesignerSession {
     const initTimer = setTimeout(() => {
       if (!this.gotReady && !this.disposed) {
         this.output.appendLine('[designer] webview did NOT send "ready" within 6s (script blocked / failed to init)');
-        void vscode.window.showErrorMessage(
-          'WinForms Designer: the preview did not initialize (no "ready" from the webview). Its script may be blocked.',
-        );
+        void vscode.window.showErrorMessage(t('host.initTimeout'));
       }
     }, 6000);
     this.disposables.push({ dispose: () => clearTimeout(initTimer) });
@@ -486,6 +518,7 @@ class DesignerSession {
     this.disposed = true;
     if (this.doc.session === this) this.doc.session = undefined; // drop the back-reference on close
     this.chooseItemsPanel?.dispose();
+    DesignerHub.instance.unregisterSession(this);
     DesignerHub.instance.clearIfActive(this);
     if (this.debounce) clearTimeout(this.debounce);
     for (const d of this.disposables.splice(0)) {
@@ -494,7 +527,9 @@ class DesignerSession {
   }
 
   private asm(): string | undefined {
-    return this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined;
+    // Explicit control source wins; otherwise the framework assembly the last render auto-resolved (net48/
+    // DevExpress). A net9 form leaves autoAsm undefined → this returns undefined → engine-side auto-discovery.
+    return (this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined) ?? this.autoAsm;
   }
 
   /** The .Designer.cs this session renders (the key the control-source override is stored under). */
@@ -503,7 +538,8 @@ class DesignerSession {
   /** True when this form is rendered by the net48 engine — a read-only compiled preview. */
   get isCompiledPreview(): boolean { return this.engineKind === 'net48'; }
 
-  /** The control assembly currently in effect (explicit override, or null = engine auto-discovery). */
+  /** The control assembly currently in effect: explicit override, else the auto-resolved framework assembly
+   *  (net48/DevExpress) from the last render, else undefined (a net9 form → engine auto-discovery). */
   get controlAssembly(): string | undefined { return this.asm(); }
 
   /** Re-render after the user changed the control source (Select Control Assembly): drop the cached toolbox so
@@ -531,13 +567,40 @@ class DesignerSession {
     DesignerHub.instance.pushPanel(this, { type: 'select', id });
   }
 
+  /** Populate `toolboxItems` once. net9: framework + project controls in one enumeration. net48: framework controls
+   *  from the net9 enumerator (same FQNs → droppable on a net48 form) MERGED with the project/vendor (DevExpress)
+   *  controls from the net48 engine — the ones the net9 ALC can't load (§5 DevExpress-add). Best-effort: a framework
+   *  failure leaves it undefined (retry later); a project-enumeration failure degrades to framework-only. */
+  private async loadToolboxItems(): Promise<void> {
+    if (this.toolboxItems || !this.designerFile) return;
+    // Capture the kind: the pre-render refreshViews (ctor setActive) runs while engineKind is still the default
+    // 'net9', but the first fullRender flips it to 'net48' for a compiled form. A load started under one kind must
+    // NOT assign after the kind flipped — else a stale framework-only net9 result would poison the net48 cache and
+    // the project/vendor controls would never appear (fullRender also clears the cache on the transition).
+    const kind = this.engineKind;
+    if (kind === 'net48') {
+      let framework: ToolboxItemInfo[];
+      try { framework = await listToolboxItems(await this.ensureEngine('net9'), this.designerFile, undefined); }
+      catch { return; } // leave undefined so a later refresh retries
+      let project: ToolboxItemInfo[] = [];
+      const asm = this.asm();
+      if (asm) {
+        try { project = await listCompiledToolboxControls(await this.ensureEngine('net48'), asm); } catch { /* project best-effort */ }
+      }
+      if (this.disposed || this.engineKind !== kind || this.toolboxItems) return; // kind flipped / already loaded under us
+      this.toolboxItems = [...framework, ...project];
+    } else {
+      let items: ToolboxItemInfo[];
+      try { items = await listToolboxItems(await this.ensureEngine('net9'), this.designerFile, this.asm()); } catch { return; }
+      if (this.disposed || this.engineKind !== kind || this.toolboxItems) return;
+      this.toolboxItems = items;
+    }
+  }
+
   // ----- view refresh (when this session becomes the focused one, or a view (re)opens) -----
   async refreshToolbox(): Promise<void> {
     if (this.disposed || !this.designerFile) return;
-    if (!this.toolboxItems) {
-      const tAsm = this.engineKind === 'net48' ? undefined : this.asm(); // net48: framework-only toolbox
-      try { this.toolboxItems = await listToolboxItems(await this.ensureEngine(), this.designerFile, tAsm); } catch { /* ignore */ }
-    }
+    await this.loadToolboxItems();
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
     await this.refreshPalette();
   }
@@ -564,6 +627,16 @@ class DesignerSession {
   }
   refreshViews(): void { void this.refreshToolbox(); this.refreshProperties(); this.pushClipboardState(); }
 
+  /** Re-emit this canvas's HTML with the current locale's injected catalog (live language switch). Reloading the
+   *  webview makes it re-send `ready`, which triggers a full re-render / rehydrate through the normal path. */
+  rebuildHtml(): void {
+    if (this.disposed) return;
+    this.gotReady = false;
+    this.panel.webview.html = this.designerFile
+      ? designerHtml(this.panel.webview, this.extensionUri)
+      : placeholderHtml(this.panel.webview, this.documentUri.fsPath);
+  }
+
   /** Debounced reaction to a file-system change of the .Designer.cs (coalesces change+create events). */
   private scheduleRerender(): void {
     if (this.debounce) clearTimeout(this.debounce);
@@ -585,7 +658,7 @@ class DesignerSession {
     try { onDisk = await readDesignerBytesUri(vscode.Uri.file(this.designerFile)); } catch { return; }
     if (onDisk.text === this.doc.designerText) return; // our own save, or a no-op change
     if (this.doc.isDirty) {
-      this.post({ type: 'status', message: '.Designer.cs changed on disk — keeping your unsaved designer edits' });
+      this.post({ type: 'status', message: t('status.diskChanged') });
       return;
     }
     this.doc.adoptDiskBaseline(onDisk.text, onDisk.hadBom);
@@ -618,7 +691,7 @@ class DesignerSession {
   /** Called by the provider after a successful save: clear the canvas "unsaved" mark. */
   notifySaved(): void {
     if (this.disposed) return;
-    this.post({ type: 'status', message: 'saved' });
+    this.post({ type: 'status', message: t('status.saved') });
     this.postDirty();
   }
 
@@ -626,11 +699,11 @@ class DesignerSession {
     type: string; id?: string; mode?: string; x?: number; y?: number; width?: number; height?: number;
     ids?: string[]; dx?: number; dy?: number; prop?: string; propType?: string; isEnum?: boolean; value?: string;
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
-    sizeEdits?: Array<{ id: string; width: number; height: number }>;
+    sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
   }): Promise<void> {
     try {
       if (this.engineKind === 'net48' && NET48_READONLY_BLOCKED.has(m.type)) {
-        this.post({ type: 'status', message: 'Cut/Paste isn’t supported yet in the .NET Framework compiled preview.' });
+        this.post({ type: 'status', message: t('status.net48Unsupported') });
         return;
       }
       if (m.type === 'ready') {
@@ -679,6 +752,14 @@ class DesignerSession {
         await this.applyZOrder([m.id], false);
       } else if (m.type === 'sendToBackGroup' && Array.isArray(m.ids)) {
         await this.applyZOrder(m.ids, false);
+      } else if (m.type === 'tabClick' && m.hostId) {
+        await this.applyTabClick(m.hostId, m.x ?? 0, m.y ?? 0);
+      } else if (m.type === 'tabRename' && m.hostId) {
+        await this.applyTabRename(m.hostId, m.x ?? 0, m.y ?? 0);
+      } else if (m.type === 'addTab' && m.hostId) {
+        await this.applyAddTab(m.hostId);
+      } else if (m.type === 'deleteTab' && m.hostId && m.pageId) {
+        await this.applyDeleteTab(m.hostId, m.pageId);
       } else if (m.type === 'learnMore') {
         await this.openLearnMore(m.typeName);
       } else if (m.type === 'showProperties') {
@@ -750,7 +831,7 @@ class DesignerSession {
     if (this.disposed || !this.designerFile) { void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox(), check }); return; }
     try {
       const eng = await this.ensureEngine();
-      if (!this.toolboxItems) { try { this.toolboxItems = await listToolboxItems(eng, this.designerFile, this.asm()); } catch { /* ignore */ } }
+      await this.loadToolboxItems(); // baseline "already in toolbox" set (incl. net48 project controls)
       const items = await listToolboxCandidates(eng, this.designerFile, this.asm(), this.browsedDlls.length ? this.browsedDlls : undefined);
       void panel.webview.postMessage({ type: 'items', items, tab, chosen: inToolbox(), check });
     } catch (err) {
@@ -789,7 +870,7 @@ class DesignerSession {
     // that gated push can be dropped → the added items wouldn't show until a refocus. Push the merged toolbox
     // DIRECTLY (ungated) so they appear in the palette immediately, which is exactly the point of clicking OK.
     hub.toPanel({ type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !hub.isHidden(it.fqn)), ...hub.chosenItems] });
-    this.post({ type: 'status', message: `toolbox updated (${chosen.length} added, ${hidden.size} hidden)` });
+    this.post({ type: 'status', message: t('status.toolboxUpdated', { added: chosen.length, hidden: hidden.size }) });
   }
 
   /**
@@ -818,7 +899,7 @@ class DesignerSession {
           for (const c of res.items) scannedFqns.push(c.namespace ? c.namespace + '.' + c.name : c.name);
           if (!this.browsedDlls.includes(u.fsPath)) this.browsedDlls.push(u.fsPath);
         } else {
-          notes.push(`${base}: ${res.error || 'no toolbox components'}`);
+          notes.push(`${base}: ${res.error || t('status.browseNoToolbox')}`);
         }
       } catch (e) {
         notes.push(`${base}: ${errMsg(e)}`);
@@ -828,16 +909,16 @@ class DesignerSession {
     // add on OK (VS auto-checks a browsed assembly's items) instead of appearing as an unchecked list expansion.
     await this.pushCandidates(panel, scannedFqns);
     const parts: string[] = [];
-    if (added) parts.push(`Loaded ${added} item${added > 1 ? 's' : ''} from ${okCount} assembl${okCount > 1 ? 'ies' : 'y'} (pre-checked — click OK to add them)`);
+    if (added) parts.push(t('status.browseLoaded', { items: tn('unit.items', added), asm: tn('unit.assemblies', okCount) }));
     if (notes.length) parts.push(notes.join('; '));
-    void panel.webview.postMessage({ type: 'browseResult', message: parts.join(' — ') || 'No components added.' });
+    void panel.webview.postMessage({ type: 'browseResult', message: parts.join(' — ') || t('status.browseNoComponents') });
   }
 
   private fail(err: unknown): void {
     const msg = errMsg(err);
     this.post({ type: 'error', message: msg });
     this.output.appendLine('designer render failed: ' + msg);
-    void vscode.window.showErrorMessage('WinForms Designer: ' + msg);
+    void vscode.window.showErrorMessage(t('host.error', { msg }));
   }
 
   private withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -852,14 +933,36 @@ class DesignerSession {
     if (!this.designerFile || this.disposed) return;
     const seq = ++this.renderSeq;
     this.output.appendLine(`[designer] render #${seq} starting: ${this.designerFile}`);
-    this.post({ type: 'loading', message: 'Starting engine…' });
+    this.post({ type: 'loading', message: t('host.loading.starting') });
 
-    const asm = this.asm();
     // Route by the control assembly's runtime: a Framework/DevExpress assembly (no .deps.json sidecar) renders
-    // on the net48 compiled-preview engine; everything else on the net9 engine.
+    // on the net48 compiled-preview engine; everything else on net9. When no control source is chosen we
+    // auto-detect this from the project so a net48/DevExpress form isn't sent to net9 (which can't load it →
+    // a near-empty "empty form"). See resolveRouting.
+    const explicit = this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined;
+    const route = this.resolveRouting(explicit);
+    // Remember an AUTO-resolved framework assembly (not the explicit override) so this session's net48 edit ops
+    // reuse it via asm(); a net9 form / explicit source leaves it undefined so nothing stale leaks into asm().
+    this.autoAsm = explicit ? undefined : route.asm;
+    const asm = route.asm;
     const prevKind = this.engineKind;
-    this.engineKind = detectEngineKind(asm);
-    if (this.engineKind !== prevKind) DesignerHub.instance.refreshStatus();
+    this.engineKind = route.kind;
+    if (this.engineKind !== prevKind) {
+      // the pre-render toolbox load may have cached a framework-only list under the old kind — drop it so the
+      // toolbox re-enumerates on the correct engine (net48 → framework + project/vendor controls). See loadToolboxItems.
+      this.toolboxItems = undefined;
+      DesignerHub.instance.refreshStatus();
+    }
+
+    // A .NET Framework project with nothing built can't be rendered by either engine (net9 can't load a net4x
+    // assembly; net48 needs the compiled output). Don't draw a misleading empty form — tell the user and offer
+    // to point the designer at a built control source.
+    if (route.frameworkUnbuilt) {
+      this.output.appendLine(`[designer] render #${seq}: .NET Framework project not built — prompting for control source`);
+      this.post({ type: 'error', message: t('host.frameworkUnbuilt') });
+      this.promptControlSource(t('host.frameworkUnbuilt'));
+      return;
+    }
 
     let eng: EngineHandle;
     try {
@@ -869,15 +972,12 @@ class DesignerSession {
       return;
     }
     if (seq !== this.renderSeq || this.disposed) return;
-    // Toolbox: net9 shows framework + project controls (needs the assembly); net48 shows framework-only (its
-    // assembly can't load in the net9 enumerator, and only framework controls can be dropped onto the preview).
-    if (!this.toolboxItems) {
-      const toolboxAsm = this.engineKind === 'net48' ? undefined : asm;
-      try { this.toolboxItems = await listToolboxItems(await this.ensureEngine('net9'), this.designerFile, toolboxAsm); } catch { /* ignore */ }
-    }
+    // Toolbox: net9 shows framework + project controls (one enumeration); net48 merges net9 framework controls
+    // with the project/vendor (DevExpress) controls the net48 engine enumerates (§5 — the net9 ALC can't load them).
+    await this.loadToolboxItems();
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
     void this.refreshPalette();
-    this.post({ type: 'loading', message: 'Rendering…' });
+    this.post({ type: 'loading', message: t('host.loading.rendering') });
     const text = await this.currentText();
     let result: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
@@ -918,13 +1018,47 @@ class DesignerSession {
       .map((u) => /unresolved type\)?\s+([\w.]+)/.exec(u)?.[1])
       .filter((t): t is string => !!t);
     if (!unresolved.length) return;
-    this.promptedForSource = true;
     const uniq = [...new Set(unresolved)];
     const shown = uniq.slice(0, 3).join(', ') + (uniq.length > 3 ? ', …' : '');
-    void vscode.window.showWarningMessage(
-      `This form uses controls that couldn't be loaded (${shown}). Select the project or assembly that provides them.`,
-      'Select control source…',
-    ).then((pick) => { if (pick) void vscode.commands.executeCommand('winformsDesigner.selectControlAssembly'); });
+    this.promptControlSource(t('host.unresolved', { names: shown }));
+  }
+
+  /** Show the one-shot "point the designer at a control source" prompt — latched (`promptedForSource`) so a
+   *  form asks at most once per session. Clicking the action opens the Select-Control-Assembly picker. */
+  private promptControlSource(message: string): void {
+    if (this.promptedForSource) return;
+    this.promptedForSource = true;
+    void vscode.window.showWarningMessage(message, t('host.unresolved.button'))
+      .then((pick) => { if (pick) void vscode.commands.executeCommand('winformsDesigner.selectControlAssembly'); });
+  }
+
+  /**
+   * Choose the engine (and control assembly) for this render. An explicit control source wins. Otherwise
+   * auto-detect a .NET Framework/DevExpress project — which ONLY the net48 compiled-preview engine can load
+   * (net9 can't, so it would draw a near-empty form): if its build output exists we route to net48 with it;
+   * if it's a single-target Framework project not built yet we flag it (`frameworkUnbuilt`) so the caller
+   * prompts instead of rendering garbage. Anything else stays net9 with engine-side auto-discovery (unchanged).
+   */
+  private resolveRouting(explicitAsm: string | undefined): { kind: EngineKind; asm: string | undefined; frameworkUnbuilt: boolean } {
+    if (explicitAsm) return { kind: detectEngineKind(explicitAsm), asm: explicitAsm, frameworkUnbuilt: false };
+    const csproj = this.designerFile ? findNearestCsproj(path.dirname(this.designerFile)) : null;
+    if (csproj) {
+      // A discovered Framework output (no .deps.json sidecar) is definitive — a net4x assembly can only load
+      // on the net48 host. A .NET (Core) output has the sidecar, so detectEngineKind returns net9 and we fall
+      // through to the unchanged net9 path (engine-side auto-discovery, incl. MSBuild eval for custom output).
+      const out = resolveFrameworkOutput(csproj);
+      if (out && detectEngineKind(out) === 'net48') return { kind: 'net48', asm: out, frameworkUnbuilt: false };
+      if (!out) {
+        let text = '';
+        try { text = fs.readFileSync(csproj, 'utf8'); } catch { /* unreadable → treat as net9 default */ }
+        // Single-target net4x with nothing built: net48 needs the compiled assembly and net9 can't load it,
+        // so neither can render. (Multi-target projects also build a net9 output — leave those to net9.)
+        if (text && !/<TargetFrameworks>/i.test(text) && isFrameworkTfm(projectTargetFramework(text))) {
+          return { kind: 'net48', asm: undefined, frameworkUnbuilt: true };
+        }
+      }
+    }
+    return { kind: 'net9', asm: undefined, frameworkUnbuilt: false };
   }
 
   /** Describe the selected component → push its grid to the Properties view + its manipulability to the canvas. */
@@ -939,6 +1073,7 @@ class DesignerSession {
       }
       if (this.disposed) return;
       DesignerHub.instance.pushPanel(this, { type: 'props', id, component: comp });
+      this.post({ type: 'tasks', id, component: comp }); // canvas smart-tag flyout data
       const manip = this.manipFor(id, comp); // single drag/resize is live (net9 splices Location/Size, net48 mutates)
       this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
       return;
@@ -947,6 +1082,7 @@ class DesignerSession {
     const component = await describeComponent(eng, this.designerFile, id, this.asm(), await this.currentText());
     if (this.disposed) return;
     DesignerHub.instance.pushPanel(this, { type: 'props', id, component });
+    this.post({ type: 'tasks', id, component }); // canvas smart-tag flyout data
     const manip = this.manipFor(id, component);
     this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
   }
@@ -1039,13 +1175,13 @@ class DesignerSession {
       const res = await setProperty(eng, this.designerFile, id, 'Location', expr, text);
       if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: id, propName: 'Location', rawValue: value }); }
     }
-    if (!applied) { this.post({ type: 'status', message: 'nothing moved (layout-managed?)' }); await this.loadProps(this.currentId); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); await this.loadProps(this.currentId); return; }
+    if (!applied) { this.post({ type: 'status', message: t('status.nothingMoved') }); await this.loadProps(this.currentId); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     this.commit(before, text, `Move ${applied} control${applied > 1 ? 's' : ''}`);
     this.output.appendLine(`moved ${applied} controls by (${Math.round(dx)}, ${Math.round(dy)}) (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits));
     else await this.fullRender();
-    this.post({ type: 'status', message: `moved ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
+    this.post({ type: 'status', message: tn('status.moved', applied) });
   }
 
   /**
@@ -1073,13 +1209,13 @@ class DesignerSession {
       const res = await setProperty(eng, this.designerFile, e.id, 'Location', expr, text);
       if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: e.id, propName: 'Location', rawValue: value }); }
     }
-    if (!applied) { this.post({ type: 'status', message: 'nothing aligned (layout-managed?)' }); await this.loadProps(this.currentId); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); await this.loadProps(this.currentId); return; }
+    if (!applied) { this.post({ type: 'status', message: t('status.nothingAligned') }); await this.loadProps(this.currentId); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     this.commit(before, text, `Align ${applied} control${applied > 1 ? 's' : ''}`);
     this.output.appendLine(`aligned ${applied} controls (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
     else await this.fullRender();
-    this.post({ type: 'status', message: `aligned ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
+    this.post({ type: 'status', message: tn('status.aligned', applied) });
   }
 
   /**
@@ -1104,13 +1240,13 @@ class DesignerSession {
       const res = await setProperty(eng, this.designerFile, e.id, 'Size', expr, text);
       if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: e.id, propName: 'Size', rawValue: value }); }
     }
-    if (!applied) { this.post({ type: 'status', message: 'nothing resized (layout-managed?)' }); await this.loadProps(this.currentId); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); await this.loadProps(this.currentId); return; }
+    if (!applied) { this.post({ type: 'status', message: t('status.nothingResized') }); await this.loadProps(this.currentId); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`);
     this.output.appendLine(`resized ${applied} controls (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
     else await this.fullRender();
-    this.post({ type: 'status', message: `resized ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
+    this.post({ type: 'status', message: tn('status.resized', applied) });
   }
 
   /**
@@ -1131,14 +1267,14 @@ class DesignerSession {
       if (res.safe && res.newText !== null) { text = res.newText; removed.push(id); }
     }
     const applied = removed.length;
-    if (!applied) { this.post({ type: 'status', message: 'remove rejected: nothing removable' }); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    if (!applied) { this.post({ type: 'status', message: t('status.removeRejectedNothing') }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     this.commit(before, text, `Remove ${applied} control${applied > 1 ? 's' : ''}`);
     this.currentId = 'this';
     this.output.appendLine(`removed ${applied} controls (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, removed));
     else await this.fullRender();
-    this.post({ type: 'status', message: `removed ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
+    this.post({ type: 'status', message: tn('status.removed', applied) });
   }
 
   /** Grid edit from the Properties view, with its own error/restore handling. */
@@ -1155,7 +1291,7 @@ class DesignerSession {
     if (!this.designerFile) return;
 
     if (COMPLEX_TYPE_SET.has(propType) && raw.trim() === '') {
-      this.post({ type: 'status', message: `enter a ${shortName(propType)} value` });
+      this.post({ type: 'status', message: t('status.enterValue', { type: shortName(propType) }) });
       await this.loadProps(id);
       return;
     }
@@ -1166,14 +1302,14 @@ class DesignerSession {
     if (COMPLEX_TYPE_SET.has(propType)) {
       expr = await convertValue(eng, propType, raw);
       if (expr === null) {
-        this.post({ type: 'status', message: `'${raw}' is not a valid ${shortName(propType)} value` });
+        this.post({ type: 'status', message: t('status.invalidValue', { raw, type: shortName(propType) }) });
         await this.loadProps(id);
         return;
       }
     } else {
       expr = toCSharpExpression(propType, isEnum, raw);
       if (expr === null) {
-        this.post({ type: 'status', message: `cannot edit ${propType} from the panel yet` });
+        this.post({ type: 'status', message: t('status.cannotEditType', { type: propType }) });
         return;
       }
     }
@@ -1183,7 +1319,7 @@ class DesignerSession {
 
     const res = await setProperty(eng, this.designerFile, id, prop, expr, before);
     if (!res.safe || res.text === null) {
-      this.post({ type: 'status', message: `edit rejected: ${res.reason || 'unsafe'}` });
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
       await this.loadProps(id);
       return;
     }
@@ -1205,14 +1341,14 @@ class DesignerSession {
     }
 
     if (this.doc.rev !== revBefore) {
-      this.post({ type: 'status', message: 'document changed during edit — try again' });
+      this.post({ type: 'status', message: t('status.docChanged') });
       await this.loadProps(id);
       return;
     }
 
     this.commit(before, finalText, `Set ${id}.${prop}`);
     this.output.appendLine(`set ${id}.${prop} = ${expr} (${res.mode}, unsaved)`);
-    this.post({ type: 'status', message: `set ${id}.${prop} — unsaved` });
+    this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
 
     // net9 re-renders the interpreted graph from the edited text; net48 can't (it renders the compiled assembly),
     // so it mutates the LIVE instance for an immediate picture — the text edit above is what persists on save.
@@ -1245,7 +1381,7 @@ class DesignerSession {
     this.postLayout(res.controls);
     this.post({ type: 'tray', items: res.tray });
     if (res.applied === false) {
-      this.post({ type: 'status', message: `preview partial — ${res.diagnostics || 'some edits not applied live'}; saved, renders fully after a rebuild` });
+      this.post({ type: 'status', message: t('status.previewPartial', { diag: res.diagnostics || 'some edits not applied live' }) });
     }
   }
 
@@ -1308,7 +1444,7 @@ class DesignerSession {
     if (!picked || !picked.length) return; // cancelled
     try {
       const bytes = await vscode.workspace.fs.readFile(picked[0]);
-      if (bytes.byteLength > 16 * 1024 * 1024) { this.post({ type: 'status', message: 'image is too large (max 16 MB)' }); return; }
+      if (bytes.byteLength > 16 * 1024 * 1024) { this.post({ type: 'status', message: t('status.imageTooLarge') }); return; }
       const imageBase64 = Buffer.from(bytes).toString('base64');
       const eng = await this.ensureEngine();
       const resxUri = this.resxUri();
@@ -1318,12 +1454,12 @@ class DesignerSession {
 
       const res = await setImageResource(eng, this.designerFile, id, prop, propType, imageBase64, resxText, before);
       if (!res.safe || res.designerText === null || res.resxText === null) {
-        this.post({ type: 'status', message: `import rejected: ${res.reason || 'unsafe'}` });
+        this.post({ type: 'status', message: t('status.importRejected', { reason: res.reason || 'unsafe' }) });
         await this.loadProps(id);
         return;
       }
       if (this.doc.rev !== revBefore) {
-        this.post({ type: 'status', message: 'document changed during import — try again' });
+        this.post({ type: 'status', message: t('status.docChangedImport') });
         await this.loadProps(id);
         return;
       }
@@ -1332,13 +1468,13 @@ class DesignerSession {
       await vscode.workspace.fs.writeFile(resxUri, Buffer.from(res.resxText, 'utf8'));
       this.commit(before, res.designerText, `Import ${id}.${prop} image`);
       this.output.appendLine(`imported image into ${id}.${prop} → ${res.resxKey} (${res.mode}; .resx written, designer unsaved)`);
-      this.post({ type: 'status', message: `imported image for ${id}.${prop} — unsaved (.resx written)` });
+      this.post({ type: 'status', message: t('status.imageImported', { id, prop }) });
 
       await this.fullRender(); // a new resx image + assignment → full re-render (not a single-control patch)
       await this.loadProps(id);
       await this.postDirty();
     } catch (err) {
-      this.post({ type: 'status', message: `import failed: ${errMsg(err)}` });
+      this.post({ type: 'status', message: t('status.importFailed', { error: errMsg(err) }) });
       try { await this.loadProps(id); } catch { /* best effort */ }
     }
   }
@@ -1352,17 +1488,17 @@ class DesignerSession {
       const before = this.doc.designerText;
       const revBefore = this.doc.rev;
       const res = await resetProperty(eng, this.designerFile, id, prop, before);
-      if (!res.safe) { this.post({ type: 'status', message: `clear rejected: ${res.reason || 'unsafe'}` }); await this.loadProps(id); return; }
-      if (res.text == null) { this.post({ type: 'status', message: `${id}.${prop} is already (none)` }); await this.loadProps(id); return; }
-      if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: 'document changed — try again' }); await this.loadProps(id); return; }
+      if (!res.safe) { this.post({ type: 'status', message: t('status.clearRejected', { reason: res.reason || 'unsafe' }) }); await this.loadProps(id); return; }
+      if (res.text == null) { this.post({ type: 'status', message: t('status.alreadyNone', { id, prop }) }); await this.loadProps(id); return; }
+      if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedShort') }); await this.loadProps(id); return; }
       this.commit(before, res.text, `Clear ${id}.${prop} image`);
       this.output.appendLine(`cleared image ${id}.${prop} (resx entry left as an orphan — harmless)`);
-      this.post({ type: 'status', message: `cleared ${id}.${prop} — unsaved` });
+      this.post({ type: 'status', message: t('status.imageCleared', { id, prop }) });
       await this.fullRender();
       await this.loadProps(id);
       await this.postDirty();
     } catch (err) {
-      this.post({ type: 'status', message: `clear failed: ${errMsg(err)}` });
+      this.post({ type: 'status', message: t('status.clearFailed', { error: errMsg(err) }) });
       try { await this.loadProps(id); } catch { /* best effort */ }
     }
   }
@@ -1382,7 +1518,7 @@ class DesignerSession {
     if (!this.designerFile) return;
     const n = Number.parseInt(String(raw).trim(), 10);
     if (!Number.isInteger(n) || n < 0) {
-      this.post({ type: 'status', message: `${cell} must be a non-negative integer` });
+      this.post({ type: 'status', message: t('status.cellInteger', { cell }) });
       await this.loadProps(id);
       return;
     }
@@ -1394,19 +1530,19 @@ class DesignerSession {
     const row = cell === 'Row' ? n : null;
     const res = await setTableCell(eng, this.designerFile, id, column, row, before);
     if (!res.safe || res.text === null) {
-      this.post({ type: 'status', message: `cell edit rejected: ${res.reason || 'unsafe'}` });
+      this.post({ type: 'status', message: t('status.cellEditRejected', { reason: res.reason || 'unsafe' }) });
       await this.loadProps(id);
       return;
     }
     if (this.doc.rev !== revBefore) {
-      this.post({ type: 'status', message: 'document changed during edit — try again' });
+      this.post({ type: 'status', message: t('status.docChanged') });
       await this.loadProps(id);
       return;
     }
 
     this.commit(before, res.text, `Set ${id}.${cell}`);
     this.output.appendLine(`set ${id}.${cell} = ${n} (table cell, unsaved)`);
-    this.post({ type: 'status', message: `set ${id}.${cell} — unsaved` });
+    this.post({ type: 'status', message: t('status.cellSet', { id, cell }) });
 
     // a cell move repositions the control and can re-flow its siblings → full re-render, not a single-control patch
     await this.fullRender();
@@ -1426,13 +1562,13 @@ class DesignerSession {
         ? await convertValue(eng, e.propType, e.value)
         : toCSharpExpression(e.propType, false, e.value);
       if (expr === null) {
-        this.post({ type: 'status', message: `cannot set ${e.prop} to '${e.value}'` });
+        this.post({ type: 'status', message: t('status.cannotSet', { prop: e.prop, value: e.value }) });
         await this.loadProps(id);
         return;
       }
       const res = await setProperty(eng, this.designerFile, id, e.prop, expr, text);
       if (!res.safe || res.text === null) {
-        this.post({ type: 'status', message: `edit rejected: ${res.reason || 'unsafe'}` });
+        this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
         await this.loadProps(id);
         return;
       }
@@ -1440,7 +1576,7 @@ class DesignerSession {
     }
 
     if (this.doc.rev !== revBefore) {
-      this.post({ type: 'status', message: 'document changed during edit — try again' });
+      this.post({ type: 'status', message: t('status.docChanged') });
       await this.loadProps(id);
       return;
     }
@@ -1466,7 +1602,7 @@ class DesignerSession {
     // Route through VS Code's Save so the custom editor's NATIVE dirty state clears (→ saveCustomDocument,
     // which writes the .Designer.cs). The canvas webview is part of the active editor, so this targets it.
     try { await vscode.commands.executeCommand('workbench.action.files.save'); }
-    catch (err) { this.post({ type: 'status', message: 'save failed: ' + errMsg(err) }); }
+    catch (err) { this.post({ type: 'status', message: t('status.saveFailed', { error: errMsg(err) }) }); }
   }
 
   private codeFile(): string | null {
@@ -1485,7 +1621,7 @@ class DesignerSession {
   async createHandler(id: string, eventName: string, handlerName?: string): Promise<void> {
     if (!this.designerFile) return;
     const codePath = this.codeFile();
-    if (!codePath) { this.post({ type: 'status', message: 'no code-behind .cs to add a handler to' }); return; }
+    if (!codePath) { this.post({ type: 'status', message: t('status.noCodeBehindHandler') }); return; }
     const eng = await this.ensureEngine();
 
     const designerBefore = this.doc.designerText;
@@ -1493,16 +1629,16 @@ class DesignerSession {
 
     let codeDoc: vscode.TextDocument;
     try { codeDoc = await vscode.workspace.openTextDocument(codePath); }
-    catch { this.post({ type: 'status', message: 'cannot open ' + path.basename(codePath) }); return; }
+    catch { this.post({ type: 'status', message: t('status.cannotOpen', { file: path.basename(codePath) }) }); return; }
     const codeBefore = codeDoc.getText();
     const codeVer = codeDoc.version;
 
     const gen = await generateEventHandler(eng, this.designerFile, id, eventName, handlerName ?? null, designerBefore, codeBefore, this.asm() ?? null);
-    if (!gen.safe) { this.post({ type: 'status', message: 'create handler rejected: ' + (gen.reason || 'unsafe') }); return; }
+    if (!gen.safe) { this.post({ type: 'status', message: t('status.createHandlerRejected', { reason: gen.reason || 'unsafe' }) }); return; }
     if (this.disposed) return;
 
     if (this.doc.rev !== designerRev || codeDoc.version !== codeVer) {
-      this.post({ type: 'status', message: 'document changed during edit — try again' });
+      this.post({ type: 'status', message: t('status.docChanged') });
       return;
     }
 
@@ -1511,8 +1647,8 @@ class DesignerSession {
     if (gen.codeText != null) {
       const edit = new vscode.WorkspaceEdit();
       edit.replace(codeDoc.uri, new vscode.Range(codeDoc.positionAt(0), codeDoc.positionAt(codeBefore.length)), gen.codeText);
-      if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: 'could not write the handler stub — wiring not added' }); return; }
-      if (this.doc.rev !== designerRev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+      if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: t('status.couldNotWriteStub') }); return; }
+      if (this.doc.rev !== designerRev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     }
     if (gen.designerText != null) this.commit(designerBefore, gen.designerText, `Wire ${id}.${eventName}`);
 
@@ -1523,15 +1659,15 @@ class DesignerSession {
   }
 
   private async openHandlerAt(codePath: string | null, handler: string): Promise<void> {
-    if (!codePath) { this.post({ type: 'status', message: 'no .cs code-behind to navigate to' }); return; }
+    if (!codePath) { this.post({ type: 'status', message: t('status.noCodeBehindNav') }); return; }
     let doc: vscode.TextDocument;
     try { doc = await vscode.workspace.openTextDocument(codePath); }
-    catch { this.post({ type: 'status', message: 'cannot open ' + path.basename(codePath) }); return; }
+    catch { this.post({ type: 'status', message: t('status.cannotOpen', { file: path.basename(codePath) }) }); return; }
 
     const re = new RegExp('(?:^|[^\\w.])' + escapeRegex(handler) + '\\s*\\([^)]*\\)\\s*\\{');
     const text = doc.getText();
     const mm = re.exec(text);
-    if (!mm) { this.post({ type: 'status', message: `handler '${handler}' not found in ${path.basename(codePath)}` }); return; }
+    if (!mm) { this.post({ type: 'status', message: t('status.handlerNotFound', { handler, file: path.basename(codePath) }) }); return; }
     const brace = mm.index + mm[0].length - 1;
 
     const braceLine = doc.positionAt(brace).line;
@@ -1540,7 +1676,7 @@ class DesignerSession {
     const col = lineText.trim().length === 0 ? lineText.length : doc.lineAt(bodyLine).firstNonWhitespaceCharacterIndex;
     const pos = new vscode.Position(bodyLine, col);
     this.onViewCode(vscode.Uri.file(codePath), pos);
-    this.post({ type: 'status', message: `→ ${handler}` });
+    this.post({ type: 'status', message: t('status.navigateHandler', { handler }) });
   }
 
   /** Events dropdown candidates → the Properties view (lazy: only when the Events tab asks). */
@@ -1575,18 +1711,18 @@ class DesignerSession {
 
     const res = await setEventWiring(eng, this.designerFile, id, event, handler, before, codeText, this.asm() ?? null);
     if (!res.safe || res.designerText == null) {
-      this.post({ type: 'status', message: 'wiring rejected: ' + (res.reason || 'unsafe') });
+      this.post({ type: 'status', message: t('status.wiringRejected', { reason: res.reason || 'unsafe' }) });
       await this.loadProps(id);
       return;
     }
     if (this.doc.rev !== rev) {
-      this.post({ type: 'status', message: 'document changed during edit — try again' });
+      this.post({ type: 'status', message: t('status.docChanged') });
       await this.loadProps(id);
       return;
     }
     this.commit(before, res.designerText, `${handler ? 'Wire' : 'Unwire'} ${id}.${event}`);
     this.output.appendLine(`${handler ? 'wired' : 'unwired'} ${id}.${event}${handler ? ' → ' + handler : ''} (unsaved)`);
-    this.post({ type: 'status', message: `${handler ? 'wired ' + event + ' → ' + handler : 'unwired ' + event} — unsaved` });
+    this.post({ type: 'status', message: handler ? t('status.wired', { event, handler }) : t('status.unwired', { event }) });
     await this.loadProps(id);
     await this.postDirty();
   }
@@ -1616,19 +1752,25 @@ class DesignerSession {
       }
     }
     const asm = this.asm();
-    // net48's toolbox is framework-only → a pure-text add (no project-control resolution / assembly load).
+    // The Roslyn text splice runs on net9. For a net48 form net9 can't load the vendor (DevExpress/net4x)
+    // assembly, so instead of an asm-based enumeration we hand it the FQNs the net48 engine enumerated (§5) —
+    // the pure-text splice emits `new <Fqn>()` and the net48 engine live-instantiates the control below.
     const addAsm = this.engineKind === 'net48' ? undefined : asm;
-    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm);
-    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'add rejected: ' + (res.reason || 'unsafe') }); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    const projectFqns = this.engineKind === 'net48'
+      ? (this.toolboxItems ?? []).filter((it) => it.fromProject).map((it) => it.fqn)
+      : undefined;
+    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm, projectFqns);
+    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     this.commit(before, res.newText, `Add ${controlType}`);
     this.currentId = res.name;
     this.output.appendLine(`added ${controlType} → ${res.name} (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', controlType, res.name, locX, locY));
     else await this.fullRender();
-    this.post({ type: 'status', message: `added ${res.name} — unsaved` });
-    // A control from the chosen control-source assembly won't compile until the project references it — offer to add one.
-    await this.maybeOfferProjectReference(controlType, asm);
+    this.post({ type: 'status', message: t('status.added', { name: res.name }) });
+    // A control from the chosen control-source assembly won't compile until the project references it — offer to add
+    // one. net48-only skip: its project controls live in the form's OWN compiled assembly, so no <Reference> is needed.
+    if (this.engineKind !== 'net48') await this.maybeOfferProjectReference(controlType, asm);
   }
 
   /**
@@ -1665,11 +1807,12 @@ class DesignerSession {
 
       this.offeredReferences.add(latchKey); // count the offer whatever the answer, so we ask only once
       const projBase = path.basename(csproj);
+      const addRefLabel = t('host.addReference.yes');
       const pick = await vscode.window.showInformationMessage(
-        `${asmName} isn't referenced by ${projBase}. Add a reference so the added control compiles?`,
-        'Add reference', 'Not now',
+        t('host.addReference', { asm: asmName, proj: projBase }),
+        addRefLabel, t('host.addReference.no'),
       );
-      if (pick !== 'Add reference') return;
+      if (pick !== addRefLabel) return;
       await this.addProjectReference(csproj, asmName, asm);
     } catch (e) {
       this.output.appendLine('offer project reference failed: ' + errMsg(e));
@@ -1683,24 +1826,24 @@ class DesignerSession {
   private async addProjectReference(csproj: string, includeName: string, dll: string): Promise<void> {
     let doc: vscode.TextDocument;
     try { doc = await vscode.workspace.openTextDocument(csproj); }
-    catch { this.post({ type: 'status', message: 'cannot open ' + path.basename(csproj) }); return; }
+    catch { this.post({ type: 'status', message: t('status.cannotOpen', { file: path.basename(csproj) }) }); return; }
     const before = doc.getText();
     if (projectReferencesAssembly(before, csproj, includeName)) return; // added by something else since we checked
     // MSBuild accepts native separators; path.relative gives backslashes on Windows (matching VS-authored .csproj).
     const hintPath = path.relative(path.dirname(csproj), dll) || dll;
     const after = addReferenceToCsproj(before, includeName, hintPath);
     if (!projectReferencesAssembly(after, csproj, includeName)) { // defensive: the snippet must actually register
-      this.post({ type: 'status', message: `could not add the reference to ${path.basename(csproj)} — add it manually` });
+      this.post({ type: 'status', message: t('status.couldNotAddRef', { file: path.basename(csproj) }) });
       return;
     }
     const wasDirty = doc.isDirty;
     const edit = new vscode.WorkspaceEdit();
     edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(before.length)), after);
-    if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: 'could not update ' + path.basename(csproj) }); return; }
+    if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: t('status.couldNotUpdate', { file: path.basename(csproj) }) }); return; }
     // Don't force-save over the user's own unsaved .csproj edits — if it was already dirty, leave saving to them.
     if (!wasDirty) { try { await doc.save(); } catch { /* leave it dirty for the user to save manually */ } }
     this.output.appendLine(`added <Reference Include="${includeName}"> (HintPath ${hintPath}) → ${path.basename(csproj)}${wasDirty ? ' (unsaved)' : ''}`);
-    this.post({ type: 'status', message: `referenced ${includeName} in ${path.basename(csproj)}${wasDirty ? ' — review & save it' : ''}` });
+    this.post({ type: 'status', message: t('status.referenced', { name: includeName, file: path.basename(csproj) }) + (wasDirty ? t('status.referencedReview') : '') });
   }
 
   /** Toolbox add for a non-visual component (Timer/ToolTip/dialog…) — a bare `new T()` that lands in the tray.
@@ -1711,13 +1854,13 @@ class DesignerSession {
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     const res = await addComponent(eng, this.designerFile, componentType, before);
-    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'add rejected: ' + (res.reason || 'unsafe') }); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     this.commit(before, res.newText, `Add ${componentType}`);
     this.currentId = res.name;
     this.output.appendLine(`added component ${componentType} → ${res.name} (unsaved)`);
     await this.fullRender();
-    this.post({ type: 'status', message: `added ${res.name} to the tray — unsaved` });
+    this.post({ type: 'status', message: t('status.addedTray', { name: res.name }) });
   }
 
   private async applyRemoveControl(id: string): Promise<void> {
@@ -1726,14 +1869,14 @@ class DesignerSession {
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     const res = await removeControl(eng, this.designerFile, id, before);
-    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'remove rejected: ' + (res.reason || 'unsafe') }); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.removeRejected', { reason: res.reason || 'unsafe' }) }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     this.commit(before, res.newText, `Remove ${id}`);
     this.currentId = 'this';
     this.output.appendLine(`removed ${id} (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, [id]));
     else await this.fullRender();
-    this.post({ type: 'status', message: `removed ${id} — unsaved` });
+    this.post({ type: 'status', message: t('status.removedComponent', { id }) });
   }
 
   /** Tell the canvas whether the clipboard has something to paste (enables/disables the Paste menu item). */
@@ -1759,11 +1902,11 @@ class DesignerSession {
       const res = await copyControl(eng, this.designerFile, id, text);
       if (res.safe && res.clip) { clips.push(res.clip); names.push(id); } else refused++;
     }
-    if (!clips.length) { this.post({ type: 'status', message: 'nothing copied (root / container with children / referenced elsewhere)' }); return; }
+    if (!clips.length) { this.post({ type: 'status', message: t('status.nothingCopied') }); return; }
     DesignerHub.instance.clipboard = { clips, label: names.join(', ') };
     this.pushClipboardState();
-    const note = refused ? ` (${refused} skipped)` : '';
-    this.post({ type: 'status', message: `copied ${clips.length} control${clips.length > 1 ? 's' : ''}${note}` });
+    const note = refused ? tn('status.copiedSkipped', refused) : '';
+    this.post({ type: 'status', message: tn('status.copied', clips.length) + note });
   }
 
   /** Cut = copy to the clipboard, then delete (one undoable removal). Copy never edits the document, so the
@@ -1788,7 +1931,7 @@ class DesignerSession {
   private async applyPaste(targetId?: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const clip = DesignerHub.instance.clipboard;
-    if (!clip || !clip.clips.length) { this.post({ type: 'status', message: 'clipboard is empty' }); return; }
+    if (!clip || !clip.clips.length) { this.post({ type: 'status', message: t('status.clipboardEmpty') }); return; }
     const parent = this.containerParentFor(targetId ?? this.currentId);
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
@@ -1796,17 +1939,35 @@ class DesignerSession {
     let text = before;
     let last = '';
     let applied = 0;
+    // For the net48 compiled preview, mirror each accepted paste by live-instantiating the clone (the net9 text
+    // splice below isn't in the compiled instance). It comes up default-styled at the pasted Location, exactly like
+    // Add; a project rebuild reconciles the copied property values (net48's text-is-truth / picture-best-effort).
+    const live48Adds: { typeName: string; name: string; x: number; y: number }[] = [];
     for (const c of clip.clips) {
       const res = await pasteControl(eng, this.designerFile, c, parent, text);
-      if (res.safe && res.newText !== null) { text = res.newText; last = res.name; applied++; }
+      if (res.safe && res.newText !== null) {
+        text = res.newText; last = res.name; applied++;
+        if (this.engineKind === 'net48' && res.typeName) live48Adds.push({ typeName: res.typeName, name: res.name, x: res.x, y: res.y });
+      }
     }
-    if (!applied) { this.post({ type: 'status', message: 'paste rejected' }); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    if (!applied) { this.post({ type: 'status', message: t('status.pasteRejected') }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     this.commit(before, text, `Paste ${applied} control${applied > 1 ? 's' : ''}`);
     this.currentId = last || this.currentId;
     this.output.appendLine(`pasted ${applied} control(s) into ${parent} (unsaved)`);
-    await this.fullRender();
-    this.post({ type: 'status', message: `pasted ${applied} control${applied > 1 ? 's' : ''} — unsaved` });
+    let net48Stale = false;
+    if (this.engineKind === 'net48') {
+      // If the control assembly went away mid-session the live picture can't be updated — the text/undo state is
+      // still truthful (net48's text-is-truth contract), so say so instead of a plain "unsaved" that implies the
+      // preview reflects the paste.
+      if (live48Adds.length && !this.asm()) net48Stale = true;
+      else for (const a of live48Adds) {
+        await this.live48((e) => addCompiledControl(e, this.designerFile!, this.asm()!, parent, a.typeName, a.name, a.x >= 0 ? a.x : undefined, a.y >= 0 ? a.y : undefined));
+      }
+    } else {
+      await this.fullRender();
+    }
+    this.post({ type: 'status', message: net48Stale ? tn('status.pastedStale', applied) : tn('status.pasted', applied) });
   }
 
   /**
@@ -1831,13 +1992,104 @@ class DesignerSession {
       const res = await moveZOrder(eng, this.designerFile, id, toFront, text);
       if (res.safe && res.newText !== null && res.newText !== text) { text = res.newText; applied++; }
     }
-    if (!applied) { this.post({ type: 'status', message: toFront ? 'already at front' : 'already at back' }); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    if (!applied) { this.post({ type: 'status', message: toFront ? t('status.alreadyFront') : t('status.alreadyBack') }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     this.commit(before, text, toFront ? 'Bring to Front' : 'Send to Back');
     this.output.appendLine(`${toFront ? 'brought to front' : 'sent to back'} ${applied} control(s) (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => setCompiledZOrder(e, this.designerFile!, this.asm()!, targets, toFront));
     else await this.fullRender();
-    this.post({ type: 'status', message: `${toFront ? 'brought to front' : 'sent to back'} — unsaved` });
+    this.post({ type: 'status', message: toFront ? t('status.broughtFront') : t('status.sentBack') });
+  }
+
+  /**
+   * A click that landed on a tab host (net48 compiled preview): ask the engine to switch the active tab to the
+   * header under (x,y). If it switched, the live re-render shows the newly-active tab's controls (the hidden-tab
+   * filter then exposes them); if the point wasn't on another tab's header it's a harmless no-op re-render, and the
+   * normal `pick` (sent alongside by the webview) still selects the tab host.
+   */
+  private async applyTabClick(hostId: string, x: number, y: number): Promise<void> {
+    if (this.disposed || this.engineKind !== 'net48') return; // net9 tab-switching is a future parity item
+    const asm = this.asm();
+    if (!asm) return;
+    await this.live48((e) => selectCompiledTabAt(e, this.designerFile!, asm, hostId, Math.round(x), Math.round(y)));
+  }
+
+  /**
+   * Double-click on a tab header (net48 compiled preview): find the tab page under (x,y), prompt for a new caption,
+   * and rename it by editing that page's Text through the normal edit path (net9 splices `this.<page>.Text = "…"`,
+   * net48 updates the live picture). A no-op if the point wasn't on a field-backed tab header.
+   */
+  private async applyTabRename(hostId: string, x: number, y: number): Promise<void> {
+    if (this.disposed || this.engineKind !== 'net48') return; // net9 uses the property grid to rename a tab
+    const asm = this.asm();
+    if (!asm) return;
+    let hit;
+    try { hit = await hitTestCompiledTab(await this.ensureEngine('net48'), this.designerFile!, asm, hostId, Math.round(x), Math.round(y)); }
+    catch { return; }
+    if (!hit || !hit.pageId) return; // not on a tab header (or the page has no .Designer.cs field)
+    const next = await vscode.window.showInputBox({
+      prompt: `Rename tab "${hit.pageId}"`,
+      value: hit.text,
+      validateInput: (v) => (v.trim() === '' ? 'Enter a tab caption' : undefined),
+    });
+    if (next === undefined) return;         // cancelled
+    const val = next.trim();
+    if (val === hit.text) return;           // unchanged
+    await this.applyEdit(hit.pageId, 'Text', 'System.String', false, val);
+  }
+
+  /**
+   * Add a new empty tab page to the tab host (net48 compiled preview). net9 splices the field + `TabPages.Add`
+   * (the page type is derived from an existing page in the layout), then net48 live-adds the page and makes it
+   * active. Undoable in one commit. Persisted text keeps the tab even before a rebuild.
+   */
+  private async applyAddTab(hostId: string): Promise<void> {
+    if (this.disposed || this.engineKind !== 'net48') return; // net9 add-tab needs interpreter support (future)
+    const asm = this.asm();
+    if (!asm) return;
+    const pageType = this.controls.find((c) => c.parentId === hostId)?.type;
+    if (!pageType) { this.post({ type: 'status', message: 'add tab: could not determine the tab page type' }); return; }
+    const eng = await this.ensureEngine(); // net9 for the text splice
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const res = await addTabPage(eng, this.designerFile!, hostId, pageType, before);
+    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'add tab rejected: ' + (res.reason || 'unsafe') }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    this.commit(before, res.newText, `Add tab ${res.name}`);
+    this.currentId = res.name;
+    this.output.appendLine(`added tab ${res.name} to ${hostId} (unsaved)`);
+    await this.live48((e) => addCompiledTab(e, this.designerFile!, asm, hostId, pageType, res.name));
+    this.post({ type: 'status', message: `added tab ${res.name} — unsaved` });
+  }
+
+  /**
+   * Delete a whole tab page (the page + its entire subtree) from the tab host (net48 compiled preview). net9 removes
+   * the subtree's fields/statements and detaches the page from the host's tab collection (whole Controls.Add /
+   * TabPages.Add, or a trimmed TabPages.AddRange element); net48 live-removes the page from the picture. Undoable in
+   * one commit. Declines (with a status) when the page's subtree is referenced from outside it. The page id is the
+   * host's currently-active tab (the visible one), so the user deletes what they see. Confirmed first (destructive).
+   */
+  private async applyDeleteTab(hostId: string, pageId: string): Promise<void> {
+    if (this.disposed || this.engineKind !== 'net48') return; // net9 delete-tab needs interpreter support (future)
+    const asm = this.asm();
+    if (!asm) return;
+    const pick = await vscode.window.showWarningMessage(
+      `Delete tab "${pageId}" and all controls on it? This cannot be undone except via Undo.`,
+      { modal: true },
+      'Delete Tab',
+    );
+    if (pick !== 'Delete Tab') return;               // cancelled
+    const eng = await this.ensureEngine();           // net9 for the text edit
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const res = await removeTabPage(eng, this.designerFile!, hostId, pageId, before);
+    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'delete tab rejected: ' + (res.reason || 'unsafe') }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    this.commit(before, res.newText, `Delete tab ${pageId}`);
+    if (this.currentId === pageId) this.currentId = hostId;
+    this.output.appendLine(`deleted tab ${pageId} from ${hostId} (unsaved)`);
+    await this.live48((e) => removeCompiledTab(e, this.designerFile!, asm, hostId, pageId));
+    this.post({ type: 'status', message: `deleted tab ${pageId} — unsaved` });
   }
 
   /** "Learn More Online": open the selected control type's .NET API docs (or the WinForms hub if unknown). */
@@ -1894,7 +2146,7 @@ class DesignerSession {
     try {
       frame = await renderWithLayout(eng, this.designerFile, asm, text);
     } catch (err) {
-      this.post({ type: 'status', message: 'render failed: ' + errMsg(err) });
+      this.post({ type: 'status', message: t('status.renderFailed', { error: errMsg(err) }) });
       return;
     }
     if (seq !== this.renderSeq || this.disposed) return;
@@ -1949,9 +2201,9 @@ function placeholderHtml(webview: vscode.Webview, file: string): string {
   .muted { color: var(--vscode-descriptionForeground); }
 </style></head>
 <body>
-  <h3>No WinForms designer for ${escapeHtml(name)}</h3>
-  <p class="muted">The designer view needs a generated <code>${escapeHtml(base)}.Designer.cs</code> next to this file.</p>
-  <p class="muted">Open a form's <code>.cs</code> that has a <code>.Designer.cs</code> partner, or reopen this file as code.</p>
+  <h3>${t('placeholder.noDesigner', { name: escapeHtml(name) })}</h3>
+  <p class="muted">${t('placeholder.needsDesignerCs', { base: escapeHtml(base) })}</p>
+  <p class="muted">${t('placeholder.openAsCode')}</p>
 </body></html>`;
 }
 
@@ -2011,19 +2263,20 @@ ${cspMeta(webview, nonce)}
 </style></head>
 <body>
   <div id="ciTabs">
-    <div class="t active" data-tab="net">.NET Framework Components</div>
-    <div class="t" data-tab="com">COM Components</div>
-    <div class="t" data-tab="wpf">WPF Components</div>
+    <div class="t active" data-tab="net">${t('chooseItems.tab.net')}</div>
+    <div class="t" data-tab="com">${t('chooseItems.tab.com')}</div>
+    <div class="t" data-tab="wpf">${t('chooseItems.tab.wpf')}</div>
   </div>
   <div id="ciMain">
     <div id="ciArea">
-      <div id="ciLoading"><div>Loading items…</div><div class="bar"><div></div></div><div id="ciLoadName">scanning assemblies…</div></div>
+      <div id="ciLoading"><div>${t('chooseItems.loading')}</div><div class="bar"><div></div></div><div id="ciLoadName">${t('chooseItems.scanning')}</div></div>
       <div id="ciTable"></div>
     </div>
-    <div id="ciFilterRow"><span>Filter:</span><input id="ciFilter" type="text"><button id="ciClear">Clear</button><button id="ciBrowse">Browse…</button></div>
-    <div id="ciDetails">Select an item to see details.</div>
+    <div id="ciFilterRow"><span>${t('chooseItems.filter')}</span><input id="ciFilter" type="text"><button id="ciClear">${t('common.clear')}</button><button id="ciBrowse">${t('chooseItems.browse')}</button></div>
+    <div id="ciDetails">${t('chooseItems.selectHint')}</div>
   </div>
-  <div id="ciFoot"><span id="ciStatus"></span><button id="ciReset" disabled>Reset</button><button id="ciCancel">Cancel</button><button id="ciOk" class="primary">OK</button></div>
+  <div id="ciFoot"><span id="ciStatus"></span><button id="ciReset" disabled>${t('common.reset')}</button><button id="ciCancel">${t('common.cancel')}</button><button id="ciOk" class="primary">${t('common.ok')}</button></div>
+${injectL10nScript(nonce)}
 <script nonce="${nonce}" src="${scriptUri}"></script>
 </body></html>`;
 }
@@ -2084,8 +2337,9 @@ ${cspMeta(webview, nonce)}
   .anchortether { position: absolute; pointer-events: none; z-index: 6; }
   .anchortether.vert { border-left: 1px dashed #ffa033; }
   .anchortether.horz { border-top: 1px dashed #ffa033; }
-  .dockBadge { position: absolute; pointer-events: none; z-index: 7; font-size: 11px; padding: 0 4px; border-radius: 2px;
-    background: rgba(255,160,51,.9); color: #1e1e1e; white-space: nowrap; }
+  /* persistent dashed boundary around container controls (a control that holds children), VS-style — sits BELOW
+     the selection boxes so it hints the layout region without obscuring the active selection */
+  .containeroutline { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 2; border: 1px dashed rgba(160,160,160,.55); }
   /* small visual separator between toolbar button groups */
   .tbsep { display: inline-block; width: 1px; align-self: stretch; margin: 1px 4px; background: var(--vscode-panel-border, #444); }
   /* rubber-band selection rectangle */
@@ -2124,40 +2378,62 @@ ${cspMeta(webview, nonce)}
   .ctxmenu .mi .acc { color: var(--vscode-descriptionForeground); }
   .ctxmenu .mi:hover .acc { color: inherit; }
   .ctxmenu .sep { height: 1px; margin: 4px 0; background: var(--vscode-menu-separatorBackground, #454545); }
+  /* on-canvas smart-tag (VS/DevExpress-style): a chevron glyph at the selected control's top-right corner that
+     opens the Tasks flyout — the point being it lives ON THE CANVAS, not in the property grid */
+  .smarttag { position: absolute; width: 15px; height: 15px; box-sizing: border-box; z-index: 8; cursor: pointer;
+    background: #fff; color: #1e1e1e; border: 1px solid #4ea1ff; border-radius: 2px; font-size: 10px; line-height: 13px;
+    text-align: center; pointer-events: auto; box-shadow: 0 1px 3px rgba(0,0,0,.55); display: none; }
+  .smarttag:hover { background: #d7e9ff; }
+  .taskfly { position: fixed; z-index: 51; min-width: 232px; max-width: 340px; font-size: 12px;
+    background: var(--vscode-menu-background, #252526); color: var(--vscode-menu-foreground, #ccc);
+    border: 1px solid var(--vscode-menu-border, #454545); border-radius: 4px; box-shadow: 0 3px 12px rgba(0,0,0,.5); user-select: none; }
+  .taskfly .tfTitle { padding: 6px 10px; font-weight: 600; border-bottom: 1px solid var(--vscode-menu-separatorBackground, #454545);
+    background: var(--vscode-sideBarSectionHeader-background, #2d2d2d); }
+  .taskfly .tfRow { display: flex; align-items: center; gap: 8px; padding: 3px 10px; }
+  .taskfly .tfLabel { color: var(--vscode-descriptionForeground); white-space: nowrap; min-width: 96px; }
+  .taskfly .tfRow.tfCheck { gap: 6px; cursor: pointer; }
+  .taskfly .tfRow.tfCheck .tfLabel { color: var(--vscode-menu-foreground, #ccc); min-width: 0; }
+  .taskfly select, .taskfly input.tfText { flex: 1; min-width: 0; font: inherit; padding: 1px 3px; border-radius: 2px;
+    background: var(--vscode-input-background, #3c3c3c); color: var(--vscode-input-foreground, #ccc); border: 1px solid var(--vscode-input-border, #555); }
+  .taskfly .tfNote { padding: 4px 10px; color: var(--vscode-descriptionForeground); font-style: italic; }
+  .taskfly .tfLinks { border-top: 1px solid var(--vscode-menu-separatorBackground, #454545); padding: 3px 0; margin-top: 3px; }
+  .taskfly .tfLink { display: block; padding: 4px 10px; cursor: pointer; color: var(--vscode-textLink-foreground, #4ea1ff); }
+  .taskfly .tfLink:hover { background: var(--vscode-menu-selectionBackground, #04395e); color: #fff; }
 </style></head>
 <body>
-  <div id="stage"><div id="overlay">Loading designer…<noscript> — (JavaScript is DISABLED in this webview)</noscript></div><div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="sel"></div></div></div>
+  <div id="stage"><div id="overlay">${t('designer.overlay.loading')}<noscript>${t('designer.overlay.noscript')}</noscript></div><div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="sel"></div></div></div>
   <div id="tray" style="display:none"></div>
   <div id="status"></div>
   <div id="toolbar">
     <span id="selName" class="sel">—</span>
     <span class="spacer"></span>
     <span id="zoom" class="zoomgrp">
-      <button id="zoomOut" title="Zoom out (Ctrl+-)">−</button>
-      <button id="zoomLabel" title="Reset to 100% (Ctrl+0)">100%</button>
-      <button id="zoomIn" title="Zoom in (Ctrl+=)">+</button>
-      <button id="zoomFit" title="Fit the form to the view">Fit</button>
+      <button id="zoomOut" title="${t('designer.zoom.out')}">−</button>
+      <button id="zoomLabel" title="${t('designer.zoom.reset')}">100%</button>
+      <button id="zoomIn" title="${t('designer.zoom.in')}">+</button>
+      <button id="zoomFit" title="${t('designer.zoom.fit')}">${t('designer.zoom.fitBtn')}</button>
     </span>
-    <span id="align" class="zoomgrp" style="display:none" title="Arrange the selected controls relative to the primary selection">
-      <button id="alignLeft" title="Align lefts">⊢</button>
-      <button id="alignRight" title="Align rights">⊣</button>
-      <button id="alignTop" title="Align tops">⊤</button>
-      <button id="alignBottom" title="Align bottoms">⊥</button>
-      <button id="alignCenterH" title="Align horizontal centers">↔</button>
-      <button id="alignCenterV" title="Align vertical centers">↕</button>
+    <span id="align" class="zoomgrp" style="display:none" title="${t('designer.align.group')}">
+      <button id="alignLeft" title="${t('designer.align.left')}">⊢</button>
+      <button id="alignRight" title="${t('designer.align.right')}">⊣</button>
+      <button id="alignTop" title="${t('designer.align.top')}">⊤</button>
+      <button id="alignBottom" title="${t('designer.align.bottom')}">⊥</button>
+      <button id="alignCenterH" title="${t('designer.align.centerH')}">↔</button>
+      <button id="alignCenterV" title="${t('designer.align.centerV')}">↕</button>
       <span class="tbsep"></span>
-      <button id="distH" title="Distribute horizontally — equalize the gaps (needs 3+)">⇆</button>
-      <button id="distV" title="Distribute vertically — equalize the gaps (needs 3+)">⇅</button>
+      <button id="distH" title="${t('designer.distribute.h')}">⇆</button>
+      <button id="distV" title="${t('designer.distribute.v')}">⇅</button>
       <span class="tbsep"></span>
-      <button id="sameW" title="Make same width as the primary selection">=W</button>
-      <button id="sameH" title="Make same height as the primary selection">=H</button>
-      <button id="sameWH" title="Make same size as the primary selection">=□</button>
+      <button id="sameW" title="${t('designer.same.width')}">=W</button>
+      <button id="sameH" title="${t('designer.same.height')}">=H</button>
+      <button id="sameWH" title="${t('designer.same.size')}">=□</button>
     </span>
-    <button id="tabOrder" title="Toggle tab-order editing: click controls in order to renumber TabIndex">Tab Order</button>
-    <button id="rulerToggle" title="Show/hide the pixel ruler">Show ruler</button>
-    <span id="dirty" class="dirty" title="Unsaved designer changes"></span>
+    <button id="tabOrder" title="${t('designer.tabOrder.tip')}">${t('designer.tabOrder.btn')}</button>
+    <button id="rulerToggle" title="${t('designer.ruler.tip')}">${t('designer.ruler.show')}</button>
+    <span id="dirty" class="dirty" title="${t('designer.dirty.tip')}"></span>
   </div>
   <div id="ctxMenu" class="ctxmenu"></div>
+${injectL10nScript(nonce)}
 <script nonce="${nonce}" src="${scriptUri}"></script>
 </body></html>`;
 }
@@ -2280,6 +2556,19 @@ ${cspMeta(webview, nonce)}
   /* floating popup surface (color picker / flags checkboxes) — on <body>, position:fixed so #grid can't clip it */
   .propPopup { position: fixed; z-index: 70; background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-foreground);
     border: 1px solid var(--vscode-widget-border, #454545); border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.5); font-size: 12px; }
+  /* smart-tag "Tasks" flyout: the button bar above the grid + the popup's title/note/all-properties link */
+  .tasksbar { padding: 4px 4px 2px; }
+  .tasksbtn { width: 100%; text-align: left; padding: 3px 8px; cursor: pointer; font-size: 12px; border-radius: 3px;
+    color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.06));
+    border: 1px solid var(--vscode-widget-border, #454545); }
+  .tasksbtn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.14)); }
+  .propPopup .tasksTitle { padding: 5px 8px; font-weight: 600; border-bottom: 1px solid var(--vscode-widget-border, #454545); }
+  .propPopup .tasksNote { padding: 6px 8px; color: var(--vscode-descriptionForeground); }
+  .propPopup .tasksAll { display: block; width: 100%; text-align: left; padding: 5px 8px; cursor: pointer; background: none;
+    border: none; border-top: 1px solid var(--vscode-widget-border, #454545); color: var(--vscode-textLink-foreground, #4ea1ff); }
+  .propPopup .tasksAll:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.1)); }
+  .propPopup .grid { min-width: 260px; }
+  .propsMsg { padding: 6px 8px; color: var(--vscode-descriptionForeground); }
   .popTabs { display: flex; border-bottom: 1px solid var(--vscode-widget-border, #454545); }
   .popTab { flex: 1 1 0; text-align: center; padding: 4px 10px; cursor: pointer; color: var(--vscode-descriptionForeground);
     user-select: none; border-right: 1px solid var(--vscode-widget-border, #454545); }
@@ -2375,18 +2664,18 @@ ${cspMeta(webview, nonce)}
 <body>
   <div id="content">
     <div id="propsPane" class="pane">
-      <div id="propsEmpty" class="paneEmpty">Select a control in the WinForms designer to edit its properties.</div>
+      <div id="propsEmpty" class="paneEmpty">${t('panel.props.empty')}</div>
       <div id="propsBody" style="display:none">
         <div id="sideHeader">
           <select id="tree"></select>
           <div id="tabs">
-            <button id="sortCat" class="active" title="Categorized"><span class="codicon ico-cat"></span></button>
-            <button id="sortAlpha" title="Alphabetical"><span class="codicon ico-alpha"></span></button>
+            <button id="sortCat" class="active" title="${t('panel.sort.categorized')}"><span class="codicon ico-cat"></span></button>
+            <button id="sortAlpha" title="${t('panel.sort.alphabetical')}"><span class="codicon ico-alpha"></span></button>
             <span class="tabgap"></span>
-            <button id="tabProps" class="active" title="Properties"><span class="codicon ico-props"></span></button>
-            <button id="tabEvents" title="Events"><span class="codicon ico-events"></span></button>
+            <button id="tabProps" class="active" title="${t('panel.tab.props')}"><span class="codicon ico-props"></span></button>
+            <button id="tabEvents" title="${t('panel.tab.events')}"><span class="codicon ico-events"></span></button>
           </div>
-          <input id="search" type="text" placeholder="Search…">
+          <input id="search" type="text" placeholder="${t('panel.search')}">
         </div>
         <div id="grid">
           <div id="props"></div><div id="events" style="display:none"></div>
@@ -2397,26 +2686,27 @@ ${cspMeta(webview, nonce)}
       <div id="outlineTree"></div>
     </div>
     <div id="toolboxPane" class="pane" style="display:none">
-      <div id="tbEmpty" class="paneEmpty">Open a WinForms designer to use the toolbox.</div>
+      <div id="tbEmpty" class="paneEmpty">${t('panel.toolbox.empty')}</div>
       <div id="tbBody" style="display:none">
-        <div id="tbHeader"><input id="tbSearch" type="text" placeholder="Search toolbox…"></div>
+        <div id="tbHeader"><input id="tbSearch" type="text" placeholder="${t('panel.toolbox.search')}"></div>
         <div id="tbList"></div>
       </div>
     </div>
   </div>
   <div id="bottomTabs">
-    <button id="mainTabProps" class="active">Properties</button>
-    <button id="mainTabOutline">Outline</button>
-    <button id="mainTabToolbox">Toolbox</button>
+    <button id="mainTabProps" class="active">${t('panel.mainTab.props')}</button>
+    <button id="mainTabOutline">${t('panel.mainTab.outline')}</button>
+    <button id="mainTabToolbox">${t('panel.mainTab.toolbox')}</button>
   </div>
   <div id="tbMenu" class="ctxmenu" style="display:none"></div>
   <div id="tbPrompt" class="modal" style="display:none">
     <div class="modalBox small">
-      <div class="modalHead" id="tbPromptTitle">Add Tab</div>
-      <div class="modalBody"><input id="tbPromptInput" class="full" type="text" placeholder="Tab name"></div>
-      <div class="modalFoot"><button id="tbPromptCancel">Cancel</button><button id="tbPromptOk" class="primary">OK</button></div>
+      <div class="modalHead" id="tbPromptTitle">${t('panel.tbPrompt.title')}</div>
+      <div class="modalBody"><input id="tbPromptInput" class="full" type="text" placeholder="${t('panel.tbPrompt.input')}"></div>
+      <div class="modalFoot"><button id="tbPromptCancel">${t('common.cancel')}</button><button id="tbPromptOk" class="primary">${t('common.ok')}</button></div>
     </div>
   </div>
+${injectL10nScript(nonce)}
 <script nonce="${nonce}" src="${scriptUri}"></script>
 </body></html>`;
 }

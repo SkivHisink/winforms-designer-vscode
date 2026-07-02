@@ -4,10 +4,29 @@
 // delete, and zoom. The Toolbox and Properties live in a separate, dockable WebviewView (media/panel.js);
 // the host (src/designerEditor.ts) routes between them. Plain ES5-ish JS (no bundler touches this file).
 (function () {
+  // ---- i18n shim: the host injects window.__WFD_L10N__ (the resolved catalog) + window.__WFD_LANG__ (locale)
+  // in a <script> immediately before this file. T()/TN() mirror the host's t()/tn(); a missing key falls back
+  // to the key itself. Named T/TN (not t/tn) because `t` is already a local variable throughout this file. ----
+  var __L10N = window.__WFD_L10N__ || {}, __LANG = window.__WFD_LANG__ || 'en';
+  function T(k, p) {
+    var s = __L10N[k];
+    if (s == null) return k;
+    if (typeof s === 'object') s = s.other || k;
+    return p ? String(s).replace(/\{(\w+)\}/g, function (_m, n) { return p[n] != null ? p[n] : ''; }) : s;
+  }
+  function TN(k, n, p) {
+    var e = __L10N[k];
+    if (e == null) return k;
+    if (typeof e !== 'object') { var pp = {}; if (p) for (var kk in p) pp[kk] = p[kk]; pp.n = n; return T(k, pp); }
+    var cat; try { cat = new Intl.PluralRules(__LANG).select(n); } catch (_e) { cat = 'other'; }
+    var s = e[cat] || e.other || k;
+    return String(s).replace(/\{(\w+)\}/g, function (_m, x) { return x === 'n' ? n : (p && p[x] != null ? p[x] : ''); });
+  }
+
   window.addEventListener('error', function (ev) {
-    try { var o = document.getElementById('overlay'); if (o) { o.className = 'err'; o.textContent = 'Webview error: ' + ev.message; } } catch (_e) {}
+    try { var o = document.getElementById('overlay'); if (o) { o.className = 'err'; o.textContent = T('designer.overlay.error', { message: ev.message }); } } catch (_e) {}
   });
-  try { var _ov = document.getElementById('overlay'); if (_ov) _ov.textContent = 'Initializing…'; } catch (_e) {}
+  try { var _ov = document.getElementById('overlay'); if (_ov) _ov.textContent = T('designer.overlay.initializing'); } catch (_e) {}
 
   var vscode = acquireVsCodeApi();
   var canvas = document.getElementById('surface');
@@ -63,7 +82,7 @@
   var secBoxes = [];   // outline boxes for non-primary selected controls
   var guideEls = [];   // snapline guides
   var anchorEls = [];  // anchor tethers for the single selected control (Phase 2)
-  var dockBadge = null; // dock indicator badge
+  var containerEls = []; // persistent dashed outlines for container controls (VS-style layout hint)
   var bandEl = null;   // rubber-band rectangle
   function secBox(i) {
     while (secBoxes.length <= i) { var d = document.createElement('div'); d.className = 'selsec'; d.style.display = 'none'; surfaceWrap.appendChild(d); secBoxes.push(d); }
@@ -75,7 +94,28 @@
     while (anchorEls.length <= i) { var d = document.createElement('div'); d.className = 'anchortether'; d.style.display = 'none'; surfaceWrap.appendChild(d); anchorEls.push(d); }
     return anchorEls[i];
   }
-  function getDockBadge() { if (!dockBadge) { dockBadge = document.createElement('div'); dockBadge.className = 'dockBadge'; dockBadge.style.display = 'none'; surfaceWrap.appendChild(dockBadge); } return dockBadge; }
+  function containerBox(i) {
+    while (containerEls.length <= i) { var d = document.createElement('div'); d.className = 'containeroutline'; d.style.display = 'none'; surfaceWrap.appendChild(d); containerEls.push(d); }
+    return containerEls[i];
+  }
+  // ---- container outlines: a persistent dashed border around every control that HOLDS children (VS shows layout
+  // containers this way). "Is a parent of >=1 visible control" is robust across control libraries (no type list);
+  // hidden-tab children are already dropped by the engine, so only on-surface containers get outlined. ----
+  function renderContainers() {
+    var n = 0;
+    if (hasRendered) {
+      var parentIds = {};
+      for (var i = 0; i < controls.length; i++) { var pid = controls[i].parentId; if (pid && pid !== 'this') parentIds[pid] = true; }
+      for (var j = 0; j < controls.length; j++) {
+        var c = controls[j];
+        if (c.isRoot || c.id === 'this' || !parentIds[c.id]) continue;
+        var b = containerBox(n++); b.style.display = 'block';
+        b.style.left = (c.x * zoom) + 'px'; b.style.top = (c.y * zoom) + 'px';
+        b.style.width = Math.max(0, c.width * zoom) + 'px'; b.style.height = Math.max(0, c.height * zoom) + 'px';
+      }
+    }
+    for (; n < containerEls.length; n++) containerEls[n].style.display = 'none';
+  }
 
   function findControl(id) { for (var i = 0; i < controls.length; i++) { if (controls[i].id === id) return controls[i]; } return null; }
   function findTray(id) { for (var i = 0; i < tray.length; i++) { if (tray[i].id === id) return tray[i]; } return null; }
@@ -180,7 +220,7 @@
     }
   }
   function renderRuler() {
-    if (rulerToggleEl) { rulerToggleEl.className = rulerOn ? 'active' : ''; rulerToggleEl.textContent = rulerOn ? 'Hide ruler' : 'Show ruler'; }
+    if (rulerToggleEl) { rulerToggleEl.className = rulerOn ? 'active' : ''; rulerToggleEl.textContent = rulerOn ? T('designer.ruler.hide') : T('designer.ruler.show'); }
     if (!rulerOn) {
       if (rulerHEl) rulerHEl.style.display = 'none';
       if (rulerVEl) rulerVEl.style.display = 'none';
@@ -257,34 +297,154 @@
     }
     for (; n < secBoxes.length; n++) secBoxes[n].style.display = 'none';
     var pc = current ? findControl(current) : null;
-    if (selection.length > 1) selName.textContent = selection.length + ' controls selected';
-    else if (pc) selName.textContent = (pc.isRoot ? pc.name + ' (form)' : pc.name) + ' : ' + shortType(pc.type);
+    if (selection.length > 1) selName.textContent = TN('designer.sel.multi', selection.length);
+    else if (pc) selName.textContent = (pc.isRoot ? pc.name + T('designer.formSuffix') : pc.name) + ' : ' + shortType(pc.type);
     else { var ti = current ? findTray(current) : null; selName.textContent = ti ? (ti.name + ' : ' + shortType(ti.type)) : '—'; }
     if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0;
     // the align/distribute/same-size tools apply only to a live 2+ selection on a rendered form — never show
     // them before the first render or while (re)loading (a stale retained selection would otherwise flash them)
     if (alignEl) alignEl.style.display = (hasRendered && selection.length >= 2) ? '' : 'none';
+    renderContainers();
     renderTabBadges();
     renderAnchors();
+    renderSmartTag();
     updateRulerMarks(pc && !pc.isRoot ? { x: pc.x, y: pc.y, w: pc.width, h: pc.height } : null);
   }
 
-  // ---- anchor/dock overlay (Phase 2): for a single selected control, draw tether lines from each anchored
-  // edge to the parent edge (VS-style), or a Dock badge when docked. Display-only; editing is the property
-  // grid's anchor/dock glyph. Tethers reach the parent's window-space rect (form chrome inset is a v1 gap). ----
+  // ---- on-canvas smart-tag "Tasks" flyout (VS/DevExpress-style): a chevron glyph pinned to the selected control's
+  // top-right corner; clicking it opens a flyout OF THE CONTROL'S common properties edited inline (through the SAME
+  // 'edit' message the property grid uses), plus All Properties / Learn More. Curated set = a name heuristic. ----
+  var tasksState = null;   // { id, comp } for the current single selection (from the host 'tasks' message)
+  var smartTagEl = null;
+  var flyoutEl = null;
+  var flyoutOwner = null;  // the control id the open flyout edits
+  var TASK_PROP_NAMES = ['Text', 'Caption', 'AutoSizeMode', 'AutoSize', 'Image', 'ImageIndex', 'UseMnemonic',
+    'LineVisible', 'ShowCloseButton', 'PageEnabled', 'PageVisible', 'Enabled', 'Visible', 'ReadOnly', 'Checked',
+    'CheckState', 'Value', 'Multiline', 'Dock', 'Anchor', 'BackColor', 'ForeColor'];
+  function taskListFor(comp) {
+    if (!comp || !comp.properties) return [];
+    var rank = {};
+    for (var i = 0; i < TASK_PROP_NAMES.length; i++) rank[TASK_PROP_NAMES[i].toLowerCase()] = i;
+    var found = comp.properties.filter(function (p) { return p && !p.readOnly && rank[String(p.name).toLowerCase()] !== undefined; });
+    found.sort(function (a, b) { return rank[a.name.toLowerCase()] - rank[b.name.toLowerCase()]; });
+    return found;
+  }
+  function sameSet(arr, want) {
+    if (!arr || arr.length !== want.length) return false;
+    for (var i = 0; i < want.length; i++) if (arr.indexOf(want[i]) < 0) return false;
+    return true;
+  }
+  function renderSmartTag() {
+    var comp = (tasksState && tasksState.id === current) ? tasksState.comp : null;
+    var c = current ? findControl(current) : null;
+    var show = !tabOrderMode && !drag && selection.length === 1 && !!c && !!comp && taskListFor(comp).length > 0;
+    if (!smartTagEl) {
+      smartTagEl = document.createElement('div'); smartTagEl.className = 'smarttag'; smartTagEl.textContent = '▸'; // ▸
+      smartTagEl.title = 'Tasks';
+      smartTagEl.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      smartTagEl.addEventListener('click', function (e) { e.stopPropagation(); if (flyoutEl) closeFlyout(); else openFlyout(); });
+      surfaceWrap.appendChild(smartTagEl);
+    }
+    if (!show) { smartTagEl.style.display = 'none'; if (flyoutEl) closeFlyout(); return; }
+    smartTagEl.style.display = 'block';
+    smartTagEl.style.left = Math.round((c.x + c.width) * zoom - 16) + 'px';
+    smartTagEl.style.top = Math.round(c.y * zoom + 1) + 'px';
+    if (flyoutEl) { if (flyoutOwner !== current) closeFlyout(); else positionFlyout(); }
+  }
+  function closeFlyout() {
+    if (flyoutEl && flyoutEl.parentNode) flyoutEl.parentNode.removeChild(flyoutEl);
+    flyoutEl = null; flyoutOwner = null;
+    document.removeEventListener('mousedown', onFlyoutOutside, true);
+    document.removeEventListener('keydown', onFlyoutKey, true);
+  }
+  function onFlyoutOutside(e) {
+    if (!flyoutEl) return;
+    if (flyoutEl.contains(e.target)) return;
+    if (smartTagEl && smartTagEl.contains(e.target)) return;
+    closeFlyout();
+  }
+  function onFlyoutKey(e) { if (e.key === 'Escape' && flyoutEl) { e.stopPropagation(); closeFlyout(); } }
+  function positionFlyout() {
+    if (!flyoutEl || !smartTagEl) return;
+    var r = smartTagEl.getBoundingClientRect();
+    var w = flyoutEl.offsetWidth || 240, h = flyoutEl.offsetHeight || 120;
+    var left = Math.max(6, Math.min(r.right - w, window.innerWidth - w - 6));
+    var top = r.bottom + 4; if (top + h > window.innerHeight - 6) top = Math.max(6, r.top - h - 4);
+    flyoutEl.style.left = Math.round(left) + 'px';
+    flyoutEl.style.top = Math.round(top) + 'px';
+  }
+  function openFlyout() {
+    var comp = (tasksState && tasksState.id === current) ? tasksState.comp : null;
+    var c = current ? findControl(current) : null;
+    if (!comp || !c) return;
+    closeFlyout();
+    flyoutOwner = current;
+    flyoutEl = document.createElement('div'); flyoutEl.className = 'taskfly';
+    var title = document.createElement('div'); title.className = 'tfTitle';
+    title.textContent = shortType(comp.type) + ' Tasks';
+    flyoutEl.appendChild(title);
+    var tasks = taskListFor(comp);
+    if (!tasks.length) {
+      var note = document.createElement('div'); note.className = 'tfNote'; note.textContent = 'No common tasks'; flyoutEl.appendChild(note);
+    } else {
+      for (var i = 0; i < tasks.length; i++) flyoutEl.appendChild(taskRow(comp, tasks[i]));
+    }
+    var links = document.createElement('div'); links.className = 'tfLinks';
+    var all = document.createElement('div'); all.className = 'tfLink'; all.textContent = 'All Properties…';
+    all.addEventListener('click', function () { closeFlyout(); vscode.postMessage({ type: 'showProperties' }); });
+    links.appendChild(all);
+    var learn = document.createElement('div'); learn.className = 'tfLink'; learn.textContent = 'Learn More Online';
+    learn.addEventListener('click', function () { closeFlyout(); vscode.postMessage({ type: 'learnMore', typeName: comp.type }); });
+    links.appendChild(learn);
+    flyoutEl.appendChild(links);
+    document.body.appendChild(flyoutEl);
+    positionFlyout();
+    setTimeout(function () { document.addEventListener('mousedown', onFlyoutOutside, true); document.addEventListener('keydown', onFlyoutKey, true); }, 0);
+  }
+  function taskRow(comp, p) {
+    var owner = current;
+    function send(value) { vscode.postMessage({ type: 'edit', id: owner, prop: p.name, propType: p.type, isEnum: !!p.isEnum, value: value }); }
+    var cur = p.value == null ? '' : String(p.value);
+    var isBool = /(^|\.)Boolean$/.test(p.type || '') || sameSet(p.standardValues, ['True', 'False']);
+    var row;
+    if (isBool) {
+      row = document.createElement('label'); row.className = 'tfRow tfCheck';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = cur === 'True';
+      cb.addEventListener('change', function () { send(cb.checked ? 'True' : 'False'); });
+      var lb = document.createElement('span'); lb.className = 'tfLabel'; lb.textContent = p.name;
+      row.appendChild(cb); row.appendChild(lb);
+    } else if (p.standardValues && p.standardValues.length) {
+      row = document.createElement('div'); row.className = 'tfRow';
+      var l1 = document.createElement('span'); l1.className = 'tfLabel'; l1.textContent = p.name;
+      var sel = document.createElement('select'); var has = false;
+      for (var k = 0; k < p.standardValues.length; k++) {
+        var o = document.createElement('option'); o.value = p.standardValues[k]; o.textContent = p.standardValues[k];
+        if (o.value === cur) { o.selected = true; has = true; } sel.appendChild(o);
+      }
+      if (!has && cur) { var o0 = document.createElement('option'); o0.value = cur; o0.textContent = cur; o0.selected = true; sel.insertBefore(o0, sel.firstChild); }
+      sel.addEventListener('change', function () { send(sel.value); });
+      row.appendChild(l1); row.appendChild(sel);
+    } else {
+      row = document.createElement('div'); row.className = 'tfRow';
+      var l2 = document.createElement('span'); l2.className = 'tfLabel'; l2.textContent = p.name;
+      var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'tfText'; inp.value = cur;
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+      inp.addEventListener('blur', function () { if (inp.value !== cur) send(inp.value); });
+      row.appendChild(l2); row.appendChild(inp);
+    }
+    return row;
+  }
+
+  // ---- anchor overlay (Phase 2): for a single selected control, draw tether lines from each anchored edge to the
+  // parent edge (VS-style). Display-only; editing is the property grid's anchor/dock glyph. Tethers reach the
+  // parent's window-space rect (form chrome inset is a v1 gap). A docked control ignores Anchor at runtime, so it
+  // simply shows no tethers (we intentionally do NOT paint a "Dock: …" text badge on the canvas). ----
   function renderAnchors() {
     clearAnchors();
-    var badge = getDockBadge(); badge.style.display = 'none';
     if (tabOrderMode || drag || selection.length !== 1) return;
     var c = current ? findControl(current) : null;
     if (!c || c.isRoot || c.id === 'this') return;
-    if (c.dock && c.dock !== 'None') { // a docked control ignores Anchor at runtime — show the dock instead
-      badge.style.display = 'block';
-      badge.textContent = '⬓ Dock: ' + c.dock;
-      badge.style.left = (c.x * zoom) + 'px';
-      badge.style.top = (Math.max(0, c.y) * zoom) + 'px';
-      return;
-    }
+    if (c.dock && c.dock !== 'None') return; // docked → no anchor tethers, and no on-canvas dock label
     var parent = c.parentId != null ? findControl(c.parentId) : null;
     if (!parent) return;
     var px = parent.x, py = parent.y, pr = parent.x + parent.width, pb = parent.y + parent.height;
@@ -359,7 +519,7 @@
       var id = selection[i]; if (id === 'this') continue;
       var c = findControl(id); if (c) sel.push(c);
     }
-    if (sel.length < 3) { setStatus('select 3+ controls to distribute'); return; }
+    if (sel.length < 3) { setStatus(T('designer.status.distSelectMore')); return; }
     var sk = (axis === 'h') ? 'x' : 'y';            // start coord
     var zk = (axis === 'h') ? 'width' : 'height';   // size along the axis
     sel.sort(function (a, b) { return a[sk] - b[sk]; });
@@ -367,7 +527,7 @@
     var span = (last[sk] + last[zk]) - first[sk];
     var sumSize = 0; for (var i = 0; i < sel.length; i++) sumSize += sel[i][zk];
     var gap = (span - sumSize) / (sel.length - 1);
-    if (gap < 0) { setStatus('controls overlap — cannot distribute'); return; }
+    if (gap < 0) { setStatus(T('designer.status.distOverlap')); return; }
     var edits = [], cursor = first[sk];
     for (var i = 0; i < sel.length; i++) {
       var c = sel[i], newStart = Math.round(cursor), delta = newStart - c[sk];
@@ -528,8 +688,27 @@
       tabSeq++;
       return;
     }
+    // a click on a tab host may be on a tab HEADER → ask the host to switch the active tab (net48 compiled preview;
+    // the engine no-ops if it wasn't a different tab's header). Sent regardless of selection state so re-clicking an
+    // already-selected tab control still switches tabs. Normal selection still runs below.
+    var hc = findControl(id);
+    if (hc && hc.isTabHost && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
+      vscode.postMessage({ type: 'tabClick', hostId: id, x: Math.round(e.offsetX / zoom), y: Math.round(e.offsetY / zoom) });
+    }
     if ((e.ctrlKey || e.metaKey || e.shiftKey) && id !== 'this') { toggleSelect(id); }
     else if (id !== current || selection.length > 1) { selectSingle(id); }
+  });
+
+  // double-click a tab header → rename that tab (the host hit-tests the page under the point and prompts). Only a
+  // tab host reacts; other double-clicks are ignored here (no default dblclick behavior on the surface).
+  canvas.addEventListener('dblclick', function (e) {
+    if (!controls.length) return;
+    var id = hitTest(e.offsetX / zoom, e.offsetY / zoom);
+    if (!id) return;
+    var hc = findControl(id);
+    if (hc && hc.isTabHost) {
+      vscode.postMessage({ type: 'tabRename', hostId: id, x: Math.round(e.offsetX / zoom), y: Math.round(e.offsetY / zoom) });
+    }
   });
 
   // cross-webview drop: a control dragged from the toolbox webview (custom MIME) lands here → add at cursor
@@ -558,7 +737,9 @@
     if (!controls.length || drag || band) return;
     var sx = e.offsetX / zoom, sy = e.offsetY / zoom;
     var id = hitTest(sx, sy);
-    if (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove) {
+    var mdc = id ? findControl(id) : null;
+    // a tab host never starts a move-drag: its header must stay clickable so tab-switching (tabClick) fires
+    if (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove && !(mdc && mdc.isTabHost)) {
       // (group) move: snapshot every selected control's rect so they translate together
       var items = [];
       for (var i = 0; i < selection.length; i++) { var c = findControl(selection[i]); if (c) items.push({ id: c.id, x: c.x, y: c.y, w: c.width, h: c.height }); }
@@ -606,8 +787,8 @@
           b.style.left = ((it.x + sdx) * zoom) + 'px'; b.style.top = ((it.y + sdy) * zoom) + 'px';
           b.style.width = Math.max(0, it.w * zoom - 2) + 'px'; b.style.height = Math.max(0, it.h * zoom - 2) + 'px';
         }
-        setStatus(drag.group ? ('move ' + drag.items.length + ' → Δ(' + Math.round(sdx) + ', ' + Math.round(sdy) + ')')
-                             : ('move → (' + Math.round(nx) + ', ' + Math.round(ny) + ')'));
+        setStatus(drag.group ? T('designer.status.moveGroup', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) })
+                             : T('designer.status.moveSingle', { x: Math.round(nx), y: Math.round(ny) }));
       } else {
         var o = drag.orig, dir = drag.dir || 'se';
         var rx = o.x, ry = o.y, rw = o.w, rh = o.h;
@@ -619,7 +800,7 @@
         selBox.style.left = (rx * zoom) + 'px'; selBox.style.top = (ry * zoom) + 'px';
         selBox.style.width = Math.max(0, rw * zoom - 2) + 'px'; selBox.style.height = Math.max(0, rh * zoom - 2) + 'px';
         updateRulerMarks(drag.cur); // track bounds on the ruler during resize too
-        setStatus('resize → ' + Math.round(rw) + ' × ' + Math.round(rh));
+        setStatus(T('designer.status.resize', { w: Math.round(rw), h: Math.round(rh) }));
       }
       return;
     }
@@ -655,7 +836,7 @@
         var r = d.cur || { x: d.orig.x, y: d.orig.y, w: Math.max(4, d.orig.w + cdx / zoom), h: Math.max(4, d.orig.h + cdy / zoom) };
         vscode.postMessage({ type: 'manipulate', id: current, mode: 'resize', x: r.x, y: r.y, width: r.w, height: r.h });
       }
-      setStatus('committing…');
+      setStatus(T('designer.status.committing'));
       return;
     }
     if (band) {
@@ -692,7 +873,7 @@
     e.preventDefault(); doDelete();
   });
 
-  function setDirty(d) { if (dirtyEl) dirtyEl.textContent = d ? '● unsaved' : ''; if (saveEl) saveEl.disabled = !d; }
+  function setDirty(d) { if (dirtyEl) dirtyEl.textContent = d ? T('designer.dirtyBadge') : ''; if (saveEl) saveEl.disabled = !d; }
 
   // ---- VS-style right-click context menu (HTML; native VS Code menus aren't reachable inside a webview) ----
   // Mirrors the Visual Studio designer menu: View Code, z-order, All Properties / Learn More, the "Select
@@ -731,16 +912,16 @@
     var canDelete = ids.length > 0;       // false when only the root is selected → Delete/Cut/Copy greyed (VS)
     var canZ = ids.length > 0 && !!primary && !isRoot; // z-order applies to visual non-root controls only
     var menu = [];
-    menu.push({ label: 'View Code', acc: 'F7', act: function () { vscode.postMessage({ type: 'viewCode' }); } });
+    menu.push({ label: T('designer.menu.viewCode'), acc: 'F7', act: function () { vscode.postMessage({ type: 'viewCode' }); } });
     menu.push({ sep: 1 });
-    menu.push({ label: 'Bring to Front', disabled: !canZ, act: function () { zorder(true); } });
-    menu.push({ label: 'Send to Back', disabled: !canZ, act: function () { zorder(false); } });
+    menu.push({ label: T('designer.menu.bringToFront'), disabled: !canZ, act: function () { zorder(true); } });
+    menu.push({ label: T('designer.menu.sendToBack'), disabled: !canZ, act: function () { zorder(false); } });
     menu.push({ sep: 1 });
-    menu.push({ label: 'Align to Grid', disabled: true });   // no snap-to-grid → disabled, as in VS
-    menu.push({ label: 'Lock Controls', disabled: true });   // design-time Locked persistence not supported yet
+    menu.push({ label: T('designer.menu.alignToGrid'), disabled: true });   // no snap-to-grid → disabled, as in VS
+    menu.push({ label: T('designer.menu.lockControls'), disabled: true });   // design-time Locked persistence not supported yet
     menu.push({ sep: 1 });
-    menu.push({ label: 'All Properties…', act: function () { vscode.postMessage({ type: 'showProperties' }); } });
-    if (!multi && subject) menu.push({ label: 'Learn More Online', act: function () { vscode.postMessage({ type: 'learnMore', typeName: subject.type }); } });
+    menu.push({ label: T('designer.menu.allProperties'), act: function () { vscode.postMessage({ type: 'showProperties' }); } });
+    if (!multi && subject) menu.push({ label: T('designer.menu.learnMore'), act: function () { vscode.postMessage({ type: 'learnMore', typeName: subject.type }); } });
     // "Select '<ancestor>'" chain — immediate parent up to the root, like VS (single visual selection only)
     if (!multi && primary && !isRoot) {
       var chain = [], p = primary.parentId;
@@ -748,18 +929,32 @@
       if (chain.length) {
         menu.push({ sep: 1 });
         chain.forEach(function (pc) {
-          menu.push({ label: "Select '" + pc.name + "'", act: (function (idd) { return function () { selectSingle(idd); }; })(pc.id) });
+          menu.push({ label: T('designer.menu.selectAncestor', { name: pc.name }), act: (function (idd) { return function () { selectSingle(idd); }; })(pc.id) });
         });
       }
     }
+    // tab host (WinForms TabControl / DevExpress XtraTabControl): add a new tab, or delete the ACTIVE tab (the one
+    // currently shown — switch to a tab first to delete it). net48 compiled preview. Renaming a tab is a double-click
+    // on its header; switching is a single click.
+    if (!multi && primary && primary.isTabHost) {
+      menu.push({ sep: 1 });
+      menu.push({ label: 'Add Tab', act: function () { vscode.postMessage({ type: 'addTab', hostId: primary.id }); } });
+      var activePage = null;
+      for (var pi = 0; pi < controls.length; pi++) { if (controls[pi].parentId === primary.id) { activePage = controls[pi]; break; } }
+      menu.push({
+        label: activePage ? ('Delete Tab "' + activePage.name + '"') : 'Delete Tab',
+        disabled: !activePage,
+        act: function () { if (activePage) vscode.postMessage({ type: 'deleteTab', hostId: primary.id, pageId: activePage.id }); },
+      });
+    }
     menu.push({ sep: 1 });
-    menu.push({ label: 'Cut', acc: 'Ctrl+X', disabled: !canDelete, act: doCut });
-    menu.push({ label: 'Copy', acc: 'Ctrl+C', disabled: !canDelete, act: doCopy });
-    menu.push({ label: 'Paste', acc: 'Ctrl+V', disabled: !clipboardHas, act: doPaste });
+    menu.push({ label: T('designer.menu.cut'), acc: 'Ctrl+X', disabled: !canDelete, act: doCut });
+    menu.push({ label: T('designer.menu.copy'), acc: 'Ctrl+C', disabled: !canDelete, act: doCopy });
+    menu.push({ label: T('designer.menu.paste'), acc: 'Ctrl+V', disabled: !clipboardHas, act: doPaste });
     menu.push({ sep: 1 });
-    menu.push({ label: 'Delete', acc: 'Del', disabled: !canDelete, act: doDelete });
+    menu.push({ label: T('designer.menu.delete'), acc: 'Del', disabled: !canDelete, act: doDelete });
     menu.push({ sep: 1 });
-    menu.push({ label: 'Properties', act: function () { vscode.postMessage({ type: 'showProperties' }); } });
+    menu.push({ label: T('designer.menu.properties'), act: function () { vscode.postMessage({ type: 'showProperties' }); } });
     return menu;
   }
 
@@ -836,6 +1031,10 @@
       current = m.id; renderSelection(); renderTray();
     } else if (m.type === 'manip') {
       if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; renderSelection(); }
+    } else if (m.type === 'tasks') {
+      // the selected control's property descriptors — feeds the on-canvas smart-tag flyout
+      tasksState = m.component ? { id: m.id, comp: m.component } : null;
+      renderSmartTag();
     } else if (m.type === 'loading') {
       // hide the align tools while (re)loading — the retained-context DOM can still show them from a prior
       // multi-selection; they'll reappear via renderSelection only if a 2+ selection survives the render
@@ -852,8 +1051,8 @@
       // selection, so run the same delete path as the local Delete key / toolbar button.
       doDelete();
     } else if (m.type === 'error') {
-      if (!hasRendered) showOverlay('Designer error:\n' + m.message, true);
-      else setStatus('error: ' + m.message);
+      if (!hasRendered) showOverlay(T('designer.overlay.designerError', { message: m.message }), true);
+      else setStatus(T('designer.status.error', { message: m.message }));
     }
   });
 

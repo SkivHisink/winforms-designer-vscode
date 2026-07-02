@@ -48,6 +48,23 @@ namespace WinFormsDesigner.Engine.Net48
                 return DescribeCli(args, ddesigner);
             }
 
+            if (Has(args, "--list-toolbox", out _))
+            {
+                return ListToolboxCli(args);
+            }
+
+            if (Has(args, "--parse-meta", out string? pmFile) && pmFile != null)
+            {
+                // pure-text (no assembly): print the source-only facts SourceMetadata recovers for a component id.
+                if (!File.Exists(pmFile)) { Console.Error.WriteLine("--parse-meta: file not found: " + pmFile); return 5; }
+                string pmId = Value(args, "--id") ?? "this";
+                var (props, handlers) = SourceMetadata.Dump(pmFile, pmId);
+                Console.WriteLine($"[parse-meta] id={pmId}: {props.Count} explicit prop(s), {handlers.Count} wired event(s)");
+                foreach (var p in props) Console.WriteLine("   * " + p);
+                foreach (var h in handlers) Console.WriteLine($"   [event] {h.Key} -> {h.Value}");
+                return 0;
+            }
+
             if (Has(args, "--setprop", out string? sdesigner) && sdesigner != null)
             {
                 return SetPropCli(args, sdesigner);
@@ -83,10 +100,98 @@ namespace WinFormsDesigner.Engine.Net48
                 return present ? 0 : 4;
             }
 
+            if (Has(args, "--seltab", out string? tdesigner) && tdesigner != null)
+            {
+                string? tasm = Value(args, "--asm");
+                string thost = Value(args, "--host") ?? "this";
+                int tx = int.TryParse(Value(args, "--x"), out var xv) ? xv : 0;
+                int ty = int.TryParse(Value(args, "--y"), out var yv) ? yv : 0;
+                if (tasm == null) { Console.Error.WriteLine("--asm required"); return 5; }
+                var tprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
+                var api4 = new EngineApi();
+                var pre = api4.RenderCompiledWithLayout(tdesigner, tasm, null, tprobes, 0, 0);
+                var post = api4.SelectCompiledTabAt(tdesigner, tasm, thost, tx, ty, null, tprobes);
+                Console.WriteLine($"[seltab] host='{thost}' @({tx},{ty}): controls {pre.Controls.Count} -> {post.Controls.Count}; switched={post.Applied}");
+                foreach (var c in post.Controls.Take(16))
+                    Console.WriteLine($"   id={c.Id} @({c.X},{c.Y}) {c.Width}x{c.Height} parent={c.ParentId} tabHost={c.IsTabHost}");
+                return post.Applied ? 0 : 4;
+            }
+
+            if (Has(args, "--hittab", out string? hdesigner) && hdesigner != null)
+            {
+                string? hasm = Value(args, "--asm");
+                string hhost = Value(args, "--host") ?? "this";
+                int hx = int.TryParse(Value(args, "--x"), out var hxv) ? hxv : 0;
+                int hy = int.TryParse(Value(args, "--y"), out var hyv) ? hyv : 0;
+                if (hasm == null) { Console.Error.WriteLine("--asm required"); return 5; }
+                var hprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
+                var api5 = new EngineApi();
+                api5.RenderCompiledWithLayout(hdesigner, hasm, null, hprobes, 0, 0);
+                var th = api5.HitTestCompiledTab(hdesigner, hasm, hhost, hx, hy, null, hprobes);
+                Console.WriteLine($"[hittab] host='{hhost}' @({hx},{hy}): pageId='{th.PageId}' text='{th.Text}'");
+                return string.IsNullOrEmpty(th.PageId) ? 4 : 0;
+            }
+
+            if (Has(args, "--addtab", out string? atdesigner) && atdesigner != null)
+            {
+                string? atasm = Value(args, "--asm");
+                string athost = Value(args, "--host") ?? "this";
+                string? atpage = Value(args, "--pagetype");
+                string atid = Value(args, "--newid") ?? "newTabPage1";
+                if (atasm == null || atpage == null) { Console.Error.WriteLine("--asm and --pagetype required"); return 5; }
+                var atprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
+                var api6 = new EngineApi();
+                var pre = api6.RenderCompiledWithLayout(atdesigner, atasm, null, atprobes, 0, 0);
+                var post = api6.AddCompiledTab(atdesigner, atasm, athost, atpage, atid, null, atprobes);
+                bool present = post.Controls.Any(c => c.Id == atid);
+                Console.WriteLine($"[addtab] '{atpage}' → '{atid}' in '{athost}': controls {pre.Controls.Count} -> {post.Controls.Count}; present={present}; applied={post.Applied}{(post.Diagnostics.Length > 0 ? " diag=" + post.Diagnostics : "")}");
+                return present ? 0 : 4;
+            }
+
+            if (Has(args, "--deltab", out string? dtdesigner) && dtdesigner != null)
+            {
+                string? dtasm = Value(args, "--asm");
+                string dthost = Value(args, "--host") ?? "this";
+                string? dtpage = Value(args, "--page");
+                if (dtasm == null || dtpage == null) { Console.Error.WriteLine("--asm and --page required"); return 5; }
+                var dtprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
+                var api7 = new EngineApi();
+                var pre = api7.RenderCompiledWithLayout(dtdesigner, dtasm, null, dtprobes, 0, 0);
+                var post = api7.RemoveCompiledTab(dtdesigner, dtasm, dthost, dtpage, null, dtprobes);
+                bool gone = !post.Controls.Any(c => c.Id == dtpage);
+                Console.WriteLine($"[deltab] '{dtpage}' from '{dthost}': controls {pre.Controls.Count} -> {post.Controls.Count}; gone={gone}; applied={post.Applied}{(post.Diagnostics.Length > 0 ? " diag=" + post.Diagnostics : "")}");
+                return gone && post.Applied ? 0 : 4;
+            }
+
             Console.WriteLine("usage: Engine.Net48 --pipe <name>");
             Console.WriteLine("       Engine.Net48 --render   <designerFile> --asm <assemblyPath> [--type T] [--out png] [--probe dir]...");
             Console.WriteLine("       Engine.Net48 --describe <designerFile> --asm <assemblyPath> --id <componentId|this> [--type T] [--probe dir]...");
+            Console.WriteLine("       Engine.Net48 --list-toolbox --asm <assemblyPath> [--probe dir]...   (project/vendor controls the net9 enumerator can't load)");
             return 2;
+        }
+
+        /// <summary>Headless self-test for the DevExpress-add toolbox: list the compiled assembly's own toolbox-eligible
+        /// controls (the ones the net9 enumerator can't load) — the net48 "Project Controls" the host merges into the palette.</summary>
+        private static int ListToolboxCli(string[] args)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            var api = new EngineApi();
+            try
+            {
+                var items = api.ListCompiledToolboxControls(asm, probes);
+                Console.WriteLine($"[toolbox] {items.Length} project control(s) from {Path.GetFileName(asm)}");
+                foreach (var it in items.Take(80))
+                    Console.WriteLine($"   {(it.IconPng != null ? "[icon]" : "      ")} {it.Name}  ({it.Fqn})");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                for (var e = ex; e != null; e = e.InnerException)
+                    Console.Error.WriteLine($"[toolbox] {e.GetType().FullName}: {e.Message}");
+                return 4;
+            }
         }
 
         /// <summary>Headless self-test: exercises DomainManager + child AppDomain + RenderWorker end to end.</summary>
@@ -131,9 +236,13 @@ namespace WinFormsDesigner.Engine.Net48
             {
                 var d = api.DescribeCompiledComponent(designer, asm, id, type, probes);
                 if (d == null) { Console.Error.WriteLine("[describe] no field-backed control with id '" + id + "'"); return 4; }
-                Console.WriteLine($"[describe] id={d.Id} type={d.Type} isRoot={d.IsRoot} parent={d.Parent} props={d.Properties.Count} events={d.Events.Count}");
+                int explicitCount = d.Properties.Count(p => p.SourceExplicit);
+                int wiredCount = d.Events.Count(e => e.Handler != null);
+                Console.WriteLine($"[describe] id={d.Id} type={d.Type} isRoot={d.IsRoot} parent={d.Parent} props={d.Properties.Count} ({explicitCount} explicit) events={d.Events.Count} ({wiredCount} wired)");
                 foreach (var p in d.Properties.Take(24))
-                    Console.WriteLine($"   {p.Name} : {p.Type} = {p.Value ?? "(null)"}{(p.StandardValues != null ? $"  [{p.StandardValues.Count} std]" : "")}{(p.IsImage ? "  [image]" : "")}");
+                    Console.WriteLine($"   {(p.SourceExplicit ? "*" : " ")} {p.Name} : {p.Type} = {p.Value ?? "(null)"}{(p.StandardValues != null ? $"  [{p.StandardValues.Count} std]" : "")}{(p.IsImage ? "  [image]" : "")}");
+                foreach (var e in d.Events.Where(e => e.Handler != null).Take(12))
+                    Console.WriteLine($"   [event] {e.Name} -> {e.Handler}");
                 return 0;
             }
             catch (Exception ex)
@@ -225,7 +334,28 @@ namespace WinFormsDesigner.Engine.Net48
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
-            return worker.DescribeComponent(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId);
+            var desc = worker.DescribeComponent(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId);
+            // enrich with source-only facts the live TypeDescriptor can't see (Roslyn in the HOST domain): which
+            // properties were assigned in source (grid bold) + which event handlers were wired (Events tab).
+            SourceMetadata.Apply(desc, designerFilePath);
+            return desc;
+        }
+
+        /// <summary>Enumerate the project/vendor (DevExpress/net4x) assembly's own toolbox-eligible controls — the
+        /// net48 counterpart of the net9 engine's project-control enumeration, for the assemblies the net9 enumerator
+        /// can't load. The host merges these (category "Project Controls") with the net9 framework palette so a net48
+        /// form's toolbox offers the vendor controls. Reflection only, in the child domain; [] on a bad path.</summary>
+        public ToolboxItemInfo[] ListCompiledToolboxControls(string assemblyPath, string[]? probeDirs = null)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyPath) || !File.Exists(assemblyPath)) return Array.Empty<ToolboxItemInfo>();
+            // Guard GetWorker (child-domain creation) too, so the whole call honors the "[] on any failure" contract
+            // (the worker method is already fully guarded); the host degrades to a framework-only toolbox.
+            try
+            {
+                var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+                return worker.ListToolboxControls(assemblyPath);
+            }
+            catch { return Array.Empty<ToolboxItemInfo>(); }
         }
 
         /// <summary>Apply one property edit to the live compiled instance + re-render (live preview for a
@@ -274,6 +404,46 @@ namespace WinFormsDesigner.Engine.Net48
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
             return worker.AddControl(assemblyPath, typeName, parentId ?? "this", controlTypeKey ?? "", newId ?? "", locX, locY);
+        }
+
+        /// <summary>Switch the active tab of the tab host at hostId to the header under window-space (x,y) +
+        /// re-render (Applied=true only when the active tab actually changed).</summary>
+        public RenderLayoutResult SelectCompiledTabAt(string designerFilePath, string assemblyPath, string hostId, int x, int y,
+            string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.SelectTabAt(assemblyPath, typeName, hostId ?? "this", x, y);
+        }
+
+        /// <summary>Return the tab page (field id + Text) whose header is under window-space (x,y) on the tab host —
+        /// used to rename a tab (the host then edits that page's Text via the normal edit path).</summary>
+        public TabHit HitTestCompiledTab(string designerFilePath, string assemblyPath, string hostId, int x, int y,
+            string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.HitTestTab(assemblyPath, typeName, hostId ?? "this", x, y);
+        }
+
+        /// <summary>Add a new empty tab page (type pageTypeFqn) to the tab host on the live instance + re-render (the
+        /// persisted field/statements are the host's net9 splice).</summary>
+        public RenderLayoutResult AddCompiledTab(string designerFilePath, string assemblyPath, string hostId, string pageTypeFqn, string newId,
+            string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.AddTab(assemblyPath, typeName, hostId ?? "this", pageTypeFqn ?? "", newId ?? "");
+        }
+
+        /// <summary>Remove tab page pageId from the tab host on the live instance + re-render (Applied=true when the
+        /// page was a live child). The persisted removal is the host's net9 text edit.</summary>
+        public RenderLayoutResult RemoveCompiledTab(string designerFilePath, string assemblyPath, string hostId, string pageId,
+            string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.RemoveTab(assemblyPath, typeName, hostId ?? "this", pageId ?? "");
         }
 
         private static string ResolveTypeName(string designerFilePath, string assemblyPath, string? rootTypeName)

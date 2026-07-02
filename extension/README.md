@@ -15,15 +15,16 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 ## Features
 
 - **Live form rendering** from `.Designer.cs` — your controls (including custom/3rd-party ones) are really instantiated and painted, so the preview matches runtime.
-- **.NET Framework & DevExpress support (experimental)** — forms whose controls target **.NET Framework** (`net4x`) render on a dedicated bundled **.NET Framework 4.8** engine that instantiates the compiled controls, so classic component suites (e.g. **DevExpress**) look pixel-accurate. Each form is auto-routed to the right engine; the property grid, drag/resize/align, add/remove and z-order apply live. _(Cut/paste on this engine is not available yet.)_
+- **.NET Framework & DevExpress support (experimental)** — forms whose controls target **.NET Framework** (`net4x`) render on a dedicated bundled **.NET Framework 4.8** engine that instantiates the compiled controls, so classic component suites (e.g. **DevExpress**) look pixel-accurate. Each form is auto-routed to the right engine; the property grid, drag/resize/align, add/remove, z-order, **cut/paste**, **tab-page add/rename/delete**, and dropping the project's own vendor controls from the toolbox all apply live.
 - **VS Code–native workflow** — opening `Form.cs` opens the designer; **View Code** switches back to text.
 - **Property grid** — primitives, enums, complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`), composite expansion, and standard-value dropdowns, plus VS-style **Color**, **Font** (expandable), **flags-enum**, **Anchor/Dock**, and **image** editors.
 - **Images & `.resx`** — render images from a form's sibling `.resx`, and import / clear `Image` / `BackgroundImage` / `Icon` back into both files.
 - **Layout panels** — edit `TableLayoutPanel` cells & column/row styles, `SplitContainer` splitter distance, and `FlowLayoutPanel` order.
 - **Toolbox** — ~39 `System.Windows.Forms` controls (with native icons) plus controls from your own project; **Choose Toolbox Items** and a **control-source** picker for custom / 3rd-party assemblies.
-- **Direct manipulation** — select, move, resize (8 handles), multi-select + rubber-band, group move/delete, reparent, z-order, copy/paste, align / distribute / make-same-size, tab-order editor, snaplines, and a right-click menu.
+- **Direct manipulation** — select, move, resize (8 handles), multi-select + rubber-band, group move/delete, reparent, z-order, copy/paste, align / distribute / make-same-size, tab-order editor, snaplines, on-canvas **smart-tags**, and a right-click menu.
 - **Events** — wire / unwire / rewire handlers, generate a stub, navigate to the handler body.
 - **Component tray** and **document outline** for non-visual components and the control hierarchy.
+- **Localized UI (6 languages)** — the designer surface, dialogs and messages can be shown in English, Русский, 简体中文, Français, Deutsch or Español via the `winformsDesigner.language` setting.
 - **Safe save** — targeted, byte-minimal text edits; everything outside the change is preserved exactly.
 
 ## Requirements
@@ -46,6 +47,11 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 |---------|---------|-------------|
 | `winformsDesigner.autoOpenDesigner` | `true` | Open the designer automatically when a form's `.cs` becomes active. |
 | `winformsDesigner.assemblyPath` | `""` | Explicit path to the built control assembly. Leave empty for auto-discovery. |
+| `winformsDesigner.language` | `en` | UI language of the designer, dialogs and messages (English, Русский, 简体中文, Français, Deutsch, Español). |
+
+### Language
+
+The designer surface, property grid, toolbox, dialogs and status/notification messages are localized and follow the `winformsDesigner.language` setting — chosen **here**, not from the VS Code display language. Changing it takes full effect after a **Reload Window** (you'll be prompted). Note: the VS Code **command palette** titles and the settings page itself follow VS Code's own *Display Language* (a platform limitation), so those pieces of "chrome" may stay in a different language than the designer UI.
 
 ## Security & Workspace Trust
 
@@ -53,7 +59,7 @@ Rendering a designer **loads and runs your project's control assemblies** (const
 
 ## Status & limitations
 
-This is a **preview**. The core render → select → edit → save loop, property grid (with Color / Font / flags / image editors), toolbox, layout-panel editing, `.resx` image support, and safe save all work. **.NET Framework (net48) hosting is new in 0.3.0 as an experimental compiled preview** — render plus live property / drag / add / remove / z-order edits for `net4x` / DevExpress forms (cut/paste there is not available yet). `UITypeEditor` / collection-editor modals and advanced `.resx` are still in progress. Please report issues — the **WinForms: Export Designer Diagnostics** command generates a ready-to-paste bug report.
+This is a **preview**. The core render → select → edit → save loop, property grid (with Color / Font / flags / image editors), toolbox, layout-panel editing, `.resx` image support, 6-language UI localization, and safe save all work. **.NET Framework (net48) hosting** is an experimental compiled preview for `net4x` / DevExpress forms — render plus live property / drag / add / remove / z-order / **cut / paste** edits, **tab-page add / rename / delete**, and dropping the project's own vendor controls from the toolbox. `UITypeEditor` / collection-editor modals and advanced `.resx` are still in progress. Please report issues — the **WinForms: Export Designer Diagnostics** command generates a ready-to-paste bug report.
 
 ## Links
 

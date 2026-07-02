@@ -1,0 +1,16 @@
+{
+  "description": "Visualize and edit WinForms .Designer.cs forms live inside VS Code — a Visual Studio-style designer surface, property grid, toolbox and event wiring, powered by a .NET 9 rendering engine.",
+  "editor.displayName": "WinForms Designer",
+  "viewsContainers.title": "WinForms Designer",
+  "view.name": "Designer",
+  "command.open.title": "WinForms: Open Designer",
+  "command.viewCode.title": "WinForms: View Code",
+  "command.showProperties.title": "WinForms: Show Properties",
+  "command.exportDiagnostics.title": "WinForms: Export Designer Diagnostics",
+  "command.selectControlAssembly.title": "WinForms: Select Control Assembly / Project…",
+  "configuration.title": "WinForms Designer",
+  "untrusted.description": "Rendering a designer loads and executes the project's control assemblies (constructors / OnPaint run on preview), so the extension is disabled in untrusted workspaces.",
+  "config.autoOpenDesigner.description": "Automatically open the WinForms designer when a form's `.cs` (one that has a generated `.Designer.cs` partner) becomes the active editor — mirroring Visual Studio, where opening `Form1.cs` shows the designer. Use **View Code** to switch a form back to its `.cs` text (auto-open won't re-hijack it until you reopen the file). Disable this to keep the C# text editor and open the designer manually via **WinForms: Open Designer** or *Reopen Editor With…*.",
+  "config.assemblyPath.description": "Explicit path to the project's built control assembly (`.dll`) used to resolve custom/3rd-party controls. Leave empty to auto-discover the project's build output. Set this only when auto-discovery fails (e.g. multi-target, a custom `OutputPath`, or a not-yet-built project).\n\n- A leading `~` expands to your home directory; a relative path resolves against the workspace folder (or the file's own directory when no folder is open). Environment variables (`%VAR%`, `${env:VAR}`, `$VAR`) are **not** expanded.\n- If the resolved path does not exist, a warning is shown and auto-discovery is used instead.\n- **The assembly is loaded and its control constructors / `OnPaint` run when a designer is previewed**, so it is honored only in a trusted workspace.",
+  "config.language.description": "Language of the WinForms Designer user interface — the designer surface, property grid, toolbox, dialogs and messages. This is chosen **here**, in the extension settings; it does **not** follow the VS Code display language automatically. Default: **English**.\n\n- Changing this takes full effect after **Reload Window** (you'll be prompted).\n- Note: the VS Code **command palette** titles (e.g. *WinForms: Open Designer*) and this settings page itself follow VS Code's own *Display Language*, not this setting — a platform limitation."
+}

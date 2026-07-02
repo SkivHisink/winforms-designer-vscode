@@ -323,6 +323,43 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
+            if (Has(args, "--deltab", out string? dtFile) && dtFile != null)
+            {
+                string host = ArgAfter(args, "--host") ?? "this";
+                string? page = ArgAfter(args, "--page");
+                if (page == null)
+                {
+                    Console.WriteLine("usage: --deltab <file> --host <tabHost> --page <tabPage>");
+                    return 2;
+                }
+                try
+                {
+                    string src = System.IO.File.ReadAllText(dtFile);
+                    var res = DesignerRenderer.RemoveTabPage(dtFile, host, page, src); // sourceText override → never writes disk
+                    Console.WriteLine("== engine delete-tab (remove page + its whole subtree, detach from host)");
+                    Console.WriteLine("   target : " + host + " / " + page);
+                    Console.WriteLine("   safe: " + res.Safe + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Safe || res.NewText == null)
+                    {
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    bool refGone = !System.Text.RegularExpressions.Regex.IsMatch(res.NewText, @"\bthis\." + System.Text.RegularExpressions.Regex.Escape(page) + @"\b");
+                    int before = src.Split('\n').Length, after = res.NewText.Split('\n').Length;
+                    Console.WriteLine("   page ref gone: " + refGone + " | lines " + before + " -> " + after + " (removed " + (before - after) + ")");
+                    string? outFile = ArgAfter(args, "--out"); // debug: write the edited text to a SEPARATE file (never the source)
+                    if (outFile != null) System.IO.File.WriteAllText(outFile, res.NewText);
+                    Console.WriteLine("RESULT: " + (refGone ? "PASS" : "FAIL — dangling page ref"));
+                    return refGone ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
             if (Has(args, "--set-image", out string? siFile) && siFile != null)
             {
                 string comp = ArgAfter(args, "--comp") ?? "this";
@@ -541,6 +578,23 @@ namespace WinFormsDesigner.Engine
                 foreach (var i in items.Take(25))
                     Console.WriteLine($"   {i.Name,-26} {i.Namespace,-32} {i.AssemblyName} {i.Version}");
                 return 0;
+            }
+
+            if (Has(args, "--add", out string? addFile) && addFile != null)
+            {
+                // Headless self-test for AddControl, incl. the net48 DevExpress path: --proj-fqn supplies the
+                // vendor-control FQNs the net48 engine enumerated, so the pure-text splice emits `new <Fqn>()`
+                // without a net9 assembly load. e.g. --add F.Designer.cs --parent this --ctl <Fqn> --proj-fqn <Fqn>
+                string parent = ArgAfter(args, "--parent") ?? "this";
+                string ctl = ArgAfter(args, "--ctl") ?? "Button";
+                var fqns = args.Select((a, i) => (a, i)).Where(x => x.a == "--proj-fqn" && x.i + 1 < args.Length).Select(x => args[x.i + 1]).ToList();
+                var res = DesignerRenderer.AddControl(addFile, parent, ctl, null, null, null, ArgAfter(args, "--asm"), fqns.Count > 0 ? fqns : null);
+                Console.WriteLine($"== add '{ctl}' to '{parent}': safe={res.Safe} name={res.Name}{(res.Reason.Length > 0 ? " reason=" + res.Reason : "")}");
+                if (res.Safe && res.NewText != null)
+                    foreach (var line in res.NewText.Split('\n').Where(l => res.Name.Length > 0 && l.Contains(res.Name)).Take(10))
+                        Console.WriteLine("   " + line.TrimEnd());
+                Console.WriteLine(res.Safe ? "RESULT: PASS" : "RESULT: FAIL");
+                return res.Safe ? 0 : 1;
             }
 
             if (Has(args, "--palette", out _))
@@ -898,11 +952,18 @@ namespace WinFormsDesigner.Engine
         /// <summary>Toolbox add-control: insert a standard WinForms control (field decl + InitializeComponent
         /// statements) as a text edit. PURE TEXT — no graph load / STA (the generated statements are
         /// interpreted on the next render). The host applies the returned text as an unsaved edit.</summary>
-        public ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null)
+        public ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, List<string>? projectControlFqns = null)
         {
-            Prewarm(designerFilePath, controlAssemblyPath); // a project-control key (§7.2 Inc2) needs the resolved assembly
-            return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath));
+            // A net9 project-control key (§7.2 Inc2) needs the resolved assembly enumerated; the net48 (DevExpress/
+            // net4x) path instead supplies projectControlFqns (net9 can't load that assembly) → no prewarm needed.
+            if (projectControlFqns == null) Prewarm(designerFilePath, controlAssemblyPath);
+            return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath), projectControlFqns);
         }
+
+        /// <summary>Add a new empty tab page to a tab host (pure text edit; pageTypeFqn is the page type). The host
+        /// applies the returned text as an unsaved edit, then the net48 engine live-adds the page to the picture.</summary>
+        public ControlAddResult AddTabPage(string designerFilePath, string hostId, string pageTypeFqn, string? sourceText = null)
+            => DesignerRenderer.AddTabPage(designerFilePath, hostId, pageTypeFqn, sourceText);
 
         /// <summary>Add a non-visual component (Timer/ToolTip/dialog…) — the tray counterpart of AddControl. No
         /// parent/location; the component is created and appears in the component tray.</summary>
@@ -942,6 +1003,13 @@ namespace WinFormsDesigner.Engine
         /// PURE TEXT — no graph load/STA. Refuses a container with children / externally-referenced control.</summary>
         public ControlRemoveResult RemoveControl(string designerFilePath, string controlId, string? sourceText = null) =>
             DesignerRenderer.RemoveControl(designerFilePath, controlId, sourceText);
+
+        /// <summary>Remove a whole tab page (page + its entire subtree) from a tab host as a text edit; detaches the
+        /// page from the host's tab collection (whole Controls.Add/TabPages.Add, or a trimmed TabPages.AddRange
+        /// element). PURE TEXT — no graph load/STA. The host applies the returned text, then the net48 engine
+        /// live-removes the page from the picture.</summary>
+        public ControlRemoveResult RemoveTabPage(string designerFilePath, string hostId, string pageId, string? sourceText = null) =>
+            DesignerRenderer.RemoveTabPage(designerFilePath, hostId, pageId, sourceText);
 
         /// <summary>Copy a leaf control to an opaque clipboard blob (field type + InitializeComponent statements).
         /// PURE TEXT — no graph load/STA. The host stores the blob and hands it back to <see cref="PasteControl"/>.</summary>

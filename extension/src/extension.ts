@@ -5,6 +5,7 @@ import * as os from 'os';
 import { startEngine, EngineHandle, ping, resolveAssembly, describeDesigner, listToolboxItems } from './engineClient';
 import { WinFormsDesignerProvider, DesignerPanelViewProvider, DesignerHub, hasDesignerSibling, canOpenDesigner, resolveOpenTarget, resolveDesignerFile, EngineKind } from './designerEditor';
 import { resolveFrameworkOutput } from './csprojRef';
+import { setLocale, t } from './i18n';
 
 // Two engine processes, started lazily and keyed by kind: 'net9' (the default WinForms/Roslyn engine) and
 // 'net48' (the .NET Framework compiled-render engine for DevExpress/Framework projects). A form routes to one
@@ -54,18 +55,18 @@ function updateControlStatus(): void {
   if (!file) { controlStatus.hide(); return; }
   // A form rendered by the net48 engine is a read-only compiled preview — surface that in the badge.
   const preview = DesignerHub.instance.activeSession?.isCompiledPreview
-    ? ' · $(lock) preview' : '';
+    ? t('host.statusbar.previewBadge') : '';
   const previewTip = DesignerHub.instance.activeSession?.isCompiledPreview
-    ? '\n.NET Framework compiled preview — property edits are live; drag/add and manual source edits reflect after a rebuild.' : '';
+    ? '\n' + t('host.statusbar.tip.previewNote') : '';
   const explicit = getControlSource(file);
   if (explicit) {
-    controlStatus.text = '$(package) Controls: ' + path.basename(explicit) + preview;
-    controlStatus.tooltip = 'WinForms control source (explicit): ' + explicit + previewTip + '\nClick to change.';
+    controlStatus.text = t('host.statusbar.controls', { name: path.basename(explicit) }) + preview;
+    controlStatus.tooltip = t('host.statusbar.tip.explicit', { path: explicit }) + previewTip + '\n' + t('host.statusbar.tip.clickChange');
     controlStatus.show();
     return;
   }
-  controlStatus.text = '$(package) Controls: auto' + preview;
-  controlStatus.tooltip = 'WinForms control source: auto-detected from the project.' + previewTip + '\nClick to override.';
+  controlStatus.text = t('host.statusbar.controls', { name: t('host.statusbar.auto') }) + preview;
+  controlStatus.tooltip = t('host.statusbar.tip.auto') + previewTip + '\n' + t('host.statusbar.tip.clickOverride');
   controlStatus.show();
   // best-effort: fill in the resolved dll name in the background (don't block the status update on the engine)
   void (async () => {
@@ -73,8 +74,8 @@ function updateControlStatus(): void {
       if (!extContext) return;
       const r = await resolveAssembly(await getEngine(extContext), file);
       if (r && controlStatus && DesignerHub.instance.activeSession?.designerFilePath === file && !getControlSource(file)) {
-        controlStatus.text = '$(package) Controls: ' + path.basename(r) + ' (auto)';
-        controlStatus.tooltip = 'WinForms control source (auto-detected): ' + r + '\nClick to override.';
+        controlStatus.text = t('host.statusbar.controls', { name: path.basename(r) + t('host.statusbar.autoSuffix') });
+        controlStatus.tooltip = t('host.statusbar.tip.autoResolved', { path: r }) + '\n' + t('host.statusbar.tip.clickOverride');
       }
     } catch { /* engine not up / unresolved — leave the neutral "auto" label */ }
   })();
@@ -84,6 +85,10 @@ export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel('WinForms Designer');
   context.subscriptions.push(output);
   extContext = context;
+
+  // Resolve the UI language from the `winformsDesigner.language` setting (default English). It is driven
+  // ONLY by the setting — it never auto-follows the VS Code display language. Refreshed on config change below.
+  setLocale();
 
   // Persist the user's "Choose Items" toolbox additions across sessions (global, like VS toolbox customization).
   DesignerHub.instance.initState(context.globalState);
@@ -123,7 +128,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const uri = vscode.window.activeTextEditor?.document.uri ?? activeCustomEditorUri();
       const target = uri ? resolveOpenTarget(uri.fsPath) : null;
       if (!target) {
-        vscode.window.showErrorMessage('Open a form .cs (with a .Designer.cs partner) to open its designer.');
+        vscode.window.showErrorMessage(t('host.notify.openDesigner.noForm'));
         return;
       }
       const targetUri = vscode.Uri.file(target);
@@ -186,6 +191,21 @@ export function activate(context: vscode.ExtensionContext): void {
         const ed = vscode.window.activeTextEditor;
         updateContext(ed);
         autoOpenIfDesigner(ed);
+      }
+      // Language: refresh the cached locale, then offer a window reload so all webviews (and the VS Code
+      // display-language-driven chrome) pick up the new language consistently.
+      if (e.affectsConfiguration('winformsDesigner.language')) {
+        setLocale();
+        // Re-emit open designer/panel webviews so the interactive UI switches language on the spot; the toast
+        // then offers a window reload for the manifest "chrome" (palette/settings) that only reloads with it.
+        DesignerHub.instance.rebuildOpenWebviews();
+        void vscode.window
+          .showInformationMessage(t('config.language.reloadPrompt'), t('config.language.reloadButton'))
+          .then((pick) => {
+            if (pick === t('config.language.reloadButton')) {
+              void vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+          });
       }
     }),
   );
@@ -376,16 +396,16 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
   const session = DesignerHub.instance.activeSession;
   const file = session?.designerFilePath ?? null;
   if (!file || !session) {
-    void vscode.window.showInformationMessage('Open a WinForms designer first, then choose its control source.');
+    void vscode.window.showInformationMessage(t('host.notify.selectAssembly.noSession'));
     return;
   }
-  const PROJECT = '$(project) Use a project (.csproj)…';
-  const BROWSE = '$(file-binary) Browse for a control assembly (.dll)…';
-  const CLEAR = '$(clear-all) Auto-detect (clear the override)';
+  const PROJECT = t('host.controlSource.project');
+  const BROWSE = t('host.controlSource.browse');
+  const CLEAR = t('host.controlSource.clear');
   const cur = getControlSource(file);
   const choice = await vscode.window.showQuickPick([PROJECT, BROWSE, CLEAR], {
-    title: 'WinForms — control source for this form',
-    placeHolder: cur ? 'Current: ' + path.basename(cur) : 'Current: auto-detect',
+    title: t('host.controlSource.title'),
+    placeHolder: cur ? t('host.controlSource.current', { name: path.basename(cur) }) : t('host.controlSource.currentAuto'),
   });
   if (!choice) return;
 
@@ -394,20 +414,20 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
     dll = undefined;
   } else if (choice === BROWSE) {
     const picked = await vscode.window.showOpenDialog({
-      canSelectMany: false, openLabel: 'Use as control source',
-      title: "Select the assembly that builds this form's controls", filters: { Assemblies: ['dll', 'exe'] },
+      canSelectMany: false, openLabel: t('host.dialog.selectAssembly.openLabel'),
+      title: t('host.dialog.selectAssembly.title'), filters: { Assemblies: ['dll', 'exe'] },
     });
     if (!picked || !picked.length) return;
     dll = picked[0].fsPath;
   } else {
     const csprojs = await vscode.workspace.findFiles('**/*.csproj', '**/{bin,obj,node_modules}/**', 200);
     if (!csprojs.length) {
-      void vscode.window.showWarningMessage('No .csproj found in the workspace — use "Browse" to pick a .dll instead.');
+      void vscode.window.showWarningMessage(t('host.notify.selectProject.notFound'));
       return;
     }
     const proj = await vscode.window.showQuickPick(
       csprojs.map((u) => ({ label: '$(project) ' + path.basename(u.fsPath), description: vscode.workspace.asRelativePath(u), uri: u })),
-      { title: 'Select the project that provides the controls', placeHolder: 'Its build output becomes the control source' },
+      { title: t('host.dialog.selectProject.title'), placeHolder: t('host.dialog.selectProject.placeholder') },
     );
     if (!proj) return;
     try {
@@ -419,19 +439,19 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
       }
       if (!resolved || !fs.existsSync(resolved)) {
         void vscode.window.showWarningMessage(
-          `Could not resolve ${path.basename(proj.uri.fsPath)}'s build output — build the project, or use "Browse" to pick its .dll directly.`,
+          t('host.notify.resolveProject.error', { name: path.basename(proj.uri.fsPath) }),
         );
         return;
       }
       dll = resolved;
     } catch (e) {
-      void vscode.window.showWarningMessage('Failed to resolve the project output: ' + (e instanceof Error ? e.message : String(e)));
+      void vscode.window.showWarningMessage(t('host.notify.resolveEngine.error', { error: e instanceof Error ? e.message : String(e) }));
       return;
     }
   }
 
   await setControlSource(file, dll);
-  void vscode.window.showInformationMessage(dll ? 'Control source: ' + path.basename(dll) : 'Control source cleared — using auto-detection.');
+  void vscode.window.showInformationMessage(dll ? t('host.notify.controlSource.set', { name: path.basename(dll) }) : t('host.notify.controlSource.cleared'));
   await session.reloadControlSource();
   updateControlStatus();
 }
@@ -468,7 +488,7 @@ function warnMissingAssembly(resolved: string): void {
   warnedAssemblyPaths.add(resolved);
   output.appendLine('winformsDesigner.assemblyPath not found, using auto-discovery: ' + resolved);
   void vscode.window.showWarningMessage(
-    'WinForms: configured assemblyPath was not found — using auto-discovery instead: ' + resolved,
+    t('host.notify.assemblyPath.missing', { path: resolved }),
   );
 }
 

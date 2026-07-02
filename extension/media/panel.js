@@ -5,6 +5,40 @@
 // host protocol in src/designerEditor.ts.
 (function () {
   var vscode = acquireVsCodeApi();
+  // ---- i18n shim: host injects window.__WFD_L10N__ (catalog) + window.__WFD_LANG__ (locale) before this
+  // script. T()/TN() mirror the host's t()/tn(); a missing key falls back to the key itself. Named T/TN (not
+  // t/tn) because `t` is already used as a local variable throughout this file. ----
+  var __L10N = window.__WFD_L10N__ || {}, __LANG = window.__WFD_LANG__ || 'en';
+  function T(k, p) {
+    var s = __L10N[k];
+    if (s == null) return k;
+    if (typeof s === 'object') s = s.other || k;
+    return p ? String(s).replace(/\{(\w+)\}/g, function (_m, n) { return p[n] != null ? p[n] : ''; }) : s;
+  }
+  function TN(k, n, p) {
+    var e = __L10N[k];
+    if (e == null) return k;
+    if (typeof e !== 'object') { var pp = {}; if (p) for (var kk in p) pp[kk] = p[kk]; pp.n = n; return T(k, pp); }
+    var cat; try { cat = new Intl.PluralRules(__LANG).select(n); } catch (_e) { cat = 'other'; }
+    var s = e[cat] || e.other || k;
+    return String(s).replace(/\{(\w+)\}/g, function (_m, x) { return x === 'n' ? n : (p && p[x] != null ? p[x] : ''); });
+  }
+  // Toolbox categories + composite/anchor field names are canonical English KEYS (matched against engine data,
+  // persisted in state, and used in edit logic); only their DISPLAY is localized. Unknown names (custom tabs)
+  // show verbatim.
+  var CAT_KEY = {
+    'All Windows Forms': 'panel.cat.allWinforms', 'Common Controls': 'panel.cat.commonControls',
+    'Containers': 'panel.cat.containers', 'Menus & Toolbars': 'panel.cat.menusToolbars',
+    'Components': 'panel.cat.components', 'Printing': 'panel.cat.printing', 'Dialogs': 'panel.cat.dialogs',
+    'WPF Interoperability': 'panel.cat.wpfInterop', 'Data': 'panel.cat.data', 'Project Controls': 'panel.cat.projectControls'
+  };
+  function catLabel(tab) { return CAT_KEY[tab] ? T(CAT_KEY[tab]) : tab; }
+  var FIELD_KEY = {
+    X: 'panel.field.x', Y: 'panel.field.y', Width: 'panel.field.width', Height: 'panel.field.height',
+    Left: 'panel.field.left', Top: 'panel.field.top', Right: 'panel.field.right', Bottom: 'panel.field.bottom',
+    All: 'panel.field.all', Dock: 'panel.field.dock'
+  };
+  function fieldLabel(n) { return FIELD_KEY[n] ? T(FIELD_KEY[n]) : n; }
 
   // ---- bottom tab switching (Properties / Outline / Toolbox panes) ----
   var propsPane = document.getElementById('propsPane');
@@ -108,7 +142,7 @@
       var collapsed = !!tbState.collapsed[tab] && !q; // an active search forces expand
       var head = document.createElement('div');
       head.className = 'tbCat' + (isCustom ? ' custom' : '');
-      head.innerHTML = '<span class="tw">' + (collapsed ? '▸' : '▾') + '</span>' + escapeHtml(tab) + ' <span class="cnt">(' + items.length + ')</span>';
+      head.innerHTML = '<span class="tw">' + (collapsed ? '▸' : '▾') + '</span>' + escapeHtml(catLabel(tab)) + ' <span class="cnt">(' + items.length + ')</span>';
       head.addEventListener('click', function () { tbState.collapsed[tab] = !tbState.collapsed[tab]; saveTbState(); renderToolbox(); });
       head.addEventListener('contextmenu', function (ev) { ev.preventDefault(); ev.stopPropagation(); openTbMenu(ev.clientX, ev.clientY, tab, isCustom); });
       tbListEl.appendChild(head);
@@ -116,7 +150,7 @@
       if (!items.length) {
         // reached only when NOT searching (empty categories are filtered above during search)
         var e = document.createElement('div'); e.className = 'tbEmptyCat';
-        e.textContent = DEFERRED_TABS.indexOf(tab) >= 0 ? 'coming soon' : 'no items';
+        e.textContent = DEFERRED_TABS.indexOf(tab) >= 0 ? T('panel.tb.comingSoon') : T('panel.tb.noItems');
         tbListEl.appendChild(e); return;
       }
       var box = document.createElement('div'); box.className = 'tbItems' + (tbState.listView ? '' : ' icons');
@@ -125,7 +159,7 @@
     });
     // a search that filters out every category → one hint instead of a blank pane
     if (q && !rendered) {
-      var none = document.createElement('div'); none.className = 'tbEmptyCat'; none.textContent = 'no matching controls';
+      var none = document.createElement('div'); none.className = 'tbEmptyCat'; none.textContent = T('panel.tb.noMatching');
       tbListEl.appendChild(none);
     }
   }
@@ -145,17 +179,23 @@
     b.appendChild(lbl);
     // non-visual components (Timer/ToolTip/dialog…) go to the component tray — click-to-add only (no position), via
     // the AddComponent path. Visual controls support click-to-add AND drag onto the form at a position.
-    b.title = it.fqn + (it.isComponent ? ' — click to add to the component tray' : ' — click to add, or drag onto the form');
+    // For a PROJECT/vendor control send the FULLY-QUALIFIED name as the add key, not the short name: a vendor control
+    // whose short name collides with a framework one (e.g. a project "Panel") would otherwise resolve to the stock
+    // framework type, and two project controls sharing a short name would be ambiguous. A dotted FQN resolves exactly
+    // in both engines (net9 ResolveSpec by Fqn; net48 ResolveControlType via Type.GetType). Framework/components keep
+    // their short name (unchanged). See #5 DevExpress-add review.
+    var addKey = it.fromProject ? it.fqn : it.name;
+    b.title = it.fqn + (it.isComponent ? T('panel.tb.item.componentTip') : T('panel.tb.item.controlTip'));
     b.addEventListener('click', function () {
       if (it.isComponent) vscode.postMessage({ type: 'addComponent', componentType: it.name });
-      else vscode.postMessage({ type: 'addControl', controlType: it.name });
+      else vscode.postMessage({ type: 'addControl', controlType: addKey });
     });
     if (it.isComponent) return b;   // components aren't draggable (no on-form position)
     // cross-webview drag → canvas drop (custom MIME, NOT text/uri-list). Click-to-add is the reliable fallback.
     b.draggable = true;
     b.addEventListener('dragstart', function (ev) {
       if (!ev.dataTransfer) return;
-      ev.dataTransfer.setData('application/vnd.winforms-toolbox-item', it.name);
+      ev.dataTransfer.setData('application/vnd.winforms-toolbox-item', addKey);
       ev.dataTransfer.effectAllowed = 'copy';
       // give the drag a clean single-item image — the default drag snapshot in this host can balloon to look like
       // the whole list is being dragged. A throwaway off-screen chip with just the control name fixes the visual.
@@ -179,22 +219,22 @@
   function openTbMenu(x, y, tab, isCustom) {
     var idx = customIndex(tab), last = tbState.customTabs.length - 1;
     var menu = [
-      { label: 'Paste', acc: 'Ctrl+V', disabled: true },
+      { label: T('panel.menu.paste'), acc: 'Ctrl+V', disabled: true },
       { sep: 1 },
-      { label: 'List View', check: tbState.listView, act: function () { tbState.listView = !tbState.listView; saveTbState(); renderToolbox(); } },
-      { label: 'Show All', check: tbState.showAll, act: function () { tbState.showAll = !tbState.showAll; saveTbState(); renderToolbox(); } },
+      { label: T('panel.menu.listView'), check: tbState.listView, act: function () { tbState.listView = !tbState.listView; saveTbState(); renderToolbox(); } },
+      { label: T('panel.menu.showAll'), check: tbState.showAll, act: function () { tbState.showAll = !tbState.showAll; saveTbState(); renderToolbox(); } },
       { sep: 1 },
-      { label: 'Choose Items…', act: function () { openChoose(tab); } },
-      { label: 'Sort Items Alphabetically', check: tbState.sortAlpha, act: function () { tbState.sortAlpha = !tbState.sortAlpha; saveTbState(); renderToolbox(); } },
+      { label: T('panel.menu.chooseItems'), act: function () { openChoose(tab); } },
+      { label: T('panel.menu.sortAlpha'), check: tbState.sortAlpha, act: function () { tbState.sortAlpha = !tbState.sortAlpha; saveTbState(); renderToolbox(); } },
       { sep: 1 },
-      { label: 'Reset Toolbox', act: resetToolbox },
+      { label: T('panel.menu.resetToolbox'), act: resetToolbox },
       { sep: 1 },
-      { label: 'Add Tab', act: addTab },
-      { label: 'Delete Tab', disabled: !isCustom, act: function () { deleteTab(tab); } },
-      { label: 'Rename Tab', disabled: !isCustom, act: function () { renameTab(tab); } },
+      { label: T('panel.menu.addTab'), act: addTab },
+      { label: T('panel.menu.deleteTab'), disabled: !isCustom, act: function () { deleteTab(tab); } },
+      { label: T('panel.menu.renameTab'), disabled: !isCustom, act: function () { renameTab(tab); } },
       { sep: 1 },
-      { label: 'Move Up', disabled: !isCustom || idx <= 0, act: function () { moveTab(idx, -1); } },
-      { label: 'Move Down', disabled: !isCustom || idx < 0 || idx >= last, act: function () { moveTab(idx, 1); } }
+      { label: T('panel.menu.moveUp'), disabled: !isCustom || idx <= 0, act: function () { moveTab(idx, -1); } },
+      { label: T('panel.menu.moveDown'), disabled: !isCustom || idx < 0 || idx >= last, act: function () { moveTab(idx, 1); } }
     ];
     tbMenuEl.innerHTML = '';
     menu.forEach(function (mi) {
@@ -215,7 +255,7 @@
 
   // ---- custom-tab management (Add/Rename/Delete/Move Up/Down) ----
   function addTab() {
-    promptTab('Add Tab', '', function (name) {
+    promptTab(T('panel.tbPrompt.title'), '', function (name) {
       name = (name || '').trim(); if (!name) return;
       if (tabOrder().indexOf(name) >= 0) return; // ignore duplicate name
       tbState.customTabs.push({ name: name, items: [] });
@@ -224,7 +264,7 @@
   }
   function renameTab(tab) {
     var c = findCustom(tab); if (!c) return;
-    promptTab('Rename Tab', tab, function (name) {
+    promptTab(T('panel.tbPrompt.renameTitle'), tab, function (name) {
       name = (name || '').trim(); if (!name || name === tab || tabOrder().indexOf(name) >= 0) return;
       if (tbState.collapsed[tab] != null) { tbState.collapsed[name] = tbState.collapsed[tab]; delete tbState.collapsed[tab]; }
       c.name = name; saveTbState(); renderToolbox();
@@ -320,14 +360,14 @@
     return p.type === 'System.String' || p.type === 'System.Boolean' || p.type === 'System.Char' || NUM.has(p.type) || COMPLEX.has(p.type);
   }
   function editHint(p) {
-    if (p.standardValues && p.standardValues.length) return p.standardValuesExclusive ? ' (choose a value)' : ' (choose or type a value)';
-    if (p.isEnum) return ' (enum: type the member name)';
-    if (p.type === 'System.Drawing.Point') return ' (x, y)';
-    if (p.type === 'System.Drawing.Size') return ' (width, height)';
-    if (p.type === 'System.Drawing.Color') return ' (name, or R, G, B / A, R, G, B)';
-    if (p.type === 'System.Drawing.Rectangle') return ' (x, y, width, height)';
-    if (p.type === 'System.Windows.Forms.Padding') return ' (left, top, right, bottom)';
-    if (p.type === 'System.Drawing.Font') return ' (name, sizept[, style=Bold, Italic])';
+    if (p.standardValues && p.standardValues.length) return p.standardValuesExclusive ? T('panel.hint.chooseValue') : T('panel.hint.chooseOrType');
+    if (p.isEnum) return T('panel.hint.enum');
+    if (p.type === 'System.Drawing.Point') return T('panel.hint.point');
+    if (p.type === 'System.Drawing.Size') return T('panel.hint.size');
+    if (p.type === 'System.Drawing.Color') return T('panel.hint.color');
+    if (p.type === 'System.Drawing.Rectangle') return T('panel.hint.rectangle');
+    if (p.type === 'System.Windows.Forms.Padding') return T('panel.hint.padding');
+    if (p.type === 'System.Drawing.Font') return T('panel.hint.font');
     return '';
   }
 
@@ -338,7 +378,7 @@
       var c = ordered[i];
       var o = document.createElement('option');
       o.value = c.id;
-      o.textContent = (c.isRoot ? c.name + ' (form)' : repeat('   ', c.depth) + c.name) + ' : ' + shortType(c.type);
+      o.textContent = (c.isRoot ? c.name + T('panel.tree.formSuffix') : repeat('   ', c.depth) + c.name) + ' : ' + shortType(c.type);
       treeEl.appendChild(o);
     }
     if (currentId) treeEl.value = currentId;
@@ -352,11 +392,11 @@
     // a11y mirror-tree (§18): the outline IS the accessible mirror of the design surface — expose it as an ARIA
     // tree so a screen reader announces the control hierarchy, selection and expand state.
     outlineEl.setAttribute('role', 'tree');
-    outlineEl.setAttribute('aria-label', 'Designer control hierarchy');
+    outlineEl.setAttribute('aria-label', T('panel.outline.aria'));
     outlineEl.innerHTML = '';
     if (!controls.length) {
       var empty = document.createElement('div'); empty.className = 'paneEmpty';
-      empty.textContent = 'Render a WinForms designer to see its outline.';
+      empty.textContent = T('panel.outline.empty');
       outlineEl.appendChild(empty); return;
     }
     var kids = {}, roots = [], parentOf = {};
@@ -389,7 +429,7 @@
       } else { tw.textContent = '   '; }
       node.appendChild(tw);
       var label = document.createElement('span');
-      label.textContent = (c.isRoot ? c.name + ' (form)' : c.name) + ' : ' + shortType(c.type);
+      label.textContent = (c.isRoot ? c.name + T('panel.tree.formSuffix') : c.name) + ' : ' + shortType(c.type);
       node.appendChild(label);
       node.title = c.id + ' : ' + c.type;
       node.addEventListener('click', function () { pickOutline(c.id); });
@@ -523,7 +563,7 @@
       sel.appendChild(o);
     });
     if (!has) { // keep the current (possibly out-of-set) value selectable so a change is explicit
-      var o0 = document.createElement('option'); o0.value = cur; o0.textContent = cur === '' ? '(unset)' : cur;
+      var o0 = document.createElement('option'); o0.value = cur; o0.textContent = cur === '' ? T('panel.grid.unset') : cur;
       o0.selected = true; sel.insertBefore(o0, sel.firstChild);
     }
     if (title) sel.title = title;
@@ -573,7 +613,7 @@
     var set = parseAnchor(value);
     var wrap = document.createElement('div'); wrap.className = 'anchorEd';
     var box = document.createElement('div'); box.className = 'anchorBox';
-    box.title = 'Anchor — click a bar to tether/untether that edge';
+    box.title = T('panel.anchor.boxTip');
     ['Top', 'Bottom', 'Left', 'Right'].forEach(function (side) {
       var bar = document.createElement('span');
       bar.className = 'aBar a' + side + (set[side] ? ' on' : '');
@@ -594,13 +634,13 @@
     var box = document.createElement('div'); box.className = 'dockBox';
     [['Top', 'dTop'], ['Left', 'dLeft'], ['Fill', 'dFill'], ['Right', 'dRight'], ['Bottom', 'dBottom']].forEach(function (z) {
       var el = document.createElement('span'); el.className = 'dZone ' + z[1] + (cur === z[0] ? ' on' : '');
-      el.title = 'Dock ' + z[0];
+      el.title = T('panel.dock.zoneTip', { side: z[0] });
       el.addEventListener('click', function () { onCommit(z[0]); });
       box.appendChild(el);
     });
     wrap.appendChild(box);
     var none = document.createElement('button'); none.type = 'button'; none.className = 'dNone' + (cur === 'None' ? ' on' : '');
-    none.textContent = 'None'; none.title = 'Dock None';
+    none.textContent = 'None'; none.title = T('panel.dock.noneTip');
     none.addEventListener('click', function () { onCommit('None'); });
     wrap.appendChild(none);
     return wrap;
@@ -687,11 +727,11 @@
     var wrap = document.createElement('div'); wrap.className = 'colorEd';
     var sw = swatchSpan(colorToHex(value));
     var inp = document.createElement('input'); inp.className = 'colorInp'; inp.value = value == null ? '' : value;
-    inp.title = 'Color — a name, "R, G, B" / "A, R, G, B", or pick from the dropdown';
+    inp.title = T('panel.color.inputTip');
     inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); } });
     inp.addEventListener('change', function () { onCommit(inp.value); });
     wrap.appendChild(sw); wrap.appendChild(inp);
-    wrap.appendChild(ddButton('Pick a color', function (btn) { openColorPopup(btn, value, onCommit); }));
+    wrap.appendChild(ddButton(T('panel.color.pickTip'), function (btn) { openColorPopup(btn, value, onCommit); }));
     return wrap;
   }
   function colorSwatchGrid(container, names, curVal, onPick) {
@@ -735,7 +775,7 @@
         else colorSwatchList(body, palette && palette.systemColors, curVal, pick);
         Array.prototype.forEach.call(tabs.children, function (t) { t.className = 'popTab' + (t.getAttribute('data-k') === which ? ' active' : ''); });
       }
-      [['custom', 'Custom'], ['web', 'Web'], ['system', 'System']].forEach(function (t) {
+      [['custom', T('panel.color.tab.custom')], ['web', T('panel.color.tab.web')], ['system', T('panel.color.tab.system')]].forEach(function (t) {
         var b = document.createElement('span'); b.className = 'popTab'; b.setAttribute('data-k', t[0]); b.textContent = t[1];
         b.addEventListener('click', function () { which = t[0]; render(); });
         tabs.appendChild(b);
@@ -788,9 +828,9 @@
       if (!name || !/^[0-9]+(\.[0-9]+)?$/.test(size)) return; // incomplete/invalid → leave the value unchanged
       sendEdit(c.id, p, composeFont({ name: name, size: size, unit: f.unit, styles: f.styles }));
     }
-    t.appendChild(subComboRow('Name', f.name, fams, function (v) { f.name = v; commitFont(); }));
-    t.appendChild(subRow('Size', f.size, function (v) { f.size = v; commitFont(); }));
-    t.appendChild(subSelectRow('Unit', f.unit, unitNames, function (v) { f.unit = v; commitFont(); }));
+    t.appendChild(subComboRow(T('panel.font.name'), f.name, fams, function (v) { f.name = v; commitFont(); }));
+    t.appendChild(subRow(T('panel.font.size'), f.size, function (v) { f.size = v; commitFont(); }));
+    t.appendChild(subSelectRow(T('panel.font.unit'), f.unit, unitNames, function (v) { f.unit = v; commitFont(); }));
     ['Bold', 'Italic', 'Underline', 'Strikeout'].forEach(function (st) {
       t.appendChild(subSelectRow(st, f.styles[st] ? 'True' : 'False', ['True', 'False'], function (v) {
         f.styles[st] = (v === 'True'); commitFont();
@@ -809,9 +849,9 @@
   function flagsEditor(p, value, onCommit) {
     var wrap = document.createElement('div'); wrap.className = 'flagsEd';
     var inp = document.createElement('input'); inp.className = 'flagsInp'; inp.value = value == null ? '' : value; inp.readOnly = true;
-    inp.title = 'Flags — click the arrow to toggle members';
+    inp.title = T('panel.flags.inputTip');
     wrap.appendChild(inp);
-    wrap.appendChild(ddButton('Toggle members', function (btn) { openFlagsPopup(btn, p, value, onCommit); }));
+    wrap.appendChild(ddButton(T('panel.flags.toggleTip'), function (btn) { openFlagsPopup(btn, p, value, onCommit); }));
     return wrap;
   }
   function openFlagsPopup(anchor, p, value, onCommit) {
@@ -853,17 +893,17 @@
     sw.title = p.type;
     wrap.appendChild(sw);
     var lbl = document.createElement('span'); lbl.className = 'imgLabel';
-    lbl.textContent = p.imagePreview ? shortType(p.type) : '(none)';
+    lbl.textContent = p.imagePreview ? shortType(p.type) : T('common.none');
     wrap.appendChild(lbl);
     if (!p.readOnly) {
-      var imp = document.createElement('button'); imp.type = 'button'; imp.className = 'imgBtn'; imp.textContent = 'Import…';
-      imp.title = 'Import an image file into the form’s resources';
+      var imp = document.createElement('button'); imp.type = 'button'; imp.className = 'imgBtn'; imp.textContent = T('panel.image.import');
+      imp.title = T('panel.image.importTip');
       imp.addEventListener('click', function () { vscode.postMessage({ type: 'importImage', id: c.id, prop: p.name, propType: p.type }); });
       wrap.appendChild(imp);
       // "(none)" clears an image that is actually set in the source (has a preview or an explicit assignment).
       if (p.imagePreview || p.sourceExplicit) {
-        var clr = document.createElement('button'); clr.type = 'button'; clr.className = 'imgBtn'; clr.textContent = '(none)';
-        clr.title = 'Clear the image (reset to none)';
+        var clr = document.createElement('button'); clr.type = 'button'; clr.className = 'imgBtn'; clr.textContent = T('common.none');
+        clr.title = T('panel.image.clearTip');
         clr.addEventListener('click', function () { vscode.postMessage({ type: 'clearImage', id: c.id, prop: p.name }); });
         wrap.appendChild(clr);
       }
@@ -923,7 +963,7 @@
       }
     } else {
       valTd.className = 'ro';
-      valTd.textContent = (p.value == null ? '' : p.value) + (p.readOnly ? '  (read-only)' : '');
+      valTd.textContent = (p.value == null ? '' : p.value) + (p.readOnly ? T('panel.grid.readOnly') : '');
       valTd.title = p.type;
     }
     addColSplit(nameTd);
@@ -932,11 +972,11 @@
     if (isOpen && comp) {
       if (comp.all) {
         var allVal = (parts[0] === parts[1] && parts[1] === parts[2] && parts[2] === parts[3]) ? parts[0] : '';
-        t.appendChild(subRow('All', allVal, function (v) { sendEdit(c.id, p, [v, v, v, v].join(', ')); }));
+        t.appendChild(subRow(T('panel.field.all'), allVal, function (v) { sendEdit(c.id, p, [v, v, v, v].join(', ')); }));
       }
       for (var k = 0; k < comp.fields.length; k++) {
         (function (idx) {
-          t.appendChild(subRow(comp.fields[idx], parts[idx], function (v) {
+          t.appendChild(subRow(fieldLabel(comp.fields[idx]), parts[idx], function (v) {
             var nums = parts.slice(); nums[idx] = v; sendEdit(c.id, p, nums.join(', '));
           }));
         })(k);
@@ -945,13 +985,13 @@
       // one True/False <select> per edge; recompose the full "Top, Left"/"None" flags string on change
       var aset = parseAnchor(p.value);
       ['Top', 'Bottom', 'Left', 'Right'].forEach(function (side) {
-        t.appendChild(subSelectRow(side, aset[side] ? 'True' : 'False', ['True', 'False'], function (v) {
+        t.appendChild(subSelectRow(fieldLabel(side), aset[side] ? 'True' : 'False', ['True', 'False'], function (v) {
           aset[side] = (v === 'True'); sendEdit(c.id, p, composeAnchor(aset));
         }));
       });
     } else if (isOpen && isDock) {
       var curDock = String(p.value == null ? '' : p.value).trim() || 'None';
-      t.appendChild(subSelectRow('Dock', curDock, ['None', 'Top', 'Bottom', 'Left', 'Right', 'Fill'], function (v) {
+      t.appendChild(subSelectRow(fieldLabel('Dock'), curDock, ['None', 'Top', 'Bottom', 'Left', 'Right', 'Fill'], function (v) {
         sendEdit(c.id, p, v);
       }));
     } else if (isOpen && isFont) {
@@ -959,11 +999,65 @@
     }
   }
 
+  // ---- smart-tag "Tasks" flyout (VS/DevExpress-style): a "⚡ <Type> Tasks" button above the grid opens a popup
+  // with a CURATED subset of the control's common properties, edited with the SAME inline editors as the grid,
+  // plus "All Properties…". The set is a name heuristic (we don't read DevExpress DesignerActionList). ----
+  var TASK_PROP_NAMES = ['Text', 'Caption', 'Image', 'ImageOptions', 'ImageIndex', 'ShowCloseButton', 'TabPageWidth',
+    'PageEnabled', 'PageVisible', 'AutoScroll', 'TouchScroll', 'SmallChange', 'Enabled', 'Visible', 'ReadOnly',
+    'Checked', 'CheckState', 'Value', 'Multiline', 'Dock', 'Anchor', 'BackColor', 'ForeColor', 'Font'];
+  function tasksFor(c) {
+    if (!c || !c.properties) return [];
+    var rank = {};
+    for (var i = 0; i < TASK_PROP_NAMES.length; i++) rank[TASK_PROP_NAMES[i].toLowerCase()] = i;
+    var found = c.properties.filter(function (p) { return rank[p.name.toLowerCase()] !== undefined; });
+    found.sort(function (a, b) { return rank[a.name.toLowerCase()] - rank[b.name.toLowerCase()]; });
+    return found;
+  }
+  function openTasksPopup(anchor, c) {
+    openPopup(anchor, function (pop) {
+      var title = document.createElement('div'); title.className = 'tasksTitle';
+      title.textContent = T('panel.tasks.title', { type: shortType(c.type) });
+      pop.appendChild(title);
+      var tasks = tasksFor(c);
+      if (!tasks.length) {
+        var note = document.createElement('div'); note.className = 'tasksNote';
+        note.textContent = T('panel.tasks.none'); pop.appendChild(note);
+      } else {
+        var tbl = gridTable();
+        for (var i = 0; i < tasks.length; i++) propRow(c, tasks[i], tbl);
+        pop.appendChild(tbl);
+      }
+      var all = document.createElement('button'); all.type = 'button'; all.className = 'tasksAll';
+      all.textContent = T('panel.tasks.all');
+      all.addEventListener('click', function () { closePopup(); setTab('props'); if (searchEl) searchEl.value = ''; renderActiveTab(); });
+      pop.appendChild(all);
+    });
+  }
+  function tasksBar(c) {
+    var bar = document.createElement('div'); bar.className = 'tasksbar';
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'tasksbtn';
+    btn.textContent = '⚡ ' + T('panel.tasks.title', { type: shortType(c.type) });
+    btn.title = T('panel.tasks.tooltip', { name: c.name || shortType(c.type) });
+    btn.addEventListener('click', function () {
+      if (popupEl && popupAnchor === btn) { closePopup(); return; } // toggle
+      openTasksPopup(btn, c);
+    });
+    bar.appendChild(btn);
+    return bar;
+  }
+
   function renderProps(c, filter) {
     propsEl.innerHTML = '';
-    if (!c) { propsEl.textContent = 'component not found'; return; }
+    if (!c) { propsEl.textContent = T('panel.grid.notFound'); return; }
+    // NOTE: the "Tasks" smart-tag now lives ON THE CANVAS (a chevron glyph at the control's top-right, VS-style),
+    // not as a button above this grid — see designer.js renderSmartTag/openFlyout. tasksBar/openTasksPopup remain
+    // available but are intentionally not rendered here.
     var sorted = filterSort(c.properties, filter);
-    if (!sorted.length) { propsEl.textContent = filter ? 'no matching properties' : 'no properties'; return; }
+    if (!sorted.length) {
+      var m = document.createElement('div'); m.className = 'propsMsg';
+      m.textContent = filter ? T('panel.grid.noMatchingProps') : T('panel.grid.noProps');
+      propsEl.appendChild(m); return;
+    }
     var t = gridTable();
     var lastCat = '';
     var hideCat = false;
@@ -994,8 +1088,8 @@
     var dl = document.createElement('datalist'); dl.id = listId;
     for (var i = 0; i < cands.length; i++) { var o = document.createElement('option'); o.value = cands[i]; dl.appendChild(o); }
     var inp = document.createElement('input'); inp.className = 'evt'; inp.value = cur;
-    inp.setAttribute('list', listId); inp.placeholder = '(none)';
-    inp.title = 'Type a handler name (new or existing), or clear to unwire';
+    inp.setAttribute('list', listId); inp.placeholder = T('common.none');
+    inp.title = T('panel.event.handlerTip');
     function commit() {
       var val = inp.value.trim();
       if (val === cur) return;
@@ -1012,9 +1106,9 @@
 
   function renderEvents(c, filter) {
     eventsEl.innerHTML = '';
-    if (!c) { eventsEl.textContent = 'component not found'; return; }
+    if (!c) { eventsEl.textContent = T('panel.grid.notFound'); return; }
     var evs = filterSort(c.events || [], filter);
-    if (!evs.length) { eventsEl.textContent = filter ? 'no matching events' : 'no events'; return; }
+    if (!evs.length) { eventsEl.textContent = filter ? T('panel.grid.noMatchingEvents') : T('panel.grid.noEvents'); return; }
     var t = gridTable();
     var lastCat = '';
     var hideCat = false;
@@ -1032,7 +1126,7 @@
       var valTd = document.createElement('td'); valTd.className = 'val';
       valTd.appendChild(eventCombo(c, ev));
       (function (e) {
-        nameTd.title = e.type + (e.handler ? '  —  double-click to go to the handler' : '  —  double-click to create a handler');
+        nameTd.title = e.type + (e.handler ? T('panel.event.wiredTip') : T('panel.event.unwiredTip'));
         // VS-style: double-click an event → if wired, go to the handler; if unwired, CREATE one (auto-named) and go.
         nameTd.addEventListener('dblclick', function () {
           if (e.handler) vscode.postMessage({ type: 'navigateHandler', id: c.id, event: e.name, handler: e.handler });
@@ -1056,7 +1150,7 @@
     tabEventsEl.className = tab === 'events' ? 'active' : '';
     propsEl.style.display = tab === 'props' ? '' : 'none';
     eventsEl.style.display = tab === 'events' ? '' : 'none';
-    searchEl.placeholder = tab === 'props' ? 'Search properties…' : 'Search events…';
+    searchEl.placeholder = tab === 'props' ? T('panel.search.props') : T('panel.search.events');
     renderActiveTab();
     fetchCandidatesIfNeeded();
   }

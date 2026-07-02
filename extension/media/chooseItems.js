@@ -5,6 +5,23 @@
 // dialog was opened from (and persists them). Opening the dialog pre-checks the items already in that tab.
 (function () {
   var vscode = acquireVsCodeApi();
+  // ---- i18n shim: host injects window.__WFD_L10N__ (catalog) + window.__WFD_LANG__ (locale) before this
+  // script. T()/TN() mirror the host's t()/tn(); a missing key falls back to the key itself. ----
+  var __L10N = window.__WFD_L10N__ || {}, __LANG = window.__WFD_LANG__ || 'en';
+  function T(k, p) {
+    var s = __L10N[k];
+    if (s == null) return k;
+    if (typeof s === 'object') s = s.other || k;
+    return p ? String(s).replace(/\{(\w+)\}/g, function (_m, n) { return p[n] != null ? p[n] : ''; }) : s;
+  }
+  function TN(k, n, p) {
+    var e = __L10N[k];
+    if (e == null) return k;
+    if (typeof e !== 'object') { var pp = {}; if (p) for (var kk in p) pp[kk] = p[kk]; pp.n = n; return T(k, pp); }
+    var cat; try { cat = new Intl.PluralRules(__LANG).select(n); } catch (_e) { cat = 'other'; }
+    var s = e[cat] || e.other || k;
+    return String(s).replace(/\{(\w+)\}/g, function (_m, x) { return x === 'n' ? n : (p && p[x] != null ? p[x] : ''); });
+  }
   var items = [];          // all candidate rows (framework + project + browsed)
   var selected = {};       // fqn -> true for rows the user wants in the toolbox tab
   var targetTab = null;    // the toolbox tab these go into (from the right-clicked tab)
@@ -21,12 +38,11 @@
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'; }); }
   function fqnOf(it) { return it.namespace ? it.namespace + '.' + it.name : it.name; }
   function showLoading(on) { loadingEl.style.display = on ? 'flex' : 'none'; tableEl.style.display = on ? 'none' : 'block'; }
-  function setStatus() { if (statusEl) statusEl.textContent = targetTab ? ('Adding to tab: ' + targetTab) : 'Tip: open Choose Items from a custom toolbox tab to add there'; }
+  function setStatus() { if (statusEl) statusEl.textContent = targetTab ? T('chooseItems.status.tabTarget', { tab: targetTab }) : T('chooseItems.status.noTab'); }
 
   function render() {
     if (view !== 'net') {
-      tableEl.innerHTML = '<div class="empty">' + (view === 'com' ? 'COM Components' : 'WPF Components') +
-        ' — not yet implemented. Scanning of registered components is a later increment.</div>';
+      tableEl.innerHTML = '<div class="empty">' + esc(T('chooseItems.notImpl', { kind: view === 'com' ? T('chooseItems.tab.com') : T('chooseItems.tab.wpf') })) + '</div>';
       return;
     }
     var q = (filterEl.value || '').trim().toLowerCase();
@@ -35,8 +51,8 @@
         (it.namespace || '').toLowerCase().indexOf(q) >= 0 || (it.assemblyName || '').toLowerCase().indexOf(q) >= 0;
     });
     list.sort(function (a, b) { return a.name.localeCompare(b.name); });
-    if (!list.length) { tableEl.innerHTML = '<div class="empty">No matching components.</div>'; return; }
-    var h = '<table><thead><tr><th class="chk"></th><th>Name</th><th>Namespace</th><th>Assembly Name</th><th>Version</th><th>Directory</th></tr></thead><tbody>';
+    if (!list.length) { tableEl.innerHTML = '<div class="empty">' + esc(T('chooseItems.noMatching')) + '</div>'; return; }
+    var h = '<table><thead><tr><th class="chk"></th><th>' + esc(T('chooseItems.col.name')) + '</th><th>' + esc(T('chooseItems.col.namespace')) + '</th><th>' + esc(T('chooseItems.col.assembly')) + '</th><th>' + esc(T('chooseItems.col.version')) + '</th><th>' + esc(T('chooseItems.col.directory')) + '</th></tr></thead><tbody>';
     list.forEach(function (it) {
       var fqn = fqnOf(it);
       h += '<tr data-fqn="' + esc(fqn) + '">' +
@@ -45,7 +61,7 @@
         '<td>' + esc(it.namespace || '') + '</td>' +
         '<td>' + esc(it.assemblyName || '') + '</td>' +
         '<td>' + esc(it.version || '') + '</td>' +
-        '<td>' + esc(it.directory || (it.fromProject ? '(project)' : '')) + '</td></tr>';
+        '<td>' + esc(it.directory || (it.fromProject ? T('chooseItems.project') : '')) + '</td></tr>';
     });
     h += '</tbody></table>';
     tableEl.innerHTML = h;
@@ -67,7 +83,7 @@
     var fqn = r.getAttribute('data-fqn');
     var it = items.filter(function (x) { return fqnOf(x) === fqn; })[0];
     if (!it) { detailsEl.textContent = fqn; return; }
-    detailsEl.innerHTML = '<b>' + esc(it.name) + '</b><br>Language: Invariant Language (Invariant Country)<br>Version: ' + esc(it.version || '');
+    detailsEl.innerHTML = '<b>' + esc(it.name) + '</b><br>' + esc(T('chooseItems.details.language')) + '<br>' + esc(T('chooseItems.details.version', { version: it.version || '' }));
   }
 
   function setView(v) {
@@ -82,7 +98,7 @@
   filterEl.addEventListener('input', render);
   document.getElementById('ciClear').addEventListener('click', function () { filterEl.value = ''; render(); });
   document.getElementById('ciBrowse').addEventListener('click', function () {
-    if (loadNameEl) loadNameEl.textContent = 'scanning selected assembly…';
+    if (loadNameEl) loadNameEl.textContent = T('chooseItems.scanningSelected');
     showLoading(true); // the host always re-posts items (even on cancel), so this never sticks
     vscode.postMessage({ type: 'browse' });
   });
@@ -106,7 +122,7 @@
       if (!inited) { selected = {}; (m.chosen || []).forEach(function (f) { selected[f] = true; }); inited = true; }
       // auto-tick the just-browsed assembly's items so a loaded library is one OK-click from the toolbox.
       (m.check || []).forEach(function (f) { selected[f] = true; });
-      if (loadNameEl) loadNameEl.textContent = (items[0] && items[0].assemblyName) ? items[0].assemblyName + '.dll' : 'assemblies…';
+      if (loadNameEl) loadNameEl.textContent = (items[0] && items[0].assemblyName) ? items[0].assemblyName + '.dll' : T('chooseItems.assembliesFallback');
       setStatus();
       // brief shimmer so it reads like VS's "Loading items…" scan, then reveal the (updated) list
       setTimeout(function () { showLoading(false); render(); }, 600);

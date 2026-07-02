@@ -11,8 +11,9 @@ namespace WinFormsDesigner.Engine.Net48
     /// analogue of the net9 engine's DesignerDescribe, but reading a real runtime component (not a design-surface
     /// one) and emitting the [Serializable] net48 DTOs (they cross the child-AppDomain boundary). The extraction
     /// logic (standard values, flags enums, image thumbnails, invariant stringify) mirrors DesignerDescribe so the
-    /// grid behaves identically. SourceExplicit (the "set in source" bold) is left false for now — it needs the
-    /// .Designer.cs assignment set, a later refinement.
+    /// grid behaves identically. SourceExplicit ("set in source" bold) and event Handler are the ONLY facts this
+    /// live-instance read can't see — they need the .Designer.cs assignment/wiring set, filled in the host domain by
+    /// <see cref="SourceMetadata.Apply"/> (Roslyn) after this describe returns.
     /// </summary>
     public static class CompiledDescriber
     {
