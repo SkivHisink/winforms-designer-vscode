@@ -56,7 +56,7 @@ namespace WinFormsDesigner.Engine.Net48
             if (Has(args, "--parse-meta", out string? pmFile) && pmFile != null)
             {
                 // pure-text (no assembly): print the source-only facts SourceMetadata recovers for a component id.
-                if (!File.Exists(pmFile)) { Console.Error.WriteLine("--parse-meta: file not found: " + pmFile); return 5; }
+                if (!File.Exists(pmFile)) { await Console.Error.WriteLineAsync("--parse-meta: file not found: " + pmFile); return 5; }
                 string pmId = Value(args, "--id") ?? "this";
                 var (props, handlers) = SourceMetadata.Dump(pmFile, pmId);
                 Console.WriteLine($"[parse-meta] id={pmId}: {props.Count} explicit prop(s), {handlers.Count} wired event(s)");
@@ -74,7 +74,7 @@ namespace WinFormsDesigner.Engine.Net48
             {
                 string? rasm = Value(args, "--asm");
                 string? rid = Value(args, "--id");
-                if (rasm == null || rid == null) { Console.Error.WriteLine("--asm and --id required"); return 5; }
+                if (rasm == null || rid == null) { await Console.Error.WriteLineAsync("--asm and --id required"); return 5; }
                 var rprobes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
                 var api2 = new EngineApi();
                 var pre = api2.RenderCompiledWithLayout(rdesigner, rasm, null, rprobes, 0, 0);
@@ -90,7 +90,7 @@ namespace WinFormsDesigner.Engine.Net48
                 string parent = Value(args, "--parent") ?? "this";
                 string? ctype = Value(args, "--ctype");
                 string newid = Value(args, "--newid") ?? "newControl1";
-                if (aasm == null || ctype == null) { Console.Error.WriteLine("--asm and --ctype required"); return 5; }
+                if (aasm == null || ctype == null) { await Console.Error.WriteLineAsync("--asm and --ctype required"); return 5; }
                 var aprobes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
                 var api3 = new EngineApi();
                 var pre = api3.RenderCompiledWithLayout(adesigner, aasm, null, aprobes, 0, 0);
@@ -106,7 +106,7 @@ namespace WinFormsDesigner.Engine.Net48
                 string thost = Value(args, "--host") ?? "this";
                 int tx = int.TryParse(Value(args, "--x"), out var xv) ? xv : 0;
                 int ty = int.TryParse(Value(args, "--y"), out var yv) ? yv : 0;
-                if (tasm == null) { Console.Error.WriteLine("--asm required"); return 5; }
+                if (tasm == null) { await Console.Error.WriteLineAsync("--asm required"); return 5; }
                 var tprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
                 var api4 = new EngineApi();
                 var pre = api4.RenderCompiledWithLayout(tdesigner, tasm, null, tprobes, 0, 0);
@@ -123,7 +123,7 @@ namespace WinFormsDesigner.Engine.Net48
                 string hhost = Value(args, "--host") ?? "this";
                 int hx = int.TryParse(Value(args, "--x"), out var hxv) ? hxv : 0;
                 int hy = int.TryParse(Value(args, "--y"), out var hyv) ? hyv : 0;
-                if (hasm == null) { Console.Error.WriteLine("--asm required"); return 5; }
+                if (hasm == null) { await Console.Error.WriteLineAsync("--asm required"); return 5; }
                 var hprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
                 var api5 = new EngineApi();
                 api5.RenderCompiledWithLayout(hdesigner, hasm, null, hprobes, 0, 0);
@@ -138,7 +138,7 @@ namespace WinFormsDesigner.Engine.Net48
                 string athost = Value(args, "--host") ?? "this";
                 string? atpage = Value(args, "--pagetype");
                 string atid = Value(args, "--newid") ?? "newTabPage1";
-                if (atasm == null || atpage == null) { Console.Error.WriteLine("--asm and --pagetype required"); return 5; }
+                if (atasm == null || atpage == null) { await Console.Error.WriteLineAsync("--asm and --pagetype required"); return 5; }
                 var atprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
                 var api6 = new EngineApi();
                 var pre = api6.RenderCompiledWithLayout(atdesigner, atasm, null, atprobes, 0, 0);
@@ -153,7 +153,7 @@ namespace WinFormsDesigner.Engine.Net48
                 string? dtasm = Value(args, "--asm");
                 string dthost = Value(args, "--host") ?? "this";
                 string? dtpage = Value(args, "--page");
-                if (dtasm == null || dtpage == null) { Console.Error.WriteLine("--asm and --page required"); return 5; }
+                if (dtasm == null || dtpage == null) { await Console.Error.WriteLineAsync("--asm and --page required"); return 5; }
                 var dtprobes = args.Select((a, i) => (a, i)).Where(z => z.a == "--probe").Select(z => args[z.i + 1]).ToArray();
                 var api7 = new EngineApi();
                 var pre = api7.RenderCompiledWithLayout(dtdesigner, dtasm, null, dtprobes, 0, 0);
