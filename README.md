@@ -68,7 +68,7 @@ The rendering is real: a headless .NET host actually instantiates your controls 
   Form1.cs  ─────────────┐
   Form1.Designer.cs ─────┤
                          ▼
-        ┌──────────────────────────────────────────────┐
+        ┌────────────────────────────────────────────────┐
         │  Engine host — routed per form:                │
         │  • .NET 9 engine (C#)                          │
         │      Roslyn parse → safe interpret →           │  render • describe • edit
@@ -76,20 +76,21 @@ The rendering is real: a headless .NET host actually instantiates your controls 
         │  • .NET Framework 4.8 engine (C#)              │
         │      instantiate compiled net4x / DevExpress   │  (experimental)
         │      controls → DrawToBitmap                   │
-        └──────────────────────────────────────────────┘
+        └────────────────────────────────────────────────┘
                          ▲  JSON-RPC over a named pipe
                          │  (StreamJsonRpc, camelCase DTOs)
                          ▼
-        ┌──────────────────────────────────┐
+        ┌───────────────────────────────────┐
         │  VS Code extension (TypeScript)   │
         │  custom editor + dockable panel   │
-        └──────────────────────────────────┘
-                         ▲  postMessage
+        └───────────────────────────────────┘
+                         ▲
+                         │ postMessage
                          ▼
-        ┌──────────────────────────────────┐
+        ┌───────────────────────────────────┐
         │  Webview (canvas preview +        │
         │  property grid / toolbox / tree)  │
-        └──────────────────────────────────┘
+        └───────────────────────────────────┘
 ```
 
 | Part | Folder | Tech |
