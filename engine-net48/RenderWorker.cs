@@ -578,20 +578,41 @@ namespace WinFormsDesigner.Engine.Net48
 
             var fieldNames = BuildFieldNameMap(instance, type);
 
-            var form = new Form
+            Form form;
+            if (rootCtl is Form rootForm)
             {
-                FormBorderStyle = FormBorderStyle.None,
-                ShowInTaskbar = false,
-                StartPosition = FormStartPosition.Manual,
-                Location = new Point(-20000, -20000), // off-screen, no visible flash
-            };
-            Size sz = (rootCtl.Size.IsEmpty || rootCtl.Width < 4 || rootCtl.Height < 4) ? new Size(1000, 700) : rootCtl.Size;
-            if (reqWidth > 0 && reqHeight > 0) sz = new Size(reqWidth, reqHeight);
-            rootCtl.Location = Point.Empty;
-            rootCtl.Size = sz;
-            form.ClientSize = sz;
-            form.Controls.Add(rootCtl);
-            form.Show(); // realizes the whole control tree's handles, off-screen
+                // The root type is ITSELF a top-level window (a Form / DevExpress XtraForm, e.g. WellTieForm).
+                // A Form cannot be added as a child of another control — WinForms throws "Top-level control
+                // cannot be added to a control". So host it DIRECTLY: realize it off-screen and snapshot the
+                // whole window. This mirrors the net9 engine, whose RootComponent for a form-based .Designer.cs
+                // IS the Form itself (it draws root.DrawToBitmap on the form), and ComputeWindowOffset already
+                // accounts for a form's chrome (window-vs-client size), so child rects line up either way.
+                rootForm.StartPosition = FormStartPosition.Manual;
+                rootForm.ShowInTaskbar = false;
+                rootForm.Location = new Point(-20000, -20000); // off-screen, no visible flash
+                if (reqWidth > 0 && reqHeight > 0) rootForm.ClientSize = new Size(reqWidth, reqHeight);
+                form = rootForm;
+                form.Show(); // realizes the whole control tree's handles, off-screen
+            }
+            else
+            {
+                // A UserControl / plain Control root: wrap it in an off-screen borderless host form so its
+                // handle tree (and any DevExpress skinning) realizes exactly as at runtime (spike S5).
+                form = new Form
+                {
+                    FormBorderStyle = FormBorderStyle.None,
+                    ShowInTaskbar = false,
+                    StartPosition = FormStartPosition.Manual,
+                    Location = new Point(-20000, -20000), // off-screen, no visible flash
+                };
+                Size sz = (rootCtl.Size.IsEmpty || rootCtl.Width < 4 || rootCtl.Height < 4) ? new Size(1000, 700) : rootCtl.Size;
+                if (reqWidth > 0 && reqHeight > 0) sz = new Size(reqWidth, reqHeight);
+                rootCtl.Location = Point.Empty;
+                rootCtl.Size = sz;
+                form.ClientSize = sz;
+                form.Controls.Add(rootCtl);
+                form.Show(); // realizes the whole control tree's handles, off-screen
+            }
 
             for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
             rootCtl.PerformLayout();
