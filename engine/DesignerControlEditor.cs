@@ -66,7 +66,7 @@ namespace WinFormsDesigner.Engine
         public string? NewText { get; init; }
     }
 
-    /// <summary>One toolbox-eligible control type surfaced to the palette (§7.2 auto-population): its short
+    /// <summary>One toolbox-eligible control type surfaced to the palette (auto-population): its short
     /// key (used as the AddControl <c>controlTypeKey</c>), assembly-qualified-ish full name (display/grouping
     /// only — never trusted to reach <c>new</c>; AddControl re-resolves the key against the enumerated set),
     /// VS-style category, and whether it came from the resolved project assembly vs the framework.</summary>
@@ -82,7 +82,7 @@ namespace WinFormsDesigner.Engine
         public string? IconPng { get; init; }
         /// <summary>True for a NON-visual component (Timer/ToolTip/ErrorProvider/dialogs…) — added via AddComponent
         /// (a bare <c>new T()</c> that lands in the component tray) rather than AddControl (which also emits
-        /// Location/Size/Controls.Add). Lets the palette route the add to the right §6.5 path.</summary>
+        /// Location/Size/Controls.Add). Lets the palette route the add to the right safe-save path.</summary>
         public bool IsComponent { get; init; }
     }
 
@@ -114,7 +114,7 @@ namespace WinFormsDesigner.Engine
     /// Add a standard WinForms control to a .Designer.cs as a MINIMAL text edit (a new field declaration +
     /// the control's InitializeComponent statements), mirroring <see cref="DesignerPropertyEditor"/>/<see
     /// cref="DesignerEventEditor"/> for the "toolbox add" path. Kept SEPARATE so the proven edit paths are
-    /// untouched (§6.5). NO graph load / interpreter change is needed: the generated `this.X = new T();` /
+    /// untouched. NO graph load / interpreter change is needed: the generated `this.X = new T();` /
     /// `Controls.Add` statements are interpreted by the EXISTING engine (which creates controls via
     /// host.CreateComponent, NOT Eval — so the Eval construction allowlist is irrelevant here). Safety is two
     /// gates: the control type must be in a FIXED allowlist of standard controls (no arbitrary type name
@@ -174,10 +174,10 @@ namespace WinFormsDesigner.Engine
         private static string CategoryFor(string name) => Category.TryGetValue(name, out var c) ? c : DefaultCategory;
 
         // Lazily-discovered, process-stable framework toolbox controls (strings only — never live Type objects,
-        // per §9 reload-safety; the set is re-derivable and AddControl re-resolves the key against it).
+        // per reload-safety; the set is re-derivable and AddControl re-resolves the key against it).
         private static List<ToolboxItemInfo>? _framework;
 
-        /// <summary>Reflect <c>System.Windows.Forms</c> for every toolbox-eligible visual control (§7.2): public,
+        /// <summary>Reflect <c>System.Windows.Forms</c> for every toolbox-eligible visual control: public,
         /// concrete, parameterless-ctor, <see cref="System.Windows.Forms.Control"/>-derived, not <c>[ToolboxItem(false)]</c>,
         /// and a valid <c>Controls.Add</c> target (Forms / ToolStripDropDown menus excluded — they throw if parented).</summary>
         private static List<ToolboxItemInfo> DiscoverFramework()
@@ -199,7 +199,7 @@ namespace WinFormsDesigner.Engine
             return _framework;
         }
 
-        /// <summary>The toolbox-eligibility predicate (§7.2), shared by framework discovery and project-assembly
+        /// <summary>The toolbox-eligibility predicate, shared by framework discovery and project-assembly
         /// enumeration (<see cref="DesignerRenderer.EnumerateProjectControls"/>): a public, concrete, parameterless-ctor,
         /// <see cref="System.Windows.Forms.Control"/>-derived type that is a valid <c>Controls.Add</c> target — Forms /
         /// ToolStripDropDown menus excluded (they throw if parented), <c>[ToolboxItem(false)]</c>/<c>[DesignTimeVisible(false)]</c>
@@ -217,7 +217,7 @@ namespace WinFormsDesigner.Engine
             return true;
         }
 
-        /// <summary>Build a "Project Controls" palette item for a project-assembly control type (§7.2 Increment 2).</summary>
+        /// <summary>Build a "Project Controls" palette item for a project-assembly control type.</summary>
         public static ToolboxItemInfo MakeProjectInfo(Type t) =>
             new() { Name = t.Name, Fqn = t.FullName!, Category = "Project Controls", FromProject = true, IconPng = ToolboxIconPng(t) };
 
@@ -242,10 +242,10 @@ namespace WinFormsDesigner.Engine
         }
 
         // Lazily-discovered, process-stable framework NON-visual components (Timer/ToolTip/ErrorProvider/ImageList/
-        // BindingSource/NotifyIcon/HelpProvider + the common dialogs). Strings only (§9 reload-safety).
+        // BindingSource/NotifyIcon/HelpProvider + the common dialogs). Strings only (reload-safety).
         private static List<ToolboxItemInfo>? _components;
 
-        /// <summary>Reflect <c>System.Windows.Forms</c> for every toolbox-eligible NON-visual component (§7.2 Components/
+        /// <summary>Reflect <c>System.Windows.Forms</c> for every toolbox-eligible NON-visual component (Components/
         /// Dialogs): public, concrete, IComponent but NOT a Control, parameterless- or IContainer-constructible, not
         /// <c>[ToolboxItem(false)]</c>/<c>[DesignTimeVisible(false)]</c>. CommonDialog-derived → "Dialogs", else
         /// "Components". These are added via <see cref="AddComponent"/> (a bare <c>new T()</c> that lands in the tray).</summary>
@@ -456,7 +456,7 @@ namespace WinFormsDesigner.Engine
             return false;
         }
 
-        /// <summary>The auto-populated toolbox palette (§7.2): curated common controls keep their VS sizes, the
+        /// <summary>The auto-populated toolbox palette: curated common controls keep their VS sizes, the
         /// rest of the framework's visual controls are discovered by reflection. One entry per short name.</summary>
         public static IReadOnlyList<ToolboxItemInfo> ToolboxItems => DiscoverFramework();
 
@@ -465,7 +465,7 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>Resolve a requested toolbox key to an emit spec. Curated common controls keep their VS sizes
         /// and Text-defaulting; any other key is matched against the discovered framework set, then the supplied
-        /// project-control set (§7.2 Increment 2) by Fqn or short name — the ONLY ways an arbitrary type name can
+        /// project-control set by Fqn or short name — the ONLY ways an arbitrary type name can
         /// reach <c>new</c>, so an unknown/crafted key is rejected here. A discovered/project control emits no Size
         /// (its runtime DefaultSize applies) and no Text. Returns null to reject.</summary>
         private static Spec? ResolveSpec(string key, IReadOnlyList<ToolboxItemInfo>? projectControls)
@@ -603,7 +603,7 @@ namespace WinFormsDesigner.Engine
             return new ControlAddResult { Safe = true, Name = name, NewText = finalText };
         }
 
-        /// <summary>§6.5 gate: every ORIGINAL InitializeComponent statement is preserved unchanged, every EXTRA
+        /// <summary>safe-save gate: every ORIGINAL InitializeComponent statement is preserved unchanged, every EXTRA
         /// statement references only the new control, exactly ONE field declaration was added (the new one),
         /// and all original fields are preserved.</summary>
         public static bool OnlyControlAdded(string original, string edited, string name)
@@ -733,7 +733,7 @@ namespace WinFormsDesigner.Engine
             node.DescendantNodesAndSelf().OfType<MemberAccessExpressionSyntax>()
                 .Any(m => m.Expression is ThisExpressionSyntax && m.Name.Identifier.Text == id);
 
-        /// <summary>§6.5 gate: the edit only REMOVED statements (no add/change), every removed statement
+        /// <summary>safe-save gate: the edit only REMOVED statements (no add/change), every removed statement
         /// referenced the control, and exactly the control's field declaration was removed.</summary>
         public static bool OnlyControlRemoved(string original, string edited, string id)
         {
@@ -1033,7 +1033,7 @@ namespace WinFormsDesigner.Engine
             return true;
         }
 
-        /// <summary>§6.5 gate for a tab-subtree removal: (1) NO surviving reference to a subtree control ANYWHERE in the
+        /// <summary>safe-save gate for a tab-subtree removal: (1) NO surviving reference to a subtree control ANYWHERE in the
         /// InitializeComponent-bearing class — bare OR this-qualified, and across EVERY method (Dispose / helpers), not
         /// just InitializeComponent — so no dangling CS0103 slips through the parse-only check; (2) every REMOVED
         /// InitializeComponent statement referenced a subtree control (so no bystander was over-deleted); (3) at most
@@ -1201,7 +1201,7 @@ namespace WinFormsDesigner.Engine
         /// Paste a clipboard blob (from <see cref="CopyControl"/>) into <paramref name="parentId"/> ("this" = root):
         /// generate a fresh unique name, clone the statements with the receiver renamed to it, keep its Name
         /// property in sync, nudge its Location, add a field declaration, and parent it with a Controls.Add into
-        /// the target. Same §6.5 <see cref="OnlyControlAdded"/> gate as AddControl (only the new control was added).
+        /// the target. Same safe-save <see cref="OnlyControlAdded"/> gate as AddControl (only the new control was added).
         /// </summary>
         public static ControlPasteResult PasteControl(string src, string clipJson, string parentId)
         {
@@ -1528,7 +1528,7 @@ namespace WinFormsDesigner.Engine
 
         private static bool SameChain(List<string> a, List<string> b) => a.Count == b.Count && a.SequenceEqual(b, StringComparer.Ordinal);
 
-        /// <summary>§6.5 gate for a z-order move: the InitializeComponent statement multiset and the field
+        /// <summary>safe-save gate for a z-order move: the InitializeComponent statement multiset and the field
         /// declarations are IDENTICAL to the original (only the order of one statement changed).</summary>
         public static bool OnlyReordered(string original, string edited)
         {
@@ -1546,7 +1546,7 @@ namespace WinFormsDesigner.Engine
             return true;
         }
 
-        // ---- reparent (§7.4: move a control into a different container / the root) ----
+        // ---- reparent (move a control into a different container / the root) ----
 
         /// <summary>
         /// Reparent a LEAF control into a different container (or the root form). Rewrites ONLY the receiver of the
@@ -1615,7 +1615,7 @@ namespace WinFormsDesigner.Engine
             return new ControlReorderResult { Safe = true, NewText = text };
         }
 
-        /// <summary>§6.5 gate for a reparent: every statement EXCEPT the child's single Controls.Add is byte-identical
+        /// <summary>safe-save gate for a reparent: every statement EXCEPT the child's single Controls.Add is byte-identical
         /// (multiset), the child is parented by exactly one 1-arg Controls.Add before and after, that Add now targets
         /// <paramref name="newParentId"/> ("this"/"" = root), and the field declarations are unchanged.</summary>
         public static bool OnlyReparented(string original, string edited, string childId, string newParentId)
@@ -1724,7 +1724,7 @@ namespace WinFormsDesigner.Engine
             return (start, end);
         }
 
-        // ---- helpers (own copies — the proven property/event editors stay untouched, §6.5) ----
+        // ---- helpers (own copies — the proven property/event editors stay untouched) ----
 
         private static ClassDeclarationSyntax? FindClassWithIC(SyntaxNode root)
         {

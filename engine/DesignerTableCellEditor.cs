@@ -9,7 +9,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace WinFormsDesigner.Engine
 {
     /// <summary>
-    /// Targeted edit of a TableLayoutPanel child's cell (column/row), plan §6.5 — the grid-cell counterpart of
+    /// Targeted edit of a TableLayoutPanel child's cell (column/row) — the grid-cell counterpart of
     /// <see cref="DesignerPropertyEditor"/>. A child's cell is NOT a normal property assignment; it lives in the
     /// VS-default 3-arg overload <c>tableLayoutPanel1.Controls.Add(this.child, COLUMN, ROW)</c> (the extender
     /// Column/Row properties carry <c>[DesignerSerializationVisibility(Hidden)]</c> precisely because this Add is
@@ -62,7 +62,7 @@ namespace WinFormsDesigner.Engine
             return new EditResult { NewText = text, Mode = EditMode.Replace };
         }
 
-        /// <summary>§6.5 gate: every statement EXCEPT the one target Add is byte-identical (multiset), the target
+        /// <summary>safe-save gate: every statement EXCEPT the one target Add is byte-identical (multiset), the target
         /// Add appears exactly once before and after, and the edited Add is still a 3-arg
         /// <c>Controls.Add(this.child, &lt;int&gt;, &lt;int&gt;)</c> with non-negative integer-literal cell args.</summary>
         public static bool OnlyTableCellChanged(string original, string edited, string childId)

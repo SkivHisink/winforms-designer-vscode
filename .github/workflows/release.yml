@@ -53,6 +53,10 @@ jobs:
         working-directory: extension
         run: npm run e2e
 
+      - name: Live-webview tests (headless jsdom)
+        working-directory: extension
+        run: npm run webview-e2e
+
       # Runs `vscode:prepublish` (build + bundle the engine into extension/engine/ + copy LICENSE).
       - name: Package VSIX
         working-directory: extension

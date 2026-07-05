@@ -5,7 +5,7 @@ using System.Runtime.Loader;
 namespace WinFormsDesigner.Engine
 {
     /// <summary>
-    /// Collectible load context for the user's compiled control assembly (plan §8.3).
+    /// Collectible load context for the user's compiled control assembly.
     /// Shared contract assemblies (WinForms / Drawing / corelib / protocol DTO) are
     /// resolved from the Default ALC by returning null in Load — this keeps a SINGLE
     /// type identity so a user control's base (e.g. UserControl) is the same Type the

@@ -8,6 +8,70 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-05
+
+This preview brings **Visual Studio Collection Editors** to both engines — the `…` button now
+opens a real editor for `Items`, `ListView.Columns`, `DataGridView.Columns` and (hierarchical)
+`TreeView.Nodes`, including on compiled **.NET Framework / DevExpress** forms — plus a round of
+**canvas & property-grid polish** (keyboard nudge, Duplicate, Reset, bold non-default properties,
+a description pane), **Lock Controls**, smarter **cross-runtime routing**, and sturdier
+**round-trip saving** and **load-failure** handling.
+
+### Added
+
+#### Collection editors
+- **Visual Studio Collection Editors (`…`).** Collection properties now open a real editor instead
+  of being read-only: **String collections** (`ComboBox` / `ListBox` / `CheckedListBox.Items`),
+  **`ListView.Columns`**, **`DataGridView.Columns`**, and a recursive **`TreeView.Nodes`** tree
+  editor. Edits reconcile the collection in place — concrete column / node types, canonical names,
+  and `ISupportInitialize` blocks are preserved — and persist as `.Designer.cs` text.
+- **Collection editors on compiled net48 / DevExpress forms.** All of the above also work on the
+  .NET Framework engine: the editor reads and writes through the .NET 9 pure-text path (no vendor
+  assembly is loaded just to edit a collection), and the compiled preview's collection or node tree
+  is **rebuilt live** on the running instance, so the canvas updates immediately instead of waiting
+  for a rebuild.
+
+#### Designer surface
+- **Keyboard nudge.** Move the selection one pixel with the arrow keys (resize with `Shift`),
+  matching Visual Studio.
+- **Duplicate (`Ctrl+D`).** Clone the selection in place with a cascade offset, without touching the
+  clipboard.
+- **Lock Controls.** A form-wide *Lock Controls* toggle (VS-style) freezes move / resize / nudge /
+  align and shows a 🔒 glyph with no resize handles. _(Session-only for now — not yet persisted to
+  the `.resx`.)_
+- **Center horizontally / vertically in form** for the current selection, plus **resize snaplines**
+  and a **hover-hint** outline as the pointer moves over controls.
+
+#### Property grid
+- **Right-click *Reset*.** Reset a property to its default from the grid's context menu, on **both**
+  engines; a non-resettable property surfaces a partial-preview note instead of going stale.
+- **Bold non-default properties** and a **description pane** at the bottom of the grid (the selected
+  property's name and summary), matching Visual Studio.
+
+### Changed
+- **Cross-runtime routing.** A **multi-target** form whose vendor controls the .NET 9 engine can't
+  load now offers a **one-click switch to the .NET Framework compiled preview**; the choice is
+  remembered as the form's control source and survives a reload.
+- **Sturdier round-trip saving.** Whole-file save now preserves constructs the serializer used to
+  drop: `BeginInit` / `EndInit` blocks keep a form in the safe-save gate (the save is refused rather
+  than silently stripping them), `+=` event wirings are captured verbatim and re-emitted, and
+  component-reference assignments (`this.AcceptButton = this.okButton`) resolve on load.
+
+### Fixed
+- **Load-failure & partial-render feedback.** When a form only partially renders (unresolved
+  controls) or fails to load, the canvas now shows a categorized banner — a *partial render* warning
+  vs. an error with the last-known-good picture — instead of a misleading blank surface, with a
+  non-nagging dismiss.
+- **"Project Controls" toolbox no longer silently empties on .NET-Core `WinExe` projects.** The
+  project resolver now prefers the managed `.dll` over the apphost `.exe`, so the dependency resolver
+  no longer trips on the native launcher and the project's own controls appear in the toolbox.
+
+---
+
+_Internal:_ a headless **live-webview test harness** (jsdom loads the real `designer.js` /
+`panel.js`) now guards the webview interaction loop in CI, alongside the existing engine and
+end-to-end suites.
+
 ## [0.4.0] — 2026-07-02
 
 This preview introduces **UI localization in six languages** and a large round of **.NET
@@ -318,7 +382,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.0...v0.3.1

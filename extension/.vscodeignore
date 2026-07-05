@@ -13,7 +13,7 @@ tsconfig.json
 .gitignore
 .eslintrc*
 *.map
-dist/e2e.cjs
+dist/*e2e.cjs
 dist/**/*.map
 
 # Tests / scratch

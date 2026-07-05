@@ -24,4 +24,13 @@ await esbuild.build({
   outfile: 'dist/e2e.cjs',
 });
 
+// Headless live-webview tests (T2.3): load the real media/*.js into jsdom and drive interactions.
+// jsdom is a devDependency resolved from node_modules at runtime, so keep it external (not bundled).
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/webview-e2e.ts'],
+  outfile: 'dist/webview-e2e.cjs',
+  external: ['jsdom'],
+});
+
 console.log('build ok');

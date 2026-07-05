@@ -26,7 +26,7 @@ namespace WinFormsDesigner.Engine
     }
 
     /// <summary>
-    /// Targeted edit of a TableLayoutPanel column/row SIZING STYLE (plan §6.5, Phase 2) — the size-style counterpart
+    /// Targeted edit of a TableLayoutPanel column/row SIZING STYLE — the size-style counterpart
     /// of <see cref="DesignerTableCellEditor"/>. A column's size lives in the Nth
     /// <c>&lt;panel&gt;.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(SizeType.Percent, 25F))</c> statement
     /// (VS emits one Add per column/row, in order — so the ordinal is the column/row index). Editing a style means
@@ -102,7 +102,7 @@ namespace WinFormsDesigner.Engine
             return new EditResult { NewText = text, Mode = EditMode.Replace };
         }
 
-        /// <summary>§6.5 gate: every non-style statement is byte-identical (multiset), the target axis has the SAME
+        /// <summary>safe-save gate: every non-style statement is byte-identical (multiset), the target axis has the SAME
         /// number of styles before/after, every style EXCEPT the edited index is byte-identical, and the edited style
         /// is a valid <c>new &lt;ColumnStyle|RowStyle&gt;(SizeType.&lt;valid&gt;[, &lt;numeric&gt;])</c> for this panel/axis.</summary>
         public static bool OnlyTableStyleChanged(string original, string edited, string panelId, string axis, int index)
@@ -213,7 +213,7 @@ namespace WinFormsDesigner.Engine
         /// <summary>Emit a size value as an invariant <c>NNNf</c> literal (e.g. 25 → "25F", 33.5 → "33.5F").</summary>
         private static string FormatValue(double v) => v.ToString("R", CultureInfo.InvariantCulture) + "F";
 
-        // ---- helpers (kept local so the proven editors stay untouched, §6.5) ----
+        // ---- helpers (kept local so the proven editors stay untouched) ----
 
         private static EditResult Failed(string reason) => new() { Mode = EditMode.Failed, Reason = reason };
 

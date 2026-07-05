@@ -67,6 +67,10 @@ jobs:
         working-directory: extension
         run: npm run e2e
 
+      - name: Live-webview tests (headless jsdom)
+        working-directory: extension
+        run: npm run webview-e2e
+
       - name: Package VSIX
         # `vsce package` runs the `vscode:prepublish` script, which builds, bundles the engine
         # into extension/engine/, and copies the LICENSE — so the artifact is self-contained.

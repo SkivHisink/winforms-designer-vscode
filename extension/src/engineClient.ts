@@ -169,7 +169,7 @@ export interface LayoutControl {
   isTabHost?: boolean; // net48 compiled preview: control is a tab host (TabControl/XtraTabControl) → header clicks switch tabs
 }
 
-/** A non-visual component for the tray (§7.3): Timer/ToolTip/ErrorProvider/ImageList/BindingSource/… */
+/** A non-visual component for the tray (component tray): Timer/ToolTip/ErrorProvider/ImageList/BindingSource/… */
 export interface TrayComponent {
   id: string;   // edit id (Site.Name) for DescribeComponent/SetProperty
   name: string;
@@ -183,7 +183,7 @@ export interface LayoutResult {
   clientWidth: number;  // root client-area size (form serializes ClientSize, not window Size)
   clientHeight: number;
   controls: LayoutControl[]; // innermost-first (deepest, then smallest area)
-  tray: TrayComponent[];     // non-visual components (§7.3)
+  tray: TrayComponent[];     // non-visual components (component tray)
 }
 
 /**
@@ -204,7 +204,7 @@ export interface RenderLayout {
   clientHeight: number;
   rootType: string;
   controls: LayoutControl[]; // innermost-first (deepest, then smallest area) — same as describeLayout
-  tray: TrayComponent[];     // non-visual components (§7.3)
+  tray: TrayComponent[];     // non-visual components (component tray)
   unrepresentable: string[]; // statements the interpreter couldn't run — incl. "unresolved type X" for a control
                              // whose assembly isn't loaded (drives the "select a control source" prompt)
   /** net48 compiled engine only: for a live property edit, whether the value was applied to the live instance
@@ -308,6 +308,58 @@ export async function setCompiledPropertyLive(
   return fromCompiledRaw(raw);
 }
 
+/** Reset ONE property on the net48 live instance to its default (pd.ResetValue) + re-render — the picture half of
+ *  a per-property Reset (the persisted TEXT delete is a separate net9 splice). `applied` is false when the property
+ *  isn't resettable (CanResetValue == false); the committed text still shows after a rebuild. */
+export async function resetCompiledPropertyLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
+  propName: string, rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'ResetCompiledPropertyLive', designerFilePath, assemblyPath, componentId, propName, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** One item for the net48 live collection reconstruction (T1.1b). A superset carrying all three editable collections
+ *  keyed by the RPC's `itemType`: `text` is the string value / ListView column Text / DataGridView HeaderText;
+ *  `width`/`align` are ListView/DataGridView column props; `readOnly`/`visible` are DataGridView-only; `id` is an
+ *  existing column's field name ("" = new). Fields the target collection doesn't use are ignored. */
+export interface LiveCollItem {
+  id?: string;
+  text: string;
+  width?: number;
+  align?: string;
+  readOnly?: boolean;
+  visible?: boolean;
+}
+
+/** Reconstruct a typed collection (Items / ListView.Columns / DataGridView.Columns) on the net48 live instance from
+ *  the net9-committed item data + re-render — the live picture for the "…" collection editor (T1.1b). The persisted
+ *  TEXT write is separate (net9 splice); this is only the picture. `applied` is false when it can't be rebuilt live
+ *  (bound/unsupported column) — the committed text still renders after a rebuild. */
+export async function setCompiledCollectionLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
+  propName: string, itemType: string, items: LiveCollItem[], rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'SetCompiledCollectionLive', designerFilePath, assemblyPath, componentId, propName, itemType, items, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** Reconstruct a TreeView's Nodes on the net48 live instance from the net9-committed node forest + re-render — the
+ *  live picture for the hierarchical "…" TreeNode editor (the TreeView analogue of {@link setCompiledCollectionLive}).
+ *  The recursive `TreeNodeItem` shape is sent verbatim; the engine reads only text/name/children (`id` is ignored).
+ *  `applied` is false when it can't be rebuilt live (a DevExpress TreeList's non-TreeNodeCollection Nodes) — the
+ *  committed text still renders after a rebuild. */
+export async function setCompiledTreeNodesLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
+  propName: string, nodes: TreeNodeItem[], rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'SetCompiledTreeNodesLive', designerFilePath, assemblyPath, componentId, propName, nodes, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
 /** One live property edit for the net48 batch-mutate (drag/resize/align). */
 export interface CompiledEdit { componentId: string; propName: string; rawValue: string; }
 
@@ -401,7 +453,7 @@ export interface PropertyDesc {
   readOnly: boolean;
   isEnum: boolean;
   category: string;
-  /** TypeConverter standard values as invariant strings (§7.1 dropdowns), or null/absent when none. */
+  /** TypeConverter standard values as invariant strings (dropdowns), or null/absent when none. */
   standardValues?: string[] | null;
   /** True → closed set (render a <select>); false → editable combobox (datalist). */
   standardValuesExclusive?: boolean;
@@ -420,6 +472,15 @@ export interface PropertyDesc {
   /** A small base64 PNG thumbnail of the current image value (max 64×64), or null/absent when unset / not an
    * image. Display-only. */
   imagePreview?: string | null;
+  /** True for a string-item collection (ComboBox/ListBox/CheckedListBox.Items) — the grid renders a "…" button
+   * that opens the VS "String Collection Editor" (one item per line). Edits route through SetCollectionItems
+   * (rewrites the owner's Add/AddRange calls), NOT a normal property assignment. `value` stays null. */
+  isCollection?: boolean;
+  /** The collection's item type (currently always "System.String"), or null/absent when not a collection. */
+  collectionItemType?: string | null;
+  /** The property's DescriptionAttribute text (shown in the description pane below the grid), or null/absent
+   * when the property carries no description. */
+  description?: string | null;
 }
 
 export interface EventDesc {
@@ -461,6 +522,13 @@ export interface SerializePreview {
   unrepresentable: string[];
 }
 
+export interface SavePreview {
+  safe: boolean;
+  text: string | null;            // spliced whole-file text; null when not safe (read-only fallback)
+  unrepresentable: string[];
+  missingStatements: string[];    // safe-save gate: original statements the re-serialization fails to reproduce
+}
+
 /** Enumerate the form's controls + properties (read side for a property grid). */
 export function describeDesigner(engine: EngineHandle, designerFilePath: string, controlAssemblyPath?: string): Promise<DescribeResult> {
   return engine.connection.sendRequest<DescribeResult>('DescribeDesigner', ...withAsm(designerFilePath, controlAssemblyPath));
@@ -478,6 +546,17 @@ export function describeComponent(engine: EngineHandle, designerFilePath: string
  */
 export function serializeDesigner(engine: EngineHandle, designerFilePath: string, controlAssemblyPath?: string): Promise<SerializePreview> {
   return engine.connection.sendRequest<SerializePreview>('SerializeDesigner', ...withAsm(designerFilePath, controlAssemblyPath));
+}
+
+/**
+ * Full safe-save gate preview (no write): re-serialize + splice into the existing file and report whether
+ * it is safe to save back. Unlike {@link serializeDesigner} (`safe` == RoundTripSafe, an interpret-only
+ * signal), `safe` here also requires that no original statement is lost by the re-serialization
+ * (`missingStatements` empty) — e.g. an ISupportInitialize BeginInit/EndInit form renders (RoundTripSafe)
+ * yet is refused here because the serializer does not re-emit the brackets.
+ */
+export function previewSave(engine: EngineHandle, designerFilePath: string, controlAssemblyPath?: string): Promise<SavePreview> {
+  return engine.connection.sendRequest<SavePreview>('PreviewSave', ...withAsm(designerFilePath, controlAssemblyPath));
 }
 
 /**
@@ -713,8 +792,8 @@ export interface ToolboxItemInfo {
   isComponent?: boolean;
 }
 
-/** The auto-populated toolbox palette (§7.2): framework controls, plus the resolved project assembly's own
- * controls (§7.2 Increment 2, category "Project Controls") when designerFilePath is given. The `name` is the
+/** The auto-populated toolbox palette (auto-population): framework controls, plus the resolved project assembly's own
+ * controls (category "Project Controls") when designerFilePath is given. The `name` is the
  * AddControl controlTypeKey (project controls also resolve by their `fqn`). */
 export function listToolboxItems(engine: EngineHandle, designerFilePath?: string, controlAssemblyPath?: string): Promise<ToolboxItemInfo[]> {
   const args: (string | null)[] = [];
@@ -868,7 +947,7 @@ export function moveZOrder(
   return engine.connection.sendRequest<ControlReorderResult>('MoveZOrder', designerFilePath, controlId, toFront, ...tail);
 }
 
-/** §7.4 reparent: move a leaf control into a different container (newParentId "this" = root). Minimal text edit
+/** Reparent: move a leaf control into a different container (newParentId "this" = root). Minimal text edit
  * (rewrites only the child's Controls.Add receiver). The host applies newText like a removeControl/moveZOrder edit. */
 export function reparentControl(
   engine: EngineHandle,
@@ -894,7 +973,7 @@ export function setProperty(
   return engine.connection.sendRequest<EditPreview>('SetProperty', designerFilePath, componentId, propertyName, newValueExpr, ...tail);
 }
 
-/** §6.5 grid-cell edit: move a TableLayoutPanel child to a new column/row (rewrites the cell args of its 3-arg
+/** Safe-save-gated grid-cell edit: move a TableLayoutPanel child to a new column/row (rewrites the cell args of its 3-arg
  * Controls.Add). Pass null for a coordinate to leave it unchanged. The host applies the returned text like setProperty. */
 export function setTableCell(
   engine: EngineHandle,
@@ -906,6 +985,171 @@ export function setTableCell(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetTableCell', designerFilePath, childId, column, row, ...tail);
+}
+
+/** Result of ListCollectionItems: the string-item collection's current items and whether it's editable. `ok`
+ * is false for a bound/complex collection whose elements aren't string literals — the webview keeps it read-only
+ * so editing can't silently drop the non-literal entries. */
+export interface CollectionItems {
+  ok: boolean;
+  items: string[];
+  reason: string;
+}
+
+/** Read a string-item collection's current items (ComboBox/ListBox/CheckedListBox.Items) for the "…" editor. */
+export function listCollectionItems(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  propertyName: string,
+  sourceText?: string,
+): Promise<CollectionItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<CollectionItems>('ListCollectionItems', designerFilePath, ownerId, propertyName, ...tail);
+}
+
+/** Set a string-item collection's items (VS "String Collection Editor"): rewrite the owner's Add/AddRange calls
+ * to exactly `items`. Items are emitted as escaped string literals — nothing is interpolated. The host applies
+ * the returned text like setProperty. */
+export function setCollectionItems(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  propertyName: string,
+  items: string[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetCollectionItems', designerFilePath, ownerId, propertyName, items, ...tail);
+}
+
+/** One ColumnHeader of a ListView.Columns collection (typed collection editor). `id` is the field id; an empty
+ * id marks a NEW column (the engine generates one). Only these managed properties round-trip — a column with any
+ * other property makes the whole collection read-only. */
+export interface ColumnItem {
+  id: string;
+  text: string;
+  width: number;
+  textAlign: string; // "Left" | "Center" | "Right"
+}
+
+/** Result of ListColumns: the ListView's ordered columns and whether the collection is editable. `ok` is false
+ * when a column isn't a plain named ColumnHeader field with only Text/Width/TextAlign — the webview then keeps it
+ * read-only so an unmanaged value can't be dropped. */
+export interface ColumnItems {
+  ok: boolean;
+  columns: ColumnItem[];
+  reason: string;
+}
+
+/** Read a ListView's columns (typed collection editor) for the "…" editor. */
+export function listColumns(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  sourceText?: string,
+): Promise<ColumnItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ColumnItems>('ListColumns', designerFilePath, ownerId, ...tail);
+}
+
+/** Set a ListView's columns (VS "Collection Editor"): reconcile field declarations, per-column construction /
+ * property statements and Columns.AddRange to exactly `columns`. Values are emitted as literals/enum members —
+ * nothing is interpolated. The host applies the returned text like setProperty. */
+export function setColumns(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  columns: ColumnItem[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetColumns', designerFilePath, ownerId, columns, ...tail);
+}
+
+/** One TreeView node (hierarchical collection editor), recursively. `id` is the generated local var name; an empty
+ * id marks a NEW node (the engine names it `treeNodeN`). Only Text (the ctor label) + Name (the node key) round-trip
+ * — a node with any other property or an unsupported constructor makes the whole collection read-only. */
+export interface TreeNodeItem {
+  id: string;
+  text: string;
+  name: string;
+  children: TreeNodeItem[];
+}
+
+/** Result of ListNodes: the TreeView's node forest (roots in Nodes.AddRange order, children in ctor order) and
+ * whether it is editable. `ok` is false for an unmanaged property / ctor overload / shared or unattached node. */
+export interface TreeNodeItems {
+  ok: boolean;
+  nodes: TreeNodeItem[];
+  reason: string;
+}
+
+/** Read a TreeView's node forest (hierarchical collection editor) for the "…" editor. */
+export function listTreeNodes(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  sourceText?: string,
+): Promise<TreeNodeItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<TreeNodeItems>('ListNodes', designerFilePath, ownerId, ...tail);
+}
+
+/** Set a TreeView's nodes (VS "TreeNode Editor"): drop and regenerate the TreeNode local declarations +
+ * Nodes.AddRange in post-order to exactly `nodes`. Text/Name are emitted as literals — nothing is interpolated. */
+export function setTreeNodes(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  nodes: TreeNodeItem[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetNodes', designerFilePath, ownerId, nodes, ...tail);
+}
+
+/** One DataGridView column (typed grid-column editor). `id` is the field id; an empty id marks a NEW column (the
+ * engine generates one + a DataGridViewTextBoxColumn). Only these managed properties round-trip — a bound/cast/
+ * unmanaged column makes the whole collection read-only. */
+export interface GridColumnItem {
+  id: string;
+  headerText: string;
+  width: number;
+  readOnly: boolean;
+  visible: boolean;
+}
+
+/** Result of ListGridColumns: the DataGridView's ordered columns and whether the collection is editable. */
+export interface GridColumnItems {
+  ok: boolean;
+  columns: GridColumnItem[];
+  reason: string;
+}
+
+/** Read a DataGridView's columns (typed grid-column editor) for the "…" editor. */
+export function listGridColumns(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  sourceText?: string,
+): Promise<GridColumnItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<GridColumnItems>('ListGridColumns', designerFilePath, ownerId, ...tail);
+}
+
+/** Set a DataGridView's columns (VS "Collection Editor"): reconcile field declarations, per-column construction /
+ * property statements and Columns.AddRange to exactly `columns`. Values are emitted as literals/keywords — nothing
+ * is interpolated. The host applies the returned text like setProperty. */
+export function setGridColumns(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  columns: GridColumnItem[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetGridColumns', designerFilePath, ownerId, columns, ...tail);
 }
 
 /** Reset a property to its default by deleting its assignment(s) (VS "Reset"; the engine side of Dock↔Anchor
@@ -979,7 +1223,7 @@ export function readTableStyles(
   return engine.connection.sendRequest<TableStylesResult>('ReadTableStyles', designerFilePath, panelId, ...tail);
 }
 
-/** §6.5 TableLayoutPanel size-style edit: set the Nth Column/Row style's SizeType and/or value. Pass null for
+/** Safe-save-gated TableLayoutPanel size-style edit: set the Nth Column/Row style's SizeType and/or value. Pass null for
  * sizeType or value to keep the existing one (they occupy fixed positional slots before the optional sourceText).
  * The host applies the returned text like setProperty. */
 export function setTableStyle(

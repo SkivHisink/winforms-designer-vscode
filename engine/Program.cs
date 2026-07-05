@@ -90,7 +90,7 @@ namespace WinFormsDesigner.Engine
                 {
                     WarmResolve(rtFile, asm);
                     var res = sta.Invoke(() => DesignerRenderer.SerializeFromFile(rtFile, asm));
-                    Console.WriteLine("== engine roundtrip (load -> serialize, §6.3 normalization)");
+                    Console.WriteLine("== engine roundtrip (load -> serialize, normalization)");
                     Console.WriteLine("   runtime        : " + RuntimeInformation.FrameworkDescription);
                     Console.WriteLine("   class          : " + res.ClassName);
                     Console.WriteLine("   statements     : " + res.TotalStatements + " (representable " + res.Representable + ")");
@@ -105,7 +105,7 @@ namespace WinFormsDesigner.Engine
                     Console.WriteLine("   no spurious Enabled=true: " + !res.Code.Contains(".Enabled = true")
                                       + " | Visible=true: " + !res.Code.Contains(".Visible = true"));
 
-                    // §6.5: a file is safe to round-trip back to disk ONLY when fully representable.
+                    // safe-save gate: a file is safe to round-trip back to disk ONLY when fully representable.
                     bool pass = res.RoundTripSafe;
                     if (pass)
                     {
@@ -151,7 +151,7 @@ namespace WinFormsDesigner.Engine
                     foreach (var u in res.RoundTrip.Unrepresentable) Console.WriteLine("       ! " + u);
                     if (res.MissingStatements.Count > 0)
                     {
-                        Console.WriteLine("   statements lost by re-serialization (§6.5): " + res.MissingStatements.Count);
+                        Console.WriteLine("   statements lost by re-serialization: " + res.MissingStatements.Count);
                         foreach (var m in res.MissingStatements) Console.WriteLine("       ? " + m);
                     }
 
@@ -164,7 +164,7 @@ namespace WinFormsDesigner.Engine
 
                     if (write)
                     {
-                        // §6.6 transactional write: hard pre-save backup (byte copy), then overwrite in the original encoding
+                        // transactional write: hard pre-save backup (byte copy), then overwrite in the original encoding
                         string bak = saveFile + ".bak";
                         File.Copy(saveFile, bak, overwrite: true);
                         File.WriteAllText(saveFile, res.SplicedText!, res.Encoding);
@@ -313,6 +313,323 @@ namespace WinFormsDesigner.Engine
                         return 1;
                     }
                     Console.WriteLine("RESULT: PASS" + (res.Changed ? " (assignment removed)" : " (no-op — already default)"));
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--list-collection", out string? lcFile) && lcFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "this";
+                string? prop = ArgAfter(args, "--prop");
+                if (prop == null)
+                {
+                    Console.WriteLine("usage: --list-collection <file> --comp <id> --prop <name>");
+                    return 2;
+                }
+                try
+                {
+                    var res = DesignerRenderer.ListCollectionItems(lcFile, comp, prop);
+                    Console.WriteLine("== engine list-collection (string items of " + comp + "." + prop + ")");
+                    Console.WriteLine("   ok: " + res.Ok + " | count: " + res.Items.Count + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    for (int i = 0; i < res.Items.Count; i++) Console.WriteLine("   [" + i + "] " + res.Items[i]);
+                    Console.WriteLine("RESULT: " + (res.Ok ? "PASS" : "FAIL"));
+                    return res.Ok ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-collection", out string? scFile) && scFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "this";
+                string? prop = ArgAfter(args, "--prop");
+                bool write = Has(args, "--write", out _);
+                // repeated --item <value> (may be zero → clears the collection); mirrors --proj-fqn collection
+                var items = args.Select((a, i) => (a, i)).Where(x => x.a == "--item" && x.i + 1 < args.Length).Select(x => args[x.i + 1]).ToList();
+                if (prop == null)
+                {
+                    Console.WriteLine("usage: --set-collection <file> --comp <id> --prop <name> [--item <v>]... [--write]");
+                    return 2;
+                }
+                try
+                {
+                    var res = DesignerRenderer.ApplyCollectionEdit(scFile, comp, prop, items);
+                    Console.WriteLine("== engine set-collection (rewrite " + comp + "." + prop + " to " + items.Count + " items)");
+                    Console.WriteLine("   mode: " + res.Mode + " | parse-ok: " + res.ParseOk + " | minimal: " + res.Minimal + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Safe)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        string bak = scFile + ".bak";
+                        File.Copy(scFile, bak, overwrite: true);
+                        File.WriteAllText(scFile, res.NewText!, res.Encoding);
+                        Console.WriteLine("   APPLIED: wrote " + scFile + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        string preview = scFile + ".edited.txt";
+                        File.WriteAllText(preview, res.NewText!, res.Encoding);
+                        Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--list-columns", out string? lcolFile) && lcolFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                try
+                {
+                    var res = DesignerRenderer.ListColumnItems(lcolFile, comp);
+                    Console.WriteLine("== engine list-columns (ListView " + comp + ".Columns)");
+                    Console.WriteLine("   ok: " + res.Ok + " | count: " + res.Columns.Count + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    for (int i = 0; i < res.Columns.Count; i++)
+                    {
+                        var c = res.Columns[i];
+                        Console.WriteLine("   [" + i + "] id=" + c.Id + " text=\"" + c.Text + "\" width=" + c.Width + " align=" + c.TextAlign);
+                    }
+                    Console.WriteLine("RESULT: " + (res.Ok ? "PASS" : "FAIL"));
+                    return res.Ok ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-columns", out string? scolFile) && scolFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                bool write = Has(args, "--write", out _);
+                // repeated --col "id|text|width|align" (empty id = a new column; may be zero → clears the collection)
+                var cols = args.Select((a, i) => (a, i))
+                    .Where(x => x.a == "--col" && x.i + 1 < args.Length)
+                    .Select(x =>
+                    {
+                        var parts = args[x.i + 1].Split('|');
+                        int w = 60;
+                        if (parts.Length > 2) int.TryParse(parts[2], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out w);
+                        return new ColumnItem
+                        {
+                            Id = parts.Length > 0 ? parts[0] : "",
+                            Text = parts.Length > 1 ? parts[1] : "",
+                            Width = w,
+                            TextAlign = parts.Length > 3 && parts[3].Length > 0 ? parts[3] : "Left",
+                        };
+                    }).ToArray();
+                try
+                {
+                    var res = DesignerRenderer.ApplyColumnsEdit(scolFile, comp, cols);
+                    Console.WriteLine("== engine set-columns (rewrite " + comp + ".Columns to " + cols.Length + " columns)");
+                    Console.WriteLine("   mode: " + res.Mode + " | parse-ok: " + res.ParseOk + " | minimal: " + res.Minimal + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Safe)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        string bak = scolFile + ".bak";
+                        File.Copy(scolFile, bak, overwrite: true);
+                        File.WriteAllText(scolFile, res.NewText!, res.Encoding);
+                        Console.WriteLine("   APPLIED: wrote " + scolFile + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        string preview = scolFile + ".edited.txt";
+                        File.WriteAllText(preview, res.NewText!, res.Encoding);
+                        Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--list-nodes", out string? lnFile) && lnFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                try
+                {
+                    var res = DesignerRenderer.ListNodeItems(lnFile, comp);
+                    Console.WriteLine("== engine list-nodes (TreeView " + comp + ".Nodes)");
+                    Console.WriteLine("   ok: " + res.Ok + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    void Print(System.Collections.Generic.IReadOnlyList<TreeNodeItem> ns, int depth)
+                    {
+                        foreach (var n in ns)
+                        {
+                            Console.WriteLine("   " + new string(' ', depth * 2) + "- id=" + n.Id + " text=\"" + n.Text + "\" name=\"" + n.Name + "\"");
+                            Print(n.Children, depth + 1);
+                        }
+                    }
+                    Print(res.Nodes, 0);
+                    Console.WriteLine("RESULT: " + (res.Ok ? "PASS" : "FAIL"));
+                    return res.Ok ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-nodes", out string? snFile) && snFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                bool write = Has(args, "--write", out _);
+                // repeated --node "depth|id|text|name" (empty id = a new node; depth 0 = root; may be zero → clears).
+                var flat = args.Select((a, i) => (a, i))
+                    .Where(x => x.a == "--node" && x.i + 1 < args.Length)
+                    .Select(x =>
+                    {
+                        var p = args[x.i + 1].Split('|');
+                        int depth = 0;
+                        if (p.Length > 0) int.TryParse(p[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out depth);
+                        return (depth, node: new TreeNodeItem { Id = p.Length > 1 ? p[1] : "", Text = p.Length > 2 ? p[2] : "", Name = p.Length > 3 ? p[3] : "" });
+                    }).ToList();
+                var roots = new System.Collections.Generic.List<TreeNodeItem>();
+                var stack = new System.Collections.Generic.List<(int depth, TreeNodeItem node)>();
+                foreach (var (depth, node) in flat)
+                {
+                    while (stack.Count > 0 && stack[stack.Count - 1].depth >= depth) stack.RemoveAt(stack.Count - 1);
+                    if (stack.Count == 0) roots.Add(node); else stack[stack.Count - 1].node.Children.Add(node);
+                    stack.Add((depth, node));
+                }
+                try
+                {
+                    var res = DesignerRenderer.ApplyNodesEdit(snFile, comp, roots);
+                    Console.WriteLine("== engine set-nodes (rewrite " + comp + ".Nodes; " + flat.Count + " node(s))");
+                    Console.WriteLine("   mode: " + res.Mode + " | parse-ok: " + res.ParseOk + " | minimal: " + res.Minimal + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Safe)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        string bak = snFile + ".bak";
+                        File.Copy(snFile, bak, overwrite: true);
+                        File.WriteAllText(snFile, res.NewText!, res.Encoding);
+                        Console.WriteLine("   APPLIED: wrote " + snFile + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        string preview = snFile + ".edited.txt";
+                        File.WriteAllText(preview, res.NewText!, res.Encoding);
+                        Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--list-gridcolumns", out string? lgFile) && lgFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                try
+                {
+                    var res = DesignerRenderer.ListGridColumnItems(lgFile, comp);
+                    Console.WriteLine("== engine list-gridcolumns (DataGridView " + comp + ".Columns)");
+                    Console.WriteLine("   ok: " + res.Ok + " | count: " + res.Columns.Count + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    for (int i = 0; i < res.Columns.Count; i++)
+                    {
+                        var c = res.Columns[i];
+                        Console.WriteLine("   [" + i + "] id=" + c.Id + " header=\"" + c.HeaderText + "\" width=" + c.Width + " readonly=" + c.ReadOnly + " visible=" + c.Visible);
+                    }
+                    Console.WriteLine("RESULT: " + (res.Ok ? "PASS" : "FAIL"));
+                    return res.Ok ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-gridcolumns", out string? sgFile) && sgFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                bool write = Has(args, "--write", out _);
+                // repeated --col "id|header|width|readonly|visible" (empty id = new; zero --col = clear)
+                var cols = args.Select((a, i) => (a, i))
+                    .Where(x => x.a == "--col" && x.i + 1 < args.Length)
+                    .Select(x =>
+                    {
+                        var parts = args[x.i + 1].Split('|');
+                        int w = 100;
+                        if (parts.Length > 2) int.TryParse(parts[2], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out w);
+                        return new GridColumnItem
+                        {
+                            Id = parts.Length > 0 ? parts[0] : "",
+                            HeaderText = parts.Length > 1 ? parts[1] : "",
+                            Width = w,
+                            ReadOnly = parts.Length > 3 && parts[3] == "true",
+                            Visible = !(parts.Length > 4 && parts[4] == "false"),
+                        };
+                    }).ToArray();
+                try
+                {
+                    var res = DesignerRenderer.ApplyGridColumnsEdit(sgFile, comp, cols);
+                    Console.WriteLine("== engine set-gridcolumns (rewrite " + comp + ".Columns to " + cols.Length + " columns)");
+                    Console.WriteLine("   mode: " + res.Mode + " | parse-ok: " + res.ParseOk + " | minimal: " + res.Minimal + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Safe)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        string bak = sgFile + ".bak";
+                        File.Copy(sgFile, bak, overwrite: true);
+                        File.WriteAllText(sgFile, res.NewText!, res.Encoding);
+                        Console.WriteLine("   APPLIED: wrote " + sgFile + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        string preview = sgFile + ".edited.txt";
+                        File.WriteAllText(preview, res.NewText!, res.Encoding);
+                        Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
                     return 0;
                 }
                 catch (Exception ex)
@@ -558,7 +875,7 @@ namespace WinFormsDesigner.Engine
             if (Has(args, "--toolbox", out string? tbFile))
             {
                 var items = DesignerRenderer.ToolboxItems(tbFile, ArgAfter(args, "--asm"));
-                Console.WriteLine($"== toolbox palette (§7.2 auto-population): {items.Count} controls");
+                Console.WriteLine($"== toolbox palette (auto-population): {items.Count} controls");
                 foreach (var g in items.GroupBy(i => i.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
                 {
                     Console.WriteLine($"-- {g.Key} ({g.Count()})");
@@ -779,9 +1096,9 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>
         /// Compute the would-be-saved file text (normalized InitializeComponent spliced into the
-        /// source) WITHOUT writing — the host applies it as a WorkspaceEdit (plan §6.6, the engine
+        /// source) WITHOUT writing — the host applies it as a WorkspaceEdit (the engine
         /// never writes files itself). <see cref="SavePreview.Text"/> is null when the source is not
-        /// safe to round-trip (read-only fallback, §6.5). controlAssemblyPath optionally overrides
+        /// safe to round-trip (safe-save read-only fallback). controlAssemblyPath optionally overrides
         /// project auto-discovery (see <see cref="RenderDesigner"/>).
         /// </summary>
         public SavePreview PreviewSave(string designerFilePath, string? controlAssemblyPath = null)
@@ -801,9 +1118,9 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// Serialize a .Designer.cs back to a normalized InitializeComponent (§6.3) WITHOUT writing —
+        /// Serialize a .Designer.cs back to a normalized InitializeComponent WITHOUT writing —
         /// the round-trip preview (the explicit-asm-aware RPC complement to the CLI --roundtrip).
-        /// <see cref="SerializePreview.Code"/> is null when the source doesn't fully round-trip (§6.5).
+        /// <see cref="SerializePreview.Code"/> is null when the source doesn't fully round-trip.
         /// controlAssemblyPath optionally overrides project auto-discovery (see <see cref="RenderDesigner"/>).
         /// </summary>
         public SerializePreview SerializeDesigner(string designerFilePath, string? controlAssemblyPath = null)
@@ -832,7 +1149,7 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
-        /// <summary>§6.5 grid-cell edit: move a TableLayoutPanel child to column/row by swapping the cell args of
+        /// <summary>safe-save-gated grid-cell edit: move a TableLayoutPanel child to column/row by swapping the cell args of
         /// its 3-arg Controls.Add. Either column or row may be null to leave that coordinate unchanged.</summary>
         public EditPreview SetTableCell(string designerFilePath, string childId, int? column, int? row, string? sourceText = null)
         {
@@ -876,12 +1193,72 @@ namespace WinFormsDesigner.Engine
         public TableStylesResult ReadTableStyles(string designerFilePath, string panelId, string? sourceText = null)
             => DesignerRenderer.ReadTableStyles(designerFilePath, panelId, sourceText);
 
-        /// <summary>§6.5 TableLayoutPanel size-style edit: set the Nth Column/Row style's SizeType and/or value.
+        /// <summary>safe-save-gated TableLayoutPanel size-style edit: set the Nth Column/Row style's SizeType and/or value.
         /// SizeType is a validated enum member (Absolute/Percent/AutoSize) and value a plain number — nothing is
         /// interpolated. Either may be null to keep the existing one. Host applies Text as a WorkspaceEdit.</summary>
         public EditPreview SetTableStyle(string designerFilePath, string panelId, string axis, int index, string? sizeType, double? value, string? sourceText = null)
         {
             var r = DesignerRenderer.ApplyTableStyleEdit(designerFilePath, panelId, axis, index, sizeType, value, sourceText);
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Read a string-item collection's current items (ComboBox/ListBox/CheckedListBox.Items) for the
+        /// VS-style collection editor. <see cref="CollectionItemsResult.Ok"/> is false for a non-literal
+        /// (bound/complex) collection so the webview keeps it read-only.</summary>
+        public CollectionItemsResult ListCollectionItems(string designerFilePath, string ownerId, string propertyName, string? sourceText = null)
+            => DesignerRenderer.ListCollectionItems(designerFilePath, ownerId, propertyName, NullIfBlank(sourceText));
+
+        /// <summary>Set a string-item collection's items (VS "String Collection Editor"): rewrite the owner's
+        /// Add/AddRange calls to exactly <paramref name="items"/>. Items are emitted as escaped string literals —
+        /// nothing is interpolated. Host applies <see cref="EditPreview.Text"/> as a WorkspaceEdit.</summary>
+        public EditPreview SetCollectionItems(string designerFilePath, string ownerId, string propertyName, string[] items, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyCollectionEdit(designerFilePath, ownerId, propertyName, items ?? Array.Empty<string>(), NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Read a ListView's columns (typed collection editor) — ColumnHeader field id + Text/Width/TextAlign.
+        /// <see cref="ColumnItemsResult.Ok"/> is false for a column that isn't a plain named field with only those
+        /// three properties (inline/cast/unmanaged property), so the webview keeps the collection read-only.</summary>
+        public ColumnItemsResult ListColumns(string designerFilePath, string ownerId, string? sourceText = null)
+            => DesignerRenderer.ListColumnItems(designerFilePath, ownerId, NullIfBlank(sourceText));
+
+        /// <summary>Set a ListView's columns (VS "Collection Editor"): reconcile field declarations, per-column
+        /// construction/property statements and Columns.AddRange to exactly <paramref name="columns"/>. Values are
+        /// emitted as literals/enum members — nothing is interpolated. Host applies <see cref="EditPreview.Text"/>.</summary>
+        public EditPreview SetColumns(string designerFilePath, string ownerId, ColumnItem[] columns, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyColumnsEdit(designerFilePath, ownerId, columns ?? Array.Empty<ColumnItem>(), NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Read a DataGridView's columns (typed grid-column editor) — field id + HeaderText/Width/ReadOnly/Visible.
+        /// <see cref="GridColumnItemsResult.Ok"/> is false for a bound/cast/initializer/unmanaged column, so the webview
+        /// keeps the collection read-only.</summary>
+        public GridColumnItemsResult ListGridColumns(string designerFilePath, string ownerId, string? sourceText = null)
+            => DesignerRenderer.ListGridColumnItems(designerFilePath, ownerId, NullIfBlank(sourceText));
+
+        /// <summary>Set a DataGridView's columns (VS "Collection Editor"): reconcile field declarations, per-column
+        /// construction/property statements and Columns.AddRange to exactly <paramref name="columns"/>. Values are
+        /// emitted as literals/keywords — nothing is interpolated. Host applies <see cref="EditPreview.Text"/>.</summary>
+        public EditPreview SetGridColumns(string designerFilePath, string ownerId, GridColumnItem[] columns, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyGridColumnsEdit(designerFilePath, ownerId, columns ?? Array.Empty<GridColumnItem>(), NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Read a TreeView's node forest (hierarchical collection editor) — recursive local id + Text/Name +
+        /// children. <see cref="TreeNodeItemsResult.Ok"/> is false for an unmanaged property, an unsupported ctor
+        /// overload, a non-local child/root reference or a shared/unattached node, so the webview keeps it read-only.</summary>
+        public TreeNodeItemsResult ListNodes(string designerFilePath, string ownerId, string? sourceText = null)
+            => DesignerRenderer.ListNodeItems(designerFilePath, ownerId, NullIfBlank(sourceText));
+
+        /// <summary>Set a TreeView's nodes (VS "TreeNode Editor"): drop and regenerate the TreeNode local declarations
+        /// + Nodes.AddRange in post-order to exactly <paramref name="nodes"/>. Text/Name are emitted as literals —
+        /// nothing is interpolated. Host applies <see cref="EditPreview.Text"/>.</summary>
+        public EditPreview SetNodes(string designerFilePath, string ownerId, TreeNodeItem[] nodes, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyNodesEdit(designerFilePath, ownerId, nodes ?? Array.Empty<TreeNodeItem>(), NullIfBlank(sourceText));
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
@@ -954,7 +1331,7 @@ namespace WinFormsDesigner.Engine
         /// interpreted on the next render). The host applies the returned text as an unsaved edit.</summary>
         public ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, List<string>? projectControlFqns = null)
         {
-            // A net9 project-control key (§7.2 Inc2) needs the resolved assembly enumerated; the net48 (DevExpress/
+            // A net9 project-control key needs the resolved assembly enumerated; the net48 (DevExpress/
             // net4x) path instead supplies projectControlFqns (net9 can't load that assembly) → no prewarm needed.
             if (projectControlFqns == null) Prewarm(designerFilePath, controlAssemblyPath);
             return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath), projectControlFqns);
@@ -975,8 +1352,8 @@ namespace WinFormsDesigner.Engine
         /// <summary>The toolbox's available control type keys (e.g. "Button", "Label", …).</summary>
         public List<string> ListControlTypes() => DesignerRenderer.ControlTypes().ToList();
 
-        /// <summary>The auto-populated toolbox palette (§7.2): framework controls always, plus the resolved
-        /// project assembly's own controls (§7.2 Increment 2, "Project Controls") when a designer file is given.
+        /// <summary>The auto-populated toolbox palette: framework controls always, plus the resolved
+        /// project assembly's own controls ("Project Controls") when a designer file is given.
         /// Framework discovery is pure reflection; project enumeration loads the assembly in a collectible ALC.</summary>
         public List<ToolboxItemInfo> ListToolboxItems(string? designerFilePath = null, string? controlAssemblyPath = null)
         {
@@ -1026,7 +1403,7 @@ namespace WinFormsDesigner.Engine
         public ControlReorderResult MoveZOrder(string designerFilePath, string controlId, bool toFront, string? sourceText = null) =>
             DesignerRenderer.MoveZOrder(designerFilePath, controlId, toFront, sourceText);
 
-        /// <summary>§7.4 reparent: move a leaf control into a different container (or the root form, newParentId
+        /// <summary>reparent: move a leaf control into a different container (or the root form, newParentId
         /// "this"/""). Minimal text edit — rewrites only the child's Controls.Add receiver. See DesignerControlEditor.Reparent.</summary>
         public ControlReorderResult Reparent(string designerFilePath, string childId, string newParentId, string? sourceText = null) =>
             DesignerRenderer.ReparentControl(designerFilePath, childId, newParentId, sourceText);

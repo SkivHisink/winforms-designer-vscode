@@ -12,7 +12,7 @@ using Newtonsoft.Json.Linq;
 namespace WinFormsDesigner.Engine
 {
     /// <summary>
-    /// Discovery of a project's built output assembly for a given .Designer.cs (plan §8.6 / §12).
+    /// Discovery of a project's built output assembly for a given .Designer.cs.
     /// Two strategies, tried in order by <see cref="ResolveOutputAssembly"/>:
     ///   1. MSBuild design-time evaluation — `dotnet msbuild -getProperty:TargetPath`. Correct for
     ///      complex projects (custom OutputPath/BaseOutputPath, multi-target, Configuration). Uses only
@@ -409,14 +409,20 @@ namespace WinFormsDesigner.Engine
             {
                 return null;
             }
-            // freshest bin/**/<asmName>.{dll,exe} — .exe covers OutputType=Exe projects (WinForms apps), whose
-            // build output the .dll-only search used to miss (a cause of "could not resolve build output").
-            return Directory.EnumerateFiles(bin, asmName + ".dll", SearchOption.AllDirectories)
-                .Concat(Directory.EnumerateFiles(bin, asmName + ".exe", SearchOption.AllDirectories))
+            // Prefer the freshest managed <asmName>.dll; fall back to the freshest <asmName>.exe ONLY when no .dll
+            // exists. On .NET (Core/5+) the loadable assembly is always the .dll — the sibling .exe is a native
+            // apphost launcher, and handing that apphost to a managed load / AssemblyDependencyResolver fails
+            // ("an assembly … has already been found but with a different file extension"; the deps.json targets
+            // the .dll), which silently empties the project-control toolbox. A naive freshest-of-{dll,exe} picks the
+            // .exe whenever the apphost is stamped at/after the .dll (the common case), so we must not order across
+            // the two extensions. The .exe fallback still covers a .NET Framework Exe output (whose .exe IS the
+            // managed assembly, with no sibling .dll) and a self-contained single-file publish.
+            string? Freshest(string ext) => Directory.EnumerateFiles(bin, asmName + ext, SearchOption.AllDirectories)
                 .Select(p => new FileInfo(p))
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .Select(f => f.FullName)
                 .FirstOrDefault();
+            return Freshest(".dll") ?? Freshest(".exe");
         }
 
         private static string? ReadAssemblyName(string csproj)

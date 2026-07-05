@@ -46,7 +46,7 @@ namespace WinFormsDesigner.Engine
     }
 
     /// <summary>
-    /// Targeted single-property edit (plan §6.3 sentinel / byte-zero-diff): change one property's
+    /// Targeted single-property edit (sentinel / byte-zero-diff): change one property's
     /// value directly in the existing .Designer.cs as a MINIMAL text edit, instead of regenerating
     /// the whole InitializeComponent (which reorders). Two modes:
     ///   • Replace — the assignment exists ⇒ swap only its right-hand value (one-line diff). When the
@@ -124,7 +124,7 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// Safety gate (§6.5 for edits): every NON-target InitializeComponent statement must be
+        /// Safety gate (safe-save gate for edits): every NON-target InitializeComponent statement must be
         /// unchanged (compared syntactically, so qualified `this.x.P` and unqualified `x.P` are
         /// treated alike), AND the count of target (component, property) statements changes by
         /// exactly the amount the mode implies (Replace: 0, Insert: +1). Together this rejects both
@@ -199,7 +199,7 @@ namespace WinFormsDesigner.Engine
             };
         }
 
-        /// <summary>§6.5 gate for a property reset: the source HAD at least one (comp, prop) assignment, the edit
+        /// <summary>Safe-save gate for a property reset: the source HAD at least one (comp, prop) assignment, the edit
         /// removed ALL of them (none remain), every OTHER InitializeComponent statement is the same multiset, and
         /// the field declarations are unchanged. A shared-line statement dragged along by the whole-line delete
         /// changes the non-target multiset → rejected (the reset never corrupts, it only declines).</summary>

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Localization key-parity check (plan §12 / §8 Phase 5).
+// Localization key-parity check.
 //
 // Compares every locale against the English source of truth for BOTH layers:
 //   • Layer B (runtime catalog): extension/src/i18n/en.ts  vs  <lang>.json

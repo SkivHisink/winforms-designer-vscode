@@ -55,10 +55,17 @@ namespace WinFormsDesigner.Engine.Net48
             bool parentIsTlp = c is Control pctl && pctl.Parent is TableLayoutPanel;
             foreach (PropertyDescriptor pd in TypeDescriptor.GetProperties(c))
             {
-                if (!pd.IsBrowsable) continue;
                 bool isTableCell = parentIsTlp && (pd.Name == "Column" || pd.Name == "Row");
+                // string-item collections (ComboBox/ListBox/CheckedListBox.Items) + typed collections (ListView.Columns,
+                // DataGridView.Columns) are surfaced for the VS "…" collection editor even though they're [Browsable(false)]
+                // / Hidden-serialization — the read/write routes to the net9 pure-text engine. Matched by exact
+                // property-type name so no other collection is affected (parity with net9's DescribeProperties).
+                bool isStringCollection = IsStringCollectionProperty(pd);
+                string? typedCollectionItem = TypedCollectionItemType(pd);
+                bool isCollection = isStringCollection || typedCollectionItem != null;
+                if (!pd.IsBrowsable && !isTableCell && !isCollection) continue;
                 var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
-                if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell) continue;
+                if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
 
                 object? raw = null;
                 try { raw = pd.GetValue(c); } catch { raw = null; }
@@ -80,11 +87,17 @@ namespace WinFormsDesigner.Engine.Net48
                 bool isImage = IsImageProperty(pd.PropertyType);
                 string? imagePreview = isImage ? TryThumbnail(raw) : null;
 
+                // guarded like the value reads above — a third-party PropertyDescriptor's Description getter can throw;
+                // degrade this one field to null rather than aborting the whole grid. (Parity with net9.)
+                string? description = null;
+                try { description = string.IsNullOrEmpty(pd.Description) ? null : pd.Description; } catch { description = null; }
+
                 list.Add(new PropertyDesc
                 {
                     Name = pd.Name,
                     Type = pd.PropertyType.FullName ?? pd.PropertyType.Name,
-                    Value = value,
+                    // a collection's live value isn't a literal — the "…" editor drives it, so leave Value null (parity with net9)
+                    Value = isCollection ? null : value,
                     IsDefault = isDefault,
                     SourceExplicit = false,
                     ReadOnly = readOnly,
@@ -97,11 +110,33 @@ namespace WinFormsDesigner.Engine.Net48
                     TableCell = isTableCell,
                     IsImage = isImage,
                     ImagePreview = imagePreview,
+                    Description = description,
+                    IsCollection = isCollection,
+                    CollectionItemType = isStringCollection ? "System.String" : typedCollectionItem,
                 });
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return list;
         }
+
+        // ---- collection detection (parity with net9 DesignerDescribe): match the property TYPE by exact FullName so
+        // only the intended collections are surfaced for the "…" editor; everything else is unaffected. ----
+        private static readonly HashSet<string> StringCollectionTypeNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "System.Windows.Forms.ComboBox+ObjectCollection",
+            "System.Windows.Forms.ListBox+ObjectCollection",
+            "System.Windows.Forms.CheckedListBox+ObjectCollection",
+        };
+        private static readonly Dictionary<string, string> TypedCollectionItemTypes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { "System.Windows.Forms.ListView+ColumnHeaderCollection", "System.Windows.Forms.ColumnHeader" },
+            { "System.Windows.Forms.DataGridViewColumnCollection", "System.Windows.Forms.DataGridViewColumn" },
+            { "System.Windows.Forms.TreeNodeCollection", "System.Windows.Forms.TreeNode" },
+        };
+        private static bool IsStringCollectionProperty(PropertyDescriptor pd) =>
+            pd.PropertyType.FullName != null && StringCollectionTypeNames.Contains(pd.PropertyType.FullName);
+        private static string? TypedCollectionItemType(PropertyDescriptor pd) =>
+            pd.PropertyType.FullName != null && TypedCollectionItemTypes.TryGetValue(pd.PropertyType.FullName, out var it) ? it : null;
 
         private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd)
         {

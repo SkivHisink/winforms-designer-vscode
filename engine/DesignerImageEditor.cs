@@ -33,7 +33,7 @@ namespace WinFormsDesigner.Engine
     /// embed a chosen image into the form's sibling <c>.resx</c> and emit the VS-idiomatic
     /// <c>this.x.Prop = ((System.Drawing.Image)(resources.GetObject("x.Prop")));</c> into InitializeComponent
     /// (ensuring the <c>ComponentResourceManager resources</c> local exists). The engine NEVER writes files —
-    /// it computes both texts; the host persists them (plan §6.6).
+    /// it computes both texts; the host persists them.
     ///
     /// SECURITY (this is a WRITE surface fed image bytes + component/property names from the UI):
     ///   • component id / property name must be valid C# identifiers ("this"/"" = the root form); the resx key
@@ -46,7 +46,7 @@ namespace WinFormsDesigner.Engine
     ///     entity resolution disabled; the base64 payload is <see cref="Convert.ToBase64String"/> output only.
     ///     An existing-but-unparseable .resx is REFUSED, never clobbered. BinaryFormatter nodes are round-tripped
     ///     as opaque text (never deserialized).
-    ///   • the designer edit reuses the proven §6.5 gates (<see cref="DesignerPropertyEditor.OnlyTargetChanged"/>
+    ///   • the designer edit reuses the proven safe-save gates (<see cref="DesignerPropertyEditor.OnlyTargetChanged"/>
     ///     for the assignment; a focused local-only gate for the inserted resources declaration) + a parse check.
     /// Any failure returns Ok=false with a reason; nothing is written.
     /// </summary>
@@ -223,7 +223,7 @@ namespace WinFormsDesigner.Engine
             return (varName, newText, true);
         }
 
-        /// <summary>§6.5 gate for the resources-local insertion: the edited InitializeComponent is EXACTLY the
+        /// <summary>safe-save gate for the resources-local insertion: the edited InitializeComponent is EXACTLY the
         /// original plus one added <c>ComponentResourceManager <paramref name="varName"/></c> local — every other
         /// statement is the same multiset, and the class field declarations are unchanged.</summary>
         private static bool OnlyResourcesLocalAdded(string original, string edited, string varName)

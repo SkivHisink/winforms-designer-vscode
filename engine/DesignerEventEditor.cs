@@ -43,7 +43,7 @@ namespace WinFormsDesigner.Engine
 
     /// <summary>
     /// Targeted, byte-minimal edits for the EVENTS side (mirrors <see cref="DesignerPropertyEditor"/> for
-    /// properties, but kept SEPARATE so the proven property-edit path is untouched — §6.5 sensitive):
+    /// properties, but kept SEPARATE so the proven property-edit path is untouched — safe-save sensitive):
     ///   • <see cref="WireEvent"/>      — add one <c>this.comp.Event += new Delegate(this.handler);</c>
     ///                                    statement to InitializeComponent (.Designer.cs), nothing else.
     ///   • <see cref="GenerateHandlerStub"/> — insert one empty handler method into the form's partial
@@ -65,7 +65,7 @@ namespace WinFormsDesigner.Engine
         public static EditResult WireEvent(string src, string comp, string evt, string delegateFqn, string handler)
         {
             bool isRoot = comp is "this" or "";
-            // §6.5: comp/evt/handler are interpolated into generated C# — reject anything that isn't a plain
+            // safe-save: comp/evt/handler are interpolated into generated C# — reject anything that isn't a plain
             // identifier so a crafted name can't inject statements / break out of the wiring expression.
             if (!isRoot && !IsValidIdentifier(comp))
                 return new EditResult { Mode = EditMode.Failed, Reason = "component name is not a valid identifier: " + comp };
@@ -110,14 +110,14 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// §6.5 gate for a wiring insert: the edited InitializeComponent must equal the original PLUS exactly
+        /// safe-save gate for a wiring insert: the edited InitializeComponent must equal the original PLUS exactly
         /// one new <c>+=</c> statement for (comp, evt); every other statement byte-identical (compared with
         /// whitespace stripped, like the property gate). Rejects "wired something else" / "touched more".
         /// </summary>
         public static bool OnlyWiringAdded(string original, string edited, string comp, string evt) =>
             OnlyWiringChanged(original, edited, comp, evt, 1);
 
-        /// <summary>General §6.5 gate for any wiring edit: every NON-(comp,evt) statement is byte-identical
+        /// <summary>General safe-save gate for any wiring edit: every NON-(comp,evt) statement is byte-identical
         /// (whitespace-normalized multiset), AND the count of (comp,evt) wiring statements changed by exactly
         /// <paramref name="targetDelta"/> (+1 add, -1 unwire, 0 rewire). The (comp,evt) statement content is
         /// safe by construction (handler is identifier-validated, delegate from reflection), so only the rest
@@ -341,7 +341,7 @@ namespace WinFormsDesigner.Engine
             return new StubResult { Ok = true, NewText = edited };
         }
 
-        // ---- shared syntax helpers (own copies — DesignerPropertyEditor stays untouched, §6.5) ----
+        // ---- shared syntax helpers (own copies — DesignerPropertyEditor stays untouched, safe-save) ----
 
         private static MethodDeclarationSyntax? FindInitializeComponent(string code)
         {

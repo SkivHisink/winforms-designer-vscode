@@ -319,10 +319,12 @@
   var sortAlphaEl = document.getElementById('sortAlpha');
   var bodyEl = document.getElementById('propsBody');
   var emptyEl = document.getElementById('propsEmpty');
+  var descEl = document.getElementById('propDesc');
 
   var controls = [];
   var currentId = null;
   var currentComponent = null;
+  var currentProp = null;   // name of the active property row (drives the description pane + row highlight)
   var activeTab = 'props';
   var eventCandidates = {};
   var candFetchedFor = null;
@@ -359,6 +361,20 @@
     if (p.isEnum) return true;
     return p.type === 'System.String' || p.type === 'System.Boolean' || p.type === 'System.Char' || NUM.has(p.type) || COMPLEX.has(p.type);
   }
+  // The engine's ShouldSerializeValue over-reports a few ambient/runtime props on the interpreted host, so an
+  // untouched control would otherwise show them non-default (per DesignerDescribe.cs:17-21). Visible/Enabled are
+  // ambient; TabIndex is assigned implicitly by the layout engine and ShouldSerialize reports any non-zero value —
+  // empirically it leaked bold onto ~every control, which VS never shows in-source. Keep this set minimal.
+  var NONDEFAULT_NOISE = new Set(['Visible', 'Enabled', 'TabIndex']);
+  // A property is "non-default" (VS bolds it, and it's the natural reset target): trust the accurate source signal
+  // (sourceExplicit = assigned in .Designer.cs) unioned with the engine's ShouldSerializeValue verdict
+  // (isDefault === false = "value differs from the type default"), guarding the latter against its documented
+  // over-reporting — only literal/editable/resettable rows contribute it (skip non-literal collection/image/
+  // table-cell rows and read-only rows, plus the named ambient offenders).
+  function isNonDefault(p) {
+    if (p.sourceExplicit) return true;
+    return p.isDefault === false && !p.isCollection && !p.isImage && !p.tableCell && !p.readOnly && !NONDEFAULT_NOISE.has(p.name);
+  }
   function editHint(p) {
     if (p.standardValues && p.standardValues.length) return p.standardValuesExclusive ? T('panel.hint.chooseValue') : T('panel.hint.chooseOrType');
     if (p.isEnum) return T('panel.hint.enum');
@@ -369,6 +385,65 @@
     if (p.type === 'System.Windows.Forms.Padding') return T('panel.hint.padding');
     if (p.type === 'System.Drawing.Font') return T('panel.hint.font');
     return '';
+  }
+
+  function findProp(c, name) {
+    if (!c || !c.properties || name == null) return null;
+    for (var i = 0; i < c.properties.length; i++) if (c.properties[i].name === name) return c.properties[i];
+    return null;
+  }
+  // The description pane text: the property's DescriptionAttribute, falling back to its type + edit hint when it
+  // carries no description (so the pane is never blank for a selected row).
+  function descFor(p) {
+    if (p.description && String(p.description).trim()) return p.description;
+    var hint = editHint(p);
+    return p.type + (hint ? ' — ' + hint : '');
+  }
+  // Repaint the bottom description pane for the active property row, or a neutral component summary when none is
+  // selected. textContent throughout — never innerHTML — so a control's description text can't inject markup.
+  function updateDescPane() {
+    if (!descEl) return;
+    descEl.innerHTML = '';
+    if (!currentComponent) return;
+    // property descriptions only apply on the Properties tab; on Events show the neutral component summary
+    var p = activeTab === 'props' ? findProp(currentComponent, currentProp) : null;
+    var nm = document.createElement('div'); nm.className = 'pdName';
+    var ds = document.createElement('div'); ds.className = 'pdText';
+    if (p) { nm.textContent = p.name; ds.textContent = descFor(p); }
+    else { nm.textContent = currentComponent.name || ''; ds.textContent = shortType(currentComponent.type || ''); }
+    descEl.appendChild(nm); descEl.appendChild(ds);
+  }
+  // Mark a property row active (VS: the description pane follows the focused row). Toggles the highlight class
+  // in place — no full re-render — so clicking into a value editor doesn't rebuild/lose focus.
+  function selectProp(name, tr) {
+    if (currentProp === name) return;
+    currentProp = name;
+    if (propsEl) { var prev = propsEl.querySelector('tr.sel'); if (prev) prev.classList.remove('sel'); }
+    if (tr) tr.classList.add('sel');
+    updateDescPane();
+  }
+
+  // VS-style right-click menu for a property row. Reuses the shared floating ctxmenu element (tbMenuEl). "Reset"
+  // is enabled only when the property has a source assignment to delete (sourceExplicit) — otherwise it is already
+  // at its default and reset would be a no-op, so we grey it like VS. The engine reset is safe-save-gated + no-op-safe.
+  function openPropMenu(x, y, c, p) {
+    if (!tbMenuEl) return;
+    var items = [
+      { label: T('panel.menu.reset'), disabled: !p.sourceExplicit, act: function () { vscode.postMessage({ type: 'resetProperty', id: c.id, prop: p.name }); } }
+    ];
+    tbMenuEl.innerHTML = '';
+    items.forEach(function (mi) {
+      if (mi.sep) { var s = document.createElement('div'); s.className = 'sep'; tbMenuEl.appendChild(s); return; }
+      var d = document.createElement('div'); d.className = 'mi' + (mi.disabled ? ' disabled' : '');
+      d.innerHTML = '<span>' + escapeHtml(mi.label) + '</span>';
+      if (!mi.disabled && mi.act) d.addEventListener('click', function () { closeTbMenu(); mi.act(); });
+      tbMenuEl.appendChild(d);
+    });
+    tbMenuEl.className = 'ctxmenu open';
+    tbMenuEl.style.left = '0px'; tbMenuEl.style.top = '0px'; // measure, then clamp into the viewport
+    var w = tbMenuEl.offsetWidth, h = tbMenuEl.offsetHeight;
+    tbMenuEl.style.left = Math.max(2, Math.min(x, window.innerWidth - w - 4)) + 'px';
+    tbMenuEl.style.top = Math.max(2, Math.min(y, window.innerHeight - h - 4)) + 'px';
   }
 
   function rebuildTree() {
@@ -384,12 +459,12 @@
     if (currentId) treeEl.value = currentId;
   }
 
-  // ---- Document outline (§7.4): hierarchical tree built from the layout's parentId/depth ----
+  // ---- Document outline: hierarchical tree built from the layout's parentId/depth ----
   var outlineEl = document.getElementById('outlineTree');
   var outlineCollapsed = {}; // control id -> true when collapsed
   function renderOutline() {
     if (!outlineEl) return;
-    // a11y mirror-tree (§18): the outline IS the accessible mirror of the design surface — expose it as an ARIA
+    // a11y mirror-tree: the outline IS the accessible mirror of the design surface — expose it as an ARIA
     // tree so a screen reader announces the control hierarchy, selection and expand state.
     outlineEl.setAttribute('role', 'tree');
     outlineEl.setAttribute('aria-label', T('panel.outline.aria'));
@@ -444,7 +519,7 @@
     currentId = id; if (treeEl) treeEl.value = id;
     vscode.postMessage({ type: 'pick', id: id }); renderOutline();
   }
-  // keyboard navigation for the ARIA tree (§18): Up/Down move between visible items, Right/Left expand/collapse,
+  // keyboard navigation for the ARIA tree: Up/Down move between visible items, Right/Left expand/collapse,
   // Enter/Space select. Attached once to the container; nodes are re-created each render but delegation persists.
   if (outlineEl) outlineEl.addEventListener('keydown', function (e) {
     var nodes = Array.prototype.slice.call(outlineEl.querySelectorAll('.treeNode'));
@@ -537,7 +612,7 @@
     input.addEventListener('change', function () { onCommit(input.value); });
     return input;
   }
-  // §7.1 standard-values editor: a <select> for an exclusive set (enum/bool/…), else an editable combobox
+  // standard-values editor: a <select> for an exclusive set (enum/bool/…), else an editable combobox
   // (datalist) that also accepts free text (named Color, etc.). Commits the chosen invariant string.
   var svSeq = 0;
   function editSelect(values, exclusive, value, title, onCommit) {
@@ -911,6 +986,339 @@
     return wrap;
   }
 
+  // ---- String Collection editor (VS "String Collection Editor"): a "(Collection)" label + a "…" button that
+  // asks the host for the current items (ListCollectionItems parses the unsaved buffer), then opens a popup with
+  // a one-item-per-line textarea. OK rewrites the owner's Add/AddRange calls via SetCollectionItems. A non-literal
+  // (bound/complex) collection comes back ok:false → the popup shows a read-only note so items can't be dropped. ----
+  var COLUMN_ITEM_TYPE = 'System.Windows.Forms.ColumnHeader';
+  var GRIDCOLUMN_ITEM_TYPE = 'System.Windows.Forms.DataGridViewColumn';
+  var TREENODE_ITEM_TYPE = 'System.Windows.Forms.TreeNode';
+  var pendingCollection = null; // { id, prop, anchor } awaiting the host's collectionItems reply
+  var pendingColumns = null;    // { id, anchor } awaiting the host's columnItems reply
+  var pendingGridColumns = null; // { id, anchor } awaiting the host's gridColumnItems reply
+  var pendingTreeNodes = null;  // { id, anchor } awaiting the host's treeNodeItems reply
+  function collectionEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = 'Edit items…';
+    btn.addEventListener('click', function () {
+      pendingCollection = { id: c.id, prop: p.name, anchor: btn };
+      vscode.postMessage({ type: 'listCollection', id: c.id, prop: p.name });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  function openCollectionPopup(anchor, id, prop, ok, items, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = prop; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'This collection can’t be edited here (' + (reason || 'non-literal items') + ').';
+        pop.appendChild(note);
+        return;
+      }
+      var ta = document.createElement('textarea'); ta.className = 'collectionTa'; ta.spellcheck = false;
+      var original = (items || []).join('\n');
+      ta.value = original;
+      ta.rows = Math.min(14, Math.max(4, (items || []).length + 2));
+      ta.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') { ev.stopPropagation(); closePopup(); }
+        else if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); commit(); }
+      });
+      pop.appendChild(ta);
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      function commit() {
+        closePopup();
+        // unchanged textarea → don't post an edit at all: preserves any pre-existing trailing empty items (a trailing
+        // "" is indistinguishable from the editor-convenience newline once joined) and avoids a spurious dirty/undo.
+        if (ta.value === original) return;
+        var lines = ta.value.split(/\r?\n/);
+        while (lines.length && lines[lines.length - 1] === '') lines.pop(); // drop trailing blank line(s) (cursor convenience)
+        vscode.postMessage({ type: 'setCollection', id: id, prop: prop, items: lines });
+      }
+      okBtn.addEventListener('click', commit);
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel);
+      pop.appendChild(bar);
+      setTimeout(function () { ta.focus(); }, 0);
+    });
+  }
+
+  // Typed collection editor (VS "Collection Editor") for ListView.Columns — the "…" opens a small grid of
+  // columns (Text / Width / Align) with add / remove / reorder, committed atomically on OK.
+  function columnsEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = 'Edit columns…';
+    btn.addEventListener('click', function () {
+      pendingColumns = { id: c.id, anchor: btn };
+      vscode.postMessage({ type: 'listColumns', id: c.id });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  var ALIGNS = ['Left', 'Center', 'Right'];
+  function openColumnsPopup(anchor, id, ok, columns, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop'); pop.classList.add('columnsPop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Columns'; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'This collection can’t be edited here (' + (reason || 'unsupported column') + ').';
+        pop.appendChild(note);
+        return;
+      }
+      // working copy of the columns; `id` empty marks a new column the engine will name on commit
+      var rows = (columns || []).map(function (col) {
+        return { id: col.id || '', text: col.text || '', width: (typeof col.width === 'number' ? col.width : 60), textAlign: col.textAlign || 'Left' };
+      });
+      var original = JSON.stringify(rows);
+
+      var list = document.createElement('div'); list.className = 'columnsList';
+      pop.appendChild(list);
+      function render() {
+        list.textContent = '';
+        if (!rows.length) {
+          var empty = document.createElement('div'); empty.className = 'columnsEmpty'; empty.textContent = '(no columns)';
+          list.appendChild(empty);
+        }
+        rows.forEach(function (row, i) {
+          var r = document.createElement('div'); r.className = 'columnsRow';
+          var up = document.createElement('button'); up.type = 'button'; up.className = 'colMini'; up.textContent = '↑'; up.title = 'Move up'; up.disabled = i === 0;
+          up.addEventListener('click', function () { var t2 = rows[i - 1]; rows[i - 1] = rows[i]; rows[i] = t2; render(); });
+          var down = document.createElement('button'); down.type = 'button'; down.className = 'colMini'; down.textContent = '↓'; down.title = 'Move down'; down.disabled = i === rows.length - 1;
+          down.addEventListener('click', function () { var t2 = rows[i + 1]; rows[i + 1] = rows[i]; rows[i] = t2; render(); });
+          var txt = document.createElement('input'); txt.type = 'text'; txt.className = 'colText'; txt.value = row.text; txt.placeholder = 'Header text';
+          txt.addEventListener('input', function () { row.text = txt.value; });
+          var w = document.createElement('input'); w.type = 'number'; w.className = 'colWidth'; w.value = String(row.width); w.title = 'Width (px; -1 = size to content, -2 = size to header)';
+          // only commit a valid number — an empty/half-typed field keeps the column's current width (don't silently reset to 60)
+          w.addEventListener('input', function () { var n = parseInt(w.value, 10); if (!isNaN(n)) row.width = n; });
+          var al = document.createElement('select'); al.className = 'colAlign'; al.title = 'Text alignment';
+          ALIGNS.forEach(function (a) { var o = document.createElement('option'); o.value = a; o.textContent = a; if (a === row.textAlign) o.selected = true; al.appendChild(o); });
+          al.addEventListener('change', function () { row.textAlign = al.value; });
+          var del = document.createElement('button'); del.type = 'button'; del.className = 'colMini colDel'; del.textContent = '✕'; del.title = 'Remove column';
+          del.addEventListener('click', function () { rows.splice(i, 1); render(); });
+          r.appendChild(up); r.appendChild(down); r.appendChild(txt); r.appendChild(w); r.appendChild(al); r.appendChild(del);
+          list.appendChild(r);
+        });
+      }
+      render();
+
+      var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'columnsAdd'; addBtn.textContent = '+ Add column';
+      addBtn.addEventListener('click', function () { rows.push({ id: '', text: '', width: 60, textAlign: 'Left' }); render(); });
+      pop.appendChild(addBtn);
+
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      function commit() {
+        closePopup();
+        if (JSON.stringify(rows) === original) return; // unchanged → no edit (avoids a spurious dirty/undo)
+        var cols = rows.map(function (row) {
+          return { id: row.id || '', text: row.text || '', width: (typeof row.width === 'number' && !isNaN(row.width)) ? row.width : 60, textAlign: row.textAlign || 'Left' };
+        });
+        vscode.postMessage({ type: 'setColumns', id: id, columns: cols });
+      }
+      okBtn.addEventListener('click', commit);
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel);
+      pop.appendChild(bar);
+    });
+  }
+
+  // Typed collection editor for DataGridView.Columns — a grid of columns (Header / Width / ReadOnly / Visible)
+  // with add / remove / reorder, committed atomically on OK.
+  function gridColumnsEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = 'Edit columns…';
+    btn.addEventListener('click', function () {
+      pendingGridColumns = { id: c.id, anchor: btn };
+      vscode.postMessage({ type: 'listGridColumns', id: c.id });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  function openGridColumnsPopup(anchor, id, ok, columns, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop'); pop.classList.add('columnsPop'); pop.classList.add('gridColumnsPop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Columns'; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'This collection can’t be edited here (' + (reason || 'unsupported column') + ').';
+        pop.appendChild(note);
+        return;
+      }
+      var rows = (columns || []).map(function (col) {
+        return { id: col.id || '', headerText: col.headerText || '', width: (typeof col.width === 'number' ? col.width : 100),
+          readOnly: !!col.readOnly, visible: col.visible !== false };
+      });
+      var original = JSON.stringify(rows);
+
+      var list = document.createElement('div'); list.className = 'columnsList';
+      pop.appendChild(list);
+      function render() {
+        list.textContent = '';
+        if (!rows.length) {
+          var empty = document.createElement('div'); empty.className = 'columnsEmpty'; empty.textContent = '(no columns)';
+          list.appendChild(empty);
+        }
+        rows.forEach(function (row, i) {
+          var r = document.createElement('div'); r.className = 'columnsRow';
+          var up = document.createElement('button'); up.type = 'button'; up.className = 'colMini'; up.textContent = '↑'; up.title = 'Move up'; up.disabled = i === 0;
+          up.addEventListener('click', function () { var t2 = rows[i - 1]; rows[i - 1] = rows[i]; rows[i] = t2; render(); });
+          var down = document.createElement('button'); down.type = 'button'; down.className = 'colMini'; down.textContent = '↓'; down.title = 'Move down'; down.disabled = i === rows.length - 1;
+          down.addEventListener('click', function () { var t2 = rows[i + 1]; rows[i + 1] = rows[i]; rows[i] = t2; render(); });
+          var txt = document.createElement('input'); txt.type = 'text'; txt.className = 'colText'; txt.value = row.headerText; txt.placeholder = 'Header text';
+          txt.addEventListener('input', function () { row.headerText = txt.value; });
+          var w = document.createElement('input'); w.type = 'number'; w.className = 'colWidth'; w.value = String(row.width); w.title = 'Width (px)';
+          w.addEventListener('input', function () { var n = parseInt(w.value, 10); if (!isNaN(n)) row.width = n; });
+          var ro = document.createElement('input'); ro.type = 'checkbox'; ro.className = 'colChk'; ro.checked = row.readOnly; ro.title = 'ReadOnly';
+          ro.addEventListener('change', function () { row.readOnly = ro.checked; });
+          var vis = document.createElement('input'); vis.type = 'checkbox'; vis.className = 'colChk'; vis.checked = row.visible; vis.title = 'Visible';
+          vis.addEventListener('change', function () { row.visible = vis.checked; });
+          var del = document.createElement('button'); del.type = 'button'; del.className = 'colMini colDel'; del.textContent = '✕'; del.title = 'Remove column';
+          del.addEventListener('click', function () { rows.splice(i, 1); render(); });
+          var roLbl = document.createElement('label'); roLbl.className = 'colChkLbl'; roLbl.appendChild(ro); roLbl.appendChild(document.createTextNode('RO'));
+          var visLbl = document.createElement('label'); visLbl.className = 'colChkLbl'; visLbl.appendChild(vis); visLbl.appendChild(document.createTextNode('Vis'));
+          r.appendChild(up); r.appendChild(down); r.appendChild(txt); r.appendChild(w); r.appendChild(roLbl); r.appendChild(visLbl); r.appendChild(del);
+          list.appendChild(r);
+        });
+      }
+      render();
+
+      var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'columnsAdd'; addBtn.textContent = '+ Add column';
+      addBtn.addEventListener('click', function () { rows.push({ id: '', headerText: '', width: 100, readOnly: false, visible: true }); render(); });
+      pop.appendChild(addBtn);
+
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      function commit() {
+        closePopup();
+        if (JSON.stringify(rows) === original) return; // unchanged → no edit
+        var cols = rows.map(function (row) {
+          return { id: row.id || '', headerText: row.headerText || '', width: (typeof row.width === 'number' && !isNaN(row.width)) ? row.width : 100,
+            readOnly: !!row.readOnly, visible: row.visible !== false };
+        });
+        vscode.postMessage({ type: 'setGridColumns', id: id, gridColumns: cols });
+      }
+      okBtn.addEventListener('click', commit);
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel);
+      pop.appendChild(bar);
+    });
+  }
+
+  // ---- TreeView.Nodes: recursive hierarchical editor (VS "TreeNode Editor"). Nodes serialize as local vars, so a
+  // node's Id is its generated local name (empty = NEW); only Text (label) + Name (key) round-trip. ----
+  function treeNodesEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = 'Edit nodes…';
+    btn.addEventListener('click', function () {
+      pendingTreeNodes = { id: c.id, anchor: btn };
+      vscode.postMessage({ type: 'listTreeNodes', id: c.id });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  var _tnKey = 0;
+  function openTreeNodesPopup(anchor, id, ok, nodes, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop'); pop.classList.add('treeNodesPop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'TreeNodes'; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'This collection can’t be edited here (' + (reason || 'unsupported node') + ').';
+        pop.appendChild(note);
+        return;
+      }
+      // working copy of the forest; an empty id marks a NEW node the engine names on commit. `_k` is an ephemeral
+      // key for the expand/collapse state only — it is stripped before sending.
+      function clone(n) { return { _k: ++_tnKey, id: n.id || '', text: n.text || '', name: n.name || '', children: (n.children || []).map(clone) }; }
+      function strip(a) { return a.map(function (n) { return { id: n.id || '', text: n.text || '', name: n.name || '', children: strip(n.children) }; }); }
+      function fresh() { return { _k: ++_tnKey, id: '', text: '', name: '', children: [] }; }
+      var roots = (nodes || []).map(clone);
+      var original = JSON.stringify(strip(roots));
+      var expanded = {};
+      (function expandAll(a) { a.forEach(function (n) { if (n.children.length) { expanded[n._k] = true; expandAll(n.children); } }); })(roots);
+
+      var listEl = document.createElement('div'); listEl.className = 'columnsList treeNodesList';
+      pop.appendChild(listEl);
+      function mini(glyph, ttl, disabled, fn) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'colMini'; b.textContent = glyph; b.title = ttl;
+        if (disabled) b.disabled = true; else b.addEventListener('click', fn);
+        return b;
+      }
+      function rowEl(node, i, depth, arr, parentNode, parentList) {
+        var r = document.createElement('div'); r.className = 'columnsRow treeNodeRow'; r.style.marginLeft = (depth * 14) + 'px';
+        var hasKids = node.children.length > 0;
+        var tw = document.createElement('span'); tw.textContent = hasKids ? (expanded[node._k] ? '▾' : '▸') : '·';
+        tw.style.cssText = 'display:inline-block;width:1.1em;text-align:center;opacity:' + (hasKids ? '1' : '.3') + ';cursor:' + (hasKids ? 'pointer' : 'default');
+        if (hasKids) tw.addEventListener('click', function () { if (expanded[node._k]) delete expanded[node._k]; else expanded[node._k] = true; render(); });
+        var txt = document.createElement('input'); txt.type = 'text'; txt.className = 'colText'; txt.value = node.text; txt.placeholder = 'Node text';
+        txt.addEventListener('input', function () { node.text = txt.value; });
+        var nm = document.createElement('input'); nm.type = 'text'; nm.className = 'colText'; nm.value = node.name; nm.placeholder = '(name)'; nm.style.maxWidth = '6em';
+        nm.addEventListener('input', function () { node.name = nm.value; });
+        var addChild = mini('＋', 'Add child', false, function () { node.children.push(fresh()); expanded[node._k] = true; render(); });
+        var addSib = mini('＋⇢', 'Add sibling', false, function () { arr.splice(i + 1, 0, fresh()); render(); });
+        var indent = mini('»', 'Indent (make child of the node above)', i === 0, function () { var prev = arr[i - 1]; arr.splice(i, 1); prev.children.push(node); expanded[prev._k] = true; render(); });
+        var outdent = mini('«', 'Outdent (move up one level)', !parentNode, function () { var pidx = parentList.indexOf(parentNode); arr.splice(i, 1); parentList.splice(pidx + 1, 0, node); render(); });
+        var up = mini('↑', 'Move up', i === 0, function () { var t2 = arr[i - 1]; arr[i - 1] = arr[i]; arr[i] = t2; render(); });
+        var down = mini('↓', 'Move down', i === arr.length - 1, function () { var t2 = arr[i + 1]; arr[i + 1] = arr[i]; arr[i] = t2; render(); });
+        var del = mini('✕', 'Remove node (and its children)', false, function () { arr.splice(i, 1); render(); }); del.classList.add('colDel');
+        r.appendChild(tw); r.appendChild(txt); r.appendChild(nm);
+        r.appendChild(addChild); r.appendChild(addSib); r.appendChild(indent); r.appendChild(outdent); r.appendChild(up); r.appendChild(down); r.appendChild(del);
+        return r;
+      }
+      function walk(arr, depth, parentNode, parentList) {
+        arr.forEach(function (node, i) {
+          listEl.appendChild(rowEl(node, i, depth, arr, parentNode, parentList));
+          if (node.children.length && expanded[node._k]) walk(node.children, depth + 1, node, arr);
+        });
+      }
+      function render() {
+        listEl.textContent = '';
+        if (!roots.length) { var empty = document.createElement('div'); empty.className = 'columnsEmpty'; empty.textContent = '(no nodes)'; listEl.appendChild(empty); }
+        walk(roots, 0, null, null);
+      }
+      render();
+
+      var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'columnsAdd'; addBtn.textContent = '+ Add root node';
+      addBtn.addEventListener('click', function () { roots.push(fresh()); render(); });
+      pop.appendChild(addBtn);
+
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      function commit() {
+        closePopup();
+        if (JSON.stringify(strip(roots)) === original) return; // unchanged → no edit (avoids a spurious dirty/undo)
+        vscode.postMessage({ type: 'setTreeNodes', id: id, nodes: strip(roots) });
+      }
+      okBtn.addEventListener('click', commit);
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel);
+      pop.appendChild(bar);
+    });
+  }
+
   function propRow(c, p, t) {
     var comp = editable(p) ? COMPOSITE[p.type] : null;
     var parts = comp ? parseParts(p.value, comp.fields.length) : null;
@@ -926,9 +1334,19 @@
     var isOpen = canExpand && expandedProps.has(p.name);
 
     var tr = document.createElement('tr');
+    if (currentProp === p.name) tr.className = 'sel';
+    // selecting a row (click or keyboard focus into its editor) drives the description pane + the active highlight
+    tr.addEventListener('mousedown', function () { selectProp(p.name, tr); });
+    tr.addEventListener('focusin', function () { selectProp(p.name, tr); });
+    tr.addEventListener('contextmenu', function (ev) {
+      // right-click inside a value editor → let the browser's native Copy/Paste/Select-All menu through
+      var tgt = ev.target;
+      if (tgt && (/^(INPUT|TEXTAREA|SELECT)$/.test(tgt.tagName) || tgt.isContentEditable)) return;
+      ev.preventDefault(); selectProp(p.name, tr); openPropMenu(ev.clientX, ev.clientY, c, p);
+    });
     var nameTd = document.createElement('td');
-    nameTd.className = 'name' + (p.sourceExplicit ? ' set' : '');
-    nameTd.title = p.name;
+    nameTd.className = 'name' + (isNonDefault(p) ? ' set' : '');
+    nameTd.title = p.description || p.name;
     if (canExpand) {
       var tw = document.createElement('span'); tw.className = 'tw'; tw.textContent = isOpen ? '▾ ' : '▸ ';
       tw.addEventListener('click', function () {
@@ -945,6 +1363,16 @@
       // Image/Icon properties (resx-backed): preview swatch + Import…/(none) — no text field (value isn't a literal)
       valTd.className = 'val';
       valTd.appendChild(imageEditor(c, p));
+    } else if (p.isCollection) {
+      // a collection surfaced with a "…" editor. The value isn't a literal → no text field. String-item
+      // collections (ComboBox/ListBox/CheckedListBox.Items) open the one-item-per-line editor; a typed
+      // collection (ListView.Columns) opens the per-item grid editor.
+      valTd.className = 'val';
+      valTd.appendChild(
+        p.collectionItemType === COLUMN_ITEM_TYPE ? columnsEditor(c, p)
+        : p.collectionItemType === GRIDCOLUMN_ITEM_TYPE ? gridColumnsEditor(c, p)
+        : p.collectionItemType === TREENODE_ITEM_TYPE ? treeNodesEditor(c, p)
+        : collectionEditor(c, p));
     } else if (editable(p)) {
       valTd.className = 'val';
       if (isAnchor) {
@@ -1142,6 +1570,7 @@
   function renderActiveTab() {
     if (activeTab === 'props') renderProps(currentComponent, searchEl.value);
     else renderEvents(currentComponent, searchEl.value);
+    updateDescPane(); // keep the description pane in sync with the active tab (and any re-render)
   }
   function setTab(tab) {
     closePopup();
@@ -1201,13 +1630,41 @@
     } else if (m.type === 'props') {
       if (m.id !== currentId) return;
       var compId = m.component ? m.component.id : null;
-      if (!currentComponent || currentComponent.id !== compId) { closePopup(); eventCandidates = {}; candFetchedFor = null; }
+      if (!currentComponent || currentComponent.id !== compId) { closePopup(); eventCandidates = {}; candFetchedFor = null; currentProp = null; }
       currentComponent = m.component;
       setEmpty(!m.component);
       renderActiveTab();
       fetchCandidatesIfNeeded();
     } else if (m.type === 'candidates') {
       if (currentComponent && currentComponent.id === m.id) { eventCandidates = m.map || {}; if (activeTab === 'events') renderActiveTab(); }
+    } else if (m.type === 'collectionItems') {
+      // reply to a "…" click — open the string-collection editor anchored to the button that requested it
+      if (pendingCollection && pendingCollection.id === m.id && pendingCollection.prop === m.prop) {
+        var anchor = pendingCollection.anchor;
+        pendingCollection = null;
+        if (anchor && anchor.isConnected) openCollectionPopup(anchor, m.id, m.prop, !!m.ok, m.items || [], m.reason);
+      }
+    } else if (m.type === 'columnItems') {
+      // reply to a ListView.Columns "…" click — open the typed grid editor anchored to the requesting button
+      if (pendingColumns && pendingColumns.id === m.id) {
+        var colAnchor = pendingColumns.anchor;
+        pendingColumns = null;
+        if (colAnchor && colAnchor.isConnected) openColumnsPopup(colAnchor, m.id, !!m.ok, m.columns || [], m.reason);
+      }
+    } else if (m.type === 'gridColumnItems') {
+      // reply to a DataGridView.Columns "…" click — open the grid-column editor anchored to the requesting button
+      if (pendingGridColumns && pendingGridColumns.id === m.id) {
+        var gcAnchor = pendingGridColumns.anchor;
+        pendingGridColumns = null;
+        if (gcAnchor && gcAnchor.isConnected) openGridColumnsPopup(gcAnchor, m.id, !!m.ok, m.columns || [], m.reason);
+      }
+    } else if (m.type === 'treeNodeItems') {
+      // reply to a TreeView.Nodes "…" click — open the recursive tree editor anchored to the requesting button
+      if (pendingTreeNodes && pendingTreeNodes.id === m.id) {
+        var tnAnchor = pendingTreeNodes.anchor;
+        pendingTreeNodes = null;
+        if (tnAnchor && tnAnchor.isConnected) openTreeNodesPopup(tnAnchor, m.id, !!m.ok, m.nodes || [], m.reason);
+      }
     } else if (m.type === 'clear') {
       closePopup();
       controls = []; currentId = null; currentComponent = null; eventCandidates = {}; candFetchedFor = null;

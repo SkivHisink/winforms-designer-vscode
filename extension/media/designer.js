@@ -43,10 +43,70 @@
   function showOverlay(msg, isErr) { overlayEl.style.display = 'flex'; overlayEl.className = isErr ? 'err' : ''; overlayEl.textContent = msg; }
   function hideOverlay() { overlayEl.style.display = 'none'; }
 
+  // ---- T2.2: partial-render / failure diagnostics banner (top strip). 'warn' = constructs the (partial) render
+  // skipped, with an expandable categorized list; 'err' = a hard render failure while a prior render is kept on the
+  // canvas ("showing the last successful preview"). Dismiss latches a signature so the SAME problem-set doesn't
+  // re-nag across re-renders, but a CHANGED set (or a clean render) re-shows / resets. ----
+  var diagEl = document.getElementById('diag');
+  var diagMsgEl = document.getElementById('diagMsg');
+  var diagToggleEl = document.getElementById('diagToggle');
+  var diagListEl = document.getElementById('diagList');
+  var diagDismissEl = document.getElementById('diagDismiss');
+  var diagSig = '';             // signature of what's currently shown
+  var diagDismissedSig = null;  // signature the user dismissed (stay hidden while the next set matches it)
+  var diagExpanded = false;
+  var DIAG_MAX = 40;            // cap the rendered list; excess collapses to a "+N more" row
+  var CAT_LABEL = { missingType: 'designer.diag.cat.missingType', initError: 'designer.diag.cat.initError', unsupported: 'designer.diag.cat.unsupported' };
+  function diagSignature(mode, msg, items) {
+    // JSON-encode fields so field boundaries are unambiguous — a space/'|'/'\n'-joined key would let two different
+    // problem sets collide ("a b"+"c" == "a"+"b c") and wrongly keep a banner dismissed for a DIFFERENT set.
+    var parts = items.map(function (i) { return JSON.stringify([i.category, i.text, i.detail]); });
+    parts.sort();
+    return JSON.stringify([mode, msg, parts]);
+  }
+  function hideDiag() { if (diagEl) diagEl.style.display = 'none'; }
+  function renderDiagList(items) {
+    diagListEl.textContent = '';
+    var n = Math.min(items.length, DIAG_MAX);
+    for (var i = 0; i < n; i++) {
+      var it = items[i];
+      var li = document.createElement('li');
+      var cat = document.createElement('span'); cat.className = 'diagCat';
+      cat.textContent = T(CAT_LABEL[it.category] || CAT_LABEL.unsupported);
+      li.appendChild(cat);
+      li.appendChild(document.createTextNode(it.text || ''));   // engine text / user code — textContent, never innerHTML
+      if (it.detail) { var d = document.createElement('span'); d.className = 'diagDetail'; d.textContent = ' — ' + it.detail; li.appendChild(d); }
+      diagListEl.appendChild(li);
+    }
+    if (items.length > n) {
+      var more = document.createElement('li'); more.textContent = T('designer.diag.more', { n: items.length - n }); more.style.opacity = '.7';
+      diagListEl.appendChild(more);
+    }
+  }
+  function showDiag(mode, msg, items) {
+    if (!diagEl) return;
+    var sig = diagSignature(mode, msg, items);
+    if (sig === diagDismissedSig) { hideDiag(); return; }   // user dismissed this exact set → stay hidden
+    diagSig = sig;
+    diagEl.className = mode;                                  // 'warn' | 'err'
+    diagMsgEl.textContent = msg;
+    diagExpanded = false;
+    if (items.length) { renderDiagList(items); diagToggleEl.textContent = T('designer.diag.details'); diagToggleEl.style.display = ''; }
+    else { diagListEl.textContent = ''; diagToggleEl.style.display = 'none'; }
+    diagListEl.style.display = 'none';
+    diagEl.style.display = '';
+  }
+  if (diagToggleEl) diagToggleEl.addEventListener('click', function () {
+    diagExpanded = !diagExpanded;
+    diagListEl.style.display = diagExpanded ? '' : 'none';
+    diagToggleEl.textContent = T(diagExpanded ? 'designer.diag.hide' : 'designer.diag.details');
+  });
+  if (diagDismissEl) diagDismissEl.addEventListener('click', function () { diagDismissedSig = diagSig; hideDiag(); });
+
   var controls = [];      // innermost-first (engine order)
   var current = null;     // primary selection id (drives the Properties panel + resize handles)
   var selection = [];     // all selected ids (multi-select); always contains `current` when non-empty
-  var tray = [];          // non-visual components (§7.3 component tray)
+  var tray = [];          // non-visual components (component tray)
   var trayEl = document.getElementById('tray');
   // tab-order editing (Phase 2): click controls in sequence to renumber TabIndex
   var tabOrderMode = false;
@@ -54,13 +114,22 @@
   var tabBadges = [];
   var tabOrderEl = document.getElementById('tabOrder');
   var alignEl = document.getElementById('align');
+  var centerFormEl = document.getElementById('centerForm');
 
   // ---- direct manipulation (drag-to-move + resize) ----
   var canMove = false;     // can the primary selection be moved (set by the host's 'manip' message)
   var canResize = false;   // can it be resized
   var drag = null;         // active move/resize gesture
   var band = null;         // active rubber-band selection gesture
+  var nudge = null;        // in-progress keyboard-nudge series (arrow keys) — debounced into ONE commit/undo
+  var NUDGE_GRID = 8;      // Ctrl+Arrow step (VS default designer grid); plain Arrow = 1px
+  var NUDGE_COMMIT_MS = 250; // idle after the last arrow key before the accumulated nudge is committed
   var suppressClick = false; // swallow the click that ENDS a drag/band so it doesn't re-select
+  // ---- Lock Controls (VS): a locked control can't be moved/resized/nudged by mouse. SESSION-ONLY — webview state,
+  // no engine / no .resx persistence yet (resets on reload); the "Lock Controls" menu toggles ALL controls, as VS does.
+  var lockedIds = {};      // { id: true } for locked controls
+  function isLocked(id) { return !!lockedIds[id]; }
+  function selectionHasLocked() { var s = selectableIds(); for (var i = 0; i < s.length; i++) { if (isLocked(s[i])) return true; } return false; }
   var HANDLE_DIRS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
   var handles = {};
   HANDLE_DIRS.forEach(function (dir) {
@@ -69,8 +138,9 @@
     h.style.display = 'none';
     h.addEventListener('mousedown', function (e) {
       if (e.button !== 0) return; // left-button only — right-click opens the context menu, not a resize
-      if (drag || !canResize || selection.length > 1) return; // resize only with a single selection
+      if (drag || !canResize || selection.length > 1 || isLocked(current)) return; // resize only: single, unlocked selection
       var c = findControl(current); if (!c) return;
+      if (nudge) flushNudge(); // commit any pending keyboard-nudge before a handle-drag (handles bypass canvas mousedown)
       drag = { mode: 'resize', dir: dir, startX: e.clientX, startY: e.clientY, orig: { x: c.x, y: c.y, w: c.width, h: c.height } };
       e.preventDefault(); e.stopPropagation();
     });
@@ -98,6 +168,20 @@
     while (containerEls.length <= i) { var d = document.createElement('div'); d.className = 'containeroutline'; d.style.display = 'none'; surfaceWrap.appendChild(d); containerEls.push(d); }
     return containerEls[i];
   }
+  // ---- hover pre-selection hint (VS-style): a thin outline over the control a click WOULD select, so dense /
+  // nested layouts show the click target before you commit. Pure overlay; no engine, no selection change. ----
+  var hoverEl = null;
+  function ensureHover() { if (!hoverEl) { hoverEl = document.createElement('div'); hoverEl.className = 'hoverhint'; hoverEl.style.display = 'none'; surfaceWrap.appendChild(hoverEl); } return hoverEl; }
+  function hideHover() { if (hoverEl) hoverEl.style.display = 'none'; }
+  function showHover(id) {
+    var c = id ? findControl(id) : null;
+    // skip the root, the already-selected control(s), and any active gesture / tab-order mode
+    if (!c || c.isRoot || c.id === 'this' || selection.indexOf(id) >= 0 || drag || band || tabOrderMode) { hideHover(); return; }
+    ensureHover();
+    hoverEl.style.display = 'block';
+    hoverEl.style.left = (c.x * zoom) + 'px'; hoverEl.style.top = (c.y * zoom) + 'px';
+    hoverEl.style.width = Math.max(0, c.width * zoom - 2) + 'px'; hoverEl.style.height = Math.max(0, c.height * zoom - 2) + 'px';
+  }
   // ---- container outlines: a persistent dashed border around every control that HOLDS children (VS shows layout
   // containers this way). "Is a parent of >=1 visible control" is robust across control libraries (no type list);
   // hidden-tab children are already dropped by the engine, so only on-surface containers get outlined. ----
@@ -120,7 +204,7 @@
   function findControl(id) { for (var i = 0; i < controls.length; i++) { if (controls[i].id === id) return controls[i]; } return null; }
   function findTray(id) { for (var i = 0; i < tray.length; i++) { if (tray[i].id === id) return tray[i]; } return null; }
 
-  // ---- component tray (§7.3): non-visual components as a strip below the surface; click to select ----
+  // ---- component tray: non-visual components as a strip below the surface; click to select ----
   function renderTray() {
     if (!trayEl) return;
     trayEl.innerHTML = '';
@@ -272,20 +356,28 @@
   // position the primary selection box (#sel) + its handles for `id`
   function positionPrimary(id) {
     var c = findControl(id);
-    if (!c) { selBox.style.display = 'none'; return; }
+    if (!c) { selBox.style.display = 'none'; if (lockBadgeEl) lockBadgeEl.style.display = 'none'; return; } // e.g. a tray component is current
     selBox.style.display = 'block';
     selBox.style.left = (c.x * zoom) + 'px'; selBox.style.top = (c.y * zoom) + 'px';
     selBox.style.width = Math.max(0, c.width * zoom - 2) + 'px'; selBox.style.height = Math.max(0, c.height * zoom - 2) + 'px';
     var formOnly = c.isRoot || c.id === 'this';
-    var showHandles = canResize && selection.length <= 1;
+    var locked = isLocked(id) && !formOnly;   // a locked control shows no grab handles (VS: locked = not sizeable)
+    selBox.classList.toggle('locked', locked);
+    var showHandles = canResize && selection.length <= 1 && !locked;
     HANDLE_DIRS.forEach(function (dir) {
       var show = showHandles && (!formOnly || dir === 'e' || dir === 's' || dir === 'se');
       handles[dir].style.display = show ? 'block' : 'none';
     });
+    // lock glyph pinned to the control's top-left corner (VS-style lock affordance)
+    ensureLockBadge();
+    if (locked) { lockBadgeEl.style.display = 'block'; lockBadgeEl.style.left = (c.x * zoom) + 'px'; lockBadgeEl.style.top = (c.y * zoom) + 'px'; }
+    else lockBadgeEl.style.display = 'none';
   }
+  var lockBadgeEl = null;
+  function ensureLockBadge() { if (!lockBadgeEl) { lockBadgeEl = document.createElement('div'); lockBadgeEl.className = 'lockbadge'; lockBadgeEl.textContent = '🔒'; lockBadgeEl.title = T('designer.menu.lockControls'); lockBadgeEl.style.display = 'none'; surfaceWrap.appendChild(lockBadgeEl); } return lockBadgeEl; }
   // render the WHOLE selection: primary box + handles, outline boxes for the rest, name/Delete state.
   function renderSelection() {
-    if (!current) { selBox.style.display = 'none'; }
+    if (!current) { selBox.style.display = 'none'; if (lockBadgeEl) lockBadgeEl.style.display = 'none'; }
     else positionPrimary(current);
     var n = 0;
     for (var i = 0; i < selection.length; i++) {
@@ -303,7 +395,16 @@
     if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0;
     // the align/distribute/same-size tools apply only to a live 2+ selection on a rendered form — never show
     // them before the first render or while (re)loading (a stale retained selection would otherwise flash them)
-    if (alignEl) alignEl.style.display = (hasRendered && selection.length >= 2) ? '' : 'none';
+    // ...and never while the selection contains a locked control (align/distribute/make-same-size would move/resize it)
+    var locked = selectionHasLocked();
+    if (alignEl) alignEl.style.display = (hasRendered && selection.length >= 2 && !locked) ? '' : 'none';
+    // center-in-form works on a single control too (centers it in its parent), so it shows from 1+ selection —
+    // but only when a VISUAL control is selected (a non-visual tray component has no bounds to center), never locked
+    if (centerFormEl) {
+      var hasVisualSel = false, sids = selectableIds();
+      for (var ci = 0; ci < sids.length; ci++) { if (findControl(sids[ci])) { hasVisualSel = true; break; } }
+      centerFormEl.style.display = (hasRendered && hasVisualSel && !locked) ? '' : 'none';
+    }
     renderContainers();
     renderTabBadges();
     renderAnchors();
@@ -564,6 +665,19 @@
     if (el) el.addEventListener('click', function () { sameSizeSelected(pair[1]); });
   });
 
+  // ---- center-in-form (VS Format → Center Horizontally / Vertically): center the selection's bounding box within
+  // the parent's client area along one axis, preserving relative positions. Computed HOST-SIDE: the form's client
+  // origin within the window chrome is asymmetric (caption ≫ side border) and only known to the host, so a webview
+  // window-space center would place a vertical center ~half-a-caption too high. We forward the axis + selection. ----
+  function centerInForm(axis) { // 'h' (horizontal) | 'v' (vertical)
+    var ids = selectableIds();
+    if (ids.length) vscode.postMessage({ type: 'centerInForm', axis: axis, ids: ids });
+  }
+  [['centerFormH', 'h'], ['centerFormV', 'v']].forEach(function (pair) {
+    var el = document.getElementById(pair[0]);
+    if (el) el.addEventListener('click', function () { centerInForm(pair[1]); });
+  });
+
   function hitTest(px, py) {
     for (var i = 0; i < controls.length; i++) {
       var c = controls[i];
@@ -652,6 +766,32 @@
     }
     return { x: sx, y: sy, guides: guides };
   }
+  // ---- resize snaplines: snap only the edge(s) being dragged to sibling edges/centers (the fixed edges stay
+  // put). Mirrors the move-snap sibling scan but per moving edge, so resizing a control aligns its dragged edge
+  // to neighbours the same way moving aligns the whole control. Single-selection only (resize handles require it).
+  function computeResizeSnap(o, dir, movingId) {
+    var moving = findControl(movingId);
+    var parentId = moving ? moving.parentId : null;
+    var rx = o.x, ry = o.y, rw = o.w, rh = o.h;
+    var xl = [], yl = []; // candidate lines paired with the sibling that owns them, so a guide can reach it (move-snap parity)
+    for (var i = 0; i < controls.length; i++) {
+      var s = controls[i];
+      if (s.id === movingId || s.parentId !== parentId || selection.indexOf(s.id) >= 0) continue; // siblings only
+      xl.push({ v: s.x, s: s }, { v: s.x + s.width / 2, s: s }, { v: s.x + s.width, s: s });
+      yl.push({ v: s.y, s: s }, { v: s.y + s.height / 2, s: s }, { v: s.y + s.height, s: s });
+    }
+    function nearest(val, lines) {
+      var best = null;
+      for (var i = 0; i < lines.length; i++) { var d = lines[i].v - val; if (Math.abs(d) <= SNAP_T && (!best || Math.abs(d) < Math.abs(best.d))) best = { d: d, line: lines[i].v, s: lines[i].s }; }
+      return best;
+    }
+    var guides = [];
+    if (dir.indexOf('e') >= 0) { var be = nearest(rx + rw, xl); if (be) { rw = Math.max(4, rw + be.d); guides.push({ vert: true, x: be.line, a: Math.min(ry, be.s.y), b: Math.max(ry + rh, be.s.y + be.s.height) }); } }
+    if (dir.indexOf('w') >= 0) { var bw = nearest(rx, xl); if (bw) { var right = rx + rw; rx = rx + bw.d; rw = Math.max(4, right - rx); guides.push({ vert: true, x: bw.line, a: Math.min(ry, bw.s.y), b: Math.max(ry + rh, bw.s.y + bw.s.height) }); } }
+    if (dir.indexOf('s') >= 0) { var bs = nearest(ry + rh, yl); if (bs) { rh = Math.max(4, rh + bs.d); guides.push({ vert: false, y: bs.line, a: Math.min(rx, bs.s.x), b: Math.max(rx + rw, bs.s.x + bs.s.width) }); } }
+    if (dir.indexOf('n') >= 0) { var bn = nearest(ry, yl); if (bn) { var bottom = ry + rh; ry = ry + bn.d; rh = Math.max(4, bottom - ry); guides.push({ vert: false, y: bn.line, a: Math.min(rx, bn.s.x), b: Math.max(rx + rw, bn.s.x + bn.s.width) }); } }
+    return { x: rx, y: ry, w: rw, h: rh, guides: guides };
+  }
   function drawGuides(guides) {
     clearGuides();
     for (var i = 0; i < guides.length; i++) {
@@ -733,13 +873,15 @@
 
   canvas.addEventListener('mousedown', function (e) {
     if (e.button !== 0) return; // left-button only — right-click opens the context menu
+    if (nudge) flushNudge(); // a new gesture ends the current nudge series (commit before selection can change)
     if (tabOrderMode) return; // no drag/select in tab-order mode
     if (!controls.length || drag || band) return;
+    hideHover(); // a new gesture starts — drop the pre-select hint
     var sx = e.offsetX / zoom, sy = e.offsetY / zoom;
     var id = hitTest(sx, sy);
     var mdc = id ? findControl(id) : null;
     // a tab host never starts a move-drag: its header must stay clickable so tab-switching (tabClick) fires
-    if (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove && !(mdc && mdc.isTabHost)) {
+    if (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove && !selectionHasLocked() && !(mdc && mdc.isTabHost)) {
       // (group) move: snapshot every selected control's rect so they translate together
       var items = [];
       for (var i = 0; i < selection.length; i++) { var c = findControl(selection[i]); if (c) items.push({ id: c.id, x: c.x, y: c.y, w: c.width, h: c.height }); }
@@ -758,8 +900,10 @@
   canvas.addEventListener('mousemove', function (e) {
     if (drag || band) return;
     var id = hitTest(e.offsetX / zoom, e.offsetY / zoom);
-    canvas.style.cursor = (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove) ? 'move' : 'default';
+    canvas.style.cursor = (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove && !selectionHasLocked()) ? 'move' : 'default';
+    showHover(id);
   });
+  canvas.addEventListener('mouseleave', hideHover);
 
   function bandRect() {
     var r = canvas.getBoundingClientRect();
@@ -796,6 +940,9 @@
         if (dir.indexOf('s') >= 0) rh = Math.max(4, o.h + dy);
         if (dir.indexOf('w') >= 0) { rw = Math.max(4, o.w - dx); rx = o.x + (o.w - rw); }
         if (dir.indexOf('n') >= 0) { rh = Math.max(4, o.h - dy); ry = o.y + (o.h - rh); }
+        var rsnap = computeResizeSnap({ x: rx, y: ry, w: rw, h: rh }, dir, current);
+        rx = rsnap.x; ry = rsnap.y; rw = rsnap.w; rh = rsnap.h;
+        drawGuides(rsnap.guides);
         drag.cur = { x: rx, y: ry, w: rw, h: rh };
         selBox.style.left = (rx * zoom) + 'px'; selBox.style.top = (ry * zoom) + 'px';
         selBox.style.width = Math.max(0, rw * zoom - 2) + 'px'; selBox.style.height = Math.max(0, rh * zoom - 2) + 'px';
@@ -859,18 +1006,83 @@
 
   // View Code / Save toolbar buttons were removed: F7 opens the code-behind, Ctrl+S saves (native custom editor).
   function doDelete() {
+    if (nudge) flushNudge(); // commit a pending keyboard-nudge before it races this action's document change
     var ids = selectableIds();
     if (!ids.length || drag) return;
     if (ids.length > 1) vscode.postMessage({ type: 'removeControls', ids: ids });
     else vscode.postMessage({ type: 'removeControl', id: ids[0] });
   }
   if (deleteCtlEl) deleteCtlEl.addEventListener('click', doDelete);
+  // ---- duplicate (VS Ctrl+D): clone the selection in place (offset by the engine's paste nudge) WITHOUT
+  // touching the Cut/Copy clipboard. The host copies each source to a temp blob and pastes it into the source's
+  // own parent, one undo unit; the last clone is selected so repeated Ctrl+D cascades, as in VS. ----
+  function doDuplicate() {
+    if (nudge) flushNudge(); // commit a pending keyboard-nudge so the clone copies the nudged position, not a stale one
+    var ids = selectableIds();
+    if (!ids.length || drag) return;
+    vscode.postMessage({ type: 'duplicate', ids: ids });
+  }
+  // ---- Lock Controls (VS "Lock Controls"): flip the locked state of every control on the form (session-only). Locked
+  // controls drop their grab handles + a lock glyph appears, and mouse move/resize/nudge is blocked. No engine/persist. ----
+  function toggleLockAll(ids, lock) {
+    for (var i = 0; i < ids.length; i++) { if (lock) lockedIds[ids[i]] = true; else delete lockedIds[ids[i]]; }
+    if (lock) canvas.style.cursor = 'default'; // the menu overlay swallows mousemove — drop a stale 'move' cursor now
+    renderSelection();
+  }
   document.addEventListener('keydown', function (e) {
     if (e.key === 'F7') { e.preventDefault(); vscode.postMessage({ type: 'viewCode' }); return; } // VS: F7 = designer → code
     if (e.key !== 'Delete' && e.key !== 'Del') return;
     var ae = document.activeElement;
     if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
     e.preventDefault(); doDelete();
+  });
+
+  // ---- keyboard nudge (VS: Arrow=move 1px, Ctrl+Arrow=grid step, Shift+Arrow=resize) ----
+  // The most-used designer gesture. Moves/resizes optimistically (selection box follows) and commits the WHOLE
+  // key series as ONE edit through the existing manipulate/manipulateGroup paths → one undo, one re-render.
+  function flushNudge() {
+    if (!nudge) return;
+    var n = nudge; nudge = null;
+    if (n.timer) { clearTimeout(n.timer); n.timer = null; }
+    if (n.mode === 'move') {
+      if (n.ids.length > 1) vscode.postMessage({ type: 'manipulateGroup', ids: n.ids, dx: n.dx, dy: n.dy });
+      else { var c = findControl(n.ids[0]); if (c) vscode.postMessage({ type: 'manipulate', id: n.ids[0], mode: 'move', x: c.x, y: c.y, width: c.width, height: c.height }); }
+    } else { // resize — single selection only
+      var rc = findControl(n.ids[0]); if (rc) vscode.postMessage({ type: 'manipulate', id: n.ids[0], mode: 'resize', x: rc.x, y: rc.y, width: rc.width, height: rc.height });
+    }
+    setStatus(T('designer.status.committing'));
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key.indexOf('Arrow') !== 0) return; // ArrowLeft/Right/Up/Down
+    var ae = document.activeElement;
+    if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return; // don't hijack arrows while typing
+    if (drag || band || tabOrderMode) return;
+    var ids = selectableIds();
+    if (!ids.length) return;
+    for (var li = 0; li < ids.length; li++) { if (isLocked(ids[li])) return; } // a locked control can't be nudged
+    var resize = e.shiftKey;
+    if (resize) { if (ids.length > 1 || !canResize) return; }  // resize: single, resizable selection only
+    else if (!canMove) return;                                 // move: respect the host's movability gate
+    e.preventDefault();
+    var step = (e.ctrlKey || e.metaKey) ? NUDGE_GRID : 1;
+    var dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+    var dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+    if (!dx && !dy) return;
+    var mode = resize ? 'resize' : 'move';
+    // a change of mode or selection starts a fresh undo series
+    if (nudge && (nudge.mode !== mode || nudge.ids.join(',') !== ids.join(','))) flushNudge();
+    if (!nudge) nudge = { mode: mode, ids: ids.slice(), dx: 0, dy: 0, timer: null };
+    if (resize) {
+      var c = findControl(ids[0]); if (!c) return;
+      c.width = Math.max(4, c.width + dx);
+      c.height = Math.max(4, c.height + dy);
+    } else {
+      for (var i = 0; i < ids.length; i++) { var cc = findControl(ids[i]); if (cc) { cc.x += dx; cc.y += dy; } }
+      nudge.dx += dx; nudge.dy += dy;
+    }
+    renderSelection();
+    if (nudge.timer) clearTimeout(nudge.timer);
+    nudge.timer = setTimeout(flushNudge, NUDGE_COMMIT_MS);
   });
 
   function setDirty(d) { if (dirtyEl) dirtyEl.textContent = d ? T('designer.dirtyBadge') : ''; if (saveEl) saveEl.disabled = !d; }
@@ -891,16 +1103,18 @@
     else vscode.postMessage({ type: front ? 'bringToFront' : 'sendToBack', id: ids[0] });
   }
   function doCopy() {
+    if (nudge) flushNudge();
     var ids = selectableIds(); if (!ids.length) return;
     if (ids.length > 1) vscode.postMessage({ type: 'copyControls', ids: ids });
     else vscode.postMessage({ type: 'copy', id: ids[0] });
   }
   function doCut() {
+    if (nudge) flushNudge();
     var ids = selectableIds(); if (!ids.length) return;
     if (ids.length > 1) vscode.postMessage({ type: 'cutControls', ids: ids });
     else vscode.postMessage({ type: 'cut', id: ids[0] });
   }
-  function doPaste() { vscode.postMessage({ type: 'paste', id: current || 'this' }); }
+  function doPaste() { if (nudge) flushNudge(); vscode.postMessage({ type: 'paste', id: current || 'this' }); }
 
   function buildCtxMenu() {
     var ids = selectableIds();
@@ -918,7 +1132,14 @@
     menu.push({ label: T('designer.menu.sendToBack'), disabled: !canZ, act: function () { zorder(false); } });
     menu.push({ sep: 1 });
     menu.push({ label: T('designer.menu.alignToGrid'), disabled: true });   // no snap-to-grid → disabled, as in VS
-    menu.push({ label: T('designer.menu.lockControls'), disabled: true });   // design-time Locked persistence not supported yet
+    // Lock Controls (VS): toggles ALL controls on the form. Session-only (webview state; no .resx persistence yet) —
+    // checked when every control is already locked. Disabled on an empty form (nothing to lock).
+    var lockable = [];
+    for (var lci = 0; lci < controls.length; lci++) { var lc = controls[lci]; if (!lc.isRoot && lc.id !== 'this') lockable.push(lc.id); }
+    var allLocked = lockable.length > 0;
+    for (var lk = 0; lk < lockable.length; lk++) { if (!isLocked(lockable[lk])) { allLocked = false; break; } }
+    menu.push({ label: T('designer.menu.lockControls'), disabled: lockable.length === 0, checked: allLocked,
+                act: function () { toggleLockAll(lockable, !allLocked); } });
     menu.push({ sep: 1 });
     menu.push({ label: T('designer.menu.allProperties'), act: function () { vscode.postMessage({ type: 'showProperties' }); } });
     if (!multi && subject) menu.push({ label: T('designer.menu.learnMore'), act: function () { vscode.postMessage({ type: 'learnMore', typeName: subject.type }); } });
@@ -951,6 +1172,7 @@
     menu.push({ label: T('designer.menu.cut'), acc: 'Ctrl+X', disabled: !canDelete, act: doCut });
     menu.push({ label: T('designer.menu.copy'), acc: 'Ctrl+C', disabled: !canDelete, act: doCopy });
     menu.push({ label: T('designer.menu.paste'), acc: 'Ctrl+V', disabled: !clipboardHas, act: doPaste });
+    menu.push({ label: T('designer.menu.duplicate'), acc: 'Ctrl+D', disabled: !canDelete, act: doDuplicate });
     menu.push({ sep: 1 });
     menu.push({ label: T('designer.menu.delete'), acc: 'Del', disabled: !canDelete, act: doDelete });
     menu.push({ sep: 1 });
@@ -965,7 +1187,7 @@
     items.forEach(function (mi) {
       if (mi.sep) { var s = document.createElement('div'); s.className = 'sep'; ctxEl.appendChild(s); return; }
       var d = document.createElement('div'); d.className = 'mi' + (mi.disabled ? ' disabled' : '');
-      d.innerHTML = '<span>' + escHtml(mi.label) + '</span>' + (mi.acc ? '<span class="acc">' + escHtml(mi.acc) + '</span>' : '');
+      d.innerHTML = '<span><span style="display:inline-block;width:1.1em">' + (mi.checked ? '✓' : '') + '</span>' + escHtml(mi.label) + '</span>' + (mi.acc ? '<span class="acc">' + escHtml(mi.acc) + '</span>' : '');
       if (!mi.disabled && mi.act) d.addEventListener('click', function () { closeCtx(); mi.act(); });
       ctxEl.appendChild(d);
     });
@@ -1007,6 +1229,7 @@
     if (k === 'x') { e.preventDefault(); doCut(); }
     else if (k === 'c') { e.preventDefault(); doCopy(); }
     else if (k === 'v') { e.preventDefault(); doPaste(); }
+    else if (k === 'd') { e.preventDefault(); doDuplicate(); } // VS: Ctrl+D = Duplicate
   });
 
   window.addEventListener('message', function (e) {
@@ -1018,6 +1241,7 @@
       controls = m.controls || [];
       // drop any selected ids that no longer exist (e.g. after a remove), keeping tray ids
       selection = selection.filter(function (id) { return findControl(id) || findTray(id); });
+      for (var lid in lockedIds) { if (Object.prototype.hasOwnProperty.call(lockedIds, lid) && !findControl(lid)) delete lockedIds[lid]; } // prune locks for removed controls
       if (current && !findControl(current) && !findTray(current)) current = selection.length ? selection[selection.length - 1] : null;
       renderSelection();
     } else if (m.type === 'tray') {
@@ -1050,8 +1274,19 @@
       // Delete pressed while focus was in the side panel (Toolbox/Properties tab); this canvas owns the
       // selection, so run the same delete path as the local Delete key / toolbar button.
       doDelete();
+    } else if (m.type === 'renderDiag') {
+      // posted after every successful render: non-empty → warn banner listing what the partial render skipped;
+      // empty → this render is clean, hide the banner and reset the dismiss latch so future issues re-surface.
+      var diagItems = m.items || [];
+      if (diagItems.length) showDiag('warn', TN('designer.diag.skipped', diagItems.length), diagItems);
+      else { diagDismissedSig = null; hideDiag(); }
     } else if (m.type === 'error') {
       if (!hasRendered) showOverlay(T('designer.overlay.designerError', { message: m.message }), true);
+      // A prior render is on the canvas. Only a real RENDER failure (m.renderFailure, set by the host's fail()/
+      // frameworkUnbuilt paths) means the shown preview is stale → persistent "last successful preview" err banner
+      // that the next clean render clears. A failed user ACTION (edit/move/paste RPC error) is NOT a render failure —
+      // the canvas is intact — so surface it as the unobtrusive footer status, not a scary stale-preview banner.
+      else if (m.renderFailure) showDiag('err', T('designer.diag.stalePreview', { message: m.message }), []);
       else setStatus(T('designer.status.error', { message: m.message }));
     }
   });

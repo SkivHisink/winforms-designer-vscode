@@ -70,6 +70,16 @@ namespace WinFormsDesigner.Engine.Net48
                 return SetPropCli(args, sdesigner);
             }
 
+            if (Has(args, "--setcoll", out string? scdesigner) && scdesigner != null)
+            {
+                return SetCollCli(args, scdesigner);
+            }
+
+            if (Has(args, "--setnodes", out string? sndesigner) && sndesigner != null)
+            {
+                return SetNodesCli(args, sndesigner);
+            }
+
             if (Has(args, "--remove", out string? rdesigner) && rdesigner != null)
             {
                 string? rasm = Value(args, "--asm");
@@ -281,6 +291,84 @@ namespace WinFormsDesigner.Engine.Net48
             }
         }
 
+        /// <summary>Headless self-test for the live collection reconstruction (T1.1b): rebuild owner.propName from
+        /// comma-separated --items (each token becomes one item's Text) + report the new render. Exercises the whole
+        /// path (DomainManager → child AppDomain → STA → typed Clear/Add) for string Items and column header text.</summary>
+        private static int SetCollCli(string[] args, string designer)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            string id = Value(args, "--id") ?? "this";
+            string? prop = Value(args, "--prop");
+            string itemType = Value(args, "--itemtype") ?? "System.String";
+            string itemsCsv = Value(args, "--items") ?? "";
+            if (prop == null) { Console.Error.WriteLine("--prop <name> required"); return 5; }
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            var items = itemsCsv.Length == 0
+                ? Array.Empty<LiveCollItem>()
+                : itemsCsv.Split(',').Select(s => new LiveCollItem { Text = s }).ToArray();
+
+            var api = new EngineApi();
+            try
+            {
+                var r = api.SetCompiledCollectionLive(designer, asm, id, prop, itemType, items, null, probes);
+                Console.WriteLine($"[setcoll] applied={r.Applied} type={itemType} items={items.Length} size={r.Width}x{r.Height} png={r.Png.Length}B{(r.Diagnostics.Length > 0 ? " diag=" + r.Diagnostics : "")}");
+                return r.Applied ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                for (var e = ex; e != null; e = e.InnerException)
+                    Console.Error.WriteLine($"[setcoll] {e.GetType().FullName}: {e.Message}");
+                return 4;
+            }
+        }
+
+        /// <summary>Headless self-test for the net48 live node picture: rebuild the TreeView owner.propName (Nodes) on
+        /// the live compiled instance from <c>--nodes</c> and report the new render. The mini-syntax is a comma list of
+        /// roots, each optionally "text&gt;child1;child2" (one child level, ';'-separated) so the recursion path is
+        /// exercised — e.g. <c>--nodes "Fruits&gt;Apple;Banana,Vegetables&gt;Carrot"</c>. Drives the whole path
+        /// (DomainManager → child AppDomain → STA → TreeNodeCollection Clear/recursive Add) + the LiveTreeNode DTO
+        /// serialization across the domain boundary.</summary>
+        private static int SetNodesCli(string[] args, string designer)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            string id = Value(args, "--id") ?? "this";
+            string prop = Value(args, "--prop") ?? "Nodes";
+            string nodesSpec = Value(args, "--nodes") ?? "";
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            var nodes = ParseNodesSpec(nodesSpec);
+
+            var api = new EngineApi();
+            try
+            {
+                var r = api.SetCompiledTreeNodesLive(designer, asm, id, prop, nodes, null, probes);
+                Console.WriteLine($"[setnodes] applied={r.Applied} roots={nodes.Length} size={r.Width}x{r.Height} png={r.Png.Length}B{(r.Diagnostics.Length > 0 ? " diag=" + r.Diagnostics : "")}");
+                return r.Applied ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                for (var e = ex; e != null; e = e.InnerException)
+                    Console.Error.WriteLine($"[setnodes] {e.GetType().FullName}: {e.Message}");
+                return 4;
+            }
+        }
+
+        /// <summary>Parse the <c>--nodes</c> mini-syntax into a LiveTreeNode forest (one child level): roots are
+        /// comma-separated; a root "text&gt;a;b" gets children a, b. Empty → an empty forest (clears the tree).</summary>
+        private static LiveTreeNode[] ParseNodesSpec(string spec)
+        {
+            if (string.IsNullOrEmpty(spec)) return Array.Empty<LiveTreeNode>();
+            return spec.Split(',').Select(rootSpec =>
+            {
+                var parts = rootSpec.Split('>');
+                var children = parts.Length > 1
+                    ? parts[1].Split(';').Where(s => s.Length > 0).Select(s => new LiveTreeNode { Text = s }).ToArray()
+                    : Array.Empty<LiveTreeNode>();
+                return new LiveTreeNode { Text = parts[0], Children = children };
+            }).ToArray();
+        }
+
         private static bool Has(string[] args, string flag, out string? value)
         {
             for (int i = 0; i < args.Length; i++)
@@ -367,6 +455,44 @@ namespace WinFormsDesigner.Engine.Net48
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
             return worker.SetPropertyLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId, propName, rawValue ?? "");
+        }
+
+        /// <summary>Reset ONE property on the live compiled instance to its default (pd.ResetValue) + re-render — the
+        /// picture half of a per-property Reset. The persisted text delete is the host's job (net9 splice); this
+        /// returns the fresh picture + layout so the net48 preview matches the now-default value.</summary>
+        public RenderLayoutResult ResetCompiledPropertyLive(string designerFilePath, string assemblyPath, string componentId,
+            string propName, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.ResetPropertyLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId, propName);
+        }
+
+        /// <summary>Reconstruct a typed collection (string Items / ListView.Columns / DataGridView.Columns) on the live
+        /// compiled instance from the net9-committed item data + re-render — the net48 live picture for the "…" collection
+        /// editor (T1.1b). itemType is the describe CollectionItemType. Applied=false + a reason when it can't be rebuilt
+        /// live (bound/unsupported); the persisted text still renders after a rebuild.</summary>
+        public RenderLayoutResult SetCompiledCollectionLive(string designerFilePath, string assemblyPath, string componentId,
+            string propName, string itemType, LiveCollItem[] items, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.SetCollectionLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId,
+                propName ?? "", itemType ?? "", items ?? Array.Empty<LiveCollItem>());
+        }
+
+        /// <summary>Reconstruct a TreeView's Nodes on the live compiled instance from the net9-committed node forest +
+        /// re-render — the net48 live picture for the hierarchical "…" TreeNode editor (the TreeView analogue of
+        /// <see cref="SetCompiledCollectionLive"/>). The host sends its recursive TreeNodeItem shape (id/text/name/children);
+        /// only text/name/children are read (`id` is ignored on deserialize). Applied=false + a reason when it can't be
+        /// rebuilt live (a DevExpress TreeList's non-TreeNodeCollection Nodes); the persisted text renders after a rebuild.</summary>
+        public RenderLayoutResult SetCompiledTreeNodesLive(string designerFilePath, string assemblyPath, string componentId,
+            string propName, LiveTreeNode[] nodes, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.SetTreeNodesLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId,
+                string.IsNullOrEmpty(propName) ? "Nodes" : propName, nodes ?? Array.Empty<LiveTreeNode>());
         }
 
         /// <summary>Apply a BATCH of property edits to the live instance + re-render once (drag/resize/align).</summary>

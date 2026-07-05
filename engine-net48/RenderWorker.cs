@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -53,6 +54,13 @@ namespace WinFormsDesigner.Engine.Net48
         private Assembly? OnResolve(object sender, ResolveEventArgs e)
         {
             string simple = new AssemblyName(e.Name).Name;
+            // Our OWN engine assembly (defining the [Serializable] DTOs PropEdit/LiveCollItem/… that cross the
+            // remoting boundary) was loaded into this child domain by PATH via CreateInstanceFromAndUnwrap, i.e.
+            // in the LoadFrom context — a cross-domain deserialization's Assembly.Load(fullName) looks in the
+            // (fixture's) ApplicationBase + GAC and won't find it, throwing "Type is not resolved for member …".
+            // Resolve it to the already-loaded instance so any DTO array (SetCollectionLive / ApplyEdits) round-trips.
+            var self = typeof(RenderWorker).Assembly;
+            if (string.Equals(simple, self.GetName().Name, StringComparison.OrdinalIgnoreCase)) return self;
             foreach (var dir in _probeDirs)
             {
                 foreach (var ext in new[] { ".dll", ".exe" })
@@ -90,6 +98,26 @@ namespace WinFormsDesigner.Engine.Net48
             return ApplyEdits(assemblyPath, rootTypeName, new[] { new PropEdit { ComponentId = componentId, PropName = propName, RawValue = rawValue } });
         }
 
+        /// <summary>Reset ONE property on the live instance to its default (pd.ResetValue) and re-render — the picture
+        /// half of a per-property Reset. The persisted text delete is the host's job (net9 splice). Applied=false + a
+        /// reason only when the property can't be resolved / is read-only / throws; a property with nothing to reset
+        /// (CanResetValue==false) is a benign success (the source delete still persists).</summary>
+        public RenderLayoutResult ResetPropertyLive(string assemblyPath, string rootTypeName, string componentId, string propName)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                var notes = new List<string>();
+                if (!TryReset(live, componentId ?? "this", propName ?? "", out string reason)) notes.Add(reason);
+                live.Root.PerformLayout();
+                Application.DoEvents();
+                var r = Snapshot(live);
+                r.Applied = notes.Count == 0;
+                if (notes.Count > 0) r.Diagnostics = string.Join("; ", notes);
+                return r;
+            });
+        }
+
         /// <summary>Apply N property edits to the live instance (each via its TypeConverter) and re-render once —
         /// the batch behind drag/resize/align. Applied=false + a joined reason when any edit couldn't be applied.</summary>
         public RenderLayoutResult ApplyEdits(string assemblyPath, string rootTypeName, PropEdit[] edits)
@@ -109,6 +137,146 @@ namespace WinFormsDesigner.Engine.Net48
                 if (notes.Count > 0) r.Diagnostics = string.Join("; ", notes);
                 return r;
             });
+        }
+
+        /// <summary>Reconstruct a typed collection (string Items / ListView.Columns / DataGridView.Columns) on the LIVE
+        /// instance from the same item data the net9 text editor committed, then re-render — so the net48 canvas shows
+        /// the edit immediately instead of the built collection (T1.1b; the persisted text is the net9 splice's truth).
+        /// The live collection is fully rebuilt (Clear + typed Add): the item DTO carries no concrete column type, so
+        /// new/rebuilt columns use the default type (ColumnHeader / DataGridViewTextBoxColumn) — the real typed columns
+        /// return from source on rebuild. Best-effort: any failure (bound/read-only collection) leaves the picture on
+        /// the built collection and returns Applied=false + a reason (host surfaces "renders fully after a rebuild").</summary>
+        public RenderLayoutResult SetCollectionLive(string assemblyPath, string rootTypeName, string componentId, string propName, string itemType, LiveCollItem[] items)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                bool isRoot = componentId == "this" || componentId.Length == 0;
+                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                try
+                {
+                    // Resolve the collection property via TypeDescriptor (mirrors TryApply/TryReset): its indexer returns
+                    // the most-derived descriptor and never throws AmbiguousMatchException on a `new`-shadowed property
+                    // (e.g. CheckedListBox re-declares Items) — a raw reflection GetProperty(name) would. The collection
+                    // (Items/Columns) is read-only, so mutate it in place (don't SetValue). Kept INSIDE the try so a
+                    // lookup/getter throw becomes an honest Applied=false note (previewPartial) instead of an RPC error.
+                    var pd = TypeDescriptor.GetProperties(owner)[propName];
+                    object? coll = pd?.GetValue(owner);
+                    if (coll == null) return Note(live, "no collection '" + propName + "' on " + componentId);
+                    switch (itemType)
+                    {
+                        case "System.String": RebuildStringItems(coll, items); break;
+                        case "System.Windows.Forms.ColumnHeader": RebuildListColumns(coll, items); break;
+                        case "System.Windows.Forms.DataGridViewColumn": RebuildGridColumns(coll, items); break;
+                        default: return Note(live, "unsupported collection item type: " + itemType);
+                    }
+                    live.Root.PerformLayout();
+                    Application.DoEvents();
+                    return Snapshot(live);
+                }
+                // unwrap TargetInvocationException / a bound-collection InvalidOperationException so the note is honest
+                catch (Exception ex) { return Note(live, "could not update " + propName + ": " + ex.GetBaseException().Message); }
+            });
+        }
+
+        /// <summary>Rebuild a ListBox/ComboBox/CheckedListBox ObjectCollection (IList) to exactly the given strings.</summary>
+        private static void RebuildStringItems(object coll, LiveCollItem[] items)
+        {
+            var list = (IList)coll; // ObjectCollection implements IList
+            list.Clear();
+            foreach (var it in items) list.Add(it.Text ?? "");
+        }
+
+        /// <summary>Rebuild a ListView.ColumnHeaderCollection (IList) to exactly the given columns (default type
+        /// ColumnHeader — the item DTO carries no concrete type; the typed source columns return on rebuild).</summary>
+        private static void RebuildListColumns(object coll, LiveCollItem[] items)
+        {
+            var list = (IList)coll; // ColumnHeaderCollection implements IList
+            list.Clear();
+            foreach (var it in items)
+            {
+                var ch = new ColumnHeader { Text = it.Text ?? "" };
+                ch.Width = it.Width; // set verbatim: 0 hides the column, -1/-2 are size-to-content/header sentinels — the
+                                     // host always sends the committed width, so honor it (don't clamp or skip 0)
+                if (!string.IsNullOrEmpty(it.Align) && Enum.TryParse(it.Align, out HorizontalAlignment ha)) ch.TextAlign = ha;
+                if (!string.IsNullOrEmpty(it.Id)) ch.Name = it.Id;
+                list.Add(ch);
+            }
+        }
+
+        /// <summary>Rebuild a DataGridViewColumnCollection to exactly the given columns (default type
+        /// DataGridViewTextBoxColumn — the item DTO carries no concrete type; the typed source columns return on rebuild).</summary>
+        private static void RebuildGridColumns(object coll, LiveCollItem[] items)
+        {
+            var cols = (DataGridViewColumnCollection)coll;
+            cols.Clear(); // throws if the grid is data-bound → caught by the caller (Applied=false)
+            foreach (var it in items)
+            {
+                var col = new DataGridViewTextBoxColumn { HeaderText = it.Text ?? "", ReadOnly = it.ReadOnly, Visible = it.Visible };
+                if (!string.IsNullOrEmpty(it.Id)) col.Name = it.Id; // DataGridView.Columns is keyed by Name
+                // Width below MinimumWidth throws; a bad width shouldn't nuke the whole rebuild → soft-set.
+                if (it.Width > 0) { try { col.Width = it.Width; } catch { /* keep the type default */ } }
+                cols.Add(col);
+            }
+        }
+
+        /// <summary>Reconstruct a TreeView's Nodes (the recursive analogue of <see cref="SetCollectionLive"/>) on the
+        /// LIVE compiled instance from the same node forest the net9 text editor committed, then re-render — so the
+        /// net48 canvas shows the node edit immediately instead of the built tree (the net48 live node picture; the
+        /// persisted text is the net9 splice's truth). The live TreeNodeCollection is fully rebuilt (Clear + typed
+        /// Add) with fresh TreeNode objects carrying only Text (ctor label) + Name (key) — the same subset the read
+        /// side round-trips, so an image/checkbox node never arrives here. Nodes stay collapsed, matching the
+        /// compiled rebuild baseline (a runtime TreeView doesn't auto-expand — the net9 interpreter doesn't either).
+        /// Best-effort: a non-<see cref="System.Windows.Forms.TreeNodeCollection"/> Nodes (a DevExpress TreeList) or
+        /// any failure leaves the picture on the built tree and returns Applied=false + a reason (host surfaces
+        /// "renders fully after a rebuild").</summary>
+        public RenderLayoutResult SetTreeNodesLive(string assemblyPath, string rootTypeName, string componentId, string propName, LiveTreeNode[] nodes)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                bool isRoot = componentId == "this" || componentId.Length == 0;
+                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                try
+                {
+                    // Resolve the collection via TypeDescriptor (mirrors SetCollectionLive): its indexer returns the
+                    // most-derived descriptor and never throws AmbiguousMatchException on a `new`-shadowed property.
+                    var pd = TypeDescriptor.GetProperties(owner)[propName];
+                    object? coll = pd?.GetValue(owner);
+                    if (coll == null) return Note(live, "no collection '" + propName + "' on " + componentId);
+                    // Only a genuine WinForms TreeNodeCollection is rebuildable this way. A DevExpress TreeList exposes a
+                    // differently-typed Nodes (virtual/data-bound TreeListNode); rebuilding it is out of scope → honest note.
+                    if (!(coll is System.Windows.Forms.TreeNodeCollection tnc))
+                        return Note(live, propName + " is not a TreeNodeCollection on " + componentId);
+                    RebuildTreeNodes(tnc, nodes ?? Array.Empty<LiveTreeNode>());
+                    live.Root.PerformLayout();
+                    Application.DoEvents();
+                    return Snapshot(live);
+                }
+                // unwrap TargetInvocationException / a read-only-collection InvalidOperationException so the note is honest
+                catch (Exception ex) { return Note(live, "could not update " + propName + ": " + ex.GetBaseException().Message); }
+            });
+        }
+
+        /// <summary>Rebuild a live TreeNodeCollection to exactly the given forest (Clear + recursive typed Add). Each
+        /// node is a fresh <see cref="System.Windows.Forms.TreeNode"/> with Text (label) + optional Name (key); its
+        /// children recurse into that node's own Nodes. Text/Name only — matching the net9 editor's round-trip subset.</summary>
+        private static void RebuildTreeNodes(System.Windows.Forms.TreeNodeCollection coll, LiveTreeNode[] nodes)
+        {
+            coll.Clear();
+            foreach (var n in nodes) coll.Add(BuildLiveTreeNode(n));
+        }
+
+        /// <summary>Build one live TreeNode (Text + optional Name) and recurse into its children.</summary>
+        private static System.Windows.Forms.TreeNode BuildLiveTreeNode(LiveTreeNode n)
+        {
+            var node = new System.Windows.Forms.TreeNode(n.Text ?? "");
+            if (!string.IsNullOrEmpty(n.Name)) node.Name = n.Name;
+            if (n.Children != null)
+                foreach (var child in n.Children) node.Nodes.Add(BuildLiveTreeNode(child));
+            return node;
         }
 
         /// <summary>Remove field-backed controls from the live tree (+ field map) and re-render.</summary>
@@ -551,6 +719,45 @@ namespace WinFormsDesigner.Engine.Net48
             catch (Exception ex)
             {
                 reason = "could not apply '" + rawValue + "' to " + propName + ": " + ex.Message;
+                return false;
+            }
+        }
+
+        /// <summary>Reset one property on a live control to its default via its PropertyDescriptor (mirror of
+        /// <see cref="TryApply"/>). CanResetValue==true → ResetValue makes the picture match. CanResetValue==false
+        /// splits: a property that no longer ShouldSerialize is already at its default (benign success); a property
+        /// that STILL serializes has no design-time default the compiled instance can compute (Location/Size/many
+        /// vendor props) — ResetValue is a no-op that would leave the built value in the picture, so we report a
+        /// reason (→ Applied=false → host surfaces "renders fully after a rebuild") rather than silently lying.</summary>
+        private bool TryReset(LiveDesign live, string componentId, string propName, out string reason)
+        {
+            reason = "";
+            bool isRoot = componentId == "this" || componentId.Length == 0;
+            Control? target = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+            if (target == null) { reason = "no control '" + componentId + "'"; return false; }
+            var pd = TypeDescriptor.GetProperties(target)[propName];
+            if (pd == null) { reason = "no property '" + propName + "'"; return false; }
+            if (pd.IsReadOnly) { reason = propName + " is read-only"; return false; }
+            try
+            {
+                if (pd.CanResetValue(target))
+                {
+                    pd.ResetValue(target);
+                    target.PerformLayout();
+                    return true;
+                }
+                // No reset metadata: ResetValue is a no-op. If the value still serializes it differs from the type
+                // default and the compiled instance keeps showing the removed assignment → tell the host so it can
+                // note "renders fully after a rebuild". An already-default property is a benign no-op (return true).
+                bool stillSet;
+                try { stillSet = pd.ShouldSerializeValue(target); } catch { stillSet = false; }
+                target.PerformLayout();
+                if (stillSet) { reason = propName + " has no design-time default on the compiled instance — preview shows the built value until rebuild"; return false; }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = "could not reset " + propName + ": " + ex.Message;
                 return false;
             }
         }

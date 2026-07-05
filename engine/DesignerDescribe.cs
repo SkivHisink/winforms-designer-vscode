@@ -26,7 +26,10 @@ namespace WinFormsDesigner.Engine
         /// <summary>Enum type — lets the editor build a fully-qualified `Type.Member` C# expression.</summary>
         public bool IsEnum { get; init; }
         public string Category { get; init; } = "Misc";
-        /// <summary>The property's TypeConverter standard values as invariant strings (§7.1 dropdowns), or null
+        /// <summary>The property's DescriptionAttribute text (fills the VS description pane below the grid), or
+        /// null when the property carries no description.</summary>
+        public string? Description { get; init; }
+        /// <summary>The property's TypeConverter standard values as invariant strings (dropdowns), or null
         /// when the converter exposes none. Populated for enums (non-flags), Boolean, named Colors, etc. Flags
         /// enums are left null (a single-select can't represent "Top, Left") → the editor keeps a text input.</summary>
         public List<string>? StandardValues { get; init; }
@@ -53,6 +56,13 @@ namespace WinFormsDesigner.Engine
         /// <summary>A small base64 PNG thumbnail of the current image value (max 64×64, aspect-preserved), or null
         /// when the property is unset / not an image / couldn't be rendered. Display-only; never disposes the live value.</summary>
         public string? ImagePreview { get; init; }
+        /// <summary>True for a string-item collection (ComboBox/ListBox/CheckedListBox.Items) surfaced with the VS
+        /// "String Collection Editor" (a "…" button opening a one-item-per-line editor). Edits route through
+        /// SetCollectionItems (rewrites the owner's Add/AddRange calls), NOT a normal property assignment.</summary>
+        public bool IsCollection { get; init; }
+        /// <summary>The collection's item type for the editor (currently always "System.String"), or null when the
+        /// property is not an editable collection.</summary>
+        public string? CollectionItemType { get; init; }
     }
 
     /// <summary>One event of a component, for the Events tab. <see cref="Handler"/> is the wired handler
@@ -202,10 +212,15 @@ namespace WinFormsDesigner.Engine
             bool parentIsTlp = c is Control pctl && pctl.Parent is System.Windows.Forms.TableLayoutPanel;
             foreach (PropertyDescriptor pd in TypeDescriptor.GetProperties(c))
             {
-                if (!pd.IsBrowsable) continue;
                 bool isTableCell = parentIsTlp && (pd.Name == "Column" || pd.Name == "Row");
+                // string-item collections (ComboBox/ListBox/CheckedListBox.Items) are surfaced for the collection
+                // editor even though Items is [Browsable(false)] + Hidden serialization — the grid needs them.
+                bool isStringCollection = IsStringCollectionProperty(pd);
+                string? typedCollectionItem = TypedCollectionItemType(pd);
+                bool isCollection = isStringCollection || typedCollectionItem != null;
+                if (!pd.IsBrowsable && !isTableCell && !isCollection) continue;
                 var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
-                if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell) continue;
+                if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
 
                 // read value and default-state in SEPARATE guarded blocks: a throwing ShouldSerializeValue
                 // must not discard a value that read fine, and vice versa.
@@ -238,16 +253,23 @@ namespace WinFormsDesigner.Engine
                 bool isImage = IsImageProperty(pd.PropertyType);
                 string? imagePreview = isImage ? TryThumbnail(raw) : null;
 
+                // guarded like the value reads above — a third-party PropertyDescriptor's Description getter is user
+                // code that can throw; a failure must degrade this one field to null, not abort the whole grid.
+                string? description = null;
+                try { description = string.IsNullOrEmpty(pd.Description) ? null : pd.Description; } catch { description = null; }
+
                 list.Add(new PropertyInfo
                 {
                     Name = pd.Name,
                     Type = pd.PropertyType.FullName ?? pd.PropertyType.Name,
-                    Value = value,
+                    // a collection's live value isn't a literal — the "…" editor drives it, so leave Value null
+                    Value = isCollection ? null : value,
                     IsDefault = isDefault,
                     SourceExplicit = explicitMembers.Contains((c, pd.Name)),
                     ReadOnly = readOnly,
                     IsEnum = pd.PropertyType.IsEnum,
                     Category = string.IsNullOrEmpty(pd.Category) ? "Misc" : pd.Category,
+                    Description = description,
                     StandardValues = standardValues,
                     StandardValuesExclusive = stdExclusive,
                     FlagsMembers = FlagsMembersOf(pd.PropertyType),
@@ -255,13 +277,15 @@ namespace WinFormsDesigner.Engine
                     TableCell = isTableCell,
                     IsImage = isImage,
                     ImagePreview = imagePreview,
+                    IsCollection = isCollection,
+                    CollectionItemType = isStringCollection ? "System.String" : typedCollectionItem,
                 });
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return list;
         }
 
-        /// <summary>§7.1: the property's TypeConverter standard values as invariant strings + whether the set is
+        /// <summary>The property's TypeConverter standard values as invariant strings + whether the set is
         /// exclusive (closed). Returns (null, false) when none are offered, the type is a flags enum (a
         /// single-select can't express combined flags), or any value fails to stringify. Bounded and fully
         /// guarded — a hostile converter degrades to no dropdown, never throws.</summary>
@@ -352,6 +376,32 @@ namespace WinFormsDesigner.Engine
         /// Bitmap/Metafile — or System.Drawing.Icon). Drives the grid's preview + Import…/(none) editor.</summary>
         private static bool IsImageProperty(Type t) =>
             typeof(System.Drawing.Image).IsAssignableFrom(t) || t == typeof(System.Drawing.Icon);
+
+        /// <summary>The three WinForms string-item collections VS edits with the "String Collection Editor"
+        /// (one item per line): ComboBox/ListBox/CheckedListBox.Items. Matched by their exact property type so
+        /// nothing else (typed collections like DataGridView.Columns) is surfaced by this slice.</summary>
+        private static readonly HashSet<string> StringCollectionTypeNames = new(StringComparer.Ordinal)
+        {
+            "System.Windows.Forms.ComboBox+ObjectCollection",
+            "System.Windows.Forms.ListBox+ObjectCollection",
+            "System.Windows.Forms.CheckedListBox+ObjectCollection",
+        };
+
+        private static bool IsStringCollectionProperty(PropertyDescriptor pd) =>
+            pd.PropertyType.FullName != null && StringCollectionTypeNames.Contains(pd.PropertyType.FullName);
+
+        /// <summary>Typed collections edited with a per-item property editor (VS "Collection Editor"). This slice
+        /// surfaces only ListView.Columns (ColumnHeader items); its property type is matched exactly so no other
+        /// collection is affected. The webview branches on <see cref="PropertyInfo.CollectionItemType"/>.</summary>
+        private static readonly Dictionary<string, string> TypedCollectionItemTypes = new(StringComparer.Ordinal)
+        {
+            ["System.Windows.Forms.ListView+ColumnHeaderCollection"] = "System.Windows.Forms.ColumnHeader",
+            ["System.Windows.Forms.DataGridViewColumnCollection"] = "System.Windows.Forms.DataGridViewColumn",
+            ["System.Windows.Forms.TreeNodeCollection"] = "System.Windows.Forms.TreeNode",
+        };
+
+        private static string? TypedCollectionItemType(PropertyDescriptor pd) =>
+            pd.PropertyType.FullName != null && TypedCollectionItemTypes.TryGetValue(pd.PropertyType.FullName, out var it) ? it : null;
 
         private const int ThumbMax = 64;             // preview swatch cap (px); larger sources are scaled down, aspect-preserved
         private const long MaxSrcPixels = 4096L * 4096L; // total-pixel bound on the SOURCE — reject a pixel bomb before DrawImage allocates

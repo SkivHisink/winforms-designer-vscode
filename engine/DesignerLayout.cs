@@ -33,7 +33,7 @@ namespace WinFormsDesigner.Engine
         public string Dock { get; init; } = "None";
     }
 
-    /// <summary>One non-visual component for the component tray (§7.3): Timer, ToolTip, ErrorProvider,
+    /// <summary>One non-visual component for the component tray: Timer, ToolTip, ErrorProvider,
     /// ImageList, BindingSource, ContextMenuStrip, … — anything in the host container that isn't a control
     /// parented into the visual tree. Id is the SetProperty/DescribeComponent edit id (Site.Name).</summary>
     public sealed class TrayComponent
@@ -59,7 +59,7 @@ namespace WinFormsDesigner.Engine
         public int ClientWidth { get; init; }
         public int ClientHeight { get; init; }
         public List<LayoutControl> Controls { get; init; } = new();
-        /// <summary>Non-visual components for the tray (§7.3).</summary>
+        /// <summary>Non-visual components for the tray.</summary>
         public List<TrayComponent> Tray { get; init; } = new();
     }
 
@@ -86,7 +86,7 @@ namespace WinFormsDesigner.Engine
         public List<string> Unrepresentable { get; init; } = new();
         /// <summary>Hit-test map, innermost-first (deepest, then smallest area) — same order as <see cref="LayoutResult.Controls"/>.</summary>
         public List<LayoutControl> Controls { get; init; } = new();
-        /// <summary>Non-visual components for the tray (§7.3).</summary>
+        /// <summary>Non-visual components for the tray.</summary>
         public List<TrayComponent> Tray { get; init; } = new();
     }
 }

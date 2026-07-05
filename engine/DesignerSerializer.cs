@@ -16,14 +16,14 @@ namespace WinFormsDesigner.Engine
     {
         /// <summary>Normalized InitializeComponent C# (the value written back to disk).</summary>
         public string Code { get; init; } = "";
-        /// <summary>Raw serializer output before §6.3 normalization (diagnostics).</summary>
+        /// <summary>Raw serializer output before normalization (diagnostics).</summary>
         public string RawCode { get; init; } = "";
         public string ClassName { get; init; } = "";
         /// <summary>Default-valued property assignments dropped by normalization (e.g. "okButton.Enabled = True").</summary>
         public List<string> DroppedDefaults { get; init; } = new();
         public int DefaultsDropped => DroppedDefaults.Count;
 
-        // ---- round-trip safety (§6.5): the save direction must NEVER silently drop user code ----
+        // ---- round-trip safety (safe-save gate): the save direction must NEVER silently drop user code ----
         public int TotalStatements { get; init; }
         public int Representable { get; init; }
         /// <summary>Source statements the interpreter could not represent (e.g. unresolved control types, hand-edits).</summary>
@@ -39,7 +39,7 @@ namespace WinFormsDesigner.Engine
     /// <summary>
     /// Serializes a live designer graph back to a VS-dialect InitializeComponent via the
     /// designer's <see cref="TypeCodeDomSerializer"/> (spike S2a), then applies a
-    /// default-value normalization pass (plan §6.3).
+    /// default-value normalization pass.
     ///
     /// Why normalization is needed: the standalone DesignSurface host over-emits
     /// default-valued primitive properties (Enabled=true, Visible=true, TabIndex=0, …)
@@ -65,7 +65,8 @@ namespace WinFormsDesigner.Engine
         private static readonly object Unknown = new();
 
         public static RoundTripResult Serialize(DesignSurface surface, IDesignerHost host, string className,
-            bool normalizeDefaults = true, HashSet<(IComponent, string)>? explicitMembers = null)
+            bool normalizeDefaults = true, HashSet<(IComponent, string)>? explicitMembers = null,
+            IReadOnlyList<string>? eventWirings = null)
         {
             var root = host.RootComponent;
             var manager = new DesignerSerializationManager(surface);
@@ -81,6 +82,14 @@ namespace WinFormsDesigner.Engine
                 ctd.Name = string.IsNullOrEmpty(className)
                     ? (root.Site?.Name is { Length: > 0 } sn ? sn : "DesignedType")
                     : className;
+
+                // Re-emit the source's event wirings VERBATIM. The interpreter can't wire the code-behind handler
+                // methods to the live surface components (they live in the other partial), so the CodeDom serializer
+                // never produces the `this.X.Event += …` lines on its own — inject them so the round-trip preserves
+                // them exactly instead of silently dropping user wiring. Appended after the serialized body
+                // (order among wirings preserved); the save-splicer re-indents, and the safe-save gate is whitespace-
+                // insensitive, so position doesn't matter for correctness.
+                InjectEventWirings(ctd, eventWirings);
 
                 string rawCode = GenerateCode(ctd);
 
@@ -102,8 +111,28 @@ namespace WinFormsDesigner.Engine
             }
         }
 
+        /// <summary>Append the source's verbatim event-wiring statements (<c>this.X.Event += …</c>) to
+        /// InitializeComponent as raw snippets, so the round-trip reproduces them exactly — the surface has no
+        /// code-behind handler methods for the serializer to emit them from. No-op when there are none.</summary>
+        private static void InjectEventWirings(CodeTypeDeclaration ctd, IReadOnlyList<string>? eventWirings)
+        {
+            if (eventWirings == null || eventWirings.Count == 0)
+            {
+                return;
+            }
+            var init = ctd.Members.OfType<CodeMemberMethod>().FirstOrDefault(m => m.Name == "InitializeComponent");
+            if (init == null)
+            {
+                return;
+            }
+            foreach (var w in eventWirings)
+            {
+                init.Statements.Add(new CodeSnippetStatement(w));
+            }
+        }
+
         /// <summary>
-        /// Remove over-emitted property assignments inside InitializeComponent (§6.3),
+        /// Remove over-emitted property assignments inside InitializeComponent,
         /// mutating the method's statement list in place. Two modes:
         ///   • <paramref name="explicitMembers"/> known → keep only properties that were
         ///     explicitly set in the source (exact echo; the complete round-trip fix).

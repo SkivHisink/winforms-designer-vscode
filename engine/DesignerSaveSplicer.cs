@@ -17,7 +17,7 @@ namespace WinFormsDesigner.Engine
         /// <summary>Original file encoding (incl. BOM); the spliced text must be written with it.</summary>
         public Encoding Encoding { get; init; } = new UTF8Encoding(false);
         /// <summary>
-        /// Original InitializeComponent statements NOT reproduced by re-serialization (plan §6.5
+        /// Original InitializeComponent statements NOT reproduced by re-serialization (safe-save
         /// statement-level diff). Non-empty ⇒ a save would silently lose/alter user code ⇒ unsafe.
         /// </summary>
         public List<string> MissingStatements { get; init; } = new();
@@ -36,7 +36,7 @@ namespace WinFormsDesigner.Engine
     }
 
     /// <summary>
-    /// Save-direction splice (plan §6.3 / §6.6 transactional write): replaces ONLY the body
+    /// Save-direction splice (normalization / transactional write): replaces ONLY the body
     /// of the existing <c>InitializeComponent</c> method with a freshly normalized version,
     /// leaving the namespace, usings, partial-class declaration, field declarations,
     /// <c>Dispose</c>, regions, comments and every other member byte-for-byte intact.
@@ -117,7 +117,7 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// Plan §6.5 statement-level diff: the original InitializeComponent statements that the
+        /// Safe-save statement-level diff: the original InitializeComponent statements that the
         /// freshly re-serialized code does NOT reproduce (whitespace-insensitive). Empty ⇒ every
         /// original statement survives the round-trip; non-empty ⇒ a save would lose/alter code.
         /// (Comments are trivia, not statements, so reordering/comment changes are ignored.)
@@ -134,9 +134,15 @@ namespace WinFormsDesigner.Engine
         {
             var init = FindInitializeComponent(code);
             if (init?.Body == null) return Enumerable.Empty<string>();
-            // Suspend/Resume/PerformLayout are designer-managed layout scaffolding: the loader treats
-            // them as no-ops and the serializer regenerates them canonically (exactly as VS does), so
-            // their presence/absence is canonicalization, not user-code loss — exclude from the gate.
+            // Suspend/Resume/PerformLayout are designer-managed layout scaffolding: the loader treats them as
+            // no-ops and the serializer regenerates them canonically (exactly as VS does), so their presence/
+            // absence is canonicalization, not user-code loss — exclude from the gate.
+            // NOTE: ISupportInitialize BeginInit/EndInit are deliberately NOT excluded. The loader treats them as
+            // a representable no-op so the form still renders, but the whole-file serializer does NOT re-emit them
+            // (there is no InjectBeginInit counterpart to DesignerSerializer.InjectEventWirings). Excluding them
+            // would let a save silently drop the brackets while reporting Safe; keeping them in the gate makes such
+            // a form fail the safe-save gate and fall back to read-only (refuse-to-save) instead. (Event wirings, by contrast,
+            // ARE re-emitted verbatim, so they round-trip and legitimately stay in the gate.)
             return init.Body.Statements
                 .Where(s => !IsLayoutBoilerplate(s))
                 .Select(s => s.ToString());

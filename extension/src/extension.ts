@@ -99,7 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       WinFormsDesignerProvider.viewType,
-      new WinFormsDesignerProvider(context, (kind?: EngineKind) => getEngine(context, kind), getAssemblyOverride, output, doViewCode),
+      new WinFormsDesignerProvider(context, (kind?: EngineKind) => getEngine(context, kind), getAssemblyOverride, output, doViewCode, (file, dll) => setControlSource(file, dll)),
       { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false },
     ),
   );
@@ -147,7 +147,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Export Diagnostics (§20.1): gather engine/environment/active-document/settings info into a new
+  // Export Diagnostics: gather engine/environment/active-document/settings info into a new
   // untitled Markdown document (no file written — the user saves it where they want, no permission prompt).
   context.subscriptions.push(
     vscode.commands.registerCommand('winformsDesigner.exportDiagnostics', () => exportDiagnostics(context)),
@@ -233,7 +233,7 @@ function doViewCode(uri: vscode.Uri, position?: vscode.Position): void {
 }
 
 /**
- * Export Diagnostics (§20.1): collect engine + environment + active-document + settings state into a Markdown
+ * Export Diagnostics: collect engine + environment + active-document + settings state into a Markdown
  * report opened as a new untitled document. Read-only — never writes a file (no permission prompt) and never
  * throws out (each probe is guarded so a dead engine still produces a useful report).
  */

@@ -10,6 +10,10 @@ import {
   renderCompiledWithLayout,
   describeCompiledComponent,
   setCompiledPropertyLive,
+  resetCompiledPropertyLive,
+  setCompiledCollectionLive,
+  setCompiledTreeNodesLive,
+  LiveCollItem,
   applyCompiledEdits,
   removeCompiledControls,
   setCompiledZOrder,
@@ -18,12 +22,23 @@ import {
   hitTestCompiledTab,
   CompiledEdit,
   RenderLayout,
+  ColumnItem,
+  GridColumnItem,
+  TreeNodeItem,
+  listTreeNodes,
+  setTreeNodes,
   describeLayout,
   describeComponent,
   renderControl,
   setProperty,
   convertValue,
   setTableCell,
+  listCollectionItems,
+  setCollectionItems,
+  listColumns,
+  setColumns,
+  listGridColumns,
+  setGridColumns,
   resetProperty,
   setImageResource,
   generateEventHandler,
@@ -48,12 +63,16 @@ import {
   removeCompiledTab,
 } from './engineClient';
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
-import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, projectTargetFramework, isFrameworkTfm } from './csprojRef';
+import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
 import { t, tn, injectL10nScript } from './i18n';
+import { categorizeUnrepresentable } from './renderDiagnostics';
 
 export type EngineKind = 'net9' | 'net48';
 type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
 type AssemblyOverride = (file: string) => string | undefined;
+/** Persist a form's control-source override (the per-form `controlSources` map) — the write side of
+ *  AssemblyOverride, used by the T1.3 cross-runtime switch to remember the net48 compiled preview. */
+type SetAssemblyOverride = (file: string, dll: string) => Promise<void>;
 
 /** A .NET (Core/5+) build always emits `<name>.deps.json` (apps also `.runtimeconfig.json`) beside the
  *  assembly; a .NET Framework build emits neither. That sidecar's presence cleanly says which engine can load
@@ -339,6 +358,7 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     private readonly getAssemblyOverride: AssemblyOverride,
     private readonly output: vscode.OutputChannel,
     private readonly onViewCode: (uri: vscode.Uri, position?: vscode.Position) => void,
+    private readonly setAssemblyOverride: SetAssemblyOverride,
   ) {}
 
   async openCustomDocument(
@@ -368,7 +388,7 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
   ): void {
     document.session = new DesignerSession(
       this.context.extensionUri, this.ensureEngine, this.getAssemblyOverride, this.output, this.onViewCode,
-      document, panel, (e) => this._onDidChangeCustomDocument.fire(e),
+      document, panel, (e) => this._onDidChangeCustomDocument.fire(e), this.setAssemblyOverride,
     );
   }
 
@@ -394,6 +414,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage(async (m: {
       type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string;
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
+      items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; nodes?: TreeNodeItem[];
     }) => {
       const s = DesignerHub.instance.activeSession;
       try {
@@ -402,7 +423,16 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'edit' && m.id && m.prop && m.propType !== undefined) { await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? ''); }
         else if (m?.type === 'importImage' && m.id && m.prop && m.propType) { await s?.importImageFromGrid(m.id, m.prop, m.propType); }
         else if (m?.type === 'clearImage' && m.id && m.prop) { await s?.clearImageFromGrid(m.id, m.prop); }
+        else if (m?.type === 'resetProperty' && m.id && m.prop) { await s?.resetFromGrid(m.id, m.prop); }
         else if (m?.type === 'setTableCell' && m.id && m.cell) { await s?.tableCellFromGrid(m.id, m.cell, m.value ?? ''); }
+        else if (m?.type === 'listCollection' && m.id && m.prop) { await s?.sendCollectionItems(m.id, m.prop); }
+        else if (m?.type === 'setCollection' && m.id && m.prop && Array.isArray(m.items)) { await s?.collectionFromGrid(m.id, m.prop, m.items as string[]); }
+        else if (m?.type === 'listColumns' && m.id) { await s?.sendColumnItems(m.id); }
+        else if (m?.type === 'setColumns' && m.id && Array.isArray(m.columns)) { await s?.columnsFromGrid(m.id, m.columns as ColumnItem[]); }
+        else if (m?.type === 'listGridColumns' && m.id) { await s?.sendGridColumnItems(m.id); }
+        else if (m?.type === 'setGridColumns' && m.id && Array.isArray(m.gridColumns)) { await s?.gridColumnsFromGrid(m.id, m.gridColumns as GridColumnItem[]); }
+        else if (m?.type === 'listTreeNodes' && m.id) { await s?.sendTreeNodes(m.id); }
+        else if (m?.type === 'setTreeNodes' && m.id && Array.isArray(m.nodes)) { await s?.treeNodesFromGrid(m.id, m.nodes as TreeNodeItem[]); }
         else if (m?.type === 'setHandler' && m.id && m.event) { await s?.setHandler(m.id, m.event, m.handler ?? ''); }
         else if (m?.type === 'createHandler' && m.id && m.event) { await s?.createHandler(m.id, m.event, m.handler || undefined); }
         else if (m?.type === 'navigateHandler' && m.id) { await s?.navigateToHandler(m.id, m.event ?? '', m.handler ?? undefined); }
@@ -432,7 +462,7 @@ class DesignerSession {
   private debounce?: ReturnType<typeof setTimeout>;
   private disposed = false;
   private gotReady = false;
-  /** Auto-populated toolbox palette (§7.2) — fetched once, then mirrored to the Toolbox view. */
+  /** Auto-populated toolbox palette — fetched once, then mirrored to the Toolbox view. */
   private toolboxItems: ToolboxItemInfo[] | undefined;
   /** One-shot latch: we prompt "select a control source" at most once per form (until it renders clean or the
    *  user picks one), so a form with unresolved custom controls isn't nagging on every re-render. */
@@ -466,6 +496,8 @@ class DesignerSession {
     private readonly panel: vscode.WebviewPanel,
     /** Register an undoable custom-document edit with VS Code (drives native Ctrl+Z/Y + dirty/save). */
     private readonly fireEdit: (e: vscode.CustomDocumentEditEvent<WinFormsDesignDocument>) => void,
+    /** Persist a control-source override for this form (T1.3 cross-runtime switch → net48 compiled preview). */
+    private readonly setAssemblyOverride: SetAssemblyOverride,
   ) {
     this.doc = document;
     this.documentUri = document.uri;
@@ -569,7 +601,7 @@ class DesignerSession {
 
   /** Populate `toolboxItems` once. net9: framework + project controls in one enumeration. net48: framework controls
    *  from the net9 enumerator (same FQNs → droppable on a net48 form) MERGED with the project/vendor (DevExpress)
-   *  controls from the net48 engine — the ones the net9 ALC can't load (§5 DevExpress-add). Best-effort: a framework
+   *  controls from the net48 engine — the ones the net9 ALC can't load (DevExpress-add). Best-effort: a framework
    *  failure leaves it undefined (retry later); a project-enumeration failure degrades to framework-only. */
   private async loadToolboxItems(): Promise<void> {
     if (this.toolboxItems || !this.designerFile) return;
@@ -700,6 +732,7 @@ class DesignerSession {
     ids?: string[]; dx?: number; dy?: number; prop?: string; propType?: string; isEnum?: boolean; value?: string;
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
+    axis?: 'h' | 'v';
   }): Promise<void> {
     try {
       if (this.engineKind === 'net48' && NET48_READONLY_BLOCKED.has(m.type)) {
@@ -721,6 +754,8 @@ class DesignerSession {
         await this.editFromGrid(m.id, m.prop, m.propType ?? '', !!m.isEnum, m.value ?? '');
       } else if (m.type === 'alignControls' && Array.isArray(m.edits)) {
         await this.applyAlign(m.edits);
+      } else if (m.type === 'centerInForm' && (m.axis === 'h' || m.axis === 'v') && Array.isArray(m.ids)) {
+        await this.applyCenterInForm(m.axis, m.ids);
       } else if (m.type === 'resizeControls' && Array.isArray(m.sizeEdits)) {
         await this.applyResize(m.sizeEdits);
       } else if (m.type === 'dropControl' && m.controlType) {
@@ -744,6 +779,8 @@ class DesignerSession {
         await this.applyCut(m.ids);
       } else if (m.type === 'paste') {
         await this.applyPaste(m.id);
+      } else if (m.type === 'duplicate' && Array.isArray(m.ids)) {
+        await this.applyDuplicate(m.ids);
       } else if (m.type === 'bringToFront' && m.id) {
         await this.applyZOrder([m.id], true);
       } else if (m.type === 'bringToFrontGroup' && Array.isArray(m.ids)) {
@@ -916,7 +953,10 @@ class DesignerSession {
 
   private fail(err: unknown): void {
     const msg = errMsg(err);
-    this.post({ type: 'error', message: msg });
+    // renderFailure:true distinguishes a real render failure (canvas is stale → the webview shows the persistent
+    // "last successful preview" banner) from a failed user action routed through the generic onMessage catch
+    // (canvas intact → the webview shows an unobtrusive footer status instead).
+    this.post({ type: 'error', message: msg, renderFailure: true });
     this.output.appendLine('designer render failed: ' + msg);
     void vscode.window.showErrorMessage(t('host.error', { msg }));
   }
@@ -959,7 +999,7 @@ class DesignerSession {
     // to point the designer at a built control source.
     if (route.frameworkUnbuilt) {
       this.output.appendLine(`[designer] render #${seq}: .NET Framework project not built — prompting for control source`);
-      this.post({ type: 'error', message: t('host.frameworkUnbuilt') });
+      this.post({ type: 'error', message: t('host.frameworkUnbuilt'), renderFailure: true });
       this.promptControlSource(t('host.frameworkUnbuilt'));
       return;
     }
@@ -973,7 +1013,7 @@ class DesignerSession {
     }
     if (seq !== this.renderSeq || this.disposed) return;
     // Toolbox: net9 shows framework + project controls (one enumeration); net48 merges net9 framework controls
-    // with the project/vendor (DevExpress) controls the net48 engine enumerates (§5 — the net9 ALC can't load them).
+    // with the project/vendor (DevExpress) controls the net48 engine enumerates (the net9 ALC can't load them).
     await this.loadToolboxItems();
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
     void this.refreshPalette();
@@ -1000,13 +1040,19 @@ class DesignerSession {
     this.rootFrame = { w: result.width, h: result.height };
     this.post({ type: 'render', png: result.png.toString('base64'), width: result.width, height: result.height, gen: seq });
     this.postLayout(result.controls);
-    this.post({ type: 'tray', items: result.tray }); // §7.3 component tray (canvas strip)
+    this.post({ type: 'tray', items: result.tray }); // component tray (canvas strip)
     if (!result.controls.some((c) => c.id === this.currentId)) this.currentId = 'this';
     this.pushSelect(this.currentId);
     await this.loadProps(this.currentId);
     await this.postDirty();
     this.pushClipboardState();
     this.maybePromptForControlSource(result.unrepresentable, asm);
+    // T2.2: surface WHAT the (partial) render skipped — controls whose ctor threw, unresolved types, unsupported
+    // constructs — as a dismissible canvas banner. The engine already renders resiliently and records each dropped
+    // statement + reason in `unrepresentable`; categorize it host-side (pure) and hand the canvas a compact set.
+    // Empty items → the webview hides any stale banner (this render is clean). net48's compiled render is all-or-
+    // nothing, so this is effectively net9 partial-render diagnostics; net48 per-control skip reasons are a follow-up.
+    this.post({ type: 'renderDiag', items: categorizeUnrepresentable(result.unrepresentable) });
   }
 
   /** If the form references controls the engine couldn't resolve (no assembly holds their type) AND no control
@@ -1018,9 +1064,60 @@ class DesignerSession {
       .map((u) => /unresolved type\)?\s+([\w.]+)/.exec(u)?.[1])
       .filter((t): t is string => !!t);
     if (!unresolved.length) return;
+    // T1.3 cross-runtime fallback: a multi-target (net48;net9) project whose vendor controls the net9 engine
+    // can't load → offer the net48 compiled preview (which instantiates the REAL controls) instead of the
+    // generic "select a control source" prompt. Only when we auto-routed to net9 (asm undefined, checked above).
+    if (this.engineKind === 'net9' && this.maybeOfferFrameworkPreview(unresolved)) return;
     const uniq = [...new Set(unresolved)];
     const shown = uniq.slice(0, 3).join(', ') + (uniq.length > 3 ? ', …' : '');
     this.promptControlSource(t('host.unresolved', { names: shown }));
+  }
+
+  /**
+   * T1.3: when this form lives in a multi-target project that also targets .NET Framework and the net9 render
+   * came back with unresolved vendor controls, offer to switch to the net48 compiled preview (the engine that
+   * can load them). Returns true when it handled the situation (an offer/notice was shown) so the caller skips
+   * the generic control-source prompt. One-shot per form (latches `promptedForSource`, like promptControlSource).
+   */
+  private maybeOfferFrameworkPreview(unresolved: string[]): boolean {
+    if (!this.designerFile) return false;
+    const csproj = findNearestCsproj(path.dirname(this.designerFile));
+    if (!csproj) return false;
+    let text = '';
+    try { text = fs.readFileSync(csproj, 'utf8'); } catch { return false; }
+    if (!multiTargetHasFramework(text)) return false;
+    this.promptedForSource = true; // latch: offer/notice at most once per form (matches promptControlSource)
+    const uniq = [...new Set(unresolved)];
+    const names = uniq.slice(0, 3).join(', ') + (uniq.length > 3 ? ', …' : '');
+    const net48Out = resolveFrameworkOnlyOutput(csproj);
+    if (net48Out) {
+      void vscode.window.showWarningMessage(t('host.crossRuntime.offer', { names }), t('host.crossRuntime.switch'))
+        .then((pick) => { if (pick) void this.switchToFrameworkPreview(net48Out, names); });
+    } else {
+      this.frameworkUnbuiltNotice(names);
+    }
+    return true;
+  }
+
+  /** The .NET Framework target isn't built (only the net9 output exists) — neither engine can render the vendor
+   *  controls until it is. Tell the user to build it, or point at a control source manually. */
+  private frameworkUnbuiltNotice(names: string): void {
+    void vscode.window.showWarningMessage(t('host.crossRuntime.unbuilt', { names }), t('host.unresolved.button'))
+      .then((pick) => { if (pick) void vscode.commands.executeCommand('winformsDesigner.selectControlAssembly'); });
+  }
+
+  /** Persist the net48 build output as this form's control source (survives reload → routes to the compiled
+   *  preview) and re-render on the net48 engine. VS-parity one-click of the Select-Control-Assembly flow. */
+  private async switchToFrameworkPreview(net48Out: string, names: string): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    // The net48 output can be cleaned/rebuilt away between showing the offer and this click — getControlSource
+    // drops a non-existent path on read, so persisting it would silently re-render the same near-empty net9 form
+    // with no feedback (unlike selectControlAssembly, which re-checks existence). Guard + tell the user instead.
+    if (!fs.existsSync(net48Out)) { this.frameworkUnbuiltNotice(names); return; }
+    this.output.appendLine(`[designer] cross-runtime: switching to net48 compiled preview → ${net48Out}`);
+    await this.setAssemblyOverride(this.designerFile, net48Out);
+    await this.reloadControlSource(); // drops the cached toolbox + full-renders; routing now sees the net48 asm
+    if (!this.disposed) DesignerHub.instance.refreshStatus(); // parity with selectControlAssembly's status refresh
   }
 
   /** Show the one-shot "point the designer at a control source" prompt — latched (`promptedForSource`) so a
@@ -1185,6 +1282,48 @@ class DesignerSession {
   }
 
   /**
+   * Center-in-form (VS Format → Center Horizontally / Vertically): shift the selection's bounding box to the
+   * center of its container's CLIENT area along one axis, preserving relative offsets (the same window-space
+   * delta for every selected control → reuses applyAlign for the actual Location edits, so it's one undo,
+   * cross-runtime, and layout-managed controls are skipped). Computed host-side because only the host knows the
+   * form's exact client origin within the window chrome (asymmetric caption vs border) — a webview window-space
+   * center would put a vertical center ~half-a-caption too high. The root client rect is exact; a child container
+   * uses its window rect (its own client inset is a minor approximation, per the engine's ComputeWindowOffset).
+   */
+  private async applyCenterInForm(axis: 'h' | 'v', ids: string[]): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const sel = ids
+      .map((id) => this.controls.find((c) => c.id === id))
+      .filter((c): c is LayoutControl => !!c && !c.isRoot && c.id !== 'this');
+    if (!sel.length) return;
+    // container reference rect in window space
+    const primary = sel.find((c) => c.id === this.currentId) ?? sel[0];
+    const parentId = primary.parentId ?? 'this';
+    let cx: number, cy: number, cw: number, ch: number;
+    if ((parentId === 'this' || parentId === '') && this.rootFrame && this.rootClient) {
+      const ox = (this.rootFrame.w - this.rootClient.w) / 2;            // symmetric side borders
+      const oy = (this.rootFrame.h - this.rootClient.h) - ox;          // caption = total vertical chrome − bottom border
+      cx = ox; cy = oy; cw = this.rootClient.w; ch = this.rootClient.h;
+    } else {
+      const cont = this.controls.find((c) => c.id === parentId);
+      if (!cont) return;
+      cx = cont.x; cy = cont.y; cw = cont.width; ch = cont.height;
+    }
+    // bounding box of the selection (window space) → the single delta that centers it in the container
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of sel) { minX = Math.min(minX, c.x); minY = Math.min(minY, c.y); maxX = Math.max(maxX, c.x + c.width); maxY = Math.max(maxY, c.y + c.height); }
+    const edits: Array<{ id: string; dx: number; dy: number }> = [];
+    if (axis === 'h') {
+      const dx = Math.round(cx + (cw - (maxX - minX)) / 2 - minX);
+      if (dx !== 0) for (const c of sel) edits.push({ id: c.id, dx, dy: 0 });
+    } else {
+      const dy = Math.round(cy + (ch - (maxY - minY)) / 2 - minY);
+      if (dy !== 0) for (const c of sel) edits.push({ id: c.id, dx: 0, dy });
+    }
+    if (edits.length) await this.applyAlign(edits);
+  }
+
+  /**
    * Align (Phase 2): apply a PER-CONTROL window-space delta to each control's Location (its parent origin is
    * constant), chained into ONE undoable edit + a single re-render — like applyGroupMove but with distinct
    * deltas. Layout-managed controls (no representable Location) are skipped.
@@ -1326,7 +1465,7 @@ class DesignerSession {
     let finalText = res.text;
     // VS layout mutual-exclusivity: Dock and Anchor override each other. Setting a non-None Dock (or any Anchor)
     // clears the stale conjugate assignment so the grid + serialized source reflect the effective layout. The
-    // reset is folded into the SAME commit (one undo step). engine ResetProperty is §6.5-gated and no-op-safe:
+    // reset is folded into the SAME commit (one undo step). engine ResetProperty is safe-save-gated and no-op-safe:
     // when the conjugate has no assignment it returns safe with text === null → we keep finalText unchanged.
     const conjugate = prop === 'Dock' ? 'Anchor' : prop === 'Anchor' ? 'Dock' : null;
     const clearConjugate = prop === 'Anchor' || (prop === 'Dock' && raw.trim() !== '' && raw.trim() !== 'None');
@@ -1369,6 +1508,27 @@ class DesignerSession {
     const asm = this.asm();
     if (!asm || !this.designerFile) return;
     await this.live48((eng) => setCompiledPropertyLive(eng, this.designerFile!, asm, id, prop, raw));
+  }
+
+  /** net48 compiled preview for a typed "…" collection edit: after the text edit is committed, reconstruct the
+   *  collection (string Items / ListView.Columns / DataGridView.Columns) on the live instance so the canvas updates
+   *  immediately (T1.1b) instead of showing the built collection until a rebuild. Best-effort — a bound/unsupported
+   *  collection leaves the picture on the built value with a note (show48's previewPartial); the committed text still
+   *  renders after a rebuild. */
+  private async liveCollection48(id: string, prop: string, itemType: string, items: LiveCollItem[]): Promise<void> {
+    const asm = this.asm();
+    if (!asm || !this.designerFile) return;
+    await this.live48((eng) => setCompiledCollectionLive(eng, this.designerFile!, asm, id, prop, itemType, items));
+  }
+
+  /** net48 compiled preview for the hierarchical TreeView.Nodes edit: after the net9 text commit, reconstruct the
+   *  node forest on the live instance so the canvas updates immediately (the TreeView analogue of liveCollection48).
+   *  Best-effort — a non-TreeNodeCollection Nodes (a DevExpress TreeList) leaves the picture on the built tree with a
+   *  note (show48's previewPartial); the committed text still renders after a rebuild. */
+  private async liveTreeNodes48(id: string, prop: string, nodes: TreeNodeItem[]): Promise<void> {
+    const asm = this.asm();
+    if (!asm || !this.designerFile) return;
+    await this.live48((eng) => setCompiledTreeNodesLive(eng, this.designerFile!, asm, id, prop, nodes));
   }
 
   /** Push a net48 live-op's render result to the canvas (shared by property edit / drag / remove / z-order). */
@@ -1479,7 +1639,7 @@ class DesignerSession {
     }
   }
 
-  /** Clear an image property ("(none)"): delete its assignment via the §6.5-gated ResetProperty. The .resx
+  /** Clear an image property ("(none)"): delete its assignment via the safe-save-gated ResetProperty. The .resx
    *  entry is left as a harmless orphan (mirrors VS, which also doesn't prune unused resources on clear). */
   async clearImageFromGrid(id: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
@@ -1501,6 +1661,46 @@ class DesignerSession {
       this.post({ type: 'status', message: t('status.clearFailed', { error: errMsg(err) }) });
       try { await this.loadProps(id); } catch { /* best effort */ }
     }
+  }
+
+  /** Per-property Reset (VS grid right-click → "Reset"): delete the property's source assignment via the
+   *  safe-save-gated, no-op-safe ResetProperty (a pure net9 text splice, engine-agnostic), then refresh the picture.
+   *  net9 re-renders the interpreted graph from the edited text; net48 renders the COMPILED assembly (stale after a
+   *  text-only edit), so it resets the LIVE instance (pd.ResetValue) for an immediate, matching picture. */
+  async resetFromGrid(id: string, prop: string): Promise<void> {
+    if (!this.designerFile) return;
+    try {
+      const eng = await this.ensureEngine();
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+      const res = await resetProperty(eng, this.designerFile, id, prop, before);
+      if (!res.safe) { this.post({ type: 'status', message: t('status.resetRejected', { reason: res.reason || 'unsafe' }) }); await this.loadProps(id); return; }
+      if (res.text == null) { this.post({ type: 'status', message: t('status.alreadyDefault', { id, prop }) }); await this.loadProps(id); return; }
+      if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedShort') }); await this.loadProps(id); return; }
+      this.commit(before, res.text, `Reset ${id}.${prop}`);
+      this.output.appendLine(`reset ${id}.${prop} → default (unsaved)`);
+      this.post({ type: 'status', message: t('status.propReset', { id, prop }) });
+      if (this.engineKind === 'net48') {
+        await this.liveReset48(id, prop);
+      } else {
+        await this.patchOrRerender(id, prop);
+      }
+      await this.loadProps(id);
+      await this.postDirty();
+    } catch (err) {
+      this.post({ type: 'status', message: t('status.resetFailed', { error: errMsg(err) }) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  /** net48 compiled preview after a Reset commit: reset the property on the LIVE instance (pd.ResetValue) so the
+   *  picture matches the now-default value. Re-rendering the compiled assembly would show the stale built value
+   *  (the bug clearImageFromGrid's fullRender exhibits); the committed text is what persists after a rebuild.
+   *  Best-effort — a non-resettable prop leaves the picture unchanged with a note. */
+  private async liveReset48(id: string, prop: string): Promise<void> {
+    const asm = this.asm();
+    if (!asm || !this.designerFile) return;
+    await this.live48((eng) => resetCompiledPropertyLive(eng, this.designerFile!, asm, id, prop));
   }
 
   /** Grid edit of a TableLayoutPanel child's Column/Row — routed here (not applyEdit) because the cell lives in
@@ -1546,6 +1746,243 @@ class DesignerSession {
 
     // a cell move repositions the control and can re-flow its siblings → full re-render, not a single-control patch
     await this.fullRender();
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** Read side of the string-collection editor: send the "…"-opened collection's current items to the webview.
+   *  Parses the unsaved buffer (so it reflects pending edits). PURE-TEXT Roslyn parse → routed to the net9 engine
+   *  even for a net48 form (the compiled engine can't parse literal Add/AddRange; the text is framework-agnostic). */
+  async sendCollectionItems(id: string, prop: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'collectionItems', id, prop, ok: false, items: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('net9');
+      const res = await listCollectionItems(eng, this.designerFile, id, prop, this.doc.designerText);
+      this.post({ type: 'collectionItems', id, prop, ok: res.ok, items: res.items ?? [], reason: res.reason });
+    } catch (err) {
+      this.post({ type: 'collectionItems', id, prop, ok: false, items: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Write side of the string-collection editor (VS "String Collection Editor"): rewrite the owner's Add/AddRange
+   *  calls to exactly `items`. Mirrors tableCellFromGrid's error/restore + single-undo commit. */
+  async collectionFromGrid(id: string, prop: string, items: string[]): Promise<void> {
+    try {
+      await this.applyCollection(id, prop, items);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyCollection(id: string, prop: string, items: string[]): Promise<void> {
+    if (!this.designerFile) return;
+    // PURE-TEXT splice — route to net9 even on a net48 form (the compiled engine can't splice; the text is truth).
+    const eng = await this.ensureEngine('net9');
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const res = await setCollectionItems(eng, this.designerFile, id, prop, items, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(id);
+      return;
+    }
+
+    this.commit(before, res.text, `Set ${id}.${prop}`);
+    this.output.appendLine(`set ${id}.${prop} = ${items.length} item(s) (collection, unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
+    if (this.engineKind === 'net48') {
+      // net48 renders the compiled assembly; reconstruct the string Items on the live instance for an immediate
+      // picture (T1.1b). The committed text is what persists on save / re-renders after a rebuild.
+      await this.liveCollection48(id, prop, 'System.String', items.map((s) => ({ text: s })));
+    } else {
+      // items can change a ListBox/CheckedListBox's rendered content → full re-render, not a single-control patch
+      await this.fullRender();
+    }
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** Read side of the typed ListView.Columns editor: send the "…"-opened collection's current columns to the
+   *  webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
+  async sendColumnItems(id: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'columnItems', id, ok: false, columns: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('net9');
+      const res = await listColumns(eng, this.designerFile, id, this.doc.designerText);
+      this.post({ type: 'columnItems', id, ok: res.ok, columns: res.columns ?? [], reason: res.reason });
+    } catch (err) {
+      this.post({ type: 'columnItems', id, ok: false, columns: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Write side of the typed ListView.Columns editor (VS "Collection Editor"). Mirrors collectionFromGrid's
+   *  error/restore + single-undo commit. */
+  async columnsFromGrid(id: string, columns: ColumnItem[]): Promise<void> {
+    try {
+      await this.applyColumns(id, columns);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyColumns(id: string, columns: ColumnItem[]): Promise<void> {
+    if (!this.designerFile) return;
+    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const res = await setColumns(eng, this.designerFile, id, columns, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(id);
+      return;
+    }
+
+    this.commit(before, res.text, `Set ${id}.Columns`);
+    this.output.appendLine(`set ${id}.Columns = ${columns.length} column(s) (collection, unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Columns' }) });
+    if (this.engineKind === 'net48') {
+      // reconstruct the ListView.Columns on the live instance for an immediate net48 picture (T1.1b)
+      await this.liveCollection48(id, 'Columns', 'System.Windows.Forms.ColumnHeader',
+        columns.map((c) => ({ id: c.id, text: c.text, width: c.width, align: c.textAlign })));
+    } else {
+      // columns change the ListView's rendered header → full re-render, not a single-control patch
+      await this.fullRender();
+    }
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** Read side of the hierarchical TreeView.Nodes editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
+  async sendTreeNodes(id: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'treeNodeItems', id, ok: false, nodes: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('net9');
+      const res = await listTreeNodes(eng, this.designerFile, id, this.doc.designerText);
+      this.post({ type: 'treeNodeItems', id, ok: res.ok, nodes: res.nodes ?? [], reason: res.reason });
+    } catch (err) {
+      this.post({ type: 'treeNodeItems', id, ok: false, nodes: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Write side of the TreeView.Nodes editor (VS "TreeNode Editor"). Mirrors columnsFromGrid's error/restore. */
+  async treeNodesFromGrid(id: string, nodes: TreeNodeItem[]): Promise<void> {
+    try {
+      await this.applyTreeNodes(id, nodes);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyTreeNodes(id: string, nodes: TreeNodeItem[]): Promise<void> {
+    if (!this.designerFile) return;
+    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const res = await setTreeNodes(eng, this.designerFile, id, nodes, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(id);
+      return;
+    }
+
+    this.commit(before, res.text, `Set ${id}.Nodes`);
+    this.output.appendLine(`set ${id}.Nodes (tree, unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Nodes' }) });
+    if (this.engineKind === 'net48') {
+      // reconstruct the TreeView.Nodes on the live compiled instance for an immediate net48 picture (mirrors T1.1b
+      // for the flat collections); a non-TreeNodeCollection Nodes falls back to previewPartial (renders on rebuild)
+      await this.liveTreeNodes48(id, 'Nodes', nodes);
+    } else {
+      // nodes change the rendered tree → full re-render (the interpreter renders TreeNode locals + Nodes.AddRange)
+      await this.fullRender();
+    }
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** Read side of the typed DataGridView.Columns editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
+  async sendGridColumnItems(id: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'gridColumnItems', id, ok: false, columns: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('net9');
+      const res = await listGridColumns(eng, this.designerFile, id, this.doc.designerText);
+      this.post({ type: 'gridColumnItems', id, ok: res.ok, columns: res.columns ?? [], reason: res.reason });
+    } catch (err) {
+      this.post({ type: 'gridColumnItems', id, ok: false, columns: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Write side of the typed DataGridView.Columns editor. Mirrors columnsFromGrid. */
+  async gridColumnsFromGrid(id: string, columns: GridColumnItem[]): Promise<void> {
+    try {
+      await this.applyGridColumns(id, columns);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyGridColumns(id: string, columns: GridColumnItem[]): Promise<void> {
+    if (!this.designerFile) return;
+    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const res = await setGridColumns(eng, this.designerFile, id, columns, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(id);
+      return;
+    }
+
+    this.commit(before, res.text, `Set ${id}.Columns`);
+    this.output.appendLine(`set ${id}.Columns = ${columns.length} column(s) (grid collection, unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Columns' }) });
+    if (this.engineKind === 'net48') {
+      // reconstruct the DataGridView.Columns on the live instance for an immediate net48 picture (T1.1b)
+      await this.liveCollection48(id, 'Columns', 'System.Windows.Forms.DataGridViewColumn',
+        columns.map((c) => ({ id: c.id, text: c.headerText, width: c.width, readOnly: c.readOnly, visible: c.visible })));
+    } else {
+      await this.fullRender();
+    }
     await this.loadProps(id);
     await this.postDirty();
   }
@@ -1753,7 +2190,7 @@ class DesignerSession {
     }
     const asm = this.asm();
     // The Roslyn text splice runs on net9. For a net48 form net9 can't load the vendor (DevExpress/net4x)
-    // assembly, so instead of an asm-based enumeration we hand it the FQNs the net48 engine enumerated (§5) —
+    // assembly, so instead of an asm-based enumeration we hand it the FQNs the net48 engine enumerated —
     // the pure-text splice emits `new <Fqn>()` and the net48 engine live-instantiates the control below.
     const addAsm = this.engineKind === 'net48' ? undefined : asm;
     const projectFqns = this.engineKind === 'net48'
@@ -1971,6 +2408,66 @@ class DesignerSession {
   }
 
   /**
+   * Duplicate (Ctrl+D): clone each selected control in place WITHOUT touching the shared Cut/Copy clipboard
+   * (VS's Duplicate leaves the clipboard alone). Each source is copied to a temporary blob and pasted into its
+   * OWN parent (a sibling, offset by the engine's paste nudge), chained into ONE undoable edit; the last clone
+   * is selected so a repeated Ctrl+D cascades. Controls the engine refuses to copy (root / container with
+   * children / entangled) are skipped — the same constraint as Copy.
+   */
+  private async applyDuplicate(ids: string[]): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const dupable = ids.filter((id) => id && id !== 'this');
+    if (!dupable.length) return;
+    const eng = await this.ensureEngine();
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    // 1) copy each source to a LOCAL blob paired with its own parent — the shared clipboard is untouched
+    const blobs: { clip: string; parent: string }[] = [];
+    let refused = 0;
+    for (const id of dupable) {
+      const res = await copyControl(eng, this.designerFile, id, before);
+      if (res.safe && res.clip) {
+        const src = this.controls.find((c) => c.id === id);
+        blobs.push({ clip: res.clip, parent: src?.parentId ?? 'this' });
+      } else refused++;
+    }
+    if (!blobs.length) { this.post({ type: 'status', message: t('status.nothingDuplicated') }); return; }
+    // 2) paste each clone into its own parent, chained into one edit (mirrors applyPaste's net48 live mirror)
+    let text = before;
+    let last = '';
+    let applied = 0;
+    const live48Adds: { typeName: string; name: string; x: number; y: number; parent: string }[] = [];
+    for (const b of blobs) {
+      const res = await pasteControl(eng, this.designerFile, b.clip, b.parent, text);
+      if (res.safe && res.newText !== null) {
+        text = res.newText; last = res.name; applied++;
+        if (this.engineKind === 'net48' && res.typeName) live48Adds.push({ typeName: res.typeName, name: res.name, x: res.x, y: res.y, parent: b.parent });
+      }
+    }
+    if (!applied) { this.post({ type: 'status', message: t('status.duplicateRejected') }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
+    this.commit(before, text, `Duplicate ${applied} control${applied > 1 ? 's' : ''}`);
+    this.currentId = last || this.currentId;
+    this.output.appendLine(`duplicated ${applied} control(s) (unsaved)`);
+    let net48Stale = false;
+    if (this.engineKind === 'net48') {
+      if (live48Adds.length && !this.asm()) net48Stale = true;
+      else {
+        for (const a of live48Adds) {
+          await this.live48((e) => addCompiledControl(e, this.designerFile!, this.asm()!, a.parent, a.typeName, a.name, a.x >= 0 ? a.x : undefined, a.y >= 0 ? a.y : undefined));
+        }
+        // show48 posts layout/render but no selection; select the last clone so a repeated Ctrl+D cascades
+        // (the net9 branch gets this for free from fullRender's trailing pushSelect)
+        this.pushSelect(this.currentId);
+      }
+    } else {
+      await this.fullRender();
+    }
+    const skipped = refused ? tn('status.copiedSkipped', refused) : '';
+    this.post({ type: 'status', message: (net48Stale ? tn('status.duplicatedStale', applied) : tn('status.duplicated', applied)) + skipped });
+  }
+
+  /**
    * Bring to Front / Send to Back: relocate each control's Controls.Add among its siblings (z-order), chained
    * into ONE undoable edit. A control already at the requested end is a no-op (skipped). Layout / unparented
    * controls the engine can't reorder are skipped.
@@ -2156,6 +2653,9 @@ class DesignerSession {
     this.post({ type: 'render', png: frame.png.toString('base64'), width: frame.width, height: frame.height, gen: seq });
     this.postLayout(frame.controls);
     this.pushSelect(this.currentId);
+    // keep the partial-render banner in lockstep with this whole-frame re-render (a value edit rarely changes which
+    // constructs are unrepresentable, but if it does — e.g. fixing/breaking a control — refresh rather than go stale).
+    this.post({ type: 'renderDiag', items: categorizeUnrepresentable(frame.unrepresentable) });
   }
 }
 
@@ -2301,7 +2801,7 @@ ${cspMeta(webview, nonce)}
   .zoomgrp { display: flex; align-items: center; gap: 2px; }
   .zoomgrp button { padding: 1px 7px; }
   #toolbar button.active { background: var(--vscode-toolbar-activeBackground, rgba(255,255,255,.16)); box-shadow: inset 0 0 0 1px var(--vscode-focusBorder, #4ea1ff); }
-  /* tab-order overlay badges (§ Phase 2) */
+  /* tab-order overlay badges */
   .tabBadge { position: absolute; min-width: 14px; height: 16px; padding: 0 3px; box-sizing: border-box;
     background: #c75; color: #fff; border: 1px solid #fff; border-radius: 3px; font-size: 11px; line-height: 14px;
     text-align: center; pointer-events: none; z-index: 7; }
@@ -2312,6 +2812,20 @@ ${cspMeta(webview, nonce)}
   #stage { flex: 1; min-width: 0; overflow: auto; background: #2b2b2b; padding: 16px; position: relative; }
   #overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--vscode-descriptionForeground); white-space: pre-wrap; font-size: 13px; }
   #overlay.err { color: var(--vscode-errorForeground, #f48771); }
+  /* T2.2 partial-render / failure diagnostics banner (top strip; .warn = constructs skipped, .err = stale last-known-good preview) */
+  #diag { flex: 0 0 auto; max-height: 42%; overflow: auto; font-size: 12px; border-bottom: 1px solid var(--vscode-panel-border, #333); }
+  #diag.warn { background: var(--vscode-inputValidation-warningBackground, #352a05); color: var(--vscode-inputValidation-warningForeground, inherit); border-bottom-color: var(--vscode-inputValidation-warningBorder, #b89500); }
+  #diag.err { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); color: var(--vscode-inputValidation-errorForeground, inherit); border-bottom-color: var(--vscode-inputValidation-errorBorder, #be1100); }
+  #diagHead { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
+  #diagIcon { flex: 0 0 auto; }
+  #diagToggle { cursor: pointer; text-decoration: underline; color: var(--vscode-textLink-foreground, #4ea1ff); }
+  #diagSpacer { flex: 1; }
+  #diagDismiss { flex: 0 0 auto; background: transparent; border: none; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; opacity: .8; }
+  #diagDismiss:hover { opacity: 1; }
+  #diagList { margin: 0; padding: 0 8px 6px 8px; list-style: none; }
+  #diagList li { padding: 2px 0 2px 18px; text-indent: -18px; white-space: pre-wrap; word-break: break-word; }
+  #diagList li .diagCat { margin-right: 6px; opacity: .9; font-weight: 600; }
+  #diagList li .diagDetail { opacity: .8; }
   #surfaceWrap { position: relative; box-shadow: 0 4px 24px rgba(0,0,0,.5); }
   #surface { display: block; image-rendering: pixelated; }
   #sel { position: absolute; border: 1px solid #4ea1ff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; display: none; }
@@ -2324,6 +2838,10 @@ ${cspMeta(webview, nonce)}
   #sel .h-sw { left: -4px; bottom: -4px; cursor: nesw-resize; }
   #sel .h-s  { left: 50%; bottom: -4px; margin-left: -4px; cursor: ns-resize; }
   #sel .h-se { right: -4px; bottom: -4px; cursor: nwse-resize; }
+  /* Lock Controls: a locked control shows a muted dashed selection box with no grab handles + a lock glyph */
+  #sel.locked { border: 1px dashed #b0b0b0; }
+  .lockbadge { position: absolute; z-index: 8; font-size: 11px; line-height: 13px; padding: 0 1px; pointer-events: none;
+    background: rgba(43,43,43,.75); border-radius: 2px; user-select: none; }
   /* multi-select: outline boxes for the non-primary selected controls */
   .selsec { position: absolute; border: 1px dashed #4ea1ff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); box-sizing: border-box; pointer-events: none; }
   /* snaplines (alignment guides while dragging) */
@@ -2340,12 +2858,15 @@ ${cspMeta(webview, nonce)}
   /* persistent dashed boundary around container controls (a control that holds children), VS-style — sits BELOW
      the selection boxes so it hints the layout region without obscuring the active selection */
   .containeroutline { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 2; border: 1px dashed rgba(160,160,160,.55); }
+  /* hover pre-selection hint — a thin outline over the control a click would select (sits above container
+     outlines but below the active selection boxes so it never masks the current selection) */
+  .hoverhint { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 3; border: 1px solid rgba(78,161,255,.55); background: rgba(78,161,255,.06); }
   /* small visual separator between toolbar button groups */
   .tbsep { display: inline-block; width: 1px; align-self: stretch; margin: 1px 4px; background: var(--vscode-panel-border, #444); }
   /* rubber-band selection rectangle */
   .rubberband { position: absolute; border: 1px dashed #4ea1ff; background: rgba(78,161,255,.12); pointer-events: none; z-index: 6; box-sizing: border-box; }
   #status { padding: 4px 8px; min-height: 1em; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-panel-border, #333); }
-  /* component tray (§7.3) — non-visual components below the surface */
+  /* component tray — non-visual components below the surface */
   #tray { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-top: 1px solid var(--vscode-panel-border, #333); background: var(--vscode-editorWidget-background, #252526); max-height: 88px; overflow: auto; }
   .trayItem { font-size: 12px; padding: 3px 8px; border-radius: 2px; cursor: pointer; user-select: none; white-space: nowrap;
     background: var(--vscode-button-secondaryBackground, #3a3d41); color: var(--vscode-button-secondaryForeground, #fff); }
@@ -2401,6 +2922,7 @@ ${cspMeta(webview, nonce)}
   .taskfly .tfLink:hover { background: var(--vscode-menu-selectionBackground, #04395e); color: #fff; }
 </style></head>
 <body>
+  <div id="diag" style="display:none"><div id="diagHead"><span id="diagIcon">⚠</span><span id="diagMsg"></span><span id="diagToggle"></span><span id="diagSpacer"></span><button id="diagDismiss" title="${t('designer.diag.dismiss')}">×</button></div><ul id="diagList" style="display:none"></ul></div>
   <div id="stage"><div id="overlay">${t('designer.overlay.loading')}<noscript>${t('designer.overlay.noscript')}</noscript></div><div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="sel"></div></div></div>
   <div id="tray" style="display:none"></div>
   <div id="status"></div>
@@ -2427,6 +2949,10 @@ ${cspMeta(webview, nonce)}
       <button id="sameW" title="${t('designer.same.width')}">=W</button>
       <button id="sameH" title="${t('designer.same.height')}">=H</button>
       <button id="sameWH" title="${t('designer.same.size')}">=□</button>
+    </span>
+    <span id="centerForm" class="zoomgrp" style="display:none" title="${t('designer.center.group')}">
+      <button id="centerFormH" title="${t('designer.center.h')}">[↔]</button>
+      <button id="centerFormV" title="${t('designer.center.v')}">[↕]</button>
     </span>
     <button id="tabOrder" title="${t('designer.tabOrder.tip')}">${t('designer.tabOrder.btn')}</button>
     <button id="rulerToggle" title="${t('designer.ruler.tip')}">${t('designer.ruler.show')}</button>
@@ -2472,6 +2998,11 @@ ${cspMeta(webview, nonce)}
   #sideHeader { flex: 0 0 auto; padding: 8px 8px 4px; background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)); border-bottom: 1px solid var(--vscode-panel-border, #333); }
   #grid { flex: 1; min-height: 0; overflow: auto; }
   #props, #events { padding: 0 8px 8px; }
+  /* VS-style description pane pinned to the bottom of the Properties view: bold name + summary of the active row */
+  #propDesc { flex: 0 0 auto; border-top: 1px solid var(--vscode-panel-border, #333); padding: 6px 8px; min-height: 32px;
+              max-height: 30%; overflow: auto; background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)); }
+  #propDesc .pdName { font-weight: bold; color: var(--vscode-foreground); }
+  #propDesc .pdText { color: var(--vscode-descriptionForeground); font-size: 11px; margin-top: 2px; white-space: normal; }
   button { font: inherit; background: var(--vscode-button-secondaryBackground, #3a3d41); color: var(--vscode-button-secondaryForeground, #fff); border: none; padding: 2px 8px; cursor: pointer; border-radius: 2px; }
   select { width: 100%; margin-bottom: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, #555); padding: 3px; }
   #tabs { display: flex; gap: 2px; align-items: center; margin-bottom: 6px; }
@@ -2484,6 +3015,7 @@ ${cspMeta(webview, nonce)}
   table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
   td { padding: 1px 5px; border-bottom: 1px solid var(--vscode-panel-border, #2b2b2b); vertical-align: middle; height: 20px; }
   tr:hover td { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  tr.sel td { background: var(--vscode-list-inactiveSelectionBackground, rgba(255,255,255,.07)); }
   td.name { position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             border-right: 1px solid var(--vscode-panel-border, #2b2b2b); color: var(--vscode-foreground); }
   td.name.set { font-weight: bold; }
@@ -2553,6 +3085,41 @@ ${cspMeta(webview, nonce)}
   .imgBtn { flex: 0 0 auto; background: transparent; color: var(--vscode-textLink-foreground, #4ea1ff); border: none;
     padding: 0 4px; cursor: pointer; font-size: 11px; line-height: 20px; }
   .imgBtn:hover { text-decoration: underline; }
+  /* string-collection editor: "(Collection)" label + "…" button in the grid cell, and its popup (VS String Collection Editor) */
+  .collectionEd { display: flex; align-items: center; height: 20px; gap: 4px; }
+  .collectionLabel { flex: 1 1 auto; min-width: 0; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .collectionBtn { flex: 0 0 auto; width: 22px; background: transparent; color: var(--vscode-foreground); cursor: pointer;
+    border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; line-height: 16px; padding: 0; }
+  .collectionBtn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.12)); }
+  .propPopup .collectionTitle { padding: 5px 8px; font-weight: 600; border-bottom: 1px solid var(--vscode-widget-border, #454545); }
+  .propPopup .collectionNote { padding: 6px 8px; max-width: 260px; color: var(--vscode-descriptionForeground); }
+  .collectionTa { display: block; margin: 6px; min-width: 240px; box-sizing: border-box; resize: both; font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, #3c3c3c); }
+  .collectionBar { display: flex; justify-content: flex-end; gap: 6px; padding: 0 6px 6px; }
+  .collectionBar button { padding: 2px 12px; cursor: pointer; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background: var(--vscode-button-secondaryBackground, rgba(255,255,255,.08)); border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
+  .collectionBar .collectionOk { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border-color: var(--vscode-button-background); }
+  .collectionBar button:hover { filter: brightness(1.15); }
+  /* typed collection editor (ListView.Columns): a small grid of rows with reorder / remove */
+  .columnsPop .columnsList { margin: 6px; max-height: 260px; overflow-y: auto; min-width: 300px; }
+  .columnsPop .columnsEmpty { padding: 8px; color: var(--vscode-descriptionForeground); }
+  .columnsRow { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .columnsRow .colText { flex: 1 1 auto; min-width: 60px; }
+  .columnsRow .colWidth { flex: 0 0 58px; width: 58px; }
+  .columnsRow .colAlign { flex: 0 0 auto; }
+  .columnsRow input, .columnsRow select { color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, #3c3c3c); border-radius: 2px; padding: 1px 3px; font-size: 12px; box-sizing: border-box; }
+  .colMini { flex: 0 0 auto; width: 20px; padding: 0; line-height: 16px; cursor: pointer; color: var(--vscode-foreground);
+    background: transparent; border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
+  .colMini:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.12)); }
+  .colMini:disabled { opacity: .4; cursor: default; }
+  .colDel:hover { color: var(--vscode-errorForeground, #f14c4c); }
+  .columnsAdd { margin: 0 6px 6px; padding: 2px 10px; cursor: pointer; color: var(--vscode-foreground);
+    background: var(--vscode-button-secondaryBackground, rgba(255,255,255,.08)); border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
+  .columnsAdd:hover { filter: brightness(1.15); }
+  .gridColumnsPop .columnsList { min-width: 340px; }
+  .colChkLbl { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+  .colChk { margin: 0; }
   /* floating popup surface (color picker / flags checkboxes) — on <body>, position:fixed so #grid can't clip it */
   .propPopup { position: fixed; z-index: 70; background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-foreground);
     border: 1px solid var(--vscode-widget-border, #454545); border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.5); font-size: 12px; }
@@ -2595,7 +3162,7 @@ ${cspMeta(webview, nonce)}
   td.cat { font-weight: bold; color: var(--vscode-foreground); cursor: pointer; user-select: none;
            background: var(--vscode-sideBarSectionHeader-background, rgba(255,255,255,.045)); padding: 3px 5px; }
   td.cat:hover { color: var(--vscode-foreground); }
-  /* outline pane (Document outline §7.4) */
+  /* outline pane (Document outline) */
   #outlineTree { flex: 1; min-height: 0; overflow: auto; padding: 4px; font-size: 12px; }
   .treeNode { white-space: nowrap; cursor: pointer; user-select: none; padding: 1px 2px; border-radius: 2px; overflow: hidden; text-overflow: ellipsis; }
   .treeNode:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
@@ -2680,6 +3247,7 @@ ${cspMeta(webview, nonce)}
         <div id="grid">
           <div id="props"></div><div id="events" style="display:none"></div>
         </div>
+        <div id="propDesc"></div>
       </div>
     </div>
     <div id="outlinePane" class="pane" style="display:none">

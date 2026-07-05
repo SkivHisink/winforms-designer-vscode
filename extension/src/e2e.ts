@@ -2,8 +2,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage } from './engineClient';
-import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj } from './csprojRef';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes } from './engineClient';
+import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
+import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 
 const isPng = (b: Buffer): boolean =>
   b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
@@ -102,6 +103,115 @@ function verifyCsprojHelpers(repo: string): void {
   }
 
   console.log('e2e: csprojRef helpers verified — projectAssemblyName; csprojReferencesAssembly (Package+strong-name+ProjectReference, case-insensitive, no false positive); projectReferencesAssembly resolves a ProjectReference by target <AssemblyName>; findNearestCsproj walks up to engine/Engine.csproj; addReferenceToCsproj inserts a valid <Reference>+HintPath before the ROOT </Project> (round-trip, XML-escaped, majority-EOL, comment-safe)');
+
+  // ---- T1.3 cross-runtime routing: framework-only output resolution + multi-target detection ----
+  // A multi-target (net48;net9) project builds BOTH a net9 output (with a .deps.json sidecar) and a net48
+  // output (no sidecar). resolveFrameworkOnlyOutput must pick the net48 one — the assembly the net48 compiled-
+  // preview engine can load — even when the net9 output is NEWER; resolveFrameworkOutput stays freshest-overall.
+  {
+    const mt = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-xrt-'));
+    try {
+      const csproj = path.join(mt, 'App.csproj'); // no <AssemblyName> → asm name derives from the file ("App")
+      fs.writeFileSync(csproj, '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFrameworks>net48;net9.0-windows</TargetFrameworks></PropertyGroup></Project>');
+      const net48Dir = path.join(mt, 'bin', 'Debug', 'net48');
+      const net9Dir = path.join(mt, 'bin', 'Debug', 'net9.0-windows');
+      fs.mkdirSync(net48Dir, { recursive: true });
+      fs.mkdirSync(net9Dir, { recursive: true });
+      const net48Dll = path.join(net48Dir, 'App.dll');
+      const net9Dll = path.join(net9Dir, 'App.dll');
+      fs.writeFileSync(net48Dll, 'MZ');                          // net4x build — no sidecar
+      fs.writeFileSync(net9Dll, 'MZ');                           // .NET build — has a .deps.json sidecar
+      fs.writeFileSync(path.join(net9Dir, 'App.deps.json'), '{}');
+      // make the net9 output strictly NEWER so "freshest overall" ≠ "framework-only" — the case that would
+      // wrongly route a vendor form to net9 without the framework-only resolver.
+      const baseSec = fs.statSync(net48Dll).mtimeMs / 1000;
+      fs.utimesSync(net48Dll, baseSec, baseSec);
+      fs.utimesSync(net9Dll, baseSec + 10, baseSec + 10);
+
+      const fwOnly = resolveFrameworkOnlyOutput(csproj);
+      if (!fwOnly || path.normalize(fwOnly).toLowerCase() !== path.normalize(net48Dll).toLowerCase()) {
+        throw new Error('csprojRef: resolveFrameworkOnlyOutput must pick the net48 (no-sidecar) output, got ' + fwOnly);
+      }
+      const freshest = resolveFrameworkOutput(csproj);
+      if (!freshest || path.normalize(freshest).toLowerCase() !== path.normalize(net9Dll).toLowerCase()) {
+        throw new Error('csprojRef: resolveFrameworkOutput must stay freshest-overall (net9), got ' + freshest);
+      }
+
+      // multiTargetHasFramework: a plural tag with >1 TFM incl. a net4x → true; pure-.NET multi-target, a
+      // single-target net4x, and a single TFM in a plural tag → false.
+      if (!multiTargetHasFramework('<Project><PropertyGroup><TargetFrameworks>net48;net9.0-windows</TargetFrameworks></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework should be true for net48;net9.0-windows');
+      if (multiTargetHasFramework('<Project><PropertyGroup><TargetFrameworks>net8.0;net9.0-windows</TargetFrameworks></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework false positive (no .NET Framework TFM)');
+      if (multiTargetHasFramework('<Project><PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework must be false for a single-target net48 project');
+      if (multiTargetHasFramework('<Project><PropertyGroup><TargetFrameworks>net48</TargetFrameworks></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework must be false for a single TFM in a plural tag');
+      // review fix (MEDIUM): comment-blindness — a commented-out <TargetFrameworks> must NOT be read as live config,
+      // and a commented net48 leftover must not mask the real (pure-.NET) multi-target.
+      if (multiTargetHasFramework('<!-- <TargetFrameworks>net48;net9.0-windows</TargetFrameworks> -->')) throw new Error('csprojRef: multiTargetHasFramework must ignore a commented-out <TargetFrameworks>');
+      if (multiTargetHasFramework('<!-- old <TargetFrameworks>net48;net9.0-windows</TargetFrameworks> --><TargetFrameworks>net8.0;net9.0-windows</TargetFrameworks>')) throw new Error('csprojRef: multiTargetHasFramework must read the LIVE (pure-.NET) TFMs, not the commented net48 one');
+      // review fix (LOW): a conditioned/attributed <TargetFrameworks Condition="…"> tag is still recognized.
+      if (!multiTargetHasFramework("<TargetFrameworks Condition=\"'$(Config)'==''\">net48;net9.0-windows</TargetFrameworks>")) throw new Error('csprojRef: multiTargetHasFramework must handle a conditioned <TargetFrameworks> tag');
+
+      // an unbuilt multi-target project → no framework output yet (drives the "build it" notice, not a switch).
+      const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-xrt-empty-'));
+      try {
+        const c2 = path.join(empty, 'App.csproj');
+        fs.writeFileSync(c2, '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFrameworks>net48;net9.0-windows</TargetFrameworks></PropertyGroup></Project>');
+        if (resolveFrameworkOnlyOutput(c2) !== undefined) throw new Error('csprojRef: resolveFrameworkOnlyOutput should be undefined when nothing is built');
+      } finally { try { fs.rmSync(empty, { recursive: true, force: true }); } catch { /* ignore */ } }
+
+      console.log('e2e: T1.3 cross-runtime helpers verified — resolveFrameworkOnlyOutput picks the net48 (no-sidecar) output over a NEWER net9 one; resolveFrameworkOutput stays freshest-overall; multiTargetHasFramework true for net48;net9 + conditioned tag (false for pure-.NET multi-target / single-target / single-TFM-plural / commented-out block); unbuilt project → no framework output');
+    } finally {
+      try { fs.rmSync(mt, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }
+
+  // ---- T2.2 partial-render diagnostics: the engine's `unrepresentable` strings → categorized, actionable items ----
+  // (pure/headless: mirrors what the canvas banner surfaces without a live webview). The three real shapes are a
+  // statement wearing an "[Ex: unresolved type X]" jacket (missing type), a plain "[Ex: msg]" (init error), and a
+  // bare refused statement (unsupported). Signatures are order-independent so the dismiss-latch survives re-renders.
+  {
+    const items = categorizeUnrepresentable([
+      'this.numericUpDown1.Maximum = new decimal(new int[] { 500, 0, 0, 0 });  [InvalidOperationException: unresolved type decimal]',
+      'this.grid1 = new Vendor.FancyGrid();  [TargetInvocationException: license check failed]',
+      '((Acme.Licensing.ISupportInitialize)(this.button1)).BeginInit()',
+      '   ',                                                                  // blank → ignored
+      'this.numericUpDown1.Maximum = new decimal(new int[] { 500, 0, 0, 0 });  [InvalidOperationException: unresolved type decimal]', // dup → collapsed
+    ]);
+    if (items.length !== 3) throw new Error('T2.2 categorize: expected 3 items (blank ignored, dup collapsed), got ' + items.length + ' → ' + JSON.stringify(items));
+    const missing = items.find((i) => i.category === 'missingType');
+    if (!missing || missing.detail !== 'decimal') throw new Error('T2.2 categorize: unresolved-type-in-jacket must be missingType detail=decimal, got ' + JSON.stringify(missing));
+    // the statement legitimately contains '[' (new int[]); assert only the trailing "[…Exception: …]" jacket is gone
+    if (/InvalidOperationException|unresolved type/.test(missing!.text)) throw new Error('T2.2 categorize: missingType text must be stripped of the exception jacket, got: ' + missing!.text);
+    const init = items.find((i) => i.category === 'initError');
+    if (!init || init.detail !== 'license check failed') throw new Error('T2.2 categorize: exception-without-unresolved-type must be initError detail=message, got ' + JSON.stringify(init));
+    const unsupported = items.find((i) => i.category === 'unsupported');
+    if (!unsupported || unsupported.detail !== '' || !/BeginInit/.test(unsupported.text)) throw new Error('T2.2 categorize: bare refused statement must be unsupported (no detail), got ' + JSON.stringify(unsupported));
+    if (categorizeUnrepresentable([]).length !== 0 || categorizeUnrepresentable(undefined).length !== 0) throw new Error('T2.2 categorize: empty/undefined must yield []');
+    // signature: order-independent + stable, and sensitive to the actual set (drives the dismiss latch)
+    const sigA = diagnosticsSignature(items);
+    const sigB = diagnosticsSignature([items[2], items[0], items[1]]);
+    if (sigA !== sigB) throw new Error('T2.2 signature must be order-independent');
+    if (sigA === diagnosticsSignature(items.slice(0, 2))) throw new Error('T2.2 signature must change when the problem set changes');
+
+    // ---- review fixes (wf_85ad7886) ----
+    // categorizer-0: a statement whose text contains a LITERAL "[XxxException: …]" before the real trailing jacket
+    // must strip only the TAIL jacket (not the sibling literal) — greedy leading group anchors to the rightmost.
+    const sib = categorizeUnrepresentable(['this.errLabel.Text = "[SqlException: connection failed]";  [NotSupportedException: converter missing]']);
+    if (sib.length !== 1 || sib[0].category !== 'initError' || sib[0].detail !== 'converter missing') throw new Error('T2.2 categorize-0: sibling "[…Exception:]" literal must not hijack the jacket, got ' + JSON.stringify(sib));
+    if (sib[0].text !== 'this.errLabel.Text = "[SqlException: connection failed]";') throw new Error('T2.2 categorize-0: only the trailing jacket must be stripped, sibling literal kept; got text=' + sib[0].text);
+    // categorizer-1: an exception message that merely MENTIONS "unresolved type" as prose (not the engine's start/
+    // parenthesized signal) stays initError, not missingType.
+    const prose = categorizeUnrepresentable(['this.x.Init();  [InvalidOperationException: failed; unresolved type Foo was referenced]']);
+    if (prose[0].category !== 'initError') throw new Error('T2.2 categorize-1: "unresolved type" as mid-message prose must stay initError, got ' + JSON.stringify(prose));
+    // the genuine parenthesized bare form IS missing-type
+    const paren = categorizeUnrepresentable(['cannot evaluate invocation (unresolved type) System.Foo']);
+    if (paren[0].category !== 'missingType' || paren[0].detail !== 'System.Foo') throw new Error('T2.2 categorize-1: "(unresolved type) X" bare form must be missingType detail=X, got ' + JSON.stringify(paren));
+    // categorizer-2: two DIFFERENT sets that a naive space-joined signature would collide must get DISTINCT signatures.
+    const c1 = categorizeUnrepresentable(['foo  [SomeException: a b]']);
+    const c2 = categorizeUnrepresentable(['foo a  [SomeException: b]']);
+    if (diagnosticsSignature(c1) === diagnosticsSignature(c2)) throw new Error('T2.2 categorize-2: distinct sets must not collide in the signature');
+
+    console.log('e2e: T2.2 render-diagnostics categorize verified — unresolved-type→missingType (jacket stripped), exception→initError (message), bare statement→unsupported; blank ignored + dup collapsed; empty/undefined→[]; signature order-independent, set-sensitive & collision-free; tail-anchored jacket (sibling "[Ex:]" literal kept); prose "unresolved type"→initError; "(unresolved type) X"→missingType');
+  }
 }
 
 async function main(): Promise<void> {
@@ -154,26 +264,26 @@ async function main(): Promise<void> {
     const textBefore = before?.properties?.find((p) => p.name === 'Text')?.value;
     if (textBefore !== 'I agree to the terms') throw new Error('describe: unexpected agreeCheck.Text=' + textBefore);
 
-    // §7.1 standard-values dropdowns: an enum property carries an EXCLUSIVE standard-values set; a Boolean is
+    // standard-values dropdowns: an enum property carries an EXCLUSIVE standard-values set; a Boolean is
     // an exclusive True/False set; a Color (BackColor) is a NON-exclusive set (named colors + free ARGB entry).
     {
       const props = before?.properties ?? [];
       const flat = props.find((p) => p.name === 'FlatStyle');
       if (!flat || !flat.isEnum || !flat.standardValues || !flat.standardValues.includes('Standard') || flat.standardValuesExclusive !== true) {
-        throw new Error('§7.1: FlatStyle should have an exclusive standard-values set incl. "Standard": ' + JSON.stringify(flat));
+        throw new Error('FlatStyle should have an exclusive standard-values set incl. "Standard": ' + JSON.stringify(flat));
       }
       const autoSize = props.find((p) => p.name === 'AutoSize' && p.type === 'System.Boolean');
       if (!autoSize || !autoSize.standardValues || !autoSize.standardValues.includes('True') || !autoSize.standardValues.includes('False') || autoSize.standardValuesExclusive !== true) {
-        throw new Error('§7.1: Boolean AutoSize should have exclusive True/False standard values: ' + JSON.stringify(autoSize));
+        throw new Error('Boolean AutoSize should have exclusive True/False standard values: ' + JSON.stringify(autoSize));
       }
       const back = props.find((p) => p.name === 'BackColor');
       if (!back || !back.standardValues || !back.standardValues.length || back.standardValuesExclusive !== false) {
-        throw new Error('§7.1: BackColor (Color) should have a NON-exclusive standard-values set: ' + JSON.stringify(back));
+        throw new Error('BackColor (Color) should have a NON-exclusive standard-values set: ' + JSON.stringify(back));
       }
       // a flags enum (Anchor) must NOT get a single-select set (can't express combined flags)
       const anchor = props.find((p) => p.name === 'Anchor');
-      if (anchor && anchor.standardValues != null) throw new Error('§7.1: flags enum Anchor must have null standard values (kept as text): ' + JSON.stringify(anchor.standardValues));
-      console.log(`e2e: §7.1 standard-values verified — FlatStyle enum exclusive (${flat.standardValues.length}), Boolean True/False, BackColor non-exclusive (${back.standardValues.length}), flags Anchor left as text`);
+      if (anchor && anchor.standardValues != null) throw new Error('flags enum Anchor must have null standard values (kept as text): ' + JSON.stringify(anchor.standardValues));
+      console.log(`e2e: standard-values verified — FlatStyle enum exclusive (${flat.standardValues.length}), Boolean True/False, BackColor non-exclusive (${back.standardValues.length}), flags Anchor left as text`);
     }
 
     // Anchor/Dock visual editors (Phase 2): the glyph picker emits an invariant string ("Bottom, Right" / "Fill");
@@ -497,20 +607,20 @@ async function main(): Promise<void> {
       if (gaugeVal !== '85') throw new Error('explicit-asm describe: cpuGauge.Value=' + gaugeVal + ' (expected 85)');
       const gaugeAuto = await describeComponent(engine, customForm, 'cpuGauge'); // 1-arg → unresolved → not found
       if (gaugeAuto !== null) throw new Error('auto-resolve should not find cpuGauge (GaugeControl unresolved)');
-      // §7.2 Increment 2: the project assembly's own control appears in the toolbox under "Project Controls"
+      // project controls: the project assembly's own control appears in the toolbox under "Project Controls"
       const tbProj = await listToolboxItems(engine, customForm, customDll);
       const gaugeItem = tbProj.find((t) => t.name === 'GaugeControl');
       if (!gaugeItem || !gaugeItem.fromProject || gaugeItem.category !== 'Project Controls') {
-        throw new Error('§7.2 Inc2: GaugeControl should appear as a Project Control: ' + JSON.stringify(tbProj.filter((t) => t.fromProject)));
+        throw new Error('GaugeControl should appear as a Project Control: ' + JSON.stringify(tbProj.filter((t) => t.fromProject)));
       }
-      if (gaugeItem.fqn !== 'CustomControls.GaugeControl') throw new Error('§7.2 Inc2: GaugeControl fqn wrong: ' + gaugeItem.fqn);
-      if (!tbProj.some((t) => t.name === 'Button' && !t.fromProject)) throw new Error('§7.2 Inc2: framework controls must still be present alongside project controls');
+      if (gaugeItem.fqn !== 'CustomControls.GaugeControl') throw new Error('GaugeControl fqn wrong: ' + gaugeItem.fqn);
+      if (!tbProj.some((t) => t.name === 'Button' && !t.fromProject)) throw new Error('framework controls must still be present alongside project controls');
       // a project control adds via its fqn (validated against the enumerated set), framework path unaffected
       const addGauge = await addControl(engine, customForm, 'this', 'CustomControls.GaugeControl', fs.readFileSync(customForm, 'utf8'), undefined, undefined, customDll);
-      if (!addGauge.safe || addGauge.newText === null) throw new Error('§7.2 Inc2: AddControl(GaugeControl) rejected: ' + addGauge.reason);
-      if (addGauge.newText.indexOf('new CustomControls.GaugeControl()') < 0) throw new Error('§7.2 Inc2: AddControl(GaugeControl) did not emit the project type ctor');
+      if (!addGauge.safe || addGauge.newText === null) throw new Error('AddControl(GaugeControl) rejected: ' + addGauge.reason);
+      if (addGauge.newText.indexOf('new CustomControls.GaugeControl()') < 0) throw new Error('AddControl(GaugeControl) did not emit the project type ctor');
       const addBogus = await addControl(engine, customForm, 'this', 'CustomControls.NotAThing', fs.readFileSync(customForm, 'utf8'), undefined, undefined, customDll);
-      if (addBogus.safe) throw new Error('§7.2 Inc2: AddControl must reject a project type that is not in the enumerated set');
+      if (addBogus.safe) throw new Error('AddControl must reject a project type that is not in the enumerated set');
       // render with the override paints the gauges → a different (larger) PNG than auto-resolve
       const autoPng = await renderDesigner(engine, customForm);
       const explicitPng = await renderDesigner(engine, customForm, customDll);
@@ -596,7 +706,7 @@ async function main(): Promise<void> {
       // tab-order overlay (Phase 2): every non-root control carries its TabIndex; the root is -1
       if (typeof lOk.tabIndex !== 'number' || lOk.tabIndex < 0) throw new Error('layout: okButton tabIndex missing/invalid');
       if (root.tabIndex !== -1) throw new Error('layout: root tabIndex should be -1 (no tab order)');
-      // component tray (§7.3): SampleForm has no non-visual components → empty tray
+      // component tray: SampleForm has no non-visual components → empty tray
       if (!Array.isArray(layout.tray)) throw new Error('layout: tray must be an array');
       // simulate the webview hit-test: first containing rect (innermost-first order) at okButton's center
       const hit = (px: number, py: number): string | undefined =>
@@ -756,12 +866,12 @@ async function main(): Promise<void> {
       const e2 = await setTableCell(engine, tlpForm, 'cellText', 1, null, diskTlp);
       if (!e2.safe || e2.text === null) throw new Error('SetTableCell(cellText, col=1, keep row) rejected: ' + e2.reason);
       if (!e2.text.includes('this.cellText, 1, 1')) throw new Error('SetTableCell partial (col-only) must keep the existing row → expected "this.cellText, 1, 1"');
-      // §6.5 gate: reject a negative cell, and reject an unknown child (no matching 3-arg Add)
+      // safe-save gate: reject a negative cell, and reject an unknown child (no matching 3-arg Add)
       if ((await setTableCell(engine, tlpForm, 'cellLabel', -1, null, diskTlp)).safe) throw new Error('SetTableCell must reject a negative column');
       if ((await setTableCell(engine, tlpForm, 'noSuchChild', 1, null, diskTlp)).safe) throw new Error('SetTableCell must reject an unknown child');
       console.log(`e2e: TableLayoutPanel grid-cell edit verified — Column/Row surfaced (tableCell); SetTableCell moved cellLabel (0,0)→(1,1) [(${lbl.x},${lbl.y})→(${lbl2.x},${lbl2.y})], partial col-only keeps row, negative & unknown rejected`);
 
-      // §6.5 column/row SIZE-STYLE edit: read the 2 col + 2 row styles, then rewrite one style's args.
+      // column/row SIZE-STYLE edit: read the 2 col + 2 row styles, then rewrite one style's args.
       const styles = await readTableStyles(engine, tlpForm, 'tableLayoutPanel1');
       if (!styles.found || styles.styles.length !== 4) throw new Error('TLP styles: expected 4 (2 col + 2 row), got ' + styles.styles.length);
       const sc0 = styles.styles.find((s) => s.axis === 'Column' && s.index === 0);
@@ -796,13 +906,370 @@ async function main(): Promise<void> {
       const noop = await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 0, 'Percent', 25, diskTlp2);
       if (!noop.safe || noop.text == null) throw new Error('SetTableStyle no-op (set current value) should be safe, got: ' + noop.reason);
       if (noop.text !== diskTlp2) throw new Error('SetTableStyle no-op should return byte-identical text');
-      // §6.5 gate: out-of-range index, bogus size type, negative value — all rejected.
+      // safe-save gate: out-of-range index, bogus size type, negative value — all rejected.
       if ((await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 9, null, 10, diskTlp2)).safe) throw new Error('SetTableStyle must reject an out-of-range index');
       if ((await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 0, 'Bogus', 10, diskTlp2)).safe) throw new Error('SetTableStyle must reject an invalid size type');
       if ((await setTableStyle(engine, tlpForm, 'tableLayoutPanel1', 'Column', 0, null, -5, diskTlp2)).safe) throw new Error('SetTableStyle must reject a negative value');
       console.log('e2e: TableLayoutPanel style edit verified — 4 styles read (col0 Percent/25, row0 Absolute/40); col0→60% rewrites only that ctor (sibling 75F intact) and re-flows the boundary right; row1→AutoSize drops the value arg; out-of-range/bad-type/negative rejected');
     } else {
       console.log('e2e: TableLayoutPanel cells SKIPPED — engine/samples/TableLayoutForm.Designer.cs missing');
+    }
+
+    // ---- String Collection editor (ComboBox/ListBox/CheckedListBox.Items) ----
+    // ListForm has comboBox1.Items = [Alpha,Beta,Gamma] and listBox1.Items = [One,Two] via AddRange. Assert:
+    // describe flags Items as a string collection; the interpreter now honors string elements (the AddRange is
+    // representable, not dropped to read-only); ListCollectionItems reads them; SetCollectionItems rewrites /
+    // clears / re-inserts them and round-trips escaped values; a non-literal collection reads ok:false.
+    const listForm = path.join(repo, 'engine', 'samples', 'ListForm.Designer.cs');
+    if (fs.existsSync(listForm)) {
+      // describe flags Items as an editable string collection
+      const cbc = await describeComponent(engine, listForm, 'comboBox1');
+      const itemsProp = cbc?.properties.find((p) => p.name === 'Items');
+      if (!itemsProp) throw new Error('collection: comboBox1.Items not surfaced in describe');
+      if (!itemsProp.isCollection || itemsProp.collectionItemType !== 'System.String') throw new Error('collection: Items must be flagged isCollection/System.String');
+
+      // interpreter fix: the string-literal AddRange is now representable (was previously dropped to read-only)
+      const listDesc = await describeDesigner(engine, listForm);
+      if (listDesc.unrepresentable.some((u) => /Items\.AddRange/.test(u))) throw new Error('collection: Items.AddRange should be representable (interpreter must honor string elements)');
+
+      // list current items
+      const disk = fs.readFileSync(listForm, 'utf8');
+      const l0 = await listCollectionItems(engine, listForm, 'comboBox1', 'Items', disk);
+      if (!l0.ok || l0.items.join(',') !== 'Alpha,Beta,Gamma') throw new Error('collection: list did not read [Alpha,Beta,Gamma], got ' + JSON.stringify(l0));
+
+      // set: rewrite to a new list, incl. a value with a quote (must round-trip via an escaped literal)
+      const s1 = await setCollectionItems(engine, listForm, 'comboBox1', 'Items', ['First', 'Se"cond', 'Third'], disk);
+      if (!s1.safe || s1.text === null) throw new Error('collection: set rejected: ' + s1.reason);
+      const l1 = await listCollectionItems(engine, listForm, 'comboBox1', 'Items', s1.text);
+      if (!l1.ok || l1.items.join('|') !== 'First|Se"cond|Third') throw new Error('collection: re-read after set wrong, got ' + JSON.stringify(l1.items));
+      if (!/this\.listBox1\.Items\.AddRange/.test(s1.text)) throw new Error('collection: set over-touched — listBox1.Items must be untouched');
+
+      // clear: empty list removes the AddRange
+      const s2 = await setCollectionItems(engine, listForm, 'listBox1', 'Items', [], disk);
+      if (!s2.safe || s2.text === null) throw new Error('collection: clear rejected: ' + s2.reason);
+      if (/this\.listBox1\.Items\.Add/.test(s2.text)) throw new Error('collection: clear must remove all listBox1.Items.Add(Range) calls');
+      const l2 = await listCollectionItems(engine, listForm, 'listBox1', 'Items', s2.text);
+      if (!l2.ok || l2.items.length !== 0) throw new Error('collection: listBox1 should be empty after clear');
+
+      // insert-when-none: after clearing, setting items again inserts a fresh AddRange (anchored in the owner block)
+      const s3 = await setCollectionItems(engine, listForm, 'listBox1', 'Items', ['X', 'Y'], s2.text);
+      if (!s3.safe || s3.text === null) throw new Error('collection: re-insert rejected: ' + s3.reason);
+      const l3 = await listCollectionItems(engine, listForm, 'listBox1', 'Items', s3.text);
+      if (!l3.ok || l3.items.join(',') !== 'X,Y') throw new Error('collection: re-insert did not restore [X,Y], got ' + JSON.stringify(l3.items));
+
+      // a non-literal (bound/complex) collection reads ok:false → the webview keeps it read-only (no data loss)
+      const bound = disk.replace('"Gamma"});', '"Gamma", someVar});');
+      const lb = await listCollectionItems(engine, listForm, 'comboBox1', 'Items', bound);
+      if (lb.ok) throw new Error('collection: a non-literal element must make the collection read-only (ok:false)');
+
+      // adversarial guard (review Fix A): a comment attached to a dropped collection statement must NOT be silently
+      // lost — consolidating two Add calls would drop the comment, so the safe-save gate must REFUSE (safe:false).
+      const commented = 'namespace S{partial class F{private System.Windows.Forms.ComboBox comboBox1;' +
+        'private void InitializeComponent(){this.comboBox1=new System.Windows.Forms.ComboBox();\n' +
+        'this.comboBox1.Items.Add("A");\n// KEEP-THIS-NOTE-do-not-drop\nthis.comboBox1.Items.Add("B");\n' +
+        'this.comboBox1.Name="comboBox1";}}}';
+      const cmt = await setCollectionItems(engine, listForm, 'comboBox1', 'Items', ['A', 'B'], commented);
+      if (cmt.safe) throw new Error('collection: editing a collection with a comment between Add calls must be refused (comment-loss guard)');
+      console.log('e2e: string collection editor verified — Items flagged isCollection; AddRange representable; list [Alpha,Beta,Gamma]; set (quote round-trips) leaves listBox1 intact; clear empties; re-insert restores [X,Y]; non-literal → ok:false; comment-between-Adds refused');
+    } else {
+      console.log('e2e: string collection editor SKIPPED — engine/samples/ListForm.Designer.cs missing');
+    }
+
+    // ---- Typed collection editor (ListView.Columns) ----
+    // ListViewForm has listView1 with colName ("Name"/220) + colSize ("Size"/120) as named ColumnHeader fields.
+    // Assert: describe flags Columns as a typed collection (ColumnHeader item type); ListColumns reads the rows;
+    // SetColumns edits / reorders / removes / adds / clears them, round-trips, and refuses unsafe collections.
+    const lvForm = path.join(repo, 'engine', 'samples', 'ListViewForm.Designer.cs');
+    if (fs.existsSync(lvForm)) {
+      const disk = fs.readFileSync(lvForm, 'utf8');
+
+      // describe flags Columns as a TYPED collection (not string) so the webview opens the grid editor
+      const lvc = await describeComponent(engine, lvForm, 'listView1');
+      const colProp = lvc?.properties.find((p) => p.name === 'Columns');
+      if (!colProp) throw new Error('columns: listView1.Columns not surfaced in describe');
+      if (!colProp.isCollection || colProp.collectionItemType !== 'System.Windows.Forms.ColumnHeader')
+        throw new Error('columns: Columns must be flagged isCollection/ColumnHeader, got ' + JSON.stringify(colProp));
+
+      // read the current columns
+      const c0 = await listColumns(engine, lvForm, 'listView1', disk);
+      if (!c0.ok || c0.columns.length !== 2) throw new Error('columns: list did not read 2 columns, got ' + JSON.stringify(c0));
+      if (c0.columns[0].id !== 'colName' || c0.columns[0].text !== 'Name' || c0.columns[0].width !== 220 || c0.columns[0].textAlign !== 'Left')
+        throw new Error('columns: colName row wrong: ' + JSON.stringify(c0.columns[0]));
+
+      // EDIT: widen colName, right-align colSize — keep ids so nothing is added/removed
+      const e1 = await setColumns(engine, lvForm, 'listView1', [
+        { id: 'colName', text: 'Name', width: 260, textAlign: 'Left' },
+        { id: 'colSize', text: 'Size', width: 120, textAlign: 'Right' },
+      ], disk);
+      if (!e1.safe || e1.text === null) throw new Error('columns: edit rejected: ' + e1.reason);
+      const r1 = await listColumns(engine, lvForm, 'listView1', e1.text);
+      if (r1.columns[0].width !== 260 || r1.columns[1].textAlign !== 'Right') throw new Error('columns: edit did not round-trip, got ' + JSON.stringify(r1.columns));
+      if (!/HorizontalAlignment\.Right/.test(e1.text)) throw new Error('columns: Right align must emit a HorizontalAlignment.Right assignment');
+
+      // REORDER: colSize first
+      const e2 = await setColumns(engine, lvForm, 'listView1', [
+        { id: 'colSize', text: 'Size', width: 120, textAlign: 'Left' },
+        { id: 'colName', text: 'Name', width: 220, textAlign: 'Left' },
+      ], disk);
+      const r2 = await listColumns(engine, lvForm, 'listView1', e2.text!);
+      if (r2.columns[0].id !== 'colSize' || r2.columns[1].id !== 'colName') throw new Error('columns: reorder failed, got ' + JSON.stringify(r2.columns.map((c) => c.id)));
+
+      // REMOVE: drop colSize — its field declaration must go too (no dangling field)
+      const e3 = await setColumns(engine, lvForm, 'listView1', [{ id: 'colName', text: 'Name', width: 220, textAlign: 'Left' }], disk);
+      if (!e3.safe || e3.text === null) throw new Error('columns: remove rejected: ' + e3.reason);
+      if (/\bcolSize\b/.test(e3.text)) throw new Error('columns: remove must delete every colSize reference (field + statements)');
+      const r3 = await listColumns(engine, lvForm, 'listView1', e3.text);
+      if (r3.columns.length !== 1 || r3.columns[0].id !== 'colName') throw new Error('columns: remove wrong result: ' + JSON.stringify(r3.columns));
+
+      // ADD: a new column (empty id → engine names it) — must gain a field decl + construction + AddRange element
+      const e4 = await setColumns(engine, lvForm, 'listView1', [
+        { id: 'colName', text: 'Name', width: 220, textAlign: 'Left' },
+        { id: 'colSize', text: 'Size', width: 120, textAlign: 'Left' },
+        { id: '', text: 'Extra', width: 90, textAlign: 'Center' },
+      ], disk);
+      if (!e4.safe || e4.text === null) throw new Error('columns: add rejected: ' + e4.reason);
+      const r4 = await listColumns(engine, lvForm, 'listView1', e4.text);
+      if (r4.columns.length !== 3 || r4.columns[2].text !== 'Extra' || r4.columns[2].textAlign !== 'Center') throw new Error('columns: add wrong result: ' + JSON.stringify(r4.columns));
+      if (!/private System\.Windows\.Forms\.ColumnHeader columnHeader1;/.test(e4.text)) throw new Error('columns: add must declare a new ColumnHeader field');
+
+      // CLEAR: no columns removes every ColumnHeader field + the AddRange
+      const e5 = await setColumns(engine, lvForm, 'listView1', [], disk);
+      if (!e5.safe || e5.text === null) throw new Error('columns: clear rejected: ' + e5.reason);
+      if (/Columns\.AddRange/.test(e5.text) || /new System\.Windows\.Forms\.ColumnHeader\(\)/.test(e5.text)) throw new Error('columns: clear must remove all columns');
+      const r5 = await listColumns(engine, lvForm, 'listView1', e5.text);
+      if (!r5.ok || r5.columns.length !== 0) throw new Error('columns: cleared list should be empty');
+
+      // SAFETY — a column with an unmanaged property (ImageIndex) reads ok:false AND the edit is refused (no clobber)
+      const unmanaged = disk.replace('this.colName.Width = 220;', 'this.colName.Width = 220;\n            this.colName.ImageIndex = 1;');
+      const u0 = await listColumns(engine, lvForm, 'listView1', unmanaged);
+      if (u0.ok) throw new Error('columns: an unmanaged column property must make the collection read-only (ok:false)');
+      const u1 = await setColumns(engine, lvForm, 'listView1', [{ id: 'colName', text: 'Name', width: 220, textAlign: 'Left' }], unmanaged);
+      if (u1.safe) throw new Error('columns: editing a collection with an unmanaged column property must be refused');
+
+      // SAFETY — an unknown column id is refused (can't retarget an arbitrary field)
+      const uk = await setColumns(engine, lvForm, 'listView1', [{ id: 'colBOGUS', text: 'X', width: 60, textAlign: 'Left' }], disk);
+      if (uk.safe) throw new Error('columns: an unknown column id must be refused');
+
+      // SAFETY — a comment attached to a column statement must not be silently dropped (comment-loss guard → refuse)
+      const commented = disk.replace('this.colName.Text = "Name";', '// KEEP-THIS-COLUMN-NOTE\n            this.colName.Text = "Name";');
+      const cm = await setColumns(engine, lvForm, 'listView1', [
+        { id: 'colName', text: 'Name', width: 300, textAlign: 'Left' },
+        { id: 'colSize', text: 'Size', width: 120, textAlign: 'Left' },
+      ], commented);
+      if (cm.safe) throw new Error('columns: editing a collection with a comment in the column block must be refused (comment-loss guard)');
+
+      // SAFETY (review fix) — an object-initializer construction (new ColumnHeader { Tag = … }) carries unmodeled
+      // state; it must read ok:false AND the edit must be refused, not silently drop the initializer.
+      const initz = disk.replace('this.colName = new System.Windows.Forms.ColumnHeader();', 'this.colName = new System.Windows.Forms.ColumnHeader() { Tag = "keep-me" };');
+      if ((await listColumns(engine, lvForm, 'listView1', initz)).ok) throw new Error('columns: an object-initializer construction must make the collection read-only');
+      if ((await setColumns(engine, lvForm, 'listView1', [{ id: 'colName', text: 'Name', width: 60, textAlign: 'Left' }], initz)).safe)
+        throw new Error('columns: editing a collection with an object-initializer construction must be refused (silent-clobber guard)');
+
+      // SAFETY (review fix) — a comment on a REMOVED column's FIELD DECLARATION (outside the IC body) must not be
+      // silently dropped; removing that column must be refused (whole-class comment-loss guard).
+      const declCmt = disk.replace('private System.Windows.Forms.ColumnHeader colSize;', '// colSize is the size column\n        private System.Windows.Forms.ColumnHeader colSize;');
+      if ((await setColumns(engine, lvForm, 'listView1', [{ id: 'colName', text: 'Name', width: 220, textAlign: 'Left' }], declCmt)).safe)
+        throw new Error('columns: removing a column whose field declaration carries a comment must be refused (field-decl comment-loss guard)');
+
+      console.log('e2e: typed collection editor (ListView.Columns) verified — Columns flagged ColumnHeader; list [colName/220,colSize/120]; edit (width+Right align round-trips); reorder; remove (field+refs gone); add (new field decl); clear (all removed); unmanaged prop → ok:false + refused; unknown id refused; comment-loss refused; initializer-construction refused; field-decl comment-loss refused');
+    } else {
+      console.log('e2e: typed collection editor SKIPPED — engine/samples/ListViewForm.Designer.cs missing');
+    }
+
+    // ---- Hierarchical collection editor (TreeView.Nodes) ----
+    // TreeForm has treeView1 with Fruits[Apple,Banana] + Vegetables[Carrot] as TreeNode LOCAL variables (not fields).
+    // Assert: the interpreter renders it (Slice A); describe flags Nodes as a TreeNode collection; ListNodes reads the
+    // recursive forest; SetNodes edits/reparents/removes/clears, round-trips, and refuses an unmanaged tree.
+    const treeForm = path.join(repo, 'engine', 'samples', 'TreeForm.Designer.cs');
+    if (fs.existsSync(treeForm)) {
+      const disk = fs.readFileSync(treeForm, 'utf8');
+
+      // Slice A — a TreeView populated via TreeNode locals + Nodes.AddRange renders (previously the nodes dropped)
+      const treePng = await renderDesigner(engine, treeForm);
+      if (!isPng(treePng)) throw new Error('treenodes: TreeForm did not render');
+
+      // describe flags Nodes as a TYPED (TreeNode) collection so the webview opens the tree editor
+      const tvc = await describeComponent(engine, treeForm, 'treeView1');
+      const nodesProp = tvc?.properties.find((p) => p.name === 'Nodes');
+      if (!nodesProp) throw new Error('treenodes: treeView1.Nodes not surfaced in describe');
+      if (!nodesProp.isCollection || nodesProp.collectionItemType !== 'System.Windows.Forms.TreeNode')
+        throw new Error('treenodes: Nodes must be flagged isCollection/TreeNode, got ' + JSON.stringify(nodesProp));
+
+      // read the recursive forest: 2 roots; Fruits has 2 children
+      const n0 = await listTreeNodes(engine, treeForm, 'treeView1', disk);
+      if (!n0.ok || n0.nodes.length !== 2) throw new Error('treenodes: list did not read 2 roots, got ' + JSON.stringify(n0));
+      if (n0.nodes[0].text !== 'Fruits' || n0.nodes[0].name !== 'nodeFruits' || n0.nodes[0].children.length !== 2)
+        throw new Error('treenodes: Fruits root wrong: ' + JSON.stringify(n0.nodes[0]));
+      if (n0.nodes[0].children[0].text !== 'Apple' || n0.nodes[1].children[0].text !== 'Carrot')
+        throw new Error('treenodes: nested children wrong: ' + JSON.stringify(n0.nodes));
+
+      // EDIT: rename a node + add a child to Fruits (empty id → the engine names it treeNodeN), round-trip + renders
+      const edited = JSON.parse(JSON.stringify(n0.nodes));
+      edited[0].text = 'Produce';
+      edited[0].children.push({ id: '', text: 'Cherry', name: '', children: [] });
+      const e1 = await setTreeNodes(engine, treeForm, 'treeView1', edited, disk);
+      if (!e1.safe || e1.text === null) throw new Error('treenodes: edit rejected: ' + e1.reason);
+      const r1 = await listTreeNodes(engine, treeForm, 'treeView1', e1.text);
+      if (r1.nodes[0].text !== 'Produce' || r1.nodes[0].children.length !== 3 || r1.nodes[0].children[2].text !== 'Cherry')
+        throw new Error('treenodes: edit did not round-trip, got ' + JSON.stringify(r1.nodes[0]));
+
+      // REPARENT: move Carrot (child of Vegetables) up to be a root; Vegetables becomes a leaf
+      const flat = JSON.parse(JSON.stringify(n0.nodes));
+      const carrot = flat[1].children.splice(0, 1)[0];
+      flat.push(carrot);
+      const e2 = await setTreeNodes(engine, treeForm, 'treeView1', flat, disk);
+      if (!e2.safe || e2.text === null) throw new Error('treenodes: reparent rejected: ' + e2.reason);
+      const r2 = await listTreeNodes(engine, treeForm, 'treeView1', e2.text);
+      if (r2.nodes.length !== 3 || r2.nodes[2].text !== 'Carrot' || r2.nodes[1].children.length !== 0)
+        throw new Error('treenodes: reparent wrong: ' + JSON.stringify(r2.nodes.map((n) => n.text + '/' + n.children.length)));
+
+      // CLEAR: no nodes removes every TreeNode declaration + the AddRange
+      const e3 = await setTreeNodes(engine, treeForm, 'treeView1', [], disk);
+      if (!e3.safe || e3.text === null) throw new Error('treenodes: clear rejected: ' + e3.reason);
+      if (/new System\.Windows\.Forms\.TreeNode\(/.test(e3.text) || /Nodes\.AddRange/.test(e3.text))
+        throw new Error('treenodes: clear must remove every TreeNode + the AddRange');
+
+      // SAFETY — a node with an unmanaged property (ImageKey) reads ok:false AND the edit is refused (no clobber)
+      const unmanaged = disk.replace('treeNode1.Name = "nodeApple";', 'treeNode1.Name = "nodeApple";\n            treeNode1.ImageKey = "leaf";');
+      if ((await listTreeNodes(engine, treeForm, 'treeView1', unmanaged)).ok)
+        throw new Error('treenodes: an unmanaged node property must make the collection read-only (ok:false)');
+      if ((await setTreeNodes(engine, treeForm, 'treeView1', n0.nodes, unmanaged)).safe)
+        throw new Error('treenodes: editing a tree with an unmanaged node property must be refused');
+
+      // SAFETY — an unknown node id is refused (can't retarget an arbitrary local)
+      if ((await setTreeNodes(engine, treeForm, 'treeView1', [{ id: 'treeNodeBOGUS', text: 'X', name: '', children: [] }], disk)).safe)
+        throw new Error('treenodes: an unknown node id must be refused');
+
+      // SAFETY (review fix) — an all-inline TreeView (Nodes.Add(new TreeNode(...)) with NO locals) must read ok:false,
+      // NOT a misleading empty forest that a later commit would then silently drop the inline nodes from.
+      const inlineTree = 'namespace S { partial class T { private System.Windows.Forms.TreeView tv;'
+        + ' private void InitializeComponent() { this.tv = new System.Windows.Forms.TreeView();'
+        + ' this.tv.Nodes.Add(new System.Windows.Forms.TreeNode("Apple")); } } }';
+      if ((await listTreeNodes(engine, treeForm, 'tv', inlineTree)).ok)
+        throw new Error('treenodes: an all-inline TreeView must read ok:false (no misleading empty forest → silent drop)');
+
+      console.log('e2e: hierarchical collection editor (TreeView.Nodes) verified — renders (Slice A); Nodes flagged TreeNode; list [Fruits[Apple,Banana],Vegetables[Carrot]]; edit (rename+add child round-trips); reparent (Carrot→root); clear (all removed); unmanaged prop → ok:false + refused; unknown id refused');
+    } else {
+      console.log('e2e: TreeView.Nodes editor SKIPPED — engine/samples/TreeForm.Designer.cs missing');
+    }
+
+    // ---- TreeView.Nodes owner-scoping (review fix) — two TreeViews on one form edit INDEPENDENTLY ----
+    // Regression guard for the form-global-orphan defect: TwoTreeForm has treeLeft (Left-B[Left-A]) + treeRight (Right-A).
+    const twoTree = path.join(repo, 'engine', 'samples', 'TwoTreeForm.Designer.cs');
+    if (fs.existsSync(twoTree)) {
+      const disk = fs.readFileSync(twoTree, 'utf8');
+      // both trees read independently (form-global orphan detection would have refused BOTH)
+      const l = await listTreeNodes(engine, twoTree, 'treeLeft', disk);
+      const rr = await listTreeNodes(engine, twoTree, 'treeRight', disk);
+      if (!l.ok || l.nodes.length !== 1 || l.nodes[0].text !== 'Left-B' || l.nodes[0].children[0].text !== 'Left-A')
+        throw new Error('treenodes(2): treeLeft did not read independently: ' + JSON.stringify(l));
+      if (!rr.ok || rr.nodes.length !== 1 || rr.nodes[0].text !== 'Right-A')
+        throw new Error('treenodes(2): treeRight did not read independently: ' + JSON.stringify(rr));
+      // editing treeLeft must NOT touch treeRight's nodes (owner-scoped drop + gate)
+      const le = await setTreeNodes(engine, twoTree, 'treeLeft', [{ id: 'treeNode2', text: 'Left-B-EDITED', name: 'leftB', children: l.nodes[0].children }], disk);
+      if (!le.safe || le.text === null) throw new Error('treenodes(2): treeLeft edit rejected: ' + le.reason);
+      const rr2 = await listTreeNodes(engine, twoTree, 'treeRight', le.text);
+      if (!rr2.ok || rr2.nodes.length !== 1 || rr2.nodes[0].text !== 'Right-A' || rr2.nodes[0].name !== 'rightA')
+        throw new Error('treenodes(2): editing treeLeft corrupted treeRight: ' + JSON.stringify(rr2));
+      if (!/Left-B-EDITED/.test(le.text)) throw new Error('treenodes(2): treeLeft edit did not apply');
+      console.log('e2e: TreeView.Nodes owner-scoping verified — two TreeViews on one form read + edit independently (editing one preserves the other, review fix)');
+    } else {
+      console.log('e2e: TreeView.Nodes owner-scoping SKIPPED — engine/samples/TwoTreeForm.Designer.cs missing');
+    }
+
+    // ---- Typed collection editor (DataGridView.Columns) ----
+    // GridForm has dataGridView1 with nameColumn/valueColumn (DataGridViewTextBoxColumn) — a REAL VS shape with
+    // ISupportInitialize BeginInit/EndInit + `//\n// <name>\n//` component-separator comments. Assert: describe flags
+    // Columns as DataGridViewColumn; list/edit/reorder/remove/add/clear; VS separators tolerated but real notes refused.
+    const gridColForm = path.join(repo, 'engine', 'samples', 'GridForm.Designer.cs');
+    if (fs.existsSync(gridColForm)) {
+      const disk = fs.readFileSync(gridColForm, 'utf8');
+
+      const gdc = await describeComponent(engine, gridColForm, 'dataGridView1');
+      const gcProp = gdc?.properties.find((p) => p.name === 'Columns');
+      if (!gcProp) throw new Error('gridcolumns: dataGridView1.Columns not surfaced in describe');
+      if (!gcProp.isCollection || gcProp.collectionItemType !== 'System.Windows.Forms.DataGridViewColumn')
+        throw new Error('gridcolumns: Columns must be flagged isCollection/DataGridViewColumn, got ' + JSON.stringify(gcProp));
+
+      const g0 = await listGridColumns(engine, gridColForm, 'dataGridView1', disk);
+      if (!g0.ok || g0.columns.length !== 2) throw new Error('gridcolumns: list did not read 2 columns, got ' + JSON.stringify(g0));
+      if (g0.columns[0].id !== 'nameColumn' || g0.columns[0].headerText !== 'Name') throw new Error('gridcolumns: nameColumn row wrong: ' + JSON.stringify(g0.columns[0]));
+
+      // EDIT — the fixture carries VS `// nameColumn` separators; the edit must still pass (separators tolerated),
+      // and HeaderText/Width/ReadOnly must round-trip
+      const ge1 = await setGridColumns(engine, gridColForm, 'dataGridView1', [
+        { id: 'nameColumn', headerText: 'Full Name', width: 150, readOnly: false, visible: true },
+        { id: 'valueColumn', headerText: 'Value', width: 100, readOnly: true, visible: true },
+      ], disk);
+      if (!ge1.safe || ge1.text === null) throw new Error('gridcolumns: edit rejected (VS separators must be tolerated): ' + ge1.reason);
+      const gr1 = await listGridColumns(engine, gridColForm, 'dataGridView1', ge1.text);
+      if (gr1.columns[0].headerText !== 'Full Name' || gr1.columns[0].width !== 150 || gr1.columns[1].readOnly !== true)
+        throw new Error('gridcolumns: edit did not round-trip, got ' + JSON.stringify(gr1.columns));
+      if (!/this\.valueColumn\.ReadOnly = true;/.test(ge1.text)) throw new Error('gridcolumns: ReadOnly=true must emit an assignment');
+      if (!/this\.nameColumn\.Name = "nameColumn";/.test(ge1.text)) throw new Error('gridcolumns: Name must always be emitted (kept in sync with the field id)');
+
+      // REORDER
+      const ge2 = await setGridColumns(engine, gridColForm, 'dataGridView1', [
+        { id: 'valueColumn', headerText: 'Value', width: 100, readOnly: false, visible: true },
+        { id: 'nameColumn', headerText: 'Name', width: 100, readOnly: false, visible: true },
+      ], disk);
+      const gr2 = await listGridColumns(engine, gridColForm, 'dataGridView1', ge2.text!);
+      if (gr2.columns[0].id !== 'valueColumn' || gr2.columns[1].id !== 'nameColumn') throw new Error('gridcolumns: reorder failed');
+
+      // REMOVE valueColumn — field decl + refs must go
+      const ge3 = await setGridColumns(engine, gridColForm, 'dataGridView1', [{ id: 'nameColumn', headerText: 'Name', width: 100, readOnly: false, visible: true }], disk);
+      if (!ge3.safe || ge3.text === null) throw new Error('gridcolumns: remove rejected: ' + ge3.reason);
+      if (/\bvalueColumn\b/.test(ge3.text)) throw new Error('gridcolumns: remove must delete every valueColumn reference');
+
+      // ADD (new DataGridViewTextBoxColumn) — new field decl of the concrete type
+      const ge4 = await setGridColumns(engine, gridColForm, 'dataGridView1', [
+        { id: 'nameColumn', headerText: 'Name', width: 100, readOnly: false, visible: true },
+        { id: 'valueColumn', headerText: 'Value', width: 100, readOnly: false, visible: true },
+        { id: '', headerText: 'Extra', width: 80, readOnly: false, visible: false },
+      ], disk);
+      if (!ge4.safe || ge4.text === null) throw new Error('gridcolumns: add rejected: ' + ge4.reason);
+      const gr4 = await listGridColumns(engine, gridColForm, 'dataGridView1', ge4.text);
+      if (gr4.columns.length !== 3 || gr4.columns[2].headerText !== 'Extra' || gr4.columns[2].visible !== false) throw new Error('gridcolumns: add wrong result: ' + JSON.stringify(gr4.columns));
+      if (!/private System\.Windows\.Forms\.DataGridViewTextBoxColumn dataGridViewColumn1;/.test(ge4.text)) throw new Error('gridcolumns: add must declare a new DataGridViewTextBoxColumn field');
+
+      // CLEAR
+      const ge5 = await setGridColumns(engine, gridColForm, 'dataGridView1', [], disk);
+      if (!ge5.safe || ge5.text === null) throw new Error('gridcolumns: clear rejected: ' + ge5.reason);
+      if (/Columns\.AddRange/.test(ge5.text)) throw new Error('gridcolumns: clear must remove the AddRange');
+
+      // SAFETY — a data-bound column (DataPropertyName) or a Name that isn't the field id → read-only
+      const bound = disk.replace('this.nameColumn.Name = "nameColumn";', 'this.nameColumn.Name = "nameColumn";\n            this.nameColumn.DataPropertyName = "Name";');
+      if ((await listGridColumns(engine, gridColForm, 'dataGridView1', bound)).ok) throw new Error('gridcolumns: a data-bound column (DataPropertyName) must be read-only');
+      const renamed = disk.replace('this.nameColumn.Name = "nameColumn";', 'this.nameColumn.Name = "different";');
+      if ((await listGridColumns(engine, gridColForm, 'dataGridView1', renamed)).ok) throw new Error('gridcolumns: a column whose Name != field id must be read-only');
+
+      // SAFETY — a REAL developer note (multi-word) in the column block must still be refused (separator exclusion is narrow)
+      const note = disk.replace('this.nameColumn.HeaderText = "Name";', '// TODO revisit this column mapping\n            this.nameColumn.HeaderText = "Name";');
+      if ((await setGridColumns(engine, gridColForm, 'dataGridView1', [
+        { id: 'nameColumn', headerText: 'X', width: 150, readOnly: false, visible: true },
+        { id: 'valueColumn', headerText: 'Value', width: 100, readOnly: false, visible: true },
+      ], note)).safe) throw new Error('gridcolumns: a real developer note in the column block must be refused');
+
+      // SAFETY — unknown id refused
+      if ((await setGridColumns(engine, gridColForm, 'dataGridView1', [{ id: 'colBOGUS', headerText: 'X', width: 100, readOnly: false, visible: true }], disk)).safe)
+        throw new Error('gridcolumns: an unknown column id must be refused');
+
+      // SAFETY (review fix) — a column referenced in AddRange but never `new`-constructed (malformed source) must be
+      // read-only, not "repaired" with a synthesized ctor that could mismatch the field's declared type
+      const noCtor = disk.replace('this.nameColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();', '');
+      if ((await listGridColumns(engine, gridColForm, 'dataGridView1', noCtor)).ok) throw new Error('gridcolumns: a construction-less column must be read-only');
+
+      // SAFETY (review fix) — removing a column that shares a multi-variable field declaration must be refused
+      // (dropping the whole decl would delete its sibling; VS never emits multi-var decls, but be airtight)
+      const multiVar = disk
+        .replace('private System.Windows.Forms.DataGridViewTextBoxColumn nameColumn;', 'private System.Windows.Forms.DataGridViewTextBoxColumn nameColumn, valueColumn;')
+        .replace('private System.Windows.Forms.DataGridViewTextBoxColumn valueColumn;', '');
+      if ((await setGridColumns(engine, gridColForm, 'dataGridView1', [{ id: 'nameColumn', headerText: 'Name', width: 100, readOnly: false, visible: true }], multiVar)).safe)
+        throw new Error('gridcolumns: removing a column that shares a field declaration must be refused');
+
+      console.log('e2e: typed collection editor (DataGridView.Columns) verified — Columns flagged DataGridViewColumn; list [nameColumn,valueColumn]; edit (header/width/ReadOnly round-trip, Name kept); reorder; remove (field+refs gone); add (new DataGridViewTextBoxColumn decl); clear; VS `// <name>` separators tolerated; DataPropertyName/renamed → ok:false; real dev-note refused; unknown id refused');
+    } else {
+      console.log('e2e: DataGridView collection editor SKIPPED — engine/samples/GridForm.Designer.cs missing');
     }
 
     // ---- Tabs: net9 hidden-tab hit-test filter (#3 parity) + add-tab text splice (#2) ----
@@ -939,7 +1406,7 @@ async function main(): Promise<void> {
 
     // ---- Reset property (VS "Reset" / Dock↔Anchor mutual-exclusivity) ----
     // ResetProperty deletes a property's assignment(s) so it reverts to default. Nothing is interpolated — only
-    // whole target-statement lines are removed, §6.5-gated (OnlyPropertyReset): ONLY the (comp, prop) assignments
+    // whole target-statement lines are removed, safe-save-gated (OnlyPropertyReset): ONLY the (comp, prop) assignments
     // may go, everything else must be byte-identical. panel1 carries a MULTI-LINE Anchor (cast + bitwise-or split
     // across 3 lines) among Location/Size/Name/TabIndex/Padding; btn2 carries both Dock and Anchor (the conjugate).
     const adForm = path.join(repo, 'engine', 'samples', 'AnchorDockForm.Designer.cs');
@@ -1012,6 +1479,21 @@ async function main(): Promise<void> {
       if (!(lb.x - sc.x < 60)) throw new Error(`SplitContainer: leftButton should be near Panel1 left: lb.x=${lb.x} sc.x=${sc.x}`);
       if (!(rl.x - sc.x >= 120 && rl.x - sc.x < 170)) throw new Error(`SplitContainer: rightLabel should sit just past SplitterDistance=120, not the ~50% (≈198) default: rl.x-sc.x=${rl.x - sc.x}`);
       console.log(`e2e: SplitContainer verified — leftButton→Panel1 (x ${lb.x}), rightLabel→Panel2 (x ${rl.x}); SplitterDistance=120 applied (panel boundary ≈${rl.x - sc.x}px from container, not ~50%)`);
+
+      // ---- T2.1 review fix: ISupportInitialize BeginInit/EndInit must NOT be silently dropped on save ----
+      // SplitterForm's SplitContainer emits ((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).BeginInit()/
+      // .EndInit(). These are a representable no-op for RENDER (so the form still renders and RoundTripSafe==true), BUT the
+      // whole-file serializer does NOT re-emit them. Before the fix they were excluded from the safe-save gate, so a save
+      // reported Safe while silently deleting the brackets (data loss). After the fix they stay in the gate: previewSave
+      // must REFUSE (safe=false) and list them in missingStatements — a genuine round-trip is impossible, so we fall back
+      // to read-only instead of corrupting the file.
+      const splitRt = await serializeDesigner(engine, splitForm);
+      if (splitRt.safe !== true) throw new Error('T2.1-fix: SplitterForm should still RENDER / be RoundTripSafe (BeginInit is a representable no-op); got safe=' + splitRt.safe + ' unrep=' + splitRt.unrepresentable.join('; '));
+      const splitSave = await previewSave(engine, splitForm);
+      if (splitSave.safe !== false) throw new Error('T2.1-fix: SplitterForm save must be REFUSED (BeginInit/EndInit are not re-emitted), got safe=' + splitSave.safe);
+      if (!splitSave.missingStatements.some((m) => /BeginInit/.test(m)) || !splitSave.missingStatements.some((m) => /EndInit/.test(m)))
+        throw new Error('T2.1-fix: refused save must list the dropped BeginInit/EndInit in missingStatements, got: ' + splitSave.missingStatements.join(' | '));
+      console.log(`e2e: T2.1-fix BeginInit/EndInit no-silent-drop verified — SplitterForm renders (RoundTripSafe) but previewSave REFUSES (safe=false), missingStatements lists ${splitSave.missingStatements.length} bracket(s) instead of silently dropping them`);
     } else {
       console.log('e2e: SplitContainer SKIPPED — engine/samples/SplitterForm.Designer.cs missing');
     }
@@ -1041,7 +1523,7 @@ async function main(): Promise<void> {
       console.log('e2e: FlowLayoutPanel reorder SKIPPED — engine/samples/FlowForm.Designer.cs missing');
     }
 
-    // ---- DataGridView + BindingSource resilience (§11 fragile fixtures golden) ----
+    // ---- DataGridView + BindingSource resilience (fragile fixtures golden) ----
     // DataGridView (Columns.AddRange + ISupportInitialize BeginInit/EndInit) and a tray BindingSource are
     // "fragile": full normalize-save can't round-trip them (BinaryFormatter/CodeDom limits) → safe=false. But the
     // INTERACTIVE path must work: the form renders, both columns + the binding source describe, the BindingSource
@@ -1049,20 +1531,25 @@ async function main(): Promise<void> {
     const gridForm = path.join(repo, 'engine', 'samples', 'GridForm.Designer.cs');
     if (fs.existsSync(gridForm)) {
       const gl = await renderWithLayout(engine, gridForm);
-      if (!isPng(gl.png)) throw new Error('§11 GridForm did not render');
+      if (!isPng(gl.png)) throw new Error('GridForm did not render');
       for (const n of ['dataGridView1', 'nameColumn', 'valueColumn', 'bindingSource1']) {
-        if (!(await describeComponent(engine, gridForm, n))) throw new Error('§11 GridForm: component dropped from describe: ' + n);
+        if (!(await describeComponent(engine, gridForm, n))) throw new Error('GridForm: component dropped from describe: ' + n);
       }
       const glay = await describeLayout(engine, gridForm);
       const gtray = (glay as unknown as { tray?: Array<{ id: string }> }).tray || [];
-      if (!gtray.some((t) => t.id === 'bindingSource1')) throw new Error('§11 GridForm: bindingSource1 should be in the component tray, not the visual layout');
+      if (!gtray.some((t) => t.id === 'bindingSource1')) throw new Error('GridForm: bindingSource1 should be in the component tray, not the visual layout');
       const gdisk = fs.readFileSync(gridForm, 'utf8');
       const ge = await setProperty(engine, gridForm, 'refreshButton', 'Text', '"Reload"', gdisk);
-      if (!ge.safe || ge.text === null) throw new Error('§11 GridForm: a targeted edit must work even on a fragile form: ' + ge.reason);
+      if (!ge.safe || ge.text === null) throw new Error('GridForm: a targeted edit must work even on a fragile form: ' + ge.reason);
       const gser = await serializeDesigner(engine, gridForm);
-      console.log(`e2e: §11 fragile fixtures verified — GridForm renders (${gl.png.length}B), DataGridView columns + tray BindingSource described, targeted edit works, full-serialize degrades (safe=${gser.safe})`);
+      // T2.1: BeginInit/EndInit (ISupportInitialize scaffolding) are now representable no-ops → they must NOT be
+      // in the unrepresentable set. GridForm still degrades to read-only, but ONLY for the .NET-9 BinaryFormatter
+      // limit (DataGridView resource serialization), not the init bracketing that used to block it.
+      if (gser.unrepresentable.some((u) => /BeginInit|EndInit|ISupportInitialize/.test(u))) throw new Error('T2.1: BeginInit/EndInit must be representable now; unrep: ' + gser.unrepresentable.join('; '));
+      if (gser.safe !== false || !gser.unrepresentable.some((u) => /binary serialized resources|PlatformNotSupported/i.test(u))) throw new Error('T2.1: GridForm should degrade only for the .NET-9 BinaryFormatter limit; unrep: ' + gser.unrepresentable.join('; '));
+      console.log(`e2e: fragile fixtures verified — GridForm renders (${gl.png.length}B), DataGridView columns + tray BindingSource described, targeted edit works, BeginInit/EndInit now representable, full-serialize degrades only for BinaryFormatter (safe=${gser.safe})`);
     } else {
-      console.log('e2e: §11 fragile fixtures SKIPPED — engine/samples/GridForm.Designer.cs missing');
+      console.log('e2e: fragile fixtures SKIPPED — engine/samples/GridForm.Designer.cs missing');
     }
 
     // ---- ToolStrip / .NET-9 serialize limit (graceful read-only, not a crash) ----
@@ -1098,10 +1585,24 @@ async function main(): Promise<void> {
       if (loadEv?.handler !== 'EventForm_Load') throw new Error('Events: form Load handler=' + loadEv?.handler + ' (expected EventForm_Load)');
       console.log(`e2e: Events tab verified — okButton ${okc?.events?.length} events (Click→okButton_Click), form Load→EventForm_Load, unwired→null`);
 
+      // ---- T2.1 round-trip: a form with event wirings (+=) is now FULLY round-trip safe ----
+      // The interpreter captures each `this.X.Event += new Handler(this.method)` verbatim (representable) and the
+      // serializer re-emits it, so no user wiring is silently dropped — the safe-save gate passes. Previously the `+=`
+      // hit HandleAssignment (no property "Click") → unrepresentable → read-only.
+      const evSer = await serializeDesigner(engine, eventForm);
+      if (evSer.safe !== true) throw new Error('T2.1: EventForm (+= wirings) should be round-trip safe; unrep: ' + evSer.unrepresentable.join('; '));
+      if (evSer.code == null
+        || !/this\.okButton\.Click \+= new System\.EventHandler\(this\.okButton_Click\);/.test(evSer.code)
+        || !/this\.okButton\.MouseEnter \+= new System\.EventHandler\(this\.okButton_MouseEnter\);/.test(evSer.code)
+        || !/this\.Load \+= new System\.EventHandler\(this\.EventForm_Load\);/.test(evSer.code)) {
+        throw new Error('T2.1: EventForm round-trip must re-emit all three wirings verbatim');
+      }
+      console.log('e2e: T2.1 event-wiring round-trip verified — EventForm (+= Click/MouseEnter/Load) fully round-trip safe, all wirings re-emitted verbatim');
+
       // ---- create event handler (VS-style): wire an UNWIRED event + generate a signature-matching stub ----
       // Drive GenerateEventHandler against the unsaved buffers. okButton.MouseDown is unwired and uses a
       // NON-trivial delegate (MouseEventHandler) — proves the stub signature comes from delegate reflection,
-      // not a hardcoded (object,EventArgs). The §6.5 gate must add EXACTLY one wiring statement, nothing else.
+      // not a hardcoded (object,EventArgs). The safe-save gate must add EXACTLY one wiring statement, nothing else.
       const ecPath = path.join(repo, 'engine', 'samples', 'EventForm.cs');
       const dText = fs.readFileSync(eventForm, 'utf8');
       const cText = fs.existsSync(ecPath) ? fs.readFileSync(ecPath, 'utf8') : null;
@@ -1115,7 +1616,7 @@ async function main(): Promise<void> {
       if (!gen.designerText || gen.designerText.indexOf(wireStmt) < 0) throw new Error('GenerateEventHandler: wiring statement not added');
       const before = (dText.match(/\+= new /g) || []).length;
       const after = (gen.designerText.match(/\+= new /g) || []).length;
-      if (after !== before + 1) throw new Error(`GenerateEventHandler §6.5: wiring count ${before}→${after} (expected +1)`);
+      if (after !== before + 1) throw new Error(`GenerateEventHandler: wiring count ${before}→${after} (expected +1)`);
       // tolerate the delegate's own parameter names (sender/e vs arg0/arg1) — assert the shape: a void method
       // named okButton_MouseDown taking an object and a MouseEventArgs.
       const stubRe = /private void okButton_MouseDown\(object \w+, System\.Windows\.Forms\.MouseEventArgs \w+\)/;
@@ -1134,10 +1635,10 @@ async function main(): Promise<void> {
       // != null catches both null and undefined (C# null serializes to an absent JSON-RPC field → undefined)
       if (gen2.designerText != null || gen2.codeText != null) throw new Error('GenerateEventHandler: already-wired + existing stub must change nothing');
 
-      // §6.5: a non-identifier handler name (code-injection attempt) must be REJECTED, never interpolated.
+      // safe-save gate: a non-identifier handler name (code-injection attempt) must be REJECTED, never interpolated.
       const inj = await generateEventHandler(engine, eventForm, 'okButton', 'MouseLeave', 'evil){}static void Pwn(){', dText, cText, null);
       if (inj.safe || inj.designerText != null || inj.codeText != null) throw new Error('GenerateEventHandler MUST reject a non-identifier handler name (injection): safe=' + inj.safe);
-      console.log(`e2e: create-event-handler verified — okButton.MouseDown wired + typed stub generated (§6.5: +1 wiring only), wired form renders (${wiredPng.png.length}B), already-wired Click → no change, injection handler name rejected`);
+      console.log(`e2e: create-event-handler verified — okButton.MouseDown wired + typed stub generated (safe-save gate: +1 wiring only), wired form renders (${wiredPng.png.length}B), already-wired Click → no change, injection handler name rejected`);
 
       // ---- events dropdown (#2): compatible-handler candidates + wire/rewire/unwire ----
       const cands = await listHandlerCandidates(engine, eventForm, 'okButton', dText, cText, null);
@@ -1185,6 +1686,24 @@ async function main(): Promise<void> {
       console.log('e2e: collection AddRange SKIPPED — engine/samples/ListViewForm.Designer.cs missing');
     }
 
+    // ---- T2.1 component-reference property RHS (this.<prop> = this.<component>) — round-trip safe ----
+    // ComponentRefForm points AcceptButton/CancelButton at Button components (the reference VS emits for a
+    // dialog). The interpreter now assigns the live component instance (Eval can't — it has no `comps`) and the
+    // serializer re-emits the reference, so the form fully round-trips; it also renders (the reference applies).
+    const compRefForm = path.join(repo, 'engine', 'samples', 'ComponentRefForm.Designer.cs');
+    if (fs.existsSync(compRefForm)) {
+      const crSer = await serializeDesigner(engine, compRefForm);
+      if (crSer.safe !== true) throw new Error('T2.1: ComponentRefForm (component-ref RHS) should be round-trip safe; unrep: ' + crSer.unrepresentable.join('; '));
+      if (crSer.code == null || !/this\.AcceptButton = this\.okButton;/.test(crSer.code) || !/this\.CancelButton = this\.cancelButton;/.test(crSer.code)) {
+        throw new Error('T2.1: ComponentRefForm round-trip must re-emit the AcceptButton/CancelButton component refs');
+      }
+      const crPng = await renderDesigner(engine, compRefForm);
+      if (!isPng(crPng)) throw new Error('T2.1: ComponentRefForm should render to a valid PNG');
+      console.log(`e2e: T2.1 component-ref round-trip verified — ComponentRefForm AcceptButton/CancelButton round-trip safe + re-emitted, renders (${crPng.length}B)`);
+    } else {
+      console.log('e2e: T2.1 component-ref SKIPPED — engine/samples/ComponentRefForm.Designer.cs missing');
+    }
+
     // ---- extender providers (ToolTip/ErrorProvider) ----
     // The interpreter recognizes the components container, the provider ctor new ToolTip(this.components),
     // and provider.SetToolTip(target, value) — so the form renders (tooltip wired) and is fully interpreted.
@@ -1196,41 +1715,41 @@ async function main(): Promise<void> {
       if (!isPng(ep)) throw new Error('extender form should render to a valid PNG');
       const tt = await describeComponent(engine, extenderForm, 'toolTip1');
       if (!tt) throw new Error('extender: toolTip1 provider was not interpreted (ctor with components container)');
-      // component tray (§7.3): the non-visual ToolTip provider appears in the tray, not the visual layout
+      // component tray: the non-visual ToolTip provider appears in the tray, not the visual layout
       const exLayout = await describeLayout(engine, extenderForm);
       if (!exLayout.tray.some((t) => t.id === 'toolTip1')) {
-        throw new Error('§7.3 tray: toolTip1 should be in the component tray: ' + JSON.stringify(exLayout.tray));
+        throw new Error('tray: toolTip1 should be in the component tray: ' + JSON.stringify(exLayout.tray));
       }
-      if (exLayout.controls.some((c) => c.id === 'toolTip1')) throw new Error('§7.3: a non-visual component must NOT be in the visual layout');
+      if (exLayout.controls.some((c) => c.id === 'toolTip1')) throw new Error('a non-visual component must NOT be in the visual layout');
       const es = await serializeDesigner(engine, extenderForm);
       if (es.safe !== false) throw new Error('extender serialize should degrade to read-only on .NET 9 (BinaryFormatter)');
-      // §7.3 delete-tray: RemoveControl removes a NON-visual tray component (its field + ctor + SetToolTip wiring),
+      // delete-tray: RemoveControl removes a NON-visual tray component (its field + ctor + SetToolTip wiring),
       // and the control it provided a tooltip for (helpButton) survives — the engine side of "delete from the tray".
       const exDisk = fs.readFileSync(extenderForm, 'utf8');
       const rmTray = await removeControl(engine, extenderForm, 'toolTip1', exDisk);
-      if (!rmTray.safe || rmTray.newText == null) throw new Error('§7.3 delete-tray: RemoveControl(toolTip1) rejected: ' + rmTray.reason);
-      if (/\btoolTip1\b/.test(rmTray.newText)) throw new Error('§7.3 delete-tray: toolTip1 field/statements/wiring not fully removed');
-      if (!/\bhelpButton\b/.test(rmTray.newText)) throw new Error('§7.3 delete-tray: the provided-to control (helpButton) must survive');
+      if (!rmTray.safe || rmTray.newText == null) throw new Error('delete-tray: RemoveControl(toolTip1) rejected: ' + rmTray.reason);
+      if (/\btoolTip1\b/.test(rmTray.newText)) throw new Error('delete-tray: toolTip1 field/statements/wiring not fully removed');
+      if (!/\bhelpButton\b/.test(rmTray.newText)) throw new Error('delete-tray: the provided-to control (helpButton) must survive');
       const trayGone = await describeLayout(engine, extenderForm, undefined, rmTray.newText);
-      if (trayGone.tray.some((t) => t.id === 'toolTip1')) throw new Error('§7.3 delete-tray: toolTip1 still in tray after removal');
-      if (!trayGone.controls.some((c) => c.id === 'helpButton')) throw new Error('§7.3 delete-tray: helpButton missing after tray removal');
-      console.log(`e2e: extender providers verified — ToolTip/SetToolTip interpreted & rendered (${ep.length}B), in tray (§7.3), serialize degrades read-only; delete-tray removes toolTip1 (helpButton survives)`);
+      if (trayGone.tray.some((t) => t.id === 'toolTip1')) throw new Error('delete-tray: toolTip1 still in tray after removal');
+      if (!trayGone.controls.some((c) => c.id === 'helpButton')) throw new Error('delete-tray: helpButton missing after tray removal');
+      console.log(`e2e: extender providers verified — ToolTip/SetToolTip interpreted & rendered (${ep.length}B), in tray, serialize degrades read-only; delete-tray removes toolTip1 (helpButton survives)`);
     } else {
       console.log('e2e: extender providers SKIPPED — engine/samples/ExtenderForm.Designer.cs missing');
     }
-    // §6.5 safety: the extender ctor relaxation is gated to `new T(this.<components>)` ONLY — a non-container
+    // safe-save gate: the extender ctor relaxation is gated to `new T(this.<components>)` ONLY — a non-container
     // ctor arg is still a hand-edit → unrepresentable (must not silently create + drop state).
     {
       const src6 = fs.readFileSync(designer, 'utf8');
       const hostile = src6.replace('this.okButton = new System.Windows.Forms.Button();', 'this.okButton = new System.Windows.Forms.Button(this.nameTextBox);');
-      if (hostile === src6) throw new Error('§6.5 fixture: okButton ctor anchor not found');
+      if (hostile === src6) throw new Error('safe-save gate fixture: okButton ctor anchor not found');
       const tmpH = path.join(os.tmpdir(), `wfd-e2e-ctorarg-${process.pid}.Designer.cs`);
       fs.writeFileSync(tmpH, hostile, 'utf8');
       try {
         const hs = await serializeDesigner(engine, tmpH);
-        if (hs.safe !== false) throw new Error('§6.5: a non-container ctor arg must NOT be round-trip safe');
-        if (!hs.unrepresentable.some((u) => u.includes('ctor args'))) throw new Error('§6.5: ctor-arg hand-edit should be flagged unrepresentable; got: ' + hs.unrepresentable.join('; '));
-        console.log('e2e: §6.5 safety preserved — a non-container ctor arg is still flagged unrepresentable (extender relaxation is narrow)');
+        if (hs.safe !== false) throw new Error('safe-save gate: a non-container ctor arg must NOT be round-trip safe');
+        if (!hs.unrepresentable.some((u) => u.includes('ctor args'))) throw new Error('safe-save gate: ctor-arg hand-edit should be flagged unrepresentable; got: ' + hs.unrepresentable.join('; '));
+        console.log('e2e: safe-save gate preserved — a non-container ctor arg is still flagged unrepresentable (extender relaxation is narrow)');
       } finally {
         try { fs.unlinkSync(tmpH); } catch { /* ignore */ }
       }
@@ -1257,7 +1776,7 @@ async function main(): Promise<void> {
       console.log('e2e: render/edit-from-text (unsaved preview) verified — buffer render differs from disk (640x480), describe & setProperty read the buffer, disk untouched');
     }
 
-    // ---- toolbox auto-population (§7.2) — reflect framework controls, grouped by VS category ----
+    // ---- toolbox auto-population — reflect framework controls, grouped by VS category ----
     {
       const items = await listToolboxItems(engine);
       if (items.length < 30) throw new Error(`listToolboxItems too small (${items.length}) — auto-population not working`);
@@ -1270,7 +1789,7 @@ async function main(): Promise<void> {
       }
       if (byName.get('Button')!.category !== 'Common Controls') throw new Error('Button miscategorized: ' + byName.get('Button')!.category);
       if (byName.get('TabControl')!.category !== 'Containers') throw new Error('TabControl miscategorized: ' + byName.get('TabControl')!.category);
-      // toolbox icons (§7.2): each framework control carries its own [ToolboxBitmap] as a base64 PNG, and the
+      // toolbox icons: each framework control carries its own [ToolboxBitmap] as a base64 PNG, and the
       // icons are control-specific (not one shared generic glyph) — assert presence + a valid PNG + distinctness.
       const PNG_B64 = 'iVBORw0KGgo'; // base64 of the PNG magic bytes (\x89PNG\r\n)
       for (const n of ['Button', 'Label', 'TextBox', 'TreeView']) {
@@ -1303,10 +1822,10 @@ async function main(): Promise<void> {
       if (!afterSc.controls.some((c) => c.id === addSc.name)) {
         throw new Error(`AddControl(SplitContainer): ${addSc.name} missing from layout — swallowed by the Container heuristic`);
       }
-      console.log(`e2e: toolbox §7.2 auto-population verified — ${items.length} controls in ${new Set(items.map((i) => i.category)).size} categories; TreeView add+render (no explicit Size) & SplitContainer materializes (not Container-swallowed)`);
+      console.log(`e2e: toolbox auto-population verified — ${items.length} controls in ${new Set(items.map((i) => i.category)).size} categories; TreeView add+render (no explicit Size) & SplitContainer materializes (not Container-swallowed)`);
     }
 
-    // ---- toolbox non-visual components/dialogs + AddComponent (§7.2, F5 #4) ----
+    // ---- toolbox non-visual components/dialogs + AddComponent ----
     {
       const items = await listToolboxItems(engine);
       const timer = items.find((i) => i.name === 'Timer');
@@ -1367,7 +1886,7 @@ async function main(): Promise<void> {
       if (!addAt.safe || addAt.newText === null) throw new Error('AddControl(locX/locY) rejected: ' + addAt.reason);
       if (addAt.newText.indexOf('new System.Drawing.Point(50, 60)') < 0) throw new Error('AddControl did not place the control at the drop location (50, 60)');
       if (!isPng((await renderWithLayout(engine, designer, undefined, addAt.newText)).png)) throw new Error('AddControl(loc) form did not render');
-      // §6.5 / robustness: a non-allowlisted type and an unknown parent are rejected
+      // safe-save gate / robustness: a non-allowlisted type and an unknown parent are rejected
       const badType = await addControl(engine, designer, 'this', 'Process', diskAdd);
       if (badType.safe) throw new Error('AddControl must reject a non-allowlisted control type');
       const badParent = await addControl(engine, designer, 'noSuchParent', 'Button', diskAdd);
@@ -1489,11 +2008,11 @@ async function main(): Promise<void> {
       console.log('e2e: z-order verified — front/back relocate the Controls.Add (front < first sibling, back > last); control set preserved; no-op at ends; refuse root; visual proof front≠back; refuse shared-line & AddRange containers');
     }
 
-    // ---- §7.4 reparent: move a leaf control into a different container / back to the root ----
+    // ---- reparent: move a leaf control into a different container / back to the root ----
     {
       const rpDisk = fs.readFileSync(designer, 'utf8'); // SampleForm: okButton (root leaf), optionsGroup (container of optionA/optionB)
       const rp1 = await reparentControl(engine, designer, 'okButton', 'optionsGroup', rpDisk);
-      if (!rp1.safe || rp1.newText == null) throw new Error('§7.4 reparent(okButton → optionsGroup) rejected: ' + rp1.reason);
+      if (!rp1.safe || rp1.newText == null) throw new Error('reparent(okButton → optionsGroup) rejected: ' + rp1.reason);
       if (!/this\.optionsGroup\.Controls\.Add\(this\.okButton\)/.test(rp1.newText)) throw new Error('reparent: okButton not re-parented into optionsGroup');
       if (/this\.Controls\.Add\(this\.okButton\)/.test(rp1.newText)) throw new Error('reparent: the old root Controls.Add(okButton) must be gone');
       const rpLay = await describeLayout(engine, designer, undefined, rp1.newText);
@@ -1501,9 +2020,9 @@ async function main(): Promise<void> {
       if (!okc || okc.parentId !== 'optionsGroup') throw new Error(`reparent: okButton.parentId should reflow to optionsGroup, got ${okc?.parentId}`);
       // reverse the move (→ root) and confirm it reproduces the original file byte-for-byte (receiver-only edit).
       const rp2 = await reparentControl(engine, designer, 'okButton', 'this', rp1.newText);
-      if (!rp2.safe || rp2.newText == null) throw new Error('§7.4 reparent(okButton → root) rejected: ' + rp2.reason);
+      if (!rp2.safe || rp2.newText == null) throw new Error('reparent(okButton → root) rejected: ' + rp2.reason);
       if (rp2.newText !== rpDisk) throw new Error('reparent there-and-back should reproduce the original bytes');
-      // §6.5 gate refusals: the root, a self-parent, an unknown parent.
+      // safe-save gate refusals: the root, a self-parent, an unknown parent.
       if ((await reparentControl(engine, designer, 'this', 'optionsGroup', rpDisk)).safe) throw new Error('reparent must refuse the root form');
       if ((await reparentControl(engine, designer, 'okButton', 'okButton', rpDisk)).safe) throw new Error('reparent must refuse a self-parent');
       if ((await reparentControl(engine, designer, 'okButton', 'noSuchParent', rpDisk)).safe) throw new Error('reparent must refuse an unknown parent');
@@ -1526,7 +2045,7 @@ async function main(): Promise<void> {
         const tlpDisk2 = fs.readFileSync(tlpForm, 'utf8');
         if ((await reparentControl(engine, tlpForm, 'tableLayoutPanel1', 'this', tlpDisk2)).safe) throw new Error('reparent must refuse a TableLayoutPanel with 3-arg cell children (leaf-only/cycle-safe)');
       }
-      console.log('e2e: §7.4 reparent verified — okButton → optionsGroup (parentId reflows) and back to root (byte-identical); refuses root/self/unknown/container-with-children/non-container target/non-Control tray target/TLP-cells; disk untouched');
+      console.log('e2e: reparent verified — okButton → optionsGroup (parentId reflows) and back to root (byte-identical); refuses root/self/unknown/container-with-children/non-container target/non-Control tray target/TLP-cells; disk untouched');
     }
 
     // ---- group move (multi-select): chain setProperty(Location) over several controls (applyGroupMove core) ----

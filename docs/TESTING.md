@@ -13,7 +13,8 @@ fast **unit-test** layer. It complements the dev/test commands in
 |------|----------------|-------|-------|
 | **Unit** *(to add)* | Pure / near-pure functions in isolation: security gates, allowlists, value conversion, identifier validation, TFM selection, the TS expression helpers. No WinForms host, no STA, no filesystem. | ms | `tests/` (C#), `extension/` (TS) |
 | **Integration / E2E** *(exists)* | The whole engine driven over the named pipe against sample `.Designer.cs` fixtures: render, layout, property edits, add/remove, events, MSBuild resolution, byte-identity. | seconds | [`extension/src/e2e.ts`](../extension/src/e2e.ts) → `npm run e2e` |
-| **Manual / F5** *(exists)* | Webview UI (canvas, property grid, toolbox, drag/resize) — not covered by headless tests. | manual | Extension Development Host (F5) |
+| **Live-webview** *(exists)* | The real `media/designer.js` + `media/panel.js` loaded into a headless jsdom window; synthetic events (keyboard nudge, click/selection, context-menu, banner dismiss, zoom, property-grid edits) assert on the messages the webview posts back + the resulting DOM. No Extension Host, no engine. | seconds | [`extension/src/webview-e2e.ts`](../extension/src/webview-e2e.ts) → `npm run webview-e2e` |
+| **Manual / F5** *(exists)* | Anything the headless webview layer can't reach: real PNG rendering, cross-webview drag geometry, VS Code focus/theming, layout that depends on real `getBoundingClientRect`. | manual | Extension Development Host (F5) |
 
 ## What exists today
 
@@ -24,7 +25,7 @@ These prove the system end-to-end but are **not** unit tests: they exercise ever
 
 ## Why add unit tests
 
-1. **Pin the security boundary.** The engine interprets and edits code from `.Designer.cs`. The §6.5 gates and interpreter allowlists are the line between "safe preview" and RCE-on-open. They deserve direct, exhaustive, fast tests — including adversarial/negative cases — that don't depend on rendering.
+1. **Pin the security boundary.** The engine interprets and edits code from `.Designer.cs`. The safe-save gates and interpreter allowlists are the line between "safe preview" and RCE-on-open. They deserve direct, exhaustive, fast tests — including adversarial/negative cases — that don't depend on rendering.
 2. **Fast feedback & refactor safety.** Pure-function tests run in milliseconds and localize regressions to one function.
 3. **Contributor confidence.** A `dotnet test` / `npm test` that runs in seconds lowers the bar to contribute (vs. needing the full engine + sample builds for e2e).
 
@@ -32,7 +33,7 @@ These prove the system end-to-end but are **not** unit tests: they exercise ever
 
 Most high-value targets are **already `public static` and accept a source-text string** (an in-memory `.Designer.cs` buffer), so they can be unit-tested with **no temp files, no STA thread, and no WinForms rendering**:
 
-- §6.5 gate classifiers: `OnlyControlAdded`, `OnlyControlRemoved`, `OnlyWiringAdded`, `OnlyWiringChanged`, `OnlyTargetChanged` (all `public static`, `string → bool`).
+- safe-save gate classifiers: `OnlyControlAdded`, `OnlyControlRemoved`, `OnlyWiringAdded`, `OnlyWiringChanged`, `OnlyTargetChanged` (all `public static`, `string → bool`).
 - `DesignerControlEditor.AddControl(string src, …)` / `RemoveControl(string src, …)` → results expose `.Safe`/`.Reason`.
 - `DesignerRenderer.IsValidIdentifier(string)` (`public static`) — the injection guard.
 - `DesignerValueConverter.ToExpression(string typeName, string invariantValue)` (`public static`, pure).
@@ -96,7 +97,7 @@ Optional coverage: `coverlet` for C#, `vitest --coverage` for TS — report only
 
 ## Rollout
 
-- **P0 — security core (no refactor):** §6.5 gates, `IsValidIdentifier`, `DesignerValueConverter.ToExpression`, `AddControl`/`RemoveControl` `.Safe` — all via existing public APIs. Create `tests/Engine.UnitTests`, wire `dotnet test` into CI.
+- **P0 — security core (no refactor):** safe-save gates, `IsValidIdentifier`, `DesignerValueConverter.ToExpression`, `AddControl`/`RemoveControl` `.Safe` — all via existing public APIs. Create `tests/Engine.UnitTests`, wire `dotnet test` into CI.
 - **P1 — allowlists + resolver + TS:** allowlist negative tests (boundary or `InternalsVisibleTo`); `ProjectResolver` TFM regex/selection; vitest for `valueExpr.ts`; wire `npm test` into CI.
 - **P2 — broaden + decouple:** factor pure config/path logic out of `vscode`-coupled code; widen TS coverage; add coverage reporting.
 - **P3 — golden fixtures:** snapshot/golden tests for fragile constructs (DataGridView, BindingSource, etc.) — overlaps the e2e fixtures.
@@ -107,4 +108,4 @@ These stay in their existing tiers (don't try to unit-test them):
 
 - Full WinForms rendering / `DrawToBitmap` (needs an STA thread + a real host) → **e2e**.
 - MSBuild design-time evaluation (needs the filesystem + `dotnet`) → **e2e**.
-- Webview JavaScript behavior (`media/*.js`) → **manual F5** + `node --check` for syntax.
+- Webview JavaScript **rendering fidelity** (real PNG blit, `getBoundingClientRect`-dependent drag/marquee geometry, VS Code theming/focus) → **manual F5**. The webview *logic* (event → posted message, DOM state) is now covered headlessly by [`webview-e2e.ts`](../extension/src/webview-e2e.ts) (`npm run webview-e2e`), on top of `node --check` for syntax.

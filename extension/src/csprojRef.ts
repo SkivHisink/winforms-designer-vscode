@@ -100,18 +100,43 @@ export function isFrameworkTfm(tfm: string | null | undefined): boolean {
 }
 
 /**
- * Locate a project's build output (`<AssemblyName>.exe|dll`, freshest under bin/) — used for .NET Framework
- * projects, whose output the net9 engine's resolver deliberately refuses (can't load net4x) and whose bin
- * search only looks for `.dll`. This covers OutputType=Exe (net48 WinForms apps), so a Framework control
- * source resolves for the net48 engine — and fixes the "Could not resolve build output" the user hit picking
- * a net48 project. Returns undefined when nothing built yet.
+ * True when the project MULTI-targets and at least one target is .NET Framework — the T1.3 cross-runtime case:
+ * a `<TargetFrameworks>` (plural) list with more than one entry that includes a net4x TFM (e.g.
+ * "net48;net9.0-windows"). Such a project builds BOTH a net9 and a net48 output, so when the net9 engine
+ * renders a vendor form near-empty we can fall back to the net48 compiled preview. A single-target net4x
+ * project (`<TargetFramework>net48`) is not this case — it's routed to net48 up front (see resolveRouting).
  */
-export function resolveFrameworkOutput(csprojPath: string): string | undefined {
+export function multiTargetHasFramework(csprojText: string): boolean {
+  // Strip XML comments first so a commented-out `<TargetFrameworks>` (a common migration leftover) isn't read as
+  // live config (mirrors rootCloseOffset's comment-skipping). The opening tag may carry attributes (e.g. a
+  // Condition), so allow them — else a conditioned multi-target project would never get the fallback offer.
+  const m = /<TargetFrameworks(?:\s[^>]*)?>\s*([^<]+?)\s*<\/TargetFrameworks>/i.exec(stripXmlComments(csprojText));
+  if (!m) return false;
+  const tfms = m[1].split(';').map((s) => s.trim()).filter(Boolean);
+  return tfms.length > 1 && tfms.some(isFrameworkTfm);
+}
+
+/** Remove XML comments (`<!-- … -->`) from csproj text so a commented-out element isn't matched as live config. */
+function stripXmlComments(text: string): string {
+  return text.replace(/<!--[\s\S]*?-->/g, '');
+}
+
+/** True when the assembly at `assemblyPath` has NO .NET (Core) sidecar (`.deps.json`/`.runtimeconfig.json`) —
+ *  i.e. it's a .NET Framework build that only the net48 engine can load. Mirrors the host's detectEngineKind. */
+function isFrameworkBuild(assemblyPath: string): boolean {
+  const base = assemblyPath.replace(/\.(dll|exe)$/i, '');
+  try { return !(fs.existsSync(base + '.deps.json') || fs.existsSync(base + '.runtimeconfig.json')); }
+  catch { return true; }
+}
+
+/** Every `<AssemblyName>.exe|dll` under the project's bin/ (depth-capped), freshest first, each tagged whether
+ *  it's a .NET Framework build (no Core sidecar). Shared walk behind the two output resolvers below. */
+function collectBuildOutputs(csprojPath: string): { path: string; mtime: number; framework: boolean }[] {
   let text: string;
-  try { text = fs.readFileSync(csprojPath, 'utf8'); } catch { return undefined; }
+  try { text = fs.readFileSync(csprojPath, 'utf8'); } catch { return []; }
   const asm = projectAssemblyName(text, csprojPath).toLowerCase();
   const binDir = path.join(path.dirname(csprojPath), 'bin');
-  const hits: { p: string; m: number }[] = [];
+  const hits: { path: string; mtime: number; framework: boolean }[] = [];
   const walk = (dir: string, depth: number): void => {
     if (depth > 4) return;
     let entries: fs.Dirent[];
@@ -121,13 +146,34 @@ export function resolveFrameworkOutput(csprojPath: string): string | undefined {
       if (e.isDirectory()) { walk(full, depth + 1); continue; }
       const lower = e.name.toLowerCase();
       if (lower === asm + '.exe' || lower === asm + '.dll') {
-        try { hits.push({ p: full, m: fs.statSync(full).mtimeMs }); } catch { /* ignore */ }
+        try { hits.push({ path: full, mtime: fs.statSync(full).mtimeMs, framework: isFrameworkBuild(full) }); } catch { /* ignore */ }
       }
     }
   };
   walk(binDir, 0);
-  hits.sort((a, b) => b.m - a.m); // freshest build wins (Debug vs Release)
-  return hits[0]?.p;
+  hits.sort((a, b) => b.mtime - a.mtime); // freshest build wins (Debug vs Release, net48 vs net9)
+  return hits;
+}
+
+/**
+ * Locate a project's build output (`<AssemblyName>.exe|dll`, freshest under bin/) — used for .NET Framework
+ * projects, whose output the net9 engine's resolver deliberately refuses (can't load net4x) and whose bin
+ * search only looks for `.dll`. This covers OutputType=Exe (net48 WinForms apps), so a Framework control
+ * source resolves for the net48 engine — and fixes the "Could not resolve build output" the user hit picking
+ * a net48 project. Returns undefined when nothing built yet.
+ */
+export function resolveFrameworkOutput(csprojPath: string): string | undefined {
+  return collectBuildOutputs(csprojPath)[0]?.path; // freshest overall (unchanged semantics)
+}
+
+/**
+ * The freshest .NET FRAMEWORK build output of a project (the net4x-flavored `<asm>.exe|dll`, identified by the
+ * ABSENCE of a `.deps.json`/`.runtimeconfig.json` sidecar), or undefined when none is built. For a MULTI-target
+ * project this picks the net48 output even when a (net9) Core output is newer — the assembly the net48 compiled-
+ * preview engine can load when net9 renders a vendor form near-empty (T1.3 cross-runtime fallback).
+ */
+export function resolveFrameworkOnlyOutput(csprojPath: string): string | undefined {
+  return collectBuildOutputs(csprojPath).find((h) => h.framework)?.path;
 }
 
 function xmlEscape(s: string): string {

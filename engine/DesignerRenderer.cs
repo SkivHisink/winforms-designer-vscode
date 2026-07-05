@@ -20,7 +20,7 @@ namespace WinFormsDesigner.Engine
     /// DesignSurface (S1), interprets the representable InitializeComponent subset
     /// (S2b), and captures to PNG (S1/S4 fast-path). When a control assembly is
     /// supplied, custom/3rd-party control types are resolved from a collectible ALC
-    /// (Phase 1, §8.3) so real custom controls render with full fidelity.
+    /// so real custom controls render with full fidelity.
     /// </summary>
     public sealed class RenderResult
     {
@@ -344,7 +344,7 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// The component tray (§7.3): every host-container component that is NOT a Control — Timer, ToolTip,
+        /// The component tray: every host-container component that is NOT a Control — Timer, ToolTip,
         /// ErrorProvider, ImageList, BindingSource, etc. ANY Control (parented or orphaned) belongs to the
         /// visual layout/hit-test map (BuildLayoutControls), NOT the tray, so the two read-paths never
         /// double-list the same component. The root form and the (unnamed) IContainer disposal holder are
@@ -367,7 +367,7 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>
         /// Load a .Designer.cs into a live design surface and serialize it back to
-        /// InitializeComponent through the host serializer with §6.3 default-value
+        /// InitializeComponent through the host serializer with default-value
         /// normalization. The save-direction half of the round-trip contract: proves
         /// open→save stays clean (no Enabled=true/Visible=true over-emission) while
         /// genuine non-defaults (Checked=true, custom Value=85) survive.
@@ -378,7 +378,7 @@ namespace WinFormsDesigner.Engine
             RoundTripResult r;
             try
             {
-                r = DesignerSerializer.Serialize(g.Surface, g.Host, g.ClassName, normalizeDefaults, g.ExplicitMembers);
+                r = DesignerSerializer.Serialize(g.Surface, g.Host, g.ClassName, normalizeDefaults, g.ExplicitMembers, g.EventWiringStatements);
             }
             catch (Exception ex)
             {
@@ -386,7 +386,7 @@ namespace WinFormsDesigner.Engine
                 // serializer pulls BinaryFormatter-backed resources (e.g. ToolStrip/MenuStrip), and
                 // BinaryFormatter was removed in .NET 9 → "This platform does not support binary serialized
                 // resources." The form still renders and accepts targeted text edits (--set-prop never
-                // serializes); only the full normalize-save is impossible. Degrade to the §6.5 read-only
+                // serializes); only the full normalize-save is impossible. Degrade to the safe-save read-only
                 // fallback (treat the failure as an unrepresentable construct) instead of throwing out of
                 // PreviewSave/SerializeDesigner/--roundtrip — a save crash on a common control is worse
                 // than a clean read-only signal.
@@ -401,7 +401,7 @@ namespace WinFormsDesigner.Engine
                     Unrepresentable = unrep,
                 };
             }
-            // carry interpret stats so the caller can enforce the §6.5 read-only fallback
+            // carry interpret stats so the caller can enforce the safe-save read-only fallback
             return new RoundTripResult
             {
                 Code = r.Code,
@@ -416,9 +416,9 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>
         /// Produce the would-be-saved text by splicing the normalized InitializeComponent
-        /// back into the existing file (save-direction, §6.3/§6.6). The result is a preview:
+        /// back into the existing file (save-direction, normalization + transactional write). The result is a preview:
         /// the caller decides whether to write it. <see cref="SaveResult.Safe"/> is true only
-        /// when the source fully round-trips (§6.5) — never write back otherwise.
+        /// when the source fully round-trips — never write back otherwise.
         /// </summary>
         public static SaveResult SaveSplice(string designerFilePath, string? controlAssemblyPath = null)
         {
@@ -428,7 +428,7 @@ namespace WinFormsDesigner.Engine
             {
                 return new SaveResult { RoundTrip = rt, OriginalText = original, Encoding = encoding, SplicedText = null };
             }
-            // plan §6.5 statement-level diff: refuse to save if re-serialization fails to reproduce
+            // safe-save statement-level diff: refuse to save if re-serialization fails to reproduce
             // any original statement (would silently lose/alter user code), even when all interpreted.
             var missing = DesignerSaveSplicer.MissingOriginalStatements(original, rt.Code);
             if (missing.Count > 0)
@@ -458,9 +458,9 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// Apply a targeted single-property edit to a source file (byte-minimal text edit, §6.3
-        /// sentinel). Verifies the result still parses and that ONLY the target (component,
-        /// property) changed (§6.5 for edits). Returns a preview — the caller decides to write.
+        /// Apply a targeted single-property edit to a source file (byte-minimal text edit,
+        /// normalization sentinel). Verifies the result still parses and that ONLY the target (component,
+        /// property) changed. Returns a preview — the caller decides to write.
         /// No rendering/assembly load needed: works even on files that don't fully round-trip.
         /// </summary>
         public static PropertyEditResult ApplyPropertyEdit(string designerFilePath, string componentName, string propertyName, string newValueExpr, string? sourceText = null)
@@ -500,7 +500,7 @@ namespace WinFormsDesigner.Engine
             };
         }
 
-        /// <summary>§6.5 grid-cell edit: move a TableLayoutPanel child to a new column/row by swapping the cell
+        /// <summary>Safe-save-gated grid-cell edit: move a TableLayoutPanel child to a new column/row by swapping the cell
         /// args of its 3-arg <c>Controls.Add(this.child, col, row)</c>. Mirrors <see cref="ApplyPropertyEdit"/>
         /// (buffer-or-disk source, parse-check + <see cref="DesignerTableCellEditor.OnlyTableCellChanged"/> gate);
         /// column/row are plain ints, so no source is interpolated. Either may be null to keep the existing value.</summary>
@@ -533,7 +533,7 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>Reset one property to its default by deleting its assignment(s) — the engine side of VS's
         /// "Reset" and of Dock↔Anchor mutual exclusivity. Mirrors <see cref="ApplyPropertyEdit"/> (buffer-or-disk
-        /// source; §6.5 <see cref="DesignerPropertyEditor.OnlyPropertyReset"/> gate). Nothing is interpolated —
+        /// source; safe-save <see cref="DesignerPropertyEditor.OnlyPropertyReset"/> gate). Nothing is interpolated —
         /// only whole target-statement lines are removed. A property with no assignment is a safe no-op.</summary>
         public static PropertyResetResult ApplyPropertyReset(string designerFilePath, string componentName, string propertyName, string? sourceText = null)
         {
@@ -552,7 +552,7 @@ namespace WinFormsDesigner.Engine
             return DesignerImageEditor.SetImageResource(src, componentName, propertyName, propertyTypeName, imageBytes, resxText);
         }
 
-        /// <summary>§6.5 TableLayoutPanel column/row size-style edit: rewrite the Nth ColumnStyle/RowStyle ctor args to
+        /// <summary>Safe-save-gated TableLayoutPanel column/row size-style edit: rewrite the Nth ColumnStyle/RowStyle ctor args to
         /// (SizeType, value). Mirrors <see cref="ApplyTableCellEdit"/> (buffer-or-disk, parse-check +
         /// <see cref="DesignerTableStyleEditor.OnlyTableStyleChanged"/> gate); SizeType is a validated enum member and
         /// value a plain number, so no source is interpolated. sizeType/value may be null to keep the existing one.</summary>
@@ -588,6 +588,157 @@ namespace WinFormsDesigner.Engine
         {
             string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
             return DesignerTableStyleEditor.ReadStyles(src, panelId);
+        }
+
+        /// <summary>Read a string-collection's current items (ComboBox/ListBox/CheckedListBox.Items) for the
+        /// collection editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
+        public static CollectionItemsResult ListCollectionItems(string designerFilePath, string ownerId, string propertyName, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerCollectionEditor.ListItems(src, ownerId, propertyName);
+        }
+
+        /// <summary>Set a string-collection's items (VS "String Collection Editor"): rewrite the owner's
+        /// Add/AddRange calls to exactly <paramref name="items"/>. Mirrors <see cref="ApplyPropertyEdit"/>
+        /// (buffer-or-disk source, parse-check + <see cref="DesignerCollectionEditor.OnlyCollectionChanged"/>
+        /// gate); items are emitted as escaped string literals, so nothing is interpolated.</summary>
+        public static PropertyEditResult ApplyCollectionEdit(string designerFilePath, string ownerId, string propertyName, IReadOnlyList<string> items, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerCollectionEditor.SetItems(src, ownerId, propertyName, items);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerCollectionEditor.OnlyCollectionChanged(src, edit.NewText, ownerId, propertyName);
+            bool safe = parseOk && minimal;
+
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target collection"),
+            };
+        }
+
+        /// <summary>Read a ListView's current columns (ColumnHeader field id + Text/Width/TextAlign) for the typed
+        /// collection editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
+        public static ColumnItemsResult ListColumnItems(string designerFilePath, string ownerId, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerListColumnEditor.ListColumns(src, ownerId);
+        }
+
+        /// <summary>Set a ListView's columns (the typed counterpart of <see cref="ApplyCollectionEdit"/>): reconcile
+        /// the field declarations, per-column construction/property statements and <c>Columns.AddRange</c> to exactly
+        /// <paramref name="columns"/>. Same buffer-or-disk source + parse-check + <see cref="DesignerListColumnEditor.OnlyColumnsChanged"/>
+        /// gate; values are emitted as literals/enum members, so nothing is interpolated.</summary>
+        public static PropertyEditResult ApplyColumnsEdit(string designerFilePath, string ownerId, IReadOnlyList<ColumnItem> columns, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerListColumnEditor.SetColumns(src, ownerId, columns);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerListColumnEditor.OnlyColumnsChanged(src, edit.NewText, ownerId);
+            bool safe = parseOk && minimal;
+
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target columns"),
+            };
+        }
+
+        /// <summary>Read a TreeView's current node forest (recursive: local id + Text/Name + children) for the
+        /// hierarchical collection editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
+        public static TreeNodeItemsResult ListNodeItems(string designerFilePath, string ownerId, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerTreeNodeEditor.ListNodes(src, ownerId);
+        }
+
+        /// <summary>Set a TreeView's nodes (the recursive counterpart of <see cref="ApplyColumnsEdit"/>): drop and
+        /// regenerate the TreeNode local declarations + <c>Nodes.AddRange</c> in post-order to exactly
+        /// <paramref name="nodes"/>. Same buffer-or-disk source + parse-check + <see cref="DesignerTreeNodeEditor.OnlyTreeNodesChanged"/>
+        /// gate; Text/Name are emitted as literals, so nothing is interpolated.</summary>
+        public static PropertyEditResult ApplyNodesEdit(string designerFilePath, string ownerId, IReadOnlyList<TreeNodeItem> nodes, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerTreeNodeEditor.SetNodes(src, ownerId, nodes);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerTreeNodeEditor.OnlyTreeNodesChanged(src, edit.NewText, ownerId);
+            bool safe = parseOk && minimal;
+
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target nodes"),
+            };
+        }
+
+        /// <summary>Read a DataGridView's current columns (field id + HeaderText/Width/ReadOnly/Visible) for the
+        /// typed grid-column editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
+        public static GridColumnItemsResult ListGridColumnItems(string designerFilePath, string ownerId, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerGridColumnEditor.ListColumns(src, ownerId);
+        }
+
+        /// <summary>Set a DataGridView's columns (VS "Collection Editor"): reconcile field declarations, per-column
+        /// construction/property statements and Columns.AddRange to exactly <paramref name="columns"/>. Same
+        /// buffer-or-disk source + parse-check + <see cref="DesignerGridColumnEditor.OnlyColumnsChanged"/> gate.</summary>
+        public static PropertyEditResult ApplyGridColumnsEdit(string designerFilePath, string ownerId, IReadOnlyList<GridColumnItem> columns, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerGridColumnEditor.SetColumns(src, ownerId, columns);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerGridColumnEditor.OnlyColumnsChanged(src, edit.NewText, ownerId);
+            bool safe = parseOk && minimal;
+
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target columns"),
+            };
         }
 
         /// <summary>
@@ -760,8 +911,8 @@ namespace WinFormsDesigner.Engine
         public static ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, IReadOnlyList<string>? projectControlFqns = null)
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
-            // Fast path (curated/framework): pure text, NO assembly load. Only a project-control key (§7.2
-            // Increment 2) needs the project set to validate + resolve its full type name.
+            // Fast path (curated/framework): pure text, NO assembly load. Only a project-control key
+            // needs the project set to validate + resolve its full type name.
             IReadOnlyList<ToolboxItemInfo>? projectControls = null;
             if (!DesignerControlEditor.CanResolveWithoutProject(controlTypeKey))
             {
@@ -796,14 +947,14 @@ namespace WinFormsDesigner.Engine
         /// <summary>The toolbox's available control type keys (e.g. "Button", "Label", …).</summary>
         public static IReadOnlyList<string> ControlTypes() => DesignerControlEditor.ControlTypes;
 
-        /// <summary>The auto-populated toolbox palette (§7.2): framework controls always, plus the resolved
-        /// project assembly's own controls (§7.2 Increment 2, category "Project Controls") when a designer file is
+        /// <summary>The auto-populated toolbox palette: framework controls always, plus the resolved
+        /// project assembly's own controls (category "Project Controls") when a designer file is
         /// given. Framework discovery is pure reflection; project enumeration loads the assembly in a collectible
-        /// ALC (cached per file mtime), reflects type names only (§9 reload-safe), and never instantiates.</summary>
+        /// ALC (cached per file mtime), reflects type names only (reload-safe), and never instantiates.</summary>
         public static IReadOnlyList<ToolboxItemInfo> ToolboxItems(string? designerFilePath = null, string? controlAssemblyPath = null)
         {
             var items = new List<ToolboxItemInfo>(DesignerControlEditor.ToolboxItems);
-            items.AddRange(DesignerControlEditor.DiscoverComponents());   // §7.2 Components/Dialogs (non-visual)
+            items.AddRange(DesignerControlEditor.DiscoverComponents());   // Components/Dialogs (non-visual)
             if (!string.IsNullOrEmpty(designerFilePath) || !string.IsNullOrEmpty(controlAssemblyPath))
             {
                 items.AddRange(EnumerateProjectControls(ResolveAsmForList(designerFilePath, controlAssemblyPath)));
@@ -833,7 +984,7 @@ namespace WinFormsDesigner.Engine
         private static readonly Dictionary<string, (long mtime, List<ToolboxItemInfo> items)> _projCtlCache = new();
         private static readonly Dictionary<string, (long mtime, ToolboxScanResult result)> _candidateCache = new();
 
-        /// <summary>Enumerate the project assembly's own toolbox-eligible controls (§7.2 Increment 2). Loads the
+        /// <summary>Enumerate the project assembly's own toolbox-eligible controls. Loads the
         /// assembly in a collectible ALC (shared assemblies deferred to Default so Control identity matches),
         /// reflects eligible types into strings, then unloads. Cached per (path, mtime). Returns [] on any failure
         /// (degrade to framework-only) — never throws. NO instantiation: GetTypes()/attributes only.</summary>
@@ -972,7 +1123,7 @@ namespace WinFormsDesigner.Engine
             return DesignerControlEditor.RemoveTabPage(src, hostId, pageId);
         }
 
-        /// <summary>Reparent a leaf control into a different container / the root (§7.4) as a MINIMAL text edit —
+        /// <summary>Reparent a leaf control into a different container / the root as a MINIMAL text edit —
         /// rewrites only the receiver of its Controls.Add. Pure text, no graph load. See
         /// <see cref="DesignerControlEditor.Reparent"/>.</summary>
         public static ControlReorderResult ReparentControl(string designerFilePath, string childId, string newParentId, string? sourceText = null)
@@ -1084,6 +1235,9 @@ namespace WinFormsDesigner.Engine
             public required HashSet<(IComponent, string)> ExplicitMembers { get; init; }
             /// <summary>Event wirings parsed from the source: component id ("this"/Site.Name) → (event → handler method).</summary>
             public required Dictionary<string, Dictionary<string, string>> EventWirings { get; init; }
+            /// <summary>Verbatim event-wiring statements (this.X.Event += …) — re-emitted by the serializer so the
+            /// round-trip preserves them exactly (they can't be wired to code-behind handlers on the surface).</summary>
+            public required List<string> EventWiringStatements { get; init; }
             public void Dispose() => Surface.Dispose();
         }
 
@@ -1179,7 +1333,7 @@ namespace WinFormsDesigner.Engine
                 // resolve resources.GetObject(...) against the form's sibling .resx (image/icon properties).
                 // null when there is no .resx → forms without resources are entirely unaffected.
                 var resx = ResxResolver.TryLoadForDesigner(designerFilePath);
-                var (total, ok, unrep, explicitMembers) = Interpret(cls, host, userAsms, resx);
+                var (total, ok, unrep, explicitMembers, eventWirings) = Interpret(cls, host, userAsms, resx);
 
                 return new LoadedGraph
                 {
@@ -1193,6 +1347,7 @@ namespace WinFormsDesigner.Engine
                     Unrepresentable = unrep,
                     ExplicitMembers = explicitMembers,
                     EventWirings = ExtractEventWirings(cls),
+                    EventWiringStatements = eventWirings,
                 };
             }
             catch
@@ -1205,7 +1360,7 @@ namespace WinFormsDesigner.Engine
         /// <summary>
         /// Load a user control assembly via a collectible ALC, instantiate the given
         /// control type on a design surface alongside a framework control, and render.
-        /// Proves real custom-control rendering (plan §8.3) — not a placeholder.
+        /// Proves real custom-control rendering — not a placeholder.
         /// </summary>
         public static RenderResult RenderCustomControl(string assemblyPath, string typeName)
         {
@@ -1378,16 +1533,19 @@ namespace WinFormsDesigner.Engine
         /// serialized on the single STA thread; <see cref="Eval"/> reads it to resolve resources.GetObject(...).</summary>
         [ThreadStatic] private static (HashSet<string> vars, ResxResolver? resolver)? _resx;
 
-        private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers) Interpret(
+        private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers, List<string> eventWirings) Interpret(
             ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms, ResxResolver? resx = null)
         {
             var root = (Control)host.RootComponent;
             var comps = new Dictionary<string, IComponent>(StringComparer.Ordinal);
             var unrep = new List<string>();
             // (component, property) pairs explicitly assigned in the source file. Lets the
-            // serializer echo exactly the source's property set (§6.3) and not the extra
+            // serializer echo exactly the source's property set and not the extra
             // state the live designer/runtime assigns on its own (auto TabIndex, CheckState…).
             var explicitMembers = new HashSet<(IComponent, string)>();
+            // Verbatim event-wiring statements (this.X.Event += …) captured for the serializer to re-emit exactly —
+            // they can't be wired to the code-behind handlers on the surface, so we preserve them textually.
+            var eventWirings = new List<string>();
             int total = 0, ok = 0;
 
             // names of `IContainer components = new Container()` fields — lets a provider ctor
@@ -1408,7 +1566,7 @@ namespace WinFormsDesigner.Engine
             if (init?.Body == null)
             {
                 unrep.Add("InitializeComponent not found");
-                return (0, 0, unrep, explicitMembers);
+                return (0, 0, unrep, explicitMembers, eventWirings);
             }
 
             // find the `[System.ComponentModel.]ComponentResourceManager resources = new ...(typeof(Form))` local(s)
@@ -1426,6 +1584,12 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
+            // TreeView.Nodes: VS serializes tree nodes as LOCAL variables (not fields), so they never enter `comps`.
+            // We build them into this side table as we walk the body (children are declared before their parents),
+            // and attach them to the owning TreeView / parent node when we reach the `.Nodes.Add/AddRange(...)` call.
+            var nodeMap = new Dictionary<string, System.Windows.Forms.TreeNode>(StringComparer.Ordinal);
+            var treeNodeLocals = new HashSet<string>(StringComparer.Ordinal);
+
             var prevResx = _resx;
             _resx = (resxVars, resx);
             try
@@ -1435,10 +1599,25 @@ namespace WinFormsDesigner.Engine
                     total++;
                     try
                     {
+                        // TreeView.Nodes population (local `new TreeNode(...)` + `.Nodes.Add/AddRange`) is rendered by a
+                        // self-contained builder — it only constructs TreeNode objects and sets side-effect-free value
+                        // properties, so it stays outside the general Eval construction allowlist.
+                        if (TryApplyTreeNodeStatement(stmt, nodeMap, treeNodeLocals, comps, userAsms)) { ok++; continue; }
                         if (stmt is ExpressionStatementSyntax es)
                         {
                             if (es.Expression is AssignmentExpressionSyntax asg)
                             {
+                                // event wiring (this.X.Event += new Handler(this.method)): the handler lives in the
+                                // code-behind, not on the design surface, so we don't (can't) wire it live — but it IS
+                                // representable. Capture the VERBATIM statement so the serializer re-emits it exactly
+                                // (round-trip safety: nothing is lost). A `+=`/`-=` whose LHS is not a real event
+                                // is a hand-edit → stays unrepresentable.
+                                if (asg.IsKind(SyntaxKind.AddAssignmentExpression) || asg.IsKind(SyntaxKind.SubtractAssignmentExpression))
+                                {
+                                    if (IsEventWiring(asg, root, comps)) { eventWirings.Add(stmt.ToString().Trim()); ok++; }
+                                    else unrep.Add(stmt.ToString().Trim());
+                                    continue;
+                                }
                                 HandleAssignment(asg, host, root, comps, fieldNames, containerNames, userAsms, explicitMembers);
                                 ok++;
                                 continue;
@@ -1467,7 +1646,150 @@ namespace WinFormsDesigner.Engine
                 }
             }
             finally { _resx = prevResx; }
-            return (total, ok, unrep, explicitMembers);
+            return (total, ok, unrep, explicitMembers, eventWirings);
+        }
+
+        // ---- TreeView.Nodes rendering ------------------------------------------------------------------------------
+        // VS serializes tree nodes as LOCAL variables inside InitializeComponent, bottom-up:
+        //   TreeNode treeNode1 = new TreeNode("Apple");
+        //   TreeNode treeNode2 = new TreeNode("Fruits", new TreeNode[] { treeNode1 });
+        //   treeNode1.Name = "nodeApple";
+        //   this.treeView1.Nodes.AddRange(new TreeNode[] { treeNode2 });
+        // None of this touches the field `comps` graph, so the general dispatch drops it as unrepresentable (an empty
+        // TreeView box). We render it with a self-contained builder that ONLY constructs TreeNode objects and sets a
+        // small allowlist of side-effect-free value properties — no user code runs (TreeNode ctors/setters are pure),
+        // so this deliberately stays out of the general Eval construction allowlist.
+        private static readonly HashSet<string> TreeNodeSettableProps = new(StringComparer.Ordinal)
+        {
+            "Name", "Text", "ToolTipText", "ImageKey", "SelectedImageKey", "StateImageKey",
+            "ImageIndex", "SelectedImageIndex", "StateImageIndex", "Checked", "ForeColor", "BackColor", "NodeFont", "Tag",
+        };
+
+        /// <summary>Renders one statement of a TreeView.Nodes population (a TreeNode local decl, a property assignment
+        /// on such a local, or a <c>owner.Nodes.Add/AddRange(...)</c> call). Returns true when it handled the statement
+        /// (so the caller counts it representable); false lets the general dispatch handle / flag it.</summary>
+        private static bool TryApplyTreeNodeStatement(
+            StatementSyntax stmt,
+            Dictionary<string, System.Windows.Forms.TreeNode> nodeMap,
+            HashSet<string> treeNodeLocals,
+            Dictionary<string, IComponent> comps,
+            IReadOnlyList<Assembly> userAsms)
+        {
+            // (1) `TreeNode treeNodeN = new TreeNode(...)` — build the node (children resolve from earlier locals).
+            if (stmt is LocalDeclarationStatementSyntax lds
+                && LastTypeSegment(lds.Declaration.Type.ToString()) == "TreeNode")
+            {
+                foreach (var v in lds.Declaration.Variables)
+                {
+                    treeNodeLocals.Add(v.Identifier.Text);
+                    nodeMap[v.Identifier.Text] = v.Initializer?.Value is ObjectCreationExpressionSyntax oce
+                        ? BuildTreeNode(oce, nodeMap, userAsms)
+                        : new System.Windows.Forms.TreeNode();
+                }
+                return true;
+            }
+            if (stmt is not ExpressionStatementSyntax es) return false;
+
+            // (2) `treeNodeN.Prop = value` — a property assignment on a known TreeNode local.
+            if (es.Expression is AssignmentExpressionSyntax asg && asg.IsKind(SyntaxKind.SimpleAssignmentExpression))
+            {
+                var lhs = Flatten(asg.Left);
+                if (lhs.Count < 1 || !treeNodeLocals.Contains(lhs[0])) return false;
+                // it targets a TreeNode local → treat as a node statement. Apply only the modelled value properties;
+                // an unmodelled/nested one is a best-effort skip (still representable — nothing is lost on render).
+                if (lhs.Count == 2 && TreeNodeSettableProps.Contains(lhs[1]) && nodeMap.TryGetValue(lhs[0], out var node))
+                {
+                    var pd = TypeDescriptor.GetProperties(node)[lhs[1]];
+                    if (pd != null && !pd.IsReadOnly)
+                    {
+                        var val = Eval(asg.Right, pd.PropertyType, userAsms);
+                        if (val != null) { try { pd.SetValue(node, val); } catch { /* value not applicable — skip */ } }
+                    }
+                }
+                return true;
+            }
+
+            // (3) `owner.Nodes.Add(node)` / `owner.Nodes.AddRange(new TreeNode[]{ … })` — attach to a TreeView or
+            // parent TreeNode. The elements must be known TreeNode locals; anything else is left for the general path.
+            if (es.Expression is InvocationExpressionSyntax inv
+                && inv.Expression is MemberAccessExpressionSyntax ma
+                && (ma.Name.Identifier.Text == "Add" || ma.Name.Identifier.Text == "AddRange"))
+            {
+                var recv = Flatten(ma.Expression);
+                if (recv.Count < 2 || recv[^1] != "Nodes") return false;
+                System.Windows.Forms.TreeNodeCollection? coll = null;
+                if (comps.TryGetValue(recv[0], out var oc) && oc is System.Windows.Forms.TreeView tv) coll = tv.Nodes;
+                else if (nodeMap.TryGetValue(recv[0], out var parent)) coll = parent.Nodes;
+                if (coll == null) return false;
+                var argList = inv.ArgumentList;
+                if (argList == null || argList.Arguments.Count != 1) return false;
+                var els = ma.Name.Identifier.Text == "AddRange"
+                    ? ExtractArrayElements(argList.Arguments[0].Expression)
+                    : new[] { argList.Arguments[0].Expression };
+                if (els == null) return false;
+                var resolved = new List<System.Windows.Forms.TreeNode>();
+                foreach (var el in els)
+                {
+                    var ec = Flatten(el);
+                    if (ec.Count == 1 && nodeMap.TryGetValue(ec[0], out var child)) resolved.Add(child);
+                    else return false; // unknown element → don't claim the statement (keep it honest)
+                }
+                foreach (var child in resolved) coll.Add(child);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Builds a <see cref="System.Windows.Forms.TreeNode"/> from a <c>new TreeNode(...)</c> expression:
+        /// the recognized overloads are <c>()</c>, <c>(text)</c>, <c>(text, TreeNode[])</c>, <c>(text, int, int)</c>,
+        /// and <c>(text, int, int, TreeNode[])</c>. Child locals are resolved from <paramref name="nodeMap"/> (they
+        /// were declared earlier). Only string/int literals and child references are read — no arbitrary code.</summary>
+        private static System.Windows.Forms.TreeNode BuildTreeNode(
+            ObjectCreationExpressionSyntax oce,
+            Dictionary<string, System.Windows.Forms.TreeNode> nodeMap,
+            IReadOnlyList<Assembly> userAsms)
+        {
+            var node = new System.Windows.Forms.TreeNode();
+            var args = oce.ArgumentList?.Arguments;
+            if (args == null || args.Value.Count == 0) return node;
+            var list = args.Value;
+            int i = 0;
+            if (Eval(list[0].Expression, typeof(string), userAsms) is string text) { node.Text = text; i = 1; }
+            var ints = new List<int>();
+            for (; i < list.Count; i++)
+            {
+                var expr = list[i].Expression;
+                var childExprs = ExtractArrayElements(expr);
+                if (childExprs != null)
+                {
+                    foreach (var ce in childExprs)
+                    {
+                        var cc = Flatten(ce);
+                        if (cc.Count == 1 && nodeMap.TryGetValue(cc[0], out var child)) node.Nodes.Add(child);
+                    }
+                    continue;
+                }
+                if (Eval(expr, typeof(int), userAsms) is int iv) ints.Add(iv);
+            }
+            if (ints.Count >= 1) node.ImageIndex = ints[0];
+            if (ints.Count >= 2) node.SelectedImageIndex = ints[1];
+            return node;
+        }
+
+        /// <summary>True when the compound-assignment (<c>+=</c>/<c>-=</c>) LHS resolves to a real event on a known
+        /// component or the root form — i.e. it's an event wiring (<c>this.X.Event += …</c>), not a hand-edited
+        /// <c>+=</c> on a property. Walks any intermediate property segments to the event's declaring object.</summary>
+        private static bool IsEventWiring(AssignmentExpressionSyntax asg, Control root, Dictionary<string, IComponent> comps)
+        {
+            var chain = Flatten(asg.Left);
+            object? owner;
+            int evStart;
+            if (chain.Count >= 2 && comps.TryGetValue(chain[0], out var c)) { owner = c; evStart = 1; }
+            else if (chain.Count == 1) { owner = root; evStart = 0; }
+            else return false;
+            for (int i = evStart; i < chain.Count - 1 && owner != null; i++)
+                owner = TypeDescriptor.GetProperties(owner)[chain[i]]?.GetValue(owner);
+            return owner is IComponent oc && TypeDescriptor.GetEvents(oc)[chain[^1]] != null;
         }
 
         /// <summary>The last dotted segment of a (possibly qualified) type name, e.g.
@@ -1490,7 +1812,7 @@ namespace WinFormsDesigner.Engine
             // (nothing is lost — the host supplies its own container to CreateComponent).
             // Match the ACTUAL System.ComponentModel.Container by exact short name, not any *Container suffix —
             // otherwise real controls like SplitContainer / ToolStripContainer (now offered by the auto-populated
-            // toolbox §7.2) would be wrongly treated as the disposal holder, never instantiated, and silently
+            // toolbox) would be wrongly treated as the disposal holder, never instantiated, and silently
             // dropped from the render/hit-test map.
             if (chain.Count == 1 && fieldNames.Contains(chain[0]) && asg.Right is ObjectCreationExpressionSyntax cc
                 && (cc.ArgumentList?.Arguments.Count ?? 0) == 0 && cc.Initializer == null
@@ -1504,7 +1826,7 @@ namespace WinFormsDesigner.Engine
             {
                 // the designer always emits the parameterless ctor + separate property assignments.
                 // constructor arguments or an object initializer are a hand-edit — flag as
-                // unrepresentable (§6.5) rather than create the component and silently drop that
+                // unrepresentable rather than create the component and silently drop that
                 // state, which would otherwise leave RoundTripSafe == true while losing user code.
                 // SOLE EXCEPTION: the extender/component-tray ctor `new T(this.components)` — exactly one
                 // arg that is the recognized components container. The host supplies its own container to
@@ -1557,7 +1879,15 @@ namespace WinFormsDesigner.Engine
             string propName = chain[^1];
             var pd = TypeDescriptor.GetProperties(target)[propName]
                 ?? throw new InvalidOperationException("no property " + propName + " on " + target.GetType().Name);
-            object? val = Eval(asg.Right, pd.PropertyType, userAsms);
+            // component-reference RHS (this.<prop> = this.<component>): assign the live component instance the
+            // source points at — the value VS emits for a dialog's AcceptButton/CancelButton, DataGridView.DataSource,
+            // a control's ContextMenuStrip, etc. Eval can't resolve a component field (it carries no `comps`), so
+            // intercept it here; the serializer re-emits the reference. Every non-component RHS (literals, enums,
+            // Point/Size, resources.GetObject, …) still goes through Eval unchanged.
+            var rhsChain = Flatten(asg.Right);
+            object? val = (rhsChain.Count == 1 && comps.TryGetValue(rhsChain[0], out var refComp))
+                ? refComp
+                : Eval(asg.Right, pd.PropertyType, userAsms);
             pd.SetValue(target, val);
         }
 
@@ -1579,9 +1909,24 @@ namespace WinFormsDesigner.Engine
                 return false;
             }
             string method = ma.Name.Identifier.Text;
-            var targetChain = Flatten(ma.Expression);
 
             if (method is "SuspendLayout" or "ResumeLayout" or "PerformLayout") return true;
+
+            // ISupportInitialize bracketing: ((System.ComponentModel.ISupportInitialize)(this.x)).BeginInit()/.EndInit()
+            // — designer-managed init scaffolding VS emits around any DataGridView/BindingSource/PictureBox/NumericUpDown/
+            // SplitContainer. Like Suspend/Resume it's a representable no-op for RENDER: our static render sets properties
+            // directly, so bracketing the init has no effect on the preview. It is NOT round-trip-safe, though — the
+            // whole-file serializer does not re-emit these brackets (there is no InjectBeginInit counterpart to
+            // InjectEventWirings), so they stay in the safe-save gate (DesignerSaveSplicer) and a form that has them
+            // correctly falls back to read-only (refuse-to-save) instead of silently dropping them. Matched by the
+            // FULLY-QUALIFIED System.ComponentModel.ISupportInitialize so an unrelated user interface that merely shares
+            // the short name isn't silently swallowed as scaffolding.
+            if (method is "BeginInit" or "EndInit"
+                && ma.Expression is ParenthesizedExpressionSyntax pe && pe.Expression is CastExpressionSyntax ce
+                && ce.Type.ToString() == "System.ComponentModel.ISupportInitialize")
+                return true;
+
+            var targetChain = Flatten(ma.Expression);
 
             if (method == "Add" && targetChain.Count >= 1 && targetChain[^1] == "Controls")
             {
@@ -1687,7 +2032,16 @@ namespace WinFormsDesigner.Engine
                     {
                         var elChain = Flatten(elExpr);
                         if (elChain.Count == 1 && comps.TryGetValue(elChain[0], out var item)) list.Add(item);
-                        else { why = "AddRange: unknown element " + elExpr; return false; }
+                        else
+                        {
+                            // inline value element — e.g. ComboBox/ListBox.Items.AddRange(new object[]{ "Alpha", … }).
+                            // Eval is IsConstructionAllowed-gated (no side-effecting ctors); a string/number literal
+                            // just materializes. Makes string-item collections actually populate (ListBox shows its
+                            // items) AND representable instead of dropping the whole AddRange to read-only.
+                            var v = Eval(elExpr, null, userAsms);
+                            if (v != null) list.Add(v);
+                            else { why = "AddRange: unknown element " + elExpr; return false; }
+                        }
                     }
                     return true;
                 }
