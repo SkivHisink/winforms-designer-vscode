@@ -147,6 +147,11 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev loop, tests, and arc
 |---------|---------|-------------|
 | `winformsDesigner.autoOpenDesigner` | `true` | Open the designer automatically when a form's `.cs` becomes active. |
 | `winformsDesigner.assemblyPath` | `""` | Explicit path to the built control assembly. Leave empty for auto-discovery; set it for multi-target / custom `OutputPath` / not-yet-built projects. |
+| `winformsDesigner.language` | `"en"` | UI language of the designer, dialogs and messages: `en` English, `ru` Русский, `zh-cn` 简体中文, `fr` Français, `de` Deutsch, `es` Español. Chosen **here** (window scope) — it does **not** follow the VS Code display language. |
+
+### Language
+
+The designer surface, property grid, toolbox, dialogs and status / notification messages are localized and follow the **`winformsDesigner.language`** setting — six languages: **English** (default), **Русский**, **简体中文**, **Français**, **Deutsch**, **Español**. The language is picked in the extension settings, **not** from the VS Code display language, and switches **live** in already-open designer views. The VS Code **command palette** titles and the **settings page** itself follow VS Code's own *Display Language* (a platform limitation), so those pieces of chrome may stay in a different language until you **Reload Window** (you'll be prompted). Enum and color *values* stay canonical English so they remain typeable and round-trip cleanly.
 
 ## 🔒 Security & Workspace Trust
 
@@ -161,7 +166,7 @@ Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SEC
 
 This project is in **active preview**.
 
-- ✅ **Done & verified:** the core render → select → edit → save loop; property grid (incl. Color / Font / flags / Anchor-Dock / image editors, bold non-default values, description pane, right-click reset); collection editors (`Items` / `ListView.Columns` / `DataGridView.Columns` / `TreeView.Nodes`); toolbox with icons and *Choose Toolbox Items*; control-source selection; direct manipulation (move / resize / keyboard nudge / duplicate / lock / reparent / z-order / copy-paste / align / snaplines / on-canvas smart-tags); layout-panel editing (`TableLayoutPanel` / `SplitContainer` / `FlowLayoutPanel`); `.resx` image import & render; events; safe save; accessibility mirror-tree; 6-language UI localization.
+- ✅ **Done & verified:** the core render → select → edit → save loop; property grid (incl. Color / Font / flags / Anchor-Dock / image editors, bold non-default values, description pane, right-click reset); collection editors (`Items` / `ListView.Columns` / `DataGridView.Columns` / `TreeView.Nodes`); toolbox with icons and *Choose Toolbox Items*; control-source selection; direct manipulation (move / resize / keyboard nudge / duplicate / lock / reparent / z-order / copy-paste / align / snaplines / on-canvas smart-tags); layout-panel editing (`TableLayoutPanel` / `SplitContainer` / `FlowLayoutPanel`); `.resx` image import & render; events; safe save; accessibility mirror-tree; 6-language UI localization with a live switch (`winformsDesigner.language`).
 - 🧪 **Experimental (net48 compiled preview):** **.NET Framework (net48) compiled preview** for `net4x` / DevExpress forms — render is proven; live property / drag / resize / align / add / remove / z-order / cut / paste edits, tab-page add / rename / delete / switch, dropping the project's own vendor controls, collection editors (with the preview rebuilt live), and source-set (bold) properties / wired events are all wired (edits persisted as `.Designer.cs` text via the .NET 9 splice). A multi-target form can switch to this compiled preview with one click. The webview interactions are primarily validated headless — confirm the live flow with an F5 run.
 - 🚧 **In progress:** `UITypeEditor` modals, richer multi-assembly control sources, and further VS-parity polish.
 - 🔭 **Not started:** `DesignerActionList` / vendor smart-tag action lists, advanced `.resx` (non-image resources, `ApplyResources`), RTL.
