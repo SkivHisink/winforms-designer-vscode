@@ -396,6 +396,69 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
+            if (Has(args, "--list-lines", out string? llFile) && llFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "this";
+                string? prop = ArgAfter(args, "--prop") ?? "Lines";
+                try
+                {
+                    var res = DesignerRenderer.ListStringArray(llFile, comp, prop);
+                    Console.WriteLine("== engine list-lines (string[] items of " + comp + "." + prop + ")");
+                    Console.WriteLine("   ok: " + res.Ok + " | count: " + res.Items.Count + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    for (int i = 0; i < res.Items.Count; i++) Console.WriteLine("   [" + i + "] " + res.Items[i]);
+                    Console.WriteLine("RESULT: " + (res.Ok ? "PASS" : "FAIL"));
+                    return res.Ok ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-lines", out string? slFile) && slFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "this";
+                string prop = ArgAfter(args, "--prop") ?? "Lines";
+                bool write = Has(args, "--write", out _);
+                // repeated --item <value> (may be zero → clears to an empty array); mirrors --set-collection
+                var items = args.Select((a, i) => (a, i)).Where(x => x.a == "--item" && x.i + 1 < args.Length).Select(x => args[x.i + 1]).ToList();
+                try
+                {
+                    var res = DesignerRenderer.ApplyStringArrayEdit(slFile, comp, prop, items);
+                    Console.WriteLine("== engine set-lines (rewrite " + comp + "." + prop + " to string[" + items.Count + "])");
+                    Console.WriteLine("   mode: " + res.Mode + " | parse-ok: " + res.ParseOk + " | minimal: " + res.Minimal + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Safe)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        string bak = slFile + ".bak";
+                        File.Copy(slFile, bak, overwrite: true);
+                        File.WriteAllText(slFile, res.NewText!, res.Encoding);
+                        Console.WriteLine("   APPLIED: wrote " + slFile + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        string preview = slFile + ".edited.txt";
+                        File.WriteAllText(preview, res.NewText!, res.Encoding);
+                        Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
             if (Has(args, "--list-columns", out string? lcolFile) && lcolFile != null)
             {
                 string comp = ArgAfter(args, "--comp") ?? "";
@@ -487,7 +550,7 @@ namespace WinFormsDesigner.Engine
                     {
                         foreach (var n in ns)
                         {
-                            Console.WriteLine("   " + new string(' ', depth * 2) + "- id=" + n.Id + " text=\"" + n.Text + "\" name=\"" + n.Name + "\"");
+                            Console.WriteLine("   " + new string(' ', depth * 2) + "- id=" + n.Id + " text=\"" + n.Text + "\" name=\"" + n.Name + "\" imgKey=\"" + n.ImageKey + "\" imgIdx=" + n.ImageIndex + " selKey=\"" + n.SelectedImageKey + "\" selIdx=" + n.SelectedImageIndex + " tip=\"" + n.ToolTipText + "\" checked=" + n.Checked + " fore=\"" + n.ForeColor + "\" back=\"" + n.BackColor + "\" font=\"" + n.NodeFont + "\"");
                             Print(n.Children, depth + 1);
                         }
                     }
@@ -507,7 +570,9 @@ namespace WinFormsDesigner.Engine
             {
                 string comp = ArgAfter(args, "--comp") ?? "";
                 bool write = Has(args, "--write", out _);
-                // repeated --node "depth|id|text|name" (empty id = a new node; depth 0 = root; may be zero → clears).
+                // repeated --node "depth|id|text|name|imageKey|imageIndex|selImageKey|selImageIndex|toolTip|checked|foreColor|backColor|nodeFont"
+                // (all fields past name optional; empty id = a new node; depth 0 = root; may be zero → clears).
+                // fore/back/font are invariant strings ("Red" / "64, 128, 255" / "Segoe UI, 9pt, style=Bold").
                 var flat = args.Select((a, i) => (a, i))
                     .Where(x => x.a == "--node" && x.i + 1 < args.Length)
                     .Select(x =>
@@ -515,7 +580,15 @@ namespace WinFormsDesigner.Engine
                         var p = args[x.i + 1].Split('|');
                         int depth = 0;
                         if (p.Length > 0) int.TryParse(p[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out depth);
-                        return (depth, node: new TreeNodeItem { Id = p.Length > 1 ? p[1] : "", Text = p.Length > 2 ? p[2] : "", Name = p.Length > 3 ? p[3] : "" });
+                        int ImgIdx(int k) => p.Length > k && int.TryParse(p[k], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : -1;
+                        return (depth, node: new TreeNodeItem
+                        {
+                            Id = p.Length > 1 ? p[1] : "", Text = p.Length > 2 ? p[2] : "", Name = p.Length > 3 ? p[3] : "",
+                            ImageKey = p.Length > 4 ? p[4] : "", ImageIndex = ImgIdx(5),
+                            SelectedImageKey = p.Length > 6 ? p[6] : "", SelectedImageIndex = ImgIdx(7),
+                            ToolTipText = p.Length > 8 ? p[8] : "", Checked = p.Length > 9 && p[9] == "true",
+                            ForeColor = p.Length > 10 ? p[10] : "", BackColor = p.Length > 11 ? p[11] : "", NodeFont = p.Length > 12 ? p[12] : "",
+                        });
                     }).ToList();
                 var roots = new System.Collections.Generic.List<TreeNodeItem>();
                 var stack = new System.Collections.Generic.List<(int depth, TreeNodeItem node)>();
@@ -546,6 +619,98 @@ namespace WinFormsDesigner.Engine
                     else
                     {
                         string preview = snFile + ".edited.txt";
+                        File.WriteAllText(preview, res.NewText!, res.Encoding);
+                        Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--list-tsitems", out string? ltFile) && ltFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                try
+                {
+                    var res = DesignerRenderer.ListToolStripItems(ltFile, comp);
+                    Console.WriteLine("== engine list-tsitems (ToolStrip/MenuStrip " + comp + ".Items)");
+                    Console.WriteLine("   ok: " + res.Ok + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    void PrintTs(System.Collections.Generic.IReadOnlyList<ToolStripItemModel> its, int depth)
+                    {
+                        foreach (var it in its)
+                        {
+                            Console.WriteLine("   " + new string(' ', depth * 2) + "- id=" + it.Id + " type=" + it.ItemType + " text=\"" + it.Text + "\" name=\"" + it.Name + "\"");
+                            PrintTs(it.Children, depth + 1);
+                        }
+                    }
+                    PrintTs(res.Items, 0);
+                    Console.WriteLine("RESULT: " + (res.Ok ? "PASS" : "FAIL"));
+                    return res.Ok ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-tsitems", out string? stFile) && stFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                bool write = Has(args, "--write", out _);
+                // repeated --tsitem "depth|id[|text[|itemType]]" — depth 0 = a top-level item, deeper = a DropDownItems
+                // child of the previous shallower item. Reorder: give the existing field id. ADD ("Type Here"): leave id
+                // EMPTY and give a text (and optional itemType, default ToolStripMenuItem), e.g. --tsitem "0||Help".
+                var flat = args.Select((a, i) => (a, i))
+                    .Where(x => x.a == "--tsitem" && x.i + 1 < args.Length)
+                    .Select(x =>
+                    {
+                        var p = args[x.i + 1].Split('|');
+                        int depth = 0;
+                        if (p.Length > 0) int.TryParse(p[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out depth);
+                        return (depth, node: new ToolStripItemModel
+                        {
+                            Id = p.Length > 1 ? p[1] : "",
+                            Text = p.Length > 2 ? p[2] : "",
+                            ItemType = p.Length > 3 ? p[3] : "",
+                        });
+                    }).ToList();
+                var roots = new System.Collections.Generic.List<ToolStripItemModel>();
+                var stack = new System.Collections.Generic.List<(int depth, ToolStripItemModel node)>();
+                foreach (var (depth, node) in flat)
+                {
+                    while (stack.Count > 0 && stack[stack.Count - 1].depth >= depth) stack.RemoveAt(stack.Count - 1);
+                    if (stack.Count == 0) roots.Add(node); else stack[stack.Count - 1].node.Children.Add(node);
+                    stack.Add((depth, node));
+                }
+                try
+                {
+                    var res = DesignerRenderer.ApplyToolStripItemsEdit(stFile, comp, roots);
+                    Console.WriteLine("== engine set-tsitems (reorder " + comp + ".Items; " + flat.Count + " item(s))");
+                    Console.WriteLine("   mode: " + res.Mode + " | parse-ok: " + res.ParseOk + " | minimal: " + res.Minimal + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Safe)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        string bak = stFile + ".bak";
+                        File.Copy(stFile, bak, overwrite: true);
+                        File.WriteAllText(stFile, res.NewText!, res.Encoding);
+                        Console.WriteLine("   APPLIED: wrote " + stFile + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        string preview = stFile + ".edited.txt";
                         File.WriteAllText(preview, res.NewText!, res.Encoding);
                         Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
                     }
@@ -1217,6 +1382,21 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
+        /// <summary>Read a generic <c>string[]</c> property's current items (TextBox/RichTextBox.Lines) for the
+        /// string-array editor. <see cref="CollectionItemsResult.Ok"/> is false for a non-literal (bound/computed)
+        /// value so the webview keeps it read-only.</summary>
+        public CollectionItemsResult ListStringArray(string designerFilePath, string ownerId, string propertyName, string? sourceText = null)
+            => DesignerRenderer.ListStringArray(designerFilePath, ownerId, propertyName, NullIfBlank(sourceText));
+
+        /// <summary>Set a generic <c>string[]</c> property (TextBox/RichTextBox.Lines): rewrite it to the single
+        /// canonical assignment <c>owner.prop = new string[] { … }</c>. Items are emitted as escaped string literals —
+        /// nothing is interpolated. Host applies <see cref="EditPreview.Text"/> as a WorkspaceEdit.</summary>
+        public EditPreview SetStringArray(string designerFilePath, string ownerId, string propertyName, string[] items, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyStringArrayEdit(designerFilePath, ownerId, propertyName, items ?? Array.Empty<string>(), NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
         /// <summary>Read a ListView's columns (typed collection editor) — ColumnHeader field id + Text/Width/TextAlign.
         /// <see cref="ColumnItemsResult.Ok"/> is false for a column that isn't a plain named field with only those
         /// three properties (inline/cast/unmanaged property), so the webview keeps the collection read-only.</summary>
@@ -1259,6 +1439,21 @@ namespace WinFormsDesigner.Engine
         public EditPreview SetNodes(string designerFilePath, string ownerId, TreeNodeItem[] nodes, string? sourceText = null)
         {
             var r = DesignerRenderer.ApplyNodesEdit(designerFilePath, ownerId, nodes ?? Array.Empty<TreeNodeItem>(), NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Read a ToolStrip/MenuStrip item tree (VS "…" collection editor) — recursive item field id + Text/
+        /// Name/type + nested DropDownItems. <see cref="ToolStripItemsResult.Ok"/> is false for an inline/shared item,
+        /// an unexpected collection shape, or a non-field element, so the webview keeps it read-only.</summary>
+        public ToolStripItemsResult ListToolStripItems(string designerFilePath, string ownerId, string? sourceText = null)
+            => DesignerRenderer.ListToolStripItems(designerFilePath, ownerId, NullIfBlank(sourceText));
+
+        /// <summary>Reorder a ToolStrip/MenuStrip item tree (Slice 1): rewrite each Items/DropDownItems AddRange to the
+        /// given order (same items, no add/remove/rename), leaving every other statement byte-identical. Host applies
+        /// <see cref="EditPreview.Text"/>.</summary>
+        public EditPreview SetToolStripItems(string designerFilePath, string ownerId, ToolStripItemModel[] items, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyToolStripItemsEdit(designerFilePath, ownerId, items ?? Array.Empty<ToolStripItemModel>(), NullIfBlank(sourceText));
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 

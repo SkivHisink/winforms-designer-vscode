@@ -360,6 +360,19 @@ export async function setCompiledTreeNodesLive(
   return fromCompiledRaw(raw);
 }
 
+/** Set a generic string[] property (TextBox/RichTextBox.Lines) on the net48 live instance from the net9-committed
+ *  values + re-render — the live picture for the "…" string-array editor (mirror of {@link setCompiledCollectionLive}).
+ *  The persisted TEXT write is separate (net9 splice); this is only the picture. `applied` is false when the property
+ *  isn't a writable string[] — the committed text still renders after a rebuild. */
+export async function setCompiledStringArrayLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
+  propName: string, items: string[], rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'SetCompiledStringArrayLive', designerFilePath, assemblyPath, componentId, propName, items, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
 /** One live property edit for the net48 batch-mutate (drag/resize/align). */
 export interface CompiledEdit { componentId: string; propName: string; rawValue: string; }
 
@@ -1023,6 +1036,33 @@ export function setCollectionItems(
   return engine.connection.sendRequest<EditPreview>('SetCollectionItems', designerFilePath, ownerId, propertyName, items, ...tail);
 }
 
+/** Read a generic string[] property's current items (TextBox/RichTextBox.Lines) for the "…" editor. `ok` is false
+ * for a non-literal (bound/computed) value — the webview keeps it read-only. Reuses {@link CollectionItems}. */
+export function listStringArray(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  propertyName: string,
+  sourceText?: string,
+): Promise<CollectionItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<CollectionItems>('ListStringArray', designerFilePath, ownerId, propertyName, ...tail);
+}
+
+/** Set a generic string[] property (TextBox/RichTextBox.Lines): rewrite it to the single assignment
+ * `owner.prop = new string[] { … }`. Items are emitted as escaped string literals — nothing is interpolated. */
+export function setStringArray(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  propertyName: string,
+  items: string[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetStringArray', designerFilePath, ownerId, propertyName, items, ...tail);
+}
+
 /** One ColumnHeader of a ListView.Columns collection (typed collection editor). `id` is the field id; an empty
  * id marks a NEW column (the engine generates one). Only these managed properties round-trip — a column with any
  * other property makes the whole collection read-only. */
@@ -1074,6 +1114,22 @@ export interface TreeNodeItem {
   id: string;
   text: string;
   name: string;
+  // TreeNode image props. Optional to stay source-compatible with existing image-less traffic; 'no image' is
+  // "" key / -1 index. They ride verbatim through listTreeNodes/setTreeNodes/liveTreeNodes48 — threaded so an
+  // edit through the popup preserves images even where the UI doesn't yet expose a picker.
+  imageKey?: string;
+  imageIndex?: number;
+  selectedImageKey?: string;
+  selectedImageIndex?: number;
+  // Other scalar node props (optional, source-compatible with existing traffic): the hover tooltip + the check-box
+  // state. Ride verbatim through listTreeNodes/setTreeNodes/liveTreeNodes48.
+  toolTipText?: string;
+  checked?: boolean;
+  // Visual-style node props as property-grid invariant strings ("Red" / "64, 128, 255" / "Segoe UI, 9pt, style=Bold");
+  // "" = unset. Ride verbatim; the engine turns them into a Color/Font initializer (net9) or a live value (net48).
+  foreColor?: string;
+  backColor?: string;
+  nodeFont?: string;
   children: TreeNodeItem[];
 }
 
@@ -1107,6 +1163,49 @@ export function setTreeNodes(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetNodes', designerFilePath, ownerId, nodes, ...tail);
+}
+
+/** One ToolStrip/MenuStrip item (structural view for the "…" editor), recursively. `id` is the item's field name;
+ * `itemType` is its short type (ToolStripMenuItem/…); `text`/`name` are display-only in the reorder slice; `children`
+ * are the nested DropDownItems. The engine models ONLY this structure — every other item property is preserved. */
+export interface ToolStripItemModel {
+  id: string;
+  text: string;
+  name: string;
+  itemType: string;
+  children: ToolStripItemModel[];
+}
+
+/** Result of ListToolStripItems: the strip/menu item tree and whether it is editable. `ok` is false for an inline or
+ * shared item, an unexpected collection shape, or a non-field element (→ the webview keeps it read-only). */
+export interface ToolStripItems {
+  ok: boolean;
+  items: ToolStripItemModel[];
+  reason: string;
+}
+
+/** Read a ToolStrip/MenuStrip item tree (Items / DropDownItems) for the "…" editor. */
+export function listToolStripItems(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  sourceText?: string,
+): Promise<ToolStripItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ToolStripItems>('ListToolStripItems', designerFilePath, ownerId, ...tail);
+}
+
+/** Reorder a ToolStrip/MenuStrip item tree (Slice 1): rewrite each Items/DropDownItems AddRange to the given order
+ * (same items — no add/remove/rename), leaving every other statement byte-identical. */
+export function setToolStripItems(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  items: ToolStripItemModel[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetToolStripItems', designerFilePath, ownerId, items, ...tail);
 }
 
 /** One DataGridView column (typed grid-column editor). `id` is the field id; an empty id marks a NEW column (the

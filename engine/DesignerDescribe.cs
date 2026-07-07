@@ -217,7 +217,13 @@ namespace WinFormsDesigner.Engine
                 // editor even though Items is [Browsable(false)] + Hidden serialization — the grid needs them.
                 bool isStringCollection = IsStringCollectionProperty(pd);
                 string? typedCollectionItem = TypedCollectionItemType(pd);
-                bool isCollection = isStringCollection || typedCollectionItem != null;
+                // a generic writable string[] property (flagship: TextBox/RichTextBox.Lines) is surfaced through the
+                // SAME "…" editor as the string collections, but marked with the distinct CollectionItemType sentinel
+                // "System.String[]" so the host routes it to the string-array RPCs (a single `= new string[]{…}`
+                // assignment) rather than the Items.Add/AddRange splicer. Gate on a real setter — a getter-only
+                // string[] (computed) would show editable but never apply.
+                bool isStringArray = pd.PropertyType.FullName == "System.String[]" && !pd.IsReadOnly;
+                bool isCollection = isStringCollection || typedCollectionItem != null || isStringArray;
                 if (!pd.IsBrowsable && !isTableCell && !isCollection) continue;
                 var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
                 if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
@@ -247,6 +253,15 @@ namespace WinFormsDesigner.Engine
                 }
 
                 var (standardValues, stdExclusive) = StandardValuesOf(pd);
+
+                // Cursor: only a STANDARD cursor (Cursors.Hand, …) round-trips through the picker; editing a
+                // custom/resx/.cur cursor would silently replace it with a standard one. Mirror the Font-charset
+                // guard above — show it read-only unless the current value is one of the offered standard names.
+                if (pd.PropertyType.FullName == "System.Windows.Forms.Cursor"
+                    && (standardValues == null || value == null || !standardValues.Contains(value)))
+                {
+                    readOnly = true;
+                }
 
                 // Image/Icon properties (BackgroundImage, PictureBox.Image, Form.Icon…): the value isn't a
                 // literal, so surface a thumbnail preview + the resx-backed Import…/(none) editor instead of text.
@@ -278,7 +293,7 @@ namespace WinFormsDesigner.Engine
                     IsImage = isImage,
                     ImagePreview = imagePreview,
                     IsCollection = isCollection,
-                    CollectionItemType = isStringCollection ? "System.String" : typedCollectionItem,
+                    CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : typedCollectionItem),
                 });
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
@@ -398,6 +413,9 @@ namespace WinFormsDesigner.Engine
             ["System.Windows.Forms.ListView+ColumnHeaderCollection"] = "System.Windows.Forms.ColumnHeader",
             ["System.Windows.Forms.DataGridViewColumnCollection"] = "System.Windows.Forms.DataGridViewColumn",
             ["System.Windows.Forms.TreeNodeCollection"] = "System.Windows.Forms.TreeNode",
+            // MenuStrip/ToolStrip/StatusStrip.Items and ToolStripMenuItem/ToolStripDropDownButton.DropDownItems are
+            // all ToolStripItemCollection — one entry surfaces the "…" ToolStrip item editor on every strip and submenu.
+            ["System.Windows.Forms.ToolStripItemCollection"] = "System.Windows.Forms.ToolStripItem",
         };
 
         private static string? TypedCollectionItemType(PropertyDescriptor pd) =>

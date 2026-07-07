@@ -62,7 +62,12 @@ namespace WinFormsDesigner.Engine.Net48
                 // property-type name so no other collection is affected (parity with net9's DescribeProperties).
                 bool isStringCollection = IsStringCollectionProperty(pd);
                 string? typedCollectionItem = TypedCollectionItemType(pd);
-                bool isCollection = isStringCollection || typedCollectionItem != null;
+                // a generic writable string[] property (TextBox/RichTextBox.Lines) — surfaced through the same "…"
+                // editor as the string collections, marked with the distinct "System.String[]" sentinel so the host
+                // routes it to the string-array RPCs (single `= new string[]{…}` assignment). Byte-identical marker to
+                // net9's DescribeProperties. Gate on a real setter so a getter-only string[] doesn't show editable.
+                bool isStringArray = pd.PropertyType == typeof(string[]) && !pd.IsReadOnly;
+                bool isCollection = isStringCollection || typedCollectionItem != null || isStringArray;
                 if (!pd.IsBrowsable && !isTableCell && !isCollection) continue;
                 var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
                 if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
@@ -84,6 +89,16 @@ namespace WinFormsDesigner.Engine.Net48
                 }
 
                 var (standardValues, stdExclusive) = StandardValuesOf(pd);
+
+                // Cursor: only a STANDARD cursor round-trips through the picker; a custom/resx/.cur cursor would be
+                // silently replaced on edit. Mirror the Font-charset guard — read-only unless the value is a standard
+                // cursor name. (Parity with net9's DescribeProperties.)
+                if (pd.PropertyType.FullName == "System.Windows.Forms.Cursor"
+                    && (standardValues == null || value == null || !standardValues.Contains(value)))
+                {
+                    readOnly = true;
+                }
+
                 bool isImage = IsImageProperty(pd.PropertyType);
                 string? imagePreview = isImage ? TryThumbnail(raw) : null;
 
@@ -112,7 +127,7 @@ namespace WinFormsDesigner.Engine.Net48
                     ImagePreview = imagePreview,
                     Description = description,
                     IsCollection = isCollection,
-                    CollectionItemType = isStringCollection ? "System.String" : typedCollectionItem,
+                    CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : typedCollectionItem),
                 });
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
@@ -132,6 +147,8 @@ namespace WinFormsDesigner.Engine.Net48
             { "System.Windows.Forms.ListView+ColumnHeaderCollection", "System.Windows.Forms.ColumnHeader" },
             { "System.Windows.Forms.DataGridViewColumnCollection", "System.Windows.Forms.DataGridViewColumn" },
             { "System.Windows.Forms.TreeNodeCollection", "System.Windows.Forms.TreeNode" },
+            // MenuStrip/ToolStrip.Items + ToolStripMenuItem.DropDownItems (all ToolStripItemCollection) — parity with net9.
+            { "System.Windows.Forms.ToolStripItemCollection", "System.Windows.Forms.ToolStripItem" },
         };
         private static bool IsStringCollectionProperty(PropertyDescriptor pd) =>
             pd.PropertyType.FullName != null && StringCollectionTypeNames.Contains(pd.PropertyType.FullName);

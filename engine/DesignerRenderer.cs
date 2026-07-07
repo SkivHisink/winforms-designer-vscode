@@ -628,6 +628,31 @@ namespace WinFormsDesigner.Engine
             };
         }
 
+        /// <summary>Read a generic <c>string[]</c> property's current items (TextBox/RichTextBox.Lines) for the
+        /// string-array editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
+        public static CollectionItemsResult ListStringArray(string designerFilePath, string ownerId, string propertyName, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerStringArrayEditor.ListArray(src, ownerId, propertyName);
+        }
+
+        /// <summary>Set a generic <c>string[]</c> property (TextBox/RichTextBox.Lines): rewrite its value to the
+        /// single canonical assignment <c>owner.prop = new string[] { … }</c>. Builds the escaped single-line RHS
+        /// (<see cref="DesignerStringArrayEditor.BuildArrayExpr"/>) then DELEGATES to the proven single-assignment
+        /// splice (<see cref="ApplyPropertyEdit"/> → <see cref="DesignerPropertyEditor.EditProperty"/> +
+        /// <see cref="DesignerPropertyEditor.OnlyTargetChanged"/> §6.5 gate) — NOT the collection Add/AddRange
+        /// splicer, since a string[] property is a single assignment. Values are literals, so nothing is interpolated.</summary>
+        public static PropertyEditResult ApplyStringArrayEdit(string designerFilePath, string ownerId, string propertyName, IReadOnlyList<string> items, string? sourceText = null)
+        {
+            // A content-backed property (TextBox/RichTextBox.Lines) is really stored in Text; write whichever
+            // assignment is runtime-effective (Text = "joined" vs an existing Lines = new[]{…}) IN PLACE, so the
+            // edit never introduces a competing assignment the other would silently override (data-loss guard).
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            var (targetProp, asArray) = DesignerStringArrayEditor.ResolveWriteTarget(src, ownerId, propertyName);
+            string rhs = asArray ? DesignerStringArrayEditor.BuildArrayExpr(items) : DesignerStringArrayEditor.BuildTextLiteral(items);
+            return ApplyPropertyEdit(designerFilePath, ownerId, targetProp, rhs, sourceText);
+        }
+
         /// <summary>Read a ListView's current columns (ColumnHeader field id + Text/Width/TextAlign) for the typed
         /// collection editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
         public static ColumnItemsResult ListColumnItems(string designerFilePath, string ownerId, string? sourceText = null)
@@ -701,6 +726,44 @@ namespace WinFormsDesigner.Engine
                 Minimal = minimal,
                 NewText = safe ? edit.NewText : null,
                 Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target nodes"),
+            };
+        }
+
+        /// <summary>Read a ToolStrip/MenuStrip item tree (item field id + Text/Name/type + nested DropDownItems) for
+        /// the "…" editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
+        public static ToolStripItemsResult ListToolStripItems(string designerFilePath, string ownerId, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerToolStripItemEditor.ListItems(src, ownerId);
+        }
+
+        /// <summary>Reorder and/or ADD to a ToolStrip/MenuStrip item tree (Slice 2): rewrite each <c>Items</c>/
+        /// <c>DropDownItems</c> AddRange to exactly <paramref name="items"/> (an empty-Id item is synthesized as a new
+        /// field + construction + Name/Text), leaving every existing statement byte-identical. Same buffer-or-disk
+        /// source + parse-check + <see cref="DesignerToolStripItemEditor.OnlyItemsAddedOrReordered"/> gate.</summary>
+        public static PropertyEditResult ApplyToolStripItemsEdit(string designerFilePath, string ownerId, IReadOnlyList<ToolStripItemModel> items, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerToolStripItemEditor.SetItems(src, ownerId, items);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerToolStripItemEditor.OnlyItemsAddedOrReordered(src, edit.NewText);
+            bool safe = parseOk && minimal;
+
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than adding/reordering items"),
             };
         }
 
@@ -2241,9 +2304,49 @@ namespace WinFormsDesigner.Engine
                         throw new InvalidOperationException("unsupported bitwise-or operands: " + be);
                     }
 
+                case ArrayCreationExpressionSyntax arr:
+                    return EvalArray(arr.Type.ElementType, arr.Initializer, targetType, userAsms);
+
+                case ImplicitArrayCreationExpressionSyntax iarr:
+                    return EvalArray(null, iarr.Initializer, targetType, userAsms);
+
                 default:
                     throw new InvalidOperationException("unsupported expression: " + expr.Kind() + " '" + expr + "'");
             }
+        }
+
+        /// <summary>Evaluate an array-creation expression (<c>new string[] { "a", "b" }</c>, <c>new string[] { }</c>,
+        /// <c>new string[0]</c>, or the implicit <c>new[] { … }</c>) to a live array. Emitted by the string[] property
+        /// editor (TextBox/RichTextBox.Lines) and present in hand-written designer files. SECURITY: the element type
+        /// is restricted to string + primitives — <see cref="Array.CreateInstance(Type,int)"/> runs no constructor and
+        /// every element re-enters the gated <see cref="Eval"/>, so no user ctor/getter is reachable; an unrestricted
+        /// element type (<c>new SomeUserType[]{…}</c>) would widen the reachable surface, so it stays unrepresentable.
+        /// A sized-but-uninitialized array (<c>new string[5]</c>) yields an empty array — the editor only ever emits an
+        /// explicit initializer, and the read side rejects non-initializer RHS.</summary>
+        private static object? EvalArray(TypeSyntax? elementTypeSyntax, InitializerExpressionSyntax? initializer,
+                                         Type? targetType, IReadOnlyList<Assembly> userAsms)
+        {
+            Type elem = typeof(string);
+            if (elementTypeSyntax != null)
+            {
+                elem = ResolveCastType(elementTypeSyntax, userAsms)
+                    ?? throw new InvalidOperationException("unsupported array element type: " + elementTypeSyntax);
+            }
+            else if (targetType is { IsArray: true } && targetType.GetElementType() is { } inferred)
+            {
+                elem = inferred;
+            }
+            if (!(elem == typeof(string) || elem.IsPrimitive))
+            {
+                throw new InvalidOperationException("unsupported array element type: " + (elem.FullName ?? elem.Name));
+            }
+            int n = initializer?.Expressions.Count ?? 0;
+            Array result = Array.CreateInstance(elem, n);
+            for (int i = 0; i < n; i++)
+            {
+                result.SetValue(CoerceArg(Eval(initializer!.Expressions[i], elem, userAsms), elem), i);
+            }
+            return result;
         }
 
         /// <summary>
@@ -2359,6 +2462,10 @@ namespace WinFormsDesigner.Engine
             "System.Drawing.Rectangle",
             "System.Drawing.RectangleF",
             "System.Windows.Forms.Padding",
+            // Cursors is a class of pure, side-effect-free static Cursor-valued properties (Cursors.Hand,
+            // Cursors.Default, …) — exact parity with SystemColors. The value-converter emits
+            // System.Windows.Forms.Cursors.Hand for an edited Cursor property; this lets the re-render read it back.
+            "System.Windows.Forms.Cursors",
         };
 
         private static bool IsStaticReadAllowed(Type t) =>

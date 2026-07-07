@@ -18,6 +18,10 @@ export const COMPLEX_TYPES = [
   'System.Drawing.Rectangle',
   'System.Windows.Forms.Padding',
   'System.Drawing.Font',
+  // Cursor: the grid shows CursorConverter's standard values (Default/Hand/…) as a dropdown; the picked
+  // NAME ("Hand") is handed to the engine, which emits System.Windows.Forms.Cursors.Hand via InstanceDescriptor.
+  // A custom/.cur cursor has no Cursors.* member → the engine returns null → the edit is rejected (stays read-only).
+  'System.Windows.Forms.Cursor',
 ];
 export const COMPLEX_TYPE_SET = new Set(COMPLEX_TYPES);
 

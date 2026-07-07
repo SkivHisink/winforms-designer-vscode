@@ -10,14 +10,34 @@ namespace WinFormsDesigner.Engine
 {
     /// <summary>One node of a <c>TreeView.Nodes</c> collection, recursively. Unlike the flat column editors a node is
     /// a LOCAL variable (not a field): <c>Id</c> is the generated local name (empty for a NEW node — a fresh
-    /// <c>treeNodeN</c> is named on commit). Only Text (the constructor label) + Name (the node key) are modelled;
-    /// a node that carries any other property (ImageKey/ImageIndex/…) or an unrecognized constructor overload makes
-    /// the whole collection read-only, so the editor never clobbers a value it can't round-trip.</summary>
+    /// <c>treeNodeN</c> is named on commit). Text (the constructor label), Name (the node key) and the four image
+    /// properties (ImageKey/ImageIndex + SelectedImageKey/SelectedImageIndex) are modelled; a node that carries any
+    /// OTHER property, or an image-index CONSTRUCTOR overload, still makes the whole collection read-only, so the
+    /// editor never clobbers a value it can't round-trip.</summary>
     public sealed class TreeNodeItem
     {
         public string Id { get; set; } = "";
         public string Text { get; set; } = "";
         public string Name { get; set; } = "";
+        // TreeNode image properties, defaults matching System.Windows.Forms.TreeNode ('no image' = "" key / -1 index)
+        // so an image-less node emits nothing new and existing fixtures stay byte-identical. Key and index are
+        // mutually exclusive in WinForms (setting one clears the other) — round-trip whichever the source carries.
+        public string ImageKey { get; set; } = "";
+        public int ImageIndex { get; set; } = -1;
+        public string SelectedImageKey { get; set; } = "";
+        public int SelectedImageIndex { get; set; } = -1;
+        // Other round-tripped node value properties (simple literals only): the hover tooltip (string) and the
+        // check-box state (bool). Defaults match TreeNode so an untouched node emits nothing new.
+        public string ToolTipText { get; set; } = "";
+        public bool Checked { get; set; } = false;
+        // Visual-style node properties, carried as the property-grid INVARIANT string (e.g. "Red" / "64, 128, 255"
+        // for a color, "Segoe UI, 9pt, style=Bold" for a font); "" = default/unset. On read the source expression is
+        // evaluated to this invariant via DesignerValueConverter.FromExpression; on emit it is turned back into the
+        // idiomatic initializer via DesignerValueConverter.ToExpression (both funnel through the same TypeConverter,
+        // so the round-trip is stable). A color/font the converter can't represent keeps the node read-only.
+        public string ForeColor { get; set; } = "";
+        public string BackColor { get; set; } = "";
+        public string NodeFont { get; set; } = "";
         public List<TreeNodeItem> Children { get; set; } = new();
     }
 
@@ -126,9 +146,20 @@ namespace WinFormsDesigner.Engine
                 forest.Add(item!);
             }
 
-            // (4) property statements — ONLY for THIS owner's locals (`used`): `.Name = "literal"` is modelled;
-            // any other property, or children attached outside the ctor via `<local>.Nodes.Add`, makes it read-only.
+            // (4) property statements — ONLY for THIS owner's locals (`used`): `.Name = "literal"` and the four image
+            // props (ImageKey/SelectedImageKey string literals, ImageIndex/SelectedImageIndex int literals) are
+            // modelled; any OTHER property, or children attached outside the ctor via `<local>.Nodes.Add`, makes it
+            // read-only. The accepted set here MUST match EmitPostOrder + IsSafeNodeStatement exactly (closed loop).
             var names = new Dictionary<string, string>(StringComparer.Ordinal);
+            var imageKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+            var selImageKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+            var imageIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+            var selImageIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+            var toolTips = new Dictionary<string, string>(StringComparer.Ordinal);
+            var checkeds = new Dictionary<string, bool>(StringComparer.Ordinal);
+            var foreColors = new Dictionary<string, string>(StringComparer.Ordinal);
+            var backColors = new Dictionary<string, string>(StringComparer.Ordinal);
+            var nodeFonts = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var st in init.Body.Statements)
             {
                 if (st is not ExpressionStatementSyntax es) continue;
@@ -142,6 +173,46 @@ namespace WinFormsDesigner.Engine
                             if (!TryStringLiteral(asn.Right, out var nv)) { reason = "node " + lhs[0] + ".Name is not a literal"; return false; }
                             names[lhs[0]] = nv!;
                         }
+                        else if (lhs.Count == 2 && (lhs[1] == "ImageKey" || lhs[1] == "SelectedImageKey"))
+                        {
+                            if (!TryStringLiteral(asn.Right, out var iv)) { reason = "node " + lhs[0] + "." + lhs[1] + " is not a literal"; return false; }
+                            // ImageKey and ImageIndex are MUTUALLY EXCLUSIVE (setting one clears the other; the LAST
+                            // assignment wins at runtime). Statements are visited in source order, so a key assignment
+                            // clears any earlier sibling index for this local — the parsed model carries exactly the
+                            // one effective member, and a later index would in turn clear this key. (Same for Selected*.)
+                            if (lhs[1] == "ImageKey") { imageKeys[lhs[0]] = iv!; imageIndexes.Remove(lhs[0]); }
+                            else { selImageKeys[lhs[0]] = iv!; selImageIndexes.Remove(lhs[0]); }
+                        }
+                        else if (lhs.Count == 2 && (lhs[1] == "ImageIndex" || lhs[1] == "SelectedImageIndex"))
+                        {
+                            if (!TryIntLiteral(asn.Right, out var ix)) { reason = "node " + lhs[0] + "." + lhs[1] + " is not an int literal"; return false; }
+                            if (lhs[1] == "ImageIndex") { imageIndexes[lhs[0]] = ix; imageKeys.Remove(lhs[0]); }
+                            else { selImageIndexes[lhs[0]] = ix; selImageKeys.Remove(lhs[0]); }
+                        }
+                        else if (lhs.Count == 2 && lhs[1] == "ToolTipText")
+                        {
+                            if (!TryStringLiteral(asn.Right, out var tv)) { reason = "node " + lhs[0] + ".ToolTipText is not a literal"; return false; }
+                            toolTips[lhs[0]] = tv!;
+                        }
+                        else if (lhs.Count == 2 && lhs[1] == "Checked")
+                        {
+                            if (!TryBoolLiteral(asn.Right, out var cv)) { reason = "node " + lhs[0] + ".Checked is not a bool literal"; return false; }
+                            checkeds[lhs[0]] = cv;
+                        }
+                        else if (lhs.Count == 2 && (lhs[1] == "ForeColor" || lhs[1] == "BackColor"))
+                        {
+                            // evaluate the color expression to its invariant string; a color the bounded converter
+                            // can't represent (a computed value, a user type, an unsafe member) keeps the node read-only.
+                            var inv = DesignerValueConverter.FromExpression("System.Drawing.Color", asn.Right.ToString());
+                            if (inv == null) { reason = "node " + lhs[0] + "." + lhs[1] + " is not a representable color"; return false; }
+                            if (lhs[1] == "ForeColor") foreColors[lhs[0]] = inv; else backColors[lhs[0]] = inv;
+                        }
+                        else if (lhs.Count == 2 && lhs[1] == "NodeFont")
+                        {
+                            var inv = DesignerValueConverter.FromExpression("System.Drawing.Font", asn.Right.ToString());
+                            if (inv == null) { reason = "node " + lhs[0] + ".NodeFont is not a representable font"; return false; }
+                            nodeFonts[lhs[0]] = inv;
+                        }
                         else { reason = "node " + lhs[0] + " has unsupported property " + string.Join(".", lhs.Skip(1)); return false; }
                     }
                 }
@@ -154,6 +225,9 @@ namespace WinFormsDesigner.Engine
                 }
             }
             ApplyNames(forest, names);
+            ApplyImages(forest, imageKeys, imageIndexes, selImageKeys, selImageIndexes);
+            ApplyExtras(forest, toolTips, checkeds);
+            ApplyStyles(forest, foreColors, backColors, nodeFonts);
             return true;
         }
 
@@ -184,6 +258,48 @@ namespace WinFormsDesigner.Engine
             }
         }
 
+        /// <summary>Apply the parsed image-property assignments to the built forest (post-pass, like <see cref="ApplyNames"/>).</summary>
+        private static void ApplyImages(List<TreeNodeItem> items,
+            Dictionary<string, string> imageKeys, Dictionary<string, int> imageIndexes,
+            Dictionary<string, string> selImageKeys, Dictionary<string, int> selImageIndexes)
+        {
+            foreach (var n in items)
+            {
+                if (imageKeys.TryGetValue(n.Id, out var ik)) n.ImageKey = ik;
+                if (imageIndexes.TryGetValue(n.Id, out var ii)) n.ImageIndex = ii;
+                if (selImageKeys.TryGetValue(n.Id, out var sk)) n.SelectedImageKey = sk;
+                if (selImageIndexes.TryGetValue(n.Id, out var si)) n.SelectedImageIndex = si;
+                ApplyImages(n.Children, imageKeys, imageIndexes, selImageKeys, selImageIndexes);
+            }
+        }
+
+        /// <summary>Apply the parsed scalar node properties (ToolTipText / Checked) to the built forest (post-pass,
+        /// like <see cref="ApplyNames"/>).</summary>
+        private static void ApplyExtras(List<TreeNodeItem> items,
+            Dictionary<string, string> toolTips, Dictionary<string, bool> checkeds)
+        {
+            foreach (var n in items)
+            {
+                if (toolTips.TryGetValue(n.Id, out var tt)) n.ToolTipText = tt;
+                if (checkeds.TryGetValue(n.Id, out var ck)) n.Checked = ck;
+                ApplyExtras(n.Children, toolTips, checkeds);
+            }
+        }
+
+        /// <summary>Apply the parsed visual-style node properties (ForeColor / BackColor / NodeFont, as invariant
+        /// strings) to the built forest (post-pass, like <see cref="ApplyNames"/>).</summary>
+        private static void ApplyStyles(List<TreeNodeItem> items,
+            Dictionary<string, string> foreColors, Dictionary<string, string> backColors, Dictionary<string, string> nodeFonts)
+        {
+            foreach (var n in items)
+            {
+                if (foreColors.TryGetValue(n.Id, out var fc)) n.ForeColor = fc;
+                if (backColors.TryGetValue(n.Id, out var bc)) n.BackColor = bc;
+                if (nodeFonts.TryGetValue(n.Id, out var nf)) n.NodeFont = nf;
+                ApplyStyles(n.Children, foreColors, backColors, nodeFonts);
+            }
+        }
+
         // ---- write ----
 
         /// <summary>Rewrite <paramref name="ownerId"/>'s nodes to exactly <paramref name="desired"/>: drop every node
@@ -210,6 +326,10 @@ namespace WinFormsDesigner.Engine
             if (!ResolveIds(desired, currentSet, used, seen, out var normalized, out var resolveReason)) return Failed(resolveReason);
             var finalSet = new HashSet<string>(StringComparer.Ordinal);
             CollectIds(normalized, finalSet);
+
+            // never clobber: refuse the whole edit if any node carries a color/font invariant that can't be turned
+            // back into an initializer (the pickers only ever produce representable values, so this is defensive).
+            if (!AllStylesRepresentable(normalized, out var styleReason)) return Failed(styleReason);
 
             // removing a node whose local is referenced OUTSIDE the node statements would dangle — refuse.
             var nodeStmts = init.Body.Statements.Where(st => IsNodeRelated(st, ownerId, currentSet)).ToList();
@@ -331,7 +451,15 @@ namespace WinFormsDesigner.Engine
                     seen.Add(id);
                 }
                 if (!ResolveIds(d.Children ?? new List<TreeNodeItem>(), currentSet, used, seen, out var kids, out reason)) return false;
-                normalized.Add(new TreeNodeItem { Id = id, Text = d.Text ?? "", Name = d.Name ?? "", Children = kids });
+                normalized.Add(new TreeNodeItem
+                {
+                    Id = id, Text = d.Text ?? "", Name = d.Name ?? "",
+                    ImageKey = d.ImageKey ?? "", ImageIndex = d.ImageIndex,
+                    SelectedImageKey = d.SelectedImageKey ?? "", SelectedImageIndex = d.SelectedImageIndex,
+                    ToolTipText = d.ToolTipText ?? "", Checked = d.Checked,
+                    ForeColor = d.ForeColor ?? "", BackColor = d.BackColor ?? "", NodeFont = d.NodeFont ?? "",
+                    Children = kids,
+                });
             }
             return true;
         }
@@ -339,6 +467,24 @@ namespace WinFormsDesigner.Engine
         private static void CollectIds(IReadOnlyList<TreeNodeItem> items, HashSet<string> into)
         {
             foreach (var n in items) { into.Add(n.Id); CollectIds(n.Children, into); }
+        }
+
+        /// <summary>Every non-empty ForeColor/BackColor/NodeFont invariant must convert to an initializer expression;
+        /// otherwise the edit is refused (rather than emit a node that silently drops the color/font).</summary>
+        private static bool AllStylesRepresentable(IReadOnlyList<TreeNodeItem> items, out string reason)
+        {
+            foreach (var n in items)
+            {
+                if (n.ForeColor.Length > 0 && DesignerValueConverter.ToExpression("System.Drawing.Color", n.ForeColor) == null)
+                { reason = "node " + n.Id + " ForeColor is not representable: " + n.ForeColor; return false; }
+                if (n.BackColor.Length > 0 && DesignerValueConverter.ToExpression("System.Drawing.Color", n.BackColor) == null)
+                { reason = "node " + n.Id + " BackColor is not representable: " + n.BackColor; return false; }
+                if (n.NodeFont.Length > 0 && DesignerValueConverter.ToExpression("System.Drawing.Font", n.NodeFont) == null)
+                { reason = "node " + n.Id + " NodeFont is not representable: " + n.NodeFont; return false; }
+                if (!AllStylesRepresentable(n.Children, out reason)) return false;
+            }
+            reason = "";
+            return true;
         }
 
         private static void EmitPostOrder(TreeNodeItem node, string nodeType, string indent, string nl, List<StatementSyntax> outList)
@@ -362,6 +508,37 @@ namespace WinFormsDesigner.Engine
             outList.Add(Stmt(sb.ToString(), indent, nl));
             if (node.Name.Length > 0)
                 outList.Add(Stmt($"{node.Id}.Name = {SyntaxFactory.Literal(node.Name)};", indent, nl));
+            // image properties — emit ONLY the EFFECTIVE member of each mutually-exclusive pair (key preferred), never
+            // both: setting ImageKey then ImageIndex would let the index silently shadow the key at runtime. Key-first
+            // matches the net48 live apply (BuildLiveTreeNode) so the live picture and a rebuild render the same glyph.
+            // Emitting at most one per pair also keeps the read recognizer + IsSafeNodeStatement gate satisfied.
+            if (node.ImageKey.Length > 0)
+                outList.Add(Stmt($"{node.Id}.ImageKey = {SyntaxFactory.Literal(node.ImageKey)};", indent, nl));
+            else if (node.ImageIndex >= 0)
+                outList.Add(Stmt($"{node.Id}.ImageIndex = {node.ImageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)};", indent, nl));
+            if (node.SelectedImageKey.Length > 0)
+                outList.Add(Stmt($"{node.Id}.SelectedImageKey = {SyntaxFactory.Literal(node.SelectedImageKey)};", indent, nl));
+            else if (node.SelectedImageIndex >= 0)
+                outList.Add(Stmt($"{node.Id}.SelectedImageIndex = {node.SelectedImageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)};", indent, nl));
+            // other scalar props — emit only when non-default (tooltip set / checked). Must match the read recognizer
+            // + IsSafeNodeStatement gate.
+            if (node.ToolTipText.Length > 0)
+                outList.Add(Stmt($"{node.Id}.ToolTipText = {SyntaxFactory.Literal(node.ToolTipText)};", indent, nl));
+            if (node.Checked)
+                outList.Add(Stmt($"{node.Id}.Checked = true;", indent, nl));
+            // visual-style props — turn the invariant string back into the idiomatic initializer. SetNodes has already
+            // pre-validated that every non-empty style converts (else it Failed), so ToExpression can't be null here;
+            // the null-guard is belt-and-braces so a value is never silently dropped.
+            EmitStyle(node.ForeColor, "ForeColor", "System.Drawing.Color", node.Id, indent, nl, outList);
+            EmitStyle(node.BackColor, "BackColor", "System.Drawing.Color", node.Id, indent, nl, outList);
+            EmitStyle(node.NodeFont, "NodeFont", "System.Drawing.Font", node.Id, indent, nl, outList);
+        }
+
+        private static void EmitStyle(string invariant, string prop, string typeName, string id, string indent, string nl, List<StatementSyntax> outList)
+        {
+            if (invariant.Length == 0) return;
+            var e = DesignerValueConverter.ToExpression(typeName, invariant);
+            if (e != null) outList.Add(Stmt($"{id}.{prop} = {e};", indent, nl));
         }
 
         private static StatementSyntax BuildAddRange(string ownerId, string nodeType, List<string> rootIds, string indent, string nl)
@@ -514,7 +691,16 @@ namespace WinFormsDesigner.Engine
             if (st is ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax asn })
             {
                 var lhs = Flatten(asn.Left);
-                return lhs.Count == 2 && nodeLocals.Contains(lhs[0]) && lhs[1] == "Name" && TryStringLiteral(asn.Right, out _);
+                if (lhs.Count != 2 || !nodeLocals.Contains(lhs[0])) return false;
+                // must exactly mirror the read recognizer + EmitPostOrder: Name/ImageKey/SelectedImageKey/ToolTipText
+                // are string literals, ImageIndex/SelectedImageIndex are int literals, Checked is a bool literal,
+                // ForeColor/BackColor are representable colors and NodeFont a representable font (both re-validated
+                // through the same bounded converter the read/emit sides use, so the three sites can't drift).
+                return ((lhs[1] is "Name" or "ImageKey" or "SelectedImageKey" or "ToolTipText") && TryStringLiteral(asn.Right, out _))
+                    || ((lhs[1] is "ImageIndex" or "SelectedImageIndex") && TryIntLiteral(asn.Right, out _))
+                    || (lhs[1] is "Checked" && TryBoolLiteral(asn.Right, out _))
+                    || (lhs[1] is "ForeColor" or "BackColor" && IsSafeColorExpr(asn.Right))
+                    || (lhs[1] is "NodeFont" && IsSafeFontExpr(asn.Right));
             }
             return false;
         }
@@ -540,6 +726,37 @@ namespace WinFormsDesigner.Engine
             if (expr is LiteralExpressionSyntax lit && lit.IsKind(SyntaxKind.StringLiteralExpression))
             { value = lit.Token.ValueText; return true; }
             value = null; return false;
+        }
+
+        /// <summary>A plain int literal (image index), tolerating a unary-minus wrapper (<c>-1</c>). Non-literal /
+        /// non-int is refused so a computed image index keeps the node read-only rather than round-trip lossily.</summary>
+        private static bool TryIntLiteral(ExpressionSyntax expr, out int value)
+        {
+            value = 0;
+            bool neg = false;
+            ExpressionSyntax e = expr;
+            if (e is PrefixUnaryExpressionSyntax u && u.IsKind(SyntaxKind.UnaryMinusExpression)) { neg = true; e = u.Operand; }
+            if (e is LiteralExpressionSyntax lit && lit.IsKind(SyntaxKind.NumericLiteralExpression) && lit.Token.Value is int i)
+            { value = neg ? -i : i; return true; }
+            return false;
+        }
+
+        /// <summary>A color expression the bounded converter can evaluate (named/system color / Color.FromArgb(...)).
+        /// Delegates to FromExpression so read, emit and this gate share ONE definition of "representable color".</summary>
+        private static bool IsSafeColorExpr(ExpressionSyntax expr) =>
+            DesignerValueConverter.FromExpression("System.Drawing.Color", expr.ToString()) != null;
+
+        /// <summary>A font expression the bounded converter can evaluate (a lossless <c>new Font(...)</c>).</summary>
+        private static bool IsSafeFontExpr(ExpressionSyntax expr) =>
+            DesignerValueConverter.FromExpression("System.Drawing.Font", expr.ToString()) != null;
+
+        /// <summary>A plain <c>true</c>/<c>false</c> literal (TreeNode.Checked). A non-literal (computed / named const)
+        /// keeps the node read-only rather than round-trip lossily.</summary>
+        private static bool TryBoolLiteral(ExpressionSyntax expr, out bool value)
+        {
+            if (expr is LiteralExpressionSyntax lit && (lit.IsKind(SyntaxKind.TrueLiteralExpression) || lit.IsKind(SyntaxKind.FalseLiteralExpression)))
+            { value = lit.IsKind(SyntaxKind.TrueLiteralExpression); return true; }
+            value = false; return false;
         }
 
         private static IReadOnlyList<ExpressionSyntax>? ArrayElements(ExpressionSyntax? arg)

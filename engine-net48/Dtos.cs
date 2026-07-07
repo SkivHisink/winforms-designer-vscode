@@ -110,11 +110,11 @@ namespace WinFormsDesigner.Engine.Net48
     }
 
     /// <summary>One TreeView node for the live tree reconstruction (net48 live node picture — the TreeView analogue of
-    /// <see cref="LiveCollItem"/>). Recursive: <see cref="Children"/> are the sub-nodes. Only <see cref="Text"/> (the
-    /// ctor label) and <see cref="Name"/> (the node key) are modelled — the same subset the net9 TreeNode editor
-    /// round-trips — so a node with an image/checkbox/etc. never reaches here (the read side makes such a tree
-    /// read-only). The host sends its `TreeNodeItem` shape verbatim; the extra `id` field is ignored on deserialize.
-    /// Crosses the child-AppDomain boundary, so plain get/set (no `init`) + [Serializable].</summary>
+    /// <see cref="LiveCollItem"/>). Recursive: <see cref="Children"/> are the sub-nodes. <see cref="Text"/> (the ctor
+    /// label), <see cref="Name"/> (the node key) and the four image props are modelled — the same subset the net9
+    /// TreeNode editor round-trips. The image is drawn automatically by WinForms from the compiled TreeView's ImageList
+    /// once the key/index is set. The host sends its `TreeNodeItem` shape verbatim; the extra `id` field is ignored on
+    /// deserialize. Crosses the child-AppDomain boundary, so plain get/set (no `init`) + [Serializable].</summary>
     [Serializable]
     public sealed class LiveTreeNode
     {
@@ -122,6 +122,21 @@ namespace WinFormsDesigner.Engine.Net48
         public string Text { get; set; } = "";
         /// <summary>Node key (TreeNode.Name); "" leaves it unset.</summary>
         public string Name { get; set; } = "";
+        /// <summary>TreeNode image props. Defaults match WinForms ('no image' = "" key / -1 index) — an omitted field
+        /// keeps the default across the JSON boundary. Key and index are mutually exclusive; key-first on apply.</summary>
+        public string ImageKey { get; set; } = "";
+        public int ImageIndex { get; set; } = -1;
+        public string SelectedImageKey { get; set; } = "";
+        public int SelectedImageIndex { get; set; } = -1;
+        /// <summary>Other scalar node props. Defaults match WinForms ("" tooltip / unchecked) — an omitted field keeps
+        /// the default across the JSON boundary.</summary>
+        public string ToolTipText { get; set; } = "";
+        public bool Checked { get; set; } = false;
+        /// <summary>Visual-style node props as property-grid invariant strings ("Red" / "64, 128, 255" / "Segoe UI,
+        /// 9pt, style=Bold"); "" = unset. Converted to a live Color/Font via the framework TypeConverter on apply.</summary>
+        public string ForeColor { get; set; } = "";
+        public string BackColor { get; set; } = "";
+        public string NodeFont { get; set; } = "";
         /// <summary>Child nodes, in order. Empty for a leaf.</summary>
         public LiveTreeNode[] Children { get; set; } = Array.Empty<LiveTreeNode>();
     }

@@ -485,6 +485,75 @@ test('panel collection editor: the "…" button posts listCollection', () => {
   h.destroy();
 });
 
+test('panel cursor editor (Tier 4): a Cursor property renders an editable dropdown; picking a value posts an edit', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'nb',
+    name: 'notesBox',
+    type: 'System.Windows.Forms.TextBox',
+    properties: [
+      prop('Cursor', {
+        type: 'System.Windows.Forms.Cursor',
+        value: 'Default',
+        standardValues: ['Default', 'Hand', 'Cross'],
+        standardValuesExclusive: false,
+        sourceExplicit: false,
+        isDefault: true,
+        category: 'Appearance',
+      }),
+    ],
+    events: [],
+  });
+  // Cursor is now in the COMPLEX set → editable() true → the CursorConverter standard values render as a datalist
+  // input (non-exclusive), NOT read-only text. (Previously the type failed editable() and showed a plain label.)
+  const inp = findPropRow(h, 'Cursor').querySelector('input');
+  ok(!!inp, 'Cursor renders an editable input (dropdown), not read-only text');
+  inp.value = 'Hand';
+  inp.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const edits = only(h.posted, 'edit');
+  eq(edits.length, 1, 'one edit posted');
+  eq([edits[0].prop, edits[0].value, edits[0].propType], ['Cursor', 'Hand', 'System.Windows.Forms.Cursor'], 'edit carries the picked cursor NAME + Cursor type (engine converts to Cursors.Hand)');
+  h.destroy();
+});
+
+test('panel string[] editor (Tier 4): the "…" posts listStringArray; editing + OK posts setStringArray', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'nb',
+    name: 'notesBox',
+    type: 'System.Windows.Forms.TextBox',
+    properties: [
+      prop('Lines', {
+        type: 'System.String[]',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.String[]', // distinct sentinel → routes to the string-array RPCs, not the Items splicer
+        category: 'Appearance',
+      }),
+    ],
+    events: [],
+  });
+  const btn = findPropRow(h, 'Lines').querySelector('button.collectionBtn');
+  ok(!!btn, 'the "…" button is rendered for a string[] property');
+  h.click(btn);
+  const lsa = only(h.posted, 'listStringArray');
+  eq(lsa.length, 1, 'listStringArray posted (not listCollection)');
+  eq([lsa[0].id, lsa[0].prop], ['nb', 'Lines'], 'targets the control + property');
+
+  // host replies with the current lines → the same one-item-per-line popup opens
+  h.resetPosted();
+  h.send({ type: 'stringArrayItems', id: 'nb', prop: 'Lines', ok: true, reason: '', items: ['one', 'two'] });
+  const ta = h.document.querySelector('textarea.collectionTa');
+  ok(!!ta, 'the string-array popup textarea opened');
+  eq(ta.value, 'one\ntwo', 'popup prefilled with the current lines');
+  ta.value = 'one\ntwo\nthree';
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setStringArray');
+  eq(set.length, 1, 'OK posts setStringArray (not setCollection)');
+  eq([set[0].id, set[0].prop, set[0].items.join('|')], ['nb', 'Lines', 'one|two|three'], 'setStringArray carries the edited items');
+  h.destroy();
+});
+
 test('panel tree editor: "…" lists nodes, the popup renders the recursive forest, add-child + OK posts a nested setTreeNodes', () => {
   const h = loadPanel();
   setupComponent(h, {
@@ -534,6 +603,102 @@ test('panel tree editor: "…" lists nodes, the popup renders the recursive fore
   eq(set[0].nodes[0].children.length, 2, 'root now has 2 children (Apple + the new one)');
   eq([set[0].nodes[0].children[1].text, set[0].nodes[0].children[1].id], ['Cherry', ''], 'new child carries text + an empty id (engine names it)');
   ok(!('_k' in set[0].nodes[0]), 'the ephemeral expand-key is stripped before sending');
+  h.destroy();
+});
+
+test('panel toolstrip editor: "…" lists items, the popup renders the recursive menu, ↑ reorders a sibling group + OK posts setToolStripItems (review wf_55284a72-7f3 F5-proxy)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ms',
+    name: 'menuStrip1',
+    type: 'System.Windows.Forms.MenuStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  const btn = findPropRow(h, 'Items').querySelector('button.collectionBtn');
+  ok(!!btn, 'the "…" button is rendered for a MenuStrip.Items collection');
+  h.click(btn);
+  const lt = only(h.posted, 'listToolStripItems');
+  eq(lt.length, 1, 'listToolStripItems posted');
+  eq(lt[0].id, 'ms', 'targets the menu strip');
+
+  // host replies with File[Open,Save] + Edit → the recursive popup mounts (nodes with children auto-expand)
+  h.resetPosted();
+  h.send({
+    type: 'toolStripItems',
+    id: 'ms',
+    ok: true,
+    reason: '',
+    items: [
+      { id: 'fileToolStripMenuItem', text: 'File', name: 'fileToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [
+        { id: 'openToolStripMenuItem', text: 'Open', name: '', itemType: 'ToolStripMenuItem', children: [] },
+        { id: 'saveToolStripMenuItem', text: 'Save', name: '', itemType: 'ToolStripMenuItem', children: [] },
+      ] },
+      { id: 'editToolStripMenuItem', text: 'Edit', name: 'editToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] },
+    ],
+  });
+  const rows = (): any[] => Array.from(h.document.querySelectorAll('.treeNodeRow')) as any[];
+  eq(rows().length, 4, 'popup rendered File + Open + Save + Edit (submenu auto-expanded)');
+
+  // reorder the TOP-LEVEL sibling group: move Edit (root index 1, flat row 3) above File via its ↑ button, OK
+  h.click(rows()[3].querySelector('button[title="Move up"]'));
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq(set.length, 1, 'setToolStripItems posted on OK');
+  eq(set[0].toolStripItems.map((n: any) => n.text), ['Edit', 'File'], 'top-level order is now Edit, File');
+  eq(set[0].toolStripItems[1].children.map((n: any) => n.text), ['Open', 'Save'], 'File submenu order preserved (only the reordered group changed)');
+  ok(!('_k' in set[0].toolStripItems[0]), 'the ephemeral expand-key is stripped before sending');
+  h.destroy();
+});
+
+test('panel toolstrip editor: "+ Add item" ("Type Here") appends an empty-id item, typing sets its Text, OK posts it (Slice 2 ADD)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ms',
+    name: 'menuStrip1',
+    type: 'System.Windows.Forms.MenuStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({
+    type: 'toolStripItems',
+    id: 'ms',
+    ok: true,
+    reason: '',
+    items: [{ id: 'fileToolStripMenuItem', text: 'File', name: 'fileToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] }],
+  });
+  // "+ Add item" appends a NEW row whose Text is an editable input (existing items stay read-only spans).
+  const addBtn = (Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === '+ Add item');
+  ok(!!addBtn, 'the "+ Add item" button is present');
+  h.click(addBtn);
+  const inputs = Array.from(h.document.querySelectorAll('.treeNodeRow input')) as any[];
+  eq(inputs.length, 1, 'exactly the new item row has an editable Text input (File stays read-only)');
+  inputs[0].value = 'Help';
+  inputs[0].dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq(set.length, 1, 'setToolStripItems posted on OK');
+  eq(set[0].toolStripItems.length, 2, 'File + the new item');
+  eq([set[0].toolStripItems[1].id, set[0].toolStripItems[1].text, set[0].toolStripItems[1].itemType], ['', 'Help', 'ToolStripMenuItem'], 'the new item carries an EMPTY id (engine mints it), the typed Text, and a concrete type');
+  ok(!('_k' in set[0].toolStripItems[1]), 'the ephemeral key is stripped');
   h.destroy();
 });
 

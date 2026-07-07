@@ -8,6 +8,53 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-07
+
+This preview deepens the **collection & value editors** toward Visual Studio parity. The
+`TreeView.Nodes` editor now round-trips a node's **images, check state, tooltip and visual style**;
+menus and toolbars gain a **"Type Here" item editor** (reorder + add) on both engines; and the
+property grid picks up a **Cursor** picker and a generic **`string[]` (`Lines`) editor**.
+
+### Added
+
+#### TreeView node editor
+- **Node images.** A tree node's `ImageKey` / `ImageIndex` and `SelectedImageKey` /
+  `SelectedImageIndex` now round-trip through the `TreeView.Nodes` editor. The key and index of a
+  pair are mutually exclusive (last-write-wins, matching WinForms), so setting one clears the other.
+  On the **.NET Framework** engine the node's glyph is drawn live from the form's `ImageList`.
+- **Check state & tooltip.** A node's `Checked` flag and `ToolTipText` are now editable and persist
+  to the `.Designer.cs`.
+- **Node visual style.** A node's `ForeColor`, `BackColor` and `NodeFont` round-trip as
+  property-grid–style values. A font that can't be reproduced safely (an uninstalled family that GDI+
+  would substitute, a non-`Default` GDI charset, or a vertical font) stays **read-only** rather than
+  being silently changed.
+
+#### Menu & toolbar editing
+- **ToolStrip / MenuStrip "Type Here" item editor.** The `…` on a `MenuStrip` / `ToolStrip` /
+  `StatusStrip`'s `Items` now opens a structural editor to **reorder** items within a sibling group
+  and **add** a new item — either at the top level or into a menu item's drop-down — Visual
+  Studio–style. Every other item property (`Image`, `ShortcutKeys`, event wirings, …) is preserved:
+  only the affected `Items.AddRange` order / membership is rewritten. Works on **both** engines (the
+  .NET Framework compiled preview reflects the change on its next render).
+
+#### Property grid
+- **Cursor editor.** The `Cursor` property is now a standard-value dropdown (Default / Hand / …); the
+  picked cursor round-trips as `Cursors.<Name>` via `InstanceDescriptor`. A custom / `.cur` cursor
+  with no matching `Cursors.*` member stays read-only instead of being clobbered.
+
+#### Collection editors
+- **`string[]` collection editor.** String-array properties such as `TextBox.Lines` now open the same
+  string-collection editor as `Items`. When `Lines` is backed by the control's `Text` in the source
+  (the pattern the VS designer emits), the edit rewrites the **effective** assignment so the two stay
+  in sync and no content is lost; a value that can't be represented safely (e.g. RTF-backed or
+  `.resx`-backed text) stays read-only.
+
+---
+
+_Internal:_ new sample fixtures (`LinesForm`, `MenuForm`, `TreeImageForm`, `TreeStyleForm`), extended
+engine, end-to-end and live-webview coverage for every new editor, and adversarial review passes over
+the round-trip / data-loss gates.
+
 ## [0.5.0] — 2026-07-05
 
 This preview brings **Visual Studio Collection Editors** to both engines — the `…` button now
@@ -382,7 +429,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.1...v0.3.2

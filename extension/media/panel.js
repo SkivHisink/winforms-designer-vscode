@@ -333,7 +333,7 @@
 
   var NUM = new Set(['System.Int32', 'System.Int64', 'System.Int16', 'System.Byte', 'System.SByte', 'System.UInt16', 'System.UInt32', 'System.UInt64', 'System.Single', 'System.Double', 'System.Decimal']);
   // keep in sync with COMPLEX_TYPES in src/valueExpr.ts
-  var COMPLEX = new Set(['System.Drawing.Point', 'System.Drawing.Size', 'System.Drawing.Color', 'System.Drawing.Rectangle', 'System.Windows.Forms.Padding', 'System.Drawing.Font']);
+  var COMPLEX = new Set(['System.Drawing.Point', 'System.Drawing.Size', 'System.Drawing.Color', 'System.Drawing.Rectangle', 'System.Windows.Forms.Padding', 'System.Drawing.Font', 'System.Windows.Forms.Cursor']);
   var COLOR_TYPE = 'System.Drawing.Color';
   var FONT_TYPE = 'System.Drawing.Font';
 
@@ -993,10 +993,14 @@
   var COLUMN_ITEM_TYPE = 'System.Windows.Forms.ColumnHeader';
   var GRIDCOLUMN_ITEM_TYPE = 'System.Windows.Forms.DataGridViewColumn';
   var TREENODE_ITEM_TYPE = 'System.Windows.Forms.TreeNode';
+  var TOOLSTRIP_ITEM_TYPE = 'System.Windows.Forms.ToolStripItem';
+  var STRINGARRAY_ITEM_TYPE = 'System.String[]'; // sentinel for a generic string[] property (TextBox/RichTextBox.Lines)
   var pendingCollection = null; // { id, prop, anchor } awaiting the host's collectionItems reply
   var pendingColumns = null;    // { id, anchor } awaiting the host's columnItems reply
   var pendingGridColumns = null; // { id, anchor } awaiting the host's gridColumnItems reply
   var pendingTreeNodes = null;  // { id, anchor } awaiting the host's treeNodeItems reply
+  var pendingToolStrip = null;  // { id, anchor } awaiting the host's toolStripItems reply
+  var pendingStringArray = null; // { id, prop, anchor } awaiting the host's stringArrayItems reply
   function collectionEditor(c, p) {
     var wrap = document.createElement('div'); wrap.className = 'collectionEd';
     var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
@@ -1011,7 +1015,24 @@
     wrap.appendChild(btn);
     return wrap;
   }
-  function openCollectionPopup(anchor, id, prop, ok, items, reason) {
+  // Generic string[] property editor (TextBox/RichTextBox.Lines): same one-item-per-line popup as the string
+  // collection, but the value is a single `= new string[]{…}` assignment — routed via the stringArray RPCs.
+  function stringArrayEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = 'Edit items…';
+    btn.addEventListener('click', function () {
+      pendingStringArray = { id: c.id, prop: p.name, anchor: btn };
+      vscode.postMessage({ type: 'listStringArray', id: c.id, prop: p.name });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  function openCollectionPopup(anchor, id, prop, ok, items, reason, msgType) {
+    var commitType = msgType || 'setCollection';
     openPopup(anchor, function (pop) {
       pop.classList.add('collectionPop');
       var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = prop; pop.appendChild(title);
@@ -1039,8 +1060,13 @@
         // "" is indistinguishable from the editor-convenience newline once joined) and avoids a spurious dirty/undo.
         if (ta.value === original) return;
         var lines = ta.value.split(/\r?\n/);
-        while (lines.length && lines[lines.length - 1] === '') lines.pop(); // drop trailing blank line(s) (cursor convenience)
-        vscode.postMessage({ type: 'setCollection', id: id, prop: prop, items: lines });
+        // For a string[] property (Lines), a trailing blank line is MEANINGFUL content (a trailing newline that the
+        // engine round-trips), so keep it. For a string-item collection (.Items) a trailing blank is just the
+        // editor-convenience newline → drop it.
+        if (commitType !== 'setStringArray') {
+          while (lines.length && lines[lines.length - 1] === '') lines.pop();
+        }
+        vscode.postMessage({ type: commitType, id: id, prop: prop, items: lines });
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -1251,13 +1277,20 @@
       }
       // working copy of the forest; an empty id marks a NEW node the engine names on commit. `_k` is an ephemeral
       // key for the expand/collapse state only — it is stripped before sending.
-      function clone(n) { return { _k: ++_tnKey, id: n.id || '', text: n.text || '', name: n.name || '', children: (n.children || []).map(clone) }; }
-      function strip(a) { return a.map(function (n) { return { id: n.id || '', text: n.text || '', name: n.name || '', children: strip(n.children) }; }); }
-      function fresh() { return { _k: ++_tnKey, id: '', text: '', name: '', children: [] }; }
+      // every modelled field rides through clone/strip/fresh so an edit through the popup preserves it (strip feeds
+      // BOTH the transmitted payload AND the change-detection baseline — omitting a field would silently drop an
+      // edit that only touched it).
+      function ii(n) { return (n == null ? -1 : n); }
+      function clone(n) { return { _k: ++_tnKey, id: n.id || '', text: n.text || '', name: n.name || '', imageKey: n.imageKey || '', imageIndex: ii(n.imageIndex), selectedImageKey: n.selectedImageKey || '', selectedImageIndex: ii(n.selectedImageIndex), toolTipText: n.toolTipText || '', checked: !!n.checked, foreColor: n.foreColor || '', backColor: n.backColor || '', nodeFont: n.nodeFont || '', children: (n.children || []).map(clone) }; }
+      function strip(a) { return a.map(function (n) { return { id: n.id || '', text: n.text || '', name: n.name || '', imageKey: n.imageKey || '', imageIndex: ii(n.imageIndex), selectedImageKey: n.selectedImageKey || '', selectedImageIndex: ii(n.selectedImageIndex), toolTipText: n.toolTipText || '', checked: !!n.checked, foreColor: n.foreColor || '', backColor: n.backColor || '', nodeFont: n.nodeFont || '', children: strip(n.children) }; }); }
+      function fresh() { return { _k: ++_tnKey, id: '', text: '', name: '', imageKey: '', imageIndex: -1, selectedImageKey: '', selectedImageIndex: -1, toolTipText: '', checked: false, foreColor: '', backColor: '', nodeFont: '', children: [] }; }
       var roots = (nodes || []).map(clone);
       var original = JSON.stringify(strip(roots));
       var expanded = {};
       (function expandAll(a) { a.forEach(function (n) { if (n.children.length) { expanded[n._k] = true; expandAll(n.children); } }); })(roots);
+      // per-node "style" sub-row (ForeColor/BackColor/NodeFont) open-state; auto-open a node that already carries a style.
+      var styleOpen = {};
+      (function autoStyle(a) { a.forEach(function (n) { if (n.foreColor || n.backColor || n.nodeFont) styleOpen[n._k] = true; autoStyle(n.children); }); })(roots);
 
       var listEl = document.createElement('div'); listEl.className = 'columnsList treeNodesList';
       pop.appendChild(listEl);
@@ -1276,6 +1309,29 @@
         txt.addEventListener('input', function () { node.text = txt.value; });
         var nm = document.createElement('input'); nm.type = 'text'; nm.className = 'colText'; nm.value = node.name; nm.placeholder = '(name)'; nm.style.maxWidth = '6em';
         nm.addEventListener('input', function () { node.name = nm.value; });
+        // MVP image editors: ImageKey (text, matches a TreeView.ImageList key) + ImageIndex (number; empty = -1 = none).
+        // No thumbnail dropdown yet (no ImageList-image source RPC).
+        var imgKey = document.createElement('input'); imgKey.type = 'text'; imgKey.className = 'colText'; imgKey.value = node.imageKey || ''; imgKey.placeholder = '(img key)'; imgKey.style.maxWidth = '6em'; imgKey.title = 'ImageKey — a key in the TreeView.ImageList';
+        var imgIdx = document.createElement('input'); imgIdx.type = 'number'; imgIdx.min = '0'; imgIdx.className = 'colText'; imgIdx.value = (node.imageIndex != null && node.imageIndex >= 0) ? String(node.imageIndex) : ''; imgIdx.placeholder = '#'; imgIdx.style.maxWidth = '3.5em'; imgIdx.title = 'ImageIndex — index into the TreeView.ImageList (empty = none)';
+        // ImageKey and ImageIndex are mutually exclusive (as in the VS property grid): setting one clears the other so
+        // the committed node carries a single effective image. The engine emits key-preferred and net48 applies
+        // key-first; a both-set node would let the index silently shadow a just-typed key. A negative index is 'no
+        // image' (min=0 blocks the spinner; the parseInt guard also rejects a hand-typed negative).
+        imgKey.addEventListener('input', function () { node.imageKey = imgKey.value; if (imgKey.value) { node.imageIndex = -1; imgIdx.value = ''; } });
+        imgIdx.addEventListener('input', function () { var v = parseInt(imgIdx.value, 10); node.imageIndex = (isNaN(v) || v < 0) ? -1 : v; if (node.imageIndex >= 0) { node.imageKey = ''; imgKey.value = ''; } });
+        // SelectedImageKey / SelectedImageIndex — the glyph shown while the node is selected; same mutually-exclusive
+        // pair semantics as ImageKey/ImageIndex above.
+        var selKey = document.createElement('input'); selKey.type = 'text'; selKey.className = 'colText'; selKey.value = node.selectedImageKey || ''; selKey.placeholder = '(sel key)'; selKey.style.maxWidth = '6em'; selKey.title = 'SelectedImageKey — ImageList key shown while the node is selected';
+        var selIdx = document.createElement('input'); selIdx.type = 'number'; selIdx.min = '0'; selIdx.className = 'colText'; selIdx.value = (node.selectedImageIndex != null && node.selectedImageIndex >= 0) ? String(node.selectedImageIndex) : ''; selIdx.placeholder = '#'; selIdx.style.maxWidth = '3.5em'; selIdx.title = 'SelectedImageIndex — ImageList index shown while the node is selected (empty = none)';
+        selKey.addEventListener('input', function () { node.selectedImageKey = selKey.value; if (selKey.value) { node.selectedImageIndex = -1; selIdx.value = ''; } });
+        selIdx.addEventListener('input', function () { var v = parseInt(selIdx.value, 10); node.selectedImageIndex = (isNaN(v) || v < 0) ? -1 : v; if (node.selectedImageIndex >= 0) { node.selectedImageKey = ''; selKey.value = ''; } });
+        // ToolTipText (hover tooltip) + Checked (the node check-box state, visible when TreeView.CheckBoxes is on).
+        var tip = document.createElement('input'); tip.type = 'text'; tip.className = 'colText'; tip.value = node.toolTipText || ''; tip.placeholder = '(tooltip)'; tip.style.maxWidth = '6em'; tip.title = 'ToolTipText — the hover tooltip';
+        tip.addEventListener('input', function () { node.toolTipText = tip.value; });
+        var chkWrap = document.createElement('label'); chkWrap.className = 'colText'; chkWrap.style.maxWidth = '2.5em'; chkWrap.title = 'Checked — the node check-box state (visible when TreeView.CheckBoxes is on)';
+        var chk = document.createElement('input'); chk.type = 'checkbox'; chk.checked = !!node.checked;
+        chk.addEventListener('change', function () { node.checked = chk.checked; });
+        chkWrap.appendChild(chk);
         var addChild = mini('＋', 'Add child', false, function () { node.children.push(fresh()); expanded[node._k] = true; render(); });
         var addSib = mini('＋⇢', 'Add sibling', false, function () { arr.splice(i + 1, 0, fresh()); render(); });
         var indent = mini('»', 'Indent (make child of the node above)', i === 0, function () { var prev = arr[i - 1]; arr.splice(i, 1); prev.children.push(node); expanded[prev._k] = true; render(); });
@@ -1283,13 +1339,53 @@
         var up = mini('↑', 'Move up', i === 0, function () { var t2 = arr[i - 1]; arr[i - 1] = arr[i]; arr[i] = t2; render(); });
         var down = mini('↓', 'Move down', i === arr.length - 1, function () { var t2 = arr[i + 1]; arr[i + 1] = arr[i]; arr[i] = t2; render(); });
         var del = mini('✕', 'Remove node (and its children)', false, function () { arr.splice(i, 1); render(); }); del.classList.add('colDel');
-        r.appendChild(tw); r.appendChild(txt); r.appendChild(nm);
-        r.appendChild(addChild); r.appendChild(addSib); r.appendChild(indent); r.appendChild(outdent); r.appendChild(up); r.appendChild(down); r.appendChild(del);
+        // toggle a per-node style sub-row (ForeColor / BackColor / NodeFont) — kept off the main row so it stays compact.
+        var styleTgl = mini('🎨', 'Node style — fore/back colour, font', false, function () { if (styleOpen[node._k]) delete styleOpen[node._k]; else styleOpen[node._k] = true; render(); });
+        if (styleOpen[node._k]) styleTgl.classList.add('sel');
+        r.appendChild(tw); r.appendChild(txt); r.appendChild(nm); r.appendChild(imgKey); r.appendChild(imgIdx);
+        r.appendChild(selKey); r.appendChild(selIdx); r.appendChild(tip); r.appendChild(chkWrap);
+        r.appendChild(addChild); r.appendChild(addSib); r.appendChild(indent); r.appendChild(outdent); r.appendChild(up); r.appendChild(down); r.appendChild(styleTgl); r.appendChild(del);
+        return r;
+      }
+      // A colour field: a live swatch + a free-text invariant input ("Red" / "64, 128, 255" / "Control"). No dropdown
+      // picker here — the tree-nodes popup is itself a singleton popup, so opening the colour palette popup would close
+      // it. The engine turns the invariant into Color.Red / Color.FromArgb(...) via the same converter the grid uses.
+      function styleColorField(label, get, set) {
+        var wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center;gap:3px;margin-right:8px';
+        var lab = document.createElement('span'); lab.textContent = label; lab.style.cssText = 'font-size:.85em;opacity:.7';
+        var sw = swatchSpan(colorToHex(get()));
+        var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'colText'; inp.style.maxWidth = '7em';
+        inp.value = get(); inp.placeholder = '(default)'; inp.title = label + ' — colour name, "R, G, B", or a system colour';
+        inp.addEventListener('input', function () {
+          set(inp.value);
+          var hex = colorToHex(inp.value);
+          sw.className = 'swatch' + (hex ? '' : ' none'); sw.style.background = hex || '';
+        });
+        wrap.appendChild(lab); wrap.appendChild(sw); wrap.appendChild(inp);
+        return wrap;
+      }
+      function styleFontField(node) {
+        var wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center;gap:3px';
+        var lab = document.createElement('span'); lab.textContent = 'Font'; lab.style.cssText = 'font-size:.85em;opacity:.7';
+        var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'colText'; inp.style.maxWidth = '15em';
+        inp.value = node.nodeFont || ''; inp.placeholder = 'Segoe UI, 9pt, style=Bold';
+        inp.title = 'NodeFont — FontConverter string: "Family, <size>pt[, style=Bold, Italic]"';
+        inp.addEventListener('input', function () { node.nodeFont = inp.value; });
+        wrap.appendChild(lab); wrap.appendChild(inp);
+        return wrap;
+      }
+      function styleRowEl(node, depth) {
+        var r = document.createElement('div'); r.className = 'treeNodeStyleRow';
+        r.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;padding:2px 0 4px;opacity:.95;margin-left:' + ((depth * 14) + 20) + 'px';
+        r.appendChild(styleColorField('Fore', function () { return node.foreColor || ''; }, function (v) { node.foreColor = v; }));
+        r.appendChild(styleColorField('Back', function () { return node.backColor || ''; }, function (v) { node.backColor = v; }));
+        r.appendChild(styleFontField(node));
         return r;
       }
       function walk(arr, depth, parentNode, parentList) {
         arr.forEach(function (node, i) {
           listEl.appendChild(rowEl(node, i, depth, arr, parentNode, parentList));
+          if (styleOpen[node._k]) listEl.appendChild(styleRowEl(node, depth));
           if (node.children.length && expanded[node._k]) walk(node.children, depth + 1, node, arr);
         });
       }
@@ -1311,6 +1407,106 @@
         closePopup();
         if (JSON.stringify(strip(roots)) === original) return; // unchanged → no edit (avoids a spurious dirty/undo)
         vscode.postMessage({ type: 'setTreeNodes', id: id, nodes: strip(roots) });
+      }
+      okBtn.addEventListener('click', commit);
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel);
+      pop.appendChild(bar);
+    });
+  }
+
+  // ---- ToolStrip / MenuStrip item editor (Slice 1: view + REORDER within a sibling group). The item tree renders
+  // recursively (menus have nested DropDownItems); each row's ↑/↓ moves it within its siblings. Text/type are shown
+  // read-only — adding / removing / renaming items are follow-up slices. OK posts the reordered forest. ----
+  function toolStripEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)'; lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…'; btn.title = 'Edit items…';
+    btn.addEventListener('click', function () {
+      pendingToolStrip = { id: c.id, anchor: btn };
+      vscode.postMessage({ type: 'listToolStripItems', id: c.id });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  var _tsKey = 0;
+  function openToolStripPopup(anchor, id, ok, items, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop'); pop.classList.add('treeNodesPop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Items'; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'This collection can’t be edited here (' + (reason || 'unsupported item') + ').';
+        pop.appendChild(note);
+        return;
+      }
+      // `_k` is an ephemeral key for expand-state only; it is stripped before sending. Every modelled field rides
+      // through clone/strip so the change-detection baseline and the payload agree. A NEW item ("Type Here") is a node
+      // with an EMPTY id — the engine mints its field name, construction and Name/Text on commit.
+      function clone(n) { return { _k: ++_tsKey, id: n.id || '', text: n.text || '', name: n.name || '', itemType: n.itemType || '', children: (n.children || []).map(clone) }; }
+      function strip(a) { return a.map(function (n) { return { id: n.id || '', text: n.text || '', name: n.name || '', itemType: n.itemType || '', children: strip(n.children) }; }); }
+      function fresh() { return { _k: ++_tsKey, id: '', text: '', name: '', itemType: 'ToolStripMenuItem', children: [] }; }
+      var roots = (items || []).map(clone);
+      var original = JSON.stringify(strip(roots));
+      var expanded = {};
+      (function ex(a) { a.forEach(function (n) { if (n.children.length) { expanded[n._k] = true; ex(n.children); } }); })(roots);
+      var listEl = document.createElement('div'); listEl.className = 'columnsList treeNodesList'; pop.appendChild(listEl);
+      function mini(glyph, ttl, disabled, fn) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'colMini'; b.textContent = glyph; b.title = ttl;
+        if (disabled) b.disabled = true; else b.addEventListener('click', fn);
+        return b;
+      }
+      function rowEl(node, i, depth, arr) {
+        var r = document.createElement('div'); r.className = 'columnsRow treeNodeRow'; r.style.marginLeft = (depth * 14) + 'px';
+        var isNew = !node.id;                              // a fresh() item has an empty id until the engine mints one
+        var isMenu = node.itemType === 'ToolStripMenuItem';
+        var hasKids = node.children.length > 0;
+        var tw = document.createElement('span'); tw.textContent = hasKids ? (expanded[node._k] ? '▾' : '▸') : '·';
+        tw.style.cssText = 'display:inline-block;width:1.1em;text-align:center;opacity:' + (hasKids ? '1' : '.3') + ';cursor:' + (hasKids ? 'pointer' : 'default');
+        if (hasKids) tw.addEventListener('click', function () { if (expanded[node._k]) delete expanded[node._k]; else expanded[node._k] = true; render(); });
+        r.appendChild(tw);
+        if (isNew) {
+          // a NEW item's Text is editable ("Type Here"); existing items stay read-only (renaming is a later slice).
+          var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'colText'; inp.value = node.text || '';
+          inp.placeholder = 'Type Here'; inp.style.minWidth = '9em';
+          inp.addEventListener('input', function () { node.text = inp.value; });
+          r.appendChild(inp);
+        } else {
+          var label = document.createElement('span'); label.className = 'colText'; label.style.cssText = 'min-width:9em;opacity:.95';
+          if (node.itemType === 'ToolStripSeparator') { label.textContent = '──────'; label.style.opacity = '.5'; }
+          else label.textContent = node.text || node.name || node.id || '(item)';
+          label.title = (node.itemType || 'item') + '  ' + node.name;
+          r.appendChild(label);
+        }
+        r.appendChild(mini('↑', 'Move up', i === 0, function () { var t = arr[i - 1]; arr[i - 1] = arr[i]; arr[i] = t; render(); }));
+        r.appendChild(mini('↓', 'Move down', i === arr.length - 1, function () { var t = arr[i + 1]; arr[i + 1] = arr[i]; arr[i] = t; render(); }));
+        r.appendChild(mini('＋⇢', 'Add item below', false, function () { arr.splice(i + 1, 0, fresh()); render(); }));
+        // add a child only under an EXISTING menu item — a submenu under a brand-new item isn't supported yet
+        if (isMenu && !isNew) r.appendChild(mini('＋', 'Add child item', false, function () { node.children.push(fresh()); expanded[node._k] = true; render(); }));
+        // only a NEW (unsaved) item may be removed here — deleting an existing item is a separate slice
+        if (isNew) r.appendChild(mini('✕', 'Remove', false, function () { arr.splice(i, 1); render(); }));
+        return r;
+      }
+      function walk(arr, depth) {
+        arr.forEach(function (node, i) { listEl.appendChild(rowEl(node, i, depth, arr)); if (node.children.length && expanded[node._k]) walk(node.children, depth + 1); });
+      }
+      function render() {
+        listEl.textContent = '';
+        if (!roots.length) { var e = document.createElement('div'); e.className = 'columnsEmpty'; e.textContent = '(no items)'; listEl.appendChild(e); }
+        else walk(roots, 0);
+      }
+      render();
+      var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'columnsAdd'; addBtn.textContent = '+ Add item';
+      addBtn.addEventListener('click', function () { roots.push(fresh()); render(); });
+      pop.appendChild(addBtn);
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      function commit() {
+        closePopup();
+        if (JSON.stringify(strip(roots)) === original) return; // unchanged → no edit
+        vscode.postMessage({ type: 'setToolStripItems', id: id, toolStripItems: strip(roots) });
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -1372,6 +1568,8 @@
         p.collectionItemType === COLUMN_ITEM_TYPE ? columnsEditor(c, p)
         : p.collectionItemType === GRIDCOLUMN_ITEM_TYPE ? gridColumnsEditor(c, p)
         : p.collectionItemType === TREENODE_ITEM_TYPE ? treeNodesEditor(c, p)
+        : p.collectionItemType === TOOLSTRIP_ITEM_TYPE ? toolStripEditor(c, p)
+        : p.collectionItemType === STRINGARRAY_ITEM_TYPE ? stringArrayEditor(c, p)
         : collectionEditor(c, p));
     } else if (editable(p)) {
       valTd.className = 'val';
@@ -1644,6 +1842,13 @@
         pendingCollection = null;
         if (anchor && anchor.isConnected) openCollectionPopup(anchor, m.id, m.prop, !!m.ok, m.items || [], m.reason);
       }
+    } else if (m.type === 'stringArrayItems') {
+      // reply to a string[] "…" click — same one-item-per-line popup, committed via the setStringArray route
+      if (pendingStringArray && pendingStringArray.id === m.id && pendingStringArray.prop === m.prop) {
+        var saAnchor = pendingStringArray.anchor;
+        pendingStringArray = null;
+        if (saAnchor && saAnchor.isConnected) openCollectionPopup(saAnchor, m.id, m.prop, !!m.ok, m.items || [], m.reason, 'setStringArray');
+      }
     } else if (m.type === 'columnItems') {
       // reply to a ListView.Columns "…" click — open the typed grid editor anchored to the requesting button
       if (pendingColumns && pendingColumns.id === m.id) {
@@ -1664,6 +1869,13 @@
         var tnAnchor = pendingTreeNodes.anchor;
         pendingTreeNodes = null;
         if (tnAnchor && tnAnchor.isConnected) openTreeNodesPopup(tnAnchor, m.id, !!m.ok, m.nodes || [], m.reason);
+      }
+    } else if (m.type === 'toolStripItems') {
+      // reply to a ToolStrip/MenuStrip.Items "…" click — open the recursive reorder editor anchored to the button
+      if (pendingToolStrip && pendingToolStrip.id === m.id) {
+        var tsAnchor = pendingToolStrip.anchor;
+        pendingToolStrip = null;
+        if (tsAnchor && tsAnchor.isConnected) openToolStripPopup(tsAnchor, m.id, !!m.ok, m.items || [], m.reason);
       }
     } else if (m.type === 'clear') {
       closePopup();

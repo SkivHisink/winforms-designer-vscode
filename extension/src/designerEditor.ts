@@ -13,6 +13,7 @@ import {
   resetCompiledPropertyLive,
   setCompiledCollectionLive,
   setCompiledTreeNodesLive,
+  setCompiledStringArrayLive,
   LiveCollItem,
   applyCompiledEdits,
   removeCompiledControls,
@@ -27,6 +28,9 @@ import {
   TreeNodeItem,
   listTreeNodes,
   setTreeNodes,
+  ToolStripItemModel,
+  listToolStripItems,
+  setToolStripItems,
   describeLayout,
   describeComponent,
   renderControl,
@@ -35,6 +39,8 @@ import {
   setTableCell,
   listCollectionItems,
   setCollectionItems,
+  listStringArray,
+  setStringArray,
   listColumns,
   setColumns,
   listGridColumns,
@@ -415,6 +421,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
       type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string;
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
       items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; nodes?: TreeNodeItem[];
+      toolStripItems?: ToolStripItemModel[];
     }) => {
       const s = DesignerHub.instance.activeSession;
       try {
@@ -427,12 +434,16 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'setTableCell' && m.id && m.cell) { await s?.tableCellFromGrid(m.id, m.cell, m.value ?? ''); }
         else if (m?.type === 'listCollection' && m.id && m.prop) { await s?.sendCollectionItems(m.id, m.prop); }
         else if (m?.type === 'setCollection' && m.id && m.prop && Array.isArray(m.items)) { await s?.collectionFromGrid(m.id, m.prop, m.items as string[]); }
+        else if (m?.type === 'listStringArray' && m.id && m.prop) { await s?.sendStringArray(m.id, m.prop); }
+        else if (m?.type === 'setStringArray' && m.id && m.prop && Array.isArray(m.items)) { await s?.stringArrayFromGrid(m.id, m.prop, m.items as string[]); }
         else if (m?.type === 'listColumns' && m.id) { await s?.sendColumnItems(m.id); }
         else if (m?.type === 'setColumns' && m.id && Array.isArray(m.columns)) { await s?.columnsFromGrid(m.id, m.columns as ColumnItem[]); }
         else if (m?.type === 'listGridColumns' && m.id) { await s?.sendGridColumnItems(m.id); }
         else if (m?.type === 'setGridColumns' && m.id && Array.isArray(m.gridColumns)) { await s?.gridColumnsFromGrid(m.id, m.gridColumns as GridColumnItem[]); }
         else if (m?.type === 'listTreeNodes' && m.id) { await s?.sendTreeNodes(m.id); }
         else if (m?.type === 'setTreeNodes' && m.id && Array.isArray(m.nodes)) { await s?.treeNodesFromGrid(m.id, m.nodes as TreeNodeItem[]); }
+        else if (m?.type === 'listToolStripItems' && m.id) { await s?.sendToolStripItems(m.id); }
+        else if (m?.type === 'setToolStripItems' && m.id && Array.isArray(m.toolStripItems)) { await s?.toolStripFromGrid(m.id, m.toolStripItems as ToolStripItemModel[]); }
         else if (m?.type === 'setHandler' && m.id && m.event) { await s?.setHandler(m.id, m.event, m.handler ?? ''); }
         else if (m?.type === 'createHandler' && m.id && m.event) { await s?.createHandler(m.id, m.event, m.handler || undefined); }
         else if (m?.type === 'navigateHandler' && m.id) { await s?.navigateToHandler(m.id, m.event ?? '', m.handler ?? undefined); }
@@ -1521,6 +1532,16 @@ class DesignerSession {
     await this.live48((eng) => setCompiledCollectionLive(eng, this.designerFile!, asm, id, prop, itemType, items));
   }
 
+  /** net48 compiled preview for a generic string[] "…" edit (TextBox/RichTextBox.Lines): after the net9 text commit,
+   *  set the string[] on the live instance so the canvas updates immediately (mirror of liveCollection48). Best-effort
+   *  — a non-string[]/read-only property leaves the picture on the built value with a note; the committed text still
+   *  renders after a rebuild. */
+  private async liveStringArray48(id: string, prop: string, items: string[]): Promise<void> {
+    const asm = this.asm();
+    if (!asm || !this.designerFile) return;
+    await this.live48((eng) => setCompiledStringArrayLive(eng, this.designerFile!, asm, id, prop, items));
+  }
+
   /** net48 compiled preview for the hierarchical TreeView.Nodes edit: after the net9 text commit, reconstruct the
    *  node forest on the live instance so the canvas updates immediately (the TreeView analogue of liveCollection48).
    *  Best-effort — a non-TreeNodeCollection Nodes (a DevExpress TreeList) leaves the picture on the built tree with a
@@ -1812,6 +1833,67 @@ class DesignerSession {
     await this.postDirty();
   }
 
+  /** Read side of the generic string[] editor (TextBox/RichTextBox.Lines): send the "…"-opened property's current
+   *  items to the webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
+  async sendStringArray(id: string, prop: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'stringArrayItems', id, prop, ok: false, items: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('net9');
+      const res = await listStringArray(eng, this.designerFile, id, prop, this.doc.designerText);
+      this.post({ type: 'stringArrayItems', id, prop, ok: res.ok, items: res.items ?? [], reason: res.reason });
+    } catch (err) {
+      this.post({ type: 'stringArrayItems', id, prop, ok: false, items: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Write side of the generic string[] editor: rewrite the property to the single assignment
+   *  `owner.prop = new string[] { … }`. Mirrors collectionFromGrid's error/restore + single-undo commit. */
+  async stringArrayFromGrid(id: string, prop: string, items: string[]): Promise<void> {
+    try {
+      await this.applyStringArray(id, prop, items);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyStringArray(id: string, prop: string, items: string[]): Promise<void> {
+    if (!this.designerFile) return;
+    // PURE-TEXT splice — route to net9 even on a net48 form (the compiled engine can't splice; the text is truth).
+    const eng = await this.ensureEngine('net9');
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const res = await setStringArray(eng, this.designerFile, id, prop, items, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(id);
+      return;
+    }
+
+    this.commit(before, res.text, `Set ${id}.${prop}`);
+    this.output.appendLine(`set ${id}.${prop} = string[${items.length}] (unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
+    if (this.engineKind === 'net48') {
+      // net48 renders the compiled assembly; set the string[] on the live instance for an immediate picture. The
+      // committed text is what persists on save / re-renders after a rebuild.
+      await this.liveStringArray48(id, prop, items);
+    } else {
+      // Lines changes the TextBox's rendered content → full re-render, not a single-control patch
+      await this.fullRender();
+    }
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
   /** Read side of the typed ListView.Columns editor: send the "…"-opened collection's current columns to the
    *  webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
   async sendColumnItems(id: string): Promise<void> {
@@ -1924,6 +2006,63 @@ class DesignerSession {
       await this.liveTreeNodes48(id, 'Nodes', nodes);
     } else {
       // nodes change the rendered tree → full re-render (the interpreter renders TreeNode locals + Nodes.AddRange)
+      await this.fullRender();
+    }
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** Read side of the ToolStrip/MenuStrip item editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
+  async sendToolStripItems(id: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'toolStripItems', id, ok: false, items: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('net9');
+      const res = await listToolStripItems(eng, this.designerFile, id, this.doc.designerText);
+      this.post({ type: 'toolStripItems', id, ok: res.ok, items: res.items ?? [], reason: res.reason });
+    } catch (err) {
+      this.post({ type: 'toolStripItems', id, ok: false, items: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Write side of the ToolStrip/MenuStrip item editor (Slice 1: reorder). Mirrors treeNodesFromGrid's error/restore. */
+  async toolStripFromGrid(id: string, items: ToolStripItemModel[]): Promise<void> {
+    try {
+      await this.applyToolStripItems(id, items);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyToolStripItems(id: string, items: ToolStripItemModel[]): Promise<void> {
+    if (!this.designerFile) return;
+    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const res = await setToolStripItems(eng, this.designerFile, id, items, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(id);
+      return;
+    }
+
+    this.commit(before, res.text, `Edit ${id}.Items`);
+    this.output.appendLine(`edit ${id}.Items (toolstrip add/reorder, unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Items' }) });
+    if (this.engineKind === 'net48') {
+      // the live compiled instance isn't rebuilt for a menu add/reorder in this slice — the change shows on the next
+      // full rebuild; flag it so the (unchanged) live picture isn't mistaken for the committed items.
+      this.post({ type: 'status', message: t('status.previewPartial', { diag: 'menu items edited in source; rebuild to update the live preview' }) });
+    } else {
       await this.fullRender();
     }
     await this.loadProps(id);

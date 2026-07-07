@@ -221,6 +221,38 @@ namespace WinFormsDesigner.Engine.Net48
             }
         }
 
+        /// <summary>Set a generic string[] property (TextBox/RichTextBox.Lines) on the LIVE instance from the same
+        /// values the net9 text editor committed, then re-render — so the net48 canvas shows the edit immediately
+        /// instead of the built value (the persisted text is the net9 splice's truth). Unlike
+        /// <see cref="SetCollectionLive"/> (in-place Clear/Add on a read-only collection), a string[] property has a
+        /// real setter, so a FRESH array is assigned via pd.SetValue. Best-effort: a missing/read-only/non-string[]
+        /// property leaves the picture on the built value and returns Applied=false + a reason (host surfaces
+        /// "renders fully after a rebuild").</summary>
+        public RenderLayoutResult SetStringArrayLive(string assemblyPath, string rootTypeName, string componentId, string propName, string[] values)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                bool isRoot = componentId == "this" || componentId.Length == 0;
+                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                try
+                {
+                    // TypeDescriptor indexer → most-derived descriptor (never AmbiguousMatchException on a `new`-shadowed
+                    // property). Guard type + writability so a mismatch is an honest Applied=false note, not an RPC error.
+                    var pd = TypeDescriptor.GetProperties(owner)[propName];
+                    if (pd == null) return Note(live, "no property '" + propName + "' on " + componentId);
+                    if (pd.IsReadOnly || pd.PropertyType != typeof(string[]))
+                        return Note(live, propName + " on " + componentId + " is not a writable string[]");
+                    pd.SetValue(owner, values ?? new string[0]);
+                    live.Root.PerformLayout();
+                    Application.DoEvents();
+                    return Snapshot(live);
+                }
+                catch (Exception ex) { return Note(live, "could not update " + propName + ": " + ex.GetBaseException().Message); }
+            });
+        }
+
         /// <summary>Reconstruct a TreeView's Nodes (the recursive analogue of <see cref="SetCollectionLive"/>) on the
         /// LIVE compiled instance from the same node forest the net9 text editor committed, then re-render — so the
         /// net48 canvas shows the node edit immediately instead of the built tree (the net48 live node picture; the
@@ -269,14 +301,43 @@ namespace WinFormsDesigner.Engine.Net48
             foreach (var n in nodes) coll.Add(BuildLiveTreeNode(n));
         }
 
-        /// <summary>Build one live TreeNode (Text + optional Name) and recurse into its children.</summary>
+        /// <summary>Build one live TreeNode (Text + optional Name + image props) and recurse into its children. The
+        /// image is drawn by WinForms from the compiled TreeView's ImageList once set. ImageKey/ImageIndex are mutually
+        /// exclusive (setting one clears the other) — apply key-first, else index-if->=0, per pair.</summary>
         private static System.Windows.Forms.TreeNode BuildLiveTreeNode(LiveTreeNode n)
         {
             var node = new System.Windows.Forms.TreeNode(n.Text ?? "");
             if (!string.IsNullOrEmpty(n.Name)) node.Name = n.Name;
+            if (!string.IsNullOrEmpty(n.ImageKey)) node.ImageKey = n.ImageKey;
+            else if (n.ImageIndex >= 0) node.ImageIndex = n.ImageIndex;
+            if (!string.IsNullOrEmpty(n.SelectedImageKey)) node.SelectedImageKey = n.SelectedImageKey;
+            else if (n.SelectedImageIndex >= 0) node.SelectedImageIndex = n.SelectedImageIndex;
+            if (!string.IsNullOrEmpty(n.ToolTipText)) node.ToolTipText = n.ToolTipText;
+            if (n.Checked) node.Checked = n.Checked;
+            // visual-style props — the invariant string (matching the net9 editor / property grid) becomes a live
+            // Color/Font via the framework TypeConverter; a bad value is skipped rather than aborting the render.
+            var fore = ConvertInvariant<System.Drawing.Color?>(n.ForeColor); if (fore.HasValue) node.ForeColor = fore.Value;
+            var back = ConvertInvariant<System.Drawing.Color?>(n.BackColor); if (back.HasValue) node.BackColor = back.Value;
+            var font = ConvertInvariant<System.Drawing.Font>(n.NodeFont); if (font != null) node.NodeFont = font;
             if (n.Children != null)
                 foreach (var child in n.Children) node.Nodes.Add(BuildLiveTreeNode(child));
             return node;
+        }
+
+        /// <summary>Parse a property-grid invariant string into a live framework value (Color/Font) via its
+        /// TypeConverter; returns default(T) on empty/unparseable input so a bad node style never aborts the render.</summary>
+        private static T ConvertInvariant<T>(string invariant)
+        {
+            if (string.IsNullOrEmpty(invariant)) return default(T);
+            try
+            {
+                var target = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+                var conv = System.ComponentModel.TypeDescriptor.GetConverter(target);
+                if (conv == null || !conv.CanConvertFrom(typeof(string))) return default(T);
+                var v = conv.ConvertFromInvariantString(invariant);
+                return v is T typed ? typed : default(T);
+            }
+            catch { return default(T); }
         }
 
         /// <summary>Remove field-backed controls from the live tree (+ field map) and re-render.</summary>

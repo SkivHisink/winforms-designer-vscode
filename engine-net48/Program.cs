@@ -80,6 +80,11 @@ namespace WinFormsDesigner.Engine.Net48
                 return SetNodesCli(args, sndesigner);
             }
 
+            if (Has(args, "--setlines", out string? sldesigner) && sldesigner != null)
+            {
+                return SetLinesCli(args, sldesigner);
+            }
+
             if (Has(args, "--remove", out string? rdesigner) && rdesigner != null)
             {
                 string? rasm = Value(args, "--asm");
@@ -354,6 +359,35 @@ namespace WinFormsDesigner.Engine.Net48
             }
         }
 
+        /// <summary>Headless self-test for the net48 live string-array picture: set the string[] owner.propName (Lines)
+        /// on the live compiled instance from <c>--items</c> (a comma-separated list; empty → an empty array that clears
+        /// the value) and report the new render. Drives the whole path (DomainManager → child AppDomain → STA →
+        /// pd.SetValue(string[])).</summary>
+        private static int SetLinesCli(string[] args, string designer)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            string id = Value(args, "--id") ?? "this";
+            string prop = Value(args, "--prop") ?? "Lines";
+            string itemsCsv = Value(args, "--items") ?? "";
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            var values = itemsCsv.Length == 0 ? Array.Empty<string>() : itemsCsv.Split(',');
+
+            var api = new EngineApi();
+            try
+            {
+                var r = api.SetCompiledStringArrayLive(designer, asm, id, prop, values, null, probes);
+                Console.WriteLine($"[setlines] applied={r.Applied} prop={prop} items={values.Length} size={r.Width}x{r.Height} png={r.Png.Length}B{(r.Diagnostics.Length > 0 ? " diag=" + r.Diagnostics : "")}");
+                return r.Applied ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                for (var e = ex; e != null; e = e.InnerException)
+                    Console.Error.WriteLine($"[setlines] {e.GetType().FullName}: {e.Message}");
+                return 4;
+            }
+        }
+
         /// <summary>Parse the <c>--nodes</c> mini-syntax into a LiveTreeNode forest (one child level): roots are
         /// comma-separated; a root "text&gt;a;b" gets children a, b. Empty → an empty forest (clears the tree).</summary>
         private static LiveTreeNode[] ParseNodesSpec(string spec)
@@ -493,6 +527,20 @@ namespace WinFormsDesigner.Engine.Net48
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
             return worker.SetTreeNodesLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId,
                 string.IsNullOrEmpty(propName) ? "Nodes" : propName, nodes ?? Array.Empty<LiveTreeNode>());
+        }
+
+        /// <summary>Set a generic string[] property (TextBox/RichTextBox.Lines) on the live compiled instance from the
+        /// net9-committed values + re-render — the net48 live picture for the "…" string-array editor (mirror of
+        /// <see cref="SetCompiledCollectionLive"/>). Applied=false + a reason when the property isn't a writable
+        /// string[]; the persisted text still renders after a rebuild. No custom DTO — string[] is a framework
+        /// [Serializable] type that crosses the JSON-RPC + child-AppDomain boundary on its own.</summary>
+        public RenderLayoutResult SetCompiledStringArrayLive(string designerFilePath, string assemblyPath, string componentId,
+            string propName, string[] values, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.SetStringArrayLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId,
+                propName ?? "", values ?? Array.Empty<string>());
         }
 
         /// <summary>Apply a BATCH of property edits to the live instance + re-render once (drag/resize/align).</summary>

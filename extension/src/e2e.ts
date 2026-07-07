@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes } from './engineClient';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 
@@ -975,6 +975,76 @@ async function main(): Promise<void> {
       console.log('e2e: string collection editor SKIPPED — engine/samples/ListForm.Designer.cs missing');
     }
 
+    // ---- Generic string[] editor (TextBox/RichTextBox.Lines) + Cursor picker ----
+    // LinesForm has notesBox.Cursor = Cursors.Hand and its multi-line content serialized as Text (the VS-canonical
+    // form — Lines is DesignerSerializationVisibility.Hidden, so VS never emits `Lines =`). Assert: describe flags
+    // Lines with the distinct "System.String[]" sentinel and surfaces Cursor's dropdown; the interpreter honors the
+    // Cursors.Hand static read; the "…" editor reads the multi-line content FROM Text and WRITES it back to Text
+    // (never a competing Lines= assignment — the review's HIGH data-loss guard); a hand-written Lines= array still
+    // round-trips; a resx/Rtf-backed value reads ok:false; Cursor converts to the idiomatic Cursors.<name>.
+    const linesForm = path.join(repo, 'engine', 'samples', 'LinesForm.Designer.cs');
+    if (fs.existsSync(linesForm)) {
+      const disk = fs.readFileSync(linesForm, 'utf8');
+
+      // describe: Lines flagged as a string[] collection (distinct sentinel); Cursor editable with standard values
+      const nb = await describeComponent(engine, linesForm, 'notesBox');
+      const linesProp = nb?.properties.find((p) => p.name === 'Lines');
+      if (!linesProp) throw new Error('stringArray: notesBox.Lines not surfaced in describe');
+      if (!linesProp.isCollection || linesProp.collectionItemType !== 'System.String[]') throw new Error('stringArray: Lines must be flagged isCollection/System.String[] (distinct sentinel), got ' + JSON.stringify({ c: linesProp.isCollection, t: linesProp.collectionItemType }));
+      const cursorProp = nb?.properties.find((p) => p.name === 'Cursor');
+      if (!cursorProp || !cursorProp.standardValues || !cursorProp.standardValues.length) throw new Error('cursor: notesBox.Cursor must surface CursorConverter standard values');
+      if (cursorProp.readOnly) throw new Error('cursor: a STANDARD cursor (Hand) must stay editable, not read-only');
+
+      // interpreter: the Cursors.Hand static read is not dropped to unrepresentable (array-creation is exercised by the array-form case below)
+      const linesDesc = await describeDesigner(engine, linesForm);
+      if (linesDesc.unrepresentable.some((u) => /Cursor/.test(u))) throw new Error('cursor: Cursors.Hand static read must be representable, got ' + JSON.stringify(linesDesc.unrepresentable));
+
+      // read: the multi-line content is stored in Text — the editor reads it FROM Text (the review's empty-read bug)
+      const l0 = await listStringArray(engine, linesForm, 'notesBox', 'Lines', disk);
+      if (!l0.ok || l0.items.join('|') !== 'First line|Second line|Third line') throw new Error('stringArray: list did not read the 3 lines from Text, got ' + JSON.stringify(l0));
+
+      // set: writes the joined value back to TEXT (never a competing Lines= that would overwrite it), quote escaped
+      const s1 = await setStringArray(engine, linesForm, 'notesBox', 'Lines', ['Alpha', 'Be"ta', 'Gamma'], disk);
+      if (!s1.safe || s1.text === null) throw new Error('stringArray: set rejected: ' + s1.reason);
+      if (!/this\.notesBox\.Text = "Alpha\\r\\nBe\\"ta\\r\\nGamma";/.test(s1.text)) throw new Error('stringArray: set must rewrite the Text assignment (join, escaped), not introduce a Lines= array');
+      if (/notesBox\.Lines =/.test(s1.text)) throw new Error('stringArray: set must NOT introduce a competing Lines= assignment (data-loss guard)');
+      const l1 = await listStringArray(engine, linesForm, 'notesBox', 'Lines', s1.text);
+      if (!l1.ok || l1.items.join('|') !== 'Alpha|Be"ta|Gamma') throw new Error('stringArray: re-read after set wrong, got ' + JSON.stringify(l1.items));
+
+      // clear: empty list writes Text = "" and reads back ok:true / empty
+      const s2 = await setStringArray(engine, linesForm, 'notesBox', 'Lines', [], disk);
+      if (!s2.safe || s2.text === null) throw new Error('stringArray: clear rejected: ' + s2.reason);
+      if (!/this\.notesBox\.Text = "";/.test(s2.text)) throw new Error('stringArray: clear must set Text = ""');
+      const l2 = await listStringArray(engine, linesForm, 'notesBox', 'Lines', s2.text);
+      if (!l2.ok || l2.items.length !== 0) throw new Error('stringArray: cleared Lines should read ok:true empty, got ' + JSON.stringify(l2));
+
+      // a resx-backed Text value reads ok:false → the field stays read-only (no silent overwrite)
+      const resx = disk.replace(/this\.notesBox\.Text = "[^"]*";/, 'this.notesBox.Text = resources.GetString("notesBox.Text");');
+      const lr = await listStringArray(engine, linesForm, 'notesBox', 'Lines', resx);
+      if (lr.ok) throw new Error('stringArray: a non-literal (resx) Text must make Lines read-only (ok:false)');
+
+      // a RichTextBox whose content is Rtf reads ok:false → plain-text editing can't discard the formatting
+      const rtf = 'namespace S{partial class F{private System.Windows.Forms.RichTextBox rtb;private void InitializeComponent(){this.rtb=new System.Windows.Forms.RichTextBox();this.rtb.Name="rtb";this.rtb.Rtf="{\\\\rtf1 hi}";}}}';
+      const lrtf = await listStringArray(engine, linesForm, 'rtb', 'Lines', rtf);
+      if (lrtf.ok) throw new Error('stringArray: a Rtf-backed RichTextBox must make Lines read-only (ok:false)');
+
+      // a hand-written Lines= array still round-trips (it is the effective assignment) and edits stay in array form
+      const arrSrc = 'namespace S{partial class F{private System.Windows.Forms.TextBox tb;private void InitializeComponent(){this.tb=new System.Windows.Forms.TextBox();this.tb.Location=new System.Drawing.Point(1,1);this.tb.Name="tb";this.tb.Lines = new string[] { "aa", "bb" };}}}';
+      const la = await listStringArray(engine, linesForm, 'tb', 'Lines', arrSrc);
+      if (!la.ok || la.items.join('|') !== 'aa|bb') throw new Error('stringArray: hand-written Lines= array must read back, got ' + JSON.stringify(la));
+      const sa = await setStringArray(engine, linesForm, 'tb', 'Lines', ['cc'], arrSrc);
+      if (!sa.safe || sa.text === null || !/tb\.Lines = new string\[\] \{ "cc" \};/.test(sa.text) || /tb\.Text =/.test(sa.text)) throw new Error('stringArray: editing an existing Lines= array must stay in array form (not switch to Text=), got ' + (sa.text || sa.reason));
+
+      // Cursor converts to the idiomatic static-property expression (identical shape to a named Color/SystemColors)
+      const cur = await convertValue(engine, 'System.Windows.Forms.Cursor', 'Hand');
+      if (cur !== 'System.Windows.Forms.Cursors.Hand') throw new Error('cursor: convert should yield System.Windows.Forms.Cursors.Hand, got ' + cur);
+      // a custom/non-standard cursor has no Cursors.* member → not convertible → stays read-only (no data loss)
+      if (await convertValue(engine, 'System.Windows.Forms.Cursor', 'NoSuchCursorXYZ') !== null) throw new Error('cursor: an unknown cursor name must be rejected (null)');
+      console.log('e2e: string[] editor + Cursor verified — Lines flagged System.String[] sentinel; content read/written via the effective Text assignment (no competing Lines=, data-loss guard); clear → Text=""; resx/Rtf → ok:false; hand-written Lines= array round-trips in array form; Cursor editable→Cursors.Hand, custom cursor read-only, unknown→null');
+    } else {
+      console.log('e2e: string[] editor + Cursor SKIPPED — engine/samples/LinesForm.Designer.cs missing');
+    }
+
     // ---- Typed collection editor (ListView.Columns) ----
     // ListViewForm has listView1 with colName ("Name"/220) + colSize ("Size"/120) as named ColumnHeader fields.
     // Assert: describe flags Columns as a typed collection (ColumnHeader item type); ListColumns reads the rows;
@@ -1129,8 +1199,9 @@ async function main(): Promise<void> {
       if (/new System\.Windows\.Forms\.TreeNode\(/.test(e3.text) || /Nodes\.AddRange/.test(e3.text))
         throw new Error('treenodes: clear must remove every TreeNode + the AddRange');
 
-      // SAFETY — a node with an unmanaged property (ImageKey) reads ok:false AND the edit is refused (no clobber)
-      const unmanaged = disk.replace('treeNode1.Name = "nodeApple";', 'treeNode1.Name = "nodeApple";\n            treeNode1.ImageKey = "leaf";');
+      // SAFETY — a node with a STILL-unmanaged property (StateImageKey; Name/images/ToolTipText/Checked are modelled)
+      // reads ok:false AND the edit is refused (no clobber)
+      const unmanaged = disk.replace('treeNode1.Name = "nodeApple";', 'treeNode1.Name = "nodeApple";\n            treeNode1.StateImageKey = "state";');
       if ((await listTreeNodes(engine, treeForm, 'treeView1', unmanaged)).ok)
         throw new Error('treenodes: an unmanaged node property must make the collection read-only (ok:false)');
       if ((await setTreeNodes(engine, treeForm, 'treeView1', n0.nodes, unmanaged)).safe)
@@ -1151,6 +1222,170 @@ async function main(): Promise<void> {
       console.log('e2e: hierarchical collection editor (TreeView.Nodes) verified — renders (Slice A); Nodes flagged TreeNode; list [Fruits[Apple,Banana],Vegetables[Carrot]]; edit (rename+add child round-trips); reparent (Carrot→root); clear (all removed); unmanaged prop → ok:false + refused; unknown id refused');
     } else {
       console.log('e2e: TreeView.Nodes editor SKIPPED — engine/samples/TreeForm.Designer.cs missing');
+    }
+
+    // ---- TreeView node IMAGES (ImageKey/ImageIndex/SelectedImage*) ----
+    // TreeImageForm carries nodes with ImageKey/SelectedImageKey (Apple, Fruits) + ImageIndex/SelectedImageIndex
+    // (Banana). Assert: an image node is no longer read-only (was ok:false before); read parses all four props;
+    // save re-emits them and round-trips exactly (§6.5 gate accepts image assignments); the render is representable.
+    const treeImg = path.join(repo, 'engine', 'samples', 'TreeImageForm.Designer.cs');
+    if (fs.existsSync(treeImg)) {
+      const disk = fs.readFileSync(treeImg, 'utf8');
+      const d = await describeDesigner(engine, treeImg);
+      if (d.unrepresentable.some((u) => /ImageKey|ImageIndex|Nodes/.test(u))) throw new Error('treenodes-img: image nodes must be representable, got ' + JSON.stringify(d.unrepresentable));
+
+      const n0 = await listTreeNodes(engine, treeImg, 'treeView1', disk);
+      if (!n0.ok) throw new Error('treenodes-img: an image tree must now be editable (ok:true), got ' + n0.reason);
+      const fruits = n0.nodes.find((n) => n.text === 'Fruits');
+      const apple = fruits?.children.find((n) => n.text === 'Apple');
+      const banana = fruits?.children.find((n) => n.text === 'Banana');
+      if (apple?.imageKey !== 'apple.png' || apple?.selectedImageKey !== 'apple_sel.png') throw new Error('treenodes-img: Apple image keys wrong: ' + JSON.stringify(apple));
+      if (banana?.imageIndex !== 1 || banana?.selectedImageIndex !== 2) throw new Error('treenodes-img: Banana image indexes wrong: ' + JSON.stringify(banana));
+      if (fruits?.imageKey !== 'folder.png') throw new Error('treenodes-img: Fruits imageKey wrong: ' + JSON.stringify(fruits?.imageKey));
+
+      // round-trip: save the read forest unchanged → images survive + the §6.5 gate accepts the image assignments
+      const e1 = await setTreeNodes(engine, treeImg, 'treeView1', n0.nodes, disk);
+      if (!e1.safe || e1.text === null) throw new Error('treenodes-img: image round-trip rejected: ' + e1.reason);
+      if (!/treeNode\d+\.ImageKey = "apple\.png";/.test(e1.text) || !/treeNode\d+\.ImageIndex = 1;/.test(e1.text) || !/treeNode\d+\.SelectedImageIndex = 2;/.test(e1.text))
+        throw new Error('treenodes-img: save must re-emit the image assignments');
+      const r1 = await listTreeNodes(engine, treeImg, 'treeView1', e1.text);
+      const apple2 = r1.nodes.find((n) => n.text === 'Fruits')?.children.find((n) => n.text === 'Apple');
+      if (apple2?.imageKey !== 'apple.png' || apple2?.selectedImageKey !== 'apple_sel.png') throw new Error('treenodes-img: re-read after save lost Apple images: ' + JSON.stringify(apple2));
+
+      // edit an image: change Apple's key → the new key is emitted, the others untouched
+      const editedForest = JSON.parse(JSON.stringify(n0.nodes));
+      editedForest.find((n: TreeNodeItem) => n.text === 'Fruits').children.find((n: TreeNodeItem) => n.text === 'Apple').imageKey = 'apricot.png';
+      const e2 = await setTreeNodes(engine, treeImg, 'treeView1', editedForest, disk);
+      if (!e2.safe || e2.text === null || !/ImageKey = "apricot\.png";/.test(e2.text) || /ImageKey = "apple\.png";/.test(e2.text))
+        throw new Error('treenodes-img: editing an image key must re-emit the new key: ' + (e2.reason || 'no apricot'));
+
+      // MUTUAL EXCLUSIVITY (review fix — ImageKey/ImageIndex are mutually exclusive, last-write-wins at runtime):
+      // (a) a hand-written node with index-THEN-key has the KEY effective — the read collapses to the effective member
+      // (imageIndex cleared) and the save emits ONLY the key, never a competing ImageIndex that would silently shadow it.
+      const bothSrc = 'namespace S{partial class F{private System.Windows.Forms.TreeView tv;private void InitializeComponent(){'
+        + 'System.Windows.Forms.TreeNode tn1 = new System.Windows.Forms.TreeNode("A");'
+        + 'this.tv = new System.Windows.Forms.TreeView();'
+        + 'tn1.ImageIndex = 5;'          // index first…
+        + 'tn1.ImageKey = "keyWins";'    // …then key → KEY is the effective image at runtime
+        + 'tn1.Name = "n1";'
+        + 'this.tv.Location = new System.Drawing.Point(1, 1);'
+        + 'this.tv.Name = "tv";'
+        + 'this.tv.Nodes.AddRange(new System.Windows.Forms.TreeNode[] { tn1 });'
+        + '}}}';
+      const bx = await listTreeNodes(engine, treeImg, 'tv', bothSrc);
+      if (!bx.ok) throw new Error('treenodes-img: an index-then-key node must be readable, got ' + bx.reason);
+      if (bx.nodes[0].imageKey !== 'keyWins' || bx.nodes[0].imageIndex !== -1)
+        throw new Error('treenodes-img: read must collapse index-then-key to the effective KEY (imageKey=keyWins, imageIndex=-1), got ' + JSON.stringify({ k: bx.nodes[0].imageKey, i: bx.nodes[0].imageIndex }));
+      const bxe = await setTreeNodes(engine, treeImg, 'tv', bx.nodes, bothSrc);
+      if (!bxe.safe || bxe.text === null) throw new Error('treenodes-img: index-then-key round-trip rejected: ' + bxe.reason);
+      if (!/tn1\.ImageKey = "keyWins";/.test(bxe.text) || /tn1\.ImageIndex =/.test(bxe.text))
+        throw new Error('treenodes-img: save must emit ONLY the effective ImageKey, no shadowing ImageIndex, got ' + bxe.text);
+
+      // (b) a DESIRED node (the popup exposes both editors) that carries BOTH imageKey and imageIndex must persist
+      // key-preferred — never both — so the index can't shadow a just-typed key (and net48 key-first agrees).
+      const bothForest = JSON.parse(JSON.stringify(n0.nodes));
+      const bApple = bothForest.find((n: TreeNodeItem) => n.text === 'Fruits').children.find((n: TreeNodeItem) => n.text === 'Apple');
+      bApple.imageKey = 'kept.png'; bApple.imageIndex = 7;
+      const be = await setTreeNodes(engine, treeImg, 'treeView1', bothForest, disk);
+      if (!be.safe || be.text === null) throw new Error('treenodes-img: both-set desired forest rejected: ' + be.reason);
+      if (!/ImageKey = "kept\.png";/.test(be.text) || /ImageIndex = 7;/.test(be.text))
+        throw new Error('treenodes-img: a desired node with both key+index must emit key only (key-preferred), got ' + be.text);
+
+      // ToolTipText (string) + Checked (bool) round-trip: parsed, re-emitted; unchecking drops the assignment (default).
+      const scSrc = 'namespace S{partial class F{private System.Windows.Forms.TreeView tv;private void InitializeComponent(){'
+        + 'System.Windows.Forms.TreeNode tn1 = new System.Windows.Forms.TreeNode("A");'
+        + 'this.tv = new System.Windows.Forms.TreeView();'
+        + 'tn1.Name = "n1";'
+        + 'tn1.ToolTipText = "hover me";'
+        + 'tn1.Checked = true;'
+        + 'this.tv.Location = new System.Drawing.Point(1, 1);'
+        + 'this.tv.Name = "tv";'
+        + 'this.tv.Nodes.AddRange(new System.Windows.Forms.TreeNode[] { tn1 });'
+        + '}}}';
+      const sc = await listTreeNodes(engine, treeImg, 'tv', scSrc);
+      if (!sc.ok) throw new Error('treenodes-img: a ToolTipText/Checked node must be readable, got ' + sc.reason);
+      if (sc.nodes[0].toolTipText !== 'hover me' || sc.nodes[0].checked !== true)
+        throw new Error('treenodes-img: ToolTipText/Checked not parsed, got ' + JSON.stringify({ t: sc.nodes[0].toolTipText, c: sc.nodes[0].checked }));
+      const sce = await setTreeNodes(engine, treeImg, 'tv', sc.nodes, scSrc);
+      if (!sce.safe || sce.text === null || !/tn1\.ToolTipText = "hover me";/.test(sce.text) || !/tn1\.Checked = true;/.test(sce.text))
+        throw new Error('treenodes-img: ToolTipText/Checked round-trip failed, got ' + (sce.text || sce.reason));
+      const scOff = JSON.parse(JSON.stringify(sc.nodes)); scOff[0].checked = false; scOff[0].toolTipText = '';
+      const sceOff = await setTreeNodes(engine, treeImg, 'tv', scOff, scSrc);
+      if (!sceOff.safe || sceOff.text === null || /Checked/.test(sceOff.text) || /ToolTipText/.test(sceOff.text))
+        throw new Error('treenodes-img: clearing ToolTipText + unchecking must drop both assignments (defaults), got ' + (sceOff.text || sceOff.reason));
+
+      console.log('e2e: TreeView node images + scalars verified — image nodes editable; ImageKey/ImageIndex/SelectedImage* + ToolTipText/Checked parsed + round-trip (§6.5 accepts); mutual exclusivity: index-then-key collapses to effective key, both-set emits key-preferred (no shadowing index); clearing tooltip/uncheck drops the default assignments');
+    } else {
+      console.log('e2e: TreeView node images SKIPPED — engine/samples/TreeImageForm.Designer.cs missing');
+    }
+
+    // ---- TreeView node STYLE (ForeColor / BackColor / NodeFont) round-trip ----
+    // A node with a named color, an ARGB color, and a bold font must be readable (was ok:false before this feature),
+    // parse to property-grid INVARIANT strings, and round-trip through the engine's Color/Font converter. A color/font
+    // the bounded converter can't represent (a user type, an uninstalled family) keeps the node read-only (no clobber).
+    // Uses an inline source (no fixture-file dependency); "Microsoft Sans Serif" is present on every Windows engine host.
+    {
+      const styleSrc = 'namespace S{partial class F{private System.Windows.Forms.TreeView tv;private void InitializeComponent(){'
+        + 'System.Windows.Forms.TreeNode tn1 = new System.Windows.Forms.TreeNode("A");'
+        + 'this.tv = new System.Windows.Forms.TreeView();'
+        + 'tn1.ForeColor = System.Drawing.Color.Red;'
+        + 'tn1.BackColor = System.Drawing.Color.FromArgb(255, 224, 192);'
+        + 'tn1.NodeFont = new System.Drawing.Font("Microsoft Sans Serif", 9F, System.Drawing.FontStyle.Bold);'
+        + 'tn1.Name = "n1";'
+        + 'this.tv.Location = new System.Drawing.Point(1, 1);'
+        + 'this.tv.Name = "tv";'
+        + 'this.tv.Nodes.AddRange(new System.Windows.Forms.TreeNode[] { tn1 });'
+        + '}}}';
+      const st = await listTreeNodes(engine, treeImg, 'tv', styleSrc);
+      if (!st.ok) throw new Error('treenodes-style: a styled node must be readable, got ' + st.reason);
+      const sn = st.nodes[0];
+      if (sn.foreColor !== 'Red') throw new Error('treenodes-style: ForeColor should read "Red", got ' + JSON.stringify(sn.foreColor));
+      if (sn.backColor !== '255, 224, 192') throw new Error('treenodes-style: BackColor should read "255, 224, 192", got ' + JSON.stringify(sn.backColor));
+      if (!/^Microsoft Sans Serif, 9(\.\d+)?pt, style=Bold$/.test(sn.nodeFont || '')) throw new Error('treenodes-style: NodeFont invariant wrong, got ' + JSON.stringify(sn.nodeFont));
+
+      // round-trip: re-emit the read forest → canonical (fully-qualified) initializers, then re-read is stable
+      const se = await setTreeNodes(engine, treeImg, 'tv', st.nodes, styleSrc);
+      if (!se.safe || se.text === null) throw new Error('treenodes-style: style round-trip rejected: ' + se.reason);
+      if (!/tn1\.ForeColor = System\.Drawing\.Color\.Red;/.test(se.text)) throw new Error('treenodes-style: ForeColor not re-emitted: ' + se.text);
+      if (!/tn1\.BackColor = System\.Drawing\.Color\.FromArgb\(255, 224, 192\);/.test(se.text)) throw new Error('treenodes-style: BackColor not re-emitted: ' + se.text);
+      if (!/tn1\.NodeFont = new System\.Drawing\.Font\("Microsoft Sans Serif", 9F, System\.Drawing\.FontStyle\.Bold/.test(se.text)) throw new Error('treenodes-style: NodeFont not re-emitted: ' + se.text);
+      const re = await listTreeNodes(engine, treeImg, 'tv', se.text);
+      if (re.nodes[0].foreColor !== 'Red' || re.nodes[0].backColor !== '255, 224, 192') throw new Error('treenodes-style: re-read after save lost colors: ' + JSON.stringify(re.nodes[0]));
+
+      // edit a color to a SYSTEM color → the system-color initializer is emitted, the old one gone
+      const ed = JSON.parse(JSON.stringify(st.nodes)); ed[0].foreColor = 'ControlText';
+      const ee = await setTreeNodes(engine, treeImg, 'tv', ed, styleSrc);
+      if (!ee.safe || ee.text === null || !/tn1\.ForeColor = System\.Drawing\.SystemColors\.ControlText;/.test(ee.text) || /Color\.Red/.test(ee.text))
+        throw new Error('treenodes-style: editing ForeColor to a system color must re-emit it, got ' + (ee.reason || ee.text));
+
+      // clearing a style drops the assignment (matches the default → the §6.5 gate stays minimal)
+      const cl = JSON.parse(JSON.stringify(st.nodes)); cl[0].foreColor = ''; cl[0].backColor = ''; cl[0].nodeFont = '';
+      const ce = await setTreeNodes(engine, treeImg, 'tv', cl, styleSrc);
+      if (!ce.safe || ce.text === null || /ForeColor|BackColor|NodeFont/.test(ce.text))
+        throw new Error('treenodes-style: clearing fore/back/font must drop all three assignments, got ' + (ce.text || ce.reason));
+
+      // SAFETY: a color from a USER type (not Color/SystemColors) keeps the whole node read-only (converter refuses)
+      const userColorSrc = styleSrc.replace('System.Drawing.Color.Red', 'MyApp.Palette.Brand');
+      if ((await listTreeNodes(engine, treeImg, 'tv', userColorSrc)).ok)
+        throw new Error('treenodes-style: a user-type color must make the node read-only (no clobber)');
+      // SAFETY: an uninstalled font family would be silently substituted by GDI+ → refuse (read-only), no lossy round-trip
+      const badFontSrc = styleSrc.replace('Microsoft Sans Serif', 'No Such Font Family 12345');
+      if ((await listTreeNodes(engine, treeImg, 'tv', badFontSrc)).ok)
+        throw new Error('treenodes-style: an uninstalled font family must make the node read-only (substitution would lose the family)');
+
+      // REGRESSION (review wf_8bc83096-371, HIGH): a non-Point GraphicsUnit must NOT be reinterpreted as a FontStyle
+      // (a wrong-overload bug read new Font(f, 12, GraphicsUnit.Pixel) as "12pt, style=Italic" and persisted it).
+      const unitSrc = styleSrc.replace('new System.Drawing.Font("Microsoft Sans Serif", 9F, System.Drawing.FontStyle.Bold)',
+        'new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.GraphicsUnit.Pixel)');
+      const us = await listTreeNodes(engine, treeImg, 'tv', unitSrc);
+      if (!us.ok) throw new Error('treenodes-style: a GraphicsUnit.Pixel font must be readable, got ' + us.reason);
+      if (us.nodes[0].nodeFont !== 'Microsoft Sans Serif, 12px')
+        throw new Error('treenodes-style: a Pixel font must read as "..., 12px" (unit preserved), got ' + JSON.stringify(us.nodes[0].nodeFont));
+      const ue = await setTreeNodes(engine, treeImg, 'tv', us.nodes, unitSrc);
+      if (!ue.safe || ue.text === null || !/GraphicsUnit\.Pixel/.test(ue.text) || /FontStyle\.(Italic|Underline)/.test(ue.text))
+        throw new Error('treenodes-style: a Pixel font must re-emit GraphicsUnit.Pixel, never a reinterpreted FontStyle, got ' + (ue.reason || ue.text));
+
+      console.log('e2e: TreeView node style verified — ForeColor/BackColor/NodeFont parse to invariant strings + round-trip (named/ARGB/system color, Bold font, fully-qualified re-emit); edit→system color; clearing drops all three; a user-type color and an uninstalled font family both keep the node read-only (no clobber); a non-Point GraphicsUnit (Pixel) is preserved, never reinterpreted as a FontStyle (review wf_8bc83096-371 regression)');
     }
 
     // ---- TreeView.Nodes owner-scoping (review fix) — two TreeViews on one form edit INDEPENDENTLY ----
@@ -1175,6 +1410,167 @@ async function main(): Promise<void> {
       console.log('e2e: TreeView.Nodes owner-scoping verified — two TreeViews on one form read + edit independently (editing one preserves the other, review fix)');
     } else {
       console.log('e2e: TreeView.Nodes owner-scoping SKIPPED — engine/samples/TwoTreeForm.Designer.cs missing');
+    }
+
+    // ---- ToolStrip / MenuStrip item editor (Slice 1: read + reorder) ----
+    // MenuForm has menuStrip1 with File[Open,Save] + Edit (ToolStripMenuItem fields via Items/DropDownItems.AddRange).
+    // Assert: describe flags Items as ToolStripItem; list reads the recursive tree; a top-level / submenu reorder
+    // rewrites ONLY the relevant AddRange (item property blocks + the other collection untouched); add/remove refused.
+    const tsMenuForm = path.join(repo, 'engine', 'samples', 'MenuForm.Designer.cs');
+    if (fs.existsSync(tsMenuForm)) {
+      const disk = fs.readFileSync(tsMenuForm, 'utf8');
+      const dc = await describeComponent(engine, tsMenuForm, 'menuStrip1');
+      const itemsProp = dc?.properties?.find((p) => p.name === 'Items');
+      if (itemsProp?.collectionItemType !== 'System.Windows.Forms.ToolStripItem')
+        throw new Error('toolstrip: MenuStrip.Items must be flagged as a ToolStripItem collection, got ' + JSON.stringify(itemsProp?.collectionItemType));
+
+      const t0 = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', disk);
+      if (!t0.ok) throw new Error('toolstrip: menu must be readable, got ' + t0.reason);
+      const file = t0.items.find((i) => i.text === 'File');
+      const edit = t0.items.find((i) => i.text === 'Edit');
+      if (!file || !edit) throw new Error('toolstrip: File/Edit items missing: ' + JSON.stringify(t0.items.map((i) => i.text)));
+      if (file.itemType !== 'ToolStripMenuItem') throw new Error('toolstrip: File itemType wrong: ' + file.itemType);
+      if (file.children.map((c) => c.text).join(',') !== 'Open,Save') throw new Error('toolstrip: File submenu wrong: ' + JSON.stringify(file.children.map((c) => c.text)));
+
+      // top-level reorder: Edit before File → only the menuStrip1.Items AddRange element order changes
+      const e1 = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [edit, file], disk);
+      if (!e1.safe || e1.text === null) throw new Error('toolstrip: reorder rejected: ' + e1.reason);
+      const itemsIdx = e1.text.indexOf('menuStrip1.Items.AddRange');
+      const editIdx = e1.text.indexOf('this.editToolStripMenuItem', itemsIdx);
+      const fileIdx = e1.text.indexOf('this.fileToolStripMenuItem', itemsIdx);
+      if (!(itemsIdx > 0 && editIdx > 0 && fileIdx > editIdx)) throw new Error('toolstrip: Items AddRange must list Edit before File after reorder');
+      if (!/this\.fileToolStripMenuItem\.Text = "File";/.test(e1.text)) throw new Error('toolstrip: item property blocks must be preserved (File.Text)');
+      const r1 = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', e1.text);
+      if (r1.items.map((i) => i.text).join(',') !== 'Edit,File') throw new Error('toolstrip: re-read after reorder wrong: ' + JSON.stringify(r1.items.map((i) => i.text)));
+      if (r1.items.find((i) => i.text === 'File')?.children.map((c) => c.text).join(',') !== 'Open,Save') throw new Error('toolstrip: a top-level reorder must not touch the submenu order');
+
+      // submenu reorder: Save before Open under File → only File.DropDownItems AddRange changes (top-level untouched)
+      const file2: ToolStripItemModel = { ...file, children: [file.children[1], file.children[0]] };
+      const e2 = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file2, edit], disk);
+      if (!e2.safe || e2.text === null) throw new Error('toolstrip: submenu reorder rejected: ' + e2.reason);
+      const ddIdx = e2.text.indexOf('fileToolStripMenuItem.DropDownItems.AddRange');
+      const saveIdx = e2.text.indexOf('this.saveToolStripMenuItem', ddIdx);
+      const openIdx = e2.text.indexOf('this.openToolStripMenuItem', ddIdx);
+      if (!(ddIdx > 0 && saveIdx > 0 && openIdx > saveIdx)) throw new Error('toolstrip: DropDownItems must list Save before Open after submenu reorder');
+
+      // ---- ADD ("Type Here") Slice 2 ----
+      // a NEW item is an empty-id node: the engine synthesizes a field + construction + Name/Text and appends the id
+      // into the Items AddRange; existing items stay byte-identical and the new item round-trips on re-read.
+      const newHelp: ToolStripItemModel = { id: '', text: 'Help', name: '', itemType: 'ToolStripMenuItem', children: [] };
+      const addTop = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, newHelp], disk);
+      if (!addTop.safe || addTop.text === null) throw new Error('toolstrip: adding a top-level item must be allowed (Slice 2): ' + addTop.reason);
+      if (!/private System\.Windows\.Forms\.ToolStripMenuItem toolStripMenuItem1;/.test(addTop.text)) throw new Error('toolstrip: add must synthesize a new field decl');
+      if (!/this\.toolStripMenuItem1 = new System\.Windows\.Forms\.ToolStripMenuItem\(\);/.test(addTop.text)) throw new Error('toolstrip: add must synthesize a construction');
+      if (!/this\.toolStripMenuItem1\.Text = "Help";/.test(addTop.text)) throw new Error('toolstrip: add must synthesize the Text');
+      if (!/this\.fileToolStripMenuItem\.Text = "File";/.test(addTop.text)) throw new Error('toolstrip: add must leave existing item property blocks intact');
+      // the construction MUST precede the Items AddRange that references the new id (else a runtime null-ref)
+      const atLines = addTop.text.split(/\r?\n/);
+      const ctorLine = atLines.findIndex((l) => /this\.toolStripMenuItem1 = new /.test(l));
+      const arLine2 = atLines.findIndex((l) => l.includes('menuStrip1.Items.AddRange'));
+      if (ctorLine < 0 || arLine2 < 0 || ctorLine > arLine2) throw new Error('toolstrip: a new item construction must precede the AddRange that references it');
+      const addRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', addTop.text);
+      if (addRt.items.map((i) => i.text).join(',') !== 'File,Edit,Help') throw new Error('toolstrip: added item must round-trip: ' + JSON.stringify(addRt.items.map((i) => i.text)));
+
+      // a FIRST child under a childless existing item (Edit) CREATES its DropDownItems AddRange
+      const addFirst = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, { ...edit, children: [{ id: '', text: 'Undo', name: '', itemType: 'ToolStripMenuItem', children: [] }] }], disk);
+      if (!addFirst.safe || addFirst.text === null) throw new Error('toolstrip: adding a first child (create AddRange) must be allowed: ' + addFirst.reason);
+      if (!/this\.editToolStripMenuItem\.DropDownItems\.AddRange\(/.test(addFirst.text)) throw new Error('toolstrip: a first child must create the DropDownItems AddRange');
+      const afRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', addFirst.text);
+      if (afRt.items.find((i) => i.text === 'Edit')?.children.map((c) => c.text).join(',') !== 'Undo') throw new Error('toolstrip: the created submenu must round-trip');
+
+      // ADD + REORDER in one edit (Help added, Edit moved before File)
+      const addReo = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [edit, file, newHelp], disk);
+      if (!addReo.safe || addReo.text === null) throw new Error('toolstrip: add + reorder in one edit must be allowed');
+      const arRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', addReo.text);
+      if (arRt.items.map((i) => i.text).join(',') !== 'Edit,File,Help') throw new Error('toolstrip: add + reorder must round-trip Edit,File,Help');
+
+      // a new item whose Text literal happens to contain "this.<existingField>" must NOT false-trip the gate — the
+      // added-statement field-reference check reads the AST, not the source text, so string content is never code.
+      const tricky = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, { id: '', text: 'goto this.fileToolStripMenuItem', name: '', itemType: 'ToolStripMenuItem', children: [] }], disk);
+      if (!tricky.safe) throw new Error('toolstrip: an item Text containing "this.<field>" must not false-trip the gate (AST field-ref check)');
+
+      // ---- REGRESSION (adversarial review wf_9f94fae1) ----
+      // #HIGH: rooting the editor on a MENU ITEM (its DropDownItems) and creating a first child must synthesize a
+      // DropDownItems AddRange, NOT Items (a ToolStripMenuItem has no Items property → would not compile).
+      const rootedOnItem = await setToolStripItems(engine, tsMenuForm, 'editToolStripMenuItem', [{ id: '', text: 'Undo', name: '', itemType: 'ToolStripMenuItem', children: [] }], disk);
+      if (!rootedOnItem.safe || rootedOnItem.text === null) throw new Error('toolstrip: adding to a menu item’s DropDownItems must be allowed: ' + rootedOnItem.reason);
+      if (!/editToolStripMenuItem\.DropDownItems\.AddRange\(/.test(rootedOnItem.text) || /editToolStripMenuItem\.Items\.AddRange\(/.test(rootedOnItem.text))
+        throw new Error('toolstrip: a menu-item-rooted create must use DropDownItems, never Items');
+      // #LOW: a leading comment on the first AddRange element must not be DUPLICATED onto the appended new element
+      // (which would false-reject the add via the comment-multiset gate).
+      const cmtSrc = disk.replace('this.fileToolStripMenuItem,', '// first item\n            this.fileToolStripMenuItem,');
+      const cmtAdd = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, { id: '', text: 'Help', name: '', itemType: 'ToolStripMenuItem', children: [] }], cmtSrc);
+      if (!cmtAdd.safe || cmtAdd.text === null) throw new Error('toolstrip: adding to a menu whose first element has a leading comment must be allowed (comment not duplicated): ' + cmtAdd.reason);
+      if ((cmtAdd.text.match(/\/\/ first item/g) || []).length !== 1) throw new Error('toolstrip: the leading comment must not be duplicated by an append');
+      // #MEDIUM: a receiver whose construction is INTERLEAVED after the layout block must refuse a first-child create
+      // (else the synthesized AddRange would reference a not-yet-constructed field → runtime null-ref).
+      const lateSrc = [
+        'namespace S { partial class F {',
+        '  private System.Windows.Forms.MenuStrip menuStrip1;',
+        '  private System.Windows.Forms.ToolStripMenuItem fileToolStripMenuItem;',
+        '  private System.Windows.Forms.ToolStripMenuItem editToolStripMenuItem;',
+        '  private void InitializeComponent() {',
+        '    this.menuStrip1 = new System.Windows.Forms.MenuStrip();',
+        '    this.fileToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.menuStrip1.SuspendLayout();',
+        '    this.editToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { this.fileToolStripMenuItem, this.editToolStripMenuItem });',
+        '    this.fileToolStripMenuItem.Text = "File"; this.editToolStripMenuItem.Text = "Edit";',
+        '  } } }',
+      ].join('\n');
+      const lateAdd = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileToolStripMenuItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }, { id: 'editToolStripMenuItem', text: 'Edit', name: '', itemType: 'ToolStripMenuItem', children: [{ id: '', text: 'Undo', name: '', itemType: 'ToolStripMenuItem', children: [] }] }], lateSrc);
+      if (lateAdd.safe) throw new Error('toolstrip: a first-child create under a late/interleaved-construction receiver must be refused (runtime null-ref guard)');
+
+      // SAFETY: removing an existing item, reparenting one, and a submenu under a BRAND-NEW item are still refused.
+      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file], disk)).safe)
+        throw new Error('toolstrip: removing an item must be refused');
+      const reparent: ToolStripItemModel[] = [{ ...file, children: [file.children[1]] }, { ...edit, children: [file.children[0]] }];
+      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', reparent, disk)).safe)
+        throw new Error('toolstrip: reparenting an existing item must be refused');
+      const nested: ToolStripItemModel[] = [file, edit, { id: '', text: 'Tools', name: '', itemType: 'ToolStripMenuItem', children: [{ id: '', text: 'Opt', name: '', itemType: 'ToolStripMenuItem', children: [] }] }];
+      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', nested, disk)).safe)
+        throw new Error('toolstrip: a submenu under a brand-new item must be refused (nested-new)');
+
+      // ---- REGRESSION (adversarial review wf_55284a72-7f3) ----
+      // #3 formatting-drift: a reorder must be a pure line-permutation — the rewritten AddRange element lines keep the
+      // SAME leading indent as the `.AddRange(` statement line (previously they drifted to statement-indent + 4).
+      const e1Lines = e1.text.split(/\r?\n/);
+      const indentOf = (s?: string): number => (s ? s.match(/^[ \t]*/)![0].length : -1);
+      const arIndent = indentOf(e1Lines.find((l) => l.includes('menuStrip1.Items.AddRange')));
+      const elIndent = indentOf(e1Lines.find((l) => /^[ \t]*this\.editToolStripMenuItem,/.test(l)));
+      if (elIndent < 0 || arIndent < 0 || elIndent !== arIndent)
+        throw new Error(`toolstrip: reorder must not re-indent AddRange elements (AddRange indent ${arIndent} vs element ${elIndent})`);
+
+      // #1 data-loss: a hand-written comment INSIDE an Items/DropDownItems AddRange initializer must never be silently
+      // dropped by a reorder. The gate guarantees this — the comment is preserved (safe), or the edit is refused;
+      // it is NEVER lost with safe:true. (VS never emits such comments, but a hand-edited file may carry one.)
+      const cSrc = disk.replace('this.fileToolStripMenuItem,', 'this.fileToolStripMenuItem, // KEEP-THIS-COMMENT');
+      const cEdit = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [edit, file], cSrc);
+      if (cEdit.safe && (cEdit.text === null || !cEdit.text.includes('// KEEP-THIS-COMMENT')))
+        throw new Error('toolstrip: a comment inside an AddRange was silently dropped by a reorder (reported safe)');
+
+      // #2 read-scope: a menu populated ONLY by an unmodelled Add shape (the 3-arg Items.Add(string, Image,
+      // EventHandler) overload) must be refused read-only (ok:false), not silently presented as an empty collection.
+      const addSrc = [
+        'namespace S {', '  partial class F {',
+        '    private System.Windows.Forms.MenuStrip ms;',
+        '    private void InitializeComponent() {',
+        '      this.ms = new System.Windows.Forms.MenuStrip();',
+        '      this.ms.Items.Add("File", null, this.OnFile);',
+        '      this.ms.Items.Add("Edit", null, this.OnEdit);',
+        '      this.ms.Name = "ms";',
+        '    }',
+        '    private void OnFile(object s, System.EventArgs e) { }',
+        '    private void OnEdit(object s, System.EventArgs e) { }',
+        '  }', '}',
+      ].join('\n');
+      const addRead = await listToolStripItems(engine, tsMenuForm, 'ms', addSrc);
+      if (addRead.ok)
+        throw new Error('toolstrip: a menu built only via the 3-arg Items.Add overload must be refused read-only, not read as empty');
+
+      console.log('e2e: ToolStrip/MenuStrip item editor verified — Items flagged ToolStripItem; recursive read; reorder rewrites ONLY the AddRange as a pure indent-preserving permutation; ADD (Type Here) synthesizes a new field+ctor+Name/Text and grows/creates the AddRange (construction precedes it), round-trips, and combines with reorder; remove/reparent/nested-new refused; intra-AddRange comment never silently dropped; a 3-arg Items.Add menu refused read-only (Slice 2 + review wf_55284a72-7f3 regressions)');
+    } else {
+      console.log('e2e: ToolStrip item editor SKIPPED — engine/samples/MenuForm.Designer.cs missing');
     }
 
     // ---- Typed collection editor (DataGridView.Columns) ----
