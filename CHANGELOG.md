@@ -8,6 +8,56 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-07-07
+
+Adds a **Hindi (हिन्दी)** UI localization — the localized designer UI now spans **seven** languages.
+
+### Added
+- **Hindi (हिन्दी) UI localization.** The designer surface, property grid, toolbox, dialogs and status /
+  notification messages can now be shown in Hindi via `winformsDesigner.language: "hi"` — bringing the
+  localized UI to **seven** languages (English, Русский, 简体中文, Français, Deutsch, Español, हिन्दी).
+
+## [0.7.0] — 2026-07-07
+
+This preview completes **structural editing of `MenuStrip` / `ToolStrip` items**. The "Type Here"
+item editor introduced in 0.6.0 (reorder + add) now also **removes** and **renames** existing items
+and lets a new item **pick its type** — Visual Studio–style CRUD on a menu / toolbar item tree, on
+both engines, with every untouched item preserved byte-for-byte.
+
+### Added
+
+#### Menu & toolbar editing
+- **Remove items.** The `…` editor's ✕ now deletes an **existing** item, not just an unsaved one.
+  Removing a submenu parent takes its **whole subtree** with it: the item's field declaration,
+  construction, property block, event wiring and `Items` / `DropDownItems.AddRange` membership are
+  all stripped, and a parent `AddRange` that loses its last element is deleted outright rather than
+  left empty. Every surviving item stays byte-identical.
+- **Rename items.** An existing item's caption is now editable inline — the engine rewrites its
+  `Text = "…"` string literal **in place**, leaving every other property (`Image`, `ShortcutKeys`,
+  `Checked`, …) untouched. Clearing the field leaves the source `Text` unchanged, so a rename can
+  never silently wipe a caption.
+- **Item-type picker.** A new item now chooses its type from a **context-appropriate** list keyed to
+  the owner strip — menu item / combo / text box for a `MenuStrip`; button / label / separator /
+  split & dropdown button for a `ToolStrip`; status label / progress bar for a `StatusStrip`.
+  Choosing **Separator** drops the caption; existing items keep their concrete type.
+
+### Safety
+- The safe-save gate (`OnlyItemsChanged`, ex-`OnlyItemsAddedOrReordered`) proves a
+  remove / rename / reorder / add edit touched **only** the item tree: exactly the removed fields
+  were dropped and the added fields minted (the class-member count moves by that net, so no method or
+  property is smuggled in or silently deleted), and no removed field name lingers anywhere — a
+  dangling reference the syntax-only parse check would miss. Edits that would **reparent** an item,
+  drop a hand-written comment inside a shrunk `AddRange`, remove an item still referenced by non-item
+  code (e.g. `MdiWindowListItem`), or delete a field declaration sharing a physical line with a
+  neighbour are **refused**, never silently applied.
+
+---
+
+_Internal:_ engine `SetItems` extended to REMOVE (whole-subtree, whitespace-safe whole-line splices)
+and RENAME (in-place literal rewrite) behind a reparent guard; the gate renamed and hardened for
+removed-id / rename canonical-form / comment fail-safes; extended end-to-end and live-webview
+coverage including the adversarial refusal cases.
+
 ## [0.6.0] — 2026-07-07
 
 This preview deepens the **collection & value editors** toward Visual Studio parity. The
@@ -429,7 +479,9 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.3.2...v0.4.0

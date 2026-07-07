@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "preview": true,
   "license": "MIT",
   "author": {
@@ -189,7 +189,8 @@
             "zh-cn",
             "fr",
             "de",
-            "es"
+            "es",
+            "hi"
           ],
           "enumItemLabels": [
             "English",
@@ -197,7 +198,8 @@
             "简体中文",
             "Français",
             "Deutsch",
-            "Español"
+            "Español",
+            "हिन्दी"
           ],
           "markdownEnumDescriptions": [
             "English",
@@ -205,7 +207,8 @@
             "Chinese (Simplified) — 简体中文",
             "French — Français",
             "German — Deutsch",
-            "Spanish — Español"
+            "Spanish — Español",
+            "Hindi — हिन्दी"
           ],
           "markdownDescription": "%config.language.description%"
         }

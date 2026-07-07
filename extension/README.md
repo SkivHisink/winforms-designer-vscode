@@ -18,14 +18,14 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 - **.NET Framework & DevExpress support (experimental)** — forms whose controls target **.NET Framework** (`net4x`) render on a dedicated bundled **.NET Framework 4.8** engine that instantiates the compiled controls, so classic component suites (e.g. **DevExpress**) look pixel-accurate. Each form is auto-routed to the right engine; the property grid, drag/resize/align, add/remove, z-order, **cut/paste**, **tab-page add/rename/delete**, dropping the project's own vendor controls from the toolbox, and the **collection editors** all apply live (the compiled preview is rebuilt on the running instance). A multi-target form the .NET 9 engine can't load can switch to the compiled preview with one click.
 - **VS Code–native workflow** — opening `Form.cs` opens the designer; **View Code** switches back to text.
 - **Property grid** — primitives, enums, complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`, `Cursor`), composite expansion, and standard-value dropdowns, plus VS-style **Color**, **Font** (expandable), **flags-enum**, **Anchor/Dock**, **Cursor**, and **image** editors; non-default values are **bold**, a **description pane** explains the selected property, and right-click **Reset** restores the default.
-- **Collection editors** — the `…` button opens a VS-style **Collection Editor** for string collections (`ComboBox` / `ListBox` / `CheckedListBox.Items`), string-array properties (`TextBox.Lines`), `ListView.Columns`, `DataGridView.Columns`, and a recursive `TreeView.Nodes` tree editor (with per-node **images, check state, tooltip, colors & font**) — on both engines. Menus and toolbars get a **"Type Here"** editor to **reorder and add** `MenuStrip` / `ToolStrip` items.
+- **Collection editors** — the `…` button opens a VS-style **Collection Editor** for string collections (`ComboBox` / `ListBox` / `CheckedListBox.Items`), string-array properties (`TextBox.Lines`), `ListView.Columns`, `DataGridView.Columns`, and a recursive `TreeView.Nodes` tree editor (with per-node **images, check state, tooltip, colors & font**) — on both engines. Menus and toolbars get a **"Type Here"** editor to **reorder, add, remove and rename** `MenuStrip` / `ToolStrip` items.
 - **Images & `.resx`** — render images from a form's sibling `.resx`, and import / clear `Image` / `BackgroundImage` / `Icon` back into both files.
 - **Layout panels** — edit `TableLayoutPanel` cells & column/row styles, `SplitContainer` splitter distance, and `FlowLayoutPanel` order.
 - **Toolbox** — ~39 `System.Windows.Forms` controls (with native icons) plus controls from your own project; **Choose Toolbox Items** and a **control-source** picker for custom / 3rd-party assemblies.
 - **Direct manipulation** — select, move, resize (8 handles), keyboard nudge (arrow keys), multi-select + rubber-band, group move/delete, reparent, z-order, copy/paste, **duplicate** (`Ctrl+D`), **lock controls**, align / distribute / make-same-size, tab-order editor, snaplines, on-canvas **smart-tags**, and a right-click menu.
 - **Events** — wire / unwire / rewire handlers, generate a stub, navigate to the handler body.
 - **Component tray** and **document outline** for non-visual components and the control hierarchy.
-- **Localized UI (6 languages)** — the designer surface, dialogs and messages can be shown in English, Русский, 简体中文, Français, Deutsch or Español via the `winformsDesigner.language` setting.
+- **Localized UI (7 languages)** — the designer surface, dialogs and messages can be shown in English, Русский, 简体中文, Français, Deutsch, Español or हिन्दी via the `winformsDesigner.language` setting.
 - **Safe save** — targeted, byte-minimal text edits; everything outside the change is preserved exactly.
 
 ## Requirements
@@ -48,7 +48,7 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 |---------|---------|-------------|
 | `winformsDesigner.autoOpenDesigner` | `true` | Open the designer automatically when a form's `.cs` becomes active. |
 | `winformsDesigner.assemblyPath` | `""` | Explicit path to the built control assembly. Leave empty for auto-discovery. |
-| `winformsDesigner.language` | `en` | UI language of the designer, dialogs and messages (English, Русский, 简体中文, Français, Deutsch, Español). |
+| `winformsDesigner.language` | `en` | UI language of the designer, dialogs and messages (English, Русский, 简体中文, Français, Deutsch, Español, हिन्दी). |
 
 ### Language
 
@@ -60,7 +60,7 @@ Rendering a designer **loads and runs your project's control assemblies** (const
 
 ## Status & limitations
 
-This is a **preview**. The core render → select → edit → save loop, property grid (with Color / Font / flags / Cursor / image editors, bold non-default values, description pane and reset), collection editors (`Items` / string-array `Lines` / `ListView.Columns` / `DataGridView.Columns` / `TreeView.Nodes` with per-node images / check / tooltip / colors / font, and a `MenuStrip` / `ToolStrip` "Type Here" reorder-and-add editor), toolbox, layout-panel editing, `.resx` image support, 6-language UI localization, and safe save all work. **.NET Framework (net48) hosting** is an experimental compiled preview for `net4x` / DevExpress forms — render plus live property / drag / add / remove / z-order / **cut / paste** edits, **tab-page add / rename / delete**, collection editors, and dropping the project's own vendor controls from the toolbox. `UITypeEditor` modals and advanced `.resx` are still in progress. Please report issues — the **WinForms: Export Designer Diagnostics** command generates a ready-to-paste bug report.
+This is a **preview**. The core render → select → edit → save loop, property grid (with Color / Font / flags / Cursor / image editors, bold non-default values, description pane and reset), collection editors (`Items` / string-array `Lines` / `ListView.Columns` / `DataGridView.Columns` / `TreeView.Nodes` with per-node images / check / tooltip / colors / font, and a `MenuStrip` / `ToolStrip` "Type Here" reorder / add / remove / rename editor), toolbox, layout-panel editing, `.resx` image support, 7-language UI localization, and safe save all work. **.NET Framework (net48) hosting** is an experimental compiled preview for `net4x` / DevExpress forms — render plus live property / drag / add / remove / z-order / **cut / paste** edits, **tab-page add / rename / delete**, collection editors, and dropping the project's own vendor controls from the toolbox. `UITypeEditor` modals and advanced `.resx` are still in progress. Please report issues — the **WinForms: Export Designer Diagnostics** command generates a ready-to-paste bug report.
 
 ## Links
 

@@ -5,13 +5,14 @@ import zhcn from './zh-cn.json';
 import fr from './fr.json';
 import de from './de.json';
 import es from './es.json';
+import hi from './hi.json';
 
 /** A pluralized entry: forms are picked by the current locale's CLDR plural category (Intl.PluralRules). */
 export type Plural = { zero?: string; one?: string; two?: string; few?: string; many?: string; other: string };
 export type Catalog = Record<string, string | Plural>;
 
-export type Lang = 'en' | 'ru' | 'zh-cn' | 'fr' | 'de' | 'es';
-export const SUPPORTED: readonly Lang[] = ['en', 'ru', 'zh-cn', 'fr', 'de', 'es'];
+export type Lang = 'en' | 'ru' | 'zh-cn' | 'fr' | 'de' | 'es' | 'hi';
+export const SUPPORTED: readonly Lang[] = ['en', 'ru', 'zh-cn', 'fr', 'de', 'es', 'hi'];
 
 const CATALOGS: Record<Lang, Catalog> = {
   en,
@@ -20,6 +21,7 @@ const CATALOGS: Record<Lang, Catalog> = {
   fr: fr as Catalog,
   de: de as Catalog,
   es: es as Catalog,
+  hi: hi as Catalog,
 };
 
 // The active language. Driven ONLY by the `winformsDesigner.language` setting — it never auto-follows the

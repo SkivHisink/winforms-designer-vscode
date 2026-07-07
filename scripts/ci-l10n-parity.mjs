@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ext = join(root, 'extension');
-const LANGS = ['ru', 'zh-cn', 'fr', 'de', 'es'];
+const LANGS = ['ru', 'zh-cn', 'fr', 'de', 'es', 'hi'];
 const strict = process.argv.includes('--strict');
 
 /** Load the English runtime catalog by transpiling en.ts (TS) in-memory with the bundler's esbuild. */
