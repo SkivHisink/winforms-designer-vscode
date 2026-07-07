@@ -32,11 +32,11 @@ namespace WinFormsDesigner.Engine
     }
 
     /// <summary>
-    /// Structural editor for a ToolStrip/MenuStrip item tree. SLICE 1 supports READ + REORDER only: it rewrites the
-    /// element ORDER inside each <c>Items</c>/<c>DropDownItems</c> <c>AddRange</c> to a permutation of the SAME items,
-    /// leaving every other statement (item constructions, property blocks) byte-identical — so items' unmanaged
-    /// properties are preserved and the change is airtight-gateable. Adding / removing / renaming items are follow-up
-    /// slices that plug into the same read + wiring.
+    /// Structural editor for a ToolStrip/MenuStrip item tree: READ + REORDER + ADD ("Type Here") + REMOVE + RENAME.
+    /// Reorder rewrites the element ORDER inside each <c>Items</c>/<c>DropDownItems</c> <c>AddRange</c>; ADD synthesizes a
+    /// new field + construction + Name/Text; REMOVE deletes an omitted item's whole subtree; RENAME rewrites an existing
+    /// item's <c>Text = "…"</c> string literal in place. Every statement not implicated by the edit stays byte-identical —
+    /// so items' unmanaged properties (Image/ShortcutKeys/Checked/…) are preserved and the change is airtight-gateable.
     /// </summary>
     public static class DesignerToolStripItemEditor
     {
@@ -213,6 +213,18 @@ namespace WinFormsDesigner.Engine
             return true;
         }
 
+        /// <summary>True for ANY <c>&lt;x&gt;.Items|DropDownItems.Add|AddRange(...)</c> regardless of receiver — used
+        /// only to give a precise refusal message when a removal is blocked by an unsupported collection-populate shape.</summary>
+        private static bool IsItemCollectionAddOrAddRange(StatementSyntax st)
+        {
+            if (st is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }) return false;
+            if (inv.Expression is not MemberAccessExpressionSyntax ma) return false;
+            string method = ma.Name.Identifier.Text;
+            if (method != "Add" && method != "AddRange") return false;
+            var chain = Flatten(ma.Expression);
+            return chain.Count == 2 && ItemCollections.Contains(chain[1]);
+        }
+
         private static Dictionary<string, string> BuildCtorTypeMap(MethodDeclarationSyntax init, HashSet<string> fields)
         {
             var map = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -239,17 +251,24 @@ namespace WinFormsDesigner.Engine
             return "";
         }
 
-        // ---- write (Slice 2: reorder + ADD "Type Here") ----
+        // ---- write (reorder + ADD "Type Here" + REMOVE + RENAME) ----
 
-        /// <summary>Rewrite the item tree of <paramref name="ownerId"/> to <paramref name="desired"/>. Accepts a
-        /// REORDER and/or an ADD: an item with an EMPTY <see cref="ToolStripItemModel.Id"/> is a NEW item — a field +
-        /// <c>this.&lt;id&gt; = new &lt;Type&gt;()</c> + Name/Text is synthesized and the id is appended into the
-        /// owner's <c>Items</c> / a parent item's <c>DropDownItems</c> AddRange (the AddRange is CREATED if the parent
-        /// had none). Every EXISTING item and statement stays byte-identical, so unmanaged item props (Image/
-        /// ShortcutKeys/Checked/…) are preserved. Removing, reparenting or renaming an existing item — and adding a
-        /// submenu under a brand-new item, or appending onto a non-<c>AddRange</c> collection — are refused (follow-up
-        /// slices). The new items' constructions are placed with the other constructions (before any AddRange) so every
-        /// referenced field is assigned before the AddRange that uses it.</summary>
+        /// <summary>Rewrite the item tree of <paramref name="ownerId"/> to <paramref name="desired"/>. Accepts any mix
+        /// of REORDER, ADD, REMOVE and RENAME. An item with an EMPTY <see cref="ToolStripItemModel.Id"/> is a NEW item — a field
+        /// + <c>this.&lt;id&gt; = new &lt;Type&gt;()</c> + Name/Text is synthesized and its id appended into the owner's
+        /// <c>Items</c> / a parent item's <c>DropDownItems</c> AddRange (CREATED if the parent had none). An EXISTING
+        /// item that is absent from <paramref name="desired"/> is REMOVED with its whole subtree: its field decl,
+        /// construction, property block, event wiring and its own AddRange are deleted, and its id stripped from the
+        /// parent's AddRange (which is deleted outright when it loses its last element). Every SURVIVING item/statement
+        /// stays byte-identical, so unmanaged item props (Image/ShortcutKeys/Checked/…) are preserved. An EXISTING item
+        /// whose desired <see cref="ToolStripItemModel.Text"/> is non-empty and differs from its current Text is RENAMED —
+        /// its <c>Text = "…"</c> string literal is rewritten in place (an empty desired Text leaves it unchanged, so a
+        /// caller that omits Text never wipes one; an item with no simple string-literal Text assignment is refused).
+        /// Reparenting an
+        /// existing item, adding a submenu under a brand-new item, appending onto a non-<c>AddRange</c> collection, or
+        /// removing an item still referenced by non-item code are refused (follow-up slices / fail-safe). New items'
+        /// constructions are placed with the other constructions (before any AddRange) so every referenced field is
+        /// assigned before use.</summary>
         public static EditResult SetItems(string sourceText, string ownerId, IReadOnlyList<ToolStripItemModel> desired)
         {
             if (!IsValidIdentifier(ownerId)) return Failed("invalid owner id: " + ownerId);
@@ -274,21 +293,38 @@ namespace WinFormsDesigner.Engine
                 return Failed(resolveReason);
             var newIds = new HashSet<string>(newItems.Select(n => n.Id), StringComparer.Ordinal);
 
-            // (2) per-receiver child-order maps. Existing items must be preserved per receiver (⊇); any extra id must be
-            // one of the freshly-minted new ids. Removing / reparenting an existing item is refused.
+            // existing ids that survive (every non-new id still in the desired forest); the rest of the current tree is
+            // REMOVED (an omitted item takes its whole subtree with it).
+            var resolvedExisting = new HashSet<string>(StringComparer.Ordinal);
+            CollectItemIds(resolved, resolvedExisting);
+            resolvedExisting.ExceptWith(newIds);
+            var removedIds = new HashSet<string>(currentSet, StringComparer.Ordinal);
+            removedIds.ExceptWith(resolvedExisting);
+
+            // (1b) RENAMES: a SURVIVING existing item whose desired Text is non-empty and differs from its current Text
+            // has its `this.<id>.Text = "…"` string literal rewritten IN PLACE (Phase 2b below). An empty desired Text is
+            // treated as "leave unchanged" so a caller that doesn't carry Text can never wipe one; giving a Text to an
+            // item that has no simple string-literal Text assignment is refused (adding a Text property is a follow-up).
+            var curTextById = new Dictionary<string, string>(StringComparer.Ordinal); CollectTexts(current, curTextById);
+            var desTextById = new Dictionary<string, string>(StringComparer.Ordinal); CollectTexts(resolved, desTextById);
+            var renames = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var id in resolvedExisting)
+                if (desTextById.TryGetValue(id, out var dt) && dt.Length > 0
+                    && (!curTextById.TryGetValue(id, out var ct) || ct != dt))
+                    renames[id] = dt;
+
+            // (2) per-receiver child-order maps + reparent guard. An existing item may be reordered within its parent or
+            // removed, but never MOVED to a different parent (a cross-parent move — which also covers keeping a child of
+            // a removed item — is refused). A des-only receiver = a childless existing item gaining all-NEW children.
             var cur = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             CollectOrders(ownerId, current, cur);
             var des = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             CollectOrders(ownerId, resolved, des);
-
-            foreach (var kv in cur)
-            {
-                if (!des.TryGetValue(kv.Key, out var d)) return Failed("removing an item is not supported yet (under " + kv.Key + ")");
-                foreach (var id in kv.Value) if (!d.Contains(id)) return Failed("removing/reparenting an existing item is not supported yet (" + id + ")");
-                foreach (var id in d) if (!kv.Value.Contains(id) && !newIds.Contains(id)) return Failed("unexpected item under " + kv.Key + ": " + id);
-            }
-            // a receiver present in desired but not current = a childless item gaining its FIRST child (or a new
-            // submenu). It must be an EXISTING item and every one of its children must be new (no reparent).
+            var curParent = new Dictionary<string, string>(StringComparer.Ordinal); BuildParentMap(ownerId, current, curParent);
+            var desParent = new Dictionary<string, string>(StringComparer.Ordinal); BuildParentMap(ownerId, resolved, desParent);
+            foreach (var id in resolvedExisting)
+                if (!curParent.TryGetValue(id, out var cp) || !desParent.TryGetValue(id, out var dp) || cp != dp)
+                    return Failed("reparenting an existing item is not supported yet (" + id + ")");
             foreach (var kv in des)
             {
                 if (cur.ContainsKey(kv.Key)) continue;
@@ -296,19 +332,78 @@ namespace WinFormsDesigner.Engine
                 foreach (var id in kv.Value) if (!newIds.Contains(id)) return Failed("reparenting an existing item is not supported yet (" + id + " under " + kv.Key + ")");
             }
 
-            // (3) which receivers' AddRange must change, split into GROW (an AddRange exists → append/reorder in place)
-            // vs CREATE (no AddRange in source → synthesize one).
+            // (3) Phase 0 (removal): classify every InitializeComponent statement that references a removed id. A removed
+            // item's own statements (construction / Name / Text / event wiring / its own AddRange) and a SURVIVOR
+            // AddRange that shrinks to EMPTY are deleted; a survivor AddRange that keeps ≥1 element is left for Phase 2
+            // to shrink; anything else that ties a removed id to a surviving one (e.g. a single `.Add(this.removed)` on a
+            // survivor) is refused. Removed items' field declarations are deleted too. Removal is applied as whole-line
+            // text splices; the result is re-parsed for the add/grow phases.
+            string src0 = sourceText;
+            if (removedIds.Count > 0)
+            {
+                // survivor receivers that lose their LAST child → their now-empty AddRange is deleted, not shrunk.
+                var emptyReceivers = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var kv in cur)
+                {
+                    if (removedIds.Contains(kv.Key)) continue;
+                    bool desEmpty = !des.TryGetValue(kv.Key, out var d) || d.Count == 0;
+                    if (desEmpty && kv.Value.Count > 0) emptyReceivers.Add(kv.Key);
+                }
+                var deleteNodes = new List<SyntaxNode>();
+                foreach (var st in init.Body.Statements)
+                {
+                    var refd = AstReferencedFields(st, fields);
+                    if (!refd.Overlaps(removedIds)) continue;                 // no removed id → survivor statement, keep
+                    if (TryItemAddRange(st, out var recv, out _, out _))
+                    {
+                        if (removedIds.Contains(recv!) || emptyReceivers.Contains(recv!)) { deleteNodes.Add(st); continue; }
+                        continue;                                             // survivor AddRange keeping ≥1 child → Phase 2 shrinks it
+                    }
+                    if (refd.IsSubsetOf(removedIds)) { deleteNodes.Add(st); continue; } // construction / property / event of a removed item
+                    // references a removed id together with a survivor. If it is the parent's own item-collection call
+                    // (a single `.Add(this.child)` — AddRange was handled above), the shape just isn't rewritable here;
+                    // name that cause rather than the misleading generic "referenced by other code".
+                    if (IsItemCollectionAddOrAddRange(st))
+                        return Failed("cannot remove this item — its collection is populated by a single '.Add(...)' call this editor can only read, not edit (only 'AddRange' is editable)");
+                    return Failed("cannot remove an item still referenced by other code (" + string.Join(",", refd) + ")");
+                }
+                foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
+                    foreach (var v in f.Declaration.Variables)
+                        if (removedIds.Contains(v.Identifier.Text))
+                        {
+                            if (f.Declaration.Variables.Count != 1) return Failed("cannot remove '" + v.Identifier.Text + "' — it shares a multi-variable field declaration");
+                            // RemoveLines deletes the WHOLE physical line(s); if anything else shares this declaration's
+                            // line (a second field decl in a `private A a; private B b;` layout, or a trailing comment),
+                            // the splice would collaterally drop it. Refuse rather than delete a neighbour — the gate
+                            // can't see a lost *declaration* whose surviving statements stay byte-identical.
+                            if (!OccupiesOwnLines(sourceText, f)) return Failed("cannot remove '" + v.Identifier.Text + "' — its field declaration shares a physical line with other code");
+                            deleteNodes.Add(f);
+                        }
+                src0 = RemoveLines(sourceText, deleteNodes);
+            }
+
+            // re-parse the post-removal text so the add/grow phases see the survivor tree.
+            var root1 = CSharpSyntaxTree.ParseText(src0).GetRoot();
+            var cls1 = FindClassWithIC(root1);
+            var init1 = cls1?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            if (cls1 == null || init1?.Body == null) return Failed("re-parse after removal lost InitializeComponent");
+            var fields1 = GatherFieldNames(cls1);
+
+            // which receivers' AddRange must change, split into GROW (an AddRange exists → append/reorder/shrink in
+            // place) vs CREATE (no AddRange in source → synthesize one). Empty desired orders were handled by Phase 0.
             var changed = new List<string>();
             foreach (var kv in des)
             {
+                if (kv.Value.Count == 0) continue;                            // owner/menu emptied by removal → AddRange already deleted
                 cur.TryGetValue(kv.Key, out var c);
                 if (c == null || !c.SequenceEqual(kv.Value)) changed.Add(kv.Key);
             }
-            if (changed.Count == 0 && newItems.Count == 0) return new EditResult { NewText = sourceText, Mode = EditMode.Replace }; // no-op
+            if (changed.Count == 0 && newItems.Count == 0 && removedIds.Count == 0 && renames.Count == 0)
+                return new EditResult { NewText = sourceText, Mode = EditMode.Replace }; // no-op
             var grow = new List<string>();
             var create = new List<string>();
             foreach (var recv in changed)
-                (init.Body.Statements.Any(s => IsItemCollectionCall(s, recv, out _, out _)) ? grow : create).Add(recv);
+                (init1.Body.Statements.Any(s => IsItemCollectionCall(s, recv, out _, out _)) ? grow : create).Add(recv);
 
             // (4) Phase 1 (text splice): synthesize each new item's construction + Name/Text and any freshly-CREATED
             // AddRange, as one block placed at the end of the leading construction run (before every AddRange / layout
@@ -316,11 +411,11 @@ namespace WinFormsDesigner.Engine
             // existing field) too — if that receiver's own construction is NOT in the leading run (an interleaved/late
             // construction), the created AddRange would precede it → runtime null-ref; refuse rather than emit that.
             string nl = sourceText.Contains("\r\n") ? "\r\n" : "\n";
-            string bodyIndent = BodyIndentOf(sourceText, init);
-            int insertPos = ConstructionInsertPos(sourceText, init, fields);
+            string bodyIndent = BodyIndentOf(src0, init1);
+            int insertPos = ConstructionInsertPos(src0, init1, fields1);
             foreach (var recv in create)
             {
-                var recvCtor = FindConstruction(init, recv, fields);
+                var recvCtor = FindConstruction(init1, recv, fields1);
                 if (recvCtor == null || recvCtor.Span.End > insertPos)
                     return Failed("cannot add a first child to '" + recv + "' — its construction is not in the leading block");
             }
@@ -348,9 +443,9 @@ namespace WinFormsDesigner.Engine
                 string elems = string.Join(", ", des[recv].Select(id => "this." + id));
                 Emit($"this.{recv}.{coll}.AddRange(new System.Windows.Forms.ToolStripItem[] {{ {elems} }});");
             }
-            string srcWithItems = sourceText;
+            string srcWithItems = src0;
             if (block.Length > 0)
-                srcWithItems = sourceText.Substring(0, insertPos) + block.ToString() + sourceText.Substring(insertPos);
+                srcWithItems = src0.Substring(0, insertPos) + block.ToString() + src0.Substring(insertPos);
             foreach (var ni in newItems)
             {
                 var withField = InsertFieldDecl(srcWithItems, ni.Fqn, ni.Id, nl);
@@ -358,9 +453,9 @@ namespace WinFormsDesigner.Engine
                 srcWithItems = withField;
             }
 
-            // (5) Phase 2 (Roslyn): grow/reorder each EXISTING AddRange to its full desired order — existing element
-            // nodes are reused (trivia preserved), a new id is appended as a `this.<id>` element with sibling
-            // indentation and a cloned comma+newline separator. Re-parse the Phase-1 text first.
+            // (5) Phase 2 (Roslyn): grow/reorder/shrink each EXISTING AddRange to its full desired order — existing
+            // element nodes are reused (trivia preserved), a removed id is dropped by omission, a new id is appended as a
+            // `this.<id>` element with sibling indentation and a cloned comma+newline separator. Re-parse first.
             var root2 = CSharpSyntaxTree.ParseText(srcWithItems).GetRoot();
             var cls2 = FindClassWithIC(root2);
             var init2 = cls2?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
@@ -389,6 +484,12 @@ namespace WinFormsDesigner.Engine
                     else if (newIds.Contains(id)) reordered.Add(SyntaxFactory.ParseExpression("this." + id).WithLeadingTrivia(newLeading));
                     else return Failed("could not locate item " + id + " under " + recv);
                 }
+                // when this AddRange lost an element, the survivor now in first position may have lost its leading
+                // newline+indent (in the source that whitespace sat on the PRECEDING comma as trailing trivia). Give it
+                // the first element's original leading trivia so the shrunk list keeps clean first-line formatting; any
+                // comment carried along is inert (the gate refuses a shrink whose AddRange carries comments).
+                bool lostHere = origElems.Any(e => { var f = Flatten(e); return f.Count == 1 && removedIds.Contains(f[0]); });
+                if (lostHere && reordered.Count > 0) reordered[0] = reordered[0].WithLeadingTrivia(origElems[0].GetLeadingTrivia());
                 // Reuse the original separators positionally (they carry the inter-element newline as trailing trivia);
                 // for each element appended beyond the original count, clone a comma + newline. This keeps existing
                 // lines/comments intact and lays a new element on its own line.
@@ -402,10 +503,28 @@ namespace WinFormsDesigner.Engine
                 newInit = newInit.ReplaceNode(initz, initz.WithExpressions(newList));
             }
 
+            // (5b) Phase 2b (RENAME): rewrite each renamed survivor's `.Text = "…"` string literal in place. Its
+            // statement is untouched by the removal/add/grow phases, so it is still present in `newInit`. A single
+            // ReplaceNodes swaps only the literal token (surrounding trivia preserved). Refuse if the item has no simple
+            // string-literal Text assignment to rewrite (adding a Text property is not supported in this slice).
+            if (renames.Count > 0)
+            {
+                var litRepl = new Dictionary<LiteralExpressionSyntax, string>();
+                foreach (var kv in renames)
+                {
+                    var lit = FindTextLiteral(newInit, kv.Key);
+                    if (lit == null)
+                        return Failed("cannot rename '" + kv.Key + "' — it has no editable Text = \"…\" assignment to rewrite (adding a Text property is not supported yet)");
+                    litRepl[lit] = kv.Value;
+                }
+                newInit = newInit.ReplaceNodes(litRepl.Keys, (orig, _) =>
+                    SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(litRepl[orig])).WithTriviaFrom(orig));
+            }
+
             var newCls = cls2.ReplaceNode(init2, newInit);
             string edited = root2.ReplaceNode(cls2, newCls).ToFullString();
-            // the airtight safe-save gate (OnlyItemsAddedOrReordered) is applied by the DesignerRenderer wrapper,
-            // mirroring ApplyNodesEdit/ApplyColumnsEdit (which report parseOk + minimal separately).
+            // the airtight safe-save gate (OnlyItemsChanged) is applied by the DesignerRenderer wrapper, mirroring
+            // ApplyNodesEdit/ApplyColumnsEdit (which report parseOk + minimal separately).
             return new EditResult { NewText = edited, Mode = EditMode.Replace };
         }
 
@@ -417,11 +536,85 @@ namespace WinFormsDesigner.Engine
                 if (it.Children.Count > 0) CollectOrders(it.Id, it.Children, into);
         }
 
+        /// <summary>Record every itemId→parentReceiverId pair in a forest (a root's parent is the owner). Used to refuse
+        /// a cross-parent move: an existing item may be reordered or removed, but never reparented.</summary>
+        private static void BuildParentMap(string receiverId, IReadOnlyList<ToolStripItemModel> items, Dictionary<string, string> into)
+        {
+            foreach (var it in items)
+            {
+                into[it.Id] = receiverId;
+                if (it.Children.Count > 0) BuildParentMap(it.Id, it.Children, into);
+            }
+        }
+
+        /// <summary>Delete the WHOLE line(s) spanned by each node from <paramref name="src"/> (start of the node's first
+        /// line through the newline ending its last line), so a removed item's statements/field-decls vanish cleanly.
+        /// Overlapping spans (e.g. two deleted statements sharing a line) are merged; removal runs back-to-front so
+        /// earlier offsets stay valid. Leading trivia above a node (a designer <c>//</c> banner) is intentionally left in
+        /// place — orphaned but harmless — rather than guessing how far a comment block belongs to the node.</summary>
+        private static string RemoveLines(string src, IReadOnlyList<SyntaxNode> nodes)
+        {
+            if (nodes.Count == 0) return src;
+            var spans = new List<(int start, int end)>();
+            foreach (var n in nodes)
+            {
+                int start = src.LastIndexOf('\n', Math.Max(0, n.SpanStart - 1)) + 1;
+                int nl = src.IndexOf('\n', n.Span.End);
+                int end = nl < 0 ? src.Length : nl + 1;
+                spans.Add((start, end));
+            }
+            spans.Sort((a, b) => a.start != b.start ? a.start.CompareTo(b.start) : a.end.CompareTo(b.end));
+            var merged = new List<(int start, int end)>();
+            foreach (var s in spans)
+            {
+                if (merged.Count > 0 && s.start < merged[merged.Count - 1].end)
+                    merged[merged.Count - 1] = (merged[merged.Count - 1].start, Math.Max(merged[merged.Count - 1].end, s.end));
+                else merged.Add(s);
+            }
+            var sb = new StringBuilder(src);
+            for (int i = merged.Count - 1; i >= 0; i--) sb.Remove(merged[i].start, merged[i].end - merged[i].start);
+            return sb.ToString();
+        }
+
+        /// <summary>True when <paramref name="node"/> is the ONLY non-whitespace content on its physical line(s): the
+        /// text before it on its first line and after it on its last line is blank. Guards a whole-line delete from
+        /// collaterally dropping a neighbour that shares the line (a second field decl, a trailing comment).</summary>
+        private static bool OccupiesOwnLines(string src, SyntaxNode node)
+        {
+            int lineStart = src.LastIndexOf('\n', Math.Max(0, node.SpanStart - 1)) + 1;
+            int nl = src.IndexOf('\n', node.Span.End);
+            int lineEnd = nl < 0 ? src.Length : nl;
+            for (int i = lineStart; i < node.SpanStart; i++) if (!char.IsWhiteSpace(src[i])) return false;
+            for (int i = node.Span.End; i < lineEnd; i++) if (!char.IsWhiteSpace(src[i])) return false;
+            return true;
+        }
+
         // ---- add ("Type Here") helpers ----
 
         private static void CollectItemIds(IReadOnlyList<ToolStripItemModel> items, HashSet<string> into)
         {
             foreach (var it in items) { into.Add(it.Id); CollectItemIds(it.Children, into); }
+        }
+
+        /// <summary>Record every itemId→Text pair in a forest (recursively). Used to detect a RENAME (desired vs current
+        /// Text of a surviving existing item).</summary>
+        private static void CollectTexts(IReadOnlyList<ToolStripItemModel> items, Dictionary<string, string> into)
+        {
+            foreach (var it in items) { into[it.Id] = it.Text ?? ""; CollectTexts(it.Children, into); }
+        }
+
+        /// <summary>The string-literal node of item <paramref name="id"/>'s <c>this.&lt;id&gt;.Text = "…"</c> assignment
+        /// (a simple assignment whose RHS is a single string literal), or null if it has none. Accepts a bare
+        /// <c>&lt;id&gt;.Text</c> too (matching the read side, which is <c>this.</c>-insensitive via <see cref="Flatten"/>).</summary>
+        private static LiteralExpressionSyntax? FindTextLiteral(MethodDeclarationSyntax init, string id)
+        {
+            foreach (var st in init.Body!.Statements)
+                if (st is ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax asn }
+                    && asn.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                    && Flatten(asn.Left) is { Count: 2 } lhs && lhs[0] == id && lhs[1] == "Text"
+                    && asn.Right is LiteralExpressionSyntax lit && lit.IsKind(SyntaxKind.StringLiteralExpression))
+                    return lit;
+            return null;
         }
 
         private static IEnumerable<string> GatherLocalNames(MethodDeclarationSyntax init) =>
@@ -543,48 +736,91 @@ namespace WinFormsDesigner.Engine
 
         // ---- safe-save gate ----
 
-        /// <summary>Airtight gate for a reorder-and/or-ADD edit. Derives the set of NEW ids purely from the field-decl
-        /// diff (edited − original), then proves: every ORIGINAL field is kept and exactly the new fields were added
-        /// (and exactly that many class members, so no property/method is smuggled via a crafted type token); every
-        /// ORIGINAL non-AddRange statement is preserved byte-identical and every ADDED one references ONLY new ids
-        /// (so an existing item's construction / property block can never be altered); each ORIGINAL item-collection
-        /// AddRange keeps all its element ids (order may differ), any extra element is a new id, and its comment trivia
-        /// is intact; any freshly-CREATED AddRange contains only new ids. With no new ids this reduces exactly to the
-        /// Slice-1 reorder gate.</summary>
-        public static bool OnlyItemsAddedOrReordered(string original, string edited)
+        /// <summary>Airtight gate for a reorder / ADD / REMOVE / RENAME edit. Derives the NEW and REMOVED id sets purely
+        /// from the field-decl diff (edited − original and original − edited), then proves: exactly the new fields were
+        /// added and the removed fields dropped — and the class member count moved by exactly that net, so no other member
+        /// is smuggled in or silently deleted. Every SURVIVING non-AddRange statement is preserved byte-identical EXCEPT
+        /// that an existing ITEM's <c>Text = "…"</c> literal may change VALUE in place (a RENAME — matched under a
+        /// literal-blanking canonical form scoped to ids that are elements of an original item AddRange); every ADDED
+        /// statement references (via the AST) ONLY new ids and every DROPPED one references ONLY removed ids — so an
+        /// existing item's construction/property block can never be altered or lost. Each ORIGINAL item-collection
+        /// AddRange keeps all its non-removed element ids (order may differ), any extra element is a new id, no removed
+        /// id lingers, and — for a pure add/reorder — its comment trivia is intact (an AddRange that LOST an element is
+        /// required to carry NO comments, a fail-safe against dropping a surviving element's comment); a fully-deleted
+        /// AddRange held only removed ids and a freshly-created one holds only new ids. With no new/removed ids this
+        /// reduces exactly to the reorder gate.</summary>
+        public static bool OnlyItemsChanged(string original, string edited)
         {
             var oRoot = CSharpSyntaxTree.ParseText(original).GetRoot();
             var eRoot = CSharpSyntaxTree.ParseText(edited).GetRoot();
 
-            // fields: originals preserved; the added ones are exactly the new ids (derive newIds from the diff).
+            // fields: derive the added (edited − original) and removed (original − edited) id sets from the decl diff.
             var oF = FieldDeclNames(oRoot); var eF = FieldDeclNames(eRoot);
             var oFset = new HashSet<string>(oF, StringComparer.Ordinal);
             var eFset = new HashSet<string>(eF, StringComparer.Ordinal);
-            if (!oFset.IsSubsetOf(eFset)) return false;                       // no original field removed/renamed
+            if (oFset.Count != oF.Count || eFset.Count != eF.Count) return false; // no duplicate field decl either side
             var newIds = new HashSet<string>(eFset, StringComparer.Ordinal); newIds.ExceptWith(oFset);
-            if (eF.Count != oF.Count + newIds.Count) return false;            // exactly the new fields, no dup decl
-            if (ClassMemberCount(eRoot) != ClassMemberCount(oRoot) + newIds.Count) return false; // no smuggled member
+            var removedIds = new HashSet<string>(oFset, StringComparer.Ordinal); removedIds.ExceptWith(eFset);
+            // the class members moved by exactly (added − removed) fields → no method/property smuggled in or deleted.
+            if (ClassMemberCount(eRoot) != ClassMemberCount(oRoot) + newIds.Count - removedIds.Count) return false;
+            // a removed field's name must NOT occur as an identifier ANYWHERE in the edited class — after a real removal
+            // every use is gone (decl + construction + property block + AddRange element + wiring), so a lingering
+            // occurrence means its declaration was dropped while a use remains: a dangling, uncompilable reference the
+            // syntax-only parse check misses. Covers a field decl collaterally deleted (shared physical line) AND a
+            // `this`-less designer file (whose removed-item statements the Phase-0 `this.`-scan would skip). Exact-name
+            // match, so a survivor whose name merely CONTAINS a removed id (e.g. an orphaned `<id>_Click` handler) is
+            // untouched. (Backstop — the Phase-0 own-line guard already refuses the shared-line shape.)
+            if (removedIds.Count > 0)
+            {
+                var eCls = FindClassWithIC(eRoot);
+                if (eCls != null)
+                    foreach (var idn in eCls.DescendantNodes().OfType<IdentifierNameSyntax>())
+                        if (removedIds.Contains(idn.Identifier.Text))
+                            return false;
+            }
 
             var oStmts = InitStatementNodes(oRoot);
             var eStmts = InitStatementNodes(eRoot);
 
-            // partition into item-collection AddRanges vs the rest. Keep the EDITED non-AddRange nodes so an added
-            // statement's field references are read from the AST — a menu Text literal that happens to contain
-            // "this.<field>" must never be mistaken for a code reference to that field.
-            var oOther = new List<string>(); var oAdd = new List<(string recv, string coll, HashSet<string> ids, List<string> comments)>();
+            // partition into item-collection AddRanges vs the rest. Keep NODES (not just strings) so a statement's field
+            // references are read from the AST — a menu Text literal that happens to contain "this.<field>" must never be
+            // mistaken for a code reference to that field.
+            var oOtherNodes = new List<StatementSyntax>(); var oAdd = new List<(string recv, string coll, HashSet<string> ids, List<string> comments)>();
             var eOtherNodes = new List<StatementSyntax>(); var eAdd = new List<(string recv, string coll, HashSet<string> ids, List<string> comments)>();
-            foreach (var st in oStmts) { if (TryItemAddRange(st, out var r, out var c, out var ids)) oAdd.Add((r!, c!, ids!, CommentTexts(st))); else oOther.Add(NormalizeStmt(st.ToString())); }
-            foreach (var st in eStmts) { if (TryItemAddRange(st, out var r, out var c, out var ids)) eAdd.Add((r!, c!, ids!, CommentTexts(st))); else eOtherNodes.Add(st); }
-            var eOther = eOtherNodes.Select(n => NormalizeStmt(n.ToString())).ToList();
+            foreach (var st in oStmts) { if (TryItemAddRange(st, out var r, out var c, out var ids)) oAdd.Add((r!, c!, ids!, InitializerComments(st))); else oOtherNodes.Add(st); }
+            foreach (var st in eStmts) { if (TryItemAddRange(st, out var r, out var c, out var ids)) eAdd.Add((r!, c!, ids!, InitializerComments(st))); else eOtherNodes.Add(st); }
 
-            // every ORIGINAL non-AddRange statement survives; every ADDED one references (via the AST) ONLY new ids
-            // (≥1) — so it can only be a new item's construction/Name/Text, never a touch of an existing item.
-            if (!MultisetSubset(oOther, eOther)) return false;
-            var oOtherLeft = Counter(oOther);
+            // the ids that are elements of some ORIGINAL item AddRange — i.e. actual menu/toolbar items. ONLY these may
+            // have their `.Text = "…"` string literal change VALUE in place (a RENAME). `Canon` blanks that literal's value
+            // for such a statement so a rename matches byte-for-byte apart from the caption; every other statement (a
+            // non-item control's Text, or an item's non-Text property) keeps its full whitespace-free form and so must be
+            // preserved exactly. A NEW item's Text (id ∉ original items) is NOT blanked — it is validated as an added
+            // statement referencing only a new id.
+            var itemIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var a in oAdd) itemIds.UnionWith(a.ids);
+            string Canon(StatementSyntax st) =>
+                IsTextLiteralAssign(st, out var tid) && itemIds.Contains(tid)
+                    ? "this." + tid + ".Text=@STR@;"
+                    : NormalizeStmt(st.ToString());
+
+            // non-AddRange statements: two independent matching passes. Pass A — every DROPPED original references (via
+            // the AST) ONLY removed ids, so nothing belonging to a surviving item was deleted. Pass B — every ADDED
+            // edited references ONLY new ids, so no surviving/removed item's statement was altered into existence. A
+            // RENAME's before/after Text statements share a canonical form, so they cancel across the passes (never
+            // counted as a drop+add).
+            var eRemain = Counter(eOtherNodes.Select(Canon));
+            foreach (var node in oOtherNodes)
+            {
+                string norm = Canon(node);
+                if (eRemain.TryGetValue(norm, out var n) && n > 0) { eRemain[norm] = n - 1; continue; } // preserved (or renamed in place)
+                var refd = AstReferencedFields(node, oFset);
+                if (refd.Count == 0 || refd.Any(f => !removedIds.Contains(f))) return false;
+            }
+            var oRemain = Counter(oOtherNodes.Select(Canon));
             foreach (var node in eOtherNodes)
             {
-                string norm = NormalizeStmt(node.ToString());
-                if (oOtherLeft.TryGetValue(norm, out var n) && n > 0) { oOtherLeft[norm] = n - 1; continue; } // matches an original → preserved
+                string norm = Canon(node);
+                if (oRemain.TryGetValue(norm, out var n) && n > 0) { oRemain[norm] = n - 1; continue; } // preserved (or renamed in place)
                 var refd = AstReferencedFields(node, eFset);
                 if (refd.Count == 0 || refd.Any(f => !newIds.Contains(f))) return false;
             }
@@ -592,15 +828,25 @@ namespace WinFormsDesigner.Engine
             string Key(string r, string c) => r + "." + c;
             var oByKey = oAdd.GroupBy(a => Key(a.recv, a.coll)).ToDictionary(g => g.Key, g => g.ToList());
             var eByKey = eAdd.GroupBy(a => Key(a.recv, a.coll)).ToDictionary(g => g.Key, g => g.ToList());
-            // every ORIGINAL AddRange preserved: all its ids kept (order may differ), extras are new, comments intact.
             foreach (var kv in oByKey)
             {
                 if (kv.Value.Count != 1) return false; // read enforced a single AddRange per collection
-                if (!eByKey.TryGetValue(kv.Key, out var el) || el.Count != 1) return false;
-                var oIds = kv.Value[0].ids; var eIds = el[0].ids;
-                if (!oIds.IsSubsetOf(eIds)) return false;                     // no existing element removed
-                foreach (var id in eIds) if (!oIds.Contains(id) && !newIds.Contains(id)) return false; // extras are new
-                if (!SameMultiset(kv.Value[0].comments, el[0].comments)) return false; // no comment dropped/added
+                var o = kv.Value[0];
+                if (!eByKey.TryGetValue(kv.Key, out var el))
+                {
+                    // AddRange deleted (its receiver was removed, or it lost its last element) → all ids must be removed.
+                    foreach (var id in o.ids) if (!removedIds.Contains(id)) return false;
+                    continue;
+                }
+                if (el.Count != 1) return false;
+                var e = el[0];
+                foreach (var id in o.ids) if (!removedIds.Contains(id) && !e.ids.Contains(id)) return false; // a survivor was dropped
+                foreach (var id in e.ids) if (!o.ids.Contains(id) && !newIds.Contains(id)) return false;     // an extra isn't new
+                foreach (var id in e.ids) if (removedIds.Contains(id)) return false;                          // a removed id lingers
+                // comments: a pure add/reorder keeps them exactly; an AddRange that LOST an element must carry none
+                // (fail-safe — the shrink can't then silently drop a comment that belonged to a surviving element).
+                if (o.ids.Any(id => removedIds.Contains(id))) { if (o.comments.Count != 0 || e.comments.Count != 0) return false; }
+                else if (!SameMultiset(o.comments, e.comments)) return false;
             }
             // a freshly-created AddRange (edited-only key) must hold only new ids.
             foreach (var kv in eByKey)
@@ -614,13 +860,6 @@ namespace WinFormsDesigner.Engine
 
         private static int ClassMemberCount(SyntaxNode root) => FindClassWithIC(root)?.Members.Count ?? 0;
 
-        private static bool MultisetSubset(List<string> a, List<string> b)
-        {
-            var cb = Counter(b);
-            foreach (var kv in Counter(a)) if (!cb.TryGetValue(kv.Key, out var n) || n < kv.Value) return false;
-            return true;
-        }
-
         /// <summary>The set of field ids a statement references as <c>this.&lt;id&gt;</c>, read from the AST — so a
         /// string-literal <c>Text</c> that happens to contain "this.&lt;field&gt;" is never counted as a code reference.</summary>
         private static HashSet<string> AstReferencedFields(StatementSyntax st, HashSet<string> allFields)
@@ -632,8 +871,32 @@ namespace WinFormsDesigner.Engine
             return refd;
         }
 
-        /// <summary>The comment-trivia texts within a statement (single- and multi-line, incl. doc comments), as a
-        /// multiset — so the reorder gate can prove no comment was silently added or dropped from an AddRange.</summary>
+        /// <summary>True when <paramref name="st"/> is exactly <c>&lt;id&gt;.Text = "&lt;literal&gt;";</c> (a SIMPLE
+        /// assignment whose LHS flattens to <c>[id, "Text"]</c> and whose RHS is a single string literal); emits the id.
+        /// Used by the gate to recognise the one statement shape a RENAME may change in place.</summary>
+        private static bool IsTextLiteralAssign(StatementSyntax st, out string id)
+        {
+            id = "";
+            if (st is not ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax asn }) return false;
+            if (!asn.IsKind(SyntaxKind.SimpleAssignmentExpression)) return false;
+            var lhs = Flatten(asn.Left);
+            if (lhs.Count != 2 || lhs[1] != "Text") return false;
+            if (asn.Right is not LiteralExpressionSyntax lit || !lit.IsKind(SyntaxKind.StringLiteralExpression)) return false;
+            id = lhs[0];
+            return true;
+        }
+
+        /// <summary>The comment texts INSIDE an AddRange's array initializer (between/on its elements), as a multiset —
+        /// scoped to the <c>{ … }</c> so the section banner that leads the statement (a designer <c>// menuStrip1</c>
+        /// comment) is NOT counted as an in-collection comment. Empty when the statement isn't a modelled AddRange.</summary>
+        private static List<string> InitializerComments(StatementSyntax st)
+        {
+            var initz = FindArrayInitializer(st);
+            return initz == null ? new List<string>() : CommentTexts(initz);
+        }
+
+        /// <summary>The comment-trivia texts within a node (single- and multi-line, incl. doc comments), as a multiset —
+        /// so the reorder gate can prove no comment was silently added or dropped from an AddRange initializer.</summary>
         private static List<string> CommentTexts(SyntaxNode node) =>
             node.DescendantTrivia()
                 .Where(t => t.IsKind(SyntaxKind.SingleLineCommentTrivia) || t.IsKind(SyntaxKind.MultiLineCommentTrivia)
@@ -667,9 +930,6 @@ namespace WinFormsDesigner.Engine
 
         private static ToolStripItemsResult Bad(string reason) => new() { Ok = false, Reason = reason };
         private static EditResult Failed(string reason) => new() { Mode = EditMode.Failed, Reason = reason };
-
-        private static bool SameSet(List<string> a, List<string> b) =>
-            a.Count == b.Count && new HashSet<string>(a, StringComparer.Ordinal).SetEquals(b);
 
         private static bool SameMultiset(List<string> a, List<string> b)
         {

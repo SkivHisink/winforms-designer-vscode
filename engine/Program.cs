@@ -668,6 +668,8 @@ namespace WinFormsDesigner.Engine
                 // repeated --tsitem "depth|id[|text[|itemType]]" — depth 0 = a top-level item, deeper = a DropDownItems
                 // child of the previous shallower item. Reorder: give the existing field id. ADD ("Type Here"): leave id
                 // EMPTY and give a text (and optional itemType, default ToolStripMenuItem), e.g. --tsitem "0||Help".
+                // REMOVE: simply OMIT an existing item (and its subtree) from the --tsitem list — it is deleted.
+                // RENAME: give an EXISTING id a new non-empty text, e.g. --tsitem "0|fileToolStripMenuItem|Datei".
                 var flat = args.Select((a, i) => (a, i))
                     .Where(x => x.a == "--tsitem" && x.i + 1 < args.Length)
                     .Select(x =>
@@ -693,7 +695,7 @@ namespace WinFormsDesigner.Engine
                 try
                 {
                     var res = DesignerRenderer.ApplyToolStripItemsEdit(stFile, comp, roots);
-                    Console.WriteLine("== engine set-tsitems (reorder " + comp + ".Items; " + flat.Count + " item(s))");
+                    Console.WriteLine("== engine set-tsitems (reorder/add/remove " + comp + ".Items; " + flat.Count + " item(s))");
                     Console.WriteLine("   mode: " + res.Mode + " | parse-ok: " + res.ParseOk + " | minimal: " + res.Minimal + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
                     if (!res.Safe)
                     {

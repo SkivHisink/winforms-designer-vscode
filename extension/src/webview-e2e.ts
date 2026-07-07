@@ -685,20 +685,204 @@ test('panel toolstrip editor: "+ Add item" ("Type Here") appends an empty-id ite
     reason: '',
     items: [{ id: 'fileToolStripMenuItem', text: 'File', name: 'fileToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] }],
   });
-  // "+ Add item" appends a NEW row whose Text is an editable input (existing items stay read-only spans).
+  // "+ Add item" appends a NEW row whose Text is an editable input (the NEW item's carries the "Type Here" placeholder;
+  // since Slice 4 existing items are renameable and so ALSO expose an input — the new one is picked by its placeholder).
   const addBtn = (Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === '+ Add item');
   ok(!!addBtn, 'the "+ Add item" button is present');
   h.click(addBtn);
   const inputs = Array.from(h.document.querySelectorAll('.treeNodeRow input')) as any[];
-  eq(inputs.length, 1, 'exactly the new item row has an editable Text input (File stays read-only)');
-  inputs[0].value = 'Help';
-  inputs[0].dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  eq(inputs.length, 2, 'File (existing, renameable) + the new item each expose a Text input');
+  const newInput = inputs.find((i: any) => i.placeholder === 'Type Here');
+  ok(!!newInput, 'the NEW item’s input carries the "Type Here" placeholder');
+  newInput.value = 'Help';
+  newInput.dispatchEvent(new h.window.Event('input', { bubbles: true }));
   h.click(h.document.querySelector('.collectionOk'));
   const set = only(h.posted, 'setToolStripItems');
   eq(set.length, 1, 'setToolStripItems posted on OK');
   eq(set[0].toolStripItems.length, 2, 'File + the new item');
   eq([set[0].toolStripItems[1].id, set[0].toolStripItems[1].text, set[0].toolStripItems[1].itemType], ['', 'Help', 'ToolStripMenuItem'], 'the new item carries an EMPTY id (engine mints it), the typed Text, and a concrete type');
   ok(!('_k' in set[0].toolStripItems[1]), 'the ephemeral key is stripped');
+  h.destroy();
+});
+
+test('panel toolstrip editor: the ✕ button deletes an EXISTING item (and its subtree) — OK posts a forest that omits it (Slice 3 REMOVE F5-proxy)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ms',
+    name: 'menuStrip1',
+    type: 'System.Windows.Forms.MenuStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({
+    type: 'toolStripItems',
+    id: 'ms',
+    ok: true,
+    reason: '',
+    items: [
+      { id: 'fileToolStripMenuItem', text: 'File', name: 'fileToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [
+        { id: 'openToolStripMenuItem', text: 'Open', name: '', itemType: 'ToolStripMenuItem', children: [] },
+        { id: 'saveToolStripMenuItem', text: 'Save', name: '', itemType: 'ToolStripMenuItem', children: [] },
+      ] },
+      { id: 'editToolStripMenuItem', text: 'Edit', name: 'editToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] },
+    ],
+  });
+  const rows = (): any[] => Array.from(h.document.querySelectorAll('.treeNodeRow')) as any[];
+  eq(rows().length, 4, 'popup rendered File + Open + Save + Edit');
+  // every item (existing too) now offers a ✕ delete affordance; before Slice 3 only NEW items did.
+  const delBtn = rows()[3].querySelector('button[title="Delete item (and any sub-items)"]');
+  ok(!!delBtn, 'an EXISTING item exposes the ✕ delete button');
+  h.click(delBtn);
+  eq(rows().length, 3, 'Edit row removed from the popup (File + Open + Save remain)');
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq(set.length, 1, 'setToolStripItems posted on OK');
+  eq(set[0].toolStripItems.map((n: any) => n.text), ['File'], 'the committed forest OMITS the deleted Edit (engine removes it)');
+  eq(set[0].toolStripItems[0].children.map((n: any) => n.text), ['Open', 'Save'], 'the surviving item keeps its submenu');
+  h.destroy();
+});
+
+test('panel toolstrip editor: editing an EXISTING item’s Text input RENAMES it — OK posts the forest with the new caption on the same id (Slice 4 RENAME F5-proxy)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ms',
+    name: 'menuStrip1',
+    type: 'System.Windows.Forms.MenuStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({
+    type: 'toolStripItems',
+    id: 'ms',
+    ok: true,
+    reason: '',
+    items: [
+      { id: 'fileToolStripMenuItem', text: 'File', name: 'fileToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] },
+      { id: 'editToolStripMenuItem', text: 'Edit', name: 'editToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] },
+      // a separator has NO editable Text — it must render a rule, never an input
+      { id: 'toolStripSeparator1', text: '', name: 'toolStripSeparator1', itemType: 'ToolStripSeparator', children: [] },
+    ],
+  });
+  const rows = (): any[] => Array.from(h.document.querySelectorAll('.treeNodeRow')) as any[];
+  eq(rows().length, 3, 'popup rendered File + Edit + separator');
+  // existing non-separator items are pre-filled, editable inputs; the separator is a read-only rule
+  const inputs = Array.from(h.document.querySelectorAll('.treeNodeRow input')) as any[];
+  eq(inputs.length, 2, 'File + Edit expose an editable Text input; the separator does not');
+  eq(inputs.map((i: any) => i.value), ['File', 'Edit'], 'existing items’ inputs are pre-filled with their current Text');
+  ok(rows()[2].textContent.includes('──────'), 'the separator row shows a rule, not an input');
+  // rename File → "Datei" by editing its input; leave Edit untouched
+  const fileInput = inputs.find((i: any) => i.value === 'File');
+  fileInput.value = 'Datei';
+  fileInput.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq(set.length, 1, 'setToolStripItems posted on OK');
+  eq(set[0].toolStripItems.map((n: any) => [n.id, n.text]), [
+    ['fileToolStripMenuItem', 'Datei'],
+    ['editToolStripMenuItem', 'Edit'],
+    ['toolStripSeparator1', ''],
+  ], 'File is renamed to "Datei" on the SAME id; Edit and the separator are unchanged');
+  h.destroy();
+});
+
+test('panel toolstrip editor: a NEW item exposes a context-aware TYPE picker — a MenuStrip offers menu types, choosing Separator drops the Text input, OK posts the chosen type (Slice 5 item-type picker F5-proxy)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ms',
+    name: 'menuStrip1',
+    type: 'System.Windows.Forms.MenuStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({
+    type: 'toolStripItems',
+    id: 'ms',
+    ok: true,
+    reason: '',
+    items: [{ id: 'fileToolStripMenuItem', text: 'File', name: 'fileToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] }],
+  });
+  const addBtn = (Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === '+ Add item');
+  h.click(addBtn);
+  const sel = h.document.querySelector('.treeNodeRow select.colTypeSel') as any;
+  ok(!!sel, 'a NEW item row exposes a type <select> (existing items do not)');
+  eq(Array.from(sel.options).map((o: any) => o.value), ['ToolStripMenuItem', 'ToolStripComboBox', 'ToolStripTextBox', 'ToolStripSeparator'], 'a MenuStrip offers the menu-context item types');
+  eq(sel.value, 'ToolStripMenuItem', 'the default new-item type is Menu Item');
+  // switch the new item to a Separator → its Text input disappears (a separator carries no Text) and shows a rule
+  sel.value = 'ToolStripSeparator';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const newRow = (Array.from(h.document.querySelectorAll('.treeNodeRow')) as any[])[1];
+  ok(!newRow.querySelector('input'), 'the separator new-item row no longer has a Text input');
+  ok(newRow.textContent.includes('──────'), 'the separator new-item row shows a rule');
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq(set.length, 1, 'setToolStripItems posted on OK');
+  eq([set[0].toolStripItems[1].id, set[0].toolStripItems[1].itemType, set[0].toolStripItems[1].text], ['', 'ToolStripSeparator', ''], 'the new item carries an EMPTY id, the chosen Separator type, and no Text');
+  h.destroy();
+});
+
+test('panel toolstrip editor: the TYPE picker is context-sensitive — a ToolStrip (toolbar) defaults a new item to Button, not Menu Item (Slice 5)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ts',
+    name: 'toolStrip1',
+    type: 'System.Windows.Forms.ToolStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({ type: 'toolStripItems', id: 'ts', ok: true, reason: '', items: [] });
+  const addBtn = (Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === '+ Add item');
+  h.click(addBtn);
+  const sel = h.document.querySelector('.treeNodeRow select.colTypeSel') as any;
+  ok(!!sel, 'the new toolbar item exposes a type <select>');
+  eq(sel.value, 'ToolStripButton', 'a ToolStrip defaults a new item to Button');
+  ok(Array.from(sel.options).map((o: any) => o.value).indexOf('ToolStripMenuItem') < 0, 'a toolbar picker does not offer Menu Item');
+  // commit with the default type + a caption
+  const inp = h.document.querySelector('.treeNodeRow input') as any;
+  inp.value = 'Run';
+  inp.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq([set[0].toolStripItems[0].id, set[0].toolStripItems[0].itemType, set[0].toolStripItems[0].text], ['', 'ToolStripButton', 'Run'], 'the committed new item is a ToolStripButton with the typed caption');
   h.destroy();
 });
 

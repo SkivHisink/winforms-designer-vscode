@@ -2027,7 +2027,7 @@ class DesignerSession {
     }
   }
 
-  /** Write side of the ToolStrip/MenuStrip item editor (Slice 1: reorder). Mirrors treeNodesFromGrid's error/restore. */
+  /** Write side of the ToolStrip/MenuStrip item editor (reorder / add / remove). Mirrors treeNodesFromGrid's error/restore. */
   async toolStripFromGrid(id: string, items: ToolStripItemModel[]): Promise<void> {
     try {
       await this.applyToolStripItems(id, items);
@@ -2056,7 +2056,7 @@ class DesignerSession {
     }
 
     this.commit(before, res.text, `Edit ${id}.Items`);
-    this.output.appendLine(`edit ${id}.Items (toolstrip add/reorder, unsaved)`);
+    this.output.appendLine(`edit ${id}.Items (toolstrip add/remove/reorder, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Items' }) });
     if (this.engineKind === 'net48') {
       // the live compiled instance isn't rebuilt for a menu add/reorder in this slice — the change shows on the next

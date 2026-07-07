@@ -737,10 +737,12 @@ namespace WinFormsDesigner.Engine
             return DesignerToolStripItemEditor.ListItems(src, ownerId);
         }
 
-        /// <summary>Reorder and/or ADD to a ToolStrip/MenuStrip item tree (Slice 2): rewrite each <c>Items</c>/
-        /// <c>DropDownItems</c> AddRange to exactly <paramref name="items"/> (an empty-Id item is synthesized as a new
-        /// field + construction + Name/Text), leaving every existing statement byte-identical. Same buffer-or-disk
-        /// source + parse-check + <see cref="DesignerToolStripItemEditor.OnlyItemsAddedOrReordered"/> gate.</summary>
+        /// <summary>Reorder, ADD to, REMOVE from, and/or RENAME items of a ToolStrip/MenuStrip item tree: rewrite each
+        /// <c>Items</c>/<c>DropDownItems</c> AddRange to exactly <paramref name="items"/> (an empty-Id item is synthesized
+        /// as a new field + construction + Name/Text; an omitted item is deleted with its whole subtree; an existing
+        /// item's changed non-empty Text rewrites its <c>Text = "…"</c> literal in place), leaving every other surviving
+        /// statement byte-identical. Same buffer-or-disk source + parse-check +
+        /// <see cref="DesignerToolStripItemEditor.OnlyItemsChanged"/> gate.</summary>
         public static PropertyEditResult ApplyToolStripItemsEdit(string designerFilePath, string ownerId, IReadOnlyList<ToolStripItemModel> items, string? sourceText = null)
         {
             string src;
@@ -753,7 +755,7 @@ namespace WinFormsDesigner.Engine
                 return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
 
             bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
-            bool minimal = DesignerToolStripItemEditor.OnlyItemsAddedOrReordered(src, edit.NewText);
+            bool minimal = DesignerToolStripItemEditor.OnlyItemsChanged(src, edit.NewText);
             bool safe = parseOk && minimal;
 
             return new PropertyEditResult
@@ -763,7 +765,7 @@ namespace WinFormsDesigner.Engine
                 ParseOk = parseOk,
                 Minimal = minimal,
                 NewText = safe ? edit.NewText : null,
-                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than adding/reordering items"),
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than adding/removing/renaming/reordering items"),
             };
         }
 

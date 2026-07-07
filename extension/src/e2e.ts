@@ -1521,9 +1521,115 @@ async function main(): Promise<void> {
       const lateAdd = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileToolStripMenuItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }, { id: 'editToolStripMenuItem', text: 'Edit', name: '', itemType: 'ToolStripMenuItem', children: [{ id: '', text: 'Undo', name: '', itemType: 'ToolStripMenuItem', children: [] }] }], lateSrc);
       if (lateAdd.safe) throw new Error('toolstrip: a first-child create under a late/interleaved-construction receiver must be refused (runtime null-ref guard)');
 
-      // SAFETY: removing an existing item, reparenting one, and a submenu under a BRAND-NEW item are still refused.
-      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file], disk)).safe)
-        throw new Error('toolstrip: removing an item must be refused');
+      // ---- REMOVE (Slice 3) ----
+      // removing a top-level item deletes its field decl + construction + property block and strips it from the Items
+      // AddRange; every surviving item (and the other submenu) stays byte-identical and round-trips.
+      const rmEdit = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file], disk);
+      if (!rmEdit.safe || rmEdit.text === null) throw new Error('toolstrip: removing a top-level item must be allowed (Slice 3): ' + rmEdit.reason);
+      if (/this\.editToolStripMenuItem\b/.test(rmEdit.text) || /editToolStripMenuItem;/.test(rmEdit.text))
+        throw new Error('toolstrip: a removed item must leave no code trace (field decl / construction / property / AddRange)');
+      if (!/this\.fileToolStripMenuItem\.Text = "File";/.test(rmEdit.text) || !/this\.openToolStripMenuItem\.Text = "Open";/.test(rmEdit.text))
+        throw new Error('toolstrip: removal must leave every surviving item’s property block byte-identical');
+      const rmRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rmEdit.text);
+      if (rmRt.items.map((i) => i.text).join(',') !== 'File') throw new Error('toolstrip: after removing Edit the menu must round-trip File only: ' + JSON.stringify(rmRt.items.map((i) => i.text)));
+      if (rmRt.items[0]?.children.map((c) => c.text).join(',') !== 'Open,Save') throw new Error('toolstrip: removing a sibling must not touch the other item’s submenu');
+
+      // removing a SUBMENU PARENT deletes its WHOLE subtree (File + Open + Save) — no dangling child field/construction.
+      const rmFile = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [edit], disk);
+      if (!rmFile.safe || rmFile.text === null) throw new Error('toolstrip: removing a submenu parent (whole subtree) must be allowed: ' + rmFile.reason);
+      for (const gone of ['fileToolStripMenuItem', 'openToolStripMenuItem', 'saveToolStripMenuItem'])
+        if (rmFile.text.includes('this.' + gone) || rmFile.text.includes(' ' + gone + ';')) throw new Error('toolstrip: removing a submenu parent must delete its whole subtree — found ' + gone);
+      if (!/private System\.Windows\.Forms\.ToolStripMenuItem editToolStripMenuItem;/.test(rmFile.text)) throw new Error('toolstrip: subtree removal must keep the surviving item’s field decl');
+
+      // removing all of a submenu’s children leaves it childless → its DropDownItems AddRange is DELETED (not empty).
+      const rmKids = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ ...file, children: [] }, edit], disk);
+      if (!rmKids.safe || rmKids.text === null) throw new Error('toolstrip: removing all of a submenu’s children must be allowed: ' + rmKids.reason);
+      if (/DropDownItems\.AddRange/.test(rmKids.text)) throw new Error('toolstrip: a submenu emptied by removal must have its DropDownItems AddRange deleted, not left empty');
+      const rkRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rmKids.text);
+      if (rkRt.items.find((i) => i.text === 'File')?.children.length !== 0) throw new Error('toolstrip: File must round-trip childless after its children are removed');
+
+      // removing EVERY top-level item deletes the owner Items AddRange (empty menu, still valid).
+      const rmAll = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [], disk);
+      if (!rmAll.safe || rmAll.text === null) throw new Error('toolstrip: removing every item must be allowed (empty menu): ' + rmAll.reason);
+      if (/menuStrip1\.Items\.AddRange/.test(rmAll.text)) throw new Error('toolstrip: an emptied menu must have its Items AddRange deleted, not left empty');
+
+      // REMOVE + ADD in one edit: drop Edit, add Help.
+      const rmAdd = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, newHelp], disk);
+      if (!rmAdd.safe || rmAdd.text === null) throw new Error('toolstrip: remove + add in one edit must be allowed: ' + rmAdd.reason);
+      if (/this\.editToolStripMenuItem\b/.test(rmAdd.text)) throw new Error('toolstrip: remove+add must still delete the removed item');
+      const raRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rmAdd.text);
+      if (raRt.items.map((i) => i.text).join(',') !== 'File,Help') throw new Error('toolstrip: remove Edit + add Help must round-trip File,Help: ' + JSON.stringify(raRt.items.map((i) => i.text)));
+
+      // FAIL-SAFE: a remove that would drop a hand-written comment INSIDE the shrunk AddRange is refused, never silent.
+      const rcSrc = disk.replace('this.fileToolStripMenuItem,', 'this.fileToolStripMenuItem, // KEEP-INNER');
+      const rmCmt = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file], rcSrc);
+      if (rmCmt.safe && (rmCmt.text === null || !rmCmt.text.includes('// KEEP-INNER')))
+        throw new Error('toolstrip: a remove that would drop an in-AddRange comment must be refused, never silently applied');
+
+      // FAIL-SAFE: removing an item still referenced by NON-item code (a survivor reads it) is refused — the engine
+      // can’t prove deleting the field won’t break that reference.
+      const refSrc = [
+        'namespace S { partial class F {',
+        '  private System.Windows.Forms.MenuStrip menuStrip1;',
+        '  private System.Windows.Forms.ToolStripMenuItem fileToolStripMenuItem;',
+        '  private System.Windows.Forms.ToolStripMenuItem editToolStripMenuItem;',
+        '  private void InitializeComponent() {',
+        '    this.menuStrip1 = new System.Windows.Forms.MenuStrip();',
+        '    this.fileToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.editToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { this.fileToolStripMenuItem, this.editToolStripMenuItem });',
+        '    this.menuStrip1.MdiWindowListItem = this.editToolStripMenuItem;',
+        '    this.fileToolStripMenuItem.Text = "File";',
+        '    this.editToolStripMenuItem.Text = "Edit";',
+        '  } } }',
+      ].join('\n');
+      const refRm = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileToolStripMenuItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }], refSrc);
+      if (refRm.safe) throw new Error('toolstrip: removing an item still referenced by non-item code (MdiWindowListItem = this.edit) must be refused');
+
+      // FAIL-SAFE (adversarial review wf_ad3bad03-7a8, HIGH): a removed item whose field decl SHARES a physical line
+      // with an unrelated survivor’s decl must be refused — a whole-line splice would collaterally delete the neighbour
+      // (its surviving statements then dangle) and the member-count gate would balance, so this must never save.
+      const shareSrc = [
+        'namespace S { partial class F {',
+        '  private System.Windows.Forms.MenuStrip menuStrip1;',
+        '  private System.Windows.Forms.ToolStripMenuItem fileToolStripMenuItem;',
+        '  private System.Windows.Forms.ToolStripMenuItem editToolStripMenuItem; private System.Windows.Forms.Button saveButton;',
+        '  private void InitializeComponent() {',
+        '    this.menuStrip1 = new System.Windows.Forms.MenuStrip();',
+        '    this.fileToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.editToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.saveButton = new System.Windows.Forms.Button();',
+        '    this.menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { this.fileToolStripMenuItem, this.editToolStripMenuItem });',
+        '    this.Controls.Add(this.saveButton);',
+        '    this.fileToolStripMenuItem.Text = "File";',
+        '    this.editToolStripMenuItem.Text = "Edit";',
+        '  } } }',
+      ].join('\n');
+      const shareRm = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileToolStripMenuItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }], shareSrc);
+      if (shareRm.safe) throw new Error('toolstrip: removing an item whose field decl shares a physical line with a survivor’s decl must be refused (collateral-deletion guard)');
+
+      // FAIL-SAFE (adversarial review wf_ad3bad03-7a8, gate backstop): a `this`-less designer file (removed item's
+      // statements written as `editItem = …` not `this.editItem = …`) — Phase 0's this.-scan skips those statements so
+      // only the field decl is deleted, leaving a dangling bare reference. The gate backstop (any lingering occurrence
+      // of a removed id's name) must refuse it, never save uncompilable code.
+      const bareSrc = [
+        'namespace S { partial class F {',
+        '  private System.Windows.Forms.MenuStrip menuStrip1;',
+        '  private System.Windows.Forms.ToolStripMenuItem fileItem;',
+        '  private System.Windows.Forms.ToolStripMenuItem editItem;',
+        '  private void InitializeComponent() {',
+        '    menuStrip1 = new System.Windows.Forms.MenuStrip();',
+        '    fileItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    editItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { fileItem, editItem });',
+        '    editItem.Text = "Edit";',
+        '    fileItem.Text = "File";',
+        '  } } }',
+      ].join('\n');
+      const bareRm = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }], bareSrc);
+      if (bareRm.safe) throw new Error('toolstrip: removing an item from a this-less designer file (dangling bare ref) must be refused (gate backstop)');
+
+      // SAFETY: reparenting an existing item and a submenu under a BRAND-NEW item are still refused.
       const reparent: ToolStripItemModel[] = [{ ...file, children: [file.children[1]] }, { ...edit, children: [file.children[0]] }];
       if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', reparent, disk)).safe)
         throw new Error('toolstrip: reparenting an existing item must be refused');
@@ -1568,7 +1674,79 @@ async function main(): Promise<void> {
       if (addRead.ok)
         throw new Error('toolstrip: a menu built only via the 3-arg Items.Add overload must be refused read-only, not read as empty');
 
-      console.log('e2e: ToolStrip/MenuStrip item editor verified — Items flagged ToolStripItem; recursive read; reorder rewrites ONLY the AddRange as a pure indent-preserving permutation; ADD (Type Here) synthesizes a new field+ctor+Name/Text and grows/creates the AddRange (construction precedes it), round-trips, and combines with reorder; remove/reparent/nested-new refused; intra-AddRange comment never silently dropped; a 3-arg Items.Add menu refused read-only (Slice 2 + review wf_55284a72-7f3 regressions)');
+      // ---- RENAME an existing item's Text (Slice 4) ----
+      // Top-level rename File → "Datei": ONLY the one `.Text = "…"` literal changes — the edited text is byte-for-byte the
+      // disk text with just that substitution (AddRange order, sibling items, every other statement untouched).
+      const rnFile = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ ...file, text: 'Datei' }, edit], disk);
+      if (!rnFile.safe || rnFile.text === null) throw new Error('toolstrip: rename rejected: ' + rnFile.reason);
+      if (rnFile.text !== disk.replace('this.fileToolStripMenuItem.Text = "File";', 'this.fileToolStripMenuItem.Text = "Datei";'))
+        throw new Error('toolstrip: rename must change ONLY the Text literal, leaving every other byte identical');
+      const rnRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rnFile.text);
+      if (rnRt.items.find((i) => i.id === 'fileToolStripMenuItem')?.text !== 'Datei') throw new Error('toolstrip: rename must round-trip (File→Datei)');
+      if (rnRt.items.find((i) => i.id === 'editToolStripMenuItem')?.text !== 'Edit') throw new Error('toolstrip: rename must not touch a sibling’s Text');
+
+      // Submenu-child rename Open → "Opened" (a nested item's literal); every other Text literal intact.
+      const fileOpened: ToolStripItemModel = { ...file, children: [{ ...file.children[0], text: 'Opened' }, file.children[1]] };
+      const rnKid = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [fileOpened, edit], disk);
+      if (!rnKid.safe || rnKid.text === null) throw new Error('toolstrip: submenu-child rename rejected: ' + rnKid.reason);
+      if (!/this\.openToolStripMenuItem\.Text = "Opened";/.test(rnKid.text) || !/this\.saveToolStripMenuItem\.Text = "Save";/.test(rnKid.text) || !/this\.fileToolStripMenuItem\.Text = "File";/.test(rnKid.text))
+        throw new Error('toolstrip: submenu-child rename must rewrite only the child’s Text literal');
+
+      // Rename COMBINED with remove + submenu reorder in one edit: keep only File (renamed "Files"), removing Edit and
+      // ordering its submenu Save-before-Open.
+      const rnCombo = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ ...file, text: 'Files', children: [file.children[1], file.children[0]] }], disk);
+      if (!rnCombo.safe || rnCombo.text === null) throw new Error('toolstrip: rename+remove+reorder combo rejected: ' + rnCombo.reason);
+      if (!/this\.fileToolStripMenuItem\.Text = "Files";/.test(rnCombo.text)) throw new Error('toolstrip: combo must rename File→Files');
+      if (/this\.editToolStripMenuItem\b/.test(rnCombo.text)) throw new Error('toolstrip: combo must still remove Edit');
+      const rcRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rnCombo.text);
+      if (rcRt.items.map((i) => i.text).join(',') !== 'Files') throw new Error('toolstrip: combo re-read top wrong: ' + JSON.stringify(rcRt.items.map((i) => i.text)));
+      if (rcRt.items[0].children.map((c) => c.text).join(',') !== 'Save,Open') throw new Error('toolstrip: combo must reorder the surviving submenu (Save,Open)');
+
+      // An empty desired Text must NOT wipe an existing literal — a caller omitting Text is a reorder, never a clear.
+      const rnEmpty = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ ...file, text: '' }, edit], disk);
+      if (!rnEmpty.safe || rnEmpty.text === null) throw new Error('toolstrip: empty-Text edit rejected: ' + rnEmpty.reason);
+      if (!/this\.fileToolStripMenuItem\.Text = "File";/.test(rnEmpty.text)) throw new Error('toolstrip: an empty desired Text must leave the existing literal unchanged, never clear it');
+
+      // REFUSE: renaming an item that has no simple `.Text = "…"` literal (adding a Text property is a follow-up, not this slice).
+      const noTextSrc = [
+        'namespace S { partial class F {',
+        '  private System.Windows.Forms.MenuStrip menuStrip1;',
+        '  private System.Windows.Forms.ToolStripMenuItem fileItem;',
+        '  private System.Windows.Forms.ToolStripMenuItem editItem;',
+        '  private void InitializeComponent() {',
+        '    this.menuStrip1 = new System.Windows.Forms.MenuStrip();',
+        '    this.fileItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.editItem = new System.Windows.Forms.ToolStripMenuItem();',
+        '    this.menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { this.fileItem, this.editItem });',
+        '    this.fileItem.Text = "File";',
+        '  } } }',
+      ].join('\n');
+      const noTextRn = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }, { id: 'editItem', text: 'Renamed', name: '', itemType: 'ToolStripMenuItem', children: [] }], noTextSrc);
+      if (noTextRn.safe) throw new Error('toolstrip: renaming an item with no `.Text = "…"` literal must be refused (adding a Text property is a follow-up)');
+
+      // ---- item-TYPE picker (Slice 5) ----
+      // A NEW item may be any allowlisted ToolStrip type (not only ToolStripMenuItem): the engine mints the right
+      // `new <Type>()` and skips Text for a separator. Add a separator + a button + a combobox in one edit.
+      const addTyped = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [
+        file, edit,
+        { id: '', text: '', name: '', itemType: 'ToolStripSeparator', children: [] },
+        { id: '', text: 'Run', name: '', itemType: 'ToolStripButton', children: [] },
+        { id: '', text: 'Filter', name: '', itemType: 'ToolStripComboBox', children: [] },
+      ], disk);
+      if (!addTyped.safe || addTyped.text === null) throw new Error('toolstrip: typed ADD rejected: ' + addTyped.reason);
+      if (!/new System\.Windows\.Forms\.ToolStripSeparator\(\);/.test(addTyped.text)) throw new Error('toolstrip: typed ADD must construct a ToolStripSeparator');
+      if (!/new System\.Windows\.Forms\.ToolStripButton\(\);/.test(addTyped.text) || !/this\.toolStripButton1\.Text = "Run";/.test(addTyped.text)) throw new Error('toolstrip: typed ADD must construct a ToolStripButton carrying its Text');
+      if (!/new System\.Windows\.Forms\.ToolStripComboBox\(\);/.test(addTyped.text)) throw new Error('toolstrip: typed ADD must construct a ToolStripComboBox');
+      if (/toolStripSeparator1\.Text =/.test(addTyped.text)) throw new Error('toolstrip: a separator must NOT emit a Text assignment');
+      const atRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', addTyped.text);
+      if (atRt.items.map((i) => i.itemType).join(',') !== 'ToolStripMenuItem,ToolStripMenuItem,ToolStripSeparator,ToolStripButton,ToolStripComboBox')
+        throw new Error('toolstrip: typed ADD round-trip types wrong: ' + JSON.stringify(atRt.items.map((i) => i.itemType)));
+      if (atRt.items.find((i) => i.itemType === 'ToolStripSeparator')?.text !== '') throw new Error('toolstrip: an added separator must round-trip with an empty Text');
+      // an UNKNOWN / non-allowlisted new item type is refused (no arbitrary type injection)
+      const addBad = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, { id: '', text: 'X', name: '', itemType: 'System.Evil.Type', children: [] }], disk);
+      if (addBad.safe) throw new Error('toolstrip: a non-allowlisted new item type must be refused (no arbitrary type injection)');
+
+      console.log('e2e: ToolStrip/MenuStrip item editor verified — Items flagged ToolStripItem; recursive read; reorder rewrites ONLY the AddRange as a pure indent-preserving permutation; ADD (Type Here) synthesizes a new field+ctor+Name/Text and grows/creates the AddRange (construction precedes it), round-trips, and combines with reorder; REMOVE (Slice 3) deletes an item’s field+ctor+property block+AddRange membership (whole subtree for a parent; empties delete the AddRange; combines with add), leaves survivors byte-identical, and refuses when it would drop an in-AddRange comment or an item still referenced by non-item code; reparent/nested-new refused; intra-AddRange comment never silently dropped; a 3-arg Items.Add menu refused read-only; RENAME (Slice 4) rewrites an existing item’s `.Text = "…"` literal in place (byte-identical elsewhere), round-trips, nests, combines with remove+reorder, never clears on an empty desired Text, and refuses an item with no Text literal; TYPE picker (Slice 5) adds any allowlisted item type (separator/button/combobox, separator carries no Text) and refuses a non-allowlisted type (Slice 2/3/4/5 + review wf_55284a72-7f3 regressions)');
     } else {
       console.log('e2e: ToolStrip item editor SKIPPED — engine/samples/MenuForm.Designer.cs missing');
     }

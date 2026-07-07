@@ -994,12 +994,22 @@
   var GRIDCOLUMN_ITEM_TYPE = 'System.Windows.Forms.DataGridViewColumn';
   var TREENODE_ITEM_TYPE = 'System.Windows.Forms.TreeNode';
   var TOOLSTRIP_ITEM_TYPE = 'System.Windows.Forms.ToolStripItem';
+  // Item types the "Type Here" picker offers for a NEW item, curated by the owner strip's kind (VS shows a
+  // context-appropriate subset). The engine's `ItemTypeFqns` allowlist accepts every one of these; the FIRST entry is
+  // the default for a fresh item. Existing items keep their concrete type (changing it would risk losing type-specific
+  // properties), so the picker is offered on new rows only.
+  function toolStripNewTypes(ownerType) {
+    var t = ownerType || '';
+    if (t.indexOf('StatusStrip') >= 0) return [['ToolStripStatusLabel', 'Status Label'], ['ToolStripProgressBar', 'Progress Bar'], ['ToolStripDropDownButton', 'DropDown Button'], ['ToolStripSplitButton', 'Split Button'], ['ToolStripSeparator', 'Separator']];
+    if (t.indexOf('MenuStrip') >= 0) return [['ToolStripMenuItem', 'Menu Item'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripSeparator', 'Separator']];
+    return [['ToolStripButton', 'Button'], ['ToolStripLabel', 'Label'], ['ToolStripSeparator', 'Separator'], ['ToolStripSplitButton', 'Split Button'], ['ToolStripDropDownButton', 'DropDown Button'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripProgressBar', 'Progress Bar']];
+  }
   var STRINGARRAY_ITEM_TYPE = 'System.String[]'; // sentinel for a generic string[] property (TextBox/RichTextBox.Lines)
   var pendingCollection = null; // { id, prop, anchor } awaiting the host's collectionItems reply
   var pendingColumns = null;    // { id, anchor } awaiting the host's columnItems reply
   var pendingGridColumns = null; // { id, anchor } awaiting the host's gridColumnItems reply
   var pendingTreeNodes = null;  // { id, anchor } awaiting the host's treeNodeItems reply
-  var pendingToolStrip = null;  // { id, anchor } awaiting the host's toolStripItems reply
+  var pendingToolStrip = null;  // { id, anchor, ownerType } awaiting the host's toolStripItems reply
   var pendingStringArray = null; // { id, prop, anchor } awaiting the host's stringArrayItems reply
   function collectionEditor(c, p) {
     var wrap = document.createElement('div'); wrap.className = 'collectionEd';
@@ -1415,23 +1425,26 @@
     });
   }
 
-  // ---- ToolStrip / MenuStrip item editor (Slice 1: view + REORDER within a sibling group). The item tree renders
-  // recursively (menus have nested DropDownItems); each row's ↑/↓ moves it within its siblings. Text/type are shown
-  // read-only — adding / removing / renaming items are follow-up slices. OK posts the reordered forest. ----
+  // ---- ToolStrip / MenuStrip item editor (read + REORDER + ADD "Type Here" + REMOVE + RENAME + item-TYPE picker). The
+  // item tree renders recursively (menus have nested DropDownItems); ↑/↓ reorder within siblings, ✕ deletes, "+ Add item"
+  // appends a NEW item whose type is chosen from a context-appropriate picker and whose Text is typed inline, and an
+  // existing item's Text can be edited to RENAME it. OK posts the resulting forest. ----
   function toolStripEditor(c, p) {
     var wrap = document.createElement('div'); wrap.className = 'collectionEd';
     var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)'; lbl.title = p.type;
     wrap.appendChild(lbl);
     var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…'; btn.title = 'Edit items…';
     btn.addEventListener('click', function () {
-      pendingToolStrip = { id: c.id, anchor: btn };
+      pendingToolStrip = { id: c.id, anchor: btn, ownerType: c.type || '' };
       vscode.postMessage({ type: 'listToolStripItems', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
   }
   var _tsKey = 0;
-  function openToolStripPopup(anchor, id, ok, items, reason) {
+  function openToolStripPopup(anchor, id, ok, items, reason, ownerType) {
+    var pickTypes = toolStripNewTypes(ownerType);   // context-appropriate item types a NEW item may be
+    var defaultType = pickTypes[0][0];              // the default type for a fresh() item
     openPopup(anchor, function (pop) {
       pop.classList.add('collectionPop'); pop.classList.add('treeNodesPop');
       var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Items'; pop.appendChild(title);
@@ -1446,7 +1459,7 @@
       // with an EMPTY id — the engine mints its field name, construction and Name/Text on commit.
       function clone(n) { return { _k: ++_tsKey, id: n.id || '', text: n.text || '', name: n.name || '', itemType: n.itemType || '', children: (n.children || []).map(clone) }; }
       function strip(a) { return a.map(function (n) { return { id: n.id || '', text: n.text || '', name: n.name || '', itemType: n.itemType || '', children: strip(n.children) }; }); }
-      function fresh() { return { _k: ++_tsKey, id: '', text: '', name: '', itemType: 'ToolStripMenuItem', children: [] }; }
+      function fresh() { return { _k: ++_tsKey, id: '', text: '', name: '', itemType: defaultType, children: [] }; }
       var roots = (items || []).map(clone);
       var original = JSON.stringify(strip(roots));
       var expanded = {};
@@ -1467,25 +1480,44 @@
         if (hasKids) tw.addEventListener('click', function () { if (expanded[node._k]) delete expanded[node._k]; else expanded[node._k] = true; render(); });
         r.appendChild(tw);
         if (isNew) {
-          // a NEW item's Text is editable ("Type Here"); existing items stay read-only (renaming is a later slice).
+          // NEW item: a type picker (existing items keep their concrete type — changing it would risk losing
+          // type-specific properties, so no picker there). Switching to Separator drops the item's Text.
+          var typeSel = document.createElement('select'); typeSel.className = 'colTypeSel'; typeSel.title = 'Item type';
+          typeSel.style.cssText = 'margin-right:.35em';
+          pickTypes.forEach(function (pt) {
+            var o = document.createElement('option'); o.value = pt[0]; o.textContent = pt[1];
+            if (pt[0] === node.itemType) o.selected = true;
+            typeSel.appendChild(o);
+          });
+          typeSel.addEventListener('change', function () {
+            node.itemType = typeSel.value;
+            if (node.itemType === 'ToolStripSeparator') node.text = '';
+            render();
+          });
+          r.appendChild(typeSel);
+        }
+        if (node.itemType === 'ToolStripSeparator') {
+          // a separator carries no Text — show a rule, not an editor (its Text is never rewritten)
+          var label = document.createElement('span'); label.className = 'colText'; label.style.cssText = 'min-width:9em;opacity:.5';
+          label.textContent = '──────'; label.title = (node.itemType || 'item') + '  ' + node.name;
+          r.appendChild(label);
+        } else {
+          // Text is editable: a NEW item is "Type Here"; an EXISTING item can be RENAMED — the engine rewrites its
+          // `.Text = "…"` literal in place on commit (clearing it to empty leaves the source Text unchanged).
           var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'colText'; inp.value = node.text || '';
-          inp.placeholder = 'Type Here'; inp.style.minWidth = '9em';
+          inp.placeholder = isNew ? 'Type Here' : (node.name || node.id || ''); inp.style.minWidth = '9em';
+          if (!isNew) inp.title = (node.itemType || 'item') + '  ' + node.name;
           inp.addEventListener('input', function () { node.text = inp.value; });
           r.appendChild(inp);
-        } else {
-          var label = document.createElement('span'); label.className = 'colText'; label.style.cssText = 'min-width:9em;opacity:.95';
-          if (node.itemType === 'ToolStripSeparator') { label.textContent = '──────'; label.style.opacity = '.5'; }
-          else label.textContent = node.text || node.name || node.id || '(item)';
-          label.title = (node.itemType || 'item') + '  ' + node.name;
-          r.appendChild(label);
         }
         r.appendChild(mini('↑', 'Move up', i === 0, function () { var t = arr[i - 1]; arr[i - 1] = arr[i]; arr[i] = t; render(); }));
         r.appendChild(mini('↓', 'Move down', i === arr.length - 1, function () { var t = arr[i + 1]; arr[i + 1] = arr[i]; arr[i] = t; render(); }));
         r.appendChild(mini('＋⇢', 'Add item below', false, function () { arr.splice(i + 1, 0, fresh()); render(); }));
         // add a child only under an EXISTING menu item — a submenu under a brand-new item isn't supported yet
         if (isMenu && !isNew) r.appendChild(mini('＋', 'Add child item', false, function () { node.children.push(fresh()); expanded[node._k] = true; render(); }));
-        // only a NEW (unsaved) item may be removed here — deleting an existing item is a separate slice
-        if (isNew) r.appendChild(mini('✕', 'Remove', false, function () { arr.splice(i, 1); render(); }));
+        // remove this item: a NEW (unsaved) item is just discarded; an EXISTING item (and its whole subtree) is deleted
+        // from source on commit — the engine strips its field/construction/property block and its AddRange membership.
+        r.appendChild(mini('✕', isNew ? 'Remove' : 'Delete item (and any sub-items)', false, function () { arr.splice(i, 1); render(); }));
         return r;
       }
       function walk(arr, depth) {
@@ -1874,8 +1906,9 @@
       // reply to a ToolStrip/MenuStrip.Items "…" click — open the recursive reorder editor anchored to the button
       if (pendingToolStrip && pendingToolStrip.id === m.id) {
         var tsAnchor = pendingToolStrip.anchor;
+        var tsOwnerType = pendingToolStrip.ownerType;
         pendingToolStrip = null;
-        if (tsAnchor && tsAnchor.isConnected) openToolStripPopup(tsAnchor, m.id, !!m.ok, m.items || [], m.reason);
+        if (tsAnchor && tsAnchor.isConnected) openToolStripPopup(tsAnchor, m.id, !!m.ok, m.items || [], m.reason, tsOwnerType);
       }
     } else if (m.type === 'clear') {
       closePopup();
