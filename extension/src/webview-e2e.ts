@@ -323,6 +323,30 @@ test('lock controls (T1.2): the menu locks every control, then a locked control 
   h.destroy();
 });
 
+test('strip slots (on-canvas Type Here, Slice A): a layout with toolStripItems draws one .typehereslot per strip at the slot rect (zoom=1)', () => {
+  const h = loadDesigner();
+  h.send({ type: 'render', png: '', width: 300, height: 100, gen: 0 }); // set hasRendered so overlays draw
+  const strip = mkCtrl({ id: 'menuStrip1', type: 'System.Windows.Forms.MenuStrip', x: 8, y: 8, width: 284, height: 24, isStripHost: true });
+  h.send({
+    type: 'layout',
+    controls: [strip],
+    toolStripItems: [
+      { ownerId: 'menuStrip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+      { ownerId: 'menuStrip1', itemId: '', itemType: '', x: 53, y: 10, width: 66, height: 20, isTypeHere: true },
+    ],
+  });
+  const shown = Array.prototype.filter.call(h.document.querySelectorAll('.typehereslot'), (s: any) => s.style.display !== 'none');
+  eq(shown.length, 1, 'exactly one Type-Here slot drawn (the isTypeHere item, NOT the real item)');
+  eq(shown[0].style.left, '53px', 'slot left = slot.x × zoom(1)');
+  eq(shown[0].style.width, '66px', 'slot width = slot.w × zoom(1)');
+  eq(shown[0].textContent, '+', 'slot shows the add glyph');
+  // a fresh layout with NO strip items retracts every slot (no stale overlay after e.g. deleting the strip)
+  h.send({ type: 'layout', controls: [strip], toolStripItems: [] });
+  const stillShown = Array.prototype.filter.call(h.document.querySelectorAll('.typehereslot'), (s: any) => s.style.display !== 'none');
+  eq(stillShown.length, 0, 'slots retract when the layout carries no strip items');
+  h.destroy();
+});
+
 // ================================================================================================================
 // PANEL (media/panel.js) — property grid / toolbox / outline
 // ================================================================================================================

@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import {
   EngineHandle,
   LayoutControl,
+  ToolStripItemBounds,
   ComponentDesc,
   renderWithLayout,
   renderCompiledWithLayout,
@@ -13,6 +14,7 @@ import {
   resetCompiledPropertyLive,
   setCompiledCollectionLive,
   setCompiledTreeNodesLive,
+  setCompiledToolStripItemsLive,
   setCompiledStringArrayLive,
   LiveCollItem,
   applyCompiledEdits,
@@ -72,6 +74,7 @@ import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
 import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
 import { t, tn, injectL10nScript } from './i18n';
 import { categorizeUnrepresentable } from './renderDiagnostics';
+import { retainSelectionId } from './selection';
 
 export type EngineKind = 'net9' | 'net48';
 type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
@@ -465,6 +468,7 @@ class DesignerSession {
   private currentId = 'this';
   private renderSeq = 0;
   private controls: LayoutControl[] = [];
+  private toolStripItems: ToolStripItemBounds[] = []; // per-item geometry from the last render (on-canvas "Type Here")
   private rootClient: { w: number; h: number } | null = null;
   private rootFrame: { w: number; h: number } | null = null;
   /** Which engine renders THIS form — detected per render from the resolved control assembly's runtime
@@ -599,9 +603,10 @@ class DesignerSession {
     void this.panel.webview.postMessage(message);
   }
 
-  /** Layout goes to the canvas (hit-test/overlay) AND the Properties view (tree selector). */
-  private postLayout(controls: LayoutControl[]): void {
-    this.post({ type: 'layout', controls });
+  /** Layout goes to the canvas (hit-test/overlay + on-canvas strip-item geometry) AND the Properties view (tree
+   *  selector). The Properties tree has no strip geometry to draw, so only the canvas gets `toolStripItems`. */
+  private postLayout(controls: LayoutControl[], toolStripItems: ToolStripItemBounds[] = []): void {
+    this.post({ type: 'layout', controls, toolStripItems });
     DesignerHub.instance.pushPanel(this, { type: 'layout', controls });
   }
   /** Selection goes to the canvas (overlay) AND the Properties view (tree highlight). */
@@ -1047,12 +1052,17 @@ class DesignerSession {
     this.output.appendLine(`[designer] render #${seq} ok: ${result.png.length}B, ${result.controls.length} controls`);
 
     this.controls = result.controls;
+    this.toolStripItems = result.toolStripItems ?? [];
     this.rootClient = { w: result.clientWidth, h: result.clientHeight };
     this.rootFrame = { w: result.width, h: result.height };
     this.post({ type: 'render', png: result.png.toString('base64'), width: result.width, height: result.height, gen: seq });
-    this.postLayout(result.controls);
+    this.postLayout(result.controls, this.toolStripItems);
     this.post({ type: 'tray', items: result.tray }); // component tray (canvas strip)
-    if (!result.controls.some((c) => c.id === this.currentId)) this.currentId = 'this';
+    // Keep the selection across a full re-render only if it still exists — as a visual control OR a tray component
+    // (a ContextMenuStrip, Timer, …); otherwise fall back to the root form. Consulting the tray too matters after
+    // editing a tray component's collection (e.g. a ContextMenuStrip's Items commits via this net9 fullRender):
+    // without it the selection would snap to the form. See retainSelectionId (unit-tested in e2e.ts).
+    this.currentId = retainSelectionId(this.currentId, result.controls, result.tray);
     this.pushSelect(this.currentId);
     await this.loadProps(this.currentId);
     await this.postDirty();
@@ -1556,10 +1566,11 @@ class DesignerSession {
   private show48(res: RenderLayout, seq: number): void {
     if (seq !== this.renderSeq || this.disposed) return;
     this.controls = res.controls;
+    this.toolStripItems = res.toolStripItems ?? [];
     this.rootClient = { w: res.clientWidth, h: res.clientHeight };
     this.rootFrame = { w: res.width, h: res.height };
     this.post({ type: 'render', png: res.png.toString('base64'), width: res.width, height: res.height, gen: seq });
-    this.postLayout(res.controls);
+    this.postLayout(res.controls, this.toolStripItems);
     this.post({ type: 'tray', items: res.tray });
     if (res.applied === false) {
       this.post({ type: 'status', message: t('status.previewPartial', { diag: res.diagnostics || 'some edits not applied live' }) });
@@ -2056,17 +2067,34 @@ class DesignerSession {
     }
 
     this.commit(before, res.text, `Edit ${id}.Items`);
-    this.output.appendLine(`edit ${id}.Items (toolstrip add/remove/reorder, unsaved)`);
+    this.output.appendLine(`edit ${id}.Items (toolstrip add/remove/rename/reorder, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Items' }) });
     if (this.engineKind === 'net48') {
-      // the live compiled instance isn't rebuilt for a menu add/reorder in this slice — the change shows on the next
-      // full rebuild; flag it so the (unchanged) live picture isn't mistaken for the committed items.
-      this.post({ type: 'status', message: t('status.previewPartial', { diag: 'menu items edited in source; rebuild to update the live preview' }) });
+      await this.liveToolStrip48(id, res.text);
     } else {
       await this.fullRender();
     }
     await this.loadProps(id);
     await this.postDirty();
+  }
+
+  /** net48 compiled preview after a ToolStrip/MenuStrip item edit: reconcile the strip's items (add/remove/rename/
+   *  reorder) on the live instance so the canvas updates immediately (the ToolStrip analogue of liveTreeNodes48).
+   *  Re-renders the compiled assembly would show the stale built strip; this mutates the live Items instead. The items
+   *  are re-read from the just-committed source so new "Type Here" items carry their minted field ids — the live
+   *  reconcile keys on the field id, so it needs the resolved forest, not the raw popup input (which sends empty ids
+   *  for adds). Best-effort — a non-ToolStrip owner or an unresolvable new item type leaves the picture on the built
+   *  strip with a note (show48's previewPartial); the committed text still renders after a rebuild. */
+  private async liveToolStrip48(id: string, committedText: string): Promise<void> {
+    const asm = this.asm();
+    if (!asm || !this.designerFile) return;
+    // Re-read the committed buffer (net9 pure-text parse) to resolve every field id, then reconcile the live instance.
+    const resolved = await listToolStripItems(await this.ensureEngine('net9'), this.designerFile, id, committedText);
+    if (!resolved.ok) {
+      this.post({ type: 'status', message: t('status.previewPartial', { diag: resolved.reason || 'menu items edited in source; rebuild to update the live preview' }) });
+      return;
+    }
+    await this.live48((eng) => setCompiledToolStripItemsLive(eng, this.designerFile!, asm, id, resolved.items));
   }
 
   /** Read side of the typed DataGridView.Columns editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
@@ -2761,8 +2789,9 @@ class DesignerSession {
 
       const geometryUnchanged = sameLayout(this.controls, layout.controls);
       this.controls = layout.controls;
+      this.toolStripItems = layout.toolStripItems ?? [];
       this.rootClient = { w: layout.clientWidth, h: layout.clientHeight };
-      this.postLayout(layout.controls);
+      this.postLayout(layout.controls, this.toolStripItems);
 
       const hasChildren = layout.controls.some((c) => c.parentId === id);
       if (geometryUnchanged && !hasChildren) {
@@ -2787,10 +2816,11 @@ class DesignerSession {
     }
     if (seq !== this.renderSeq || this.disposed) return;
     this.controls = frame.controls;
+    this.toolStripItems = frame.toolStripItems ?? [];
     this.rootClient = { w: frame.clientWidth, h: frame.clientHeight };
     this.rootFrame = { w: frame.width, h: frame.height };
     this.post({ type: 'render', png: frame.png.toString('base64'), width: frame.width, height: frame.height, gen: seq });
-    this.postLayout(frame.controls);
+    this.postLayout(frame.controls, this.toolStripItems);
     this.pushSelect(this.currentId);
     // keep the partial-render banner in lockstep with this whole-frame re-render (a value edit rarely changes which
     // constructs are unrepresentable, but if it does — e.g. fixing/breaking a control — refresh rather than go stale).
@@ -3000,6 +3030,11 @@ ${cspMeta(webview, nonce)}
   /* hover pre-selection hint — a thin outline over the control a click would select (sits above container
      outlines but below the active selection boxes so it never masks the current selection) */
   .hoverhint { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 3; border: 1px solid rgba(78,161,255,.55); background: rgba(78,161,255,.06); }
+  /* on-canvas "Type Here" add-slot at the end of a ToolStrip/MenuStrip/StatusStrip — a dashed placeholder cell that
+     hints where a new item lands (read-only affordance in this slice; interaction lands in a follow-up) */
+  .typehereslot { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 4; border: 1px dashed rgba(78,161,255,.75);
+    background: rgba(78,161,255,.09); color: rgba(150,195,255,.95); font-size: 9px; line-height: 1; display: flex;
+    align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; padding: 0 2px; }
   /* small visual separator between toolbar button groups */
   .tbsep { display: inline-block; width: 1px; align-self: stretch; margin: 1px 4px; background: var(--vscode-panel-border, #444); }
   /* rubber-band selection rectangle */

@@ -80,6 +80,11 @@ namespace WinFormsDesigner.Engine.Net48
                 return SetNodesCli(args, sndesigner);
             }
 
+            if (Has(args, "--settsitems", out string? tsdesigner) && tsdesigner != null)
+            {
+                return SetToolStripItemsLiveCli(args, tsdesigner);
+            }
+
             if (Has(args, "--setlines", out string? sldesigner) && sldesigner != null)
             {
                 return SetLinesCli(args, sldesigner);
@@ -222,9 +227,13 @@ namespace WinFormsDesigner.Engine.Net48
             try
             {
                 var r = api.RenderCompiledWithLayout(designer, asm, type, probes, 0, 0);
-                Console.WriteLine($"[render] rootType={r.RootType} size={r.Width}x{r.Height} controls={r.Controls.Count} tray={r.Tray.Count} png={r.Png.Length}B");
+                Console.WriteLine($"[render] rootType={r.RootType} size={r.Width}x{r.Height} controls={r.Controls.Count} tray={r.Tray.Count} stripItems={r.ToolStripItems.Count} png={r.Png.Length}B");
                 foreach (var c in r.Controls.Take(12))
-                    Console.WriteLine($"   {(c.IsRoot ? "*" : " ")} id={c.Id} type={c.Type} @({c.X},{c.Y}) {c.Width}x{c.Height} d{c.Depth} parent={c.ParentId}");
+                    Console.WriteLine($"   {(c.IsRoot ? "*" : " ")} id={c.Id} type={c.Type} @({c.X},{c.Y}) {c.Width}x{c.Height} d{c.Depth} parent={c.ParentId}{(c.IsStripHost ? " [strip-host]" : "")}");
+                foreach (var it in r.ToolStripItems)
+                    Console.WriteLine($"   · {it.OwnerId} ▸ {(it.IsTypeHere ? "[Type Here]" : it.ItemId + " : " + it.ItemType)} @({it.X},{it.Y}) {it.Width}x{it.Height}");
+                foreach (var t in r.Tray)
+                    Console.WriteLine($"   [tray] {t.Name} [id={t.Id}] : {t.Type}");
                 if (!string.IsNullOrEmpty(r.Diagnostics)) Console.WriteLine("[render] diag: " + r.Diagnostics);
                 if (!string.IsNullOrEmpty(outPng)) { File.WriteAllBytes(outPng!, r.Png); Console.WriteLine("[render] wrote " + Path.GetFullPath(outPng!)); }
                 return r.Png.Length > 0 ? 0 : 2;
@@ -359,6 +368,41 @@ namespace WinFormsDesigner.Engine.Net48
             }
         }
 
+        /// <summary>Headless self-test for the net48 live ToolStrip/MenuStrip item picture: reconcile the strip owner's
+        /// items on the live compiled instance from <c>--tsitem</c> and report the new render. Each <c>--tsitem</c> is a
+        /// "depth|id|text|itemType" token (depth 0 = top-level, deeper = a DropDownItems child of the previous shallower
+        /// item), so add (empty→minted id is the net9 job; here pass an id) / remove (omit an id) / rename (id + new
+        /// text) / reorder (reordered ids) / nesting are all exercisable — e.g.
+        /// <c>--tsitem "0|fileMenu|File|ToolStripMenuItem" --tsitem "1|openItem|Open|ToolStripMenuItem"</c>. Drives the
+        /// whole path (DomainManager → child AppDomain → STA → surgical Items reconcile) + the LiveToolStripItem DTO
+        /// serialization across the domain boundary.</summary>
+        private static int SetToolStripItemsLiveCli(string[] args, string designer)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            string id = Value(args, "--id") ?? "this";
+            var specs = args.Select((a, i) => (a, i)).Where(x => x.a == "--tsitem").Select(x => x.i + 1 < args.Length ? args[x.i + 1] : "").ToArray();
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            var items = BuildToolStripForest(specs);
+
+            var api = new EngineApi();
+            try
+            {
+                var r = api.SetCompiledToolStripItemsLive(designer, asm, id, items, null, probes);
+                // The tray lists every non-Control field component (incl. ToolStrip items) by field id, so it directly
+                // reflects the reconciled item set — a headless proxy for "which items exist after add/remove/reorder".
+                string tray = string.Join(",", r.Tray.Select(t => t.Name));
+                Console.WriteLine($"[settsitems] applied={r.Applied} roots={items.Length} size={r.Width}x{r.Height} png={r.Png.Length}B tray=[{tray}]{(r.Diagnostics.Length > 0 ? " diag=" + r.Diagnostics : "")}");
+                return r.Applied ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                for (var e = ex; e != null; e = e.InnerException)
+                    Console.Error.WriteLine($"[settsitems] {e.GetType().FullName}: {e.Message}");
+                return 4;
+            }
+        }
+
         /// <summary>Headless self-test for the net48 live string-array picture: set the string[] owner.propName (Lines)
         /// on the live compiled instance from <c>--items</c> (a comma-separated list; empty → an empty array that clears
         /// the value) and report the new render. Drives the whole path (DomainManager → child AppDomain → STA →
@@ -401,6 +445,36 @@ namespace WinFormsDesigner.Engine.Net48
                     : Array.Empty<LiveTreeNode>();
                 return new LiveTreeNode { Text = parts[0], Children = children };
             }).ToArray();
+        }
+
+        /// <summary>Build a ToolStrip item forest from depth-flattened "depth|id|text|itemType" tokens (CLI self-test):
+        /// a token deeper than the previous one nests as a DropDownItems child of the nearest shallower item. Mirrors
+        /// the host's depth-based flatten of the resolved <see cref="LiveToolStripItem"/> forest.</summary>
+        private static LiveToolStripItem[] BuildToolStripForest(string[] specs)
+        {
+            var roots = new System.Collections.Generic.List<LiveToolStripItem>();
+            var stack = new System.Collections.Generic.List<(int depth, LiveToolStripItem item)>();
+            foreach (var spec in specs)
+            {
+                var parts = spec.Split('|');
+                int depth = parts.Length > 0 && int.TryParse(parts[0], out var d) ? d : 0;
+                var item = new LiveToolStripItem
+                {
+                    Id = parts.Length > 1 ? parts[1] : "",
+                    Text = parts.Length > 2 ? parts[2] : "",
+                    ItemType = parts.Length > 3 ? parts[3] : "",
+                };
+                while (stack.Count > 0 && stack[stack.Count - 1].depth >= depth) stack.RemoveAt(stack.Count - 1);
+                if (depth == 0 || stack.Count == 0) roots.Add(item);
+                else
+                {
+                    var parent = stack[stack.Count - 1].item;
+                    var kids = new System.Collections.Generic.List<LiveToolStripItem>(parent.Children) { item };
+                    parent.Children = kids.ToArray();
+                }
+                stack.Add((depth, item));
+            }
+            return roots.ToArray();
         }
 
         private static bool Has(string[] args, string flag, out string? value)
@@ -527,6 +601,21 @@ namespace WinFormsDesigner.Engine.Net48
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
             return worker.SetTreeNodesLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId,
                 string.IsNullOrEmpty(propName) ? "Nodes" : propName, nodes ?? Array.Empty<LiveTreeNode>());
+        }
+
+        /// <summary>Reconcile a ToolStrip/MenuStrip's items (add/remove/rename/reorder) on the live compiled instance
+        /// from the net9-committed forest + re-render — the net48 live picture for the "…" ToolStrip item editor. The
+        /// host sends the resolved <see cref="LiveToolStripItem"/> forest (every field id populated, incl. minted ids
+        /// for adds); items are reconciled surgically by id so unmodelled props (Image/events) survive. Applied=false
+        /// + a reason when the owner isn't a live ToolStrip or a new item type can't be constructed; the persisted
+        /// text still renders after a rebuild.</summary>
+        public RenderLayoutResult SetCompiledToolStripItemsLive(string designerFilePath, string assemblyPath, string componentId,
+            LiveToolStripItem[] items, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.SetToolStripItemsLive(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId,
+                items ?? Array.Empty<LiveToolStripItem>());
         }
 
         /// <summary>Set a generic string[] property (TextBox/RichTextBox.Lines) on the live compiled instance from the

@@ -8,6 +8,37 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-08
+
+Draws **`MenuStrip` / `ToolStrip` item geometry on the canvas** — each top-level item plus a trailing
+Visual Studio–style **"Type Here"** slot are now shown in place (the groundwork for editing items directly
+on the canvas) — and fixes a **`ContextMenuStrip`** that used to appear as an invisible rectangle stealing
+clicks over the menu bar: an off-tree menu strip now surfaces in the **component tray** on both engines,
+matching Visual Studio.
+
+### Added
+- **On-canvas menu / toolbar item geometry.** The designer now knows each top-level `MenuStrip` /
+  `ToolStrip` / `StatusStrip` item's on-surface rectangle and draws a trailing **"Type Here"** slot after
+  the last item (VS-style), on **both** engines. This is the visual groundwork for editing items directly
+  on the canvas; the `…` item editor remains the way to add / rename / remove items in this release.
+
+### Fixed
+- **`ContextMenuStrip` no longer paints a phantom rectangle over the menu bar.** A context-menu strip is a
+  non-visual component (assigned to a control's `ContextMenuStrip`, never placed on the form), but the
+  .NET 9 engine used to emit it as an invisible control rectangle in the top-left corner that **stole
+  clicks** from the menu bar beneath it. It now appears where Visual Studio puts it — as a selectable chip
+  in the **component tray** — on **both** engines, and the menu bar is clickable again. Editing a tray
+  component's collection (e.g. a `ContextMenuStrip`'s `Items`) also no longer snaps the selection back to
+  the form.
+
+---
+
+_Internal:_ both engines emit per-`ToolStripItem` bounds + an `IsStripHost` flag through the render→canvas
+layout path; off-tree controls are partitioned into the tray (never the visual layout) under a shared
+invariant; new `ContextMenuForm` sample + a `Net48CtxFixture` project; extended coverage — a
+selection-retention regression and a cross-runtime net48 partition leg that compiles the sample and asserts
+both engines agree.
+
 ## [0.7.1] — 2026-07-07
 
 Adds a **Hindi (हिन्दी)** UI localization — the localized designer UI now spans **seven** languages.
@@ -479,7 +510,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.5.0...v0.6.0

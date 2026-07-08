@@ -107,6 +107,7 @@
   var current = null;     // primary selection id (drives the Properties panel + resize handles)
   var selection = [];     // all selected ids (multi-select); always contains `current` when non-empty
   var tray = [];          // non-visual components (component tray)
+  var stripItems = [];    // per-item geometry for ToolStrip/MenuStrip/StatusStrip incl. the trailing "Type Here" slot
   var trayEl = document.getElementById('tray');
   // tab-order editing (Phase 2): click controls in sequence to renumber TabIndex
   var tabOrderMode = false;
@@ -199,6 +200,28 @@
       }
     }
     for (; n < containerEls.length; n++) containerEls[n].style.display = 'none';
+  }
+
+  // ---- on-canvas "Type Here" add-slot: a dashed placeholder cell drawn at the end of each ToolStrip/MenuStrip/
+  // StatusStrip (engine-supplied window-space geometry). Read-only affordance in this slice — it previews where a
+  // new item lands; the click-to-add interaction is a follow-up. Pooled overlay divs like renderContainers. ----
+  var stripSlotEls = [];
+  function stripSlotEl(i) {
+    while (stripSlotEls.length <= i) { var d = document.createElement('div'); d.className = 'typehereslot'; d.style.display = 'none'; d.textContent = '+'; surfaceWrap.appendChild(d); stripSlotEls.push(d); }
+    return stripSlotEls[i];
+  }
+  function renderStripSlots() {
+    var n = 0;
+    if (hasRendered) {
+      for (var i = 0; i < stripItems.length; i++) {
+        var it = stripItems[i];
+        if (!it.isTypeHere) continue; // this slice draws only the trailing add-slot; per-item outlines come later
+        var b = stripSlotEl(n++); b.style.display = 'flex';
+        b.style.left = (it.x * zoom) + 'px'; b.style.top = (it.y * zoom) + 'px';
+        b.style.width = Math.max(0, it.width * zoom) + 'px'; b.style.height = Math.max(0, it.height * zoom) + 'px';
+      }
+    }
+    for (; n < stripSlotEls.length; n++) stripSlotEls[n].style.display = 'none';
   }
 
   function findControl(id) { for (var i = 0; i < controls.length; i++) { if (controls[i].id === id) return controls[i]; } return null; }
@@ -406,6 +429,7 @@
       centerFormEl.style.display = (hasRendered && hasVisualSel && !locked) ? '' : 'none';
     }
     renderContainers();
+    renderStripSlots();
     renderTabBadges();
     renderAnchors();
     renderSmartTag();
@@ -1239,6 +1263,7 @@
       drawPng(m.png, 0, 0, m.width, m.height, true, m.gen);
     } else if (m.type === 'layout') {
       controls = m.controls || [];
+      stripItems = m.toolStripItems || [];
       // drop any selected ids that no longer exist (e.g. after a remove), keeping tray ids
       selection = selection.filter(function (id) { return findControl(id) || findTray(id); });
       for (var lid in lockedIds) { if (Object.prototype.hasOwnProperty.call(lockedIds, lid) && !findControl(lid)) delete lockedIds[lid]; } // prune locks for removed controls

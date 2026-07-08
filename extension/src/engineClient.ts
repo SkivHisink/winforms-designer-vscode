@@ -167,6 +167,20 @@ export interface LayoutControl {
   anchor: string;      // anchor edges ("Top, Left" / "None") for the canvas anchor-tether overlay
   dock: string;        // dock style ("Fill"/"Top"/… / "None") for the canvas dock indicator
   isTabHost?: boolean; // net48 compiled preview: control is a tab host (TabControl/XtraTabControl) → header clicks switch tabs
+  isStripHost?: boolean; // control is a ToolStrip/MenuStrip/StatusStrip → canvas routes clicks into on-canvas item mode
+}
+
+/** One top-level ToolStrip/MenuStrip/StatusStrip item's window-space rect (or the trailing "Type Here" slot) for
+ *  on-canvas item add/rename/delete. Same transform as LayoutControl. See engine ToolStripItemBounds. */
+export interface ToolStripItemBounds {
+  ownerId: string;    // the owning strip's edit id
+  itemId: string;     // the item's designer field id (empty for the "Type Here" slot)
+  itemType: string;   // the item's concrete type FullName (empty for the slot)
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  isTypeHere: boolean; // true for the synthesized trailing add-slot
 }
 
 /** A non-visual component for the tray (component tray): Timer/ToolTip/ErrorProvider/ImageList/BindingSource/… */
@@ -184,6 +198,7 @@ export interface LayoutResult {
   clientHeight: number;
   controls: LayoutControl[]; // innermost-first (deepest, then smallest area)
   tray: TrayComponent[];     // non-visual components (component tray)
+  toolStripItems: ToolStripItemBounds[]; // per-item geometry for on-canvas "Type Here"
 }
 
 /**
@@ -205,6 +220,7 @@ export interface RenderLayout {
   rootType: string;
   controls: LayoutControl[]; // innermost-first (deepest, then smallest area) — same as describeLayout
   tray: TrayComponent[];     // non-visual components (component tray)
+  toolStripItems: ToolStripItemBounds[]; // per-item geometry for on-canvas "Type Here"
   unrepresentable: string[]; // statements the interpreter couldn't run — incl. "unresolved type X" for a control
                              // whose assembly isn't loaded (drives the "select a control source" prompt)
   /** net48 compiled engine only: for a live property edit, whether the value was applied to the live instance
@@ -228,7 +244,7 @@ export async function renderWithLayout(
 ): Promise<RenderLayout> {
   const raw = await engine.connection.sendRequest<{
     png: string; width: number; height: number; clientWidth: number; clientHeight: number;
-    rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; unrepresentable?: string[];
+    rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; toolStripItems?: ToolStripItemBounds[]; unrepresentable?: string[];
   }>('RenderWithLayout', designerFilePath, ...asmTextTail(controlAssemblyPath, sourceText));
   return {
     png: Buffer.from(raw.png ?? '', 'base64'),
@@ -239,6 +255,7 @@ export async function renderWithLayout(
     rootType: raw.rootType,
     controls: raw.controls ?? [],
     tray: raw.tray ?? [],
+    toolStripItems: raw.toolStripItems ?? [],
     unrepresentable: raw.unrepresentable ?? [],
   };
 }
@@ -266,7 +283,7 @@ export async function renderCompiledWithLayout(
 
 interface CompiledRenderRaw {
   png: string; width: number; height: number; clientWidth: number; clientHeight: number;
-  rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; unrepresentable?: string[];
+  rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; toolStripItems?: ToolStripItemBounds[]; unrepresentable?: string[];
   applied?: boolean; diagnostics?: string;
 }
 
@@ -280,6 +297,7 @@ function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
     rootType: raw.rootType,
     controls: raw.controls ?? [],
     tray: raw.tray ?? [],
+    toolStripItems: raw.toolStripItems ?? [],
     unrepresentable: raw.unrepresentable ?? [],
     applied: raw.applied ?? true,
     diagnostics: raw.diagnostics ?? '',
@@ -357,6 +375,22 @@ export async function setCompiledTreeNodesLive(
 ): Promise<RenderLayout> {
   const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
     'SetCompiledTreeNodesLive', designerFilePath, assemblyPath, componentId, propName, nodes, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
+/** Reconcile a ToolStrip/MenuStrip's items (add/remove/rename/reorder) on the net48 live instance from the
+ *  net9-committed forest + re-render — the live picture for the "…" ToolStrip item editor (the ToolStrip analogue of
+ *  {@link setCompiledTreeNodesLive}). The recursive `ToolStripItemModel` shape is sent verbatim; unlike TreeNodes,
+ *  items are persisted fields, so the engine reconciles them SURGICALLY by `id` (never Clear()+rebuild) to preserve
+ *  unmodelled props (Image/events). The caller must send the RESOLVED forest (every id populated, incl. minted ids
+ *  for "Type Here" adds), since the engine keys on id. `applied` is false when the owner isn't a live ToolStrip or a
+ *  new item type can't be constructed — the committed text still renders after a rebuild. */
+export async function setCompiledToolStripItemsLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
+  items: ToolStripItemModel[], rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'SetCompiledToolStripItemsLive', designerFilePath, assemblyPath, componentId, items, rootTypeName ?? null, probeDirs ?? null);
   return fromCompiledRaw(raw);
 }
 

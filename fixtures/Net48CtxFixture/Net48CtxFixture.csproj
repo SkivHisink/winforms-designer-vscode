@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- e2e fixture: compiles the SAME engine/samples/ContextMenuForm.Designer.cs the net9 leg renders from source
+       into a real net48 assembly, so the e2e can drive the net48 engine's RenderCompiledWithLayout on it and assert
+       the two engines AGREE on the off-tree-ContextMenuStrip partition (controls vs tray). Not part of any engine
+       build (it lives outside engine/ and engine-net48/); built on demand by extension/src/e2e.ts. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Net48CtxFixture</AssemblyName>
+    <RootNamespace>SampleApp</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reuse the exact sample the net9 ctx leg renders (same input → cross-runtime partition parity). -->
+    <Compile Include="..\..\engine\samples\ContextMenuForm.Designer.cs" Link="ContextMenuForm.Designer.cs" />
+  </ItemGroup>
+
+</Project>

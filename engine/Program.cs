@@ -970,7 +970,21 @@ namespace WinFormsDesigner.Engine
                     {
                         Console.WriteLine("   • " + (c.IsRoot ? "[root] " : "") + c.Name + " [id=" + c.Id + "] : " + c.Type
                                           + "  @ (" + c.X + "," + c.Y + ") " + c.Width + "x" + c.Height
-                                          + " depth=" + c.Depth + (c.ParentId != null ? " parent=" + c.ParentId : ""));
+                                          + " depth=" + c.Depth + (c.ParentId != null ? " parent=" + c.ParentId : "")
+                                          + (c.IsStripHost ? " [strip-host]" : ""));
+                    }
+                    if (res.ToolStripItems.Count > 0)
+                    {
+                        Console.WriteLine("   -- strip items (on-canvas Type Here) --");
+                        foreach (var it in res.ToolStripItems)
+                            Console.WriteLine("   · " + it.OwnerId + " ▸ " + (it.IsTypeHere ? "[Type Here]" : it.ItemId + " : " + it.ItemType)
+                                              + "  @ (" + it.X + "," + it.Y + ") " + it.Width + "x" + it.Height);
+                    }
+                    if (res.Tray.Count > 0)
+                    {
+                        Console.WriteLine("   -- tray (non-visual + off-tree components) --");
+                        foreach (var t in res.Tray)
+                            Console.WriteLine("   [tray] " + t.Name + " [id=" + t.Id + "] : " + t.Type);
                     }
                     Console.WriteLine(res.Controls.Count > 0 ? "RESULT: PASS" : "RESULT: FAIL");
                     return res.Controls.Count > 0 ? 0 : 1;

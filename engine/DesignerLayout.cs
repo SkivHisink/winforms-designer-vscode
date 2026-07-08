@@ -31,6 +31,32 @@ namespace WinFormsDesigner.Engine
         public string Anchor { get; init; } = "None";
         /// <summary>Dock style ("Fill"/"Top"/… / "None") — feeds the canvas dock indicator. Root = "None".</summary>
         public string Dock { get; init; } = "None";
+        /// <summary>True when this control is a ToolStrip/MenuStrip/StatusStrip — the canvas routes clicks on it into
+        /// on-canvas item mode ("Type Here" add / item rename / delete) instead of a plain control select.</summary>
+        public bool IsStripHost { get; init; }
+    }
+
+    /// <summary>
+    /// One TOP-LEVEL ToolStrip/MenuStrip/StatusStrip item's window-space rectangle (or the synthesized trailing
+    /// "Type Here" slot) — the read side behind on-canvas item add/rename/delete. Same window-space transform as
+    /// <see cref="LayoutControl"/> so a per-item overlay lines up with the rendered strip. Nested/submenu items are
+    /// intentionally absent: a closed DropDown isn't laid out, so its children have no meaningful bounds.
+    /// </summary>
+    public sealed class ToolStripItemBounds
+    {
+        /// <summary>The owning strip's edit id (Site.Name, or "this" if the strip is the root — never happens).</summary>
+        public string OwnerId { get; init; } = "";
+        /// <summary>The item's designer field id (Site.Name) — the identity the item editor edits by. Empty for the
+        /// trailing "Type Here" slot.</summary>
+        public string ItemId { get; init; } = "";
+        /// <summary>The item's concrete type FullName (empty for the "Type Here" slot).</summary>
+        public string ItemType { get; init; } = "";
+        public int X { get; init; }
+        public int Y { get; init; }
+        public int Width { get; init; }
+        public int Height { get; init; }
+        /// <summary>True for the synthesized trailing add-slot placed after the last item along the strip orientation.</summary>
+        public bool IsTypeHere { get; init; }
     }
 
     /// <summary>One non-visual component for the component tray: Timer, ToolTip, ErrorProvider,
@@ -61,6 +87,8 @@ namespace WinFormsDesigner.Engine
         public List<LayoutControl> Controls { get; init; } = new();
         /// <summary>Non-visual components for the tray.</summary>
         public List<TrayComponent> Tray { get; init; } = new();
+        /// <summary>Per-item geometry for every top-level strip item + a trailing "Type Here" slot per strip.</summary>
+        public List<ToolStripItemBounds> ToolStripItems { get; init; } = new();
     }
 
     /// <summary>
@@ -88,5 +116,7 @@ namespace WinFormsDesigner.Engine
         public List<LayoutControl> Controls { get; init; } = new();
         /// <summary>Non-visual components for the tray.</summary>
         public List<TrayComponent> Tray { get; init; } = new();
+        /// <summary>Per-item geometry for every top-level strip item + a trailing "Type Here" slot per strip.</summary>
+        public List<ToolStripItemBounds> ToolStripItems { get; init; } = new();
     }
 }

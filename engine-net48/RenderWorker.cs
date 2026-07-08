@@ -340,6 +340,162 @@ namespace WinFormsDesigner.Engine.Net48
             catch { return default(T); }
         }
 
+        /// <summary>Apply an add/remove/rename/reorder of a ToolStrip/MenuStrip's items to the LIVE compiled instance
+        /// from the net9-committed item forest, then re-render — so the net48 canvas shows the menu edit immediately
+        /// instead of the built strip (the net9 splice is the persisted truth). Unlike TreeView.Nodes, ToolStrip items
+        /// are PERSISTED FIELDS carrying unmodelled props (Image, event wiring), so the collection is reconciled
+        /// SURGICALLY keyed by the designer field id (from the field map, else ToolStripItem.Name): an existing item
+        /// object is reused (only its Text changes on a rename), a new item is constructed once, deletions are disposed
+        /// — never Clear()+rebuild, which would drop those props. The host resolves every id (incl. minted ids for
+        /// "Type Here" adds) before calling, so an empty id never reaches here. Best-effort: a non-ToolStrip owner or
+        /// an unresolvable new item type leaves the picture on the built strip and returns Applied=false + a reason
+        /// (host surfaces "renders after a rebuild"); the strip's own OnPaint redraws the mutated Items during the
+        /// snapshot's DrawToBitmap, so no explicit item walk is needed.</summary>
+        public RenderLayoutResult SetToolStripItemsLive(string assemblyPath, string rootTypeName, string componentId, LiveToolStripItem[] items)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                bool isRoot = componentId == "this" || componentId.Length == 0;
+                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                if (!(owner is ToolStrip strip)) return Note(live, "'" + componentId + "' is not a ToolStrip");
+                try
+                {
+                    // Phase 1 (pure): build the per-collection reconciliation plans — reuse existing item objects,
+                    // construct new ones (into memory, NOT yet added), record renames — WITHOUT touching the live
+                    // collections. An unresolvable new-item type throws here, before any mutation, so a failure leaves
+                    // the picture untouched (honest Applied=false via the catch).
+                    var plans = new List<ToolStripColPlan>();
+                    var renames = new List<KeyValuePair<ToolStripItem, string>>();
+                    var registers = new List<KeyValuePair<ToolStripItem, string>>();
+                    BuildToolStripPlan(strip.Items, items ?? Array.Empty<LiveToolStripItem>(), live, plans, renames, registers);
+
+                    // Phase 2 (apply): register newly-built items in the field map (tray/describe parity + stable
+                    // matching on the next live edit), rebuild each collection to its exact order (Clear detaches
+                    // without disposing, so reused items keep their props), dispose deletions, apply deferred renames.
+                    foreach (var reg in registers) live.FieldNames[reg.Key] = reg.Value;
+                    foreach (var p in plans)
+                    {
+                        // Prune each deletion's WHOLE subtree from the field map BEFORE disposing it: a deleted
+                        // ToolStripDropDownItem is never recursed by BuildToolStripPlan (only reused items are), so its
+                        // children have no ColPlan — and Dispose() cascade-disposes them. Without this walk their
+                        // FieldNames entries would linger as phantom disposed items (tray/describe leak). Mirrors
+                        // RemoveTab's Collect(page, subtree) descendant cleanup.
+                        foreach (var del in p.Deletions) RemoveItemFieldEntries(del, live);
+                        p.Coll.Clear();
+                        foreach (var it in p.Ordered) p.Coll.Add(it);
+                        foreach (var del in p.Deletions) { try { del.Dispose(); } catch { /* best effort */ } }
+                    }
+                    foreach (var rn in renames) rn.Key.Text = rn.Value;
+
+                    live.Root.PerformLayout();
+                    Application.DoEvents();
+                    return Snapshot(live);
+                }
+                catch (Exception ex) { return Note(live, "could not update items on " + componentId + ": " + ex.GetBaseException().Message); }
+            });
+        }
+
+        /// <summary>One reconciled collection: the live ToolStripItemCollection, the exact ordered item objects it
+        /// should contain (reused + newly built), and the items to remove/dispose.</summary>
+        private sealed class ToolStripColPlan
+        {
+            public ToolStripItemCollection Coll = default!;
+            public List<ToolStripItem> Ordered = new List<ToolStripItem>();
+            public List<ToolStripItem> Deletions = new List<ToolStripItem>();
+        }
+
+        /// <summary>Recursively PLAN the reconciliation of one ToolStripItemCollection against the desired item list,
+        /// keyed by designer field id. Reuses the matching live item object (recursing into its DropDownItems);
+        /// constructs a fresh item for an id with no live match (a "Type Here" add — always a leaf, per the net9
+        /// editor). Mutates nothing — plans/renames/registers are collected for the caller to apply.</summary>
+        private void BuildToolStripPlan(ToolStripItemCollection coll, LiveToolStripItem[] desired, LiveDesign live,
+            List<ToolStripColPlan> plans, List<KeyValuePair<ToolStripItem, string>> renames, List<KeyValuePair<ToolStripItem, string>> registers)
+        {
+            var byId = new Dictionary<string, ToolStripItem>(StringComparer.Ordinal);
+            foreach (ToolStripItem it in coll)
+            {
+                string iid = ToolStripItemId(it, live);
+                if (iid.Length > 0 && !byId.ContainsKey(iid)) byId[iid] = it;
+            }
+
+            var ordered = new List<ToolStripItem>();
+            foreach (var d in desired ?? Array.Empty<LiveToolStripItem>())
+            {
+                string did = d.Id ?? "";
+                if (did.Length > 0 && byId.TryGetValue(did, out var existing))
+                {
+                    // reuse the existing item object (keeps its Image/event/other props); rename Text if it changed
+                    if (!(existing is ToolStripSeparator) && !string.IsNullOrEmpty(d.Text) && existing.Text != d.Text)
+                        renames.Add(new KeyValuePair<ToolStripItem, string>(existing, d.Text));
+                    if (existing is ToolStripDropDownItem ddi)
+                        BuildToolStripPlan(ddi.DropDownItems, d.Children ?? Array.Empty<LiveToolStripItem>(), live, plans, renames, registers);
+                    ordered.Add(existing);
+                }
+                else
+                {
+                    // no live match → a new item (its minted field id is already in `did`). New items are leaves.
+                    Type? t = ResolveToolStripItemType(d.ItemType);
+                    if (t == null) throw new InvalidOperationException("unknown ToolStrip item type '" + (d.ItemType ?? "") + "'");
+                    var obj = (ToolStripItem)Activator.CreateInstance(t);
+                    if (did.Length > 0) { obj.Name = did; registers.Add(new KeyValuePair<ToolStripItem, string>(obj, did)); }
+                    if (!(obj is ToolStripSeparator) && !string.IsNullOrEmpty(d.Text)) obj.Text = d.Text;
+                    ordered.Add(obj);
+                }
+            }
+
+            var deletions = new List<ToolStripItem>();
+            foreach (ToolStripItem it in coll)
+                if (!ordered.Any(o => ReferenceEquals(o, it))) deletions.Add(it);
+
+            plans.Add(new ToolStripColPlan { Coll = coll, Ordered = ordered, Deletions = deletions });
+        }
+
+        /// <summary>The designer field id of a live ToolStrip item — the field-map name (the compiled analogue of
+        /// Site.Name) or, for an item this session created live (not a compiled field), its Name. Matches the net9
+        /// editor's identity, so a source item whose .Name assignment is absent still resolves via the field map.</summary>
+        private static string ToolStripItemId(ToolStripItem item, LiveDesign live)
+            => (live.FieldNames.TryGetValue(item, out var fn) && fn.Length > 0) ? fn : (item.Name ?? "");
+
+        /// <summary>Remove a deleted item AND its whole DropDownItems subtree from the field map — call BEFORE Dispose()
+        /// (which cascade-disposes the descendants) while DropDownItems is still intact, so no phantom disposed entries
+        /// linger in FieldNames (→ BuildTray). The recursion depth is bounded by the live tree, never the input.</summary>
+        private static void RemoveItemFieldEntries(ToolStripItem item, LiveDesign live)
+        {
+            live.FieldNames.Remove(item);
+            if (item is ToolStripDropDownItem ddi)
+                foreach (ToolStripItem child in ddi.DropDownItems)
+                    RemoveItemFieldEntries(child, live);
+        }
+
+        /// <summary>The 10 item types a NEW item may be constructed as — the same allowlist the net9 editor gates adds
+        /// by. Existing items are never re-created, so a vendor item type never needs to resolve here.</summary>
+        private static readonly Dictionary<string, string> _toolStripItemFqns = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { "ToolStripMenuItem", "System.Windows.Forms.ToolStripMenuItem" },
+            { "ToolStripButton", "System.Windows.Forms.ToolStripButton" },
+            { "ToolStripLabel", "System.Windows.Forms.ToolStripLabel" },
+            { "ToolStripSeparator", "System.Windows.Forms.ToolStripSeparator" },
+            { "ToolStripComboBox", "System.Windows.Forms.ToolStripComboBox" },
+            { "ToolStripTextBox", "System.Windows.Forms.ToolStripTextBox" },
+            { "ToolStripDropDownButton", "System.Windows.Forms.ToolStripDropDownButton" },
+            { "ToolStripSplitButton", "System.Windows.Forms.ToolStripSplitButton" },
+            { "ToolStripProgressBar", "System.Windows.Forms.ToolStripProgressBar" },
+            { "ToolStripStatusLabel", "System.Windows.Forms.ToolStripStatusLabel" },
+        };
+
+        /// <summary>Resolve a NEW item's short type name to a concrete ToolStripItem type from the allowlist (default
+        /// ToolStripMenuItem when empty). Returns null for an unknown/non-item/abstract type so the caller degrades to
+        /// Applied=false rather than constructing an arbitrary type.</summary>
+        private static Type? ResolveToolStripItemType(string shortName)
+        {
+            if (string.IsNullOrEmpty(shortName)) return typeof(ToolStripMenuItem);
+            if (!_toolStripItemFqns.TryGetValue(shortName, out var fqn)) return null;
+            Type? t = typeof(ToolStripItem).Assembly.GetType(fqn, false);
+            return (t != null && !t.IsAbstract && typeof(ToolStripItem).IsAssignableFrom(t)) ? t : null;
+        }
+
         /// <summary>Remove field-backed controls from the live tree (+ field map) and re-render.</summary>
         public RenderLayoutResult RemoveControls(string assemblyPath, string rootTypeName, string[] ids)
         {
@@ -912,6 +1068,7 @@ namespace WinFormsDesigner.Engine.Net48
 
             var controls = BuildLayoutControls(root, live.Type.Name, live.FieldNames, w, h);
             var tray = BuildTray(live);
+            var toolStripItems = BuildToolStripItemGeometry(live);
 
             return new RenderLayoutResult
             {
@@ -925,6 +1082,7 @@ namespace WinFormsDesigner.Engine.Net48
                 Representable = controls.Count, // compiled render: no interpreted-subset gaps
                 Controls = controls,
                 Tray = tray,
+                ToolStripItems = toolStripItems,
             };
         }
 
@@ -1032,6 +1190,7 @@ namespace WinFormsDesigner.Engine.Net48
                     Anchor = isRoot ? "None" : ctrl.Anchor.ToString(),
                     Dock = isRoot ? "None" : ctrl.Dock.ToString(),
                     IsTabHost = LooksLikeTabHost(ctrl),
+                    IsStripHost = ctrl is ToolStrip && (isRoot || ctrl.Parent != null), // lockstep with item-geometry emission
                 });
             }
 
@@ -1043,6 +1202,62 @@ namespace WinFormsDesigner.Engine.Net48
                 return ((long)a.Width * a.Height).CompareTo((long)b.Width * b.Height);
             });
             return list;
+        }
+
+        /// <summary>Width (horizontal strip) / height (vertical strip) of the synthesized trailing "Type Here" slot.
+        /// Mirrors the net9 engine's TypeHereExtent so the cross-runtime overlay is placed identically.</summary>
+        private const int TypeHereExtent = 66;
+
+        /// <summary>Per-item window-space geometry for every TOP-LEVEL ToolStrip/MenuStrip/StatusStrip item on the live
+        /// compiled instance, plus a synthesized trailing "Type Here" slot per strip — the net48 analogue of the net9
+        /// <c>BuildToolStripItems</c>. Items are Components (not Controls) so they never appear in BuildLayoutControls;
+        /// their id is the field-map name (<see cref="ToolStripItemId"/>). item.Bounds is valid because Build() has
+        /// already shown the form off-screen + pumped + laid out; only top-level items (a closed submenu isn't laid
+        /// out). Overflowed / unavailable items are skipped.</summary>
+        private static List<ToolStripItemBounds> BuildToolStripItemGeometry(LiveDesign live)
+        {
+            var items = new List<ToolStripItemBounds>();
+            Control root = live.Root;
+            var all = new List<Control>();
+            Collect(root, all);
+            foreach (var ctrl in all)
+            {
+                if (!(ctrl is ToolStrip strip)) continue;
+                if (!ReferenceEquals(strip, root) && !IsOnVisibleSurface(strip, root)) continue;
+                string ownerId = ReferenceEquals(strip, root) ? "this" : IdOf(strip, live.FieldNames);
+                if (ownerId.Length == 0) continue;
+
+                try { strip.PerformLayout(); } catch { /* layout hiccup → bounds may be default */ }
+                var (ox, oy) = ComputeWindowOffset(strip, root);
+                var disp = strip.DisplayRectangle;                 // the item-row area, in strip coords
+                bool horizontal = strip.Orientation == Orientation.Horizontal;
+                int contentEnd = horizontal ? disp.Left : disp.Top; // running right/bottom edge of the last item
+
+                foreach (ToolStripItem it in strip.Items)
+                {
+                    if (!it.Available) continue;
+                    if (it.Placement != ToolStripItemPlacement.Main) continue;
+                    var b = it.Bounds;
+                    items.Add(new ToolStripItemBounds
+                    {
+                        OwnerId = ownerId,
+                        ItemId = ToolStripItemId(it, live),
+                        ItemType = it.GetType().FullName ?? it.GetType().Name,
+                        X = ox + b.X,
+                        Y = oy + b.Y,
+                        Width = Math.Max(b.Width, 1),
+                        Height = Math.Max(b.Height, 1),
+                        IsTypeHere = false,
+                    });
+                    contentEnd = Math.Max(contentEnd, horizontal ? b.Right : b.Bottom);
+                }
+
+                // Cross-axis placement from DisplayRectangle (stable item-row band), NOT the last item — mirrors net9.
+                items.Add(horizontal
+                    ? new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + contentEnd + 2, Y = oy + disp.Top, Width = TypeHereExtent, Height = Math.Max(disp.Height, 1) }
+                    : new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + disp.Left, Y = oy + contentEnd + 2, Width = Math.Max(disp.Width, 1), Height = TypeHereExtent });
+            }
+            return items;
         }
 
         private static void Collect(Control c, List<Control> acc)
@@ -1108,8 +1323,13 @@ namespace WinFormsDesigner.Engine.Net48
             var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach (var kv in live.FieldNames)
             {
-                if (kv.Key is Control) continue;              // controls live in the visual layout
                 if (!(kv.Key is IComponent)) continue;
+                // A PARENTED Control lives in the visual layout (BuildLayoutControls), never the tray. But an OFF-TREE
+                // Control (Parent==null, not the root) is a sited field never added to any Controls collection — a
+                // ContextMenuStrip / ToolStripDropDown — so Collect(root) never reaches it and it isn't in the visual
+                // tree. It belongs in the tray, exactly as Visual Studio shows a ContextMenuStrip. Mirrors the net9
+                // engine's BuildLayoutControls/BuildTray split (both skip the phantom control rect, both tray it).
+                if (kv.Key is Control ctrl && (ReferenceEquals(ctrl, live.Root) || ctrl.Parent != null)) continue;
                 if (!seen.Add(kv.Key)) continue;
                 tray.Add(new TrayComponent { Id = kv.Value, Name = kv.Value, Type = kv.Key.GetType().FullName ?? kv.Key.GetType().Name });
             }

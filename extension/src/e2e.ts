@@ -2,9 +2,34 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel } from './engineClient';
+import { spawnSync } from 'child_process';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
+import { retainSelectionId } from './selection';
+
+/** Build the net48 ctx fixture on demand (it compiles the SAME engine/samples/ContextMenuForm.Designer.cs the net9
+ *  ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
+ *  missing or older than its inputs; any build failure (no net48 toolchain, locked output) → false, so the net48
+ *  e2e leg SKIPS instead of failing (the suite stays green on a net9-only box). */
+function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFile: string): boolean {
+  try {
+    const csproj = path.join(fixtureDir, 'Net48CtxFixture.csproj');
+    if (!fs.existsSync(csproj)) return false;
+    const inputs = [csproj, path.join(fixtureDir, 'ContextMenuForm.cs'), sampleFile].filter((f) => fs.existsSync(f));
+    const newestInput = inputs.reduce((m, f) => Math.max(m, fs.statSync(f).mtimeMs), 0);
+    if (fs.existsSync(fixtureDll) && fs.statSync(fixtureDll).mtimeMs >= newestInput) return true; // up to date
+    const res = spawnSync('dotnet', ['build', fixtureDir, '-c', 'Release', '--nologo', '-v', 'q'], { encoding: 'utf8' });
+    if (res.status !== 0) {
+      console.error('[e2e] net48 fixture build failed (skipping net48 ctx leg): ' + ((res.stderr || res.stdout || res.error?.message || '').trim().split('\n').slice(-3).join(' | ')));
+      return false;
+    }
+    return fs.existsSync(fixtureDll);
+  } catch (e) {
+    console.error('[e2e] net48 fixture build error (skipping): ' + (e as Error).message);
+    return false;
+  }
+}
 
 const isPng = (b: Buffer): boolean =>
   b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
@@ -752,6 +777,135 @@ async function main(): Promise<void> {
         }
       }
       console.log(`e2e: combined render+layout verified — RenderWithLayout png == renderDesigner (${combined.png.length}B), ${combined.controls.length} controls == describeLayout, one graph load`);
+
+      // ---- on-canvas "Type Here" per-item geometry (Slice A) on a STRIP form ----
+      // SampleForm has no strip, so the leg above never exercised BuildToolStripItems (which forces a per-strip
+      // PerformLayout AFTER the PNG capture). Pin that ordering here: on MenuForm (a MenuStrip with 2 top-level
+      // items) the combined PNG must STILL be byte-identical to renderDesigner (the post-capture layout-force can't
+      // perturb pixels), the strip host is flagged, per-item rects are emitted with a trailing Type-Here slot after
+      // the last item, and DescribeLayout emits the identical item geometry (the two RPCs must not drift).
+      const menuForm = path.join(repo, 'engine', 'samples', 'MenuForm.Designer.cs');
+      const menuPng = await renderDesigner(engine, menuForm);
+      const menuCombined = await renderWithLayout(engine, menuForm);
+      if (!menuCombined.png.equals(menuPng)) {
+        throw new Error(`strip geometry: MenuForm renderWithLayout png (${menuCombined.png.length}B) != renderDesigner (${menuPng.length}B) — the post-capture strip PerformLayout must NOT perturb pixels`);
+      }
+      const stripHost = menuCombined.controls.find((c) => c.isStripHost);
+      if (!stripHost) throw new Error('strip geometry: no control flagged isStripHost on MenuForm');
+      const tsItems = menuCombined.toolStripItems;
+      const realItems = tsItems.filter((it) => !it.isTypeHere);
+      const slots = tsItems.filter((it) => it.isTypeHere);
+      if (realItems.length < 2) throw new Error(`strip geometry: expected ≥2 top-level items, got ${realItems.length}`);
+      if (slots.length !== 1) throw new Error(`strip geometry: expected exactly one Type-Here slot, got ${slots.length}`);
+      if (realItems.some((it) => it.ownerId !== stripHost.id || it.itemId.length === 0 || it.width <= 0 || it.height <= 0)) {
+        throw new Error('strip geometry: an item has the wrong owner, an empty id, or a degenerate rect');
+      }
+      // the slot sits after the rightmost item (contentEnd + gap) on this horizontal strip
+      const rightmost = Math.max(...realItems.map((it) => it.x + it.width));
+      if (slots[0].x < rightmost) throw new Error(`strip geometry: Type-Here slot x=${slots[0].x} is not past the last item (right edge ${rightmost})`);
+      // DescribeLayout must emit byte-identical item geometry (no cross-RPC drift between the two layout sources)
+      const menuLayout = await describeLayout(engine, menuForm);
+      const dItems = menuLayout.toolStripItems;
+      if (dItems.length !== tsItems.length) throw new Error(`strip geometry: describeLayout ${dItems.length} items != renderWithLayout ${tsItems.length}`);
+      for (let i = 0; i < tsItems.length; i++) {
+        const a = tsItems[i], b = dItems[i];
+        if (a.ownerId !== b.ownerId || a.itemId !== b.itemId || a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height || a.isTypeHere !== b.isTypeHere) {
+          throw new Error(`strip geometry: item[${i}] renderWithLayout != describeLayout ("${a.itemId}" ${a.x},${a.y} vs "${b.itemId}" ${b.x},${b.y})`);
+        }
+      }
+      console.log(`e2e: strip item geometry (Slice A) verified — MenuForm png byte-identical with a forced strip layout, ${realItems.length} items + 1 Type-Here slot on "${stripHost.id}", renderWithLayout == describeLayout geometry`);
+
+      // ---- off-tree ContextMenuStrip → the TRAY, never a phantom control rect (hit-test-theft fix) ----
+      // A ContextMenuStrip is a sited Control field that is never added to any Controls collection (Parent==null):
+      // Visual Studio edits it from the component tray and shows it as a popup, never on the form. Keeping it in the
+      // visual/hit-test map dropped a PHANTOM rect at the chrome origin that — being smaller than the menu bar —
+      // sorted first and STOLE the click over the menu's left region. The fix skips off-tree controls in the layout
+      // and surfaces them in the tray (both engines; net48's Collect(root) already never reached one). This leg pins
+      // all of it on a Form with a MenuStrip + a ContextMenuStrip: no phantom, present in the tray, menu-bar hit-test
+      // restored, and the skipped off-tree control must not perturb the rendered pixels (it was never painted).
+      const ctxForm = path.join(repo, 'engine', 'samples', 'ContextMenuForm.Designer.cs');
+      if (fs.existsSync(ctxForm)) {
+        const ctxLayout = await describeLayout(engine, ctxForm);
+        if (ctxLayout.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) {
+          throw new Error('ctx tray: a ContextMenuStrip leaked into the control layout (phantom rect — it must be tray-only)');
+        }
+        const ctxChip = ctxLayout.tray.find((t) => t.id === 'contextMenuStrip1');
+        if (!ctxChip) throw new Error(`ctx tray: contextMenuStrip1 missing from the tray (got [${ctxLayout.tray.map((t) => t.id).join(', ')}])`);
+        if (!ctxChip.type.endsWith('ContextMenuStrip')) throw new Error(`ctx tray: contextMenuStrip1 wrong type ${ctxChip.type}`);
+        // the chip is genuinely selectable: describing it drives the property panel (VS edits a ContextMenuStrip's
+        // Items from the tray), so a tray chip that can't be described would be a dead click.
+        const ctxDesc = await describeComponent(engine, ctxForm, 'contextMenuStrip1');
+        if (!ctxDesc?.properties?.length) throw new Error('ctx tray: contextMenuStrip1 is not describable — the tray chip would select nothing');
+        const ctxItems = ctxDesc.properties.find((p) => p.name === 'Items');
+        if (ctxItems?.collectionItemType !== 'System.Windows.Forms.ToolStripItem')
+          throw new Error('ctx tray: contextMenuStrip1.Items must be a ToolStripItem collection (item editor reachable), got ' + JSON.stringify(ctxItems?.collectionItemType));
+        const menu = ctxLayout.controls.find((c) => c.id === 'menuStrip1');
+        if (!menu) throw new Error('ctx tray: menuStrip1 missing from the layout');
+        // hit-test over the menu bar's left region (where the phantom used to overlap) must return the menu bar
+        const ctxHit = (px: number, py: number): string | undefined =>
+          ctxLayout.controls.find((c) => px >= c.x && px < c.x + c.width && py >= c.y && py < c.y + c.height)?.id;
+        const menuHit = ctxHit(menu.x + 20, menu.y + Math.floor(menu.height / 2));
+        if (menuHit !== 'menuStrip1') throw new Error(`ctx tray: menu-bar hit-test → ${menuHit} (expected menuStrip1 — a phantom ContextMenuStrip must not steal it)`);
+        // skipping the off-tree control cannot change the pixels, and the combined RPC must agree with describeLayout
+        const ctxPng = await renderDesigner(engine, ctxForm);
+        const ctxCombined = await renderWithLayout(engine, ctxForm);
+        if (!ctxCombined.png.equals(ctxPng)) {
+          throw new Error(`ctx tray: ContextMenuForm renderWithLayout png (${ctxCombined.png.length}B) != renderDesigner (${ctxPng.length}B) — skipping an off-tree control must not perturb pixels`);
+        }
+        if (ctxCombined.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) {
+          throw new Error('ctx tray: renderWithLayout leaked a ContextMenuStrip into the control layout');
+        }
+        if (!ctxCombined.tray.some((t) => t.id === 'contextMenuStrip1')) {
+          throw new Error('ctx tray: renderWithLayout dropped contextMenuStrip1 from the tray');
+        }
+        console.log(`e2e: off-tree ContextMenuStrip verified — no phantom control rect, contextMenuStrip1 in tray (${ctxLayout.tray.length} tray items), menu-bar hit-test → menuStrip1, png byte-identical (describeLayout == renderWithLayout)`);
+      } else {
+        console.log('e2e: ContextMenuStrip tray SKIPPED — engine/samples/ContextMenuForm.Designer.cs missing');
+      }
+
+      // ---- selection-retention across a full re-render (regression for the tray-partition fix) ----
+      // The host's currentId is authoritative — after postLayout+tray it pushSelect()s the retained id, overriding
+      // the canvas — so pin the exact predicate (retainSelectionId): a tray component whose Items were just edited
+      // (a ContextMenuStrip) stays selected, NOT snapped to the form; a vanished id falls back to 'this'. Before the
+      // fix consulted the tray, editing a tray ctx-menu's Items dropped the selection to the form.
+      {
+        const rc = [{ id: 'menuStrip1' }, { id: 'panel1' }, { id: 'this' }];
+        const rt = [{ id: 'contextMenuStrip1' }, { id: 'cutItem' }, { id: 'pasteItem' }];
+        if (retainSelectionId('contextMenuStrip1', rc, rt) !== 'contextMenuStrip1') throw new Error('retention: a selected tray ContextMenuStrip must survive a full re-render (must not snap to the form)');
+        if (retainSelectionId('panel1', rc, rt) !== 'panel1') throw new Error('retention: a selected visual control must survive a full re-render');
+        if (retainSelectionId('this', rc, rt) !== 'this') throw new Error('retention: the root selection must survive');
+        if (retainSelectionId('deletedItem', rc, rt) !== 'this') throw new Error('retention: a vanished selection must fall back to the form (this)');
+        if (retainSelectionId('cutItem', rc, []) !== 'this') throw new Error('retention: a former tray id absent from an empty tray must fall back to the form');
+        console.log('e2e: selection-retention verified — a tray ContextMenuStrip (whose Items were edited) and visual controls survive a full re-render; a vanished id falls back to the form (this)');
+      }
+
+      // ---- net48 mirror: the compiled engine must AGREE on the off-tree-ContextMenuStrip partition ----
+      // The net9 leg above proved the source-interpreted partition; this compiles the SAME sample into a net48
+      // assembly and drives the net48 engine's RenderCompiledWithLayout, asserting BOTH engines put the
+      // ContextMenuStrip in the tray (never a phantom control) and agree on the visual-control id set. Skips
+      // gracefully when the net48 engine exe or its build toolchain isn't available (keeps the net9-only e2e green).
+      const net48Exe = process.env.WFD_ENGINE_NET48 || path.join(repo, 'engine-net48', 'bin', 'Release', 'net48', 'WinFormsDesigner.Engine.Net48.exe');
+      const ctxFixtureDir = path.join(repo, 'fixtures', 'Net48CtxFixture');
+      const ctxFixtureDll = path.join(ctxFixtureDir, 'bin', 'Release', 'net48', 'Net48CtxFixture.dll');
+      if (fs.existsSync(ctxForm) && fs.existsSync(net48Exe) && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, ctxForm)) {
+        const n48 = await startEngine(net48Exe, { onLog: (l) => console.error(l) });
+        try {
+          const r48 = await renderCompiledWithLayout(n48, ctxForm, ctxFixtureDll);
+          if (r48.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) throw new Error('net48 ctx: a ContextMenuStrip leaked into the compiled control layout (phantom rect)');
+          const chip48 = r48.tray.find((t) => t.id === 'contextMenuStrip1');
+          if (!chip48) throw new Error(`net48 ctx: contextMenuStrip1 missing from the compiled tray (got [${r48.tray.map((t) => t.id).join(', ')}])`);
+          if (!chip48.type.endsWith('ContextMenuStrip')) throw new Error(`net48 ctx: contextMenuStrip1 wrong type ${chip48.type}`);
+          // cross-runtime: the two engines must agree on the VISUAL control id set (net9 = source-interpreted).
+          const net9Ids = (await describeLayout(engine, ctxForm)).controls.map((c) => c.id).sort();
+          const net48Ids = r48.controls.map((c) => c.id).sort();
+          if (net9Ids.join(',') !== net48Ids.join(',')) throw new Error(`net48 ctx: control partition diverges from net9 — net9 [${net9Ids.join(', ')}] vs net48 [${net48Ids.join(', ')}]`);
+          console.log(`e2e: net48 off-tree ContextMenuStrip verified — compiled render agrees with net9 (controls [${net48Ids.join(', ')}], contextMenuStrip1 tray-only, ${r48.tray.length} tray chips)`);
+        } finally {
+          n48.dispose();
+        }
+      } else {
+        console.log('e2e: net48 ContextMenuStrip partition SKIPPED — net48 engine exe or fixture toolchain unavailable');
+      }
 
       // hardening: the byte/field-identity must ALSO hold on the explicit-asm path (custom controls from
       // an ALC), and a missing file must reject exactly like the separate calls — so the combined RPC

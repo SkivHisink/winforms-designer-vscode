@@ -200,6 +200,8 @@ namespace WinFormsDesigner.Engine
                 ClientHeight = root.ClientSize.Height,
                 Controls = BuildLayoutControls(g, root, frameW, frameH),
                 Tray = BuildTray(g, root),
+                // Harvest AFTER Controls: forcing a per-strip PerformLayout can't change the already-built list.
+                ToolStripItems = BuildToolStripItems(g, root),
             };
         }
 
@@ -228,6 +230,9 @@ namespace WinFormsDesigner.Engine
             // byte/field-equality leg pins both halves of that contract.
             var controls = BuildLayoutControls(g, root, w, h);
             var png = CaptureRootPng(root, w, h);
+            // Harvest item geometry AFTER the PNG capture: BuildToolStripItems forces a per-strip PerformLayout, and
+            // doing it post-capture keeps the PNG byte-identical (DrawToBitmap already laid the strip out for free).
+            var toolStripItems = BuildToolStripItems(g, root);
 
             return new RenderLayoutResult
             {
@@ -242,6 +247,7 @@ namespace WinFormsDesigner.Engine
                 Unrepresentable = g.Unrepresentable,
                 Controls = controls,
                 Tray = BuildTray(g, root),
+                ToolStripItems = toolStripItems,
             };
         }
 
@@ -258,6 +264,15 @@ namespace WinFormsDesigner.Engine
             {
                 if (comp is not Control ctrl) continue;
                 bool isRoot = ReferenceEquals(ctrl, root);
+
+                // An OFF-TREE control (not the root, no parent) is a sited Control field that was never added to
+                // any Controls collection — e.g. a ContextMenuStrip / ToolStripDropDown, which is edited via the
+                // tray and shown as a popup, never placed on the form. It has no window position: ComputeWindowOffset
+                // collapses to the chrome origin, so keeping it here drops a PHANTOM rect over the form's top-left
+                // that (being small) sorts first and STEALS the hit-test from whatever really sits there (a menu bar).
+                // It belongs in the component tray instead (BuildTray surfaces it, in lockstep). net48's Collect(root)
+                // never reaches such a control, so skipping it also restores cross-runtime parity.
+                if (!isRoot && ctrl.Parent == null) continue;
 
                 // A control on a NON-active tab page is not on the shown surface (VS shows only the active tab's
                 // contents; you switch tabs to reach the rest). Its rect stacks under the active page, so keeping it
@@ -297,6 +312,10 @@ namespace WinFormsDesigner.Engine
                     TabIndex = isRoot ? -1 : ctrl.TabIndex,
                     Anchor = isRoot ? "None" : ctrl.Anchor.ToString(),
                     Dock = isRoot ? "None" : ctrl.Dock.ToString(),
+                    // Only a strip PARENTED into the tree gets on-canvas item geometry (BuildToolStripItems skips
+                    // parentless off-tree strips like a ContextMenuStrip), so keep the flag in lockstep — a future
+                    // click-to-add slice must not route into item mode for a strip with no slot.
+                    IsStripHost = ctrl is ToolStrip && (isRoot || ctrl.Parent != null),
                 });
             }
 
@@ -311,6 +330,69 @@ namespace WinFormsDesigner.Engine
             });
 
             return controls;
+        }
+
+        /// <summary>Width (horizontal strip) / height (vertical strip) of the synthesized trailing "Type Here" add-slot.</summary>
+        private const int TypeHereExtent = 66;
+
+        /// <summary>
+        /// Per-item window-space geometry for every TOP-LEVEL ToolStrip/MenuStrip/StatusStrip item, plus a synthesized
+        /// trailing "Type Here" slot per strip — the read side behind on-canvas item add/rename/delete. Only top-level
+        /// items: a closed DropDown submenu isn't laid out, so its children have no meaningful <c>item.Bounds</c>.
+        /// <para>item.Bounds is layout-COMPUTED (never serialized) and SuspendLayout/ResumeLayout are no-ops during
+        /// interpret, so this forces a per-strip <c>PerformLayout()</c>. Call it AFTER <see cref="BuildLayoutControls"/>
+        /// (and, in <see cref="RenderWithLayout"/>, AFTER the PNG capture) so forcing layout can't perturb the
+        /// field-identical Controls list or the byte-identical PNG.</para>
+        /// </summary>
+        private static List<ToolStripItemBounds> BuildToolStripItems(LoadedGraph g, Control root)
+        {
+            var items = new List<ToolStripItemBounds>();
+            foreach (IComponent comp in g.Host.Container.Components)
+            {
+                if (comp is not ToolStrip strip) continue;
+                // Only strips PARENTED into the visual tree — a ContextMenuStrip / ToolStripDropDownMenu is a sited
+                // field but has no parent chain (it's not in any control's Controls), so it's never painted on the
+                // surface. Emitting a slot for it would drop a phantom "Type Here" over the form's top-left (its
+                // ComputeWindowOffset is just the chrome origin). This matches the net48 engine, which only walks
+                // Collect(root) and so never sees an off-tree strip.
+                if (!ReferenceEquals(strip, root) && strip.Parent == null) continue;
+                if (IsOnHiddenTab(strip, root)) continue;
+                string ownerId = ReferenceEquals(strip, root) ? "this" : (strip.Site?.Name ?? "");
+                if (ownerId.Length == 0) continue;              // unsited/internal strip → not addressable
+
+                try { strip.PerformLayout(); } catch { /* layout hiccup → bounds may be default; skip below */ }
+                var (ox, oy) = ComputeWindowOffset(strip, root);
+                var disp = strip.DisplayRectangle;                     // the item-row area, in strip coords
+                bool horizontal = strip.Orientation == Orientation.Horizontal;
+                int contentEnd = horizontal ? disp.Left : disp.Top;   // running right/bottom edge of the last item
+
+                foreach (ToolStripItem it in strip.Items)
+                {
+                    if (!it.Available) continue;                       // hidden / overflow-collapsed → no on-strip rect
+                    if (it.Placement != ToolStripItemPlacement.Main) continue; // overflow items aren't on the main strip
+                    var b = it.Bounds;                                 // strip-relative (same origin as ComputeWindowOffset)
+                    items.Add(new ToolStripItemBounds
+                    {
+                        OwnerId = ownerId,
+                        ItemId = it.Site?.Name ?? it.Name ?? "",
+                        ItemType = it.GetType().FullName ?? it.GetType().Name,
+                        X = ox + b.X,
+                        Y = oy + b.Y,
+                        Width = Math.Max(b.Width, 1),
+                        Height = Math.Max(b.Height, 1),
+                        IsTypeHere = false,
+                    });
+                    contentEnd = Math.Max(contentEnd, horizontal ? b.Right : b.Bottom);
+                }
+
+                // Synthesized "Type Here" slot just past the last item along the strip orientation. The cross-axis
+                // placement (row top+height for horizontal, left+width for vertical) comes from DisplayRectangle — the
+                // stable item-row band — NOT the last item, so a trailing Spring/separator/tall item can't skew it.
+                items.Add(horizontal
+                    ? new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + contentEnd + 2, Y = oy + disp.Top, Width = TypeHereExtent, Height = Math.Max(disp.Height, 1) }
+                    : new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + disp.Left, Y = oy + contentEnd + 2, Width = Math.Max(disp.Width, 1), Height = TypeHereExtent });
+            }
+            return items;
         }
 
         /// <summary>True when the control descends through a tab page that is NOT the tab host's selected one — i.e.
@@ -344,11 +426,13 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// The component tray: every host-container component that is NOT a Control — Timer, ToolTip,
-        /// ErrorProvider, ImageList, BindingSource, etc. ANY Control (parented or orphaned) belongs to the
-        /// visual layout/hit-test map (BuildLayoutControls), NOT the tray, so the two read-paths never
-        /// double-list the same component. The root form and the (unnamed) IContainer disposal holder are
-        /// excluded. Pure reads; the host owns lifetime, so this never instantiates anything new.
+        /// The component tray: every host-container component that has no place on the visual surface — a
+        /// non-Control (Timer, ToolTip, ErrorProvider, ImageList, BindingSource, …) OR an OFF-TREE Control that
+        /// is a sited field yet was never added to any Controls collection (a ContextMenuStrip / ToolStripDropDown,
+        /// which Visual Studio also shows in the tray). A PARENTED Control lives in the visual layout/hit-test map
+        /// (BuildLayoutControls) and is skipped here, so the two read-paths never double-list the same component
+        /// (BuildLayoutControls skips the off-tree Control in lockstep). The root form and the (unnamed) IContainer
+        /// disposal holder are excluded. Pure reads; the host owns lifetime, so this never instantiates anything new.
         /// </summary>
         private static List<TrayComponent> BuildTray(LoadedGraph g, Control root)
         {
@@ -356,7 +440,8 @@ namespace WinFormsDesigner.Engine
             foreach (IComponent comp in g.Host.Container.Components)
             {
                 if (ReferenceEquals(comp, root)) continue;
-                if (comp is Control) continue;                // a Control lives in the visual layout, never the tray
+                if (comp is Control c && c.Parent != null) continue; // a PARENTED Control lives in the visual layout;
+                                                                     // an off-tree Control (ContextMenuStrip) falls through
                 string id = comp.Site?.Name ?? "";
                 if (id.Length == 0) continue;                 // unnamed/internal (e.g. the IContainer holder) → skip
                 tray.Add(new TrayComponent { Id = id, Name = id, Type = comp.GetType().FullName ?? comp.GetType().Name });

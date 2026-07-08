@@ -64,6 +64,25 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>True when this control is a tab host (has a TabPages collection + a SelectedTab/Page) — the
         /// webview uses it to route a header click to <c>SelectCompiledTabAt</c> so clicking a tab switches it.</summary>
         public bool IsTabHost { get; set; }
+        /// <summary>True when this control is a ToolStrip/MenuStrip/StatusStrip — the canvas routes clicks on it into
+        /// on-canvas item mode ("Type Here" add / item rename / delete). Mirrors WinFormsDesigner.Engine.LayoutControl.</summary>
+        public bool IsStripHost { get; set; }
+    }
+
+    /// <summary>One TOP-LEVEL ToolStrip/MenuStrip/StatusStrip item's window-space rectangle (or the trailing "Type Here"
+    /// slot). Mirrors WinFormsDesigner.Engine.ToolStripItemBounds. Nested/submenu items are absent (a closed DropDown
+    /// isn't laid out, so its children have no bounds).</summary>
+    [Serializable]
+    public sealed class ToolStripItemBounds
+    {
+        public string OwnerId { get; set; } = "";
+        public string ItemId { get; set; } = "";
+        public string ItemType { get; set; } = "";
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public bool IsTypeHere { get; set; }
     }
 
     /// <summary>Result of a tab-header hit-test (rename): the .Designer.cs field id of the tab page under the point
@@ -139,6 +158,31 @@ namespace WinFormsDesigner.Engine.Net48
         public string NodeFont { get; set; } = "";
         /// <summary>Child nodes, in order. Empty for a leaf.</summary>
         public LiveTreeNode[] Children { get; set; } = Array.Empty<LiveTreeNode>();
+    }
+
+    /// <summary>One ToolStrip/MenuStrip item for the live item reconstruction (net48 live add/remove/rename/reorder —
+    /// the ToolStrip analogue of <see cref="LiveTreeNode"/>). Recursive: <see cref="Children"/> are the nested
+    /// DropDownItems of a menu/split/dropdown item. Unlike TreeNodes, ToolStrip items are PERSISTED FIELDS that may
+    /// carry unmodelled props (Image, event wiring), so the worker mutates the live collection SURGICALLY keyed by
+    /// <see cref="Id"/> (the .Designer.cs field name) — reusing an existing item object, creating one only for a new
+    /// id — instead of Clear()+rebuild. The host sends the net9-committed forest (every id resolved, incl. minted
+    /// ids for "Type Here" adds), so <see cref="Id"/> is always populated here. <see cref="ItemType"/> is the short
+    /// type name (ToolStripButton/…), used only when an item must be constructed; a separator carries no Text.
+    /// Crosses the child-AppDomain boundary, so plain get/set (no `init`) + [Serializable].</summary>
+    [Serializable]
+    public sealed class LiveToolStripItem
+    {
+        /// <summary>The item's .Designer.cs field name — the identity key the live reconcile matches on.</summary>
+        public string Id { get; set; } = "";
+        /// <summary>Display caption (ToolStripItem.Text). Empty for a separator or an untitled item.</summary>
+        public string Text { get; set; } = "";
+        /// <summary>ToolStripItem.Name; informational — the reconcile keys on <see cref="Id"/>, not Name.</summary>
+        public string Name { get; set; } = "";
+        /// <summary>Short concrete type name (ToolStripMenuItem/ToolStripButton/ToolStripSeparator/…). Used to
+        /// construct a NEW item (matched to the engine's allowlist); ignored for an existing, reused item.</summary>
+        public string ItemType { get; set; } = "";
+        /// <summary>Nested DropDownItems, in order. Empty for a leaf item.</summary>
+        public LiveToolStripItem[] Children { get; set; } = Array.Empty<LiveToolStripItem>();
     }
 
     /// <summary>One property row for the grid. Mirrors WinFormsDesigner.Engine.PropertyInfo (→ TS PropertyDesc).</summary>
@@ -219,6 +263,8 @@ namespace WinFormsDesigner.Engine.Net48
         public List<string> Unrepresentable { get; set; } = new List<string>();
         public List<LayoutControl> Controls { get; set; } = new List<LayoutControl>();
         public List<TrayComponent> Tray { get; set; } = new List<TrayComponent>();
+        /// <summary>Per-item geometry for every top-level strip item + a trailing "Type Here" slot per strip.</summary>
+        public List<ToolStripItemBounds> ToolStripItems { get; set; } = new List<ToolStripItemBounds>();
         /// <summary>For a live property edit: true when the value was applied to the live instance (picture reflects
         /// it); false when it couldn't be (unconvertible/read-only) — the text edit still persisted, the picture will
         /// catch up on rebuild. Always true for a plain render.</summary>
