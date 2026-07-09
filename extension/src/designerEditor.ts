@@ -75,6 +75,7 @@ import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addR
 import { t, tn, injectL10nScript } from './i18n';
 import { categorizeUnrepresentable } from './renderDiagnostics';
 import { retainSelectionId } from './selection';
+import { learnMoreUrl } from './learnMore';
 
 export type EngineKind = 'net9' | 'net48';
 type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
@@ -421,7 +422,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     view.webview.html = panelHtml(view.webview, this.extensionUri);
     DesignerHub.instance.attachPanel(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage(async (m: {
-      type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string;
+      type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string; ownerId?: string;
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
       items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; nodes?: TreeNodeItem[];
       toolStripItems?: ToolStripItemModel[];
@@ -430,7 +431,12 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
       try {
         if (m?.type === 'ready') { s?.refreshViews(); }
         else if (m?.type === 'pick' && m.id) { await s?.pick(m.id); }
-        else if (m?.type === 'edit' && m.id && m.prop && m.propType !== undefined) { await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? ''); }
+        else if (m?.type === 'edit' && m.id && m.prop && m.propType !== undefined) {
+          // an `ownerId` marks this as a ToolStripItem edit (the grid is showing item→Properties) → route to the
+          // item-edit path (targets the item field, refreshes via itemProps, keeps the canvas item highlight).
+          if (m.ownerId) await s?.editItemFromGrid(m.ownerId, m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '');
+          else await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '');
+        }
         else if (m?.type === 'importImage' && m.id && m.prop && m.propType) { await s?.importImageFromGrid(m.id, m.prop, m.propType); }
         else if (m?.type === 'clearImage' && m.id && m.prop) { await s?.clearImageFromGrid(m.id, m.prop); }
         else if (m?.type === 'resetProperty' && m.id && m.prop) { await s?.resetFromGrid(m.id, m.prop); }
@@ -748,7 +754,7 @@ class DesignerSession {
     ids?: string[]; dx?: number; dy?: number; prop?: string; propType?: string; isEnum?: boolean; value?: string;
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
-    axis?: 'h' | 'v';
+    axis?: 'h' | 'v'; itemType?: string; text?: string; itemId?: string;
   }): Promise<void> {
     try {
       if (this.engineKind === 'net48' && NET48_READONLY_BLOCKED.has(m.type)) {
@@ -809,6 +815,16 @@ class DesignerSession {
         await this.applyTabClick(m.hostId, m.x ?? 0, m.y ?? 0);
       } else if (m.type === 'tabRename' && m.hostId) {
         await this.applyTabRename(m.hostId, m.x ?? 0, m.y ?? 0);
+      } else if (m.type === 'stripAdd' && m.hostId) {
+        await this.applyStripAdd(m.hostId, typeof m.itemType === 'string' ? m.itemType : '', typeof m.text === 'string' ? m.text : '');
+      } else if (m.type === 'stripRename' && m.hostId && m.itemId) {
+        await this.applyStripRename(m.hostId, m.itemId, typeof m.text === 'string' ? m.text : '');
+      } else if (m.type === 'stripDelete' && m.hostId && m.itemId) {
+        await this.applyStripDelete(m.hostId, m.itemId);
+      } else if (m.type === 'selectItem' && m.hostId && m.itemId) {
+        // a top-level strip item was clicked on the canvas → describe THAT item into the Properties panel via a
+        // dedicated channel that leaves the control selection (currentId / manip / smart-tag) untouched.
+        await this.loadItemProps(m.hostId, m.itemId);
       } else if (m.type === 'addTab' && m.hostId) {
         await this.applyAddTab(m.hostId);
       } else if (m.type === 'deleteTab' && m.hostId && m.pageId) {
@@ -984,8 +1000,13 @@ class DesignerSession {
     });
   }
 
-  /** Full re-render: PNG + layout → canvas + views, keep/repair selection, refresh the property panel. */
-  private async fullRender(): Promise<void> {
+  /** Full re-render: PNG + layout → canvas + views, keep/repair selection, refresh the property panel.
+   *  `skipReselect` suppresses the trailing pushSelect(currentId) AND the trailing loadProps(currentId): used after an
+   *  on-canvas strip-item op (rename/add/delete) or an item→Properties edit so the canvas keeps its item highlight and
+   *  the panel keeps showing the ITEM instead of snapping to the stale container control — matching the net48 live path
+   *  (show48 posts no select). Callers that need props reloaded after a skipReselect render do it themselves
+   *  (applyToolStripItems → loadProps(strip); applyItemEdit → loadItemProps(item)). Review wf_108a7dbe. */
+  private async fullRender(skipReselect = false): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const seq = ++this.renderSeq;
     this.output.appendLine(`[designer] render #${seq} starting: ${this.designerFile}`);
@@ -1063,8 +1084,13 @@ class DesignerSession {
     // editing a tray component's collection (e.g. a ContextMenuStrip's Items commits via this net9 fullRender):
     // without it the selection would snap to the form. See retainSelectionId (unit-tested in e2e.ts).
     this.currentId = retainSelectionId(this.currentId, result.controls, result.tray);
-    this.pushSelect(this.currentId);
-    await this.loadProps(this.currentId);
+    // an on-canvas strip-item op / item edit keeps the canvas item highlight authoritative — do not snap the selection
+    // back to the (stale) container control (which would lose the highlight + make a follow-up Delete target the wrong
+    // thing) NOR reload the control's props over the item grid. The caller reloads the right props (strip or item).
+    if (!skipReselect) {
+      this.pushSelect(this.currentId);
+      await this.loadProps(this.currentId);
+    }
     await this.postDirty();
     this.pushClipboardState();
     this.maybePromptForControlSource(result.unrepresentable, asm);
@@ -1203,6 +1229,34 @@ class DesignerSession {
     this.post({ type: 'tasks', id, component }); // canvas smart-tag flyout data
     const manip = this.manipFor(id, component);
     this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
+  }
+
+  /** Describe a ToolStripItem (a Component, resolved by field id) into the Properties panel via a DEDICATED `itemProps`
+   *  message — NOT `loadProps`. This is the item→Properties channel: it deliberately does NOT set `this.currentId`, nor
+   *  post `select` / `tasks` / `manip`, so the control selection (and everything it drives — manipFor, smart-tag, the
+   *  generic Delete/Cut/z-order target) stays on the last control. net9 resolves the item by Site.Name and renders an
+   *  editable grid. net48 describes the compiled item too (Slice 1b) and edits it live (Slice 2), so it is editable
+   *  whenever the item resolved; when the assembly isn't built yet describe returns null → the panel shows the
+   *  compiled-preview placeholder (editable=false is moot for a null component — the grid isn't rendered). */
+  private async loadItemProps(ownerId: string, itemId: string): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    let component: ComponentDesc | null = null;
+    if (this.engineKind === 'net48') {
+      const asm48 = this.asm();
+      if (asm48) {
+        try { component = await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm48, itemId); }
+        catch { component = null; }
+      }
+    } else {
+      const eng = await this.ensureEngine();
+      try { component = await describeComponent(eng, this.designerFile, itemId, this.asm(), await this.currentText()); }
+      catch { component = null; }
+    }
+    if (this.disposed) return;
+    // Both engines edit a resolved item now (Slice 2 widened the net48 live-edit primitive to a non-Control
+    // component). A net48 describe miss (assembly not built) → null → placeholder; editable is moot there.
+    const editable = component != null;
+    DesignerHub.instance.pushPanel(this, { type: 'itemProps', id: itemId, ownerId, component, editable });
   }
 
   /**
@@ -1518,6 +1572,83 @@ class DesignerSession {
       await this.patchOrRerender(id, prop);
     }
     await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** Grid edit of a ToolStripItem property (item→Properties). Mirrors editFromGrid's error/restore handling but
+   *  refreshes via the item channel (loadItemProps) so a failure re-renders the item grid, not the control's. */
+  async editItemFromGrid(ownerId: string, itemId: string, prop: string, propType: string, isEnum: boolean, value: string): Promise<void> {
+    try {
+      await this.applyItemEdit(ownerId, itemId, prop, propType, isEnum, value);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadItemProps(ownerId, itemId); } catch { /* best effort */ }
+    }
+  }
+
+  /** Apply ONE property edit to a ToolStripItem field. The engine splice (setProperty) is field-agnostic — it rewrites
+   *  `this.<itemField>.<prop> = <expr>` exactly like a control — so the commit path is the proven grid-edit one. The
+   *  differences from applyEdit: (1) no Dock/Anchor conjugate reset (items have neither); (2) the re-render uses
+   *  fullRender(skipReselect) so the canvas keeps the item highlight and the panel is NOT snapped back to the control;
+   *  (3) the grid refresh goes through loadItemProps (the itemProps channel bypasses the control-props gate). net48
+   *  can't re-interpret its compiled assembly, so it mutates the LIVE item in place (liveEdit48 → the widened
+   *  TryApply) for the picture; the committed text is what persists on save either way (Slice 2). */
+  private async applyItemEdit(ownerId: string, itemId: string, prop: string, propType: string, isEnum: boolean, raw: string): Promise<void> {
+    if (!this.designerFile) return;
+
+    if (COMPLEX_TYPE_SET.has(propType) && raw.trim() === '') {
+      this.post({ type: 'status', message: t('status.enterValue', { type: shortName(propType) }) });
+      await this.loadItemProps(ownerId, itemId);
+      return;
+    }
+
+    const eng = await this.ensureEngine();
+
+    let expr: string | null;
+    if (COMPLEX_TYPE_SET.has(propType)) {
+      expr = await convertValue(eng, propType, raw);
+      if (expr === null) {
+        this.post({ type: 'status', message: t('status.invalidValue', { raw, type: shortName(propType) }) });
+        await this.loadItemProps(ownerId, itemId);
+        return;
+      }
+    } else {
+      expr = toCSharpExpression(propType, isEnum, raw);
+      if (expr === null) {
+        this.post({ type: 'status', message: t('status.cannotEditType', { type: propType }) });
+        return;
+      }
+    }
+
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const res = await setProperty(eng, this.designerFile, itemId, prop, expr, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadItemProps(ownerId, itemId);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadItemProps(ownerId, itemId);
+      return;
+    }
+
+    this.commit(before, res.text, `Set ${itemId}.${prop}`);
+    this.output.appendLine(`set ${itemId}.${prop} = ${expr} (${res.mode}, unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id: itemId, prop }) });
+
+    // net9 re-renders the interpreted graph from the edited source (skipReselect keeps the item highlight and does
+    // NOT snap the panel back to the control); net48 mutates the live item on the compiled instance instead —
+    // liveEdit48 → setCompiledPropertyLive resolves the item via the widened TryApply, and live48/show48 posts
+    // render+layout+tray but no control select, so the item highlight survives there too.
+    if (this.engineKind === 'net48') {
+      await this.liveEdit48(itemId, prop, raw);
+    } else {
+      await this.fullRender(true);
+    }
+    await this.loadItemProps(ownerId, itemId); // refresh the item grid via the itemProps channel
     await this.postDirty();
   }
 
@@ -2048,7 +2179,7 @@ class DesignerSession {
     }
   }
 
-  private async applyToolStripItems(id: string, items: ToolStripItemModel[]): Promise<void> {
+  private async applyToolStripItems(id: string, items: ToolStripItemModel[], fromCanvasItemOp = false): Promise<void> {
     if (!this.designerFile) return;
     const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
     const before = this.doc.designerText;
@@ -2070,9 +2201,9 @@ class DesignerSession {
     this.output.appendLine(`edit ${id}.Items (toolstrip add/remove/rename/reorder, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Items' }) });
     if (this.engineKind === 'net48') {
-      await this.liveToolStrip48(id, res.text);
+      await this.liveToolStrip48(id, res.text); // net48 live path posts no select → item highlight already survives
     } else {
-      await this.fullRender();
+      await this.fullRender(fromCanvasItemOp); // net9: skip the trailing reselect for on-canvas item ops (keep highlight)
     }
     await this.loadProps(id);
     await this.postDirty();
@@ -2095,6 +2226,86 @@ class DesignerSession {
       return;
     }
     await this.live48((eng) => setCompiledToolStripItemsLive(eng, this.designerFile!, asm, id, resolved.items));
+  }
+
+  /**
+   * On-canvas "Type Here" ADD: append ONE new top-level item to a ToolStrip/MenuStrip/StatusStrip. Reads the current
+   * forest from the unsaved buffer (pure-text → net9 even on a net48 form), appends a new node with an EMPTY id (the
+   * engine mints the field name on commit), then reuses the shared commit seam `applyToolStripItems` (net9 fullRender /
+   * net48 live reconcile). The item type is the one chosen on the canvas, defaulted from the owner strip when absent; a
+   * separator carries no text. Best-effort: a non-editable / non-strip owner is a no-op with a status.
+   */
+  private async applyStripAdd(hostId: string, itemType: string, text: string): Promise<void> {
+    if (this.disposed || !this.designerFile) return;
+    const eng = await this.ensureEngine('net9'); // read + splice are pure-text → net9 even on a net48 form
+    const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
+    if (!cur.ok) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: cur.reason || 'items not editable' }) });
+      return;
+    }
+    const type = itemType || this.defaultStripItemType(hostId);
+    const isSep = /Separator$/.test(type);
+    const forest: ToolStripItemModel[] = cur.items.slice(); // top-level append — existing items/subtrees untouched
+    forest.push({ id: '', text: isSep ? '' : text, name: '', itemType: type, children: [] });
+    await this.applyToolStripItems(hostId, forest, true);
+  }
+
+  /** Default new-item type for a strip, mirroring the webview's toolStripNewTypes(ownerType)[0]. */
+  private defaultStripItemType(hostId: string): string {
+    const ot = this.controls.find((c) => c.id === hostId)?.type || '';
+    if (ot.includes('StatusStrip')) return 'ToolStripStatusLabel';
+    if (ot.includes('MenuStrip')) return 'ToolStripMenuItem';
+    return 'ToolStripButton';
+  }
+
+  /**
+   * On-canvas RENAME: set one existing top-level item's Text. Reads the current forest from the unsaved buffer
+   * (pure-text → net9 even on a net48 form), finds the item by its field id, changes ONLY its Text, and reuses the
+   * shared commit seam `applyToolStripItems` — the engine renames surgically (only the changed-Text literal is
+   * rewritten; every unmanaged property of the item is preserved). An empty caption or a no-op (same text) does
+   * nothing; a vanished item id (edited away between render and commit) is a silent no-op.
+   */
+  private async applyStripRename(hostId: string, itemId: string, text: string): Promise<void> {
+    if (this.disposed || !this.designerFile) return;
+    const newText = text.trim();
+    if (newText === '') return; // empty caption = keep the old text (the engine rejects a blank Text literal anyway)
+    const eng = await this.ensureEngine('net9'); // read + splice are pure-text → net9 even on a net48 form
+    const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
+    if (!cur.ok) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: cur.reason || 'items not editable' }) });
+      return;
+    }
+    const forest = cur.items.slice(); // mutate the target node's Text in the freshly-parsed forest; all else untouched
+    const target = findToolStripItem(forest, itemId);
+    if (!target || target.text === newText) return; // item gone, or nothing changed → no commit
+    target.text = newText;
+    await this.applyToolStripItems(hostId, forest, true);
+  }
+
+  /**
+   * On-canvas DELETE: remove one top-level item (and its whole subtree) from a ToolStrip/MenuStrip/StatusStrip. Reads
+   * the current forest from the unsaved buffer (pure-text → net9 even on a net48 form), omits the target node, and
+   * reuses the shared commit seam `applyToolStripItems` — the engine computes `removedIds` (the node + its descendants)
+   * and strips their field/ctor/Text/AddRange membership (and disposes on the net48 live preview). A vanished item id
+   * (edited away between render and commit) or an id absent from the forest is a silent no-op.
+   */
+  private async applyStripDelete(hostId: string, itemId: string): Promise<void> {
+    if (this.disposed || !this.designerFile) return;
+    const eng = await this.ensureEngine('net9'); // read + splice are pure-text → net9 even on a net48 form
+    const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
+    if (!cur.ok) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: cur.reason || 'items not editable' }) });
+      return;
+    }
+    if (!findToolStripItem(cur.items, itemId)) return; // id not present (vanished / already gone) → silent no-op
+    const pruned = removeToolStripItem(cur.items, itemId); // omit the node (+subtree) from the freshly-parsed forest
+    await this.applyToolStripItems(hostId, pruned, true);
+    // The deleted item may have been shown in the Properties panel (item→Properties). applyToolStripItems reloaded the
+    // STRIP's props only; if a DIFFERENT control was the selection (currentId ≠ strip), its props were never re-pushed,
+    // so the panel would linger on the now-deleted item (review wf_df05090e-a67). Restore the selected control's props —
+    // the panel's `props` handler then exits item mode and shows the control. (Skip when currentId IS the strip:
+    // applyToolStripItems already reloaded it via loadProps(hostId).)
+    if (this.currentId !== hostId) await this.loadProps(this.currentId);
   }
 
   /** Read side of the typed DataGridView.Columns editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
@@ -2756,13 +2967,10 @@ class DesignerSession {
     this.post({ type: 'status', message: `deleted tab ${pageId} — unsaved` });
   }
 
-  /** "Learn More Online": open the selected control type's .NET API docs (or the WinForms hub if unknown). */
+  /** "Learn More Online": open the selected control type's .NET API docs; a third-party type (DevExpress, …) routes to
+   *  a web search instead of a 404'ing /dotnet/api page; an unknown type falls back to the WinForms hub. */
   private async openLearnMore(typeName?: string): Promise<void> {
-    const t = (typeName ?? '').trim();
-    const url = /^[\w.]+\.[\w.]+$/.test(t)
-      ? `https://learn.microsoft.com/dotnet/api/${t.toLowerCase()}`
-      : 'https://learn.microsoft.com/dotnet/desktop/winforms/';
-    await vscode.env.openExternal(vscode.Uri.parse(url));
+    await vscode.env.openExternal(vscode.Uri.parse(learnMoreUrl(typeName)));
   }
 
   private postDirty(): void {
@@ -2833,6 +3041,32 @@ function parsePair(s?: string | null): [number, number] | null {
   if (!s) return null;
   const parts = s.split(',').map((n) => parseInt(n.trim(), 10));
   return parts.length === 2 && parts.every((n) => Number.isFinite(n)) ? [parts[0], parts[1]] : null;
+}
+
+/** Depth-first search for a ToolStrip/MenuStrip item node by its field id, across the whole forest (incl. submenus).
+ *  Used by the on-canvas rename to locate the target in the freshly-parsed forest. Empty id never matches. */
+function findToolStripItem(forest: ToolStripItemModel[], id: string): ToolStripItemModel | null {
+  if (!id) return null;
+  for (const it of forest) {
+    if (it.id === id) return it;
+    const hit = findToolStripItem(it.children ?? [], id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Return a new forest with the node whose field id is `id` (and its whole subtree) omitted, at any depth. Non-matching
+ *  branches are rebuilt recursively so a submenu can lose one child without disturbing its siblings. Empty id ⇒ the
+ *  forest is returned unchanged (never matches). Used by the on-canvas DELETE: the engine derives removedIds from the
+ *  omission. */
+function removeToolStripItem(forest: ToolStripItemModel[], id: string): ToolStripItemModel[] {
+  if (!id) return forest;
+  const out: ToolStripItemModel[] = [];
+  for (const it of forest) {
+    if (it.id === id) continue; // drop this node and its whole subtree
+    out.push(it.children && it.children.length ? { ...it, children: removeToolStripItem(it.children, id) } : it);
+  }
+  return out;
 }
 
 /** Two layouts describe the same geometry (same ids at the same window rects) — patch-safety gate. */
@@ -3031,10 +3265,25 @@ ${cspMeta(webview, nonce)}
      outlines but below the active selection boxes so it never masks the current selection) */
   .hoverhint { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 3; border: 1px solid rgba(78,161,255,.55); background: rgba(78,161,255,.06); }
   /* on-canvas "Type Here" add-slot at the end of a ToolStrip/MenuStrip/StatusStrip — a dashed placeholder cell that
-     hints where a new item lands (read-only affordance in this slice; interaction lands in a follow-up) */
-  .typehereslot { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 4; border: 1px dashed rgba(78,161,255,.75);
+     hints where a new item lands; clicking it opens the inline add-editor (.slotedit) */
+  .typehereslot { position: absolute; box-sizing: border-box; pointer-events: auto; cursor: text; z-index: 4; border: 1px dashed rgba(78,161,255,.75);
     background: rgba(78,161,255,.09); color: rgba(150,195,255,.95); font-size: 9px; line-height: 1; display: flex;
     align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; padding: 0 2px; }
+  .typehereslot:hover { background: rgba(78,161,255,.18); }
+  /* on-canvas selected strip item (Slice D): a solid highlight box over the clicked top-level ToolStrip/MenuStrip item
+     marking the Delete / F2-rename target. Sits above the container/hover outlines but below the inline editor; never
+     intercepts pointer events so a second click / double-click still reaches the item. */
+  .stripitemsel { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 5; border: 1px solid rgba(78,161,255,.95);
+    background: rgba(78,161,255,.12); }
+  /* inline "Type Here" add-editor: a small floating popup (item-type <select> + text <input>) anchored at the clicked
+     add-slot. Enter commits (posts stripAdd), Escape / click-away cancels. Sits above every canvas overlay. */
+  .slotedit { position: absolute; z-index: 7; display: flex; gap: 3px; align-items: center; padding: 2px 3px;
+    background: var(--vscode-editor-background, #1e1e1e); border: 1px solid rgba(78,161,255,.9); border-radius: 3px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.45); }
+  .slotedit select.slotEditType { font-size: 11px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent); }
+  .slotedit input.slotEditInput { font-size: 11px; min-width: 96px; color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); padding: 1px 3px; }
   /* small visual separator between toolbar button groups */
   .tbsep { display: inline-block; width: 1px; align-self: stretch; margin: 1px 4px; background: var(--vscode-panel-border, #444); }
   /* rubber-band selection rectangle */

@@ -17,7 +17,7 @@ namespace WinFormsDesigner.Engine.Net48
     /// </summary>
     public static class CompiledDescriber
     {
-        public static ComponentDesc Describe(Control target, string id, string name, bool isRoot, string? parent)
+        public static ComponentDesc Describe(IComponent target, string id, string name, bool isRoot, string? parent)
         {
             return new ComponentDesc
             {

@@ -231,7 +231,7 @@ namespace WinFormsDesigner.Engine.Net48
                 foreach (var c in r.Controls.Take(12))
                     Console.WriteLine($"   {(c.IsRoot ? "*" : " ")} id={c.Id} type={c.Type} @({c.X},{c.Y}) {c.Width}x{c.Height} d{c.Depth} parent={c.ParentId}{(c.IsStripHost ? " [strip-host]" : "")}");
                 foreach (var it in r.ToolStripItems)
-                    Console.WriteLine($"   · {it.OwnerId} ▸ {(it.IsTypeHere ? "[Type Here]" : it.ItemId + " : " + it.ItemType)} @({it.X},{it.Y}) {it.Width}x{it.Height}");
+                    Console.WriteLine($"   · {it.OwnerId} ▸ {(it.IsTypeHere ? "[Type Here]" : it.ItemId + " : " + it.ItemType + (string.IsNullOrEmpty(it.Text) ? "" : " '" + it.Text + "'"))} @({it.X},{it.Y}) {it.Width}x{it.Height}");
                 foreach (var t in r.Tray)
                     Console.WriteLine($"   [tray] {t.Name} [id={t.Id}] : {t.Type}");
                 if (!string.IsNullOrEmpty(r.Diagnostics)) Console.WriteLine("[render] diag: " + r.Diagnostics);

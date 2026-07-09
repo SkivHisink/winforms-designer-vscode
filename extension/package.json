@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "preview": true,
   "license": "MIT",
   "author": {
@@ -98,7 +98,7 @@
     "configurationDefaults": {
       "explorer.fileNesting.enabled": true,
       "explorer.fileNesting.patterns": {
-        "*.cs": "${capture}.Designer.cs, ${capture}.resx, ${capture}.*.cs"
+        "*.cs": "${capture}.Designer.cs, ${capture}.resx"
       }
     },
     "commands": [

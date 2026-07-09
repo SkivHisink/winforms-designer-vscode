@@ -51,6 +51,9 @@ namespace WinFormsDesigner.Engine
         public string ItemId { get; init; } = "";
         /// <summary>The item's concrete type FullName (empty for the "Type Here" slot).</summary>
         public string ItemType { get; init; } = "";
+        /// <summary>The item's live caption (ToolStripItem.Text) — the canvas prefills the inline rename editor with
+        /// it (empty for the "Type Here" slot and for text-less items like a Separator).</summary>
+        public string Text { get; init; } = "";
         public int X { get; init; }
         public int Y { get; init; }
         public int Width { get; init; }

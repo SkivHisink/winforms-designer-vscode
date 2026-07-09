@@ -324,6 +324,14 @@
   var controls = [];
   var currentId = null;
   var currentComponent = null;
+  // item→Properties state (SEPARATE from currentId, which is always the selected CONTROL): when a ToolStrip item is
+  // clicked on the canvas the host pushes an `itemProps` message and the grid shows the item. currentItemId is the item
+  // field id (null ⇔ a control is shown); currentItemOwner is the strip host id (threaded back on edits so the host
+  // routes to the item-edit path); currentItemEditable is true once the item resolved on either engine (net48 edits it
+  // live now — Slice 2), false only when describe returned null (a net48 assembly not built yet → placeholder).
+  var currentItemId = null;
+  var currentItemOwner = null;
+  var currentItemEditable = false;
   var currentProp = null;   // name of the active property row (drives the description pane + row highlight)
   var activeTab = 'props';
   var eventCandidates = {};
@@ -429,7 +437,9 @@
   function openPropMenu(x, y, c, p) {
     if (!tbMenuEl) return;
     var items = [
-      { label: T('panel.menu.reset'), disabled: !p.sourceExplicit, act: function () { vscode.postMessage({ type: 'resetProperty', id: c.id, prop: p.name }); } }
+      // Reset is disabled for a ToolStrip item (currentItemId): resetProperty carries no ownerId, so the host would
+      // misroute the refresh through the control path (and lose the item highlight). Item reset is a follow-up.
+      { label: T('panel.menu.reset'), disabled: !p.sourceExplicit || !!currentItemId, act: function () { vscode.postMessage({ type: 'resetProperty', id: c.id, prop: p.name }); } }
     ];
     tbMenuEl.innerHTML = '';
     items.forEach(function (mi) {
@@ -602,7 +612,11 @@
       vscode.postMessage({ type: 'setTableCell', id: id, cell: prop.name, value: value });
       return;
     }
-    vscode.postMessage({ type: 'edit', id: id, prop: prop.name, propType: prop.type, isEnum: prop.isEnum, value: value });
+    var msg = { type: 'edit', id: id, prop: prop.name, propType: prop.type, isEnum: prop.isEnum, value: value };
+    // when the grid is showing a ToolStrip item, tag the edit with the strip host id so the host routes it to the
+    // item-edit path (splices the item field, refreshes via itemProps, keeps the canvas highlight).
+    if (currentItemId && id === currentItemId && currentItemOwner) msg.ownerId = currentItemOwner;
+    vscode.postMessage(msg);
   }
   function editInput(title, value, onCommit) {
     var input = document.createElement('input');
@@ -1586,12 +1600,19 @@
       nameTd.textContent = p.name;
     }
 
+    // item→Properties gating: when the grid shows a ToolStrip item (currentItemId set), the specialised collection/image
+    // editors are forced READ-ONLY — their "…" popups route through generic collection splicers (e.g. a menu item's
+    // DropDownItems is a ToolStrip forest, not a flat collection) that aren't item-aware. Scalar/complex-scalar props stay
+    // editable via the normal `edit` route (setProperty is field-agnostic). itemRO also forces the whole grid read-only on
+    // net48 (currentItemEditable=false), where item editing isn't supported this slice.
+    var itemActive = !!currentItemId;
+    var itemRO = itemActive && !currentItemEditable;
     var valTd = document.createElement('td');
-    if (p.isImage) {
+    if (p.isImage && !itemActive) {
       // Image/Icon properties (resx-backed): preview swatch + Import…/(none) — no text field (value isn't a literal)
       valTd.className = 'val';
       valTd.appendChild(imageEditor(c, p));
-    } else if (p.isCollection) {
+    } else if (p.isCollection && !itemActive) {
       // a collection surfaced with a "…" editor. The value isn't a literal → no text field. String-item
       // collections (ComboBox/ListBox/CheckedListBox.Items) open the one-item-per-line editor; a typed
       // collection (ListView.Columns) opens the per-item grid editor.
@@ -1603,7 +1624,7 @@
         : p.collectionItemType === TOOLSTRIP_ITEM_TYPE ? toolStripEditor(c, p)
         : p.collectionItemType === STRINGARRAY_ITEM_TYPE ? stringArrayEditor(c, p)
         : collectionEditor(c, p));
-    } else if (editable(p)) {
+    } else if (editable(p) && !itemRO) {
       valTd.className = 'val';
       if (isAnchor) {
         valTd.appendChild(anchorEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
@@ -1627,7 +1648,7 @@
     addColSplit(nameTd);
     tr.appendChild(nameTd); tr.appendChild(valTd); t.appendChild(tr);
 
-    if (isOpen && comp) {
+    if (isOpen && comp && !itemRO) { // a read-only item grid (net48) must not expose editable complex sub-rows
       if (comp.all) {
         var allVal = (parts[0] === parts[1] && parts[1] === parts[2] && parts[2] === parts[3]) ? parts[0] : '';
         t.appendChild(subRow(T('panel.field.all'), allVal, function (v) { sendEdit(c.id, p, [v, v, v, v].join(', ')); }));
@@ -1855,13 +1876,27 @@
     } else if (m.type === 'select') {
       if (m.id !== currentId) closePopup(); // selection moved to another control → drop any open dropdown
       currentId = m.id;
+      currentItemId = null; currentItemOwner = null; // a control selection supersedes any item→Properties view
       if (treeEl) treeEl.value = m.id;
       renderOutline();
     } else if (m.type === 'props') {
       if (m.id !== currentId) return;
+      currentItemId = null; currentItemOwner = null; // control props arrived → leave item→Properties mode
       var compId = m.component ? m.component.id : null;
       if (!currentComponent || currentComponent.id !== compId) { closePopup(); eventCandidates = {}; candFetchedFor = null; currentProp = null; }
       currentComponent = m.component;
+      if (!m.component) emptyEl.textContent = T('panel.props.empty'); // restore the default empty text (may have shown the item note)
+      setEmpty(!m.component);
+      renderActiveTab();
+      fetchCandidatesIfNeeded();
+    } else if (m.type === 'itemProps') {
+      // a ToolStrip item was clicked on the canvas → show ITS properties WITHOUT disturbing the control tree/currentId.
+      // net9 → a real (editable) component; net48 → null → the "unavailable in compiled preview" placeholder.
+      currentItemId = m.id; currentItemOwner = m.ownerId || null; currentItemEditable = !!m.editable;
+      var icompId = m.component ? m.component.id : null;
+      if (!currentComponent || currentComponent.id !== icompId) { closePopup(); eventCandidates = {}; candFetchedFor = null; currentProp = null; }
+      currentComponent = m.component;
+      if (!m.component) emptyEl.textContent = T('panel.itemProps.unavailable');
       setEmpty(!m.component);
       renderActiveTab();
       fetchCandidatesIfNeeded();
@@ -1913,6 +1948,8 @@
     } else if (m.type === 'clear') {
       closePopup();
       controls = []; currentId = null; currentComponent = null; eventCandidates = {}; candFetchedFor = null;
+      currentItemId = null; currentItemOwner = null;
+      emptyEl.textContent = T('panel.props.empty'); // restore the default empty text (may have shown the item note)
       toolboxItems = []; renderToolbox();
       rebuildTree(); renderOutline(); setEmpty(true);
     }

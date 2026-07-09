@@ -8,6 +8,44 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-07-09
+
+**Edit `MenuStrip` / `ToolStrip` items directly on the canvas** — add (with a Visual Studio–style **"Type Here"**
+slot + a type picker), rename (double-click / **F2**), select and delete — and open a **Properties grid for a single
+item** (editable on both engines). The **component tray** now matches Visual Studio by no longer listing strip items.
+Plus three fixes: file nesting, third-party "Learn More" links, and DevExpress `XtraTabControl` tab-adding.
+
+### Added
+- **On-canvas item editing.** Click the trailing **"Type Here"** slot to add an item via an inline editor with a type
+  picker; **double-click** or **F2** to rename a top-level item; single-click to **select** an item and **Delete** it
+  (or use the item's Rename / Delete context menu). Builds on 0.8.0's on-canvas item geometry; works on **both** engines.
+- **Item → Properties.** Selecting a strip item now loads **its own** property grid, kept separate from the control
+  selection. Editable on **.NET 9**; on the **.NET Framework** compiled preview an item both **describes** and
+  **live-edits** — the picture updates immediately, without a rebuild. A non-`Control` non-item component (e.g. a
+  `Timer`) is described but never live-mutated, so a design surface never runs a component's runtime behavior.
+
+### Changed
+- **The component tray no longer lists `ToolStripItem`s** on either engine — Visual Studio never trays strip items;
+  they are edited on the strip itself. Off-tree `ContextMenuStrip`s and non-visual components (`Timer`, `ToolTip`, …)
+  still appear in the tray. _Known limitation:_ the full property grid of **nested / context-menu / overflow** items
+  awaits on-canvas editing of those items.
+
+### Fixed
+- **File nesting no longer swallows unrelated partial-class files.** A sibling like `TestControl.Utils.cs` is no longer
+  nested under `TestControl.cs`; the designer nests only `.Designer.cs` and `.resx`, matching Visual Studio.
+- **"Learn More Online" works for third-party controls.** For a non-Microsoft type (e.g. DevExpress) it now opens a web
+  search instead of a `learn.microsoft.com/dotnet/api` page that 404s.
+- **DevExpress `XtraTabControl` "Add Tab" / "Delete Tab" now appear and work.** Tab-host detection previously broke on
+  DevExpress's `new`-shadowed properties (reflection threw `AmbiguousMatchException`), so the tab menu never showed for
+  an `XtraTabControl`; detection now scans the property list instead, with no change for a standard `TabControl`.
+
+---
+
+_Internal:_ a dedicated `selectItem` → `loadItemProps` → `itemProps` channel keeps item Properties off the control
+selection; net48 resolves a `ToolStripItem` id via a `FieldNames` reverse-scan (describe + a `Control||ToolStripItem`-
+gated live-edit); both `BuildTray`s skip `ToolStripItem`; a shared `FindTabProp` scan replaces the throwing
+`GetProperty` at every tab-host reflection site on both engines; the "Learn More" URL builder is extracted + unit-tested.
+
 ## [0.8.0] — 2026-07-08
 
 Draws **`MenuStrip` / `ToolStrip` item geometry on the canvas** — each top-level item plus a trailing
@@ -510,7 +548,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.6.0...v0.7.0

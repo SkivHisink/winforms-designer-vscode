@@ -80,6 +80,7 @@
   "designer.ruler.show": "显示标尺",
   "designer.ruler.hide": "隐藏标尺",
   "designer.formSuffix": " (窗体)",
+  "designer.typeHere": "在此输入",
   "designer.dirtyBadge": "● 未保存",
   "designer.sel.multi": {
     "other": "已选定 {n} 个控件"
@@ -104,8 +105,11 @@
   "designer.menu.paste": "粘贴",
   "designer.menu.duplicate": "生成副本",
   "designer.menu.delete": "删除",
+  "designer.menu.renameItem": "重命名",
+  "designer.menu.deleteItem": "删除项",
   "designer.menu.properties": "属性",
   "panel.props.empty": "在 WinForms 设计器中选择一个控件以编辑其属性。",
+  "panel.itemProps.unavailable": "编译预览中无法显示项属性。",
   "panel.sort.categorized": "按分类",
   "panel.sort.alphabetical": "按字母顺序",
   "panel.tab.props": "属性",

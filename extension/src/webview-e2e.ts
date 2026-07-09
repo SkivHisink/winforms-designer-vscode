@@ -347,6 +347,367 @@ test('strip slots (on-canvas Type Here, Slice A): a layout with toolStripItems d
   h.destroy();
 });
 
+/** Layout a strip host with a real item + a trailing Type-Here slot, and return the visible slot element. */
+function setupStripSlot(h: Harness, ownerType: string): any {
+  h.send({ type: 'render', png: '', width: 300, height: 100, gen: 0 }); // hasRendered → overlays draw
+  const strip = mkCtrl({ id: 'strip1', type: ownerType, x: 8, y: 8, width: 284, height: 24, isStripHost: true });
+  h.send({
+    type: 'layout',
+    controls: [strip],
+    toolStripItems: [
+      { ownerId: 'strip1', itemId: 'existingItem', itemType: 'System.Windows.Forms.ToolStripButton', x: 10, y: 10, width: 40, height: 20, isTypeHere: false },
+      { ownerId: 'strip1', itemId: '', itemType: '', x: 52, y: 10, width: 66, height: 20, isTypeHere: true },
+    ],
+  });
+  h.resetPosted();
+  return Array.prototype.filter.call(h.document.querySelectorAll('.typehereslot'), (s: any) => s.style.display !== 'none')[0];
+}
+
+test('on-canvas Type Here (Slice B ADD): clicking the slot opens the inline editor; Enter posts a stripAdd with the chosen type + typed text', () => {
+  const h = loadDesigner();
+  const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip');
+  ok(!!slot, 'the Type-Here slot is drawn and visible');
+  h.click(slot);
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'clicking the slot opens the inline add-editor');
+  const sel = editor.querySelector('select.slotEditType') as any;
+  const input = editor.querySelector('input.slotEditInput') as any;
+  ok(!!sel && !!input, 'the editor has a type <select> and a text <input>');
+  eq(sel.options[0].value, 'ToolStripMenuItem', 'a MenuStrip owner defaults the new item to ToolStripMenuItem');
+  eq(sel.value, 'ToolStripMenuItem', 'the default type is preselected');
+  input.value = 'Help';
+  h.key('keydown', { key: 'Enter' }, input);
+  const add = only(h.posted, 'stripAdd');
+  eq(add.length, 1, 'Enter posts exactly one stripAdd gesture');
+  eq([add[0].hostId, add[0].itemType, add[0].text], ['strip1', 'ToolStripMenuItem', 'Help'], 'the gesture carries the owner id, the chosen type, and the typed text');
+  ok(!h.document.querySelector('.slotedit'), 'the editor is dismissed after committing');
+  h.destroy();
+});
+
+test('on-canvas Type Here (Slice B ADD): the type <select> is owner-appropriate and a Separator commits with no text', () => {
+  const h = loadDesigner();
+  const slot = setupStripSlot(h, 'System.Windows.Forms.ToolStrip');
+  h.click(slot);
+  const editor = h.document.querySelector('.slotedit') as any;
+  const sel = editor.querySelector('select.slotEditType') as any;
+  const input = editor.querySelector('input.slotEditInput') as any;
+  eq(sel.options[0].value, 'ToolStripButton', 'a ToolStrip owner defaults the new item to ToolStripButton');
+  const optionValues = Array.prototype.map.call(sel.options, (o: any) => o.value);
+  ok(optionValues.indexOf('ToolStripSeparator') >= 0, 'the toolbar type list offers a Separator');
+  // choosing a Separator hides the text field (a separator carries no Text)
+  sel.value = 'ToolStripSeparator';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  eq(input.style.display, 'none', 'the text input is hidden for a Separator');
+  h.key('keydown', { key: 'Enter' }, editor);
+  const add = only(h.posted, 'stripAdd');
+  eq(add.length, 1, 'Enter posts the separator add');
+  eq([add[0].itemType, add[0].text], ['ToolStripSeparator', ''], 'the separator gesture carries the separator type and an empty text');
+  h.destroy();
+});
+
+test('on-canvas Type Here (Slice B ADD): Escape cancels, and an empty caption commits nothing', () => {
+  const h = loadDesigner();
+  const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip');
+  // Escape dismisses without posting
+  h.click(slot);
+  (h.document.querySelector('input.slotEditInput') as any).value = 'Discarded';
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  eq(only(h.posted, 'stripAdd').length, 0, 'Escape posts nothing');
+  ok(!h.document.querySelector('.slotedit'), 'Escape dismisses the editor');
+  // an empty (whitespace-only) caption on a non-separator commits nothing
+  h.click(slot);
+  (h.document.querySelector('input.slotEditInput') as any).value = '   ';
+  h.key('keydown', { key: 'Enter' }, h.document.querySelector('.slotedit'));
+  eq(only(h.posted, 'stripAdd').length, 0, 'an empty caption adds no item');
+  ok(!h.document.querySelector('.slotedit'), 'the editor still dismisses on an empty commit');
+  h.destroy();
+});
+
+test('on-canvas Type Here (Slice B ADD): a late manip/select push does NOT dismiss the open editor (typed text survives); a layout does (review wf_ca42c504 fix)', () => {
+  const h = loadDesigner();
+  const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip');
+  h.send({ type: 'select', id: 'strip1' }); // the strip is the current selection, as right after clicking its body
+  h.click(slot);
+  const input = h.document.querySelector('input.slotEditInput') as any;
+  ok(!!input, 'the editor opened while the strip is selected');
+  input.value = 'Draft';
+  // the async move/resize-flag push ('manip') that arrives AFTER selecting the strip must NOT eat the typed caption
+  h.send({ type: 'manip', id: 'strip1', move: true, resize: false });
+  ok(!!h.document.querySelector('.slotedit'), 'a manip push (same id) keeps the editor open');
+  eq((h.document.querySelector('input.slotEditInput') as any).value, 'Draft', 'the typed caption survives the manip push');
+  // a genuine geometry change (layout) DOES dismiss the (now potentially drifting) editor
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.MenuStrip', isStripHost: true })], toolStripItems: [] });
+  ok(!h.document.querySelector('.slotedit'), 'a layout (geometry change) dismisses the editor');
+  h.destroy();
+});
+
+test('on-canvas Type Here (Slice B ADD): a StatusStrip owner defaults to ToolStripStatusLabel, and a click-away dismisses the editor', () => {
+  const h = loadDesigner();
+  const slot = setupStripSlot(h, 'System.Windows.Forms.StatusStrip');
+  h.click(slot);
+  const sel = h.document.querySelector('select.slotEditType') as any;
+  eq(sel.options[0].value, 'ToolStripStatusLabel', 'a StatusStrip owner defaults the new item to ToolStripStatusLabel');
+  // a mousedown OUTSIDE the editor (click-away, capture-phase document listener) dismisses it without posting
+  h.mouse('mousedown', {}, h.el('surface'));
+  ok(!h.document.querySelector('.slotedit'), 'a click-away (mousedown outside the editor) dismisses it');
+  eq(only(h.posted, 'stripAdd').length, 0, 'click-away commits nothing');
+  h.destroy();
+});
+
+/** Render + layout a strip host carrying the given item geometry, then clear the posted log. */
+function setupStripItems(h: Harness, ownerType: string, items: any[]): void {
+  h.send({ type: 'render', png: '', width: 300, height: 100, gen: 0 }); // hasRendered → overlays draw
+  const strip = mkCtrl({ id: 'strip1', type: ownerType, x: 8, y: 8, width: 284, height: 24, isStripHost: true });
+  h.send({ type: 'layout', controls: [strip], toolStripItems: items });
+  h.resetPosted();
+}
+
+test('on-canvas item rename (Slice C): double-clicking a top-level item opens the inline editor prefilled with its caption; Enter posts stripRename', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: '&File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 53, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside fileMenu (14,10,37,20)
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'double-clicking an item opens the inline rename editor');
+  ok(!editor.querySelector('select.slotEditType'), 'the rename editor has NO type <select> (rename never changes type)');
+  const input = editor.querySelector('input.slotEditInput') as any;
+  ok(!!input, 'the rename editor has a text <input>');
+  eq(input.value, '&File', 'the input is prefilled with the item’s live caption');
+  input.value = '&Edit';
+  h.key('keydown', { key: 'Enter' }, input);
+  const ren = only(h.posted, 'stripRename');
+  eq(ren.length, 1, 'Enter posts exactly one stripRename gesture');
+  eq([ren[0].hostId, ren[0].itemId, ren[0].text], ['strip1', 'fileMenu', '&Edit'], 'the gesture carries the owner id, the item id, and the new caption');
+  ok(!h.document.querySelector('.slotedit'), 'the editor is dismissed after committing');
+  h.destroy();
+});
+
+test('on-canvas item rename (Slice C): double-clicking a Separator does not open the editor (a separator has no Text)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'sep1', itemType: 'System.Windows.Forms.ToolStripSeparator', text: '', x: 14, y: 10, width: 6, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 22, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  h.mouse('dblclick', { offsetX: 16, offsetY: 15 }, h.el('surface')); // inside the separator (14,10,6,20)
+  ok(!h.document.querySelector('.slotedit'), 'a separator is not renamable → no editor opens');
+  eq(only(h.posted, 'stripRename').length, 0, 'nothing is posted for a separator double-click');
+  h.destroy();
+});
+
+test('on-canvas item rename (Slice C): Escape cancels, and a blank caption commits nothing', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 53, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  // Escape dismisses without posting
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  (h.document.querySelector('input.slotEditInput') as any).value = 'Discarded';
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  eq(only(h.posted, 'stripRename').length, 0, 'Escape posts nothing');
+  ok(!h.document.querySelector('.slotedit'), 'Escape dismisses the editor');
+  // a blank (whitespace-only) caption renames nothing (VS keeps the old text)
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  (h.document.querySelector('input.slotEditInput') as any).value = '   ';
+  h.key('keydown', { key: 'Enter' }, h.document.querySelector('.slotedit'));
+  eq(only(h.posted, 'stripRename').length, 0, 'a blank caption renames nothing');
+  ok(!h.document.querySelector('.slotedit'), 'the editor still dismisses on a blank commit');
+  h.destroy();
+});
+
+test('on-canvas item rename (Slice C): a late manip push keeps the rename editor open (edited text survives); a layout dismisses it', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+  ]);
+  h.send({ type: 'select', id: 'strip1' }); // the strip is the current selection (as right after clicking its body)
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  const input = h.document.querySelector('input.slotEditInput') as any;
+  ok(!!input, 'the rename editor opened');
+  input.value = 'Edited';
+  h.send({ type: 'manip', id: 'strip1', move: true, resize: false });
+  ok(!!h.document.querySelector('.slotedit'), 'a manip push (same id) keeps the rename editor open');
+  eq((h.document.querySelector('input.slotEditInput') as any).value, 'Edited', 'the edited caption survives the manip push');
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.MenuStrip', isStripHost: true })], toolStripItems: [] });
+  ok(!h.document.querySelector('.slotedit'), 'a layout (geometry change) dismisses the rename editor');
+  h.destroy();
+});
+
+test('on-canvas item rename (Slice C): opening the editor and pressing Enter WITHOUT editing posts nothing (no silent source mutation on a no-op confirm — review wf_df230de7)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'padItem', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save ', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 56, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside padItem (14,10,40,20)
+  const input = h.document.querySelector('input.slotEditInput') as any;
+  eq(input.value, 'Save ', 'the editor prefills the caption verbatim (trailing space preserved)');
+  // press Enter with NO edit → the trim would otherwise strip the space and rewrite the source; the dirty-check blocks it
+  h.key('keydown', { key: 'Enter' }, input);
+  eq(only(h.posted, 'stripRename').length, 0, 'an unedited confirm posts no rename (even though trim would change "Save " → "Save")');
+  ok(!h.document.querySelector('.slotedit'), 'the editor still dismisses on the no-op confirm');
+  // an ACTUAL edit still posts the (trimmed) new caption
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  (h.document.querySelector('input.slotEditInput') as any).value = 'Store';
+  h.key('keydown', { key: 'Enter' }, h.document.querySelector('.slotedit'));
+  const ren = only(h.posted, 'stripRename');
+  eq(ren.length, 1, 'a real edit posts exactly one stripRename');
+  eq(ren[0].text, 'Store', 'the edited caption is posted');
+  h.destroy();
+});
+
+test('on-canvas item select (Slice D): a single click on a top-level item highlights it (a .stripitemsel box at its rect) without selecting the container strip', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 53, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside fileMenu (14,10,37,20)
+  const hl = h.document.querySelector('.stripitemsel') as any;
+  ok(!!hl && hl.style.display !== 'none', 'the clicked item is highlighted');
+  eq([hl.style.left, hl.style.top, hl.style.width, hl.style.height], ['14px', '10px', '37px', '20px'], 'the highlight box sits on the item rect (zoom=1)');
+  eq(only(h.posted, 'pick').length, 0, 'clicking an item does NOT pick the container strip as a control');
+  eq(only(h.posted, 'stripAdd').length + only(h.posted, 'stripRename').length + only(h.posted, 'stripDelete').length, 0, 'a plain select posts no mutation');
+  h.destroy();
+});
+
+test('on-canvas item delete (Slice D): Delete on a selected item posts stripDelete {hostId,itemId}; a separator is deletable too', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'saveButton', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: 'sep1', itemType: 'System.Windows.Forms.ToolStripSeparator', text: '', x: 56, y: 10, width: 6, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside saveButton
+  h.key('keydown', { key: 'Delete' });
+  let del = only(h.posted, 'stripDelete');
+  eq(del.length, 1, 'Delete posts exactly one stripDelete');
+  eq([del[0].hostId, del[0].itemId], ['strip1', 'saveButton'], 'the gesture carries the owner id and the item id');
+  // a separator is not renamable but IS deletable
+  h.resetPosted();
+  h.mouse('click', { offsetX: 58, offsetY: 15 }, h.el('surface')); // inside sep1 (56,10,6,20)
+  h.key('keydown', { key: 'Delete' });
+  del = only(h.posted, 'stripDelete');
+  eq(del.length, 1, 'a separator is deletable');
+  eq(del[0].itemId, 'sep1', 'the separator delete carries its id');
+  h.destroy();
+});
+
+test('on-canvas item rename (Slice D): F2 on a selected item opens the inline editor prefilled; F2 on a separator does nothing', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: '&File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: 'sep1', itemType: 'System.Windows.Forms.ToolStripSeparator', text: '', x: 53, y: 10, width: 6, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // select fileMenu
+  h.key('keydown', { key: 'F2' });
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'F2 opens the inline rename editor for the selected item');
+  ok(!editor.querySelector('select.slotEditType'), 'the F2 rename editor has NO type <select>');
+  eq((editor.querySelector('input.slotEditInput') as any).value, '&File', 'the editor is prefilled with the item’s caption');
+  h.key('keydown', { key: 'Escape' }, editor);
+  // F2 on a separator does nothing (no Text to rename)
+  h.mouse('click', { offsetX: 55, offsetY: 15 }, h.el('surface')); // select sep1 (53,10,6,20)
+  h.key('keydown', { key: 'F2' });
+  ok(!h.document.querySelector('.slotedit'), 'F2 on a separator opens no editor');
+  h.destroy();
+});
+
+test('on-canvas item menu (Slice D): right-clicking an item selects it and shows Rename + Delete Item; Delete Item posts stripDelete', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('contextmenu', { clientX: 20, clientY: 15, button: 2 }, h.el('surfaceWrap')); // default canvas rect (0,0) → px=clientX
+  ok(h.el('ctxMenu').className.indexOf('open') >= 0, 'the item context menu opened');
+  ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'right-click selected (highlighted) the item');
+  eq(only(h.posted, 'pick').length, 0, 'the item menu does not pick the strip as a control');
+  ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.renameItem'), 'the menu offers Rename');
+  const delItem = findMenuItem(h, 'ctxMenu', 'designer.menu.deleteItem');
+  ok(!!delItem, 'the menu offers Delete Item');
+  h.click(delItem);
+  const del = only(h.posted, 'stripDelete');
+  eq(del.length, 1, 'clicking Delete Item posts one stripDelete');
+  eq([del[0].hostId, del[0].itemId], ['strip1', 'fileMenu'], 'Delete Item carries the owner + item id');
+  h.destroy();
+});
+
+test('on-canvas item select (Slice D): selecting a control clears the item highlight (and Delete then targets the control, not the item)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // select the item
+  ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'the item is highlighted');
+  // a host control-selection supersedes the item highlight
+  h.send({ type: 'select', id: 'strip1' });
+  eq((h.document.querySelector('.stripitemsel') as any).style.display, 'none', 'a host select clears the item highlight');
+  h.send({ type: 'manip', id: 'strip1', move: false, resize: false });
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'stripDelete').length, 0, 'with the item deselected, Delete no longer posts a stripDelete');
+  h.destroy();
+});
+
+test('on-canvas item select (Slice D): an item that vanishes from a fresh layout drops the highlight (and Delete becomes a no-op)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'saveButton', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'the item is highlighted');
+  // a re-render whose layout no longer carries the item (e.g. it was just deleted) must clear the selection
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.ToolStrip', isStripHost: true })], toolStripItems: [] });
+  eq((h.document.querySelector('.stripitemsel') as any).style.display, 'none', 'the highlight is dropped when the item is gone');
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'stripDelete').length, 0, 'Delete posts nothing once the selected item vanished');
+  h.destroy();
+});
+
+test('on-canvas item select (Slice D): an anonymous item (empty itemId) is NOT selectable — click/right-click fall through to the container strip (review wf_108a7dbe)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.StatusStrip', [
+    // an item with no designer field (e.g. statusStrip1.Items.Add("Ready")) — real, painted, but has no resolvable id
+    { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripStatusLabel', text: 'Ready', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+  ]);
+  // a plain click on the anonymous item must NOT highlight it — it selects the container strip instead (no dead zone)
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  eq((h.document.querySelector('.stripitemsel') as any)?.style.display ?? 'none', 'none', 'an anonymous item is not highlighted');
+  eq(only(h.posted, 'pick')[0]?.id, 'strip1', 'the click falls through to selecting the container strip');
+  // a right-click on the anonymous item must build the CONTROL menu (Properties, NOT the Rename/Delete-Item menu) — so
+  // the earlier wrong-target delete (a stale item/control selection surviving under a control menu) can't happen
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 20, clientY: 15, button: 2 }, h.el('surfaceWrap'));
+  ok(!findMenuItem(h, 'ctxMenu', 'designer.menu.deleteItem'), 'no "Delete Item" — the anonymous item did not become the item selection');
+  ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.properties'), 'the control menu is shown for the strip under the cursor');
+  eq((h.document.querySelector('.stripitemsel') as any)?.style.display ?? 'none', 'none', 'still no item highlight after the right-click');
+  h.destroy();
+});
+
+test('on-canvas item rename (Slice D): a bare re-render layout (item still present, no trailing select) KEEPS the item highlighted — the host suppresses reselect for item ops (review wf_108a7dbe)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // select fileMenu
+  ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'the item is highlighted');
+  // the host's on-canvas rename commit re-renders (render+layout, NO trailing pushSelect thanks to skipReselect); the
+  // renamed item is still present → the highlight must survive so a follow-up F2/Delete still targets it
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.MenuStrip', isStripHost: true })], toolStripItems: [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Files', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+  ] });
+  const hl = h.document.querySelector('.stripitemsel') as any;
+  ok(hl && hl.style.display !== 'none', 'the item stays highlighted across the item-op re-render (no snap to the container)');
+  eq(hl.style.width, '40px', 'the highlight tracks the renamed item’s new geometry');
+  // Delete now still targets the item, not a stale control
+  h.key('keydown', { key: 'Delete' });
+  const del = only(h.posted, 'stripDelete');
+  eq(del.length, 1, 'Delete still targets the item after the re-render');
+  eq(del[0].itemId, 'fileMenu', 'the delete carries the re-resolved item id');
+  h.destroy();
+});
+
 // ================================================================================================================
 // PANEL (media/panel.js) — property grid / toolbox / outline
 // ================================================================================================================
@@ -907,6 +1268,157 @@ test('panel toolstrip editor: the TYPE picker is context-sensitive — a ToolStr
   h.click(h.document.querySelector('.collectionOk'));
   const set = only(h.posted, 'setToolStripItems');
   eq([set[0].toolStripItems[0].id, set[0].toolStripItems[0].itemType, set[0].toolStripItems[0].text], ['', 'ToolStripButton', 'Run'], 'the committed new item is a ToolStripButton with the typed caption');
+  h.destroy();
+});
+
+// ---- item → Properties (Slice 1e): clicking a top-level ToolStrip item loads ITS properties into the panel via a
+// dedicated selectItem→itemProps channel that never touches the control selection (currentId / manip / smart-tag). ----
+
+test('item→Properties: a single click on a top-level item posts selectItem {hostId,itemId} (loads item props) and no control pick', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside fileMenu
+  const sel = only(h.posted, 'selectItem');
+  eq(sel.length, 1, 'clicking an item posts exactly one selectItem');
+  eq([sel[0].hostId, sel[0].itemId], ['strip1', 'fileMenu'], 'selectItem carries the owner + item id');
+  eq(only(h.posted, 'pick').length, 0, 'it does NOT pick the container strip as a control');
+  h.destroy();
+});
+
+test('item→Properties: right-clicking a top-level item also posts selectItem (its props follow the context selection)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('contextmenu', { clientX: 20, clientY: 15, button: 2 }, h.el('surfaceWrap'));
+  const sel = only(h.posted, 'selectItem');
+  eq(sel.length, 1, 'a right-click posts one selectItem');
+  eq([sel[0].hostId, sel[0].itemId], ['strip1', 'fileMenu'], 'it carries the owner + item id');
+  h.destroy();
+});
+
+test('item→Properties: an anonymous item (empty id) posts NO selectItem — the click falls through to the strip (review wf_108a7dbe)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.StatusStrip', [
+    { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripStatusLabel', text: 'Ready', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  eq(only(h.posted, 'selectItem').length, 0, 'an unresolvable (anonymous) item posts no selectItem');
+  eq(only(h.posted, 'pick')[0]?.id, 'strip1', 'the click selects the container strip instead');
+  h.destroy();
+});
+
+/** Push item→Properties into the panel: a layout+select+props for the control (so the tree has it), then an itemProps. */
+function itemComp(over: Record<string, any> = {}): any {
+  return { id: 'fileMenu', name: 'fileToolStripMenuItem', type: 'System.Windows.Forms.ToolStripMenuItem', events: [], properties: [prop('Text', { value: 'File', sourceExplicit: true, isDefault: false, category: 'Appearance' })], ...over };
+}
+
+test('item→Properties: an itemProps message renders the item grid WITHOUT hijacking the control tree selection', () => {
+  const h = loadPanel();
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'button1' })] });
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'props', id: 'button1', component: { id: 'button1', name: 'button1', type: 'System.Windows.Forms.Button', events: [], properties: [prop('Text', { value: 'hi', sourceExplicit: true, isDefault: false })] } });
+  h.resetPosted();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp() });
+  eq((findPropRow(h, 'Text').querySelector('input') as any).value, 'File', 'the grid now shows the item’s Text');
+  eq(h.el('tree').value, 'button1', 'the control tree still shows the control — item props did not move currentId');
+  h.destroy();
+});
+
+test('item→Properties: editing an item scalar prop posts an edit tagged with ownerId (routes to the item-edit path)', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp() });
+  const input = h.el('props').querySelector('input') as any;
+  ok(!!input, 'an editable text input rendered for the item’s Text');
+  input.value = 'Edit';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const edits = only(h.posted, 'edit');
+  eq(edits.length, 1, 'one edit posted');
+  eq([edits[0].id, edits[0].prop, edits[0].value, edits[0].ownerId], ['fileMenu', 'Text', 'Edit', 'strip1'], 'the edit targets the item field and carries the strip owner id');
+  h.destroy();
+});
+
+test('item→Properties: an item’s collection/image props render READ-ONLY (their "…" editors are not item-aware — e.g. DropDownItems is a forest)', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp({ properties: [
+    prop('DropDownItems', { type: 'System.Windows.Forms.ToolStripItemCollection', isCollection: true, collectionItemType: 'System.Windows.Forms.ToolStripItem', value: '(Collection)', category: 'Data' }),
+    prop('Image', { type: 'System.Drawing.Image', isImage: true, value: '', category: 'Appearance' }),
+    prop('Text', { value: 'File', sourceExplicit: true, isDefault: false, category: 'Appearance' }),
+  ] }) });
+  const coll = findPropRow(h, 'DropDownItems');
+  ok(!coll.querySelector('button.collectionBtn'), 'no "…" collection editor is offered for an item collection');
+  ok(!!coll.querySelector('td.ro'), 'the item collection renders read-only');
+  ok(!findPropRow(h, 'Image').querySelector('button'), 'no Import/(none) image editor for an item image');
+  ok(!!(findPropRow(h, 'Text').querySelector('input')), 'a scalar prop (Text) is still editable on an item');
+  h.destroy();
+});
+
+test('item→Properties: net48 (component null) shows the compiled-preview placeholder, and returning to a control restores the default empty text', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: false, component: null });
+  eq(h.el('propsEmpty').textContent, 'panel.itemProps.unavailable', 'the placeholder names the compiled-preview limitation');
+  ok(h.el('propsEmpty').style.display !== 'none', 'the empty pane is shown');
+  eq(h.el('propsBody').style.display, 'none', 'the grid body is hidden for the placeholder');
+  // returning to a control (which describes to nothing) restores the DEFAULT empty text (no stale item note)
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'props', id: 'button1', component: null });
+  eq(h.el('propsEmpty').textContent, 'panel.props.empty', 'the default empty text is restored');
+  h.destroy();
+});
+
+test('item→Properties: selecting a control after an item clears item mode — a later edit posts WITHOUT ownerId', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp() });
+  // a genuine control selection supersedes the item view
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'props', id: 'button1', component: { id: 'button1', name: 'button1', type: 'System.Windows.Forms.Button', events: [], properties: [prop('Text', { value: 'hi', sourceExplicit: true, isDefault: false })] } });
+  h.resetPosted();
+  const input = h.el('props').querySelector('input') as any;
+  input.value = 'world';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const edits = only(h.posted, 'edit');
+  eq(edits.length, 1, 'the control edit posts');
+  eq(edits[0].ownerId, undefined, 'after returning to a control the edit carries NO ownerId (item mode cleared)');
+  h.destroy();
+});
+
+test('item→Properties: after an item is deleted, a bare props(control) for the retained selection exits item mode (review wf_df05090e-a67 — the host restores the control)', () => {
+  const h = loadPanel();
+  // a control was the selection (panel currentId = button1); the user then clicked an item → item grid shown
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp() });
+  eq((findPropRow(h, 'Text').querySelector('input') as any).value, 'File', 'the item grid is shown');
+  // the host deletes the item and restores the selected control's props via loadProps(currentId) — a bare props message
+  // (NO preceding select) whose id matches the panel's currentId. The props gate passes → item mode must exit.
+  h.send({ type: 'props', id: 'button1', component: { id: 'button1', name: 'button1', type: 'System.Windows.Forms.Button', events: [], properties: [prop('Text', { value: 'hi', sourceExplicit: true, isDefault: false })] } });
+  eq((findPropRow(h, 'Text').querySelector('input') as any).value, 'hi', 'the panel now shows the restored control, not the deleted item');
+  h.resetPosted();
+  const input = h.el('props').querySelector('input') as any;
+  input.value = 'z';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  eq(only(h.posted, 'edit')[0]?.ownerId, undefined, 'edits now target the control (no ownerId) — item mode fully exited');
+  h.destroy();
+});
+
+test('item→Properties: Reset is disabled while an item is shown (resetProperty carries no ownerId — item reset is a follow-up)', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp() });
+  h.mouse('contextmenu', { clientX: 5, clientY: 5 }, findPropRow(h, 'Text').querySelector('td.name'));
+  const reset = h.el('tbMenu').querySelector('.mi');
+  ok(!!reset && reset.className.indexOf('disabled') >= 0, 'Reset is greyed for a shown item even though the prop is source-explicit');
+  h.click(reset);
+  eq(only(h.posted, 'resetProperty').length, 0, 'a disabled Reset posts nothing');
+  h.destroy();
+});
+
+test('item→Properties (defensive): a non-null but non-editable itemProps (future net48 describe parity) renders the grid READ-ONLY', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: false, component: itemComp() });
+  const row = findPropRow(h, 'Text');
+  ok(!!row.querySelector('td.ro'), 'a non-editable item grid renders the value read-only');
+  ok(!row.querySelector('input'), 'no editable input for a read-only item prop');
   h.destroy();
 });
 

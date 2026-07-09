@@ -105,6 +105,7 @@ export const en: Catalog = {
   'designer.ruler.show': 'Show ruler',
   'designer.ruler.hide': 'Hide ruler',
   'designer.formSuffix': ' (form)',
+  'designer.typeHere': 'Type Here',
   'designer.dirtyBadge': '● unsaved',
   'designer.sel.multi': { one: '{n} control selected', other: '{n} controls selected' },
   'designer.status.distSelectMore': 'select 3+ controls to distribute',
@@ -127,10 +128,13 @@ export const en: Catalog = {
   'designer.menu.paste': 'Paste',
   'designer.menu.duplicate': 'Duplicate',
   'designer.menu.delete': 'Delete',
+  'designer.menu.renameItem': 'Rename',
+  'designer.menu.deleteItem': 'Delete Item',
   'designer.menu.properties': 'Properties',
 
   // ---------- side panel (Properties / Outline / Toolbox) — HTML-owned labels (host-built HTML) ----------
   'panel.props.empty': 'Select a control in the WinForms designer to edit its properties.',
+  'panel.itemProps.unavailable': 'Item properties are unavailable in the compiled preview.',
   'panel.sort.categorized': 'Categorized',
   'panel.sort.alphabetical': 'Alphabetical',
   'panel.tab.props': 'Properties',

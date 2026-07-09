@@ -108,6 +108,11 @@
   var selection = [];     // all selected ids (multi-select); always contains `current` when non-empty
   var tray = [];          // non-visual components (component tray)
   var stripItems = [];    // per-item geometry for ToolStrip/MenuStrip/StatusStrip incl. the trailing "Type Here" slot
+  // on-canvas strip ITEM selection (Slice D): a single top-level item chosen by clicking it — the Delete/F2 target.
+  // Separate from the control selection above (an item is a Component, not a Control) so the generic control ops
+  // (Delete→removeControl, Cut/Copy, z-order) never fire on it. Holds a cached geom {ownerId,itemId,itemType,text,x,y,
+  // width,height} re-resolved from `stripItems` on every render, or null when nothing / a control is selected.
+  var selectedItem = null;
   var trayEl = document.getElementById('tray');
   // tab-order editing (Phase 2): click controls in sequence to renumber TabIndex
   var tabOrderMode = false;
@@ -203,11 +208,17 @@
   }
 
   // ---- on-canvas "Type Here" add-slot: a dashed placeholder cell drawn at the end of each ToolStrip/MenuStrip/
-  // StatusStrip (engine-supplied window-space geometry). Read-only affordance in this slice — it previews where a
-  // new item lands; the click-to-add interaction is a follow-up. Pooled overlay divs like renderContainers. ----
+  // StatusStrip (engine-supplied window-space geometry). Clicking it opens the inline add-editor (openSlotEditor).
+  // Pooled overlay divs like renderContainers. ----
   var stripSlotEls = [];
   function stripSlotEl(i) {
-    while (stripSlotEls.length <= i) { var d = document.createElement('div'); d.className = 'typehereslot'; d.style.display = 'none'; d.textContent = '+'; surfaceWrap.appendChild(d); stripSlotEls.push(d); }
+    while (stripSlotEls.length <= i) {
+      var d = document.createElement('div'); d.className = 'typehereslot'; d.style.display = 'none'; d.textContent = '+';
+      d.title = T('designer.typeHere');
+      d.addEventListener('mousedown', function (e) { e.stopPropagation(); }); // a slot click must not start a marquee/drag
+      d.addEventListener('click', (function (el) { return function (e) { e.stopPropagation(); if (el.__slot) openSlotEditor(el.__slot); }; })(d));
+      surfaceWrap.appendChild(d); stripSlotEls.push(d);
+    }
     return stripSlotEls[i];
   }
   function renderStripSlots() {
@@ -216,12 +227,168 @@
       for (var i = 0; i < stripItems.length; i++) {
         var it = stripItems[i];
         if (!it.isTypeHere) continue; // this slice draws only the trailing add-slot; per-item outlines come later
-        var b = stripSlotEl(n++); b.style.display = 'flex';
+        var b = stripSlotEl(n++); b.__slot = it; b.style.display = 'flex';
         b.style.left = (it.x * zoom) + 'px'; b.style.top = (it.y * zoom) + 'px';
         b.style.width = Math.max(0, it.width * zoom) + 'px'; b.style.height = Math.max(0, it.height * zoom) + 'px';
       }
     }
-    for (; n < stripSlotEls.length; n++) stripSlotEls[n].style.display = 'none';
+    for (; n < stripSlotEls.length; n++) { stripSlotEls[n].style.display = 'none'; stripSlotEls[n].__slot = null; }
+  }
+  // Hit-test a surface-space point against the top-level strip ITEM rects (not the trailing add-slot). Returns the
+  // item geometry under the point (for double-click-to-rename), or null. Items are small; first containing rect wins.
+  function stripItemHit(px, py) {
+    for (var i = 0; i < stripItems.length; i++) {
+      var it = stripItems[i];
+      if (it.isTypeHere) continue;
+      // an item with no field id (e.g. an anonymous statusStrip1.Items.Add("Ready")) can't be resolved on commit, so it
+      // is NOT selectable/renamable/deletable — skip it so the click falls through to selecting the container strip
+      // (avoids a dead click zone AND a stale-selection wrong-target delete via the context menu). Review wf_108a7dbe.
+      if (!it.itemId) continue;
+      if (px >= it.x && px < it.x + it.width && py >= it.y && py < it.y + it.height) return it;
+    }
+    return null;
+  }
+
+  // ---- on-canvas strip ITEM selection (Slice D): a single clicked top-level item, highlighted with a solid box and
+  // made the Delete (Del / ctx "Delete Item") and F2-rename target. A pooled single overlay div (like the lock badge),
+  // re-laid-out and re-resolved from the latest `stripItems` on every renderSelection so it tracks zoom/scroll and
+  // clears itself when its item vanishes (e.g. after a delete commit). ----
+  var stripItemSelEl = null;
+  function ensureStripItemSel() {
+    if (!stripItemSelEl) { stripItemSelEl = document.createElement('div'); stripItemSelEl.className = 'stripitemsel'; stripItemSelEl.style.display = 'none'; surfaceWrap.appendChild(stripItemSelEl); }
+    return stripItemSelEl;
+  }
+  // re-resolve the selected item from the current geometry (id may have moved/vanished after a commit) and position
+  // the highlight; if it's gone, drop the selection. Called early in renderSelection so downstream (Delete-enabled) is
+  // consistent with the validated state.
+  function renderStripItemSel() {
+    ensureStripItemSel();
+    if (!selectedItem) { stripItemSelEl.style.display = 'none'; return; }
+    var g = null;
+    for (var i = 0; i < stripItems.length; i++) {
+      var it = stripItems[i];
+      if (!it.isTypeHere && it.ownerId === selectedItem.ownerId && it.itemId === selectedItem.itemId) { g = it; break; }
+    }
+    if (!g) { selectedItem = null; stripItemSelEl.style.display = 'none'; return; }
+    selectedItem = { ownerId: g.ownerId, itemId: g.itemId, itemType: g.itemType, text: g.text, x: g.x, y: g.y, width: g.width, height: g.height };
+    stripItemSelEl.style.display = 'block';
+    stripItemSelEl.style.left = (g.x * zoom) + 'px'; stripItemSelEl.style.top = (g.y * zoom) + 'px';
+    stripItemSelEl.style.width = Math.max(0, g.width * zoom) + 'px'; stripItemSelEl.style.height = Math.max(0, g.height * zoom) + 'px';
+  }
+  // select a top-level strip item on the canvas: it becomes the Delete/F2 target AND loads its own properties into the
+  // Properties panel. Clears the CONTROL selection (an item isn't a control — the generic Delete/Cut/z-order must not act
+  // on it) and posts `selectItem` so the host describes the item field and pushes an `itemProps` message — a DEDICATED
+  // channel that does NOT touch the control `currentId` (so manipFor / smart-tag / generic Delete stay on the last
+  // control). itemId is guaranteed non-empty here (the guard below + stripItemHit skipping anonymous items).
+  // renderSelection draws the highlight + updates the Delete-enabled state.
+  function selectStripItem(item) {
+    if (!item || !item.ownerId || !item.itemId) return;
+    selectedItem = { ownerId: item.ownerId, itemId: item.itemId, itemType: item.itemType, text: item.text, x: item.x, y: item.y, width: item.width, height: item.height };
+    selection = []; current = null; canMove = false; canResize = false;
+    hideHover();
+    closeSlotEditor(); // a stray inline editor must not linger over a new item selection
+    vscode.postMessage({ type: 'selectItem', hostId: item.ownerId, itemId: item.itemId });
+    renderSelection();
+  }
+  // delete the selected strip item (+ its subtree): the host fetches the owner's forest, omits this node, and reuses
+  // the ToolStrip commit path (the engine computes removedIds + disposes). The re-render's fresh layout clears the
+  // highlight once the item is gone; a refused delete leaves it in place.
+  function deleteStripItem() {
+    if (!selectedItem) return;
+    vscode.postMessage({ type: 'stripDelete', hostId: selectedItem.ownerId, itemId: selectedItem.itemId });
+  }
+
+  // ---- on-canvas "Type Here" inline add-editor: clicking an add-slot opens a small floating popup (item-type
+  // <select> + text <input>) anchored at the slot. Enter commits (posts a `stripAdd` gesture — the host fetches the
+  // owner's item forest, appends one node, and reuses the ToolStrip commit path); Escape / click-away cancels. The
+  // type list is owner-appropriate (menu vs toolbar vs status); a Separator carries no text. Click-away dismissal
+  // mirrors the smart-tag flyout. ----
+  function toolStripNewTypes(ownerType) {
+    var t = ownerType || '';
+    if (t.indexOf('StatusStrip') >= 0) return [['ToolStripStatusLabel', 'Status Label'], ['ToolStripProgressBar', 'Progress Bar'], ['ToolStripDropDownButton', 'DropDown Button'], ['ToolStripSplitButton', 'Split Button'], ['ToolStripSeparator', 'Separator']];
+    if (t.indexOf('MenuStrip') >= 0) return [['ToolStripMenuItem', 'Menu Item'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripSeparator', 'Separator']];
+    return [['ToolStripButton', 'Button'], ['ToolStripLabel', 'Label'], ['ToolStripSeparator', 'Separator'], ['ToolStripSplitButton', 'Split Button'], ['ToolStripDropDownButton', 'DropDown Button'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripProgressBar', 'Progress Bar']];
+  }
+  var slotEditEl = null, slotEditSel = null, slotEditInput = null, slotEditOwner = null, slotEditMode = 'add', slotEditItemId = null, slotEditOrig = '';
+  function isSeparatorType(t) { return /Separator$/.test(t || ''); }
+  function syncSlotEditText() {
+    // a separator has no Text → hide the text field (and its width no longer matters); other types show + focus it
+    var sep = isSeparatorType(slotEditSel.value);
+    slotEditInput.style.display = sep ? 'none' : '';
+    if (!sep) { try { slotEditInput.focus(); slotEditInput.select(); } catch (e) {} }
+  }
+  // Shared shell for the inline strip editor (ADD add-slot / RENAME item): a floating .slotedit box anchored at
+  // (x,y) in surface coords. Keys stay local — Enter commits, Escape cancels, everything else is swallowed so canvas
+  // keydowns (nudge/Delete/Ctrl-XCVD) never fire while typing (activeElement-guarded too, but stopPropagation is
+  // belt-and-suspenders). A capture-phase document mousedown dismisses on click-away (mirrors the smart-tag flyout).
+  // The caller fills in the mode-specific children (a type <select> for ADD; a prefilled input for RENAME).
+  function openSlotShell(x, y) {
+    closeSlotEditor(); // only one editor open at a time
+    slotEditEl = document.createElement('div'); slotEditEl.className = 'slotedit';
+    slotEditEl.style.left = (x * zoom) + 'px'; slotEditEl.style.top = (y * zoom) + 'px';
+    slotEditEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitSlotEditor(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSlotEditor(); }
+      else { e.stopPropagation(); }
+    });
+    slotEditEl.addEventListener('mousedown', function (e) { e.stopPropagation(); }); // don't start a marquee/drag
+    surfaceWrap.appendChild(slotEditEl);
+    document.addEventListener('mousedown', onSlotEditDocDown, true);
+  }
+  function openSlotEditor(slot) {
+    if (!slot || !slot.ownerId) return;
+    openSlotShell(slot.x, slot.y);
+    slotEditMode = 'add'; slotEditOwner = slot.ownerId; slotEditItemId = null;
+    var owner = findControl(slot.ownerId);
+    var types = toolStripNewTypes(owner ? owner.type : '');
+    slotEditSel = document.createElement('select'); slotEditSel.className = 'slotEditType';
+    types.forEach(function (pt) { var o = document.createElement('option'); o.value = pt[0]; o.textContent = pt[1]; slotEditSel.appendChild(o); });
+    slotEditInput = document.createElement('input'); slotEditInput.type = 'text'; slotEditInput.className = 'slotEditInput';
+    slotEditInput.placeholder = T('designer.typeHere');
+    slotEditEl.appendChild(slotEditSel); slotEditEl.appendChild(slotEditInput);
+    slotEditSel.addEventListener('change', syncSlotEditText);
+    syncSlotEditText();
+  }
+  // RENAME an existing top-level item: the SAME inline editor prefilled with the item's live caption (no type
+  // <select> — retype is a separate follow-up). Enter posts a `stripRename` gesture (the host fetches the owner's item
+  // forest, sets this item's Text, and reuses the ToolStrip commit path); Escape / click-away / empty caption cancel.
+  function openItemRenameEditor(item) {
+    if (!item || !item.ownerId || !item.itemId) return;
+    openSlotShell(item.x, item.y);
+    slotEditMode = 'rename'; slotEditOwner = item.ownerId; slotEditItemId = item.itemId; slotEditSel = null;
+    slotEditInput = document.createElement('input'); slotEditInput.type = 'text'; slotEditInput.className = 'slotEditInput';
+    slotEditInput.value = item.text || '';
+    slotEditOrig = slotEditInput.value; // baseline AFTER the input sanitizes it (strips CR/LF); an unedited confirm must
+    slotEditEl.appendChild(slotEditInput); //  never mutate the source — see the raw-value compare in commitSlotEditor
+    try { slotEditInput.focus(); slotEditInput.select(); } catch (e) {} // VS-style: prefill selected so typing replaces
+  }
+  function onSlotEditDocDown(e) { if (slotEditEl && !slotEditEl.contains(e.target)) closeSlotEditor(); }
+  function commitSlotEditor() {
+    if (!slotEditEl) return;
+    if (slotEditMode === 'rename') {
+      var rOwner = slotEditOwner, rItemId = slotEditItemId, rawVal = slotEditInput.value, origVal = slotEditOrig;
+      closeSlotEditor();
+      // Compare the RAW input value against the prefill baseline: an unedited open+Enter must post nothing. Trimming
+      // (below) and the host's target.text!==newText guard both normalize, so without this a no-op confirm on a caption
+      // with leading/trailing space (or a newline the input stripped) would silently rewrite the source (review wf_df230de7).
+      if (rawVal === origVal) return;
+      var newText = rawVal.trim();
+      if (newText === '') return; // an emptied caption = no rename (VS keeps the old text; the engine rejects blank Text)
+      vscode.postMessage({ type: 'stripRename', hostId: rOwner, itemId: rItemId, text: newText });
+      return;
+    }
+    var itemType = slotEditSel.value, owner = slotEditOwner;
+    var sep = isSeparatorType(itemType);
+    var text = sep ? '' : slotEditInput.value.trim();
+    closeSlotEditor();
+    // a non-separator with no text adds nothing (VS: an empty "Type Here" commits no item)
+    if (!sep && text === '') return;
+    vscode.postMessage({ type: 'stripAdd', hostId: owner, itemType: itemType, text: text });
+  }
+  function closeSlotEditor() {
+    document.removeEventListener('mousedown', onSlotEditDocDown, true);
+    if (slotEditEl && slotEditEl.parentNode) slotEditEl.parentNode.removeChild(slotEditEl);
+    slotEditEl = null; slotEditSel = null; slotEditInput = null; slotEditOwner = null; slotEditMode = 'add'; slotEditItemId = null; slotEditOrig = '';
   }
 
   function findControl(id) { for (var i = 0; i < controls.length; i++) { if (controls[i].id === id) return controls[i]; } return null; }
@@ -240,6 +407,7 @@
       chip.title = t.id + ' : ' + t.type;
       chip.addEventListener('click', function () {
         // a tray component has no visual bounds → clear the canvas selection box, drive the Properties panel
+        selectedItem = null;
         selection = [t.id]; current = t.id; canMove = false; canResize = false;
         renderSelection(); renderTray(); vscode.postMessage({ type: 'pick', id: t.id });
       });
@@ -285,7 +453,7 @@
     renderSelection();
     renderRuler();
   }
-  function setZoom(z) { zoom = clampZoom(z); try { var s = (vscode.getState && vscode.getState()) || {}; s.zoom = zoom; if (vscode.setState) vscode.setState(s); } catch (_e) {} applyZoomStyles(); }
+  function setZoom(z) { closeSlotEditor(); zoom = clampZoom(z); try { var s = (vscode.getState && vscode.getState()) || {}; s.zoom = zoom; if (vscode.setState) vscode.setState(s); } catch (_e) {} applyZoomStyles(); }
   function stepZoom(dir) {
     var idx = 0, best = Infinity;
     for (var i = 0; i < ZOOM_STEPS.length; i++) { var d = Math.abs(ZOOM_STEPS[i] - zoom); if (d < best) { best = d; idx = i; } }
@@ -400,6 +568,7 @@
   function ensureLockBadge() { if (!lockBadgeEl) { lockBadgeEl = document.createElement('div'); lockBadgeEl.className = 'lockbadge'; lockBadgeEl.textContent = '🔒'; lockBadgeEl.title = T('designer.menu.lockControls'); lockBadgeEl.style.display = 'none'; surfaceWrap.appendChild(lockBadgeEl); } return lockBadgeEl; }
   // render the WHOLE selection: primary box + handles, outline boxes for the rest, name/Delete state.
   function renderSelection() {
+    renderStripItemSel(); // validate/position the on-canvas item highlight FIRST (may clear a vanished selectedItem)
     if (!current) { selBox.style.display = 'none'; if (lockBadgeEl) lockBadgeEl.style.display = 'none'; }
     else positionPrimary(current);
     var n = 0;
@@ -415,7 +584,7 @@
     if (selection.length > 1) selName.textContent = TN('designer.sel.multi', selection.length);
     else if (pc) selName.textContent = (pc.isRoot ? pc.name + T('designer.formSuffix') : pc.name) + ' : ' + shortType(pc.type);
     else { var ti = current ? findTray(current) : null; selName.textContent = ti ? (ti.name + ' : ' + shortType(ti.type)) : '—'; }
-    if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0;
+    if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0 && !selectedItem; // a selected strip item is deletable too
     // the align/distribute/same-size tools apply only to a live 2+ selection on a rendered form — never show
     // them before the first render or while (re)loading (a stale retained selection would otherwise flash them)
     // ...and never while the selection contains a locked control (align/distribute/make-same-size would move/resize it)
@@ -830,10 +999,12 @@
 
   // ---- selection (click / Ctrl-click) ----
   function selectSingle(id) {
+    selectedItem = null; // a control selection supersedes any on-canvas strip-item selection
     selection = [id]; current = id; canMove = false; canResize = false;
     renderSelection(); vscode.postMessage({ type: 'pick', id: id });
   }
   function toggleSelect(id) {
+    selectedItem = null; // a control selection supersedes any on-canvas strip-item selection
     var idx = selection.indexOf(id);
     if (idx >= 0) { if (selection.length > 1) { selection.splice(idx, 1); if (current === id) current = selection[selection.length - 1]; } }
     else { selection.push(id); current = id; }
@@ -844,14 +1015,23 @@
   canvas.addEventListener('click', function (e) {
     if (suppressClick) { suppressClick = false; return; }
     if (!controls.length) return;
-    var id = hitTest(e.offsetX / zoom, e.offsetY / zoom);
-    if (!id) return;
+    var px = e.offsetX / zoom, py = e.offsetY / zoom;
     if (tabOrderMode) {
-      if (id === 'this') return;
-      vscode.postMessage({ type: 'edit', id: id, prop: 'TabIndex', propType: 'System.Int32', isEnum: false, value: String(tabSeq) });
+      var tid = hitTest(px, py);
+      if (!tid || tid === 'this') return;
+      vscode.postMessage({ type: 'edit', id: tid, prop: 'TabIndex', propType: 'System.Int32', isEnum: false, value: String(tabSeq) });
       tabSeq++;
       return;
     }
+    // a plain click on a top-level ToolStrip/MenuStrip/StatusStrip item selects THAT item on the canvas (the Delete/F2
+    // target) instead of its container strip. Checked before the control hit-test (mirrors dblclick-rename) so an item
+    // is selectable even if its rect extends past the strip's hit area. Ctrl/Shift-click falls through to multi-select.
+    if (!(e.ctrlKey || e.metaKey || e.shiftKey)) {
+      var sItem = stripItemHit(px, py);
+      if (sItem) { selectStripItem(sItem); return; }
+    }
+    var id = hitTest(px, py);
+    if (!id) return;
     // a click on a tab host may be on a tab HEADER → ask the host to switch the active tab (net48 compiled preview;
     // the engine no-ops if it wasn't a different tab's header). Sent regardless of selection state so re-clicking an
     // already-selected tab control still switches tabs. Normal selection still runs below.
@@ -867,11 +1047,16 @@
   // tab host reacts; other double-clicks are ignored here (no default dblclick behavior on the surface).
   canvas.addEventListener('dblclick', function (e) {
     if (!controls.length) return;
-    var id = hitTest(e.offsetX / zoom, e.offsetY / zoom);
+    var px = e.offsetX / zoom, py = e.offsetY / zoom;
+    // double-click a top-level ToolStrip/MenuStrip/StatusStrip item → rename it inline (editor prefilled with its
+    // caption). A Separator has no Text, so it isn't renamable — fall through (no default dblclick behavior on it).
+    var item = stripItemHit(px, py);
+    if (item && !isSeparatorType(item.itemType)) { openItemRenameEditor(item); return; }
+    var id = hitTest(px, py);
     if (!id) return;
     var hc = findControl(id);
     if (hc && hc.isTabHost) {
-      vscode.postMessage({ type: 'tabRename', hostId: id, x: Math.round(e.offsetX / zoom), y: Math.round(e.offsetY / zoom) });
+      vscode.postMessage({ type: 'tabRename', hostId: id, x: Math.round(px), y: Math.round(py) });
     }
   });
 
@@ -1021,6 +1206,7 @@
           var c = controls[i]; if (c.isRoot || c.id === 'this') continue;
           if (!(c.x + c.width < rect.x1 || c.x > rect.x2 || c.y + c.height < rect.y1 || c.y > rect.y2)) hits.push(c.id);
         }
+        selectedItem = null; // a marquee selects controls → drop any on-canvas strip-item selection
         if (hits.length) { selection = hits; current = hits[hits.length - 1]; canMove = false; canResize = false; renderSelection(); vscode.postMessage({ type: 'pick', id: current }); }
         else { selection = []; current = null; renderSelection(); }
       }
@@ -1031,8 +1217,10 @@
   // View Code / Save toolbar buttons were removed: F7 opens the code-behind, Ctrl+S saves (native custom editor).
   function doDelete() {
     if (nudge) flushNudge(); // commit a pending keyboard-nudge before it races this action's document change
+    if (drag) return;
+    if (selectedItem) { deleteStripItem(); return; } // an on-canvas strip item is the delete target
     var ids = selectableIds();
-    if (!ids.length || drag) return;
+    if (!ids.length) return;
     if (ids.length > 1) vscode.postMessage({ type: 'removeControls', ids: ids });
     else vscode.postMessage({ type: 'removeControl', id: ids[0] });
   }
@@ -1055,6 +1243,15 @@
   }
   document.addEventListener('keydown', function (e) {
     if (e.key === 'F7') { e.preventDefault(); vscode.postMessage({ type: 'viewCode' }); return; } // VS: F7 = designer → code
+    // F2 renames the selected on-canvas strip item (VS: F2 = rename). Same inline editor as the double-click path;
+    // a separator has no Text so it isn't renamable. No strip-item selected → let F2 fall through (no default action).
+    if (e.key === 'F2') {
+      var af2 = document.activeElement;
+      if (af2 && /^(INPUT|SELECT|TEXTAREA)$/.test(af2.tagName)) return;
+      if (!selectedItem || drag || band || tabOrderMode || isSeparatorType(selectedItem.itemType)) return;
+      e.preventDefault(); openItemRenameEditor(selectedItem);
+      return;
+    }
     if (e.key !== 'Delete' && e.key !== 'Del') return;
     var ae = document.activeElement;
     if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
@@ -1141,6 +1338,15 @@
   function doPaste() { if (nudge) flushNudge(); vscode.postMessage({ type: 'paste', id: current || 'this' }); }
 
   function buildCtxMenu() {
+    // a selected on-canvas strip item gets its own focused menu (Rename / Delete Item) — the generic control menu
+    // (Cut/Copy/z-order/Delete-control) doesn't apply to a ToolStripItem.
+    if (selectedItem) {
+      var im = [];
+      if (!isSeparatorType(selectedItem.itemType))
+        im.push({ label: T('designer.menu.renameItem'), acc: 'F2', act: function () { if (selectedItem) openItemRenameEditor(selectedItem); } });
+      im.push({ label: T('designer.menu.deleteItem'), acc: 'Del', act: deleteStripItem });
+      return im;
+    }
     var ids = selectableIds();
     var primary = current ? findControl(current) : null;            // a visual control (null for tray / nothing)
     var trayItem = (!primary && current) ? findTray(current) : null; // a non-visual component
@@ -1227,7 +1433,11 @@
     e.preventDefault();
     if (!controls.length || drag || band) return;
     var rect = canvas.getBoundingClientRect();
-    var id = hitTest((e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom) || 'this';
+    var px = (e.clientX - rect.left) / zoom, py = (e.clientY - rect.top) / zoom;
+    // right-clicking a top-level strip item selects it and opens the item menu (Rename / Delete Item)
+    var sItem = stripItemHit(px, py);
+    if (sItem) { selectStripItem(sItem); renderCtx(e.clientX, e.clientY); return; }
+    var id = hitTest(px, py) || 'this';
     if (selection.indexOf(id) < 0) selectSingle(id);
     renderCtx(e.clientX, e.clientY);
   });
@@ -1238,6 +1448,7 @@
     if (!chip || chip === trayEl) return;
     var idx = Array.prototype.indexOf.call(trayEl.children, chip);
     var t = tray[idx]; if (!t) return;
+    selectedItem = null;
     selection = [t.id]; current = t.id; canMove = false; canResize = false;
     renderSelection(); renderTray(); vscode.postMessage({ type: 'pick', id: t.id });
     renderCtx(e.clientX, e.clientY);
@@ -1262,6 +1473,9 @@
       hasRendered = true; hideOverlay();
       drawPng(m.png, 0, 0, m.width, m.height, true, m.gen);
     } else if (m.type === 'layout') {
+      // strip/item geometry may have moved → dismiss a drifting inline add-editor. Done HERE (and in setZoom), NOT in
+      // renderSelection: a 'manip'/'select' push re-renders selection WITHOUT moving the slot, and must not eat typed text.
+      closeSlotEditor();
       controls = m.controls || [];
       stripItems = m.toolStripItems || [];
       // drop any selected ids that no longer exist (e.g. after a remove), keeping tray ids
@@ -1275,6 +1489,7 @@
       drawPng(m.png, m.x, m.y, m.width, m.height, false, m.gen);
     } else if (m.type === 'select') {
       // host selection (after a render / group op). Keep the multi-set if the primary is part of it.
+      selectedItem = null; // an explicit host control-selection supersedes any on-canvas strip-item highlight
       if (selection.indexOf(m.id) < 0) selection = [m.id];
       if (m.id !== current) { canMove = false; canResize = false; }
       current = m.id; renderSelection(); renderTray();

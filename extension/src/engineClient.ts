@@ -176,6 +176,7 @@ export interface ToolStripItemBounds {
   ownerId: string;    // the owning strip's edit id
   itemId: string;     // the item's designer field id (empty for the "Type Here" slot)
   itemType: string;   // the item's concrete type FullName (empty for the slot)
+  text: string;       // the item's live caption — the canvas prefills the inline rename editor with it
   x: number;
   y: number;
   width: number;

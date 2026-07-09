@@ -376,6 +376,7 @@ namespace WinFormsDesigner.Engine
                         OwnerId = ownerId,
                         ItemId = it.Site?.Name ?? it.Name ?? "",
                         ItemType = it.GetType().FullName ?? it.GetType().Name,
+                        Text = it.Text ?? "",                              // live caption → canvas prefills the rename editor
                         X = ox + b.X,
                         Y = oy + b.Y,
                         Width = Math.Max(b.Width, 1),
@@ -400,6 +401,19 @@ namespace WinFormsDesigner.Engine
         /// SelectedTab/SelectedTabPage/SelectedPage) so it covers WinForms TabControl and any XtraTabControl-style
         /// host without a compile-time reference. Deliberately does NOT consider ctrl.Visible (design-time shadowing
         /// makes that a no-op / wrongly drops painted controls). Any reflection failure → false (keep the control).</summary>
+        /// <summary>Find a public non-indexer property by name via a GetProperties() SCAN instead of
+        /// Type.GetProperty(name), which throws AmbiguousMatchException when the property is `new`-shadowed with a
+        /// covariant return (the DevExpress XtraTabControl pattern). Behaviorally identical for a singly-declared
+        /// property (plain WinForms) — it only diverges by returning the shadowed property instead of throwing. Names
+        /// are tried in order (mirrors a `GetProperty(a) ?? GetProperty(b)` chain).</summary>
+        private static System.Reflection.PropertyInfo? FindTabProp(Type t, params string[] names)
+        {
+            foreach (var n in names)
+                foreach (var p in t.GetProperties())
+                    if (p.Name == n && p.GetIndexParameters().Length == 0) return p;
+            return null;
+        }
+
         private static bool IsOnHiddenTab(Control ctrl, Control root)
         {
             try
@@ -408,10 +422,8 @@ namespace WinFormsDesigner.Engine
                 {
                     var parent = c.Parent;
                     if (parent == null) break;
-                    var pagesProp = parent.GetType().GetProperty("TabPages");
-                    var selProp = parent.GetType().GetProperty("SelectedTab")
-                        ?? parent.GetType().GetProperty("SelectedTabPage")
-                        ?? parent.GetType().GetProperty("SelectedPage");
+                    var pagesProp = FindTabProp(parent.GetType(), "TabPages");
+                    var selProp = FindTabProp(parent.GetType(), "SelectedTab", "SelectedTabPage", "SelectedPage");
                     if (pagesProp == null || selProp == null) continue;
                     if (pagesProp.GetValue(parent) is not System.Collections.IEnumerable pages) continue;
                     bool cIsPage = false;
@@ -442,6 +454,11 @@ namespace WinFormsDesigner.Engine
                 if (ReferenceEquals(comp, root)) continue;
                 if (comp is Control c && c.Parent != null) continue; // a PARENTED Control lives in the visual layout;
                                                                      // an off-tree Control (ContextMenuStrip) falls through
+                if (comp is ToolStripItem) continue;                 // a field-backed strip item is a sited Component,
+                                                                     // but Visual Studio never trays strip items — they are
+                                                                     // edited on the strip itself (on-canvas Type Here / the
+                                                                     // item editor). The tray holds only non-visual components
+                                                                     // (Timer/ToolTip/…) + off-tree Controls (ContextMenuStrip).
                 string id = comp.Site?.Name ?? "";
                 if (id.Length == 0) continue;                 // unnamed/internal (e.g. the IContainer holder) → skip
                 tray.Add(new TrayComponent { Id = id, Name = id, Type = comp.GetType().FullName ?? comp.GetType().Name });

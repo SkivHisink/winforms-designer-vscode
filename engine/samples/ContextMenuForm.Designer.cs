@@ -10,6 +10,10 @@ namespace SampleApp
         private System.Windows.Forms.ToolStripMenuItem cutItem;
         private System.Windows.Forms.ToolStripMenuItem pasteItem;
         private System.Windows.Forms.Panel panel1;
+        // A non-visual component (a Timer) so the e2e can prove net48 item editing (Slice 2) does NOT live-mutate a
+        // non-Control non-item component: setting timer1.Enabled=true must be an inert no-op on the preview instance
+        // (a design surface must never Start() a timer and run its Tick handler).
+        private System.Windows.Forms.Timer timer1;
 
         private void InitializeComponent()
         {
@@ -21,6 +25,7 @@ namespace SampleApp
             this.cutItem = new System.Windows.Forms.ToolStripMenuItem();
             this.pasteItem = new System.Windows.Forms.ToolStripMenuItem();
             this.panel1 = new System.Windows.Forms.Panel();
+            this.timer1 = new System.Windows.Forms.Timer(this.components);
             this.menuStrip1.SuspendLayout();
             this.contextMenuStrip1.SuspendLayout();
             this.SuspendLayout();
@@ -74,6 +79,10 @@ namespace SampleApp
             this.panel1.Name = "panel1";
             this.panel1.Size = new System.Drawing.Size(200, 120);
             this.panel1.TabIndex = 1;
+            //
+            // timer1
+            //
+            this.timer1.Interval = 500;
             //
             // ContextMenuForm
             //

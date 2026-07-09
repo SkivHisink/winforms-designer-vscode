@@ -78,6 +78,7 @@ namespace WinFormsDesigner.Engine.Net48
         public string OwnerId { get; set; } = "";
         public string ItemId { get; set; } = "";
         public string ItemType { get; set; } = "";
+        public string Text { get; set; } = "";
         public int X { get; set; }
         public int Y { get; set; }
         public int Width { get; set; }

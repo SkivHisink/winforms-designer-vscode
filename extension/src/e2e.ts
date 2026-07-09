@@ -3,10 +3,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel } from './engineClient';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { retainSelectionId } from './selection';
+import { learnMoreUrl } from './learnMore';
 
 /** Build the net48 ctx fixture on demand (it compiles the SAME engine/samples/ContextMenuForm.Designer.cs the net9
  *  ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
@@ -128,6 +129,21 @@ function verifyCsprojHelpers(repo: string): void {
   }
 
   console.log('e2e: csprojRef helpers verified — projectAssemblyName; csprojReferencesAssembly (Package+strong-name+ProjectReference, case-insensitive, no false positive); projectReferencesAssembly resolves a ProjectReference by target <AssemblyName>; findNearestCsproj walks up to engine/Engine.csproj; addReferenceToCsproj inserts a valid <Reference>+HintPath before the ROOT </Project> (round-trip, XML-escaped, majority-EOL, comment-safe)');
+
+  // ---- "Learn More Online" URL routing (bug: third-party types 404'd on learn.microsoft.com/dotnet/api) ----
+  // A Microsoft/System type resolves to its .NET API reference page; a third-party type (DevExpress/Telerik/etc.) must
+  // NOT hit /dotnet/api (that page 404s) — it routes to a web search; a blank/unknown name → the WinForms hub.
+  {
+    const btn = learnMoreUrl('System.Windows.Forms.Button');
+    if (btn !== 'https://learn.microsoft.com/dotnet/api/system.windows.forms.button') throw new Error(`learnMore: a System type must hit the .NET API ref (got ${btn})`);
+    if (learnMoreUrl('Microsoft.VisualBasic.PowerPacks.LineShape') !== 'https://learn.microsoft.com/dotnet/api/microsoft.visualbasic.powerpacks.lineshape') throw new Error('learnMore: a Microsoft.* type must hit the .NET API ref');
+    const dx = learnMoreUrl('DevExpress.XtraTab.XtraTabControl');
+    if (!dx.startsWith('https://www.bing.com/search?q=')) throw new Error(`learnMore: a third-party (DevExpress) type must route to a web search, not a 404'ing /dotnet/api page (got ${dx})`);
+    if (dx.includes('/dotnet/api/')) throw new Error('learnMore: a DevExpress type must never build a /dotnet/api URL (it 404s)');
+    if (learnMoreUrl('') !== 'https://learn.microsoft.com/dotnet/desktop/winforms/') throw new Error('learnMore: a blank type must fall back to the WinForms hub');
+    if (learnMoreUrl('Button') !== 'https://learn.microsoft.com/dotnet/desktop/winforms/') throw new Error('learnMore: a bare (non-dotted) name must fall back to the WinForms hub');
+    console.log('e2e: Learn More URL routing verified — System/Microsoft types → .NET API ref; DevExpress (third-party) → web search (no 404 /dotnet/api); blank/bare → WinForms hub');
+  }
 
   // ---- T1.3 cross-runtime routing: framework-only output resolution + multi-target detection ----
   // A multi-target (net48;net9) project builds BOTH a net9 output (with a .deps.json sidecar) and a net48
@@ -800,6 +816,11 @@ async function main(): Promise<void> {
       if (realItems.some((it) => it.ownerId !== stripHost.id || it.itemId.length === 0 || it.width <= 0 || it.height <= 0)) {
         throw new Error('strip geometry: an item has the wrong owner, an empty id, or a degenerate rect');
       }
+      // each real item carries its live caption (Slice C — the canvas prefills the inline rename editor with it)
+      const captions = realItems.map((it) => it.text).sort();
+      if (JSON.stringify(captions) !== JSON.stringify(['Edit', 'File'])) {
+        throw new Error(`strip geometry: item captions [${captions.join(', ')}] != [Edit, File] — the Text field must round-trip`);
+      }
       // the slot sits after the rightmost item (contentEnd + gap) on this horizontal strip
       const rightmost = Math.max(...realItems.map((it) => it.x + it.width));
       if (slots[0].x < rightmost) throw new Error(`strip geometry: Type-Here slot x=${slots[0].x} is not past the last item (right edge ${rightmost})`);
@@ -809,11 +830,11 @@ async function main(): Promise<void> {
       if (dItems.length !== tsItems.length) throw new Error(`strip geometry: describeLayout ${dItems.length} items != renderWithLayout ${tsItems.length}`);
       for (let i = 0; i < tsItems.length; i++) {
         const a = tsItems[i], b = dItems[i];
-        if (a.ownerId !== b.ownerId || a.itemId !== b.itemId || a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height || a.isTypeHere !== b.isTypeHere) {
-          throw new Error(`strip geometry: item[${i}] renderWithLayout != describeLayout ("${a.itemId}" ${a.x},${a.y} vs "${b.itemId}" ${b.x},${b.y})`);
+        if (a.ownerId !== b.ownerId || a.itemId !== b.itemId || a.text !== b.text || a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height || a.isTypeHere !== b.isTypeHere) {
+          throw new Error(`strip geometry: item[${i}] renderWithLayout != describeLayout ("${a.itemId}" "${a.text}" ${a.x},${a.y} vs "${b.itemId}" "${b.text}" ${b.x},${b.y})`);
         }
       }
-      console.log(`e2e: strip item geometry (Slice A) verified — MenuForm png byte-identical with a forced strip layout, ${realItems.length} items + 1 Type-Here slot on "${stripHost.id}", renderWithLayout == describeLayout geometry`);
+      console.log(`e2e: strip item geometry (Slice A/C) verified — MenuForm png byte-identical with a forced strip layout, ${realItems.length} items (${captions.join(', ')}) + 1 Type-Here slot on "${stripHost.id}", renderWithLayout == describeLayout geometry+captions`);
 
       // ---- off-tree ContextMenuStrip → the TRAY, never a phantom control rect (hit-test-theft fix) ----
       // A ContextMenuStrip is a sited Control field that is never added to any Controls collection (Parent==null):
@@ -832,6 +853,14 @@ async function main(): Promise<void> {
         const ctxChip = ctxLayout.tray.find((t) => t.id === 'contextMenuStrip1');
         if (!ctxChip) throw new Error(`ctx tray: contextMenuStrip1 missing from the tray (got [${ctxLayout.tray.map((t) => t.id).join(', ')}])`);
         if (!ctxChip.type.endsWith('ContextMenuStrip')) throw new Error(`ctx tray: contextMenuStrip1 wrong type ${ctxChip.type}`);
+        // VS never trays strip ITEMS — a field-backed ToolStripItem is a sited Component, but it is edited on the strip
+        // itself (on-canvas Type Here / the item editor), not from the tray. The tray must hold ONLY non-visual
+        // components + off-tree Controls: contextMenuStrip1 (an off-tree Control) and timer1 (a non-visual component)
+        // stay; the four menu/context items must be gone. Pins that the item-skip is item-specific (timer1 survives).
+        const ctxItemIds = ['fileMenu', 'editMenu', 'cutItem', 'pasteItem'];
+        const ctxLeaked = ctxLayout.tray.filter((t) => ctxItemIds.includes(t.id)).map((t) => t.id);
+        if (ctxLeaked.length) throw new Error(`ctx tray: ToolStripItem(s) leaked into the tray [${ctxLeaked.join(', ')}] — VS never trays strip items (they are edited on the strip itself, not the tray)`);
+        if (!ctxLayout.tray.some((t) => t.id === 'timer1')) throw new Error('ctx tray: timer1 (a non-visual component) must stay in the tray — the strip-item skip must not drop non-item components');
         // the chip is genuinely selectable: describing it drives the property panel (VS edits a ContextMenuStrip's
         // Items from the tray), so a tray chip that can't be described would be a dead click.
         const ctxDesc = await describeComponent(engine, ctxForm, 'contextMenuStrip1');
@@ -858,7 +887,7 @@ async function main(): Promise<void> {
         if (!ctxCombined.tray.some((t) => t.id === 'contextMenuStrip1')) {
           throw new Error('ctx tray: renderWithLayout dropped contextMenuStrip1 from the tray');
         }
-        console.log(`e2e: off-tree ContextMenuStrip verified — no phantom control rect, contextMenuStrip1 in tray (${ctxLayout.tray.length} tray items), menu-bar hit-test → menuStrip1, png byte-identical (describeLayout == renderWithLayout)`);
+        console.log(`e2e: off-tree ContextMenuStrip verified — no phantom control rect, contextMenuStrip1 in tray (tray = [${ctxLayout.tray.map((t) => t.id).join(', ')}], no strip items), menu-bar hit-test → menuStrip1, png byte-identical (describeLayout == renderWithLayout)`);
       } else {
         console.log('e2e: ContextMenuStrip tray SKIPPED — engine/samples/ContextMenuForm.Designer.cs missing');
       }
@@ -895,11 +924,62 @@ async function main(): Promise<void> {
           const chip48 = r48.tray.find((t) => t.id === 'contextMenuStrip1');
           if (!chip48) throw new Error(`net48 ctx: contextMenuStrip1 missing from the compiled tray (got [${r48.tray.map((t) => t.id).join(', ')}])`);
           if (!chip48.type.endsWith('ContextMenuStrip')) throw new Error(`net48 ctx: contextMenuStrip1 wrong type ${chip48.type}`);
+          // VS never trays strip items (parity with the net9 leg above): the compiled tray must exclude the four
+          // menu/context ToolStripItems but keep timer1 (a non-visual component). Before this the net48 BuildTray
+          // FieldNames scan surfaced every field-backed item as a chip.
+          const n48Leaked = r48.tray.filter((t) => ['fileMenu', 'editMenu', 'cutItem', 'pasteItem'].includes(t.id)).map((t) => t.id);
+          if (n48Leaked.length) throw new Error(`net48 ctx: ToolStripItem(s) leaked into the compiled tray [${n48Leaked.join(', ')}] — VS never trays strip items`);
+          if (!r48.tray.some((t) => t.id === 'timer1')) throw new Error('net48 ctx: timer1 (a non-visual component) must stay in the compiled tray — the strip-item skip must not drop non-item components');
           // cross-runtime: the two engines must agree on the VISUAL control id set (net9 = source-interpreted).
           const net9Ids = (await describeLayout(engine, ctxForm)).controls.map((c) => c.id).sort();
           const net48Ids = r48.controls.map((c) => c.id).sort();
           if (net9Ids.join(',') !== net48Ids.join(',')) throw new Error(`net48 ctx: control partition diverges from net9 — net9 [${net9Ids.join(', ')}] vs net48 [${net48Ids.join(', ')}]`);
-          console.log(`e2e: net48 off-tree ContextMenuStrip verified — compiled render agrees with net9 (controls [${net48Ids.join(', ')}], contextMenuStrip1 tray-only, ${r48.tray.length} tray chips)`);
+          console.log(`e2e: net48 off-tree ContextMenuStrip verified — compiled render agrees with net9 (controls [${net48Ids.join(', ')}], contextMenuStrip1 tray-only, tray [${r48.tray.map((t) => t.id).join(', ')}], no strip items)`);
+
+          // ---- net48 item→Properties describe parity (Slice 1b) ----
+          // A field-backed ToolStripItem is a Component, not a Control, so before Slice 1b the net48 engine's
+          // DescribeOn (ByField = Control-only) returned null for it and the item→Properties panel showed a
+          // placeholder. Now DescribeOn falls back to ByFieldComponent → the item describes. Assert the compiled
+          // engine returns the SAME item facts as net9 for a top-level menu item (fileMenu: Text="File", and — per
+          // net9 ParentName — a Component reports no Parent). Read-only editing is a later slice; this is the read.
+          const item9 = await describeComponent(engine, ctxForm, 'fileMenu');
+          const item48 = await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, 'fileMenu');
+          if (!item9) throw new Error('net9: fileMenu (top-level menu item) failed to describe');
+          if (!item48) throw new Error('net48 item describe (Slice 1b): fileMenu returned null — DescribeOn did not fall back to ByFieldComponent');
+          if (!item48.type.endsWith('ToolStripMenuItem')) throw new Error(`net48 item describe: fileMenu wrong type ${item48.type}`);
+          const text9 = item9.properties?.find((p) => p.name === 'Text')?.value;
+          const text48 = item48.properties?.find((p) => p.name === 'Text')?.value;
+          if (text48 !== 'File') throw new Error(`net48 item describe: fileMenu.Text expected "File", got ${JSON.stringify(text48)}`);
+          if (text48 !== text9) throw new Error(`net48 item describe diverges from net9: Text net9=${JSON.stringify(text9)} net48=${JSON.stringify(text48)}`);
+          if (item48.parent != null) throw new Error(`net48 item describe: a Component item must report no Parent (net9 parity), got ${JSON.stringify(item48.parent)}`);
+          if (item48.type !== item9.type) throw new Error(`net48 item describe: type diverges from net9 — net9 ${item9.type} vs net48 ${item48.type}`);
+          console.log(`e2e: net48 item→Properties describe parity verified — fileMenu describes on both engines (type ${item48.type}, Text "${text48}", ${item48.properties?.length} props, no Parent), matching net9`);
+
+          // ---- net48 item→Properties EDITING (Slice 2) ----
+          // Widening TryApply (the net48 live-edit primitive) to resolve a non-Control component — the same FieldNames
+          // reverse-scan describe uses — makes a designer-originated item edit update the live COMPILED picture, not
+          // just the source. Drive the live-edit RPC on the menu item: `applied` MUST be true (before Slice 2 it came
+          // back false — "no control 'fileMenu'"), and the re-rendered item geometry MUST carry the new caption (the
+          // picture actually changed on the live instance, so the net48 canvas updates without a rebuild).
+          const edit48 = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'fileMenu', 'Text', 'Fichier');
+          if (!edit48.applied) throw new Error(`net48 item edit (Slice 2): fileMenu.Text was not applied live — TryApply did not resolve the item (diag: ${edit48.diagnostics || 'none'})`);
+          const editedItem = edit48.toolStripItems.find((i) => i.itemId === 'fileMenu');
+          if (!editedItem) throw new Error('net48 item edit (Slice 2): fileMenu absent from the re-rendered strip geometry');
+          if (editedItem.text !== 'Fichier') throw new Error(`net48 item edit (Slice 2): fileMenu caption did not update live — expected "Fichier", got ${JSON.stringify(editedItem.text)}`);
+          console.log(`e2e: net48 item→Properties EDITING verified — a live fileMenu.Text edit applied on the compiled instance (caption now "${editedItem.text}"), picture updated without a rebuild`);
+
+          // ---- net48 item editing must NOT live-mutate a non-Control non-item component (review wf_65a6b395-205) ----
+          // The Slice-2 widening resolves a field-backed ToolStripItem for a live edit — but ONLY a ToolStripItem. A
+          // Timer (a field-backed non-Control component, describable since Slice 1b and reachable via the tray→control
+          // edit path) must stay INERT: the preview is a real running instance, so live-setting timer1.Enabled=true
+          // would Start() it and run the compiled Tick handler inside the design surface. Assert the live edit is
+          // refused (applied===false) AND the live instance's Enabled is untouched — proving the timer never started.
+          const timerEdit = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'timer1', 'Enabled', 'true');
+          if (timerEdit.applied) throw new Error('net48 item edit (Slice 2 safety): setting timer1.Enabled live was APPLIED — a non-Control non-item component must not be live-mutated (a design surface must never Start() a timer)');
+          const timerDesc = await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, 'timer1');
+          const enabledVal = timerDesc?.properties?.find((p) => p.name === 'Enabled')?.value;
+          if (enabledVal !== 'False') throw new Error(`net48 item edit (Slice 2 safety): timer1.Enabled changed to ${JSON.stringify(enabledVal)} on the live instance — the refused edit still mutated the timer`);
+          console.log('e2e: net48 item-editing safety verified — a Timer (non-Control non-item component) is NOT live-mutable (timer1.Enabled=true refused, live instance still disabled); only ToolStripItems are newly editable');
         } finally {
           n48.dispose();
         }

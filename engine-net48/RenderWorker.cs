@@ -704,7 +704,7 @@ namespace WinFormsDesigner.Engine.Net48
                     ? live.Root
                     : (live.ByField.TryGetValue(hostId, out var h) ? h : null);
                 if (host == null) return Note(live, "no tab host '" + hostId + "'");
-                var pagesProp = host.GetType().GetProperty("TabPages");
+                var pagesProp = FindTabProp(host.GetType(), "TabPages");
                 if (pagesProp == null) return Note(live, "not a tab host: " + hostId);
                 Type? pt = ResolveControlType(pageTypeFqn);
                 if (pt == null) return Note(live, "tab page type not found: " + pageTypeFqn);
@@ -719,7 +719,7 @@ namespace WinFormsDesigner.Engine.Net48
                     add.Invoke(coll, new object[] { page });
                     if (!string.IsNullOrEmpty(newId)) { live.FieldNames[page] = newId; live.ByField[newId] = page; }
                     // make the new tab active so it's the one shown
-                    var selProp = host.GetType().GetProperty("SelectedTabPage") ?? host.GetType().GetProperty("SelectedPage") ?? host.GetType().GetProperty("SelectedTab");
+                    var selProp = FindTabProp(host.GetType(), "SelectedTabPage", "SelectedPage", "SelectedTab");
                     if (selProp != null && selProp.CanWrite) { try { selProp.SetValue(host, page); } catch { /* best effort */ } }
                     live.Root.PerformLayout();
                     Application.DoEvents();
@@ -762,7 +762,7 @@ namespace WinFormsDesigner.Engine.Net48
         /// the page was removed.</summary>
         private static bool TryRemoveTabPage(Control host, Control page)
         {
-            var coll = host.GetType().GetProperty("TabPages")?.GetValue(host);
+            var coll = FindTabProp(host.GetType(), "TabPages")?.GetValue(host);
             if (coll != null)
             {
                 var remove = coll.GetType().GetMethods().FirstOrDefault(m =>
@@ -827,13 +827,28 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>True when the control looks like a tab host: it exposes a TabPages collection AND a
         /// SelectedTab/SelectedTabPage/SelectedPage property (covers WinForms TabControl + DevExpress XtraTabControl,
         /// via reflection — the net48 engine doesn't reference DevExpress at compile time).</summary>
+        /// <summary>Find a public non-indexer property by name via a GetProperties() SCAN instead of
+        /// Type.GetProperty(name), which throws AmbiguousMatchException when the property is `new`-shadowed with a
+        /// covariant return across the inheritance chain — exactly the DevExpress pattern PageAt already works around
+        /// for its .Page property. The scan is behaviorally identical for a singly-declared property (plain WinForms
+        /// TabControl) and only diverges by RETURNING the shadowed property instead of THROWING (which the callers'
+        /// try/catch would swallow → the tab feature silently disappears for XtraTabControl). Names are tried in order,
+        /// mirroring a `GetProperty(a) ?? GetProperty(b)` chain.</summary>
+        private static System.Reflection.PropertyInfo? FindTabProp(Type t, params string[] names)
+        {
+            foreach (var n in names)
+                foreach (var p in t.GetProperties())
+                    if (p.Name == n && p.GetIndexParameters().Length == 0) return p;
+            return null;
+        }
+
         private static bool LooksLikeTabHost(Control c)
         {
             try
             {
                 var t = c.GetType();
-                return t.GetProperty("TabPages") != null
-                    && (t.GetProperty("SelectedTabPage") != null || t.GetProperty("SelectedPage") != null || t.GetProperty("SelectedTab") != null);
+                return FindTabProp(t, "TabPages") != null
+                    && FindTabProp(t, "SelectedTabPage", "SelectedPage", "SelectedTab") != null;
             }
             catch { return false; }
         }
@@ -872,7 +887,7 @@ namespace WinFormsDesigner.Engine.Net48
             var page = PageAt(host, localX, localY);
             if (page == null) return false;
             var t = host.GetType();
-            var selProp = t.GetProperty("SelectedTabPage") ?? t.GetProperty("SelectedPage") ?? t.GetProperty("SelectedTab");
+            var selProp = FindTabProp(t, "SelectedTabPage", "SelectedPage", "SelectedTab");
             if (selProp == null || !selProp.CanWrite) return false;
             try
             {
@@ -918,8 +933,12 @@ namespace WinFormsDesigner.Engine.Net48
         private bool TryApply(LiveDesign live, string componentId, string propName, string rawValue, out string reason)
         {
             reason = "";
-            bool isRoot = componentId == "this" || componentId.Length == 0;
-            Control? target = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+            // Resolve controls (ByField) AND a field-backed ToolStripItem (via the FieldNames reverse-scan) so a
+            // designer-originated ITEM edit updates the live picture, not just the source — net48 item editing (Slice
+            // 2). ResolveLiveEditTarget deliberately does NOT resolve a non-Control non-item component (a Timer, etc.):
+            // this is a running preview and live-mutating a component's runtime behavior would execute it (see the
+            // helper). A control still hits ByField first, so its path is byte-identical.
+            IComponent? target = ResolveLiveEditTarget(live, componentId);
             if (target == null) { reason = "no control '" + componentId + "'"; return false; }
             var pd = TypeDescriptor.GetProperties(target)[propName];
             if (pd == null) { reason = "no property '" + propName + "'"; return false; }
@@ -930,7 +949,7 @@ namespace WinFormsDesigner.Engine.Net48
                     ? pd.Converter.ConvertFromInvariantString(rawValue)
                     : rawValue;
                 pd.SetValue(target, value);
-                target.PerformLayout();
+                RelayoutTarget(target);
                 return true;
             }
             catch (Exception ex)
@@ -949,8 +968,11 @@ namespace WinFormsDesigner.Engine.Net48
         private bool TryReset(LiveDesign live, string componentId, string propName, out string reason)
         {
             reason = "";
-            bool isRoot = componentId == "this" || componentId.Length == 0;
-            Control? target = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+            // Same restricted resolution as TryApply (control via ByField, else a field-backed ToolStripItem via the
+            // reverse-scan; never a non-item component — see ResolveLiveEditTarget) so the two mirrors never diverge.
+            // The host currently disables per-property Reset for a ToolStrip item (no ownerId thread), so the item
+            // branch is defensive; if it is ever wired, reset works.
+            IComponent? target = ResolveLiveEditTarget(live, componentId);
             if (target == null) { reason = "no control '" + componentId + "'"; return false; }
             var pd = TypeDescriptor.GetProperties(target)[propName];
             if (pd == null) { reason = "no property '" + propName + "'"; return false; }
@@ -960,7 +982,7 @@ namespace WinFormsDesigner.Engine.Net48
                 if (pd.CanResetValue(target))
                 {
                     pd.ResetValue(target);
-                    target.PerformLayout();
+                    RelayoutTarget(target);
                     return true;
                 }
                 // No reset metadata: ResetValue is a no-op. If the value still serializes it differs from the type
@@ -968,7 +990,7 @@ namespace WinFormsDesigner.Engine.Net48
                 // note "renders fully after a rebuild". An already-default property is a benign no-op (return true).
                 bool stillSet;
                 try { stillSet = pd.ShouldSerializeValue(target); } catch { stillSet = false; }
-                target.PerformLayout();
+                RelayoutTarget(target);
                 if (stillSet) { reason = propName + " has no design-time default on the compiled instance — preview shows the built value until rebuild"; return false; }
                 return true;
             }
@@ -1089,11 +1111,62 @@ namespace WinFormsDesigner.Engine.Net48
         private ComponentDesc? DescribeOn(LiveDesign live, string componentId)
         {
             bool isRoot = componentId == "this" || componentId.Length == 0;
-            Control? target = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
+            // Controls resolve via ByField, a field-backed non-Control component (a ToolStripItem) via the FieldNames
+            // reverse-scan — see ResolveLiveTarget, the single resolver describe / edit / reset all share so they can
+            // never disagree about what an id points at.
+            IComponent? target = ResolveLiveTarget(live, componentId);
             if (target == null) return null;
-            string? parent = isRoot ? null : NearestFieldBackedParent(target, live);
+            // Parity with net9 DesignerDescribe.ParentName: only a Control parented under another Control carries a
+            // Parent; a non-Control Component (e.g. a ToolStripItem) reports none.
+            string? parent = isRoot ? null : (target is Control tc ? NearestFieldBackedParent(tc, live) : null);
             string name = isRoot ? live.Type.Name : componentId;
             return CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent);
+        }
+
+        /// <summary>Reverse the component→field-name map to find the live component a designer field id names — the
+        /// path DescribeOn takes for a non-Control field (a ToolStripItem). Reads FieldNames directly (kept pruned by
+        /// every remove path + populated by every live-add path) so there is no parallel map to fall out of sync; the
+        /// scan is O(field count) and only runs on the ByField miss (never for a plain control). Field names are
+        /// unique, so at most one entry matches.</summary>
+        private static IComponent? ResolveComponentByFieldName(LiveDesign live, string fieldName)
+        {
+            foreach (var kv in live.FieldNames)
+                if (kv.Value == fieldName && kv.Key is IComponent comp) return comp;
+            return null;
+        }
+
+        /// <summary>Resolve a component id to its live instance for a per-property live edit / reset / describe: a
+        /// control via ByField (the fast path), else a field-backed non-Control IComponent (a ToolStripItem) via the
+        /// FieldNames reverse-scan. Root ("this"/"") → the form. Null when the id names nothing live. One resolver so
+        /// describe and edit can never disagree about what an id points at.</summary>
+        private IComponent? ResolveLiveTarget(LiveDesign live, string componentId)
+        {
+            if (componentId == "this" || componentId.Length == 0) return live.Root;
+            return live.ByField.TryGetValue(componentId, out var c) ? c : ResolveComponentByFieldName(live, componentId);
+        }
+
+        /// <summary>Resolve a component id for a live property EDIT / RESET — like <see cref="ResolveLiveTarget"/> (the
+        /// describe resolver) but RESTRICTED to a Control or a ToolStripItem. A field-backed non-Control non-item
+        /// component (a Timer / BackgroundWorker / ToolTip / ImageList) is describable (Slice 1b read) yet must NOT be
+        /// live-mutated: this is a real running preview instance, so e.g. Timer.Enabled=true would Start() it and the
+        /// render pump (Application.DoEvents) would dispatch the compiled Tick handler INSIDE the preview — a design
+        /// surface must never run a component's runtime behavior. Such an id returns null here → the live edit is an
+        /// inert no-op (Applied=false; the source edit still persists via the net9 splice, and VS likewise only
+        /// serializes the value, it does not run the component). This precisely restores the pre-Slice-2 behavior for
+        /// every non-item component (only a ToolStripItem is newly live-editable). Null for an unknown id too.</summary>
+        private IComponent? ResolveLiveEditTarget(LiveDesign live, string componentId)
+        {
+            var target = ResolveLiveTarget(live, componentId);
+            return target is Control || target is ToolStripItem ? target : null;
+        }
+
+        /// <summary>Force the layout that reflects a just-applied property edit: a Control re-lays-out itself; a
+        /// ToolStripItem owns no layout, so its owning strip re-measures (setting e.g. Text already invalidates it —
+        /// this makes the new size immediate). The caller additionally PerformLayouts the root form.</summary>
+        private static void RelayoutTarget(IComponent target)
+        {
+            if (target is Control ctl) ctl.PerformLayout();
+            else if (target is ToolStripItem item) item.Owner?.PerformLayout();
         }
 
         private string? NearestFieldBackedParent(Control c, LiveDesign live)
@@ -1243,6 +1316,7 @@ namespace WinFormsDesigner.Engine.Net48
                         OwnerId = ownerId,
                         ItemId = ToolStripItemId(it, live),
                         ItemType = it.GetType().FullName ?? it.GetType().Name,
+                        Text = it.Text ?? "",                          // live caption → canvas prefills the rename editor
                         X = ox + b.X,
                         Y = oy + b.Y,
                         Width = Math.Max(b.Width, 1),
@@ -1282,10 +1356,8 @@ namespace WinFormsDesigner.Engine.Net48
                 {
                     var parent = c.Parent;
                     if (parent == null) break;
-                    var pagesProp = parent.GetType().GetProperty("TabPages");
-                    var selProp = parent.GetType().GetProperty("SelectedTab")
-                        ?? parent.GetType().GetProperty("SelectedTabPage")
-                        ?? parent.GetType().GetProperty("SelectedPage");
+                    var pagesProp = FindTabProp(parent.GetType(), "TabPages");
+                    var selProp = FindTabProp(parent.GetType(), "SelectedTab", "SelectedTabPage", "SelectedPage");
                     if (pagesProp == null || selProp == null) continue;
                     if (pagesProp.GetValue(parent) is not System.Collections.IEnumerable pages) continue;
                     bool cIsPage = false;
@@ -1330,6 +1402,10 @@ namespace WinFormsDesigner.Engine.Net48
                 // tree. It belongs in the tray, exactly as Visual Studio shows a ContextMenuStrip. Mirrors the net9
                 // engine's BuildLayoutControls/BuildTray split (both skip the phantom control rect, both tray it).
                 if (kv.Key is Control ctrl && (ReferenceEquals(ctrl, live.Root) || ctrl.Parent != null)) continue;
+                // A field-backed strip item is in FieldNames (that's how geometry/describe resolve it), but Visual Studio
+                // never trays strip items — they are edited on the strip itself (on-canvas Type Here / the item editor).
+                // The tray holds only non-visual components (Timer/ToolTip/…) + off-tree Controls (ContextMenuStrip).
+                if (kv.Key is ToolStripItem) continue;
                 if (!seen.Add(kv.Key)) continue;
                 tray.Add(new TrayComponent { Id = kv.Value, Name = kv.Value, Type = kv.Key.GetType().FullName ?? kv.Key.GetType().Name });
             }
