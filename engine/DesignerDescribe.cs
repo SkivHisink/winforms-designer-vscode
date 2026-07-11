@@ -63,6 +63,12 @@ namespace WinFormsDesigner.Engine
         /// <summary>The collection's item type for the editor (currently always "System.String"), or null when the
         /// property is not an editable collection.</summary>
         public string? CollectionItemType { get; init; }
+        /// <summary>True for a component-reference property (a ReferenceConverter target: Form.AcceptButton/
+        /// CancelButton, Control.ContextMenuStrip, …). Its <see cref="StandardValues"/> are the compatible sibling
+        /// component field names + a leading "(none)" — self-enumerated from the container (the converter needs a
+        /// design container to list them, which a plain runtime instance lacks). The grid renders the dropdown; the
+        /// host translates a pick to `this.&lt;name&gt;` / `null` on write (net9 splice, net48 live resolve).</summary>
+        public bool ReferenceValues { get; init; }
     }
 
     /// <summary>One event of a component, for the Events tab. <see cref="Handler"/> is the wired handler
@@ -122,9 +128,13 @@ namespace WinFormsDesigner.Engine
             Dictionary<string, Dictionary<string, string>>? eventWirings = null)
         {
             var root = host.RootComponent;
-            var components = host.Container.Components
-                .Cast<IComponent>()
-                .Select(c => BuildComponentInfo(c, root, rootName, explicitMembers, eventWirings))
+            var all = host.Container.Components.Cast<IComponent>().ToList();
+            // Reference-dropdown candidates: every sited component EXCEPT the root form — a field-backed component the
+            // write can name as `this.<field>`. The root is `this` (no field), never a `this.<name>` reference target,
+            // so exclude it (matches the net48 side, whose FieldNames map holds no root entry).
+            var siblings = all.Where(x => !ReferenceEquals(x, root)).ToList();
+            var components = all
+                .Select(c => BuildComponentInfo(c, root, rootName, explicitMembers, eventWirings, siblings))
                 .OrderByDescending(c => c.IsRoot)
                 .ThenBy(c => c.Name, StringComparer.Ordinal)
                 .ToList();
@@ -145,15 +155,18 @@ namespace WinFormsDesigner.Engine
             Dictionary<string, Dictionary<string, string>>? eventWirings = null)
         {
             var root = host.RootComponent;
+            var all = host.Container.Components.Cast<IComponent>().ToList();
+            var siblings = all.Where(x => !ReferenceEquals(x, root)).ToList(); // see Describe: root is never a `this.<field>` reference target
             IComponent? target = (componentId is "this" or "")
                 ? root
-                : host.Container.Components.Cast<IComponent>().FirstOrDefault(c => c.Site?.Name == componentId);
-            return target == null ? null : BuildComponentInfo(target, root, rootName, explicitMembers, eventWirings);
+                : all.FirstOrDefault(c => c.Site?.Name == componentId);
+            return target == null ? null : BuildComponentInfo(target, root, rootName, explicitMembers, eventWirings, siblings);
         }
 
         private static ComponentInfo BuildComponentInfo(IComponent c, IComponent root, string rootName,
             HashSet<(IComponent, string)> explicitMembers,
-            Dictionary<string, Dictionary<string, string>>? eventWirings)
+            Dictionary<string, Dictionary<string, string>>? eventWirings,
+            IReadOnlyList<IComponent> siblings)
         {
             bool isRoot = ReferenceEquals(c, root);
             string idKey = isRoot ? "this" : (c.Site?.Name ?? "");
@@ -166,7 +179,7 @@ namespace WinFormsDesigner.Engine
                 Type = c.GetType().FullName ?? c.GetType().Name,
                 Parent = ParentName(c, root, rootName),
                 IsRoot = isRoot,
-                Properties = DescribeProperties(c, explicitMembers),
+                Properties = DescribeProperties(c, explicitMembers, siblings, root),
                 Events = DescribeEvents(c, wired),
             };
         }
@@ -203,7 +216,8 @@ namespace WinFormsDesigner.Engine
             return null;
         }
 
-        private static List<PropertyInfo> DescribeProperties(IComponent c, HashSet<(IComponent, string)> explicitMembers)
+        private static List<PropertyInfo> DescribeProperties(IComponent c, HashSet<(IComponent, string)> explicitMembers,
+            IReadOnlyList<IComponent> siblings, IComponent root)
         {
             var list = new List<PropertyInfo>();
             // a child sited directly in a TableLayoutPanel exposes the panel's Column/Row extender properties; they
@@ -252,7 +266,23 @@ namespace WinFormsDesigner.Engine
                     readOnly = true;
                 }
 
-                var (standardValues, stdExclusive) = StandardValuesOf(pd);
+                var (standardValues, stdExclusive) = StandardValuesOf(pd, c);
+
+                // Component-reference property (ReferenceConverter: AcceptButton/CancelButton/ContextMenuStrip…): the
+                // converter can only enumerate the compatible siblings with a design container (a plain runtime
+                // instance has none), so self-enumerate the container. Overrides any (empty) standard-values from the
+                // context-less converter above, forces an exclusive dropdown, and rewrites value to the referenced
+                // field name (the SAME name source as the options → the current value pre-selects; the converter's
+                // ToString on a non-sited instance would not).
+                bool referenceValues = false;
+                var refInfo = ReferenceValuesOf(pd, c, raw, siblings, root);
+                if (refInfo != null)
+                {
+                    standardValues = refInfo.Value.values;
+                    stdExclusive = true;
+                    referenceValues = true;
+                    value = refInfo.Value.current;
+                }
 
                 // Cursor: only a STANDARD cursor (Cursors.Hand, …) round-trips through the picker; editing a
                 // custom/resx/.cur cursor would silently replace it with a standard one. Mirror the Font-charset
@@ -294,6 +324,7 @@ namespace WinFormsDesigner.Engine
                     ImagePreview = imagePreview,
                     IsCollection = isCollection,
                     CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : typedCollectionItem),
+                    ReferenceValues = referenceValues,
                 });
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
@@ -304,32 +335,167 @@ namespace WinFormsDesigner.Engine
         /// exclusive (closed). Returns (null, false) when none are offered, the type is a flags enum (a
         /// single-select can't express combined flags), or any value fails to stringify. Bounded and fully
         /// guarded — a hostile converter degrades to no dropdown, never throws.</summary>
-        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd)
+        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd, IComponent owner)
         {
             try
             {
                 if (pd.PropertyType.IsEnum && pd.PropertyType.IsDefined(typeof(FlagsAttribute), false)) return (null, false);
                 var conv = pd.Converter;
-                if (conv == null || !conv.GetStandardValuesSupported()) return (null, false);
-                var coll = conv.GetStandardValues();
+                if (conv == null) return (null, false);
+                // ONLY the WinForms ImageIndex / ImageKey converters get a describe-time context (Instance = the component,
+                // PropertyDescriptor = pd) — they read the control's ATTACHED ImageList off context.Instance to enumerate its
+                // indices / keys. Every OTHER converter uses the context-less path, EXACTLY as before. GATE on the WinForms
+                // ASSEMBLY (not just the type name): catches ImageIndexConverter / ImageKeyConverter AND the internal
+                // NoneExcludedImageIndexConverter / TreeViewImage*Converter variants, but NOT a same-named third-party
+                // converter — which must never receive a live, mutation-capable context during a read-only describe (codex).
+                string convName = conv.GetType().Name;
+                bool isImageConv = (convName.EndsWith("ImageIndexConverter", StringComparison.Ordinal) || convName.EndsWith("ImageKeyConverter", StringComparison.Ordinal))
+                    && ReferenceEquals(conv.GetType().Assembly, typeof(Control).Assembly);
+                ITypeDescriptorContext? ctx = null;
+                if (isImageConv) { try { ctx = new DescribeContext(owner, pd); } catch { ctx = null; } }
+                var coll = StandardValuesColl(conv, ctx);
                 if (coll == null) return (null, false);
                 var vals = new List<string>();
                 foreach (var sv in coll)
                 {
                     if (sv == null) continue;
+                    // Skip the image converters' "no image" SENTINEL (ImageKey ""→display "(none)", ImageIndex -1→"(none)"):
+                    // that display string does NOT round-trip through the primitive write path — it would splice a stale key
+                    // literally named "(none)", or reject the non-numeric int — so offer only REAL, committable keys/indices
+                    // (codex). Filter by the ACTUAL value (empty string / negative int), NOT the display, so a legitimate key
+                    // literally "(none)" is preserved. (Clearing to no-image is via Reset, not the dropdown, until a
+                    // value/display DTO lands.)
+                    if (isImageConv && ((sv is string ks && ks.Length == 0) || (sv is int ki && ki < 0))) continue;
                     string? s = null;
                     try { if (conv.CanConvertTo(typeof(string))) s = conv.ConvertToInvariantString(sv); } catch { s = null; }
                     if (!string.IsNullOrEmpty(s) && !vals.Contains(s!)) vals.Add(s!);
                     if (vals.Count >= 256) break; // bound — keep the payload sane for huge converters
                 }
+                // vals.Count==0 → no dropdown (plain field). For an image converter that means the ImageList is absent/empty
+                // (only the sentinel, now filtered) — so a populated 1-image list (even a no-sentinel NoneExcludedImageIndex
+                // Converter, which yields exactly [0]) correctly still shows its dropdown (codex: the old <2 gate wrongly hid it).
                 if (vals.Count == 0) return (null, false);
                 // guard the exclusivity query separately — a converter that enumerates fine but throws here
                 // should still yield the (non-exclusive) dropdown rather than discard the whole list.
                 bool excl = false;
-                try { excl = conv.GetStandardValuesExclusive(); } catch { excl = false; }
+                try { excl = ctx != null ? conv.GetStandardValuesExclusive(ctx) : conv.GetStandardValuesExclusive(); }
+                catch { try { excl = conv.GetStandardValuesExclusive(); } catch { excl = false; } }
                 return (vals, excl);
             }
             catch { return (null, false); }
+        }
+
+        /// <summary>The "clear the reference" sentinel shown/committed for a component-reference dropdown. A fixed
+        /// English token (like the en-canonical enum/color values) — never a real field name (field names are valid
+        /// C# identifiers, so they can never collide with the parenthesised token). The host maps it to `null`.</summary>
+        public const string ReferenceNone = "(none)";
+
+        /// <summary>The synthetic "the ROOT form itself" option for a component-reference dropdown — the value VS offers
+        /// for a reference the form can satisfy (e.g. ErrorProvider.ContainerControl = this). Like <see cref="ReferenceNone"/>
+        /// it is a fixed en-canonical parenthesised token that can never collide with a field name (not a valid C#
+        /// identifier); the host maps it to a bare `this` splice and net48 resolves it to the live root.</summary>
+        public const string ReferenceThis = "(this)";
+
+        /// <summary>For a component-reference property (a framework <see cref="System.ComponentModel.ReferenceConverter"/>
+        /// target — Form.AcceptButton/CancelButton, Control.ContextMenuStrip, …), the compatible sibling component
+        /// FIELD NAMES + a leading "(none)", plus the CURRENT reference's field name (or "(none)"). The converter can
+        /// only list these when handed a design container (a plain runtime instance has none), so we self-enumerate the
+        /// container being described — engine-symmetric with the net48 side. Returns null when the property is not a
+        /// framework reference target or no compatible sibling exists (→ keep the plain field, no empty dropdown).
+        /// Fully guarded — never throws. The candidate names are read from Site.Name (== the field name the write
+        /// splices `this.&lt;name&gt;`); current is read from the SAME source so the value pre-selects.</summary>
+        private static (List<string> values, string current)? ReferenceValuesOf(PropertyDescriptor pd, IComponent owner,
+            object? raw, IReadOnlyList<IComponent> siblings, IComponent? root)
+        {
+            try
+            {
+                // Reference dropdowns are for owners edited through the CONTROL channel — a Control OR a tray Component
+                // (NotifyIcon.ContextMenuStrip, ErrorProvider.ContainerControl, …), both of which the panel edits by
+                // currentId and carries a reference pick through `refEdit`. A ToolStripItem also carries ReferenceConverter
+                // props (ToolStripMenuItem.DropDown), but item edits route through the ITEM channel (ownerId), which does
+                // NOT translate a reference pick — so offering the dropdown there would half-wire a mis-write. Exclude
+                // only items; every other IComponent owner is fair game (the guards below keep the candidate list sound).
+                if (owner is ToolStripItem) return null;
+                if (pd.PropertyType.IsEnum) return null;
+                var conv = pd.Converter;
+                if (conv is not System.ComponentModel.ReferenceConverter) return null;
+                // Gate on a framework assembly: System.dll defines ReferenceConverter; a WinForms ReferenceConverter
+                // subclass lives in System.Windows.Forms.dll. Excludes any third-party ReferenceConverter subclass.
+                var asm = conv.GetType().Assembly;
+                if (!ReferenceEquals(asm, typeof(System.ComponentModel.ReferenceConverter).Assembly)
+                    && !ReferenceEquals(asm, typeof(Control).Assembly)) return null;
+
+                var names = new List<string>();
+                foreach (var sib in siblings)
+                {
+                    if (ReferenceEquals(sib, owner)) continue;             // a component never references itself
+                    if (!pd.PropertyType.IsInstanceOfType(sib)) continue;  // only assignable siblings
+                    string? n = sib.Site?.Name;
+                    if (!string.IsNullOrEmpty(n) && !names.Contains(n!)) names.Add(n!);
+                }
+                names.Sort(StringComparer.Ordinal);
+
+                // The ROOT form is itself an offered candidate whenever it is assignable to the property — VS lists the
+                // form (e.g. ErrorProvider.ContainerControl = this). It carries no field, so it is never a this.<field>
+                // sibling; it is represented by the synthetic ReferenceThis token that the write path maps to a bare
+                // `this`. Exclude the degenerate case where the OWNER is the root (a component never references itself).
+                bool rootAssignable = root != null && !ReferenceEquals(root, owner)
+                    && pd.PropertyType.IsInstanceOfType(root);
+
+                string current = ReferenceNone;
+                if (raw is IComponent rc && !ReferenceEquals(rc, owner))
+                {
+                    if (rootAssignable && ReferenceEquals(rc, root)) current = ReferenceThis; // the root form itself
+                    else
+                    {
+                        string? cn = rc.Site?.Name;
+                        if (!string.IsNullOrEmpty(cn)) current = cn!;
+                    }
+                }
+                // Offer the dropdown only when there is at least one candidate (a sibling OR the root) AND the CURRENT
+                // reference is representable in it (null/"(none)", the root token, or a listed sibling). An out-of-scope
+                // component whose name isn't a candidate would misrepresent the value (or write an invalid this.<name>
+                // RHS) and diverge from net48 — keep the plain field so the real value is never clobbered (codex review).
+                if (names.Count == 0 && !rootAssignable) return null;              // no candidate at all → plain field
+                if (raw is IComponent && current == ReferenceNone) return null;    // a live reference we could not name → out of scope
+                if (current != ReferenceNone && current != ReferenceThis && !names.Contains(current)) return null;
+                var values = new List<string>(names.Count + 2) { ReferenceNone };
+                if (rootAssignable) values.Add(ReferenceThis);                     // the form itself, right after "(none)"
+                values.AddRange(names);
+                return (values, current);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>The converter's standard-values set, PREFERRING the context-aware overload (so ImageIndexConverter /
+        /// ImageKeyConverter can resolve the attached ImageList) and FALLING BACK to the context-less form if the context
+        /// upsets a converter — strictly non-regressing. Null when neither reports a supported set.</summary>
+        private static System.Collections.ICollection? StandardValuesColl(System.ComponentModel.TypeConverter conv, ITypeDescriptorContext? ctx)
+        {
+            if (ctx != null)
+            {
+                try { if (conv.GetStandardValuesSupported(ctx)) { var c = conv.GetStandardValues(ctx); if (c != null) return c; } }
+                catch { /* the context upset this converter → fall back to the context-less form below */ }
+            }
+            try { if (conv.GetStandardValuesSupported()) return conv.GetStandardValues(); } catch { /* no standard values */ }
+            return null;
+        }
+
+        /// <summary>A minimal <see cref="ITypeDescriptorContext"/> for a describe-time TypeConverter query: it carries the
+        /// component being described (Instance) and the property (PropertyDescriptor) — enough for ImageIndexConverter /
+        /// ImageKeyConverter to read the control's related ImageList. Container / services are best-effort off the site.
+        /// Read-only: the change notifications are no-ops (describe never mutates through the converter).</summary>
+        private sealed class DescribeContext : ITypeDescriptorContext
+        {
+            private readonly IComponent _instance;
+            private readonly PropertyDescriptor _pd;
+            public DescribeContext(IComponent instance, PropertyDescriptor pd) { _instance = instance; _pd = pd; }
+            public IContainer? Container { get { try { return _instance.Site?.Container; } catch { return null; } } }
+            public object? Instance => _instance;
+            public PropertyDescriptor? PropertyDescriptor => _pd;
+            public object? GetService(Type serviceType) { try { return _instance.Site?.GetService(serviceType); } catch { return null; } }
+            public bool OnComponentChanging() => true;
+            public void OnComponentChanged() { }
         }
 
         /// <summary>The individual single-bit member names of a [Flags] enum (value != 0 and a power of two),

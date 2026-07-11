@@ -90,6 +90,8 @@
   "designer.ruler.hide": "Скрыть линейку",
   "designer.formSuffix": " (форма)",
   "designer.typeHere": "Введите текст",
+  "designer.smartTag.title": "Задачи: {type}",
+  "designer.smartTag.noTasks": "Нет общих задач",
   "designer.dirtyBadge": "● не сохранено",
   "designer.sel.multi": {
     "one": "выделен {n} элемент",
@@ -119,6 +121,9 @@
   "designer.menu.delete": "Удалить",
   "designer.menu.renameItem": "Переименовать",
   "designer.menu.deleteItem": "Удалить элемент",
+  "designer.menu.addTab": "Добавить вкладку",
+  "designer.menu.deleteTab": "Удалить вкладку",
+  "designer.menu.deleteTabNamed": "Удалить вкладку «{name}»",
   "designer.menu.properties": "Свойства",
   "panel.props.empty": "Выберите элемент управления в конструкторе WinForms, чтобы изменить его свойства.",
   "panel.itemProps.unavailable": "Свойства элемента недоступны в скомпилированном предпросмотре.",

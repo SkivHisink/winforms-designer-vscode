@@ -87,6 +87,8 @@
   "designer.ruler.hide": "Ocultar la regla",
   "designer.formSuffix": " (formulario)",
   "designer.typeHere": "Escriba aquí",
+  "designer.smartTag.title": "Tareas de {type}",
+  "designer.smartTag.noTasks": "No hay tareas comunes",
   "designer.dirtyBadge": "● sin guardar",
   "designer.sel.multi": {
     "one": "{n} control seleccionado",
@@ -115,6 +117,9 @@
   "designer.menu.delete": "Eliminar",
   "designer.menu.renameItem": "Cambiar nombre",
   "designer.menu.deleteItem": "Eliminar elemento",
+  "designer.menu.addTab": "Agregar pestaña",
+  "designer.menu.deleteTab": "Eliminar pestaña",
+  "designer.menu.deleteTabNamed": "Eliminar pestaña \"{name}\"",
   "designer.menu.properties": "Propiedades",
   "panel.props.empty": "Seleccione un control en el diseñador de WinForms para editar sus propiedades.",
   "panel.itemProps.unavailable": "Las propiedades del elemento no están disponibles en la vista previa compilada.",

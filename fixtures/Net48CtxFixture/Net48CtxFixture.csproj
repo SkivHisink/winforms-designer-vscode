@@ -13,8 +13,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Reuse the exact sample the net9 ctx leg renders (same input → cross-runtime partition parity). -->
+    <!-- Reuse the exact samples the net9 legs render (same input → cross-runtime parity). -->
     <Compile Include="..\..\engine\samples\ContextMenuForm.Designer.cs" Link="ContextMenuForm.Designer.cs" />
+    <!-- OVERFLOW parity: the ToolStrip narrower than its buttons → net48's Show pump places the excess items in overflow. -->
+    <Compile Include="..\..\engine\samples\ToolStripOverflowForm.Designer.cs" Link="ToolStripOverflowForm.Designer.cs" />
+    <!-- ImageIndex/ImageKey dropdown: the compiled instance's ImageList really holds its keyed images (Images.Add), so
+         describe's context-aware ImageKeyConverter enumerates real keys (net9's source interpreter can't run Images.Add). -->
+    <Compile Include="..\..\engine\samples\ImageListForm.Designer.cs" Link="ImageListForm.Designer.cs" />
+    <!-- Component-reference dropdown: the compiled instance's AcceptButton/CancelButton (control refs) and
+         okButton.ContextMenuStrip (a component ref) let describe self-enumerate the sibling field names and TryApply
+         resolve a picked name to the live instance (net48's converter can't, being un-sited). -->
+    <Compile Include="..\..\engine\samples\ComponentRefForm.Designer.cs" Link="ComponentRefForm.Designer.cs" />
+    <!-- TRAY-component reference dropdown: notifyIcon1.ContextMenuStrip = contextMenuStrip1 — a reference whose OWNER is
+         a non-Control tray Component. The compiled instance lets describe enumerate the ContextMenuStrip field names and
+         TryApply's reference branch resolve a picked name to the live component (the tray-owner write path). -->
+    <Compile Include="..\..\engine\samples\NotifyIconForm.Designer.cs" Link="NotifyIconForm.Designer.cs" />
   </ItemGroup>
 
 </Project>

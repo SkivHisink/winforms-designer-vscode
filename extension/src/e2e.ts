@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel } from './engineClient';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { retainSelectionId } from './selection';
@@ -13,11 +13,14 @@ import { learnMoreUrl } from './learnMore';
  *  ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
  *  missing or older than its inputs; any build failure (no net48 toolchain, locked output) → false, so the net48
  *  e2e leg SKIPS instead of failing (the suite stays green on a net9-only box). */
-function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFile: string): boolean {
+function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFiles: string[]): boolean {
   try {
     const csproj = path.join(fixtureDir, 'Net48CtxFixture.csproj');
     if (!fs.existsSync(csproj)) return false;
-    const inputs = [csproj, path.join(fixtureDir, 'ContextMenuForm.cs'), sampleFile].filter((f) => fs.existsSync(f));
+    // staleness inputs: the csproj + every .cs companion in the fixture dir + every referenced sample (so adding a form
+    // to the fixture, or editing any of them, forces a rebuild instead of serving a stale DLL).
+    const companions = fs.readdirSync(fixtureDir).filter((f) => f.endsWith('.cs')).map((f) => path.join(fixtureDir, f));
+    const inputs = [csproj, ...companions, ...sampleFiles].filter((f) => fs.existsSync(f));
     const newestInput = inputs.reduce((m, f) => Math.max(m, fs.statSync(f).mtimeMs), 0);
     if (fs.existsSync(fixtureDll) && fs.statSync(fixtureDll).mtimeMs >= newestInput) return true; // up to date
     const res = spawnSync('dotnet', ['build', fixtureDir, '-c', 'Release', '--nologo', '-v', 'q'], { encoding: 'utf8' });
@@ -817,10 +820,26 @@ async function main(): Promise<void> {
         throw new Error('strip geometry: an item has the wrong owner, an empty id, or a degenerate rect');
       }
       // each real item carries its live caption (Slice C — the canvas prefills the inline rename editor with it)
-      const captions = realItems.map((it) => it.text).sort();
-      if (JSON.stringify(captions) !== JSON.stringify(['Edit', 'File'])) {
-        throw new Error(`strip geometry: item captions [${captions.join(', ')}] != [Edit, File] — the Text field must round-trip`);
+      // assert the EMISSION order directly (NOT sorted): the flyout draws items in this order, so a reorder regression
+      // (menuStrip1.Items.AddRange sequence) must fail here rather than be normalized away.
+      const captions = realItems.map((it) => it.text);
+      if (JSON.stringify(captions) !== JSON.stringify(['File', 'Edit'])) {
+        throw new Error(`strip geometry: item captions [${captions.join(', ')}] != [File, Edit] — the Text field must round-trip in emission order`);
       }
+      // nested submenu items ride along BOUNDS-LESS in `children` so the canvas can draw a synthetic flyout and reach a
+      // nested item's Properties (the tray no longer surfaces strip items). MenuForm: File → {Open, Save}; Edit → none.
+      const fileItem = realItems.find((it) => it.text === 'File');
+      const editItem = realItems.find((it) => it.text === 'Edit');
+      if (!fileItem || !editItem) throw new Error('strip geometry: MenuForm is missing the File/Edit top-level items');
+      const fileKids = fileItem.children ?? [];
+      const kidCaptions = fileKids.map((k) => k.text); // emission order (DropDownItems.AddRange): Open, Save — asserted directly, not sorted
+      if (JSON.stringify(kidCaptions) !== JSON.stringify(['Open', 'Save'])) {
+        throw new Error(`strip geometry: File submenu children [${kidCaptions.join(', ')}] != [Open, Save] — nested items must be emitted in order`);
+      }
+      if (fileKids.some((k) => k.itemId.length === 0 || k.ownerId !== stripHost.id)) {
+        throw new Error('strip geometry: a File submenu child has an empty id or the wrong owner (must be the top-level strip id)');
+      }
+      if ((editItem.children ?? []).length !== 0) throw new Error('strip geometry: Edit has no submenu → its children must be empty');
       // the slot sits after the rightmost item (contentEnd + gap) on this horizontal strip
       const rightmost = Math.max(...realItems.map((it) => it.x + it.width));
       if (slots[0].x < rightmost) throw new Error(`strip geometry: Type-Here slot x=${slots[0].x} is not past the last item (right edge ${rightmost})`);
@@ -828,13 +847,19 @@ async function main(): Promise<void> {
       const menuLayout = await describeLayout(engine, menuForm);
       const dItems = menuLayout.toolStripItems;
       if (dItems.length !== tsItems.length) throw new Error(`strip geometry: describeLayout ${dItems.length} items != renderWithLayout ${tsItems.length}`);
+      // field-by-field equality, recursing into `children` so the nested submenu forest can't drift between the two RPCs
+      const sameItem = (a: ToolStripItemBounds, b: ToolStripItemBounds): boolean =>
+        a.ownerId === b.ownerId && a.itemId === b.itemId && a.text === b.text && a.x === b.x && a.y === b.y &&
+        a.width === b.width && a.height === b.height && a.isTypeHere === b.isTypeHere &&
+        (a.children ?? []).length === (b.children ?? []).length &&
+        (a.children ?? []).every((c, j) => sameItem(c, (b.children ?? [])[j]));
       for (let i = 0; i < tsItems.length; i++) {
         const a = tsItems[i], b = dItems[i];
-        if (a.ownerId !== b.ownerId || a.itemId !== b.itemId || a.text !== b.text || a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height || a.isTypeHere !== b.isTypeHere) {
-          throw new Error(`strip geometry: item[${i}] renderWithLayout != describeLayout ("${a.itemId}" "${a.text}" ${a.x},${a.y} vs "${b.itemId}" "${b.text}" ${b.x},${b.y})`);
+        if (!sameItem(a, b)) {
+          throw new Error(`strip geometry: item[${i}] renderWithLayout != describeLayout ("${a.itemId}" "${a.text}" ${a.x},${a.y} vs "${b.itemId}" "${b.text}" ${b.x},${b.y}) — geometry or nested children drifted`);
         }
       }
-      console.log(`e2e: strip item geometry (Slice A/C) verified — MenuForm png byte-identical with a forced strip layout, ${realItems.length} items (${captions.join(', ')}) + 1 Type-Here slot on "${stripHost.id}", renderWithLayout == describeLayout geometry+captions`);
+      console.log(`e2e: strip item geometry (Slice A/C + nested flyout) verified — MenuForm png byte-identical, ${realItems.length} items (${captions.join(', ')}) + File submenu [${kidCaptions.join(', ')}] + 1 Type-Here slot on "${stripHost.id}", renderWithLayout == describeLayout geometry+captions+children`);
 
       // ---- off-tree ContextMenuStrip → the TRAY, never a phantom control rect (hit-test-theft fix) ----
       // A ContextMenuStrip is a sited Control field that is never added to any Controls collection (Parent==null):
@@ -845,6 +870,9 @@ async function main(): Promise<void> {
       // all of it on a Form with a MenuStrip + a ContextMenuStrip: no phantom, present in the tray, menu-bar hit-test
       // restored, and the skipped off-tree control must not perturb the rendered pixels (it was never painted).
       const ctxForm = path.join(repo, 'engine', 'samples', 'ContextMenuForm.Designer.cs');
+      const overflowForm = path.join(repo, 'engine', 'samples', 'ToolStripOverflowForm.Designer.cs');
+      const imageListForm = path.join(repo, 'engine', 'samples', 'ImageListForm.Designer.cs');
+      const compRefForm48 = path.join(repo, 'engine', 'samples', 'ComponentRefForm.Designer.cs');
       if (fs.existsSync(ctxForm)) {
         const ctxLayout = await describeLayout(engine, ctxForm);
         if (ctxLayout.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) {
@@ -857,9 +885,9 @@ async function main(): Promise<void> {
         // itself (on-canvas Type Here / the item editor), not from the tray. The tray must hold ONLY non-visual
         // components + off-tree Controls: contextMenuStrip1 (an off-tree Control) and timer1 (a non-visual component)
         // stay; the four menu/context items must be gone. Pins that the item-skip is item-specific (timer1 survives).
-        const ctxItemIds = ['fileMenu', 'editMenu', 'cutItem', 'pasteItem'];
+        const ctxItemIds = ['fileMenu', 'editMenu', 'cutItem', 'pasteItem', 'pasteSpecialItem', 'undoItem', 'redoItem'];
         const ctxLeaked = ctxLayout.tray.filter((t) => ctxItemIds.includes(t.id)).map((t) => t.id);
-        if (ctxLeaked.length) throw new Error(`ctx tray: ToolStripItem(s) leaked into the tray [${ctxLeaked.join(', ')}] — VS never trays strip items (they are edited on the strip itself, not the tray)`);
+        if (ctxLeaked.length) throw new Error(`ctx tray: ToolStripItem(s) leaked into the tray [${ctxLeaked.join(', ')}] — VS never trays strip items (including nested ones)`);
         if (!ctxLayout.tray.some((t) => t.id === 'timer1')) throw new Error('ctx tray: timer1 (a non-visual component) must stay in the tray — the strip-item skip must not drop non-item components');
         // the chip is genuinely selectable: describing it drives the property panel (VS edits a ContextMenuStrip's
         // Items from the tray), so a tray chip that can't be described would be a dead click.
@@ -888,8 +916,183 @@ async function main(): Promise<void> {
           throw new Error('ctx tray: renderWithLayout dropped contextMenuStrip1 from the tray');
         }
         console.log(`e2e: off-tree ContextMenuStrip verified — no phantom control rect, contextMenuStrip1 in tray (tray = [${ctxLayout.tray.map((t) => t.id).join(', ')}], no strip items), menu-bar hit-test → menuStrip1, png byte-identical (describeLayout == renderWithLayout)`);
+
+        // ---- off-tree ContextMenuStrip → its Items reachable via a synthetic flyout from the TRAY chip (net9) ----
+        // The tray chip now carries the strip's top-level Items (a BOUNDS-LESS forest: id/text/type + recursive children)
+        // so the canvas opens a synthetic flyout from the chip — the on-canvas reach into a ContextMenuStrip's items
+        // (Properties / rename / delete / add), the tray-chip counterpart of a menu-bar item's dropdown. Assert on both
+        // describeLayout and the combined RPC (they must agree), that a non-strip chip carries none, and that each item's
+        // OwnerId is the strip (the host splice key for add/rename/delete).
+        const ctxTrayItems = (chip: any): string => // eslint-disable-line @typescript-eslint/no-explicit-any
+          (chip?.items ?? []).map((it: any) => `${it.itemId}:${it.text}:${it.itemType.split('.').pop()}`).join('|'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const dChipItems = ctxTrayItems(ctxLayout.tray.find((t) => t.id === 'contextMenuStrip1'));
+        const cChipItems = ctxTrayItems(ctxCombined.tray.find((t) => t.id === 'contextMenuStrip1'));
+        const wantCtxItems = 'cutItem:Cut:ToolStripMenuItem|pasteItem:Paste:ToolStripMenuItem';
+        if (dChipItems !== wantCtxItems) throw new Error(`ctx tray items: describeLayout chip.items [${dChipItems}] != [${wantCtxItems}] — the tray flyout would have nothing to draw`);
+        if (cChipItems !== wantCtxItems) throw new Error(`ctx tray items: renderWithLayout chip.items [${cChipItems}] != describeLayout [${dChipItems}]`);
+        const ctxChipItems = (ctxLayout.tray.find((t) => t.id === 'contextMenuStrip1') as any)?.items ?? []; // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (ctxChipItems.some((it: any) => it.ownerId !== 'contextMenuStrip1')) throw new Error('ctx tray items: each item must carry the strip as its OwnerId (the host splice key)'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (ctxTrayItems(ctxLayout.tray.find((t) => t.id === 'timer1')).length) throw new Error('ctx tray items: a non-strip tray component (timer1) must carry no items — the canvas opens no flyout for it');
+        // IsStrip distinguishes an off-tree ToolStrip (the canvas opens its flyout — even when EMPTY) from a non-strip
+        // component whose empty Items is byte-identical. The canvas gates the flyout on this flag, NOT items.length, so a
+        // ContextMenuStrip with zero items still gets an add-first-item "Type Here" flyout. Assert both net9 paths emit it.
+        if ((ctxLayout.tray.find((t) => t.id === 'contextMenuStrip1') as any)?.isStrip !== true) throw new Error('ctx tray: describeLayout contextMenuStrip1 must report isStrip=true (an off-tree strip opens a flyout, even empty)'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        if ((ctxCombined.tray.find((t) => t.id === 'contextMenuStrip1') as any)?.isStrip !== true) throw new Error('ctx tray: renderWithLayout contextMenuStrip1 must report isStrip=true (net9 combined RPC parity)'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        if ((ctxLayout.tray.find((t) => t.id === 'timer1') as any)?.isStrip) throw new Error('ctx tray: timer1 (a non-strip component) must report isStrip falsy — the canvas opens no flyout for it'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        // the tray forest is harvested RECURSIVELY (BuildStripItemForest → BuildItemChildren), not just its flat top level:
+        // pasteItem carries its nested "Paste Special" child (owner still the top-level strip) so a nested off-tree-strip
+        // item is reachable through the synthetic tray flyout — a regression that dropped children would leave it unreachable.
+        const ctxPaste = ctxChipItems.find((it: any) => it.itemId === 'pasteItem'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const ctxPasteKids = (ctxPaste?.children ?? []).map((k: any) => `${k.itemId}:${k.text}:${k.ownerId}`); // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (JSON.stringify(ctxPasteKids) !== JSON.stringify(['pasteSpecialItem:Paste Special:contextMenuStrip1'])) {
+          throw new Error(`ctx tray items: pasteItem nested children [${ctxPasteKids.join(', ')}] != [pasteSpecialItem:Paste Special:contextMenuStrip1] — the tray forest must recurse (owner = the top-level strip)`);
+        }
+        console.log(`e2e: off-tree ContextMenuStrip items reachable via tray flyout (net9) verified — contextMenuStrip1 chip carries [${dChipItems}] (owner contextMenuStrip1) + pasteItem nested [${ctxPasteKids.join(', ')}], timer1 carries none; describeLayout == renderWithLayout`);
+
+        // ---- nested submenu item → Properties reachability (on-canvas synthetic flyout, net9) ----
+        // The tray no longer surfaces strip items, so a nested item's scalar props/events are reached by clicking it in
+        // a client-side flyout the canvas draws from the engine's `children`. Pin the two halves of that path on net9:
+        // (1) editMenu's geometry carries its nested Undo/Redo (bounds-less, owner = the top-level strip) so the canvas
+        // can draw the flyout; (2) the item→Properties channel (selectItem → describeComponent by id) resolves a NESTED
+        // field-backed item — exactly what a flyout-row click sends.
+        const ctxEdit = ctxCombined.toolStripItems.find((it) => it.itemId === 'editMenu');
+        if (!ctxEdit) throw new Error('nested flyout: editMenu missing from ContextMenuForm strip geometry');
+        // emission order (editMenu.DropDownItems.AddRange): undoItem then redoItem — asserted directly. A prior `.sort()`
+        // here REVERSED this to [redo, undo] and would have hidden a real reorder regression (codex review).
+        const ctxEditKids = (ctxEdit.children ?? []).map((k) => `${k.itemId}:${k.text}`);
+        if (JSON.stringify(ctxEditKids) !== JSON.stringify(['undoItem:Undo', 'redoItem:Redo'])) {
+          throw new Error(`nested flyout: editMenu children [${ctxEditKids.join(', ')}] != [undoItem:Undo, redoItem:Redo] — the flyout would have nothing to draw (or drew out of order)`);
+        }
+        if ((ctxEdit.children ?? []).some((k) => k.ownerId !== 'menuStrip1')) throw new Error('nested flyout: a nested child must carry the top-level strip as its owner (the selectItem host)');
+        const nested9 = await describeComponent(engine, ctxForm, 'undoItem');
+        if (!nested9) throw new Error('nested flyout: net9 describeComponent(undoItem) returned null — a flyout-row click would select nothing');
+        if (!nested9.type.endsWith('ToolStripMenuItem') || nested9.properties?.find((p) => p.name === 'Text')?.value !== 'Undo') {
+          throw new Error(`nested flyout: net9 undoItem describe wrong (type ${nested9.type}, Text ${JSON.stringify(nested9.properties?.find((p) => p.name === 'Text')?.value)})`);
+        }
+        console.log(`e2e: nested submenu item→Properties reachability (net9) verified — editMenu geometry carries [${ctxEditKids.join(', ')}] (owner menuStrip1) + describeComponent(undoItem) resolves the nested field (${nested9.type}, Text "Undo")`);
       } else {
         console.log('e2e: ContextMenuStrip tray SKIPPED — engine/samples/ContextMenuForm.Designer.cs missing');
+      }
+
+      // ---- OVERFLOW items (net9): a ToolStrip narrower than its buttons pushes the excess into the overflow dropdown ----
+      // The engine emits those (Placement==Overflow) BOUNDS-LESS under the overflow chevron's ToolStripItemBounds
+      // (overflow=true, id-less, children = the overflow items) so the canvas opens a synthetic flyout of them, and it
+      // suppresses the trailing "Type Here" slot on a full strip. Assert the ROBUST invariants (a chevron with >=1 child,
+      // the union of main+overflow item ids == all six buttons, no Type-Here slot) rather than an exact split, which
+      // text measurement could pick differently per runtime.
+      if (fs.existsSync(overflowForm)) {
+        const ovf = await describeLayout(engine, overflowForm);
+        const ovfItems = ovf.toolStripItems.filter((it) => it.ownerId === 'toolStrip1');
+        const chevron = ovfItems.find((it) => (it as { overflow?: boolean }).overflow === true);
+        if (!chevron) throw new Error(`overflow (net9): no overflow chevron emitted — toolStrip1 items [${ovfItems.map((i) => i.itemId || (i.isTypeHere ? '<slot>' : '<chevron?>')).join(', ')}] (the fixture must overflow; is the strip too wide?)`);
+        const overflowIds = (chevron.children ?? []).map((c) => c.itemId);
+        if (overflowIds.length === 0) throw new Error('overflow (net9): the chevron carries no overflow items');
+        if (chevron.itemId !== '') throw new Error(`overflow (net9): the chevron must be id-less, got "${chevron.itemId}"`);
+        const mainIds = ovfItems.filter((it) => !it.isTypeHere && !(it as { overflow?: boolean }).overflow).map((it) => it.itemId);
+        const allButtons = ['btnOne', 'btnTwo', 'btnThree', 'btnFour', 'btnFive', 'btnSix'];
+        const union = [...mainIds, ...overflowIds].filter((id) => id).sort();
+        if (union.join(',') !== allButtons.slice().sort().join(',')) throw new Error(`overflow (net9): main+overflow ids [${union.join(', ')}] != all six buttons [${allButtons.join(', ')}] — an item was dropped or duplicated`);
+        if (ovfItems.some((it) => it.isTypeHere)) throw new Error('overflow (net9): a full (overflowing) strip must emit NO trailing "Type Here" slot');
+        if (!(chevron.width > 0 && chevron.height > 0)) throw new Error('overflow (net9): the chevron must carry real bounds (the canvas hit-tests it)');
+        console.log(`e2e: OVERFLOW items (net9) verified — toolStrip1 chevron (id-less, ${chevron.width}x${chevron.height}) carries [${overflowIds.join(', ')}]; main [${mainIds.join(', ')}] + overflow == all six buttons; no Type-Here slot`);
+      } else {
+        console.log('e2e: OVERFLOW items (net9) SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (an UNTRACKED sample: git add it, or this coverage silently vanishes on a fresh checkout — review wf_897ba719)');
+      }
+
+      // ---- RETYPE mechanism (net9): the host's applyStripRetype re-mints a node (id="" + new type) at the same position ----
+      // Retype has no engine changes — it reuses the ToolStrip commit seam: re-minting the forest node (empty id → NEW
+      // item) while removing the old id is a remove+add in ONE SetToolStripItems call. Pin that engine behaviour directly
+      // (the host glue that builds the mutated forest is webview-proven): read menuStrip1's forest, re-mint the leaf
+      // fileMenu as a ToolStripButton, and assert the preview is safe, drops the old field, constructs the new type, and
+      // keeps the sibling (editMenu).
+      if (fs.existsSync(ctxForm)) {
+        const lst = await listToolStripItems(engine, ctxForm, 'menuStrip1');
+        const forest = lst.ok ? lst.items.map((it) => ({ ...it })) : [];
+        const tgt = forest.find((n) => n.id === 'fileMenu');
+        if (tgt) {
+          tgt.id = ''; tgt.name = ''; tgt.itemType = 'ToolStripButton'; tgt.text = 'File';
+          const rt = await setToolStripItems(engine, ctxForm, 'menuStrip1', forest);
+          if (!rt.safe || rt.text == null) throw new Error(`retype mechanism (net9): remove+add in one SetToolStripItems was refused (reason: ${rt.reason || 'unsafe'})`);
+          // check `this.fileMenu` (a code reference: construction / Name / Text / AddRange member), NOT a bare "fileMenu"
+          // substring — the removal deletes the field's statements + declaration but leaves the `// fileMenu` comment.
+          if (/\bthis\.fileMenu\b/.test(rt.text)) throw new Error('retype mechanism (net9): the old field (this.fileMenu) survived the re-mint — the old id was not removed');
+          if (!/new System\.Windows\.Forms\.ToolStripButton\(\)/.test(rt.text)) throw new Error('retype mechanism (net9): no ToolStripButton was constructed for the re-minted item');
+          if (!rt.text.includes('editMenu')) throw new Error('retype mechanism (net9): the sibling editMenu was lost — a retype must not disturb other items');
+          // POSITION preserved: fileMenu was FIRST, so the re-minted button must precede editMenu in menuStrip1's AddRange
+          // (guards against a future append-at-end regression — the re-mint must land where the old item was).
+          if (!/menuStrip1\.Items\.AddRange\([\s\S]*?toolStripButton1[\s\S]*?editMenu[\s\S]*?\}\)/.test(rt.text)) throw new Error('retype mechanism (net9): the re-minted item did not keep its position (must precede editMenu in the AddRange, as fileMenu did)');
+          console.log('e2e: RETYPE mechanism (net9) verified — re-minting fileMenu (id="" + ToolStripButton) in one SetToolStripItems drops the old field, constructs the new type, and preserves editMenu (host applyStripRetype path)');
+        } else {
+          throw new Error('retype mechanism (net9): fileMenu not found in menuStrip1 forest — listToolStripItems regressed or the fixture changed (a present fixture MUST expose the item, else this data-loss leg silently no-ops — review wf_897ba719)');
+        }
+      }
+
+      // RETYPE middle-item position: fileMenu is FIRST, so "before editMenu" would also pass a broken index-0 insert.
+      // Retype a MIDDLE item of the six-button overflow strip (btnThree) and assert BOTH neighbours stay on their sides
+      // (btnTwo before, btnFour after) — a real position-preservation check (codex review).
+      if (fs.existsSync(overflowForm)) {
+        const lstO = await listToolStripItems(engine, overflowForm, 'toolStrip1');
+        const forestO = lstO.ok ? lstO.items.map((it) => ({ ...it })) : [];
+        const mid = forestO.find((n) => n.id === 'btnThree');
+        if (mid && forestO.length >= 4) {
+          mid.id = ''; mid.name = ''; mid.itemType = 'ToolStripLabel'; mid.text = 'Third Button';
+          const rtO = await setToolStripItems(engine, overflowForm, 'toolStrip1', forestO);
+          if (!rtO.safe || rtO.text == null) throw new Error(`retype middle (net9): refused (reason: ${rtO.reason || 'unsafe'})`);
+          const ar = /toolStrip1\.Items\.AddRange\(([\s\S]*?)\}\)/.exec(rtO.text);
+          if (!ar) throw new Error('retype middle (net9): could not locate the AddRange to verify position');
+          const seq = ar[1];
+          const iTwo = seq.indexOf('btnTwo'), iNew = seq.indexOf('toolStripLabel1'), iFour = seq.indexOf('btnFour');
+          if (iTwo < 0 || iNew < 0 || iFour < 0) throw new Error(`retype middle (net9): AddRange missing an expected member (btnTwo=${iTwo}, new=${iNew}, btnFour=${iFour})`);
+          if (!(iTwo < iNew && iNew < iFour)) throw new Error(`retype middle (net9): the re-minted item did not keep its MIDDLE position (order btnTwo(${iTwo}) < new(${iNew}) < btnFour(${iFour}) violated)`);
+          if (/\bthis\.btnThree\b/.test(rtO.text)) throw new Error('retype middle (net9): the old field (this.btnThree) survived');
+          console.log('e2e: RETYPE middle-item position (net9) verified — btnThree re-minted as toolStripLabel1 stays between btnTwo and btnFour in the AddRange');
+        } else {
+          throw new Error(`retype middle (net9): btnThree not found (or forest too small: ${forestO.length}) in toolStrip1 — a present overflow fixture MUST expose it, else this position leg silently no-ops (review wf_897ba719)`);
+        }
+      } else {
+        console.log('e2e: RETYPE middle-item position (net9) SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (UNTRACKED sample — review wf_897ba719)');
+      }
+
+      // ---- C3 fail-closed: a nested add under a NON-dropdown item is refused ENGINE-side (offer ⇔ accept) ----
+      // The UI never offers a nested "Type Here" on a non-dropdown item (a flyout opens only for an item that already
+      // has children), but a direct RPC/CLI caller can send a parentItemId pointing at a ToolStripButton — which would
+      // emit an invalid `btnOne.DropDownItems.AddRange(...)` (ToolStripButton has no DropDownItems) → non-compiling
+      // source. The engine must REFUSE it, not return a safe splice. Pin the guard directly (codex review, wf_897ba719).
+      if (fs.existsSync(overflowForm)) {
+        const lstC3 = await listToolStripItems(engine, overflowForm, 'toolStrip1');
+        const forestC3 = lstC3.ok ? lstC3.items.map((it) => ({ ...it, children: (it.children ?? []).slice() })) : [];
+        const btn = forestC3.find((n) => n.id === 'btnOne');
+        if (btn) {
+          btn.children = [{ id: '', text: 'Nested', name: '', itemType: 'System.Windows.Forms.ToolStripMenuItem', children: [] }];
+          const rtC3 = await setToolStripItems(engine, overflowForm, 'toolStrip1', forestC3);
+          if (rtC3.safe || rtC3.text != null) throw new Error('C3: adding a child under btnOne (a ToolStripButton, no DropDownItems) must be REFUSED — the engine returned a safe splice (would save non-compiling DropDownItems.AddRange)');
+          if (!/DropDownItems/.test(rtC3.reason || '')) throw new Error(`C3: the refusal reason must name the missing DropDownItems collection — got "${rtC3.reason}"`);
+          console.log(`e2e: C3 nested-add fail-closed verified — a child under btnOne (ToolStripButton) is refused engine-side (reason: ${rtC3.reason})`);
+        } else {
+          throw new Error('C3: btnOne not found in toolStrip1 forest — a present overflow fixture MUST expose it (review wf_897ba719)');
+        }
+      } else {
+        console.log('e2e: C3 nested-add fail-closed SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (UNTRACKED sample — review wf_897ba719)');
+      }
+
+      // ---- ImageIndex / ImageKey dropdown (Tier-4): describe-time context lets ImageKeyConverter/ImageIndexConverter
+      // enumerate the attached ImageList's keys/indices → the grid offers a dropdown instead of a raw text/number field.
+      // net9's source interpreter doesn't run ImageList.Images.Add (and a real resx ImageStream can't load on .NET 9), so
+      // on net9 the ImageList is empty → the image dropdown is GATED OFF (no regression: ImageKey/ImageIndex stay plain
+      // fields). The change is scoped to the image converters, so OTHER dropdowns (enum/bool/Cursor/Color) are unchanged.
+      if (fs.existsSync(imageListForm)) {
+        const il9 = await describeComponent(engine, imageListForm, 'button1');
+        if (!il9) throw new Error('ImageList (net9): button1 failed to describe');
+        const imageKey9 = il9.properties?.find((p) => p.name === 'ImageKey');
+        const imageIndex9 = il9.properties?.find((p) => p.name === 'ImageIndex');
+        if (imageKey9?.standardValues && imageKey9.standardValues.length) throw new Error(`ImageList (net9): ImageKey must NOT offer a dropdown when the ImageList is empty (interpreter can't Images.Add) — got [${imageKey9.standardValues.join(', ')}]`);
+        if (imageIndex9?.standardValues && imageIndex9.standardValues.length) throw new Error(`ImageList (net9): ImageIndex must NOT offer a dropdown for an empty ImageList — got [${imageIndex9.standardValues.join(', ')}]`);
+        // regression: the scoping must leave a NORMAL enum dropdown intact (FlatStyle is a browsable enum on a Button).
+        const flat9 = il9.properties?.find((p) => p.name === 'FlatStyle');
+        if (!(flat9?.standardValues && flat9.standardValues.length >= 2)) throw new Error(`ImageList (net9): a normal enum dropdown (Button.FlatStyle) regressed — the image-scoped context change must not affect other converters (got ${JSON.stringify(flat9?.standardValues)})`);
+        console.log(`e2e: ImageIndex/ImageKey (net9) verified — an empty (interpreter-unpopulated) ImageList offers NO image dropdown (plain field, no regression); a normal enum dropdown (FlatStyle: ${flat9!.standardValues!.join(', ')}) is unaffected by the scoped context change`);
+      } else {
+        console.log('e2e: ImageIndex/ImageKey (net9) SKIPPED — engine/samples/ImageListForm.Designer.cs missing (UNTRACKED sample — review wf_897ba719)');
       }
 
       // ---- selection-retention across a full re-render (regression for the tray-partition fix) ----
@@ -916,7 +1119,7 @@ async function main(): Promise<void> {
       const net48Exe = process.env.WFD_ENGINE_NET48 || path.join(repo, 'engine-net48', 'bin', 'Release', 'net48', 'WinFormsDesigner.Engine.Net48.exe');
       const ctxFixtureDir = path.join(repo, 'fixtures', 'Net48CtxFixture');
       const ctxFixtureDll = path.join(ctxFixtureDir, 'bin', 'Release', 'net48', 'Net48CtxFixture.dll');
-      if (fs.existsSync(ctxForm) && fs.existsSync(net48Exe) && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, ctxForm)) {
+      if (fs.existsSync(ctxForm) && fs.existsSync(net48Exe) && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, [ctxForm, overflowForm, imageListForm, compRefForm48])) {
         const n48 = await startEngine(net48Exe, { onLog: (l) => console.error(l) });
         try {
           const r48 = await renderCompiledWithLayout(n48, ctxForm, ctxFixtureDll);
@@ -924,17 +1127,45 @@ async function main(): Promise<void> {
           const chip48 = r48.tray.find((t) => t.id === 'contextMenuStrip1');
           if (!chip48) throw new Error(`net48 ctx: contextMenuStrip1 missing from the compiled tray (got [${r48.tray.map((t) => t.id).join(', ')}])`);
           if (!chip48.type.endsWith('ContextMenuStrip')) throw new Error(`net48 ctx: contextMenuStrip1 wrong type ${chip48.type}`);
+          // IsStrip parity: the compiled engine must also flag an off-tree strip so the canvas opens its flyout (even
+          // when empty) — a non-strip component (timer1) must report it falsy. Mirrors the net9 leg above.
+          if (chip48.isStrip !== true) throw new Error('net48 ctx: contextMenuStrip1 must report isStrip=true (compiled parity — the canvas opens its flyout, even for an empty strip)');
+          const timer48 = r48.tray.find((t) => t.id === 'timer1');
+          if (timer48 && timer48.isStrip) throw new Error('net48 ctx: timer1 (a non-strip component) must report isStrip falsy — no flyout');
           // VS never trays strip items (parity with the net9 leg above): the compiled tray must exclude the four
           // menu/context ToolStripItems but keep timer1 (a non-visual component). Before this the net48 BuildTray
           // FieldNames scan surfaced every field-backed item as a chip.
-          const n48Leaked = r48.tray.filter((t) => ['fileMenu', 'editMenu', 'cutItem', 'pasteItem'].includes(t.id)).map((t) => t.id);
-          if (n48Leaked.length) throw new Error(`net48 ctx: ToolStripItem(s) leaked into the compiled tray [${n48Leaked.join(', ')}] — VS never trays strip items`);
+          const n48Leaked = r48.tray.filter((t) => ['fileMenu', 'editMenu', 'cutItem', 'pasteItem', 'pasteSpecialItem', 'undoItem', 'redoItem'].includes(t.id)).map((t) => t.id);
+          if (n48Leaked.length) throw new Error(`net48 ctx: ToolStripItem(s) leaked into the compiled tray [${n48Leaked.join(', ')}] — VS never trays strip items (including nested ones)`);
           if (!r48.tray.some((t) => t.id === 'timer1')) throw new Error('net48 ctx: timer1 (a non-visual component) must stay in the compiled tray — the strip-item skip must not drop non-item components');
           // cross-runtime: the two engines must agree on the VISUAL control id set (net9 = source-interpreted).
-          const net9Ids = (await describeLayout(engine, ctxForm)).controls.map((c) => c.id).sort();
+          const net9Layout = await describeLayout(engine, ctxForm);
+          const net9Ids = net9Layout.controls.map((c) => c.id).sort();
           const net48Ids = r48.controls.map((c) => c.id).sort();
           if (net9Ids.join(',') !== net48Ids.join(',')) throw new Error(`net48 ctx: control partition diverges from net9 — net9 [${net9Ids.join(', ')}] vs net48 [${net48Ids.join(', ')}]`);
-          console.log(`e2e: net48 off-tree ContextMenuStrip verified — compiled render agrees with net9 (controls [${net48Ids.join(', ')}], contextMenuStrip1 tray-only, tray [${r48.tray.map((t) => t.id).join(', ')}], no strip items)`);
+          // cross-runtime nested GEOMETRY parity: the flyout draws from `children`, so net48's emitted nested forest for
+          // editMenu (ids/order/captions/owner) must equal net9's — a describe-only match wouldn't catch a BuildItemChildren
+          // divergence (a stray Available/Placement filter, reordering, or a different id source) (review wf_537a5916-95d).
+          const editKids = (its: ToolStripItemBounds[]): string =>
+            (its.find((i) => i.itemId === 'editMenu')?.children ?? []).map((k) => `${k.itemId}:${k.text}:${k.ownerId}`).join('|');
+          const net9Kids = editKids(net9Layout.toolStripItems);
+          const net48Kids = editKids(r48.toolStripItems);
+          if (net9Kids.length === 0) throw new Error('net48 ctx: net9 editMenu emitted no children — the nested-geometry parity check is vacuous');
+          if (net9Kids !== net48Kids) throw new Error(`net48 ctx: nested children geometry diverges from net9 — net9 [${net9Kids}] vs net48 [${net48Kids}]`);
+          // cross-runtime TRAY-ITEMS parity: the tray chip's item forest (what the synthetic flyout draws from) must be
+          // identical on both engines — RECURSIVELY (net48's BuildStripItemForest calls BuildItemChildren, so a nested
+          // divergence in id source / filter / ordering must fail here too). Serialize ids/text/type with children nested
+          // in parens; pasteItem's "Paste Special" child makes this non-vacuous for the recursive path.
+          const trayItemsOf = (chip: any): string => { // eslint-disable-line @typescript-eslint/no-explicit-any
+            const fmt = (its: any[]): string => (its ?? []).map((it: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
+              `${it.itemId}:${it.text}:${it.itemType.split('.').pop()}${it.children && it.children.length ? '(' + fmt(it.children) + ')' : ''}`).join('|');
+            return fmt(chip?.items ?? []);
+          };
+          const net9CtxItems = trayItemsOf(net9Layout.tray.find((t) => t.id === 'contextMenuStrip1'));
+          const net48CtxItems = trayItemsOf(chip48);
+          if (net9CtxItems.length === 0) throw new Error('net48 ctx: net9 contextMenuStrip1 chip emitted no items — the tray-items parity check is vacuous');
+          if (net9CtxItems !== net48CtxItems) throw new Error(`net48 ctx: tray chip items diverge from net9 — net9 [${net9CtxItems}] vs net48 [${net48CtxItems}]`);
+          console.log(`e2e: net48 off-tree ContextMenuStrip verified — compiled render agrees with net9 (controls [${net48Ids.join(', ')}], contextMenuStrip1 tray-only, tray [${r48.tray.map((t) => t.id).join(', ')}], no strip items; editMenu nested children match net9 [${net48Kids}]; tray chip items match net9 [${net48CtxItems}])`);
 
           // ---- net48 item→Properties describe parity (Slice 1b) ----
           // A field-backed ToolStripItem is a Component, not a Control, so before Slice 1b the net48 engine's
@@ -954,6 +1185,80 @@ async function main(): Promise<void> {
           if (item48.parent != null) throw new Error(`net48 item describe: a Component item must report no Parent (net9 parity), got ${JSON.stringify(item48.parent)}`);
           if (item48.type !== item9.type) throw new Error(`net48 item describe: type diverges from net9 — net9 ${item9.type} vs net48 ${item48.type}`);
           console.log(`e2e: net48 item→Properties describe parity verified — fileMenu describes on both engines (type ${item48.type}, Text "${text48}", ${item48.properties?.length} props, no Parent), matching net9`);
+
+          // reference dropdowns are CONTROL-only: a ToolStripItem's ReferenceConverter prop (ToolStripMenuItem.DropDown)
+          // must NOT become a reference dropdown — the item-edit channel doesn't translate a pick (would half-wire a
+          // mis-write). Pin it on both engines (fileMenu.DropDown is a real ReferenceConverter prop → [(none), ...]).
+          for (const [d, en] of [[item9, 'net9'], [item48, 'net48']] as const) {
+            const dd = d?.properties?.find((p) => p.name === 'DropDown');
+            if (dd && (dd.referenceValues === true || (dd.standardValues && dd.standardValues.length)))
+              throw new Error(`component-ref (${en}): a ToolStripItem's DropDown must NOT get a reference dropdown (item edits don't translate refEdit) — got referenceValues=${dd.referenceValues}, [${(dd.standardValues ?? []).join(', ')}]`);
+          }
+          // WRITE-side mirror of the item exclusion (codex + workflow review): describe never offers a reference dropdown on
+          // a ToolStripItem, so a direct RPC/CLI write of a reference onto one must be REFUSED too (offer ⇔ accept) — even
+          // when it is otherwise assignable. fileMenu.DropDown is a ReferenceConverter typed ToolStripDropDown, and
+          // contextMenuStrip1 (a ContextMenuStrip) IS a ToolStripDropDown → assignable, so only the item-exclusion guard
+          // stops it. This closes both a sibling reference and the "(this)" root token on an item (a direct-RPC bypass of
+          // the host's referenceValues re-validation). A non-reference item edit (fileMenu.Text below) still applies.
+          const itemRefWrite = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'fileMenu', 'DropDown', 'contextMenuStrip1');
+          if (itemRefWrite.applied) throw new Error('component-ref (net48): fileMenu.DropDown=contextMenuStrip1 (an assignable reference on a ToolStripItem) was APPLIED — the write side must mirror describe and refuse a reference edit on an item');
+
+          // ---- component-reference dropdown, COMPONENT ref (both engines — the FieldNames reverse-scan path) ----
+          // ContextMenuForm's panel1.ContextMenuStrip points at contextMenuStrip1, a non-Control tray Component. Its
+          // dropdown lists "(none)"+the compatible ContextMenuStrip field names and pre-selects the current one, on
+          // BOTH engines. The net48 live-set resolves the picked NAME back to the component via the FieldNames reverse-
+          // scan (ByField holds controls only), and "(none)" clears — the paths a control reference (ByField) doesn't
+          // exercise. contextMenuStrip1's BinaryFormatter resx keeps this off the round-trip-safe serialize path.
+          const cmsCheck = (d: any, engineName: string): string => { // eslint-disable-line @typescript-eslint/no-explicit-any
+            const p = d?.properties?.find((x: any) => x.name === 'ContextMenuStrip'); // eslint-disable-line @typescript-eslint/no-explicit-any
+            const vals: string[] = p?.standardValues ?? [];
+            if (!(vals.includes('(none)') && vals.includes('contextMenuStrip1'))) throw new Error(`component-ref (${engineName}): panel1.ContextMenuStrip dropdown must include [(none), contextMenuStrip1] — got [${vals.join(', ')}]`);
+            if (p?.referenceValues !== true) throw new Error(`component-ref (${engineName}): panel1.ContextMenuStrip must carry referenceValues=true`);
+            if (p?.value !== 'contextMenuStrip1') throw new Error(`component-ref (${engineName}): panel1.ContextMenuStrip must pre-select "contextMenuStrip1" — got ${JSON.stringify(p?.value)}`);
+            return vals.join(', ');
+          };
+          const cms9 = cmsCheck(await describeComponent(engine, ctxForm, 'panel1'), 'net9');
+          cmsCheck(await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, 'panel1'), 'net48');
+          const setCmp = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'panel1', 'ContextMenuStrip', 'contextMenuStrip1');
+          if (!setCmp.applied) throw new Error(`component-ref (net48): panel1.ContextMenuStrip=contextMenuStrip1 (component reverse-scan resolve) must apply live (diag: ${setCmp.diagnostics || 'none'})`);
+          const setCmpNone = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'panel1', 'ContextMenuStrip', '(none)');
+          if (!setCmpNone.applied) throw new Error(`component-ref (net48): panel1.ContextMenuStrip=(none) (clear) must apply live (diag: ${setCmpNone.diagnostics || 'none'})`);
+          // a RESOLVABLE but WRONG-TYPE reference (menuStrip1 is a MenuStrip, not a ContextMenuStrip) must be rejected by
+          // the net48 assignability contract — not silently mis-assigned or left to SetValue to throw (codex review #2).
+          const setCmpBadType = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'panel1', 'ContextMenuStrip', 'menuStrip1');
+          if (setCmpBadType.applied) throw new Error('component-ref (net48): panel1.ContextMenuStrip=menuStrip1 (a MenuStrip, not assignable) must be rejected by the assignability check');
+          console.log(`e2e: component-ref dropdown COMPONENT ref verified — panel1.ContextMenuStrip [${cms9}] pre-selecting "contextMenuStrip1" on both engines; net48 live-set resolves the component via the FieldNames reverse-scan, "(none)" clears, an incompatible-type sibling is rejected`);
+
+          // ---- net48 dirty-buffer metadata (codex review — item Events / Reset must reflect the UNSAVED edit) ----
+          // The net48 source-metadata pass (grid bold + wired-handler) previously ALWAYS read the on-disk .Designer.cs, so
+          // a just-reset item property stayed bold / a just-wired event showed unwired until Save. Now describe takes the
+          // unsaved buffer. Prove it: fileMenu.Text is source-explicit from disk; describe with a buffer whose Text
+          // assignment is REMOVED (what a Reset commits in-memory) → Text is no longer source-explicit (the pass parsed the
+          // buffer, not the disk). Guards both the new item Reset affordance and item Event wiring on net48.
+          const diskBold = item48.properties?.find((p) => p.name === 'Text')?.sourceExplicit;
+          if (diskBold !== true) throw new Error('net48 dirty-metadata: fileMenu.Text should be source-explicit when read from disk (baseline)');
+          const diskSrc = fs.readFileSync(ctxForm, 'utf8');
+          const dirtySrc = diskSrc.replace(/\r?\n\s*this\.fileMenu\.Text = "File";/, '');
+          if (dirtySrc === diskSrc) throw new Error('net48 dirty-metadata: could not craft a dirty buffer (fileMenu.Text assignment not found)');
+          const dirtyDesc = await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, 'fileMenu', undefined, undefined, dirtySrc);
+          const dirtyBold = dirtyDesc?.properties?.find((p) => p.name === 'Text')?.sourceExplicit;
+          if (dirtyBold === true) throw new Error('net48 dirty-metadata: describe with an UNSAVED buffer (Text assignment removed) still reported source-explicit — the metadata pass read disk, not the buffer');
+          console.log('e2e: net48 dirty-buffer metadata verified — describing fileMenu with an unsaved .Designer.cs (Text assignment removed, as a Reset commits) reports Text NOT source-explicit → item Reset/Events on net48 reflect the dirty edit, not the stale file');
+
+          // ---- net48 NESTED submenu item describe parity (on-canvas flyout reachability) ----
+          // A flyout-row click on a nested item posts selectItem → the net48 engine must describe a NESTED field-backed
+          // ToolStripItem (undoItem, child of editMenu). The compiled fixture builds its FieldNames map from ALL
+          // IComponent fields (nesting-blind), so the SAME reverse-scan that resolves a top-level item resolves a nested
+          // one — assert it returns the same facts as net9 (else the net48 flyout would show only the placeholder).
+          const nested48 = await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, 'undoItem');
+          const nestedNet9 = await describeComponent(engine, ctxForm, 'undoItem');
+          if (!nested48) throw new Error('net48 nested describe: undoItem (a nested submenu item) returned null — the FieldNames reverse-scan did not resolve a nested field');
+          if (!nested48.type.endsWith('ToolStripMenuItem')) throw new Error(`net48 nested describe: undoItem wrong type ${nested48.type}`);
+          const nText48 = nested48.properties?.find((p) => p.name === 'Text')?.value;
+          if (nText48 !== 'Undo') throw new Error(`net48 nested describe: undoItem.Text expected "Undo", got ${JSON.stringify(nText48)}`);
+          if (nText48 !== nestedNet9?.properties?.find((p) => p.name === 'Text')?.value) throw new Error('net48 nested describe: undoItem.Text diverges from net9');
+          if (nested48.parent != null) throw new Error(`net48 nested describe: a nested Component item must report no Parent (net9 parity), got ${JSON.stringify(nested48.parent)}`);
+          console.log(`e2e: net48 NESTED submenu item describe parity verified — undoItem (child of editMenu) describes on the compiled engine (type ${nested48.type}, Text "${nText48}"), matching net9 → the on-canvas flyout resolves nested items on net48 too`);
 
           // ---- net48 item→Properties EDITING (Slice 2) ----
           // Widening TryApply (the net48 live-edit primitive) to resolve a non-Control component — the same FieldNames
@@ -980,6 +1285,139 @@ async function main(): Promise<void> {
           const enabledVal = timerDesc?.properties?.find((p) => p.name === 'Enabled')?.value;
           if (enabledVal !== 'False') throw new Error(`net48 item edit (Slice 2 safety): timer1.Enabled changed to ${JSON.stringify(enabledVal)} on the live instance — the refused edit still mutated the timer`);
           console.log('e2e: net48 item-editing safety verified — a Timer (non-Control non-item component) is NOT live-mutable (timer1.Enabled=true refused, live instance still disabled); only ToolStripItems are newly editable');
+
+          // ---- OVERFLOW items (net48 parity) ----
+          // The compiled engine's Show pump lays out the same narrow ToolStrip → the excess buttons go to overflow. Assert
+          // the SAME robust invariants as the net9 leg (a chevron with >=1 child, union of main+overflow == all six, no
+          // Type-Here) and cross-runtime agreement on the OVERFLOW SET (both engines must move the same buttons off-strip,
+          // else the on-canvas flyout would differ from what the net9 canvas shows). The fixture form is compiled into the
+          // shared Net48CtxFixture assembly (SampleApp.ToolStripOverflowForm).
+          if (fs.existsSync(overflowForm)) {
+            const r48o = await renderCompiledWithLayout(n48, overflowForm, ctxFixtureDll);
+            const items48 = r48o.toolStripItems.filter((it) => it.ownerId === 'toolStrip1');
+            const chev48 = items48.find((it) => (it as { overflow?: boolean }).overflow === true);
+            if (!chev48) throw new Error(`overflow (net48): no overflow chevron emitted — items [${items48.map((i) => i.itemId || (i.isTypeHere ? '<slot>' : '<chevron?>')).join(', ')}]`);
+            const ov48 = (chev48.children ?? []).map((c) => c.itemId).filter((id) => id).sort();
+            if (ov48.length === 0) throw new Error('overflow (net48): the chevron carries no overflow items');
+            const main48 = items48.filter((it) => !it.isTypeHere && !(it as { overflow?: boolean }).overflow).map((it) => it.itemId).filter((id) => id);
+            const allButtons = ['btnOne', 'btnTwo', 'btnThree', 'btnFour', 'btnFive', 'btnSix'];
+            const union48 = [...main48, ...ov48].sort();
+            if (union48.join(',') !== allButtons.slice().sort().join(',')) throw new Error(`overflow (net48): main+overflow ids [${union48.join(', ')}] != all six buttons — an item was dropped or duplicated`);
+            if (items48.some((it) => it.isTypeHere)) throw new Error('overflow (net48): a full strip must emit no Type-Here slot');
+            // cross-runtime: both engines must move the SAME buttons off-strip (same overflow set) so the canvas flyout matches.
+            const ov9 = ((await describeLayout(engine, overflowForm)).toolStripItems.find((it) => it.ownerId === 'toolStrip1' && (it as { overflow?: boolean }).overflow === true)?.children ?? []).map((c) => c.itemId).filter((id) => id).sort();
+            if (ov9.join(',') !== ov48.join(',')) throw new Error(`overflow: the overflow SET diverges across runtimes — net9 [${ov9.join(', ')}] vs net48 [${ov48.join(', ')}] (the on-canvas flyout would differ)`);
+            console.log(`e2e: OVERFLOW items (net48 parity) verified — chevron carries [${ov48.join(', ')}]; main+overflow == all six; no Type-Here; overflow set matches net9`);
+          }
+
+          // ---- ImageIndex / ImageKey dropdown (net48 — the real feature) ----
+          // The compiled ImageListForm's ImageList actually holds its keyed images (Images.Add runs), so describe's
+          // context-aware ImageKeyConverter/ImageIndexConverter enumerate the REAL keys/indices → the grid shows a
+          // dropdown of them (VS parity). This is the primary target of the slice (net9 can't populate the ImageList).
+          if (fs.existsSync(imageListForm)) {
+            const il48 = await describeCompiledComponent(n48, imageListForm, ctxFixtureDll, 'button1');
+            if (!il48) throw new Error('ImageList (net48): button1 failed to describe on the compiled instance');
+            const key48 = il48.properties?.find((p) => p.name === 'ImageKey')?.standardValues ?? [];
+            const idx48 = il48.properties?.find((p) => p.name === 'ImageIndex')?.standardValues ?? [];
+            if (!(key48.includes('first') && key48.includes('second'))) throw new Error(`ImageList (net48): ImageKey dropdown must list the real ImageList keys [first, second] — got [${key48.join(', ')}]`);
+            if (!(idx48.includes('0') && idx48.includes('1'))) throw new Error(`ImageList (net48): ImageIndex dropdown must list the real indices [0, 1] — got [${idx48.join(', ')}]`);
+            // The "(none)"/-1 SENTINEL must be filtered out — it doesn't round-trip through the primitive write path
+            // (would splice a stale key literally "(none)" / reject the non-numeric int) — codex review #1.
+            if (key48.includes('(none)')) throw new Error(`ImageList (net48): the ImageKey dropdown must NOT offer the "(none)" sentinel (it doesn't round-trip) — got [${key48.join(', ')}]`);
+            if (idx48.includes('(none)') || idx48.includes('-1')) throw new Error(`ImageList (net48): the ImageIndex dropdown must NOT offer the "(none)"/-1 sentinel — got [${idx48.join(', ')}]`);
+            // A control whose ImageIndex uses the internal NoneExcludedImageIndexConverter (no sentinel) must still get its
+            // dropdown — the old "<2" gate wrongly hid a 1-image list; here the 2-image TreeView must show [0, 1] — codex #2.
+            const tv48 = await describeCompiledComponent(n48, imageListForm, ctxFixtureDll, 'treeView1');
+            const tvIdx = tv48?.properties?.find((p) => p.name === 'ImageIndex')?.standardValues ?? [];
+            if (!(tvIdx.includes('0') && tvIdx.includes('1')) || tvIdx.includes('(none)')) throw new Error(`ImageList (net48): treeView1.ImageIndex (NoneExcludedImageIndexConverter, no sentinel) must show [0, 1] with no "(none)" — got [${tvIdx.join(', ')}]`);
+            console.log(`e2e: ImageIndex/ImageKey dropdown (net48) verified — button1 ImageKey [${key48.join(', ')}] / ImageIndex [${idx48.join(', ')}] (sentinel filtered), treeView1.ImageIndex [${tvIdx.join(', ')}] via NoneExcludedImageIndexConverter — real keyed images, VS-style dropdown`);
+          }
+
+          // ---- component-reference dropdown, CONTROL ref (net48 — the compiled instance is NOT sited) ----
+          // AcceptButton/CancelButton point at Button controls. The un-sited converter can neither list the siblings
+          // nor stringify the current value to a field name, so CompiledDescriber self-enumerates the FieldNames map
+          // and OVERRIDES value with the referenced field name — verified by the pre-selected value. Live-set resolves
+          // a picked name back to the control via ByField; "(none)" clears; a bogus name is rejected (applied=false).
+          // (The component (non-Control) reference path — resolved via the FieldNames reverse-scan — is covered by the
+          // ContextMenuForm panel1.ContextMenuStrip leg above.)
+          if (fs.existsSync(compRefForm48)) {
+            const crType = 'WinFormsDesigner.Samples.ComponentRefForm';
+            const cr48 = await describeCompiledComponent(n48, compRefForm48, ctxFixtureDll, 'this', crType);
+            if (!cr48) throw new Error('component-ref (net48): the form failed to describe on the compiled instance');
+            const accept48 = cr48.properties?.find((p) => p.name === 'AcceptButton');
+            if (!accept48) throw new Error('component-ref (net48): AcceptButton missing from the describe');
+            const acceptVals = accept48.standardValues ?? [];
+            if (!(acceptVals.includes('(none)') && acceptVals.includes('okButton') && acceptVals.includes('cancelButton')))
+              throw new Error(`component-ref (net48): AcceptButton dropdown must be [(none), cancelButton, okButton] — got [${acceptVals.join(', ')}]`);
+            if (accept48.referenceValues !== true) throw new Error('component-ref (net48): AcceptButton must carry referenceValues=true so the host writes this.<name>/null');
+            if (accept48.standardValuesExclusive !== true) throw new Error('component-ref (net48): a reference dropdown must be exclusive');
+            if (accept48.value !== 'okButton') throw new Error(`component-ref (net48): AcceptButton value must pre-select the referenced FIELD NAME "okButton" (the un-sited converter can't) — got ${JSON.stringify(accept48.value)}`);
+            // live-set: control ref (ByField), clear, and a rejected bogus name
+            const setCtrl = await setCompiledPropertyLive(n48, compRefForm48, ctxFixtureDll, 'this', 'AcceptButton', 'cancelButton', crType);
+            if (!setCtrl.applied) throw new Error(`component-ref (net48): AcceptButton=cancelButton (control ByField) must apply live (diag: ${setCtrl.diagnostics || 'none'})`);
+            const setNone = await setCompiledPropertyLive(n48, compRefForm48, ctxFixtureDll, 'this', 'AcceptButton', '(none)', crType);
+            if (!setNone.applied) throw new Error(`component-ref (net48): AcceptButton=(none) (clear) must apply live (diag: ${setNone.diagnostics || 'none'})`);
+            const setBogus = await setCompiledPropertyLive(n48, compRefForm48, ctxFixtureDll, 'this', 'AcceptButton', 'noSuchField', crType);
+            if (setBogus.applied) throw new Error('component-ref (net48): AcceptButton=noSuchField must NOT apply (the name resolves to nothing) — a bogus reference was accepted');
+            console.log(`e2e: component-ref dropdown CONTROL ref (net48) verified — AcceptButton/CancelButton [(none), cancelButton, okButton] pre-selecting field name "okButton"; live-set (ByField) applies, "(none)" clears, a bogus name is rejected`);
+          }
+
+          // ---- component-reference dropdown on a TRAY-COMPONENT owner (net48 — the compiled instance is NOT sited) ----
+          // notifyIcon1.ContextMenuStrip = contextMenuStrip1: a reference whose OWNER is a non-Control tray Component.
+          // Describe must self-enumerate the ContextMenuStrip field names (parity with net9), and TryApply's reference
+          // branch must resolve a picked name to the live component even though the OWNER is not a Control — the widening
+          // that scopes the edit-target relaxation to the assign-only reference branch (a Timer stays inert). The SAFETY
+          // leg proves that scoping: a NON-reference edit on the tray component (Text) must remain an inert no-op.
+          const notifyIconForm48 = path.join(repo, 'engine', 'samples', 'NotifyIconForm.Designer.cs');
+          if (fs.existsSync(notifyIconForm48)) {
+            const niType = 'WinFormsDesigner.Samples.NotifyIconForm';
+            const ni48 = await describeCompiledComponent(n48, notifyIconForm48, ctxFixtureDll, 'notifyIcon1', niType);
+            if (!ni48) throw new Error('tray-ref (net48): notifyIcon1 failed to describe on the compiled instance');
+            const cms48 = ni48.properties?.find((p) => p.name === 'ContextMenuStrip');
+            const cmsVals48 = cms48?.standardValues ?? [];
+            if (!(cmsVals48.includes('(none)') && cmsVals48.includes('contextMenuStrip1')))
+              throw new Error(`tray-ref (net48): notifyIcon1.ContextMenuStrip dropdown must be [(none), contextMenuStrip1] — got [${cmsVals48.join(', ')}]`);
+            if (cms48?.referenceValues !== true || cms48?.standardValuesExclusive !== true) throw new Error('tray-ref (net48): notifyIcon1.ContextMenuStrip must be an exclusive referenceValues dropdown on a tray owner');
+            if (cms48?.value !== 'contextMenuStrip1') throw new Error(`tray-ref (net48): notifyIcon1.ContextMenuStrip must pre-select "contextMenuStrip1" — got ${JSON.stringify(cms48?.value)}`);
+            // live-set: the tray-owner reference resolves the picked component (reverse-scan), clears, rejects a bogus name
+            const niSet = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'notifyIcon1', 'ContextMenuStrip', 'contextMenuStrip1', niType);
+            if (!niSet.applied) throw new Error(`tray-ref (net48): notifyIcon1.ContextMenuStrip=contextMenuStrip1 must apply live on a tray owner (diag: ${niSet.diagnostics || 'none'})`);
+            const niSetNone = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'notifyIcon1', 'ContextMenuStrip', '(none)', niType);
+            if (!niSetNone.applied) throw new Error(`tray-ref (net48): notifyIcon1.ContextMenuStrip=(none) (clear) must apply live (diag: ${niSetNone.diagnostics || 'none'})`);
+            const niSetBogus = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'notifyIcon1', 'ContextMenuStrip', 'noSuchField', niType);
+            if (niSetBogus.applied) throw new Error('tray-ref (net48): notifyIcon1.ContextMenuStrip=noSuchField must NOT apply (resolves to nothing)');
+            // a RESOLVABLE but WRONG-TYPE reference (button1 is a Button, not a ContextMenuStrip) must be rejected by the assignability contract
+            const niSetBadType = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'notifyIcon1', 'ContextMenuStrip', 'button1', niType);
+            if (niSetBadType.applied) throw new Error('tray-ref (net48): notifyIcon1.ContextMenuStrip=button1 (a Button, not assignable) must be rejected by the assignability check');
+            // SAFETY: the tray-owner edit-target relaxation is REFERENCE-SCOPED. A non-reference edit on the tray
+            // component (notifyIcon1.Text) must remain an inert no-op (applied=false) AND leave the live value
+            // untouched — the same invariant that keeps a Timer from being Start()ed by a live edit.
+            const niTextEdit = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'notifyIcon1', 'Text', 'Changed', niType);
+            if (niTextEdit.applied) throw new Error('tray-ref (net48 SAFETY): notifyIcon1.Text (a NON-reference edit on a tray component) was APPLIED — the widening must be reference-scoped, a plain tray-component edit must stay inert');
+            const niAfter = await describeCompiledComponent(n48, notifyIconForm48, ctxFixtureDll, 'notifyIcon1', niType);
+            const textAfter = niAfter?.properties?.find((p) => p.name === 'Text')?.value;
+            if (textAfter !== 'Tray') throw new Error(`tray-ref (net48 SAFETY): notifyIcon1.Text changed to ${JSON.stringify(textAfter)} on the live instance — the refused non-reference edit still mutated the tray component`);
+            // ROOT reference (errorProvider1.ContainerControl = this): the compiled instance holds the root form, which
+            // is assignable to ContainerControl, so describe offers the synthetic "(this)" token — parity with net9's
+            // [(none), (this)] exclusive dropdown pre-selecting "(this)".
+            const ep48 = await describeCompiledComponent(n48, notifyIconForm48, ctxFixtureDll, 'errorProvider1', niType);
+            const cc48 = ep48?.properties?.find((p) => p.name === 'ContainerControl');
+            const cc48Vals = cc48?.standardValues ?? [];
+            if (cc48?.referenceValues !== true || cc48?.standardValuesExclusive !== true) throw new Error('tray-ref (net48): errorProvider1.ContainerControl (a ROOT reference to an assignable form) must be an exclusive referenceValues dropdown, parity with net9');
+            if (!(cc48Vals.length === 2 && cc48Vals.includes('(none)') && cc48Vals.includes('(this)'))) throw new Error(`tray-ref (net48): errorProvider1.ContainerControl dropdown must be [(none), (this)] — got [${cc48Vals.join(', ')}]`);
+            if (cc48?.value !== '(this)') throw new Error(`tray-ref (net48): errorProvider1.ContainerControl must pre-select "(this)" — got ${JSON.stringify(cc48?.value)}`);
+            // ROOT-ACCEPT: the net48 live-write now RESOLVES the "(this)" token to the live root form (it is an offered
+            // candidate — the write's assignability gate mirrors the describe offer). "(none)" clears. The root-reject
+            // guard was lifted in lockstep; only a SELF reference / non-assignable sibling stays refused (see wrong-type
+            // leg above). A bare "this" string resolves to root too (the shared resolver), so both forms apply.
+            const rootTok = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'errorProvider1', 'ContainerControl', '(this)', niType);
+            if (!rootTok.applied) throw new Error(`tray-ref (net48 ROOT-ACCEPT): errorProvider1.ContainerControl=(this) must resolve to the live root and apply (diag: ${rootTok.diagnostics || 'none'})`);
+            const rootClr = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'errorProvider1', 'ContainerControl', '(none)', niType);
+            if (!rootClr.applied) throw new Error(`tray-ref (net48 ROOT-ACCEPT): errorProvider1.ContainerControl=(none) (clear) must apply (diag: ${rootClr.diagnostics || 'none'})`);
+            const rootWrong = await setCompiledPropertyLive(n48, notifyIconForm48, ctxFixtureDll, 'errorProvider1', 'ContainerControl', 'contextMenuStrip1', niType);
+            if (rootWrong.applied) throw new Error('tray-ref (net48): errorProvider1.ContainerControl=contextMenuStrip1 (a ContextMenuStrip, not assignable to ContainerControl) must be rejected by the assignability check');
+            console.log(`e2e: tray-component reference dropdown (net48) verified — notifyIcon1.ContextMenuStrip [(none), contextMenuStrip1] pre-selecting "contextMenuStrip1"; live-set resolves the tray-owner reference, "(none)" clears, bogus/wrong-type rejected; a non-reference tray edit (Text) stays inert (Timer invariant); errorProvider1.ContainerControl (ROOT ref) is a [(none), (this)] dropdown pre-selecting "(this)", "(this)" resolves live to the root and applies, "(none)" clears, a wrong-type sibling is refused`);
+          }
         } finally {
           n48.dispose();
         }
@@ -1712,6 +2150,18 @@ async function main(): Promise<void> {
       const afRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', addFirst.text);
       if (afRt.items.find((i) => i.text === 'Edit')?.children.map((c) => c.text).join(',') !== 'Undo') throw new Error('toolstrip: the created submenu must round-trip');
 
+      // GROW an EXISTING submenu with a new child (File already has Open,Save) — the engine path the on-canvas NESTED
+      // "Type Here" gesture reaches (the flyout only opens for a submenu that already has ≥1 child → always a GROW into
+      // the owner's existing DropDownItems AddRange, never a first-child CREATE). Open/Save + the sibling Edit stay intact.
+      const addNested = await setToolStripItems(engine, tsMenuForm, 'menuStrip1',
+        [{ ...file, children: [...file.children, { id: '', text: 'Close', name: '', itemType: 'ToolStripMenuItem', children: [] }] }, edit], disk);
+      if (!addNested.safe || addNested.text === null) throw new Error('toolstrip: growing an existing submenu (nested add) must be allowed: ' + addNested.reason);
+      if (!/this\.toolStripMenuItem1\.Text = "Close";/.test(addNested.text)) throw new Error('toolstrip: nested add must synthesize the new child construction + Text');
+      if (!/this\.saveToolStripMenuItem\.Text = "Save";/.test(addNested.text) || !/this\.openToolStripMenuItem\.Text = "Open";/.test(addNested.text)) throw new Error('toolstrip: nested add must leave the existing submenu children byte-intact');
+      const anRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', addNested.text);
+      if (anRt.items.find((i) => i.text === 'File')?.children.map((c) => c.text).join(',') !== 'Open,Save,Close') throw new Error('toolstrip: nested add must round-trip the grown submenu (Open,Save,Close): ' + JSON.stringify(anRt.items.find((i) => i.text === 'File')?.children.map((c) => c.text)));
+      if (anRt.items.find((i) => i.text === 'Edit')?.children.length !== 0) throw new Error('toolstrip: nested add must not touch a sibling top-level item');
+
       // ADD + REORDER in one edit (Help added, Edit moved before File)
       const addReo = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [edit, file, newHelp], disk);
       if (!addReo.safe || addReo.text === null) throw new Error('toolstrip: add + reorder in one edit must be allowed');
@@ -1781,6 +2231,19 @@ async function main(): Promise<void> {
       if (/DropDownItems\.AddRange/.test(rmKids.text)) throw new Error('toolstrip: a submenu emptied by removal must have its DropDownItems AddRange deleted, not left empty');
       const rkRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rmKids.text);
       if (rkRt.items.find((i) => i.text === 'File')?.children.length !== 0) throw new Error('toolstrip: File must round-trip childless after its children are removed');
+
+      // removing ONE nested child while KEEPING its sibling — the exact edit the on-canvas synthetic flyout's "Delete
+      // Item" posts for a nested row (host omits the node from the owner strip's forest via removeToolStripItem). File →
+      // {Open, Save}: drop Open, keep Save. Open must leave no trace; Save + File's DropDownItems AddRange survive intact.
+      const rmOneKid = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ ...file, children: [file.children[1]] }, edit], disk);
+      if (!rmOneKid.safe || rmOneKid.text === null) throw new Error('toolstrip: deleting one nested child (keeping a sibling) must be allowed: ' + rmOneKid.reason);
+      if (rmOneKid.text.includes('this.openToolStripMenuItem') || rmOneKid.text.includes(' openToolStripMenuItem;'))
+        throw new Error('toolstrip: a deleted nested child must leave no code trace (field decl / construction / property / DropDownItems AddRange)');
+      if (!/this\.saveToolStripMenuItem\.Text = "Save";/.test(rmOneKid.text) || !/this\.fileToolStripMenuItem\.Text = "File";/.test(rmOneKid.text))
+        throw new Error('toolstrip: deleting one nested child must leave the surviving sibling + parent byte-identical');
+      const roRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rmOneKid.text);
+      if (roRt.items.find((i) => i.text === 'File')?.children.map((c) => c.text).join(',') !== 'Save')
+        throw new Error('toolstrip: after deleting the nested Open, File must round-trip with Save alone: ' + JSON.stringify(roRt.items.find((i) => i.text === 'File')?.children.map((c) => c.text)));
 
       // removing EVERY top-level item deletes the owner Items AddRange (empty menu, still valid).
       const rmAll = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [], disk);
@@ -2508,8 +2971,81 @@ async function main(): Promise<void> {
       const crPng = await renderDesigner(engine, compRefForm);
       if (!isPng(crPng)) throw new Error('T2.1: ComponentRefForm should render to a valid PNG');
       console.log(`e2e: T2.1 component-ref round-trip verified — ComponentRefForm AcceptButton/CancelButton round-trip safe + re-emitted, renders (${crPng.length}B)`);
+
+      // ---- component-reference DROPDOWN (net9 describe self-enumerates the container's compatible siblings) ----
+      // The converter can only list references with a design container; the engine self-enumerates the sited
+      // components instead → AcceptButton/CancelButton offer "(none)"+the compatible Button field names, pre-selecting
+      // the current one. The picked value is written as `this.<name>` / `null` (refEdit) — proven here by splicing the
+      // reference expr the host would send. (The component-ref case — a control's ContextMenuStrip → a tray component —
+      // is covered by the ContextMenuForm leg, which exercises the FieldNames reverse-scan resolve.)
+      const crRoot = await describeComponent(engine, compRefForm, 'this');
+      const acc9 = crRoot?.properties?.find((p) => p.name === 'AcceptButton');
+      const acc9Vals = acc9?.standardValues ?? [];
+      if (!(acc9Vals.includes('(none)') && acc9Vals.includes('okButton') && acc9Vals.includes('cancelButton')))
+        throw new Error(`T2.1: net9 AcceptButton dropdown must be [(none), cancelButton, okButton] — got [${acc9Vals.join(', ')}]`);
+      if (acc9?.referenceValues !== true || acc9?.standardValuesExclusive !== true) throw new Error('T2.1: net9 AcceptButton must be an exclusive referenceValues dropdown');
+      if (acc9?.value !== 'okButton') throw new Error(`T2.1: net9 AcceptButton must pre-select "okButton" — got ${JSON.stringify(acc9?.value)}`);
+      // the reference expr the host splices for a pick (this.<name>) / a clear (null) must round-trip minimally + safely
+      const pick = await setProperty(engine, compRefForm, 'this', 'AcceptButton', 'this.cancelButton');
+      if (!pick.safe || !/this\.AcceptButton = this\.cancelButton;/.test(pick.text ?? '')) throw new Error(`T2.1: picking AcceptButton=cancelButton must splice "this.AcceptButton = this.cancelButton" (safe) — mode ${pick.mode}, reason ${pick.reason ?? ''}`);
+      const clr = await setProperty(engine, compRefForm, 'this', 'AcceptButton', 'null');
+      if (!clr.safe || !/this\.AcceptButton = null;/.test(clr.text ?? '')) throw new Error(`T2.1: clearing AcceptButton must splice "this.AcceptButton = null" (safe) — mode ${clr.mode}, reason ${clr.reason ?? ''}`);
+      console.log(`e2e: component-ref dropdown (net9) verified — AcceptButton/CancelButton [(none), cancelButton, okButton] pre-selecting "okButton"; pick splices this.<name>, clear splices null`);
     } else {
       console.log('e2e: T2.1 component-ref SKIPPED — engine/samples/ComponentRefForm.Designer.cs missing');
+    }
+
+    // ---- component-reference dropdown on a TRAY-COMPONENT owner (net9) ----
+    // notifyIcon1.ContextMenuStrip points at a ContextMenuStrip sibling — a reference whose OWNER is a non-Control
+    // tray Component. The describe gate now excludes only ToolStripItems (not "non-Control"), so a tray component's
+    // reference prop self-enumerates the compatible ContextMenuStrip field names into an exclusive dropdown, exactly
+    // like a control owner. The refEdit splice (`this.notifyIcon1.ContextMenuStrip = this.contextMenuStrip1` / `null`)
+    // is the same control-channel write — a tray edit carries refEdit (no ownerId), so no host change is needed.
+    const notifyIconForm = path.join(repo, 'engine', 'samples', 'NotifyIconForm.Designer.cs');
+    if (fs.existsSync(notifyIconForm)) {
+      const niPng = await renderDesigner(engine, notifyIconForm);
+      if (!isPng(niPng)) throw new Error('tray-ref (net9): NotifyIconForm should render to a valid PNG');
+      const ni = await describeComponent(engine, notifyIconForm, 'notifyIcon1');
+      if (!ni) throw new Error('tray-ref (net9): notifyIcon1 (a tray Component) failed to describe');
+      const cms = ni.properties?.find((p) => p.name === 'ContextMenuStrip');
+      const cmsVals = cms?.standardValues ?? [];
+      if (!(cmsVals.includes('(none)') && cmsVals.includes('contextMenuStrip1')))
+        throw new Error(`tray-ref (net9): notifyIcon1.ContextMenuStrip dropdown must be [(none), contextMenuStrip1] — got [${cmsVals.join(', ')}]`);
+      if (cms?.referenceValues !== true || cms?.standardValuesExclusive !== true) throw new Error('tray-ref (net9): notifyIcon1.ContextMenuStrip must be an exclusive referenceValues dropdown on a tray owner');
+      if (cms?.value !== 'contextMenuStrip1') throw new Error(`tray-ref (net9): notifyIcon1.ContextMenuStrip must pre-select "contextMenuStrip1" — got ${JSON.stringify(cms?.value)}`);
+      // the refEdit splice for a tray owner: pick writes `this.notifyIcon1.ContextMenuStrip = this.<name>`, clear writes null
+      const niPick = await setProperty(engine, notifyIconForm, 'notifyIcon1', 'ContextMenuStrip', 'this.contextMenuStrip1');
+      if (!niPick.safe || !/this\.notifyIcon1\.ContextMenuStrip = this\.contextMenuStrip1;/.test(niPick.text ?? '')) throw new Error(`tray-ref (net9): picking notifyIcon1.ContextMenuStrip=contextMenuStrip1 must splice the tray-owner reference (safe) — mode ${niPick.mode}, reason ${niPick.reason ?? ''}`);
+      const niClr = await setProperty(engine, notifyIconForm, 'notifyIcon1', 'ContextMenuStrip', 'null');
+      if (!niClr.safe || !/this\.notifyIcon1\.ContextMenuStrip = null;/.test(niClr.text ?? '')) throw new Error(`tray-ref (net9): clearing notifyIcon1.ContextMenuStrip must splice null (safe) — mode ${niClr.mode}, reason ${niClr.reason ?? ''}`);
+      // a NON-reference tray property (Text) must NOT become a reference dropdown — the widening is reference-scoped
+      const niText = ni.properties?.find((p) => p.name === 'Text');
+      if (niText?.referenceValues) throw new Error('tray-ref (net9): a non-reference tray property (Text) must NOT carry referenceValues');
+      // a tray-component reference to the ROOT form (errorProvider1.ContainerControl = this): the form is assignable to
+      // ContainerControl, so describe offers the synthetic "(this)" token — an exclusive [(none), (this)] dropdown
+      // pre-selecting "(this)". The pick splices a BARE `this` (not `this.(this)`); the clear splices null. (The net9
+      // interpreter now binds `= this` to the root so the value reads back as the root form; ErrorProvider still forces a
+      // binary-resource serialize on .NET 9, so the form stays read-only-fallback — making `= this` representable cannot
+      // unblock a save, hence no data-loss surface.)
+      const ep = await describeComponent(engine, notifyIconForm, 'errorProvider1');
+      const cc = ep?.properties?.find((p) => p.name === 'ContainerControl');
+      const ccVals = cc?.standardValues ?? [];
+      if (cc?.referenceValues !== true || cc?.standardValuesExclusive !== true) throw new Error('tray-ref (net9): errorProvider1.ContainerControl (a ROOT reference to an assignable form) must be an exclusive referenceValues dropdown');
+      if (!(ccVals.length === 2 && ccVals.includes('(none)') && ccVals.includes('(this)'))) throw new Error(`tray-ref (net9): errorProvider1.ContainerControl dropdown must be [(none), (this)] — got [${ccVals.join(', ')}]`);
+      if (cc?.value !== '(this)') throw new Error(`tray-ref (net9): errorProvider1.ContainerControl must pre-select "(this)" (the current value is the root form) — got ${JSON.stringify(cc?.value)}`);
+      // the refEdit splice for a ROOT pick writes a BARE `this`; the clear writes null
+      const ccRoot = await setProperty(engine, notifyIconForm, 'errorProvider1', 'ContainerControl', 'this');
+      if (!ccRoot.safe || !/this\.errorProvider1\.ContainerControl = this;/.test(ccRoot.text ?? '')) throw new Error(`tray-ref (net9): picking errorProvider1.ContainerControl=(this) must splice the bare root reference "= this" (safe) — mode ${ccRoot.mode}, reason ${ccRoot.reason ?? ''}`);
+      const ccClr = await setProperty(engine, notifyIconForm, 'errorProvider1', 'ContainerControl', 'null');
+      if (!ccClr.safe || !/this\.errorProvider1\.ContainerControl = null;/.test(ccClr.text ?? '')) throw new Error(`tray-ref (net9): clearing errorProvider1.ContainerControl must splice null (safe) — mode ${ccClr.mode}, reason ${ccClr.reason ?? ''}`);
+      // the root form is NOT an IButtonControl, so its OWN AcceptButton must NOT offer "(this)" (rootAssignable=false;
+      // and a component never references itself) — proves the root token is gated on assignability, not offered blanket
+      const rootDesc = await describeComponent(engine, notifyIconForm, 'this');
+      const acceptBtn = rootDesc?.properties?.find((p) => p.name === 'AcceptButton');
+      if ((acceptBtn?.standardValues ?? []).includes('(this)')) throw new Error('tray-ref (net9): the form\'s own AcceptButton (IButtonControl, root not assignable) must NOT offer the "(this)" token');
+      console.log(`e2e: tray-component reference dropdown (net9) verified — notifyIcon1.ContextMenuStrip [(none), contextMenuStrip1] pre-selecting "contextMenuStrip1"; a ROOT reference (errorProvider1.ContainerControl) is an editable [(none), (this)] dropdown pre-selecting "(this)", pick splices bare "= this" / clear splices null; a non-assignable root prop (AcceptButton) does not offer "(this)"`);
+    } else {
+      console.log('e2e: tray-ref (net9) SKIPPED — engine/samples/NotifyIconForm.Designer.cs missing');
     }
 
     // ---- extender providers (ToolTip/ErrorProvider) ----

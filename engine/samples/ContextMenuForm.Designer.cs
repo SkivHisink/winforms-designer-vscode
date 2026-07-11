@@ -6,9 +6,18 @@ namespace SampleApp
         private System.Windows.Forms.MenuStrip menuStrip1;
         private System.Windows.Forms.ToolStripMenuItem fileMenu;
         private System.Windows.Forms.ToolStripMenuItem editMenu;
+        // Nested submenu items (editMenu → Undo/Redo): the e2e proves a NESTED field-backed ToolStripItem describes on
+        // both engines (the on-canvas synthetic flyout selects a nested item → its Properties), the reachability path
+        // for nested-item scalar props now that the tray no longer surfaces strip items.
+        private System.Windows.Forms.ToolStripMenuItem undoItem;
+        private System.Windows.Forms.ToolStripMenuItem redoItem;
         private System.Windows.Forms.ContextMenuStrip contextMenuStrip1;
         private System.Windows.Forms.ToolStripMenuItem cutItem;
         private System.Windows.Forms.ToolStripMenuItem pasteItem;
+        // A nested item UNDER a ContextMenuStrip item (pasteItem → Paste Special): the e2e proves the TRAY chip's item
+        // forest is harvested RECURSIVELY (BuildStripItemForest → BuildItemChildren), not just its flat top level — so a
+        // nested off-tree-strip item is reachable through the synthetic tray flyout.
+        private System.Windows.Forms.ToolStripMenuItem pasteSpecialItem;
         private System.Windows.Forms.Panel panel1;
         // A non-visual component (a Timer) so the e2e can prove net48 item editing (Slice 2) does NOT live-mutate a
         // non-Control non-item component: setting timer1.Enabled=true must be an inert no-op on the preview instance
@@ -21,9 +30,12 @@ namespace SampleApp
             this.menuStrip1 = new System.Windows.Forms.MenuStrip();
             this.fileMenu = new System.Windows.Forms.ToolStripMenuItem();
             this.editMenu = new System.Windows.Forms.ToolStripMenuItem();
+            this.undoItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.redoItem = new System.Windows.Forms.ToolStripMenuItem();
             this.contextMenuStrip1 = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.cutItem = new System.Windows.Forms.ToolStripMenuItem();
             this.pasteItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.pasteSpecialItem = new System.Windows.Forms.ToolStripMenuItem();
             this.panel1 = new System.Windows.Forms.Panel();
             this.timer1 = new System.Windows.Forms.Timer(this.components);
             this.menuStrip1.SuspendLayout();
@@ -48,9 +60,24 @@ namespace SampleApp
             //
             // editMenu
             //
+            this.editMenu.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.undoItem,
+            this.redoItem});
             this.editMenu.Name = "editMenu";
             this.editMenu.Size = new System.Drawing.Size(39, 20);
             this.editMenu.Text = "Edit";
+            //
+            // undoItem
+            //
+            this.undoItem.Name = "undoItem";
+            this.undoItem.Size = new System.Drawing.Size(103, 22);
+            this.undoItem.Text = "Undo";
+            //
+            // redoItem
+            //
+            this.redoItem.Name = "redoItem";
+            this.redoItem.Size = new System.Drawing.Size(103, 22);
+            this.redoItem.Text = "Redo";
             //
             // contextMenuStrip1
             //
@@ -68,9 +95,17 @@ namespace SampleApp
             //
             // pasteItem
             //
+            this.pasteItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.pasteSpecialItem});
             this.pasteItem.Name = "pasteItem";
             this.pasteItem.Size = new System.Drawing.Size(109, 22);
             this.pasteItem.Text = "Paste";
+            //
+            // pasteSpecialItem
+            //
+            this.pasteSpecialItem.Name = "pasteSpecialItem";
+            this.pasteSpecialItem.Size = new System.Drawing.Size(180, 22);
+            this.pasteSpecialItem.Text = "Paste Special";
             //
             // panel1
             //

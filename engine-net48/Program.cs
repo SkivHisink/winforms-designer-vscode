@@ -267,6 +267,10 @@ namespace WinFormsDesigner.Engine.Net48
                     Console.WriteLine($"   {(p.SourceExplicit ? "*" : " ")} {p.Name} : {p.Type} = {p.Value ?? "(null)"}{(p.StandardValues != null ? $"  [{p.StandardValues.Count} std]" : "")}{(p.IsImage ? "  [image]" : "")}");
                 foreach (var e in d.Events.Where(e => e.Handler != null).Take(12))
                     Console.WriteLine($"   [event] {e.Name} -> {e.Handler}");
+                // properties offering a dropdown (TypeConverter standard values) — incl. ImageIndex/ImageKey when an
+                // ImageList is attached, ReferenceConverter component picks, enum/bool/Cursor/Color sets, etc.
+                foreach (var p in d.Properties.Where(p => p.StandardValues != null && p.StandardValues.Count > 0))
+                    Console.WriteLine($"   [dropdown] {p.Name}{(p.StandardValuesExclusive ? " (exclusive)" : "")}: {string.Join(", ", p.StandardValues)}");
                 return 0;
             }
             catch (Exception ex)
@@ -526,14 +530,15 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>Property-grid + events for one control of the LIVE compiled instance ("this" = root, else its
         /// .Designer.cs field name) — the read side behind the property panel in compiled-preview mode.</summary>
         public ComponentDesc? DescribeCompiledComponent(string designerFilePath, string assemblyPath, string componentId,
-            string? rootTypeName = null, string[]? probeDirs = null)
+            string? rootTypeName = null, string[]? probeDirs = null, string? sourceText = null)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
             var desc = worker.DescribeComponent(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId);
             // enrich with source-only facts the live TypeDescriptor can't see (Roslyn in the HOST domain): which
-            // properties were assigned in source (grid bold) + which event handlers were wired (Events tab).
-            SourceMetadata.Apply(desc, designerFilePath);
+            // properties were assigned in source (grid bold) + which event handlers were wired (Events tab). When the host
+            // passes the UNSAVED buffer (sourceText), parse THAT so an item's just-wired event / just-reset prop is fresh.
+            SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
             return desc;
         }
 

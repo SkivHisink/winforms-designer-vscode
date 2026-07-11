@@ -365,11 +365,27 @@ namespace WinFormsDesigner.Engine
                 var disp = strip.DisplayRectangle;                     // the item-row area, in strip coords
                 bool horizontal = strip.Orientation == Orientation.Horizontal;
                 int contentEnd = horizontal ? disp.Left : disp.Top;   // running right/bottom edge of the last item
+                var overflowItems = new List<ToolStripItemBounds>();   // items pushed off the main strip (Placement==Overflow)
 
                 foreach (ToolStripItem it in strip.Items)
                 {
                     if (!it.Available) continue;                       // hidden / overflow-collapsed → no on-strip rect
-                    if (it.Placement != ToolStripItemPlacement.Main) continue; // overflow items aren't on the main strip
+                    // An OVERFLOW-placed item isn't on the main strip (its Bounds live in the collapsed overflow dropdown),
+                    // so it's harvested BOUNDS-LESS like a nested child and surfaced via the chevron's synthetic flyout below.
+                    if (it.Placement == ToolStripItemPlacement.Overflow)
+                    {
+                        overflowItems.Add(new ToolStripItemBounds
+                        {
+                            OwnerId = ownerId,
+                            ItemId = it.Site?.Name ?? it.Name ?? "",
+                            ItemType = it.GetType().FullName ?? it.GetType().Name,
+                            Text = it.Text ?? "",
+                            IsTypeHere = false,
+                            Children = BuildItemChildren(it, ownerId),
+                        });
+                        continue;
+                    }
+                    if (it.Placement != ToolStripItemPlacement.Main) continue; // Placement.None → not shown anywhere
                     var b = it.Bounds;                                 // strip-relative (same origin as ComputeWindowOffset)
                     items.Add(new ToolStripItemBounds
                     {
@@ -382,18 +398,72 @@ namespace WinFormsDesigner.Engine
                         Width = Math.Max(b.Width, 1),
                         Height = Math.Max(b.Height, 1),
                         IsTypeHere = false,
+                        Children = BuildItemChildren(it, ownerId),         // nested submenu → canvas synthetic flyout
                     });
                     contentEnd = Math.Max(contentEnd, horizontal ? b.Right : b.Bottom);
+                }
+
+                // The overflow chevron the ToolStrip paints at its edge: a bounds-carrying, id-less item whose Children
+                // are the overflow-placed items. The canvas opens a synthetic flyout of them anchored at this rect. The
+                // chevron is already in the PNG (a real button), so the canvas needs only the hit region, not an overlay.
+                var ob = strip.OverflowButton;
+                bool overflowing = overflowItems.Count > 0 && ob != null;
+                if (overflowing)
+                {
+                    var obb = ob!.Bounds;                              // strip-relative, like item.Bounds (non-null: overflowing implies ob != null)
+                    items.Add(new ToolStripItemBounds
+                    {
+                        OwnerId = ownerId,
+                        ItemType = ob.GetType().FullName ?? ob.GetType().Name,
+                        X = ox + obb.X,
+                        Y = oy + obb.Y,
+                        Width = Math.Max(obb.Width, 1),
+                        Height = Math.Max(obb.Height, 1),
+                        IsTypeHere = false,
+                        Overflow = true,
+                        Children = overflowItems,
+                    });
                 }
 
                 // Synthesized "Type Here" slot just past the last item along the strip orientation. The cross-axis
                 // placement (row top+height for horizontal, left+width for vertical) comes from DisplayRectangle — the
                 // stable item-row band — NOT the last item, so a trailing Spring/separator/tall item can't skew it.
-                items.Add(horizontal
-                    ? new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + contentEnd + 2, Y = oy + disp.Top, Width = TypeHereExtent, Height = Math.Max(disp.Height, 1) }
-                    : new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + disp.Left, Y = oy + contentEnd + 2, Width = Math.Max(disp.Width, 1), Height = TypeHereExtent });
+                // Suppressed when the strip is overflowing (it's full — there's no room; VS widens the strip to add).
+                if (!overflowing)
+                {
+                    items.Add(horizontal
+                        ? new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + contentEnd + 2, Y = oy + disp.Top, Width = TypeHereExtent, Height = Math.Max(disp.Height, 1) }
+                        : new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + disp.Left, Y = oy + contentEnd + 2, Width = Math.Max(disp.Width, 1), Height = TypeHereExtent });
+                }
             }
             return items;
+        }
+
+        /// <summary>Recursively collect a drop-down item's nested DropDownItems as BOUNDS-LESS <see cref="ToolStripItemBounds"/>
+        /// (id/text/type + their own Children) for the canvas's synthetic submenu flyout — a closed dropdown isn't laid
+        /// out, so children have no meaningful bounds; the canvas lays the flyout out itself and routes a child click
+        /// through the item→Properties channel (which resolves a nested field-backed item by Site.Name). Gated on
+        /// <c>HasDropDownItems</c> so it never forces a lazy dropdown to be created. OwnerId propagates the top-level
+        /// strip id (the selectItem host context). Recursion depth is bounded by the (finite) menu tree.</summary>
+        private static List<ToolStripItemBounds> BuildItemChildren(ToolStripItem item, string ownerId)
+        {
+            var kids = new List<ToolStripItemBounds>();
+            if (item is ToolStripDropDownItem ddi && ddi.HasDropDownItems)
+            {
+                foreach (ToolStripItem child in ddi.DropDownItems)
+                {
+                    kids.Add(new ToolStripItemBounds
+                    {
+                        OwnerId = ownerId,
+                        ItemId = child.Site?.Name ?? child.Name ?? "",
+                        ItemType = child.GetType().FullName ?? child.GetType().Name,
+                        Text = child.Text ?? "",
+                        IsTypeHere = false,
+                        Children = BuildItemChildren(child, ownerId),
+                    });
+                }
+            }
+            return kids;
         }
 
         /// <summary>True when the control descends through a tab page that is NOT the tab host's selected one — i.e.
@@ -461,10 +531,44 @@ namespace WinFormsDesigner.Engine
                                                                      // (Timer/ToolTip/…) + off-tree Controls (ContextMenuStrip).
                 string id = comp.Site?.Name ?? "";
                 if (id.Length == 0) continue;                 // unnamed/internal (e.g. the IContainer holder) → skip
-                tray.Add(new TrayComponent { Id = id, Name = id, Type = comp.GetType().FullName ?? comp.GetType().Name });
+                tray.Add(new TrayComponent
+                {
+                    Id = id,
+                    Name = id,
+                    Type = comp.GetType().FullName ?? comp.GetType().Name,
+                    // An OFF-TREE ToolStrip (a ContextMenuStrip) carries its top-level Items so the canvas can open a
+                    // synthetic flyout from its tray chip; a non-strip component leaves this empty.
+                    Items = comp is ToolStrip strip ? BuildStripItemForest(strip, id) : new(),
+                    IsStrip = comp is ToolStrip, // an EMPTY off-tree strip still opens an add-first-item flyout (Items alone can't distinguish it from a non-strip)
+                });
             }
             tray.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return tray;
+        }
+
+        /// <summary>The top-level Items of an OFF-TREE ToolStrip (a tray ContextMenuStrip) as a BOUNDS-LESS forest — the
+        /// tray-chip analogue of a top-level item's <see cref="BuildItemChildren"/>. The strip is never on the surface so
+        /// there are no bounds; the canvas draws a synthetic flyout from the tray chip and routes a click through the
+        /// item→Properties channel (each item resolves by Site.Name). <paramref name="ownerId"/> (the strip's id) is the
+        /// host splice key for on-canvas add/rename/delete. Pure reads — the <c>HasDropDownItems</c>-gated recursion
+        /// never forces a closed dropdown to be created, so it can run inside <see cref="BuildTray"/> without perturbing
+        /// the byte-identical PNG.</summary>
+        private static List<ToolStripItemBounds> BuildStripItemForest(ToolStrip strip, string ownerId)
+        {
+            var forest = new List<ToolStripItemBounds>();
+            foreach (ToolStripItem it in strip.Items)
+            {
+                forest.Add(new ToolStripItemBounds
+                {
+                    OwnerId = ownerId,
+                    ItemId = it.Site?.Name ?? it.Name ?? "",
+                    ItemType = it.GetType().FullName ?? it.GetType().Name,
+                    Text = it.Text ?? "",
+                    IsTypeHere = false,
+                    Children = BuildItemChildren(it, ownerId),
+                });
+            }
+            return forest;
         }
 
         /// <summary>
@@ -2046,15 +2150,19 @@ namespace WinFormsDesigner.Engine
             string propName = chain[^1];
             var pd = TypeDescriptor.GetProperties(target)[propName]
                 ?? throw new InvalidOperationException("no property " + propName + " on " + target.GetType().Name);
-            // component-reference RHS (this.<prop> = this.<component>): assign the live component instance the
-            // source points at — the value VS emits for a dialog's AcceptButton/CancelButton, DataGridView.DataSource,
-            // a control's ContextMenuStrip, etc. Eval can't resolve a component field (it carries no `comps`), so
-            // intercept it here; the serializer re-emits the reference. Every non-component RHS (literals, enums,
-            // Point/Size, resources.GetObject, …) still goes through Eval unchanged.
+            // component-reference RHS: `this.<prop> = this.<component>` (a sibling — AcceptButton/CancelButton,
+            // DataGridView.DataSource, a control's ContextMenuStrip, …) OR `this.<prop> = this` (the ROOT form itself,
+            // e.g. errorProvider1.ContainerControl = this). Assign the live instance the source names. Eval resolves
+            // neither (it carries no `comps` and has no ThisExpression case → bare `this` would throw), so intercept
+            // both here; the serializer re-emits the reference. A root RHS binds to `root`, which is in scope and is
+            // the form instance — SetValue rejects a non-assignable target (kept unrepresentable, as before). Every
+            // non-reference RHS (literals, enums, Point/Size, resources.GetObject, …) still goes through Eval unchanged.
             var rhsChain = Flatten(asg.Right);
-            object? val = (rhsChain.Count == 1 && comps.TryGetValue(rhsChain[0], out var refComp))
-                ? refComp
-                : Eval(asg.Right, pd.PropertyType, userAsms);
+            object? val = asg.Right is ThisExpressionSyntax
+                ? root
+                : (rhsChain.Count == 1 && comps.TryGetValue(rhsChain[0], out var refComp))
+                    ? refComp
+                    : Eval(asg.Right, pd.PropertyType, userAsms);
             pd.SetValue(target, val);
         }
 

@@ -70,8 +70,9 @@ namespace WinFormsDesigner.Engine.Net48
     }
 
     /// <summary>One TOP-LEVEL ToolStrip/MenuStrip/StatusStrip item's window-space rectangle (or the trailing "Type Here"
-    /// slot). Mirrors WinFormsDesigner.Engine.ToolStripItemBounds. Nested/submenu items are absent (a closed DropDown
-    /// isn't laid out, so its children have no bounds).</summary>
+    /// slot). Mirrors WinFormsDesigner.Engine.ToolStripItemBounds. Nested/submenu items have no bounds (a closed DropDown
+    /// isn't laid out), but ride along in <see cref="Children"/> (id/text/type) so the canvas can draw a synthetic
+    /// flyout and reach their Properties via the item→Properties channel.</summary>
     [Serializable]
     public sealed class ToolStripItemBounds
     {
@@ -84,6 +85,12 @@ namespace WinFormsDesigner.Engine.Net48
         public int Width { get; set; }
         public int Height { get; set; }
         public bool IsTypeHere { get; set; }
+        /// <summary>True for the strip's OVERFLOW chevron button (bounds-carrying, id-less); its <see cref="Children"/> are
+        /// the overflow-placed items. Mirrors the net9 DTO. When set the strip is full → no "Type Here" slot is emitted.</summary>
+        public bool Overflow { get; set; }
+        /// <summary>Nested DropDownItems (recursive; id/text/type only — no bounds). Mirrors the net9 DTO. Empty for
+        /// leaf items, separators, and the "Type Here" slot.</summary>
+        public List<ToolStripItemBounds> Children { get; set; } = new List<ToolStripItemBounds>();
     }
 
     /// <summary>Result of a tab-header hit-test (rename): the .Designer.cs field id of the tab page under the point
@@ -213,6 +220,10 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>Element type of an <see cref="IsCollection"/> property — "System.String" for Items, or the typed
         /// item FQN (ColumnHeader / DataGridViewColumn) that picks the webview's typed editor. Null when not a collection.</summary>
         public string? CollectionItemType { get; set; }
+        /// <summary>True for a component-reference property (ReferenceConverter: AcceptButton/CancelButton/
+        /// ContextMenuStrip). StandardValues are the compatible sibling field names + a leading "(none)"; the host
+        /// translates a pick to `this.&lt;name&gt;` / `null`. Parity with net9's PropertyInfo.ReferenceValues.</summary>
+        public bool ReferenceValues { get; set; }
     }
 
     /// <summary>One event row for the Events tab. Mirrors WinFormsDesigner.Engine.EventInfo (→ TS EventDesc).</summary>
@@ -245,6 +256,14 @@ namespace WinFormsDesigner.Engine.Net48
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
         public string Type { get; set; } = "";
+        /// <summary>For an OFF-TREE ToolStrip surfaced in the tray (a ContextMenuStrip), its top-level Items as a
+        /// BOUNDS-LESS forest (id/text/type + recursive Children) so the canvas can open a synthetic flyout from the
+        /// tray chip. Mirrors WinFormsDesigner.Engine.TrayComponent.Items. Empty for a non-strip component.</summary>
+        public List<ToolStripItemBounds> Items { get; set; } = new List<ToolStripItemBounds>();
+        /// <summary>True when this tray component is a ToolStrip (a ContextMenuStrip / off-tree strip) — the canvas opens
+        /// its synthetic items flyout on a chip click, and an EMPTY strip still gets a "Type Here" add-first-item flyout
+        /// (a non-strip component's empty Items is otherwise indistinguishable). Mirrors WinFormsDesigner.Engine.TrayComponent.IsStrip.</summary>
+        public bool IsStrip { get; set; }
     }
 
     /// <summary>Full-frame PNG + hit-test map from one instantiation. Mirrors WinFormsDesigner.Engine.RenderLayoutResult.

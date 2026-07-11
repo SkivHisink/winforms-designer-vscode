@@ -8,6 +8,44 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-11
+
+**Menu & toolbar editing goes all the way down.** The on-canvas item editing introduced in 0.8.x now reaches **nested
+submenu items**, an **off-tree `ContextMenuStrip`**, and **overflow** items; each gets its **own property grid** (with an
+**Events** tab); and reference- and image-typed properties become **Visual Studio–style dropdowns**. A pre-commit,
+fail-closed hardening pass over the whole stack rounds out the release.
+
+### Added
+- **Deep on-canvas item editing.** The 0.8.1 limitation is lifted — **nested / submenu** items, an **off-tree
+  `ContextMenuStrip`** (edited from its component-tray chip), and **overflow** items can now be **selected**, **renamed**
+  (double-click / **F2**), **deleted** (**Delete**), and grown via a **"Type Here"** slot, at any depth, through
+  synthetic flyouts that mirror Visual Studio. Works on **both** engines; the underlying source splices are unchanged and
+  depth-agnostic, so nothing outside the edited items is touched.
+- **Item → Properties, everywhere — with an Events tab.** Selecting any item — top-level, nested, context-menu,
+  overflow, or an off-tree menu — loads **its own** property grid (kept separate from the control selection), and an
+  **Events** tab **wires / unwires / navigates** that item's events. Right-click **Reset** works per item.
+- **Component-reference property dropdowns.** A property whose type is a component reference — `Form.AcceptButton` /
+  `CancelButton`, `Control.ContextMenuStrip`, `NotifyIcon.ContextMenuStrip`, `ErrorProvider.ContainerControl`, … — now
+  renders as a **dropdown** of the compatible sibling components plus **(none)**, matching Visual Studio; a property that
+  references the form itself offers **(this)**. Editable on **both** engines — the reference is written back as a minimal
+  `this.<name>` / `this` / `null` splice.
+- **`ImageIndex` / `ImageKey` dropdowns.** A control with an attached `ImageList` now picks its image from a **dropdown**
+  of the list's indices / keys, matching Visual Studio. Fully on the .NET Framework compiled preview; the .NET 9 engine
+  keeps the plain field when it can't populate the list (empty `ImageList`), with no regression.
+
+### Fixed
+- **Pre-commit fail-closed hardening (5 fixes).** Two independent review passes — a second-opinion model and an
+  adversarial workflow — over the whole uncommitted stack, closing everything reachable before release:
+  - the .NET Framework engine no longer offers an **inherited base-class private field** as a reference candidate (it
+    would have saved a non-compiling `this.<baseField>` and diverged from .NET 9);
+  - a concurrent-edit **TOCTOU** in the reference-edit round-trip that could commit a dangling `this.<field>` is closed by
+    snapshotting the document revision before the describe round-trip;
+  - the item editor now **rejects, engine-side**, a nested add under a non-dropdown item (a direct-RPC hole that emitted
+    non-compiling `.DropDownItems.AddRange(...)`), so offer ⇔ accept holds on the engine, not just in the UI;
+  - a **stale submenu selection** after navigating through an id-less (anonymous) parent could target the wrong item on
+    **Delete** / **F2**; the selection is now dropped only when its level is actually truncated;
+  - new end-to-end legs no longer **silently pass** when a sample fixture is missing (false-green guard).
+
 ## [0.8.1] — 2026-07-09
 
 **Edit `MenuStrip` / `ToolStrip` items directly on the canvas** — add (with a Visual Studio–style **"Type Here"**
@@ -548,7 +586,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.0...v0.7.1

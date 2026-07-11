@@ -87,6 +87,8 @@
   "designer.ruler.hide": "Masquer la règle",
   "designer.formSuffix": " (formulaire)",
   "designer.typeHere": "Tapez ici",
+  "designer.smartTag.title": "Tâches de {type}",
+  "designer.smartTag.noTasks": "Aucune tâche courante",
   "designer.dirtyBadge": "● non enregistré",
   "designer.sel.multi": {
     "one": "{n} contrôle sélectionné",
@@ -115,6 +117,9 @@
   "designer.menu.delete": "Supprimer",
   "designer.menu.renameItem": "Renommer",
   "designer.menu.deleteItem": "Supprimer l'élément",
+  "designer.menu.addTab": "Ajouter un onglet",
+  "designer.menu.deleteTab": "Supprimer l'onglet",
+  "designer.menu.deleteTabNamed": "Supprimer l'onglet « {name} »",
   "designer.menu.properties": "Propriétés",
   "panel.props.empty": "Sélectionnez un contrôle dans le concepteur WinForms pour modifier ses propriétés.",
   "panel.itemProps.unavailable": "Les propriétés de l'élément ne sont pas disponibles dans l'aperçu compilé.",

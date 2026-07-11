@@ -60,6 +60,16 @@ namespace WinFormsDesigner.Engine
         public int Height { get; init; }
         /// <summary>True for the synthesized trailing add-slot placed after the last item along the strip orientation.</summary>
         public bool IsTypeHere { get; init; }
+        /// <summary>True for the strip's OVERFLOW chevron button (the "&gt;&gt;" the ToolStrip paints at its edge when items
+        /// don't fit): a bounds-carrying, id-less item whose <see cref="Children"/> are the overflow-placed items
+        /// (Placement==Overflow). The canvas opens a synthetic flyout of those items anchored at this rect. When set, the
+        /// strip is full so no trailing "Type Here" slot is emitted.</summary>
+        public bool Overflow { get; init; }
+        /// <summary>This item's nested DropDownItems (a ToolStripDropDownItem's submenu), recursively — id/text/type only
+        /// (no bounds: a closed dropdown isn't laid out, so the canvas draws a SYNTHETIC flyout client-side and routes a
+        /// child click through the existing item→Properties channel). Empty for leaf items, separators, and the "Type
+        /// Here" slot. OwnerId on each child is the top-level strip (the selectItem host context).</summary>
+        public List<ToolStripItemBounds> Children { get; init; } = new();
     }
 
     /// <summary>One non-visual component for the component tray: Timer, ToolTip, ErrorProvider,
@@ -70,6 +80,18 @@ namespace WinFormsDesigner.Engine
         public string Id { get; init; } = "";
         public string Name { get; init; } = "";
         public string Type { get; init; } = "";
+        /// <summary>For an OFF-TREE ToolStrip surfaced in the tray (a ContextMenuStrip / ToolStripDropDown, which is a
+        /// sited field but never painted on the surface), its top-level Items as a BOUNDS-LESS forest (id/text/type +
+        /// recursive <see cref="ToolStripItemBounds.Children"/>) — the canvas opens a SYNTHETIC flyout from the tray
+        /// chip so the strip's items are reachable on the canvas (Properties / rename / delete / add) exactly as a
+        /// menu-bar item's DropDownItems are. Empty for a non-strip component (Timer/ImageList/…) and for an empty
+        /// strip. Each item's <see cref="ToolStripItemBounds.OwnerId"/> is the strip's id (the host splice key).</summary>
+        public List<ToolStripItemBounds> Items { get; init; } = new();
+        /// <summary>True when this tray component is a <see cref="ToolStrip"/> (a ContextMenuStrip / off-tree strip) — the
+        /// canvas opens its synthetic items flyout on a chip click. Distinguishes an EMPTY strip (still gets a "Type Here"
+        /// add-first-item flyout) from a non-strip component (Timer/ImageList/…, whose empty <see cref="Items"/> is
+        /// identical). Without this the canvas can't tell them apart, since both serialize an empty Items list.</summary>
+        public bool IsStrip { get; init; }
     }
 
     /// <summary>

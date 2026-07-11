@@ -182,6 +182,8 @@ export interface ToolStripItemBounds {
   width: number;
   height: number;
   isTypeHere: boolean; // true for the synthesized trailing add-slot
+  overflow?: boolean;  // true for the strip's overflow chevron (children = the overflow-placed items) → canvas flyout
+  children?: ToolStripItemBounds[]; // nested DropDownItems (id/text/type, no bounds) → canvas synthetic submenu flyout
 }
 
 /** A non-visual component for the tray (component tray): Timer/ToolTip/ErrorProvider/ImageList/BindingSource/… */
@@ -189,6 +191,14 @@ export interface TrayComponent {
   id: string;   // edit id (Site.Name) for DescribeComponent/SetProperty
   name: string;
   type: string;
+  // For an off-tree ToolStrip surfaced in the tray (a ContextMenuStrip): its top-level Items forest (id/text/type +
+  // recursive children, no bounds) → the canvas opens a synthetic flyout from the tray chip so the strip's items are
+  // reachable (Properties / rename / delete / add). Absent/empty for a non-strip component.
+  items?: ToolStripItemBounds[];
+  // True when this chip is a ToolStrip (ContextMenuStrip / off-tree strip): the canvas opens its flyout on a click,
+  // and an EMPTY strip still gets an add-first-item "Type Here" flyout. Distinguishes an empty strip from a non-strip
+  // component (Timer/ImageList/…), whose empty `items` is otherwise identical.
+  isStrip?: boolean;
 }
 
 export interface LayoutResult {
@@ -309,10 +319,12 @@ function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
  *  .Designer.cs field name). Same ComponentDesc shape as the net9 describeComponent. null when not found. */
 export function describeCompiledComponent(
   engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
-  rootTypeName?: string, probeDirs?: string[],
+  rootTypeName?: string, probeDirs?: string[], sourceText?: string,
 ): Promise<ComponentDesc | null> {
+  // sourceText = the UNSAVED .Designer.cs buffer; when passed, the net48 SourceMetadata pass parses IT (not the on-disk
+  // file) so a just-wired event / just-reset property reflects the dirty edit immediately. Omitted → engine reads disk.
   return engine.connection.sendRequest<ComponentDesc | null>(
-    'DescribeCompiledComponent', designerFilePath, assemblyPath, componentId, rootTypeName ?? null, probeDirs ?? null);
+    'DescribeCompiledComponent', designerFilePath, assemblyPath, componentId, rootTypeName ?? null, probeDirs ?? null, sourceText ?? null);
 }
 
 /** Apply ONE property edit to the net48 live instance + re-render (live preview for a designer-originated edit).
@@ -529,6 +541,10 @@ export interface PropertyDesc {
   /** The property's DescriptionAttribute text (shown in the description pane below the grid), or null/absent
    * when the property carries no description. */
   description?: string | null;
+  /** True for a component-reference property (ReferenceConverter: AcceptButton/CancelButton/ContextMenuStrip).
+   * `standardValues` are the compatible sibling field names + a leading "(none)"; the panel tags the edit with
+   * `refEdit` so the host writes `this.<name>` / `null` (net9 splice, net48 live resolve) instead of a literal. */
+  referenceValues?: boolean;
 }
 
 export interface EventDesc {

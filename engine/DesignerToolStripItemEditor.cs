@@ -439,7 +439,20 @@ namespace WinFormsDesigner.Engine
                     string t = ctorTypes.TryGetValue(ownerId, out var tt) ? tt : "";
                     coll = DropDownItemTypes.Contains(t) ? "DropDownItems" : "Items";
                 }
-                else coll = "DropDownItems";
+                else
+                {
+                    // A nested receiver must OWN a DropDownItems collection — a non-dropdown item (ToolStripButton/
+                    // ToolStripLabel/ToolStripSeparator/…) has none, so emitting `this.<recv>.DropDownItems.AddRange(...)`
+                    // would produce non-compiling source. The UI never offers a nested add on a non-dropdown item (a
+                    // submenu flyout opens only for an item that already has children), but a direct RPC/CLI caller can
+                    // send parentItemId pointing at one — reject it HERE so offer ⇔ accept holds engine-side, not just in
+                    // the host (codex review). A new receiver's type comes from newItems; an existing one from ctorTypes.
+                    string rt = ctorTypes.TryGetValue(recv, out var rtt) ? rtt
+                        : ShortName(newItems.FirstOrDefault(n => n.Id == recv)?.Fqn ?? "");
+                    if (!DropDownItemTypes.Contains(rt))
+                        return Failed("cannot add a child to '" + recv + "' — a " + (rt.Length == 0 ? "non-dropdown item" : rt) + " has no DropDownItems collection");
+                    coll = "DropDownItems";
+                }
                 string elems = string.Join(", ", des[recv].Select(id => "this." + id));
                 Emit($"this.{recv}.{coll}.AddRange(new System.Windows.Forms.ToolStripItem[] {{ {elems} }});");
             }

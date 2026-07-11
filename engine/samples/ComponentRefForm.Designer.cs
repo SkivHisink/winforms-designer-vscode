@@ -2,7 +2,10 @@ namespace WinFormsDesigner.Samples
 {
     // Fixture for component-reference property RHS (this.<prop> = this.<component>): the form's AcceptButton /
     // CancelButton point at Button components — the reference assignment VS emits for a dialog. These serialize
-    // cleanly on .NET 9 (a plain component reference, no BinaryFormatter), so the form is round-trip safe.
+    // cleanly on .NET 9 (a plain component reference, no BinaryFormatter), so the form is round-trip safe. The
+    // component-reference dropdown slice turns each into a "(none)"+sibling-field-names <select>. (The component-ref
+    // case — a control's ContextMenuStrip → a tray component — is covered by ContextMenuForm, whose ContextMenuStrip
+    // serialization is a BinaryFormatter resx on .NET 9 and so is exercised off the round-trip-safe path.)
     partial class ComponentRefForm
     {
         private void InitializeComponent()

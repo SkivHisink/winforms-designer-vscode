@@ -933,21 +933,74 @@ namespace WinFormsDesigner.Engine.Net48
         private bool TryApply(LiveDesign live, string componentId, string propName, string rawValue, out string reason)
         {
             reason = "";
-            // Resolve controls (ByField) AND a field-backed ToolStripItem (via the FieldNames reverse-scan) so a
-            // designer-originated ITEM edit updates the live picture, not just the source — net48 item editing (Slice
-            // 2). ResolveLiveEditTarget deliberately does NOT resolve a non-Control non-item component (a Timer, etc.):
-            // this is a running preview and live-mutating a component's runtime behavior would execute it (see the
-            // helper). A control still hits ByField first, so its path is byte-identical.
-            IComponent? target = ResolveLiveEditTarget(live, componentId);
+            // Resolve broadly (a control via ByField, else any field-backed component via the FieldNames reverse-scan),
+            // THEN gate the edit TARGET selectively. The assign-only reference branch below is safe on ANY component
+            // owner (it stores a sibling as a value, never runs the component), so a tray-component reference —
+            // notifyIcon1.ContextMenuStrip, errorProvider1.ContainerControl — is live-editable. Every OTHER edit stays
+            // restricted to a Control or ToolStripItem (ResolveLiveEditTarget's contract): a non-Control non-item
+            // component (a Timer) must NOT be live-mutated, or e.g. Timer.Enabled=true would Start() it and the render
+            // pump would dispatch its compiled Tick handler inside the preview. A control/item hits the same instances
+            // ByField/reverse-scan, so its path is byte-identical.
+            IComponent? target = ResolveLiveTarget(live, componentId);
             if (target == null) { reason = "no control '" + componentId + "'"; return false; }
             var pd = TypeDescriptor.GetProperties(target)[propName];
             if (pd == null) { reason = "no property '" + propName + "'"; return false; }
             if (pd.IsReadOnly) { reason = propName + " is read-only"; return false; }
+            bool isRef = IsFrameworkReferenceConverter(pd.Converter);
+            // Only a reference edit may target a non-Control non-item component; anything else stays inert (Timer gate).
+            if (!isRef && !(target is Control || target is ToolStripItem)) { reason = "no control '" + componentId + "'"; return false; }
+            // A REFERENCE edit on a ToolStripItem is refused: describe EXCLUDES ToolStripItem owners from reference
+            // dropdowns (CompiledDescriber.ReferenceValuesOf: the item channel can't translate a reference pick), so the
+            // host never offers one. Mirror that exclusion on the write side too, so a direct RPC/CLI caller bypassing the
+            // host's referenceValues re-validation can't set a reference the describe side never advertises — keeping
+            // offer ⇔ accept exact for items (covers both a sibling and the new "(this)" root token). Non-reference item
+            // edits (Text/Enabled/… — the item→Properties path) are unaffected: they take the !isRef branch above.
+            if (isRef && target is ToolStripItem) { reason = propName + " reference edits are not supported on a ToolStripItem"; return false; }
             try
             {
-                object? value = pd.Converter != null && pd.Converter.CanConvertFrom(typeof(string))
-                    ? pd.Converter.ConvertFromInvariantString(rawValue)
-                    : rawValue;
+                object? value;
+                // Component-reference property (ReferenceConverter: AcceptButton/CancelButton/ContextMenuStrip…): its
+                // converter can't parse a field name into an instance without a design container, so resolve the name
+                // ourselves — "(none)"/"" → null (clear); else `this.<field>` or `<field>` → the live sibling instance
+                // (via the SAME resolver describe/edit share). We only ASSIGN the sibling as a value, never mutate it,
+                // so a non-Control component reference (a ContextMenuStrip) is safe (unlike the edit-TARGET gate).
+                if (isRef)
+                {
+                    if (rawValue == CompiledDescriber.ReferenceNone || rawValue.Length == 0)
+                    {
+                        value = null;
+                    }
+                    else
+                    {
+                        // The synthetic "(this)" token → the live ROOT form (describe offers it whenever the root is
+                        // assignable to the property, e.g. ErrorProvider.ContainerControl = this). Every other token is a
+                        // this.<field> sibling name resolved via the shared resolver.
+                        string refName = rawValue == CompiledDescriber.ReferenceThis ? "this"
+                            : (rawValue.StartsWith("this.") ? rawValue.Substring(5) : rawValue);
+                        var inst = rawValue == CompiledDescriber.ReferenceThis ? live.Root : ResolveLiveTarget(live, refName);
+                        if (inst == null) { reason = "no component '" + refName + "' to reference from " + propName; return false; }
+                        // Mirror the describe candidate set exactly, so a direct RPC/CLI caller bypassing the host's
+                        // referenceValues re-validation can't assign a reference the dropdown never offers. The ROOT form is
+                        // NOW an offered candidate (the "(this)" token) whenever it is assignable, so it is no longer
+                        // rejected here — the assignability check below is the SAME gate describe uses to offer root, so the
+                        // two sides can never diverge (offer-root ⟺ accept-root). Still reject a component referencing
+                        // ITSELF: describe never offers it, yet a self-typed prop would be assignable (codex review: defense
+                        // in depth; the host never sends a non-candidate).
+                        if (ReferenceEquals(inst, target))
+                        { reason = "cannot reference itself from " + propName + " (not an offered candidate)"; return false; }
+                        // Explicit assignability check (don't rely on SetValue throwing): the host validates the pick
+                        // against the describe candidate list, but a direct RPC/CLI caller might request an incompatible
+                        // sibling (or a root the property can't hold) — reject it, mirroring the describe-side filter.
+                        if (!pd.PropertyType.IsInstanceOfType(inst)) { reason = refName + " is not assignable to " + propName; return false; }
+                        value = inst;
+                    }
+                }
+                else
+                {
+                    value = pd.Converter != null && pd.Converter.CanConvertFrom(typeof(string))
+                        ? pd.Converter.ConvertFromInvariantString(rawValue)
+                        : rawValue;
+                }
                 pd.SetValue(target, value);
                 RelayoutTarget(target);
                 return true;
@@ -957,6 +1010,17 @@ namespace WinFormsDesigner.Engine.Net48
                 reason = "could not apply '" + rawValue + "' to " + propName + ": " + ex.Message;
                 return false;
             }
+        }
+
+        /// <summary>True for a framework <see cref="System.ComponentModel.ReferenceConverter"/> (or a WinForms subclass) —
+        /// the converter a component-reference property carries. Gated on the framework assembly so a third-party
+        /// ReferenceConverter subclass does not hit the field-name reference resolve. Mirrors the describe-side gate.</summary>
+        private static bool IsFrameworkReferenceConverter(TypeConverter? conv)
+        {
+            if (!(conv is System.ComponentModel.ReferenceConverter)) return false;
+            var asm = conv.GetType().Assembly;
+            return ReferenceEquals(asm, typeof(System.ComponentModel.ReferenceConverter).Assembly)
+                || ReferenceEquals(asm, typeof(Control).Assembly);
         }
 
         /// <summary>Reset one property on a live control to its default via its PropertyDescriptor (mirror of
@@ -1120,7 +1184,32 @@ namespace WinFormsDesigner.Engine.Net48
             // Parent; a non-Control Component (e.g. a ToolStripItem) reports none.
             string? parent = isRoot ? null : (target is Control tc ? NearestFieldBackedParent(tc, live) : null);
             string name = isRoot ? live.Type.Name : componentId;
-            return CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent);
+            // Component-reference dropdown candidates (AcceptButton/CancelButton/ContextMenuStrip…): every field-backed
+            // component and its field name, from the FieldNames map. The compiled instance is NOT sited, so its
+            // ReferenceConverter can't list siblings and Site.Name is null — CompiledDescriber self-enumerates these
+            // pairs instead (engine-symmetric with net9's host.Container.Components / Site.Name). Root has no field
+            // entry, so it is naturally excluded (never a `this.<field>` reference target).
+            // Build candidates from the fields DECLARED on the root form class ITSELF, read off the live instance —
+            // NOT from the reflection FieldNames map (which BuildFieldNameMap fills by ALSO walking BASE types, for
+            // render/hit-test). An inherited base-class field is not a `this.<field>` the derived .Designer.cs can spell
+            // to the right instance: a private base field won't compile, and — critically — a `new`-HIDDEN base field
+            // sharing a derived field's name would, under a name-only filter, let the BASE instance masquerade under the
+            // derived name and rewrite the reference to the WRONG component on a pick. Reading each DeclaredOnly field's
+            // VALUE off live.Root (== the user's form/UC instance, whose runtime type IS live.Type; live.Form may be a
+            // wrapper) binds name→the EXACT instance that field holds, so a live reference to a base/hidden instance
+            // simply has no candidate and stays a plain field (fail-closed). net9's interpreter never sees base
+            // components either, so this keeps offer⇔accept AND cross-runtime parity. (codex review, High + fix-verify.)
+            var siblings = new List<KeyValuePair<string, IComponent>>();
+            var seenSib = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach (var f in live.Type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            {
+                if (f.Name.Length == 0 || !typeof(IComponent).IsAssignableFrom(f.FieldType)) continue;
+                object? val;
+                try { val = f.GetValue(live.Root); } catch { continue; }
+                if (val is IComponent comp && !ReferenceEquals(comp, live.Root) && seenSib.Add(comp))
+                    siblings.Add(new KeyValuePair<string, IComponent>(f.Name, comp));
+            }
+            return CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent, siblings, live.Root);
         }
 
         /// <summary>Reverse the component→field-name map to find the live component a designer field id names — the
@@ -1305,11 +1394,27 @@ namespace WinFormsDesigner.Engine.Net48
                 var disp = strip.DisplayRectangle;                 // the item-row area, in strip coords
                 bool horizontal = strip.Orientation == Orientation.Horizontal;
                 int contentEnd = horizontal ? disp.Left : disp.Top; // running right/bottom edge of the last item
+                var overflowItems = new List<ToolStripItemBounds>(); // items pushed off the main strip (Placement==Overflow)
 
                 foreach (ToolStripItem it in strip.Items)
                 {
                     if (!it.Available) continue;
-                    if (it.Placement != ToolStripItemPlacement.Main) continue;
+                    // An OVERFLOW-placed item isn't on the main strip → harvest it BOUNDS-LESS and surface it via the
+                    // chevron flyout below (mirrors net9).
+                    if (it.Placement == ToolStripItemPlacement.Overflow)
+                    {
+                        overflowItems.Add(new ToolStripItemBounds
+                        {
+                            OwnerId = ownerId,
+                            ItemId = ToolStripItemId(it, live),
+                            ItemType = it.GetType().FullName ?? it.GetType().Name,
+                            Text = it.Text ?? "",
+                            IsTypeHere = false,
+                            Children = BuildItemChildren(it, ownerId, live),
+                        });
+                        continue;
+                    }
+                    if (it.Placement != ToolStripItemPlacement.Main) continue; // Placement.None → not shown anywhere
                     var b = it.Bounds;
                     items.Add(new ToolStripItemBounds
                     {
@@ -1322,16 +1427,68 @@ namespace WinFormsDesigner.Engine.Net48
                         Width = Math.Max(b.Width, 1),
                         Height = Math.Max(b.Height, 1),
                         IsTypeHere = false,
+                        Children = BuildItemChildren(it, ownerId, live), // nested submenu → canvas synthetic flyout
                     });
                     contentEnd = Math.Max(contentEnd, horizontal ? b.Right : b.Bottom);
                 }
 
+                // The overflow chevron: a bounds-carrying, id-less item whose Children are the overflow items (mirrors net9).
+                var ob = strip.OverflowButton;
+                bool overflowing = overflowItems.Count > 0 && ob != null;
+                if (overflowing)
+                {
+                    var obb = ob.Bounds;                               // strip-relative, like item.Bounds
+                    items.Add(new ToolStripItemBounds
+                    {
+                        OwnerId = ownerId,
+                        ItemType = ob.GetType().FullName ?? ob.GetType().Name,
+                        X = ox + obb.X,
+                        Y = oy + obb.Y,
+                        Width = Math.Max(obb.Width, 1),
+                        Height = Math.Max(obb.Height, 1),
+                        IsTypeHere = false,
+                        Overflow = true,
+                        Children = overflowItems,
+                    });
+                }
+
                 // Cross-axis placement from DisplayRectangle (stable item-row band), NOT the last item — mirrors net9.
-                items.Add(horizontal
-                    ? new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + contentEnd + 2, Y = oy + disp.Top, Width = TypeHereExtent, Height = Math.Max(disp.Height, 1) }
-                    : new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + disp.Left, Y = oy + contentEnd + 2, Width = Math.Max(disp.Width, 1), Height = TypeHereExtent });
+                // Suppressed when the strip is overflowing (it's full — mirrors net9).
+                if (!overflowing)
+                {
+                    items.Add(horizontal
+                        ? new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + contentEnd + 2, Y = oy + disp.Top, Width = TypeHereExtent, Height = Math.Max(disp.Height, 1) }
+                        : new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + disp.Left, Y = oy + contentEnd + 2, Width = Math.Max(disp.Width, 1), Height = TypeHereExtent });
+                }
             }
             return items;
+        }
+
+        /// <summary>Recursively collect a drop-down item's nested DropDownItems as BOUNDS-LESS ToolStripItemBounds
+        /// (id via <see cref="ToolStripItemId"/> / text / type + their own Children) for the canvas synthetic submenu
+        /// flyout — the net48 analogue of the net9 <c>BuildItemChildren</c>. A closed dropdown isn't laid out, so children
+        /// have no bounds; the canvas draws the flyout and routes a child click through the item→Properties channel
+        /// (net48 resolves a nested field-backed item via the FieldNames reverse-scan). Gated on HasDropDownItems so a
+        /// closed dropdown is never created. Depth is bounded by the live menu tree.</summary>
+        private static List<ToolStripItemBounds> BuildItemChildren(ToolStripItem item, string ownerId, LiveDesign live)
+        {
+            var kids = new List<ToolStripItemBounds>();
+            if (item is ToolStripDropDownItem ddi && ddi.HasDropDownItems)
+            {
+                foreach (ToolStripItem child in ddi.DropDownItems)
+                {
+                    kids.Add(new ToolStripItemBounds
+                    {
+                        OwnerId = ownerId,
+                        ItemId = ToolStripItemId(child, live),
+                        ItemType = child.GetType().FullName ?? child.GetType().Name,
+                        Text = child.Text ?? "",
+                        IsTypeHere = false,
+                        Children = BuildItemChildren(child, ownerId, live),
+                    });
+                }
+            }
+            return kids;
         }
 
         private static void Collect(Control c, List<Control> acc)
@@ -1407,9 +1564,41 @@ namespace WinFormsDesigner.Engine.Net48
                 // The tray holds only non-visual components (Timer/ToolTip/…) + off-tree Controls (ContextMenuStrip).
                 if (kv.Key is ToolStripItem) continue;
                 if (!seen.Add(kv.Key)) continue;
-                tray.Add(new TrayComponent { Id = kv.Value, Name = kv.Value, Type = kv.Key.GetType().FullName ?? kv.Key.GetType().Name });
+                tray.Add(new TrayComponent
+                {
+                    Id = kv.Value,
+                    Name = kv.Value,
+                    Type = kv.Key.GetType().FullName ?? kv.Key.GetType().Name,
+                    // An OFF-TREE ToolStrip (a ContextMenuStrip) carries its top-level Items so the canvas opens a
+                    // synthetic flyout from its tray chip; a non-strip component leaves this empty.
+                    Items = kv.Key is ToolStrip strip ? BuildStripItemForest(strip, kv.Value, live) : new List<ToolStripItemBounds>(),
+                    IsStrip = kv.Key is ToolStrip, // an EMPTY off-tree strip still opens an add-first-item flyout (Items alone can't distinguish it from a non-strip)
+                });
             }
             return tray;
+        }
+
+        /// <summary>The top-level Items of an OFF-TREE ToolStrip (a tray ContextMenuStrip) as a BOUNDS-LESS forest — the
+        /// net48 analogue of the net9 <c>BuildStripItemForest</c>. No bounds (the strip is never on the surface); ids via
+        /// the <see cref="ToolStripItemId"/> FieldNames map so add/rename/delete/describe resolve. Pure reads
+        /// (HasDropDownItems-gated recursion never creates a closed dropdown). ownerId (the strip's id) is the host
+        /// splice key.</summary>
+        private static List<ToolStripItemBounds> BuildStripItemForest(ToolStrip strip, string ownerId, LiveDesign live)
+        {
+            var forest = new List<ToolStripItemBounds>();
+            foreach (ToolStripItem it in strip.Items)
+            {
+                forest.Add(new ToolStripItemBounds
+                {
+                    OwnerId = ownerId,
+                    ItemId = ToolStripItemId(it, live),
+                    ItemType = it.GetType().FullName ?? it.GetType().Name,
+                    Text = it.Text ?? "",
+                    IsTypeHere = false,
+                    Children = BuildItemChildren(it, ownerId, live),
+                });
+            }
+            return forest;
         }
 
         private sealed class ReferenceEqualityComparer : IEqualityComparer<object>

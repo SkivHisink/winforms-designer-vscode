@@ -20,13 +20,22 @@ namespace WinFormsDesigner.Engine.Net48
     {
         /// <summary>Set <c>SourceExplicit</c> on properties assigned in source and <c>Handler</c> on wired events for
         /// the component <c>desc.Id</c> ("this" = root, else the .Designer.cs field name). Best-effort: a missing or
-        /// unparsable file (or any failure) leaves the describe's defaults (false / null) untouched.</summary>
-        public static void Apply(ComponentDesc? desc, string? designerFilePath)
+        /// unparsable file (or any failure) leaves the describe's defaults (false / null) untouched.
+        /// <paramref name="overrideSource"/>, when non-null, is parsed INSTEAD of the on-disk file — the host passes the
+        /// UNSAVED .Designer.cs buffer so a just-wired event / just-reset property reflects the dirty edit immediately,
+        /// not the stale persisted file (a newly wired event would otherwise show unwired, a reset prop stay bold).</summary>
+        public static void Apply(ComponentDesc? desc, string? designerFilePath, string? overrideSource = null)
         {
-            if (desc == null || string.IsNullOrEmpty(designerFilePath) || !File.Exists(designerFilePath)) return;
+            if (desc == null) return;
+            string? code = overrideSource;
+            if (code == null)
+            {
+                if (string.IsNullOrEmpty(designerFilePath) || !File.Exists(designerFilePath)) return;
+                code = File.ReadAllText(designerFilePath);
+            }
             try
             {
-                var (explicitProps, handlers) = Parse(File.ReadAllText(designerFilePath), desc.Id);
+                var (explicitProps, handlers) = Parse(code, desc.Id);
                 if (desc.Properties != null)
                     foreach (var p in desc.Properties)
                         if (p != null && explicitProps.Contains(p.Name)) p.SourceExplicit = true;

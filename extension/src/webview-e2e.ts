@@ -380,6 +380,7 @@ test('on-canvas Type Here (Slice B ADD): clicking the slot opens the inline edit
   const add = only(h.posted, 'stripAdd');
   eq(add.length, 1, 'Enter posts exactly one stripAdd gesture');
   eq([add[0].hostId, add[0].itemType, add[0].text], ['strip1', 'ToolStripMenuItem', 'Help'], 'the gesture carries the owner id, the chosen type, and the typed text');
+  eq(add[0].parentItemId, undefined, 'a TOP-LEVEL add carries NO parentItemId (nested-ADD must not leak into the top-level path)');
   ok(!h.document.querySelector('.slotedit'), 'the editor is dismissed after committing');
   h.destroy();
 });
@@ -471,14 +472,14 @@ test('on-canvas item rename (Slice C): double-clicking a top-level item opens th
   h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside fileMenu (14,10,37,20)
   const editor = h.document.querySelector('.slotedit') as any;
   ok(!!editor, 'double-clicking an item opens the inline rename editor');
-  ok(!editor.querySelector('select.slotEditType'), 'the rename editor has NO type <select> (rename never changes type)');
+  ok(!!editor.querySelector('select.slotEditType'), 'a top-level leaf item’s rename editor offers a type <select> (retype); a text-only edit still renames');
   const input = editor.querySelector('input.slotEditInput') as any;
   ok(!!input, 'the rename editor has a text <input>');
   eq(input.value, '&File', 'the input is prefilled with the item’s live caption');
   input.value = '&Edit';
   h.key('keydown', { key: 'Enter' }, input);
   const ren = only(h.posted, 'stripRename');
-  eq(ren.length, 1, 'Enter posts exactly one stripRename gesture');
+  eq(ren.length, 1, 'Enter (type unchanged) posts exactly one stripRename gesture');
   eq([ren[0].hostId, ren[0].itemId, ren[0].text], ['strip1', 'fileMenu', '&Edit'], 'the gesture carries the owner id, the item id, and the new caption');
   ok(!h.document.querySelector('.slotedit'), 'the editor is dismissed after committing');
   h.destroy();
@@ -558,6 +559,71 @@ test('on-canvas item rename (Slice C): opening the editor and pressing Enter WIT
   h.destroy();
 });
 
+test('on-canvas retype (Tier 4): a top-level leaf item’s rename editor offers a type <select> prefilled with its (short) type; changing it posts stripRetype, not stripRename', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'saveBtn', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 56, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside saveBtn (14,10,40,20)
+  const editor = h.document.querySelector('.slotedit') as any;
+  const sel = editor.querySelector('select.slotEditType') as any;
+  ok(!!sel, 'a top-level leaf item’s rename editor has a type <select> (retype)');
+  eq(sel.value, 'ToolStripButton', 'the select is pre-selected on the item’s current (short) type — an untouched confirm won’t retype');
+  sel.value = 'ToolStripLabel';
+  h.key('keydown', { key: 'Enter' }, editor.querySelector('input.slotEditInput'));
+  const rt = only(h.posted, 'stripRetype');
+  eq(rt.length, 1, 'changing the type + Enter posts exactly one stripRetype');
+  eq([rt[0].hostId, rt[0].itemId, rt[0].itemType, rt[0].text], ['strip1', 'saveBtn', 'ToolStripLabel', 'Save'], 'stripRetype carries owner, item, the NEW short type, and the carried text');
+  eq(only(h.posted, 'stripRename').length, 0, 'no stripRename is posted for a retype');
+  h.destroy();
+});
+
+test('on-canvas retype: keeping the SAME type but editing the text posts stripRename (not stripRetype)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'saveBtn', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  (h.document.querySelector('input.slotEditInput') as any).value = 'Store';
+  h.key('keydown', { key: 'Enter' }, h.document.querySelector('.slotedit'));
+  eq(only(h.posted, 'stripRetype').length, 0, 'unchanged type → no stripRetype');
+  const ren = only(h.posted, 'stripRename');
+  eq(ren.length, 1, 'a text-only edit still posts one stripRename');
+  eq(ren[0].text, 'Store', 'the new caption is posted');
+  h.destroy();
+});
+
+test('on-canvas retype: an item WITH a submenu (parent) offers no type <select> (can’t retype a submenu owner)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [{ ownerId: 'strip1', itemId: 'openItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Open' }] },
+  ]);
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface')); // inside fileMenu (a parent)
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'the rename editor still opens for a parent item');
+  ok(!editor.querySelector('select.slotEditType'), 'a parent item (has a submenu) offers no retype select');
+  h.destroy();
+});
+
+test('on-canvas retype: changing the type to Separator posts stripRetype with empty text', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'saveBtn', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  const editor = h.document.querySelector('.slotedit') as any;
+  const sel = editor.querySelector('select.slotEditType') as any;
+  sel.value = 'ToolStripSeparator';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  h.key('keydown', { key: 'Enter' }, editor.querySelector('input.slotEditInput'));
+  const rt = only(h.posted, 'stripRetype');
+  eq(rt.length, 1, 'retype to Separator posts stripRetype');
+  eq([rt[0].itemType, rt[0].text], ['ToolStripSeparator', ''], 'a separator target carries no text');
+  h.destroy();
+});
+
 test('on-canvas item select (Slice D): a single click on a top-level item highlights it (a .stripitemsel box at its rect) without selecting the container strip', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
@@ -604,7 +670,7 @@ test('on-canvas item rename (Slice D): F2 on a selected item opens the inline ed
   h.key('keydown', { key: 'F2' });
   const editor = h.document.querySelector('.slotedit') as any;
   ok(!!editor, 'F2 opens the inline rename editor for the selected item');
-  ok(!editor.querySelector('select.slotEditType'), 'the F2 rename editor has NO type <select>');
+  ok(!!editor.querySelector('select.slotEditType'), 'a top-level leaf item’s F2 editor offers a retype type <select>');
   eq((editor.querySelector('input.slotEditInput') as any).value, '&File', 'the editor is prefilled with the item’s caption');
   h.key('keydown', { key: 'Escape' }, editor);
   // F2 on a separator does nothing (no Text to rename)
@@ -705,6 +771,1054 @@ test('on-canvas item rename (Slice D): a bare re-render layout (item still prese
   const del = only(h.posted, 'stripDelete');
   eq(del.length, 1, 'Delete still targets the item after the re-render');
   eq(del[0].itemId, 'fileMenu', 'the delete carries the re-resolved item id');
+  h.destroy();
+});
+
+/** Count the currently-visible synthetic-flyout level boxes. */
+function visibleFlyouts(h: Harness): any[] {
+  return Array.prototype.filter.call(h.document.querySelectorAll('.stripflyout'), (b: any) => b.style.display !== 'none');
+}
+
+test('on-canvas nested flyout: clicking a top-level item with children opens a synthetic submenu; a leaf-child click posts selectItem with the CHILD id', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [
+        { ownerId: 'strip1', itemId: 'openItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Open', children: [] },
+        { ownerId: 'strip1', itemId: 'sepItem', itemType: 'System.Windows.Forms.ToolStripSeparator', text: '', children: [] },
+        { ownerId: 'strip1', itemId: 'saveItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Save', children: [] },
+      ],
+    },
+    { ownerId: 'strip1', itemId: 'editMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Edit', x: 55, y: 10, width: 39, height: 20, isTypeHere: false, children: [] },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // click File (14,10,37,20)
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 1, 'a single submenu level opens');
+  eq(boxes[0].querySelectorAll('.stripflyoutrow').length, 2, 'two selectable rows (Open, Save) — the separator is not a row');
+  eq(boxes[0].querySelectorAll('.stripflyoutsep').length, 1, 'the separator child renders as a divider');
+  const selWhenOpened = only(h.posted, 'selectItem');
+  eq(selWhenOpened.length, 1, 'opening File also selects the top-level item (its own props load)');
+  eq(selWhenOpened[0].itemId, 'fileMenu', 'the open posts the top-level id');
+  h.resetPosted();
+  const saveRow = Array.prototype.find.call(boxes[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('Save') >= 0);
+  h.click(saveRow);
+  const sel = only(h.posted, 'selectItem');
+  eq(sel.length, 1, 'clicking a child posts exactly one selectItem');
+  eq([sel[0].hostId, sel[0].itemId], ['strip1', 'saveItem'], 'the child selectItem carries the strip host + the CHILD id (nested item→Properties)');
+  const selRow = visibleFlyouts(h)[0].querySelector('.stripflyoutrow.sel');
+  ok(!!selRow && selRow.textContent.indexOf('Save') >= 0, 'the selected child row is highlighted, flyout stays open');
+  eq((h.document.querySelector('.stripitemsel') as any)?.style.display ?? 'none', 'none', 'the top-level highlight is dropped — a nested selection is not the Del/F2 target');
+  h.destroy();
+});
+
+test('on-canvas nested flyout: a child that itself has children opens a nested level; clicking the grandchild posts selectItem with the deepest id', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [
+        {
+          ownerId: 'strip1', itemId: 'recentMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Recent',
+          children: [{ ownerId: 'strip1', itemId: 'doc1Item', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Doc1', children: [] }],
+        },
+      ],
+    },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // open File
+  h.resetPosted();
+  const recentRow = visibleFlyouts(h)[0].querySelector('.stripflyoutrow');
+  ok(!!recentRow.querySelector('.stripflyoutarrow'), 'a parent row shows a submenu arrow');
+  h.click(recentRow);
+  eq(visibleFlyouts(h).length, 2, 'clicking a parent child opens a second (nested) level');
+  eq(only(h.posted, 'selectItem')[0].itemId, 'recentMenu', 'clicking the parent also selects it (a submenu parent has its own props)');
+  h.resetPosted();
+  const doc1Row = visibleFlyouts(h)[1].querySelector('.stripflyoutrow');
+  h.click(doc1Row);
+  eq(only(h.posted, 'selectItem')[0].itemId, 'doc1Item', 'clicking the grandchild selects the deepest nested item');
+  h.destroy();
+});
+
+test('on-canvas nested flyout: a childless item opens no flyout; a control selection and a fresh layout each dismiss an open flyout', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [{ ownerId: 'strip1', itemId: 'openItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Open', children: [] }],
+    },
+    { ownerId: 'strip1', itemId: 'helpMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Help', x: 55, y: 10, width: 39, height: 20, isTypeHere: false, children: [] },
+  ]);
+  h.mouse('click', { offsetX: 60, offsetY: 15 }, h.el('surface')); // Help (55,10,39,20) — no children
+  eq(visibleFlyouts(h).length, 0, 'a childless item opens no flyout');
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // File — opens
+  eq(visibleFlyouts(h).length, 1, 'File opens a flyout');
+  h.send({ type: 'select', id: 'strip1' }); // a host control-selection supersedes the flyout
+  eq(visibleFlyouts(h).length, 0, 'a control selection closes the flyout');
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // re-open
+  eq(visibleFlyouts(h).length, 1, 're-opened');
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.MenuStrip', isStripHost: true })], toolStripItems: [] });
+  eq(visibleFlyouts(h).length, 0, 'a fresh layout (geometry may have moved) closes the flyout');
+  h.destroy();
+});
+
+test('on-canvas nested flyout: an anonymous nested child (empty itemId) renders a row but a click posts NO selectItem', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [
+        { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Ad-hoc', children: [] }, // e.g. DropDownItems.Add("Ad-hoc") — no field
+        { ownerId: 'strip1', itemId: 'openItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Open', children: [] },
+      ],
+    },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // open File
+  h.resetPosted();
+  const rows = visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow');
+  eq(rows.length, 2, 'both children (incl. the anonymous one) render as rows');
+  const anon = Array.prototype.find.call(rows, (r: any) => r.textContent.indexOf('Ad-hoc') >= 0);
+  h.click(anon);
+  eq(only(h.posted, 'selectItem').length, 0, 'clicking an anonymous nested item (no field id) posts no selectItem — it can’t be resolved');
+  h.resetPosted();
+  const openRow = Array.prototype.find.call(rows, (r: any) => r.textContent.indexOf('Open') >= 0);
+  h.click(openRow);
+  eq(only(h.posted, 'selectItem')[0]?.itemId, 'openItem', 'a sibling with a real id still selects normally');
+  h.destroy();
+});
+
+/** A MenuStrip whose editMenu → [undoItem, ───, redoItem] gives nested rename/delete + a nested separator to test. */
+function setupNestedMenu(h: Harness): void {
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'editMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Edit', x: 14, y: 10, width: 39, height: 20, isTypeHere: false,
+      children: [
+        { ownerId: 'strip1', itemId: 'undoItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Undo', children: [] },
+        { ownerId: 'strip1', itemId: 'nestedSep', itemType: 'System.Windows.Forms.ToolStripSeparator', text: '', children: [] },
+        { ownerId: 'strip1', itemId: 'redoItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Redo', children: [] },
+      ],
+    },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // open Edit → flyout
+}
+function flyoutRow(h: Harness, level: number, caption: string): any {
+  return Array.prototype.find.call(visibleFlyouts(h)[level].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf(caption) >= 0);
+}
+
+test('on-canvas overflow (Tier 4): a full strip emits an overflow chevron (overflow=true) + no Type-Here; clicking it opens a synthetic flyout of the overflow items, and a row click posts selectItem (top-level item op)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'btnOne', itemType: 'System.Windows.Forms.ToolStripButton', text: 'One', x: 14, y: 10, width: 40, height: 20, isTypeHere: false, children: [] },
+    { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripOverflowButton', text: '', x: 60, y: 10, width: 16, height: 20, isTypeHere: false, overflow: true, children: [
+      { ownerId: 'strip1', itemId: 'btnTwo', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Two', children: [] },
+      { ownerId: 'strip1', itemId: 'btnThree', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Three', children: [] },
+    ] },
+  ]);
+  // a full (overflowing) strip carries no trailing Type-Here slot in the geometry → the canvas draws none
+  eq(Array.prototype.filter.call(h.document.querySelectorAll('.typehereslot'), (s: any) => s.style.display !== 'none').length, 0, 'no Type Here add-slot is drawn for an overflowing strip');
+  h.mouse('click', { offsetX: 64, offsetY: 15 }, h.el('surface')); // inside the chevron (60,10,16,20)
+  const flyout = visibleFlyouts(h)[0];
+  ok(!!flyout, 'clicking the overflow chevron opens a synthetic flyout');
+  const rows = flyout.querySelectorAll('.stripflyoutrow');
+  eq(rows.length, 2, 'the flyout lists the two overflow items (Two, Three)');
+  ok(!flyout.querySelector('.stripflyouttypehere'), 'the overflow flyout offers no Type-Here add-slot (a full strip is widened to add)');
+  eq(only(h.posted, 'pick').length, 0, 'clicking the chevron does NOT select the strip as a control');
+  const twoRow = Array.prototype.find.call(rows, (r: any) => r.textContent.indexOf('Two') >= 0) as any;
+  h.click(twoRow);
+  const sel = only(h.posted, 'selectItem');
+  ok(sel.length >= 1, 'clicking an overflow row selects that item');
+  eq([sel[0].hostId, sel[0].itemId], ['strip1', 'btnTwo'], 'an overflow item is a normal top-level item op (owner strip + item id)');
+  h.destroy();
+});
+
+test('on-canvas overflow: the overflow chevron rect is NOT treated as a renamable item (no field id) — a dblclick on it opens no editor', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripOverflowButton', text: '', x: 60, y: 10, width: 16, height: 20, isTypeHere: false, overflow: true, children: [
+      { ownerId: 'strip1', itemId: 'btnTwo', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Two', children: [] },
+    ] },
+  ]);
+  h.mouse('dblclick', { offsetX: 64, offsetY: 15 }, h.el('surface')); // on the chevron
+  ok(!h.document.querySelector('.slotedit'), 'the chevron is not renamable (stripItemHit skips it) — no inline editor opens');
+  h.destroy();
+});
+
+test('on-canvas overflow retype (codex review): F2 on an OVERFLOW row (a chevron child, still a top-level item) opens the rename editor WITH a type <select>', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripOverflowButton', text: '', x: 60, y: 10, width: 16, height: 20, isTypeHere: false, overflow: true, children: [
+      { ownerId: 'strip1', itemId: 'ovfBtn', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Two', children: [] },
+    ] },
+  ]);
+  h.mouse('click', { offsetX: 64, offsetY: 15 }, h.el('surface')); // open the overflow flyout
+  const row = Array.prototype.find.call(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('Two') >= 0) as any;
+  h.click(row); // select the overflow row
+  h.key('keydown', { key: 'F2' }); // F2 → rename editor
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'F2 on an overflow row opens the rename editor');
+  ok(!!editor.querySelector('select.slotEditType'), 'an overflow item (top-level, childless) offers a retype <select> too');
+  h.destroy();
+});
+
+test('on-canvas retype (codex review): a type-only change carries the caption VERBATIM (no trim — data-loss guard)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: 'padBtn', itemType: 'System.Windows.Forms.ToolStripButton', text: '  Save  ', x: 14, y: 10, width: 50, height: 20, isTypeHere: false },
+  ]);
+  h.mouse('dblclick', { offsetX: 20, offsetY: 15 }, h.el('surface'));
+  const editor = h.document.querySelector('.slotedit') as any;
+  (editor.querySelector('select.slotEditType') as any).value = 'ToolStripLabel'; // change ONLY the type, do not touch the input
+  h.key('keydown', { key: 'Enter' }, editor.querySelector('input.slotEditInput'));
+  const rt = only(h.posted, 'stripRetype');
+  eq(rt.length, 1, 'a type-only change posts stripRetype');
+  eq(rt[0].text, '  Save  ', 'the padded caption is carried verbatim (not trimmed to "Save")');
+  h.destroy();
+});
+
+test('auto-reopen (overflow deeper — codex review): a nested add inside an overflowed item’s submenu arms an "overflow" reopen with a path; the flyout re-opens to the deep level', () => {
+  const h = loadDesigner();
+  const chevron = (kids: any[]): any => ({ ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripOverflowButton', text: '', x: 60, y: 10, width: 16, height: 20, isTypeHere: false, overflow: true, children: kids });
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    chevron([
+      { ownerId: 'strip1', itemId: 'ddBtn', itemType: 'System.Windows.Forms.ToolStripDropDownButton', text: 'More', children: [
+        { ownerId: 'strip1', itemId: 'subA', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'A', children: [] },
+      ] },
+    ]),
+  ]);
+  h.mouse('click', { offsetX: 64, offsetY: 15 }, h.el('surface')); // open the overflow flyout (level 0)
+  h.click(Array.prototype.find.call(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('More') >= 0)); // open ddBtn's submenu (level 1)
+  eq(visibleFlyouts(h).length, 2, 'the overflowed item’s submenu opened');
+  h.click(visibleFlyouts(h)[1].querySelector('.stripflyouttypehere')); // Type-Here at level 1
+  const input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'B';
+  h.key('keydown', { key: 'Enter' }, input);
+  const add = only(h.posted, 'stripAdd').pop() as any;
+  eq(add.parentItemId, 'ddBtn', 'the nested add targets the overflowed dropdown');
+  ok(typeof add.reopenToken === 'number', 'a deeper add inside an overflow flyout NOW arms a reopen (the overflow-root gap is closed)');
+  // host commits → fresh layout with the grown chevron (ddBtn now has A + B), then the token-matched stripAddDone
+  const strip = mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.ToolStrip', x: 8, y: 8, width: 284, height: 24, isStripHost: true });
+  h.send({ type: 'layout', controls: [strip], toolStripItems: [chevron([
+    { ownerId: 'strip1', itemId: 'ddBtn', itemType: 'System.Windows.Forms.ToolStripDropDownButton', text: 'More', children: [
+      { ownerId: 'strip1', itemId: 'subA', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'A', children: [] },
+      { ownerId: 'strip1', itemId: 'subB', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'B', children: [] },
+    ] },
+  ])] });
+  h.send({ type: 'stripAddDone', token: add.reopenToken, ok: true });
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 2, 'the overflow flyout re-opened to the deep level (root + ddBtn’s submenu)');
+  ok(Array.from(boxes[1].querySelectorAll('.stripflyoutrow')).some((r: any) => r.textContent.indexOf('B') >= 0), 'the new nested item B is visible in the re-opened deep level');
+  h.destroy();
+});
+
+test('on-canvas nested edit: selecting a nested row then Delete posts stripDelete keyed by the OWNER strip + the nested id', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  h.click(flyoutRow(h, 0, 'Undo')); // select the nested undoItem (its props load; it becomes the Del/F2 target)
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  const sd = only(h.posted, 'stripDelete');
+  eq(sd.length, 1, 'Delete on a selected nested row posts exactly one stripDelete');
+  eq([sd[0].hostId, sd[0].itemId], ['strip1', 'undoItem'], 'the delete carries the OWNER strip host + the NESTED id (host recurses)');
+  eq(only(h.posted, 'removeControl').length, 0, 'no control delete fires — a nested item is not a control');
+  h.destroy();
+});
+
+test('on-canvas nested edit: F2 on a selected nested row opens the inline editor prefilled with its caption; Enter posts stripRename with the nested id', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  h.click(flyoutRow(h, 0, 'Redo'));
+  h.resetPosted();
+  h.key('keydown', { key: 'F2' });
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'F2 opens the inline rename editor for the nested item');
+  const input = editor.querySelector('input.slotEditInput') as any;
+  eq(input.value, 'Redo', 'the editor is prefilled with the nested item’s live caption');
+  ok(!editor.querySelector('select.slotEditType'), 'a NESTED item offers no retype <select> (retype is top-level-only — nested items aren’t in the top-level geometry)');
+  input.value = 'Repeat';
+  h.key('keydown', { key: 'Enter' }, input);
+  const ren = only(h.posted, 'stripRename');
+  eq(ren.length, 1, 'Enter posts exactly one stripRename gesture');
+  eq([ren[0].hostId, ren[0].itemId, ren[0].text], ['strip1', 'redoItem', 'Repeat'], 'the rename carries the owner strip, the nested id, and the new caption');
+  ok(!h.document.querySelector('.slotedit'), 'the editor is dismissed after committing');
+  h.destroy();
+});
+
+test('on-canvas nested edit: double-clicking a nested row opens the rename editor prefilled with its caption', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  h.resetPosted();
+  h.mouse('dblclick', {}, flyoutRow(h, 0, 'Undo'));
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'a nested double-click opens the rename editor');
+  eq((editor.querySelector('input.slotEditInput') as any).value, 'Undo', 'prefilled with the nested caption');
+  h.destroy();
+});
+
+test('on-canvas nested edit: right-clicking a nested row opens a Rename/Delete Item menu; Delete Item posts stripDelete even after the flyout dismisses (build-time capture)', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  const undoRow = flyoutRow(h, 0, 'Undo');
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 10, clientY: 40, button: 2 }, undoRow);
+  ok(h.el('ctxMenu').className.indexOf('open') >= 0, 'the focused item menu opened');
+  ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.renameItem'), 'the nested menu offers Rename');
+  const del = findMenuItem(h, 'ctxMenu', 'designer.menu.deleteItem');
+  ok(!!del, 'the nested menu offers Delete Item');
+  eq(only(h.posted, 'selectItem')[0]?.itemId, 'undoItem', 'the right-click also selected the nested item (its props load)');
+  // The real sequence: a mousedown on the menu item is treated as click-away by the flyout's capture-phase doc listener,
+  // which closes the flyout and clears the LIVE selection BEFORE the click action runs. The menu closures captured the
+  // descriptor at build time, so the delete still fires with the right id (a live-read closure would post nothing).
+  h.mouse('mousedown', {}, del);
+  eq(visibleFlyouts(h).length, 0, 'the menu-item mousedown dismissed the flyout (and cleared the live selection)');
+  h.resetPosted();
+  h.click(del);
+  const sd = only(h.posted, 'stripDelete');
+  eq(sd.length, 1, 'Delete Item posts one stripDelete despite the flyout having closed');
+  eq([sd[0].hostId, sd[0].itemId], ['strip1', 'undoItem'], 'the delete carries the owner strip + the NESTED id from the captured descriptor');
+  h.destroy();
+});
+
+test('on-canvas nested edit: a nested separator is inert (no rename on F2, no right-click menu) and a nested selection never leaks into a control delete', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  const sepRow = visibleFlyouts(h)[0].querySelector('.stripflyoutsep');
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 10, clientY: 40, button: 2 }, sepRow); // a separator is not a row → no menu
+  ok(h.el('ctxMenu').className.indexOf('open') < 0, 'right-clicking a nested separator opens no item menu');
+  // select the separator’s sibling, then a control mousedown dismisses the flyout (capture-phase doc listener) and
+  // clears the nested target — a following Delete must hit the control, not the vanished nested item.
+  h.click(flyoutRow(h, 0, 'Undo'));
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'button1' }), mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.MenuStrip', isStripHost: true })] });
+  eq(visibleFlyouts(h).length, 0, 'a fresh layout closed the flyout');
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'manip', id: 'button1', move: true, resize: true });
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'stripDelete').length, 0, 'no stale nested stripDelete after the flyout dismissed');
+  eq(only(h.posted, 'removeControl')[0]?.id, 'button1', 'Delete now targets the selected control');
+  h.destroy();
+});
+
+test('on-canvas nested edit: a select-click updates the nested highlight IN PLACE (preserves the row element) so a dblclick can fire', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  const undoRow = flyoutRow(h, 0, 'Undo');
+  h.click(undoRow); // a selection-only click must NOT rebuild the flyout (a rebuilt row would break Chromium's dblclick)
+  const afterClick = flyoutRow(h, 0, 'Undo');
+  ok(afterClick === undoRow, 'the same row element survives a select-click (in-place highlight, not a full rebuild)');
+  ok(afterClick.className.indexOf('sel') >= 0, 'the clicked row is highlighted');
+  ok((h.document.querySelector('.stripflyoutrow.sel') as any) === undoRow, 'exactly the clicked row carries the .sel highlight');
+  h.destroy();
+});
+
+test('on-canvas nested edit: right-click → Rename opens the inline editor prefilled AND anchored at the row, even after the flyout dismisses (build-time capture + stored anchor)', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  // stub geometry so the anchor is non-zero (jsdom's getBoundingClientRect returns 0 — the anchor logic would be untested)
+  const wrap = h.el('surfaceWrap') as any;
+  wrap.getBoundingClientRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} });
+  const redoRow = flyoutRow(h, 0, 'Redo') as any;
+  redoRow.getBoundingClientRect = () => ({ left: 120, top: 60, right: 288, bottom: 82, width: 168, height: 22, x: 120, y: 60, toJSON() {} });
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 130, clientY: 65, button: 2 }, redoRow); // selects + measures anchor (ax=120, ay=60)
+  const ren = findMenuItem(h, 'ctxMenu', 'designer.menu.renameItem');
+  ok(!!ren, 'the nested menu offers Rename');
+  h.mouse('mousedown', {}, ren); // the flyout dismisses here (capture-phase doc mousedown) → the live submenuSel is cleared
+  eq(visibleFlyouts(h).length, 0, 'the menu-item mousedown dismissed the flyout');
+  h.click(ren);
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'Rename opens the inline editor from the captured descriptor despite the cleared live selection');
+  eq((editor.querySelector('input.slotEditInput') as any).value, 'Redo', 'the editor is prefilled with the captured nested caption');
+  eq([editor.style.left, editor.style.top], ['120px', '60px'], 'the editor is anchored at the row’s stored surface coords (survives the flyout close)');
+  h.destroy();
+});
+
+test('on-canvas nested ADD ("Type Here" in a submenu): an open level shows a trailing add-slot; clicking it opens the add-editor with the MENU type set; Enter posts stripAdd into the owner submenu', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h); // opens editMenu → [Undo, ───, Redo]; the open level's owner item is editMenu
+  const slot = visibleFlyouts(h)[0].querySelector('.stripflyouttypehere') as any;
+  ok(!!slot, 'the open submenu level shows a trailing Type-Here add-slot');
+  ok(slot.textContent.length > 0, 'the slot carries a caption (the localized "Type Here")');
+  h.resetPosted();
+  h.click(slot);
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'clicking the nested slot opens the inline add-editor');
+  eq(visibleFlyouts(h).length, 0, 'opening the editor closes the flyout (the editor floats at the captured slot anchor)');
+  const sel = editor.querySelector('select.slotEditType') as any;
+  ok(!!sel, 'the nested add-editor has a type <select>');
+  const types = Array.prototype.map.call(sel.options, (o: any) => o.value);
+  eq(types[0], 'ToolStripMenuItem', 'a submenu slot defaults to a menu item');
+  ok(types.indexOf('ToolStripSeparator') >= 0 && types.indexOf('ToolStripButton') < 0, 'the type list is the MENU set (no toolbar-only ToolStripButton)');
+  const input = editor.querySelector('input.slotEditInput') as any;
+  input.value = 'Find';
+  h.key('keydown', { key: 'Enter' }, input);
+  const add = only(h.posted, 'stripAdd');
+  eq(add.length, 1, 'Enter posts exactly one stripAdd');
+  eq([add[0].hostId, add[0].itemType, add[0].text, add[0].parentItemId], ['strip1', 'ToolStripMenuItem', 'Find', 'editMenu'],
+    'the nested add carries the OWNER strip host, the chosen type, the text, and the submenu PARENT id');
+  ok(!h.document.querySelector('.slotedit'), 'the editor dismisses after committing');
+  h.destroy();
+});
+
+test('on-canvas nested ADD: a Separator commits with no text (still keyed by the parent id); an empty caption / Escape cancels', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  let editor = h.document.querySelector('.slotedit') as any;
+  const sel = editor.querySelector('select.slotEditType') as any;
+  sel.value = 'ToolStripSeparator';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  eq((editor.querySelector('input.slotEditInput') as any).style.display, 'none', 'the text input hides for a Separator');
+  h.resetPosted();
+  h.key('keydown', { key: 'Enter' }, editor);
+  const add = only(h.posted, 'stripAdd');
+  eq(add.length, 1, 'a nested separator commits an add');
+  eq([add[0].itemType, add[0].text, add[0].parentItemId], ['ToolStripSeparator', '', 'editMenu'], 'the separator carries no text and the submenu parent id');
+  // re-open the flyout + slot and cancel two ways (Escape, empty caption) — nothing posts
+  h.resetPosted();
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // re-open editMenu
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  (h.document.querySelector('input.slotEditInput') as any).value = 'Discarded';
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  eq(only(h.posted, 'stripAdd').length, 0, 'Escape on a nested add posts nothing');
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // re-open again
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  (h.document.querySelector('input.slotEditInput') as any).value = '   ';
+  h.key('keydown', { key: 'Enter' }, h.document.querySelector('.slotedit'));
+  eq(only(h.posted, 'stripAdd').length, 0, 'a whitespace-only nested caption adds nothing');
+  h.destroy();
+});
+
+test('on-canvas nested ADD: a DEEPER submenu level’s add-slot is keyed by that nested parent id (not the top-level one)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [
+        {
+          ownerId: 'strip1', itemId: 'recentMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Recent',
+          children: [{ ownerId: 'strip1', itemId: 'doc1Item', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Doc1', children: [] }],
+        },
+      ],
+    },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // open File (level 0, owner fileMenu)
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyoutrow'));   // click Recent → opens level 1 (owner recentMenu)
+  eq(visibleFlyouts(h).length, 2, 'a nested level opened');
+  const l0slot = visibleFlyouts(h)[0].querySelector('.stripflyouttypehere') as any;
+  const l1slot = visibleFlyouts(h)[1].querySelector('.stripflyouttypehere') as any;
+  ok(!!l0slot && !!l1slot, 'both open levels show their own add-slot');
+  h.resetPosted();
+  h.click(l1slot);
+  (h.document.querySelector('input.slotEditInput') as any).value = 'Doc2';
+  h.key('keydown', { key: 'Enter' }, h.document.querySelector('.slotedit'));
+  const add = only(h.posted, 'stripAdd');
+  eq(add.length, 1, 'the deeper slot posts one stripAdd');
+  eq([add[0].hostId, add[0].parentItemId], ['strip1', 'recentMenu'], 'the deeper add targets the NESTED parent (recentMenu), keyed by the top-level strip host');
+  h.destroy();
+});
+
+test('on-canvas nested ADD: opening the add-editor drops the parent selection so a later Delete cannot delete the PARENT menu (review wf_192f24c8)', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h); // clicking Edit selected editMenu (selectedItem) AND opened its flyout
+  ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'the parent (editMenu) is selected + highlighted while the flyout is open');
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // open the nested add-editor
+  ok(!!h.document.querySelector('.slotedit'), 'the nested add-editor is open');
+  eq((h.document.querySelector('.stripitemsel') as any)?.style.display ?? 'none', 'none', 'the parent selection/highlight is dropped when the add-editor opens (an add has no delete target)');
+  // dismiss the editor, then a Delete must post NOTHING — before the fix selectedItem still pointed at editMenu, so the
+  // toolbar Delete (not activeElement-guarded) would delete the parent menu + its whole subtree while the user meant to add
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  ok(!h.document.querySelector('.slotedit'), 'Escape dismissed the add-editor');
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'stripDelete').length, 0, 'no stripDelete — the parent menu is not deleted by a Delete after the add-editor closes');
+  h.destroy();
+});
+
+test('on-canvas nested ADD: the add-editor is anchored at the slot’s measured surface coords (measured before the flyout closes)', () => {
+  const h = loadDesigner();
+  setupNestedMenu(h);
+  const wrap = h.el('surfaceWrap') as any;
+  wrap.getBoundingClientRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} });
+  const slot = visibleFlyouts(h)[0].querySelector('.stripflyouttypehere') as any;
+  slot.getBoundingClientRect = () => ({ left: 96, top: 84, right: 264, bottom: 106, width: 168, height: 22, x: 96, y: 84, toJSON() {} });
+  h.click(slot);
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'the add-editor opened');
+  eq(visibleFlyouts(h).length, 0, 'the flyout closed (the anchor was captured before the close)');
+  eq([editor.style.left, editor.style.top], ['96px', '84px'], 'the editor floats at the slot’s measured surface coords');
+  h.destroy();
+});
+
+test('on-canvas nested ADD: a submenu level owned by an ANONYMOUS parent (no field id) shows NO add-slot (a dead splice target is never offered)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [
+        // an anonymous submenu parent (e.g. a DropDownItems.Add(...) with no field) that itself has a child
+        { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Ad-hoc', children: [{ ownerId: 'strip1', itemId: 'kidItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Kid', children: [] }] },
+      ],
+    },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // open File (level 0, owner fileMenu → HAS a slot)
+  ok(!!visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'), 'the field-backed top level (fileMenu) does show a slot');
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyoutrow')); // click the anonymous "Ad-hoc" row → opens its level
+  eq(visibleFlyouts(h).length, 2, 'the anonymous parent still opens a nested level (its child is shown)');
+  eq(visibleFlyouts(h)[1].querySelector('.stripflyouttypehere'), null, 'but that level offers NO add-slot — its owner has no splice id');
+  h.destroy();
+});
+
+// ---- off-tree ContextMenuStrip: its items reached via a synthetic flyout opened from the TRAY chip ----------------
+
+/** Put a component tray on the surface, including one off-tree ContextMenuStrip with its item forest. Returns the
+ *  rendered chip elements (index 0 = the strip). */
+function setupTrayStrip(h: Harness, trayItems: any[]): any[] {
+  h.send({ type: 'render', png: '', width: 300, height: 100, gen: 0 });
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'panel1', type: 'System.Windows.Forms.Panel' })], toolStripItems: [] });
+  h.send({ type: 'tray', items: trayItems });
+  h.resetPosted();
+  return Array.from(h.el('tray').querySelectorAll('.trayItem'));
+}
+/** A ContextMenuStrip tray descriptor with cutItem/pasteItem (Paste has an Options submenu when withSub). */
+function ctxTray(withSub = false): any {
+  const paste: any = { ownerId: 'contextMenuStrip1', itemId: 'pasteItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Paste', children: [] };
+  if (withSub) paste.children = [{ ownerId: 'contextMenuStrip1', itemId: 'optItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Options', children: [] }];
+  return {
+    id: 'contextMenuStrip1', name: 'contextMenuStrip1', type: 'System.Windows.Forms.ContextMenuStrip', isStrip: true,
+    items: [
+      { ownerId: 'contextMenuStrip1', itemId: 'cutItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Cut', children: [] },
+      paste,
+    ],
+  };
+}
+
+test('off-tree ContextMenuStrip (tray): clicking its chip opens a synthetic flyout of its top-level items; the pick→select echo does NOT close it; a row click posts selectItem with the strip host + item id', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray(), { id: 'timer1', name: 'timer1', type: 'System.Windows.Forms.Timer' }]);
+  h.click(chips[0]); // click the ContextMenuStrip chip
+  eq(only(h.posted, 'pick').map((m) => m.id), ['contextMenuStrip1'], 'the chip click still selects the strip (its own props load)');
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 1, 'a single flyout level opens for the off-tree strip');
+  eq(boxes[0].querySelectorAll('.stripflyoutrow').length, 2, 'both top-level items (Cut, Paste) render as rows');
+  // the host echoes a `select` for the strip in response to `pick` — it must NOT snap the just-opened flyout shut
+  h.send({ type: 'select', id: 'contextMenuStrip1' });
+  eq(visibleFlyouts(h).length, 1, 'the select echo for the OWNING strip keeps the flyout open');
+  h.resetPosted();
+  const cutRow = Array.prototype.find.call(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('Cut') >= 0);
+  h.click(cutRow);
+  const sel = only(h.posted, 'selectItem');
+  eq(sel.length, 1, 'clicking an item posts exactly one selectItem');
+  eq([sel[0].hostId, sel[0].itemId], ['contextMenuStrip1', 'cutItem'], 'the selectItem carries the strip host + the item id (item→Properties on an off-tree strip)');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): the ROOT flyout level shows a "Type Here" slot; it uses the MENU type set; Enter posts a TOP-LEVEL stripAdd (no parentItemId) keyed by the strip', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]);
+  const slot = visibleFlyouts(h)[0].querySelector('.stripflyouttypehere') as any;
+  ok(!!slot, 'the off-tree strip’s ROOT level offers a top-level "Type Here" add-slot (isStripRoot)');
+  h.click(slot);
+  const editor = h.document.querySelector('.slotedit') as any;
+  ok(!!editor, 'the add-editor opens');
+  const opts = Array.prototype.map.call(editor.querySelectorAll('select.slotEditType option'), (o: any) => o.value);
+  ok(opts.indexOf('ToolStripMenuItem') >= 0, 'the type set is the MENU set (a ContextMenuStrip holds menu items)');
+  ok(opts.indexOf('ToolStripButton') < 0, 'the toolbar-only ToolStripButton is NOT offered for a ContextMenuStrip');
+  const input = editor.querySelector('input.slotEditInput') as any;
+  input.value = 'Copy';
+  h.key('keydown', { key: 'Enter' }, input);
+  const add = only(h.posted, 'stripAdd');
+  eq(add.length, 1, 'Enter posts one stripAdd');
+  eq([add[0].hostId, add[0].text], ['contextMenuStrip1', 'Copy'], 'the add is keyed by the ContextMenuStrip with the typed caption');
+  eq(add[0].parentItemId, undefined, 'a ROOT-level add carries NO parentItemId (it appends to the strip’s TOP level, not a submenu)');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): a nested submenu opens a deeper level whose add-slot IS keyed by the nested parent; a root row renames/deletes keyed by the strip', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray(true)]); // Paste has an Options submenu
+  h.click(chips[0]);
+  const pasteRow = Array.prototype.find.call(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('Paste') >= 0);
+  ok(!!pasteRow.querySelector('.stripflyoutarrow'), 'the Paste row shows a submenu arrow');
+  h.click(pasteRow); // opens the nested level (owner pasteItem)
+  eq(visibleFlyouts(h).length, 2, 'clicking the parent opens a nested level');
+  const l1slot = visibleFlyouts(h)[1].querySelector('.stripflyouttypehere') as any;
+  ok(!!l1slot, 'the nested level offers its own add-slot');
+  h.click(l1slot);
+  h.document.querySelector('.slotedit input.slotEditInput').value = 'Deep';
+  h.key('keydown', { key: 'Enter' }, h.document.querySelector('.slotedit input.slotEditInput'));
+  const nestedAdd = only(h.posted, 'stripAdd').pop();
+  eq([nestedAdd.hostId, nestedAdd.parentItemId], ['contextMenuStrip1', 'pasteItem'], 'a NESTED add is keyed by the strip host + the nested parent id (grows pasteItem.DropDownItems)');
+  h.resetPosted();
+  // select a ROOT row and delete it → stripDelete keyed by the strip
+  h.click(chips[0]); // re-open (the add commit closed the flyout in real life; here just re-open cleanly)
+  const cutRow = Array.prototype.find.call(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('Cut') >= 0);
+  h.click(cutRow);          // select cutItem (submenuSel)
+  h.key('keydown', { key: 'Delete' });
+  const del = only(h.posted, 'stripDelete');
+  eq(del.length, 1, 'Delete on a selected root row posts stripDelete');
+  eq([del[0].hostId, del[0].itemId], ['contextMenuStrip1', 'cutItem'], 'the delete is keyed by the strip host + the item id');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): a non-strip chip (Timer, no items) opens NO flyout; a select for a DIFFERENT control closes an open tray-strip flyout', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray(), { id: 'timer1', name: 'timer1', type: 'System.Windows.Forms.Timer' }]);
+  h.click(chips[1]); // the Timer chip — no items
+  eq(visibleFlyouts(h).length, 0, 'a non-strip tray chip opens no flyout');
+  const chips2 = Array.from(h.el('tray').querySelectorAll('.trayItem')) as any[];
+  h.click(chips2[0]); // open the ContextMenuStrip flyout
+  eq(visibleFlyouts(h).length, 1, 'the strip chip opens the flyout');
+  h.send({ type: 'select', id: 'panel1' }); // selecting a DIFFERENT control supersedes the flyout
+  eq(visibleFlyouts(h).length, 0, 'a select for another control closes the tray-strip flyout');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): a STALE select echo for a previously-clicked strip does not close the flyout now open for a DIFFERENT strip (rapid chip-to-chip switch)', () => {
+  const h = loadDesigner();
+  const stripA = ctxTray(); stripA.id = 'ctxA'; stripA.name = 'ctxA'; stripA.items.forEach((it: any) => (it.ownerId = 'ctxA'));
+  const stripB = ctxTray(); stripB.id = 'ctxB'; stripB.name = 'ctxB'; stripB.items.forEach((it: any) => (it.ownerId = 'ctxB'));
+  const chips = setupTrayStrip(h, [stripA, stripB]);
+  h.click(chips[0]); // open A's flyout
+  const chips2 = Array.from(h.el('tray').querySelectorAll('.trayItem')) as any[];
+  h.click(chips2[1]); // rapidly switch to B (mousedown closed A, click opened B)
+  eq(visibleFlyouts(h).length, 1, 'B’s flyout is open after the switch');
+  // now the STALE pick→select echo for A arrives (host processed pick A before pick B) — it must NOT close B’s flyout
+  h.send({ type: 'select', id: 'ctxA' });
+  eq(visibleFlyouts(h).length, 1, 'the stale select for the PREVIOUS strip leaves B’s flyout open (findTray guard, not exact-owner)');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): the flyout anchors at the VISIBLE surface top-left — the stage→surfaceWrap mapping (not the 8px zero-rect fallback)', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  // simulate a scrolled surface: surfaceWrap's top-left is left/above the stage's visible top-left. The flyout must
+  // anchor at the VISIBLE top-left (stage) mapped into surfaceWrap surface coords + the inset, NOT the form's (0,0).
+  const rect = (left: number, top: number): any => ({ left, top, right: left, bottom: top, width: 0, height: 0, x: left, y: top, toJSON() {} });
+  (h.el('surfaceWrap') as any).getBoundingClientRect = () => rect(0, 0);
+  (h.el('stage') as any).getBoundingClientRect = () => rect(40, 24); // stage visible top-left is 40,24 into the wrap
+  h.click(chips[0]);
+  const box = visibleFlyouts(h)[0];
+  // ax = max(8, (40-0)/1 + 8) = 48; ay = max(8, (24-0)/1 + 8) = 32 (zoom 1). If the mapping regressed to the zero-rect
+  // fallback the box would sit at 8px/8px — this asserts the real formula runs.
+  eq([box.style.left, box.style.top], ['48px', '32px'], 'the flyout anchors at the mapped visible top-left + inset, not the (8,8) fallback');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): the flyout anchor divides the stage→wrap offset by zoom — at 2× the box moves by the SCALED surface offset, not raw display px (codex — zoom transform coverage)', () => {
+  const h = loadDesigner();
+  setupTrayStrip(h, [ctxTray()]);
+  h.click(h.el('zoomIn')); h.click(h.el('zoomIn')); h.click(h.el('zoomIn')); h.click(h.el('zoomIn')); // 1 → 1.1 → 1.25 → 1.5 → 2
+  eq(h.state.zoom, 2, 'four zoomIn steps land exactly on 2× (guards the fixture, not the product)');
+  const rect = (left: number, top: number): any => ({ left, top, right: left, bottom: top, width: 0, height: 0, x: left, y: top, toJSON() {} });
+  (h.el('surfaceWrap') as any).getBoundingClientRect = () => rect(0, 0);
+  (h.el('stage') as any).getBoundingClientRect = () => rect(40, 24);
+  const chips2 = Array.from(h.el('tray').querySelectorAll('.trayItem')) as any[];
+  h.click(chips2[0]);
+  const box = visibleFlyouts(h)[0];
+  // ax = max(8, (40-0)/2 + 8) = 28 surface px; box.left = ax × zoom = 56px.  ay = max(8, (24-0)/2 + 8) = 20; box.top = 40px.
+  // If the `/zoom` were dropped, ax = max(8, 40+8) = 48 and box.left = 96px — this asserts the divide-then-remultiply runs.
+  eq([box.style.left, box.style.top], ['56px', '40px'], 'the anchor scales the visible-offset by 1/zoom before re-multiplying by zoom — not raw display px');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): opening the ROOT add-editor disarms Delete so the strip echo (while the editor is open) cannot remove the whole ContextMenuStrip (review wf_6b3ffa70 + codex token correlation)', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]); // selects contextMenuStrip1 as the CONTROL AND opens the flyout; posts pick(strip, token)
+  const tok = (only(h.posted, 'pick').slice(-1)[0] as any).token; // the chip pick's correlation token
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // open the ROOT "Type Here" add-editor
+  ok(!!h.document.querySelector('.slotedit'), 'the root add-editor is open');
+  // before the fix, openSlotEditor cleared only selectedItem, leaving the strip as the selected CONTROL — the toolbar
+  // Delete (not activeElement-guarded) would then removeControl(the whole ContextMenuStrip). openSlotEditor now clears
+  // selection/current AND arms suppression of the strip's OWN pick echo BY ITS TOKEN. Inject that exact echo (same token)
+  // while the editor is open — it must not restore selection=[strip] and re-arm the Delete.
+  h.send({ type: 'select', id: 'contextMenuStrip1', token: tok });
+  ok(!!h.document.querySelector('.slotedit'), 'the strip echo leaves the add-editor open');
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  ok(!h.document.querySelector('.slotedit'), 'Escape dismissed the add-editor');
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControl').length, 0, 'no removeControl — the add-editor disarmed the strip Delete and its own echo (matched by token) did not re-arm it');
+  eq(only(h.posted, 'removeControls').length, 0, 'and no multi-remove either');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): the strip echo arriving AFTER the add-editor is dismissed still cannot re-arm Delete — matched by token, not editor lifetime (codex P1 — late echo)', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]);
+  const tok = (only(h.posted, 'pick').slice(-1)[0] as any).token;
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // arms suppression for THIS pick's token
+  ok(!!h.document.querySelector('.slotedit'), 'the root add-editor is open');
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  ok(!h.document.querySelector('.slotedit'), 'Escape dismissed the add-editor FIRST');
+  // the slow chip echo lands NOW, after the editor closed. A `!slotEditEl` lifetime guard (null by now) would restore
+  // selection=[strip] and re-arm Delete; token correlation still matches this exact echo, so the strip stays unselected.
+  h.send({ type: 'select', id: 'contextMenuStrip1', token: tok });
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControl').length, 0, 'no removeControl — the LATE echo, matched by token, did not re-arm the strip Delete');
+  eq(only(h.posted, 'removeControls').length, 0, 'and no multi-remove either');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): a DIFFERENT control’s (token-less) select applies while the editor is open, and a later delayed strip echo does NOT overwrite it (codex P2 + "B then delayed A")', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]); // pick(strip, tok)
+  const tok = (only(h.posted, 'pick').slice(-1)[0] as any).token;
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // arms suppression for the strip's tok
+  ok(!!h.document.querySelector('.slotedit'), 'the root add-editor is open');
+  // panel1 is picked in the Properties outline (another webview) — a host-authoritative select with NO token → applies.
+  h.send({ type: 'select', id: 'panel1' });
+  // the strip's OWN delayed echo lands AFTER → suppressed by token, so it cannot overwrite panel1 and re-arm the strip Delete.
+  h.send({ type: 'select', id: 'contextMenuStrip1', token: tok });
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit')); // close the (now orphaned) editor
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControl')[0]?.id, 'panel1', 'panel1 was applied and NOT overwritten by the delayed strip echo → Delete targets panel1');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): a `layout` (net48 live edit / skipReselect render — no trailing select) between the add-editor and the delayed strip echo does NOT disarm the token suppression (codex — layout-disarm)', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]);
+  const tok = (only(h.posted, 'pick').slice(-1)[0] as any).token;
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // arms suppression for tok
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  // an authoritative re-render (e.g. a net48 live property edit, or a skipReselect ToolStrip commit) posts a `layout`
+  // with NO trailing `select`. Treating that as proof the pending echo is obsolete would re-open the P1 hole, so the
+  // token arm must survive a `layout`.
+  h.send({ type: 'layout', controls: [], toolStripItems: [] });
+  h.send({ type: 'select', id: 'contextMenuStrip1', token: tok }); // the delayed echo, AFTER the layout
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControl').length, 0, 'no removeControl — the intervening layout did not disarm the token suppression');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): when the strip echo already arrived BEFORE the add-editor opened, a later genuine re-select of the SAME strip is NOT swallowed (codex — same-owner leak)', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]); // pick(strip, tok)
+  const tok = (only(h.posted, 'pick').slice(-1)[0] as any).token;
+  h.send({ type: 'select', id: 'contextMenuStrip1', token: tok }); // the echo arrives promptly → retires the pending pick
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // NOW open the add-editor: no pending pick → arms nothing
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit'));
+  // the user genuinely re-selects the ContextMenuStrip (a fresh pick / a host select). An id-only suppression would have
+  // wrongly swallowed this same-owner select; token correlation does not — this is a real selection, so it applies.
+  h.send({ type: 'select', id: 'contextMenuStrip1' });
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControl')[0]?.id, 'contextMenuStrip1', 'the genuine re-select applied → Delete targets the strip (the same-owner select was NOT swallowed)');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): opening a SECOND strip’s add-editor before the FIRST strip’s echo returns keeps BOTH arms — the first strip’s delayed echo cannot re-arm its Delete (codex — multi-editor / cross-strip race)', () => {
+  const h = loadDesigner();
+  const stripA = ctxTray(); stripA.id = 'ctxA'; stripA.name = 'ctxA'; stripA.items.forEach((it: any) => (it.ownerId = 'ctxA'));
+  const stripB = ctxTray(); stripB.id = 'ctxB'; stripB.name = 'ctxB'; stripB.items.forEach((it: any) => (it.ownerId = 'ctxB'));
+  const chips = setupTrayStrip(h, [stripA, stripB]);
+  h.click(chips[0]); // pick(ctxA, tokA) — echo NOT delivered yet
+  const tokA = (only(h.posted, 'pick').filter((m: any) => m.id === 'ctxA').slice(-1)[0] as any).token;
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // open A's add-editor → arms tokA
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit')); // cancel A's editor (tokA still armed, echo pending)
+  const chips2 = Array.from(h.el('tray').querySelectorAll('.trayItem')) as any[];
+  h.click(chips2[1]); // pick(ctxB, tokB) — opens B's flyout
+  const tokB = (only(h.posted, 'pick').filter((m: any) => m.id === 'ctxB').slice(-1)[0] as any).token;
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // open B's add-editor → arms tokB; a SCALAR would drop tokA here
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit')); // cancel B's editor
+  ok(tokA !== tokB, 'the two picks carry distinct tokens');
+  // NOW A's long-delayed echo finally lands. A scalar arm (overwritten by tokB) would select ctxA and re-arm its Delete;
+  // the SET still holds tokA → suppressed.
+  h.send({ type: 'select', id: 'ctxA', token: tokA });
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControl').length, 0, 'no removeControl — the first strip’s delayed echo stayed suppressed (the SET kept tokA when tokB armed)');
+  eq(only(h.posted, 'removeControls').length, 0, 'and no multi-remove either');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): cancel+reopen the SAME strip’s add-editor before its first echo returns — the first delayed echo still cannot re-arm Delete (codex — re-entrant editor)', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]); // pick(strip, tok1)
+  const tok1 = (only(h.posted, 'pick').slice(-1)[0] as any).token;
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // open editor → arms tok1
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit')); // cancel
+  const chips2 = Array.from(h.el('tray').querySelectorAll('.trayItem')) as any[];
+  h.click(chips2[0]); // re-pick the SAME chip → pick(strip, tok2), reopens the flyout
+  const tok2 = (only(h.posted, 'pick').slice(-1)[0] as any).token;
+  ok(tok2 !== tok1, 'the re-pick carries a fresh token');
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere')); // open editor again → arms tok2; tok1 still armed (its echo is pending)
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit')); // cancel
+  // the FIRST editor's still-in-flight echo (tok1) lands now. A scalar arm (overwritten by tok2) would re-arm Delete.
+  h.send({ type: 'select', id: 'contextMenuStrip1', token: tok1 });
+  h.resetPosted();
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControl').length, 0, 'no removeControl — the first editor’s delayed echo (tok1) stayed suppressed');
+  h.destroy();
+});
+
+test('on-canvas MenuStrip: a SUPPRESSED strip echo is a true no-op — it does NOT clear a strip-item highlight the user selected meanwhile (codex — suppressed select side-effects)', () => {
+  const h = loadDesigner();
+  const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip'); // strip1 + existingItem + a trailing Type-Here slot
+  h.mouse('click', { offsetX: 200, offsetY: 15 }, h.el('surface')); // pick the strip control (empty area) → pick(strip1, tok)
+  const tok = (only(h.posted, 'pick').slice(-1)[0] as any).token;
+  h.click(slot); // open the strip's Type Here add-editor → arms tok
+  ok(!!h.document.querySelector('.slotedit'), 'the add-editor is open');
+  h.key('keydown', { key: 'Escape' }, h.document.querySelector('.slotedit')); // cancel (tok stays armed, its echo pending)
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // select existingItem → the item highlight turns on
+  ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'the strip item is highlighted');
+  // the strip's stale (armed) pick echo lands now. Suppressed → a TRUE no-op: before the fix the handler cleared
+  // selectedItem BEFORE deciding suppression, wiping the highlight of whatever the user selected meanwhile.
+  h.send({ type: 'select', id: 'strip1', token: tok });
+  ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'the suppressed echo did NOT clear the item highlight (no-op)');
+  // and the arm was consumed (one-shot): a subsequent NORMAL token-less host select still supersedes the item highlight.
+  h.send({ type: 'select', id: 'strip1' });
+  eq((h.document.querySelector('.stripitemsel') as any).style.display, 'none', 'a normal token-less host select still clears the item highlight');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): a hand-authored anonymous item (no field id, no children) renders INERT — not a live-looking dead click (review wf_6b3ffa70)', () => {
+  const h = loadDesigner();
+  const strip = ctxTray();
+  strip.items.push({ ownerId: 'contextMenuStrip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Ad-hoc', children: [] }); // Items.Add("Ad-hoc")
+  const chips = setupTrayStrip(h, [strip]);
+  h.click(chips[0]);
+  const rows = Array.from(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow')) as any[];
+  const anon = rows.find((r) => r.textContent.indexOf('Ad-hoc') >= 0);
+  ok(!!anon, 'the anonymous item still renders as a row (menu structure stays visible)');
+  ok((anon.className as string).indexOf('inert') >= 0, 'but it is marked inert (dimmed, no pointer/hover)');
+  h.resetPosted();
+  h.click(anon);
+  eq(only(h.posted, 'selectItem').length, 0, 'clicking the inert anonymous row posts nothing (no dead affordance)');
+  const cutRow = rows.find((r) => r.textContent.indexOf('Cut') >= 0);
+  ok((cutRow.className as string).indexOf('inert') < 0, 'a field-backed sibling (Cut) stays interactive');
+  // selecting a sibling triggers updateSubmenuSelClasses (an in-place className rebuild) — it must PRESERVE the inert
+  // predicate, else the dead anonymous row regains hover/cursor and looks clickable again (codex review P3).
+  h.click(cutRow);
+  ok((anon.className as string).indexOf('inert') >= 0, 'the anonymous row STAYS inert after a sibling selection (className rebuild preserves inert)');
+  h.destroy();
+});
+
+test('off-tree ContextMenuStrip (tray): an EMPTY strip (isStrip, no items) still opens a flyout with just a "Type Here" add-first-item slot; a non-strip chip with an identical empty items list opens NOTHING', () => {
+  const h = loadDesigner();
+  const empty = { id: 'contextMenuStrip1', name: 'contextMenuStrip1', type: 'System.Windows.Forms.ContextMenuStrip', isStrip: true, items: [] };
+  const timer = { id: 'timer1', name: 'timer1', type: 'System.Windows.Forms.Timer', items: [] }; // non-strip: same empty items, no isStrip
+  const chips = setupTrayStrip(h, [empty, timer]);
+  h.click(chips[0]); // the EMPTY strip chip
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 1, 'the empty strip still opens its root flyout level');
+  eq(boxes[0].querySelectorAll('.stripflyoutrow').length, 0, 'no item rows (the strip has no items yet)');
+  ok(!!boxes[0].querySelector('.stripflyouttypehere'), 'but the ROOT "Type Here" add-first-item slot is present (the only way to seed an empty strip)');
+  const chips2 = Array.from(h.el('tray').querySelectorAll('.trayItem')) as any[];
+  h.click(chips2[1]); // the Timer chip — identical empty items, but NOT a strip
+  eq(visibleFlyouts(h).length, 0, 'a non-strip chip opens nothing — the isStrip flag distinguishes it (items.length alone can\'t)');
+  h.destroy();
+});
+
+/** The reopenToken the canvas stamped on its LAST posted stripAdd (undefined when it armed no auto-re-open). */
+function lastReopenToken(h: Harness): number | undefined {
+  const adds = only(h.posted, 'stripAdd') as any[];
+  return adds.length ? adds[adds.length - 1].reopenToken : undefined;
+}
+
+test('auto-reopen: committing a ROOT "Type Here" add on a tray strip RE-OPENS the flyout on the token-matched stripAddDone (not the ambient tray)', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]);
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  const input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'Copy';
+  h.key('keydown', { key: 'Enter' }, input); // posts stripAdd (carrying a reopenToken); the editor + flyout close
+  const tok = lastReopenToken(h);
+  ok(typeof tok === 'number', 'a ROOT add stamps the stripAdd with a reopenToken (it armed a re-open)');
+  eq(visibleFlyouts(h).length, 0, 'the flyout is closed right after the commit');
+  // the host commits + re-renders (render → layout → tray) THEN posts stripAddDone once the outcome is known.
+  const grown = ctxTray();
+  grown.items.push({ ownerId: 'contextMenuStrip1', itemId: 'copyItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Copy', children: [] });
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'panel1', type: 'System.Windows.Forms.Panel' })], toolStripItems: [] });
+  h.send({ type: 'tray', items: [grown] });
+  eq(visibleFlyouts(h).length, 0, 'the ambient tray alone does NOT re-open (the correlated stripAddDone drives it, not tray)');
+  h.send({ type: 'stripAddDone', token: tok, ok: true });
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 1, 'the flyout auto-re-opened on the matching stripAddDone');
+  ok(Array.from(boxes[0].querySelectorAll('.stripflyoutrow')).some((r: any) => r.textContent.indexOf('Copy') >= 0), 'the newly added item (Copy) is now visible in the re-opened flyout');
+  h.destroy();
+});
+
+test('auto-reopen: committing an add in a menu-bar item’s submenu RE-OPENS that submenu on the matching stripAddDone (keyed by the top-level item id)', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [{ ownerId: 'strip1', itemId: 'openItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Open', children: [] }] },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // open File's submenu
+  eq(visibleFlyouts(h).length, 1, 'File’s submenu opened');
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  const input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'Close';
+  h.key('keydown', { key: 'Enter' }, input);
+  const add = only(h.posted, 'stripAdd').pop() as any;
+  eq([add.hostId, add.parentItemId], ['strip1', 'fileMenu'], 'the add grows fileMenu.DropDownItems');
+  ok(typeof add.reopenToken === 'number', 'the submenu-root add arms a re-open');
+  eq(visibleFlyouts(h).length, 0, 'the submenu closed on commit');
+  const strip = mkCtrl({ id: 'strip1', type: 'System.Windows.Forms.MenuStrip', x: 8, y: 8, width: 284, height: 24, isStripHost: true });
+  const grown = [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [
+        { ownerId: 'strip1', itemId: 'openItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Open', children: [] },
+        { ownerId: 'strip1', itemId: 'closeItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Close', children: [] },
+      ] },
+  ];
+  h.send({ type: 'layout', controls: [strip], toolStripItems: grown });
+  h.send({ type: 'tray', items: [] });
+  h.send({ type: 'stripAddDone', token: add.reopenToken, ok: true });
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 1, 'File’s submenu auto-re-opened on the matching stripAddDone');
+  ok(Array.from(boxes[0].querySelectorAll('.stripflyoutrow')).some((r: any) => r.textContent.indexOf('Close') >= 0), 'the new item (Close) is visible in the re-opened submenu');
+  h.destroy();
+});
+
+test('auto-reopen: a CANCELLED add (Escape) arms nothing — no stripAdd, and a stray stripAddDone does not re-open', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]);
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  const input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'Copy';
+  h.key('keydown', { key: 'Escape' }, input); // cancel — no stripAdd
+  eq(only(h.posted, 'stripAdd').length, 0, 'Escape posts no add');
+  h.send({ type: 'stripAddDone', token: 1, ok: true }); // a stray/unmatched done can't re-open (nothing armed)
+  eq(visibleFlyouts(h).length, 0, 'no flyout re-opens after a cancelled add (only a committed add arms the re-open)');
+  h.destroy();
+});
+
+test('auto-reopen (deeper-than-root): a DEEPER-level add arms a re-open with a saved path — on the matching stripAddDone the flyout re-opens BOTH levels and the new nested item is visible', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray(true)]); // Paste has an Options submenu (a nested level exists)
+  h.click(chips[0]);
+  const pasteRow = Array.prototype.find.call(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('Paste') >= 0);
+  h.click(pasteRow); // open the nested level (level 1)
+  eq(visibleFlyouts(h).length, 2, 'the nested level is open');
+  h.click(visibleFlyouts(h)[1].querySelector('.stripflyouttypehere')); // add-slot at level 1
+  const input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'Deep';
+  h.key('keydown', { key: 'Enter' }, input);
+  const add = only(h.posted, 'stripAdd').pop() as any;
+  eq(add.parentItemId, 'pasteItem', 'the nested add targets the deeper parent');
+  ok(typeof add.reopenToken === 'number', 'a deeper-level add now ALSO arms a re-open (a token is stamped)');
+  eq(visibleFlyouts(h).length, 0, 'the flyout closed on commit');
+  // the host commits + re-renders → a fresh tray carrying the grown pasteItem (Options + the new Deep), then stripAddDone
+  const grownTray = {
+    id: 'contextMenuStrip1', name: 'contextMenuStrip1', type: 'System.Windows.Forms.ContextMenuStrip', isStrip: true,
+    items: [
+      { ownerId: 'contextMenuStrip1', itemId: 'cutItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Cut', children: [] },
+      { ownerId: 'contextMenuStrip1', itemId: 'pasteItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Paste', children: [
+        { ownerId: 'contextMenuStrip1', itemId: 'optItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Options', children: [] },
+        { ownerId: 'contextMenuStrip1', itemId: 'deepItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Deep', children: [] },
+      ] },
+    ],
+  };
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'panel1', type: 'System.Windows.Forms.Panel' })], toolStripItems: [] });
+  h.send({ type: 'tray', items: [grownTray] });
+  h.send({ type: 'stripAddDone', token: add.reopenToken, ok: true });
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 2, 'the deeper add re-opened BOTH levels (root + the nested submenu) by replaying the saved path');
+  ok(Array.from(boxes[1].querySelectorAll('.stripflyoutrow')).some((r: any) => r.textContent.indexOf('Deep') >= 0), 'the new nested item (Deep) is visible in the re-opened deep level');
+  h.destroy();
+});
+
+test('auto-reopen (codex #1): a REJECTED add (stripAddDone ok:false) clears the arm — no later render can resurrect the flyout', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]);
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  const input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'Copy';
+  h.key('keydown', { key: 'Enter' }, input);
+  const tok = lastReopenToken(h) as number;
+  ok(typeof tok === 'number', 'the add armed a re-open');
+  // the host REJECTS the add (docChanged / unsafe splice / vanished owner) → stripAddDone ok:false, NO fresh render
+  h.send({ type: 'stripAddDone', token: tok, ok: false });
+  eq(visibleFlyouts(h).length, 0, 'a rejected add does NOT re-open the flyout');
+  // a LATER unrelated render must not resurrect it — the arm was already consumed by the ok:false
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'panel1', type: 'System.Windows.Forms.Panel' })], toolStripItems: [] });
+  h.send({ type: 'tray', items: [ctxTray()] });
+  h.send({ type: 'stripAddDone', token: tok, ok: true }); // even a duplicated (now-stale) success can't re-arm it
+  eq(visibleFlyouts(h).length, 0, 'no stale flyout appears on an unrelated later render (the arm is gone after ok:false)');
+  h.destroy();
+});
+
+test('auto-reopen (codex #2): overlapping adds — a stripAddDone for a SUPERSEDED add does not re-open; only the newest token does', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [ctxTray()]);
+  h.click(chips[0]);
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  let input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'A';
+  h.key('keydown', { key: 'Enter' }, input);       // add A → token tA (arms slotReopen)
+  const tA = lastReopenToken(h) as number;
+  // the user re-opens the flyout and commits a SECOND add B before A's round-trip finishes → B overwrites the single arm
+  const chips2 = Array.from(h.el('tray').querySelectorAll('.trayItem')) as any[];
+  h.click(chips2[0]);
+  h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+  input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+  input.value = 'B';
+  h.key('keydown', { key: 'Enter' }, input);       // add B → token tB
+  const tB = lastReopenToken(h) as number;
+  ok(typeof tB === 'number' && tB !== tA, 'each add mints a distinct token');
+  // A's LATE stripAddDone arrives against A's (stale, B-less) forest — its token no longer matches the armed (B) one
+  h.send({ type: 'tray', items: [ctxTray()] }); // A's forest — no B item
+  h.send({ type: 'stripAddDone', token: tA, ok: true });
+  eq(visibleFlyouts(h).length, 0, 'the superseded add A does NOT re-open (its token no longer matches the armed B) — no stale-forest flyout');
+  // B's stripAddDone re-opens against B's fresh forest
+  const grownB = ctxTray();
+  grownB.items.push({ ownerId: 'contextMenuStrip1', itemId: 'bItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Bee', children: [] });
+  h.send({ type: 'tray', items: [grownB] });
+  h.send({ type: 'stripAddDone', token: tB, ok: true });
+  const boxes = visibleFlyouts(h);
+  eq(boxes.length, 1, 'B (the newest arm) re-opens on its matching token');
+  ok(Array.from(boxes[0].querySelectorAll('.stripflyoutrow')).some((r: any) => r.textContent.indexOf('Bee') >= 0), 'B’s new item is visible in the re-opened flyout');
+  h.destroy();
+});
+
+test('auto-reopen (codex #2 lifecycle): each page load seeds a DISTINCT token epoch, so an in-flight completion cannot match a NEW page (after a webview rebuild) and reopen the wrong flyout', () => {
+  // Reproduces the cross-rebuild collision: a 0-based reopenSeq would restart at the same value on every HTML reload,
+  // so an old page's token N could match a rebuilt page's arm N. Seeding from a random per-load base makes two page
+  // loads mint tokens from different epochs (collision ~1e-9). Two fresh harnesses = two page loads.
+  const firstToken = (): number => {
+    const h = loadDesigner();
+    const chips = setupTrayStrip(h, [ctxTray()]);
+    h.click(chips[0]);
+    h.click(visibleFlyouts(h)[0].querySelector('.stripflyouttypehere'));
+    const input = h.document.querySelector('.slotedit input.slotEditInput') as any;
+    input.value = 'X';
+    h.key('keydown', { key: 'Enter' }, input);
+    const t = lastReopenToken(h) as number;
+    h.destroy();
+    return t;
+  };
+  const a = firstToken(), b = firstToken();
+  ok(typeof a === 'number' && typeof b === 'number', 'both page loads mint a numeric token');
+  ok(a !== b, 'two independent page loads mint tokens from different epochs (a rebuild can’t reuse an in-flight token)');
+});
+
+test('tab-host context menu: Add Tab / Delete Tab labels come from the i18n catalog (localized, not hardcoded literals)', () => {
+  const h = loadDesigner();
+  h.send({ type: 'render', png: '', width: 300, height: 200, gen: 0 });
+  h.send({ type: 'layout', controls: [
+    mkCtrl({ id: 'tabControl1', name: 'tabControl1', type: 'System.Windows.Forms.TabControl', x: 8, y: 8, width: 200, height: 150, isTabHost: true }),
+    mkCtrl({ id: 'tabPage1', name: 'tabPage1', type: 'System.Windows.Forms.TabPage', parentId: 'tabControl1', x: 12, y: 30, width: 190, height: 120 }),
+  ] });
+  h.resetPosted();
+  // right-click the tab HEADER area (y=15 is above the page at y=30) so the hit-test lands on the tab host, not the page
+  h.mouse('contextmenu', { clientX: 40, clientY: 15, button: 2 }, h.el('surfaceWrap'));
+  ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.addTab'), 'the Add-Tab item is keyed by designer.menu.addTab (localizable — was a hardcoded "Add Tab")');
+  ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.deleteTabNamed'), 'the Delete-Tab item is keyed by designer.menu.deleteTabNamed with the active page name (was a hardcoded literal)');
   h.destroy();
 });
 
@@ -898,6 +2012,81 @@ test('panel cursor editor (Tier 4): a Cursor property renders an editable dropdo
   const edits = only(h.posted, 'edit');
   eq(edits.length, 1, 'one edit posted');
   eq([edits[0].prop, edits[0].value, edits[0].propType], ['Cursor', 'Hand', 'System.Windows.Forms.Cursor'], 'edit carries the picked cursor NAME + Cursor type (engine converts to Cursors.Hand)');
+  h.destroy();
+});
+
+test('panel component-reference dropdown (Tier 4): a referenceValues prop renders an exclusive <select> pre-selected on the field name; edits tag refEdit (pick + clear)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'this',
+    name: 'Form1',
+    type: 'System.Windows.Forms.Form',
+    properties: [
+      prop('AcceptButton', {
+        type: 'System.Windows.Forms.IButtonControl', // NOT an editable literal type — the referenceValues flag is what makes it editable
+        value: 'okButton',
+        standardValues: ['(none)', 'cancelButton', 'okButton'],
+        standardValuesExclusive: true,
+        referenceValues: true,
+        sourceExplicit: true,
+        isDefault: false,
+        category: 'Misc',
+      }),
+    ],
+    events: [],
+  });
+  const sel = findPropRow(h, 'AcceptButton').querySelector('select');
+  ok(!!sel, 'a component-reference property renders an exclusive <select> (referenceValues makes a non-literal type editable)');
+  eq(sel.value, 'okButton', 'the dropdown pre-selects the current reference FIELD NAME (engine overrode the un-sited converter value)');
+  // pick a different sibling → the edit carries the field name + refEdit so the host writes `this.cancelButton`
+  sel.value = 'cancelButton';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  let edits = only(h.posted, 'edit');
+  eq(edits.length, 1, 'one edit posted on the pick');
+  eq([edits[0].prop, edits[0].value, edits[0].refEdit], ['AcceptButton', 'cancelButton', true], 'the pick posts the field name + refEdit (host writes this.cancelButton)');
+  // clear to "(none)" → still tagged refEdit so the host writes null
+  h.resetPosted();
+  sel.value = '(none)';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  edits = only(h.posted, 'edit');
+  eq([edits[0].value, edits[0].refEdit], ['(none)', true], 'clearing posts "(none)" + refEdit (host writes null)');
+  h.destroy();
+});
+
+test('panel component-reference ROOT token (Tier 4): a [(none), (this)] dropdown pre-selects "(this)"; picking it posts value "(this)" + refEdit (host splices bare `this`)', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'errorProvider1',
+    name: 'errorProvider1',
+    type: 'System.Windows.Forms.ErrorProvider',
+    properties: [
+      prop('ContainerControl', {
+        type: 'System.Windows.Forms.ContainerControl', // non-literal — referenceValues makes it editable
+        value: '(this)', // the engine pre-selects the synthetic root token (current value is the root form)
+        standardValues: ['(none)', '(this)'],
+        standardValuesExclusive: true,
+        referenceValues: true,
+        sourceExplicit: true,
+        isDefault: false,
+        category: 'Misc',
+      }),
+    ],
+    events: [],
+  });
+  const sel = findPropRow(h, 'ContainerControl').querySelector('select');
+  ok(!!sel, 'a ROOT-reference property renders an exclusive <select>');
+  eq(sel.value, '(this)', 'the dropdown pre-selects the synthetic "(this)" root token');
+  // clear to "(none)" → refEdit so the host writes null
+  sel.value = '(none)';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  let edits = only(h.posted, 'edit');
+  eq([edits[0].prop, edits[0].value, edits[0].refEdit], ['ContainerControl', '(none)', true], 'clearing the root ref posts "(none)" + refEdit');
+  // re-pick "(this)" → refEdit so the host splices a bare `this`
+  h.resetPosted();
+  sel.value = '(this)';
+  sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  edits = only(h.posted, 'edit');
+  eq([edits[0].value, edits[0].refEdit], ['(this)', true], 'picking the root token posts "(this)" + refEdit (host splices bare `this`)');
   h.destroy();
 });
 
@@ -1402,14 +2591,57 @@ test('item→Properties: after an item is deleted, a bare props(control) for the
   h.destroy();
 });
 
-test('item→Properties: Reset is disabled while an item is shown (resetProperty carries no ownerId — item reset is a follow-up)', () => {
+test('item→Properties: Reset works for an EDITABLE item — posts resetProperty tagged with ownerId (routes to the item-reset path)', () => {
   const h = loadPanel();
   h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp() });
   h.mouse('contextmenu', { clientX: 5, clientY: 5 }, findPropRow(h, 'Text').querySelector('td.name'));
   const reset = h.el('tbMenu').querySelector('.mi');
-  ok(!!reset && reset.className.indexOf('disabled') >= 0, 'Reset is greyed for a shown item even though the prop is source-explicit');
+  ok(!!reset && reset.className.indexOf('disabled') < 0, 'Reset is enabled for a source-explicit prop on an editable item');
+  h.click(reset);
+  const rst = only(h.posted, 'resetProperty');
+  eq(rst.length, 1, 'Reset posts one resetProperty');
+  eq([rst[0].id, rst[0].prop, rst[0].ownerId], ['fileMenu', 'Text', 'strip1'], 'the reset targets the item field and carries the strip owner id (item-reset path)');
+  h.destroy();
+});
+
+test('item→Properties: Reset stays disabled for a READ-ONLY item (net48 unresolved placeholder — currentItemEditable false)', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: false, component: itemComp() });
+  h.mouse('contextmenu', { clientX: 5, clientY: 5 }, findPropRow(h, 'Text').querySelector('td.name'));
+  const reset = h.el('tbMenu').querySelector('.mi');
+  ok(!!reset && reset.className.indexOf('disabled') >= 0, 'Reset is greyed for a non-editable item');
   h.click(reset);
   eq(only(h.posted, 'resetProperty').length, 0, 'a disabled Reset posts nothing');
+  h.destroy();
+});
+
+test('item→Properties Events tab: wiring an event on a shown item tags createHandler with ownerId (routes to the item-event path)', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp({ events: [{ name: 'Click', type: 'System.EventHandler', handler: '', category: 'Action' }] }) });
+  h.click(h.el('tabEvents'));
+  // listHandlers is a plain read (no ownerId tag needed — it replies via `candidates` keyed on the component id)
+  eq(only(h.posted, 'listHandlers')[0]?.ownerId, undefined, 'listHandlers is not owner-tagged (a read that never refreshes props)');
+  const inp = h.el('events').querySelector('input.evt') as any;
+  ok(!!inp, 'the Events tab rendered an event input for the item');
+  inp.value = 'fileMenu_Click';
+  inp.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const ch = only(h.posted, 'createHandler');
+  eq(ch.length, 1, 'typing a new handler name posts one createHandler');
+  eq([ch[0].id, ch[0].event, ch[0].ownerId], ['fileMenu', 'Click', 'strip1'], 'the wiring targets the item field and carries the strip owner id (item-event path)');
+  h.destroy();
+});
+
+test('item→Properties Events tab: double-clicking an unwired event creates a handler tagged with ownerId', () => {
+  const h = loadPanel();
+  h.send({ type: 'itemProps', id: 'fileMenu', ownerId: 'strip1', editable: true, component: itemComp({ events: [{ name: 'Click', type: 'System.EventHandler', handler: '', category: 'Action' }] }) });
+  h.click(h.el('tabEvents'));
+  h.resetPosted();
+  const nameTd = Array.prototype.find.call(h.el('events').querySelectorAll('td.name'), (td: any) => td.textContent.indexOf('Click') >= 0) as any;
+  ok(!!nameTd, 'the Click event row rendered');
+  nameTd.dispatchEvent(new h.window.Event('dblclick', { bubbles: true }));
+  const ch = only(h.posted, 'createHandler');
+  eq(ch.length, 1, 'double-clicking an unwired event posts createHandler');
+  eq(ch[0].ownerId, 'strip1', 'the createHandler carries the strip owner id');
   h.destroy();
 });
 

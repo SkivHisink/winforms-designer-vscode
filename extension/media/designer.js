@@ -244,6 +244,18 @@
       // is NOT selectable/renamable/deletable — skip it so the click falls through to selecting the container strip
       // (avoids a dead click zone AND a stale-selection wrong-target delete via the context menu). Review wf_108a7dbe.
       if (!it.itemId) continue;
+      if (it.overflow) continue; // the overflow chevron is hit-tested separately (overflowHit) → opens the overflow flyout
+      if (px >= it.x && px < it.x + it.width && py >= it.y && py < it.y + it.height) return it;
+    }
+    return null;
+  }
+  // Hit-test a surface point against a strip's OVERFLOW chevron rect (overflow=true, id-less, painted by the ToolStrip
+  // itself). Returns the chevron geom (its children = the overflow items) or null. Checked before the control hit-test so
+  // a click on the chevron opens the overflow flyout instead of selecting the strip.
+  function overflowHit(px, py) {
+    for (var i = 0; i < stripItems.length; i++) {
+      var it = stripItems[i];
+      if (!it.overflow) continue;
       if (px >= it.x && px < it.x + it.width && py >= it.y && py < it.y + it.height) return it;
     }
     return null;
@@ -298,6 +310,265 @@
     vscode.postMessage({ type: 'stripDelete', hostId: selectedItem.ownerId, itemId: selectedItem.itemId });
   }
 
+  // ---- on-canvas synthetic submenu flyout: clicking a top-level menu item that has nested DropDownItems (the engine-
+  // supplied `children` on its geometry) draws a client-side dropdown listing those children. A closed dropdown isn't
+  // laid out on the surface (no bounds), so we synthesize it here instead of rendering it into the PNG. Clicking a child
+  // row loads THAT item's Properties via the existing item→Properties channel (posts `selectItem`; the host describes
+  // the nested field-backed item by id — Site.Name / FieldNames reverse-scan). A child that itself has children opens a
+  // nested level to its right. This is the reachability path for the scalar props / events of nested items now that the
+  // component tray no longer surfaces strip items (VS parity). A selected nested row is ALSO the Del / F2 / dblclick /
+  // right-click-menu target: rename & delete recurse through the depth-agnostic host splices (findToolStripItem /
+  // removeToolStripItem) keyed by the OWNER strip; only nested ADD ("Type Here" inside a submenu) still lives in the
+  // recursive Items editor. Pooled level-box overlays like
+  // renderContainers; click-away (capture-phase doc mousedown, mirrors the inline editor / smart-tag flyout) dismisses.
+  // NOTE the distinct `submenu*` naming: the smart-tag glyph already owns openFlyout/closeFlyout in this IIFE, so these
+  // MUST NOT reuse those names (later function declarations would clobber earlier ones). ----
+  var SUBMENU_ROW_H = 22; // per-row height in SURFACE px (× zoom when drawn)
+  var SUBMENU_W = 168;    // level min-width in SURFACE px (nested levels anchor to the measured parent row, not this)
+  var TRAY_FLYOUT_INSET = 8; // an off-tree strip's flyout anchors this far inside the VISIBLE surface top-left (SURFACE px)
+  var submenuLevels = []; // open submenu path: [{ ownerId, items:[childGeom], ax, ay }] (ax/ay = anchor in SURFACE px)
+  // the selected (properties-loaded) flyout row = the nested Del/F2/rename target, or null. ax/ay = the row's measured
+  // top-left in SURFACE px (the rename editor overlays it); ownerId = the TOP-LEVEL strip (the host splice key).
+  var submenuSel = null;
+  var submenuBoxes = [];  // pooled level boxes (children of surfaceWrap)
+  // Armed by a COMMITTED on-canvas add from a flyout's ROOT "Type Here" slot; consumed ONCE by the matching `stripAddDone`
+  // (token-correlated with the add's real outcome), NOT by the ambient `tray` message. Keyed by a monotonic token so a
+  // REJECTED/superseded add can't resurrect a stale flyout (host posts stripAddDone ok:false → just clear the arm), and
+  // an OVERLAPPING second add can't consume the first's arm against a stale forest (only the token that matches reopens)
+  // — the two state-machine holes codex found in the tray-signal version. { token, kind:'tray', ownerId } re-opens a tray
+  // strip's chip flyout; { token, kind:'submenu', topItemId } re-opens a menu-bar item's dropdown; an optional `path`
+  // (parentItemId per level below the root) replays the descent so a DEEPER-than-root add re-reveals its new item at the
+  // right level. stripAddDone arrives AFTER this add's render→layout→tray, so the forest the reopen draws from is fresh.
+  // reopenSeq is seeded with a RANDOM per-page-load base (a session epoch), NOT 0: a webview HTML rebuild (e.g. a live
+  // locale switch replaces the HTML without cancelling an in-flight host add) resets this module, so a 0-based counter
+  // would let the OLD page's in-flight completion token collide with the NEW page's arm and reopen the wrong flyout
+  // (codex confirm #2). A distinct random base per load makes that cross-rebuild collision negligible — no message change.
+  var slotReopen = null, reopenSeq = Math.floor(Math.random() * 0x40000000);
+  function submenuBox(i) {
+    while (submenuBoxes.length <= i) {
+      var d = document.createElement('div'); d.className = 'stripflyout'; d.style.display = 'none';
+      d.addEventListener('mousedown', function (e) { e.stopPropagation(); });   // a flyout click must not start a marquee/drag
+      // right-click a flyout ROW → select it (its Properties + the nested Del/F2 target) and open the focused item menu
+      // (Rename / Delete Item), mirroring a top-level item right-click. A click on padding / a separator opens nothing.
+      d.addEventListener('contextmenu', onSubmenuCtx);
+      surfaceWrap.appendChild(d); submenuBoxes.push(d);
+    }
+    return submenuBoxes[i];
+  }
+  function renderSubmenu() {
+    var n = 0;
+    for (var lvl = 0; lvl < submenuLevels.length; lvl++) {
+      var L = submenuLevels[lvl];
+      var box = submenuBox(n++); box.innerHTML = ''; box.style.display = 'block';
+      box.style.left = (L.ax * zoom) + 'px'; box.style.top = (L.ay * zoom) + 'px';
+      box.style.minWidth = (SUBMENU_W * zoom) + 'px';
+      for (var r = 0; r < L.items.length; r++) {
+        var it = L.items[r];
+        if (isSeparatorType(it.itemType)) { var s = document.createElement('div'); s.className = 'stripflyoutsep'; box.appendChild(s); continue; }
+        var hasKids = !!(it.children && it.children.length);
+        // an item with no field id can't be selected/renamed/deleted, and with no children it can't be navigated either →
+        // a purely DEAD row (e.g. a hand-authored Items.Add("Foo")). Render it INERT (no hover/cursor/handlers) so it
+        // doesn't masquerade as a live click. An anonymous PARENT (has children) stays interactive — it still opens its
+        // submenu. A field-backed item is always interactive.
+        var interactive = !!(it.itemId || hasKids);
+        var row = document.createElement('div');
+        row.className = 'stripflyoutrow' + (interactive ? '' : ' inert') + (submenuSel && it.itemId && it.itemId === submenuSel.itemId ? ' sel' : '');
+        row.style.height = (SUBMENU_ROW_H * zoom) + 'px';
+        row._smItem = it; row._smLevel = lvl; // read by onSubmenuCtx (right-click has no per-row closure of its own)
+        var cap = document.createElement('span'); cap.className = 'stripflyoutcap'; cap.textContent = it.text || it.itemId || '—';
+        row.appendChild(cap);
+        if (hasKids) { var arr = document.createElement('span'); arr.className = 'stripflyoutarrow'; arr.textContent = '▸'; row.appendChild(arr); }
+        if (interactive) {
+          (function (item, level, rowEl) {
+            rowEl.addEventListener('click', function (e) { e.stopPropagation(); onSubmenuRow(item, level, rowEl); });
+            // double-click a nested row → rename it (mirrors the top-level dblclick; a separator has no Text so it's inert)
+            rowEl.addEventListener('dblclick', function (e) { e.stopPropagation(); if (item.itemId && !isSeparatorType(item.itemType)) { selectSubmenuRow(item, level, rowEl); renameSubmenuSel(); } });
+          })(it, lvl, row);
+        }
+        box.appendChild(row);
+      }
+      // trailing "Type Here" add-slot for THIS submenu level — the nested analogue of the top-level .typehereslot.
+      // Clicking it opens the inline add-editor to append a new item. For a nested level (parentItemId set) it grows
+      // that owner-item's DropDownItems; for an off-tree strip's ROOT level (isStripRoot, parentItemId null) it appends
+      // to the strip's TOP level (host applyStripAdd with no parentItemId). Skipped for an anonymous submenu parent (no
+      // splice id → a dead click). openNestedSlot measures the slot BEFORE openSlotShell closes the flyout, then floats
+      // the editor at that anchor.
+      if (L.parentItemId || L.isStripRoot) {
+        var slot = document.createElement('div'); slot.className = 'stripflyouttypehere';
+        slot.style.height = (SUBMENU_ROW_H * zoom) + 'px';
+        var scap = document.createElement('span'); scap.className = 'stripflyoutcap'; scap.textContent = T('designer.typeHere');
+        slot.appendChild(scap);
+        (function (ownerId, parentItemId, slotEl, isRoot, level) {
+          slotEl.addEventListener('click', function (e) { e.stopPropagation(); openNestedSlot(ownerId, parentItemId, slotEl, isRoot, level); });
+        })(L.ownerId, L.parentItemId, slot, !!L.isStripRoot, lvl);
+        box.appendChild(slot);
+      }
+    }
+    for (; n < submenuBoxes.length; n++) { submenuBoxes[n].style.display = 'none'; submenuBoxes[n].innerHTML = ''; }
+  }
+  // open the flyout for a top-level item that has children (no-op / close otherwise). Anchored just under the item.
+  function openSubmenu(item) {
+    if (!item || !item.children || !item.children.length) { closeSubmenu(); return; }
+    // parentItemId = the item whose DropDownItems this level lists (the host splice target for a nested "Type Here" ADD).
+    submenuLevels = [{ ownerId: item.ownerId, parentItemId: item.itemId, items: item.children, ax: item.x, ay: item.y + item.height }];
+    submenuSel = null;
+    document.addEventListener('mousedown', onSubmenuDocDown, true);
+    renderSubmenu();
+  }
+  // open the synthetic flyout for a strip's OVERFLOW chevron: the items pushed off the main strip (Placement==Overflow)
+  // are its children. They're TOP-LEVEL Items of the strip (just overflow-placed), so selecting/renaming/deleting a row
+  // is a normal top-level item op (the host's findToolStripItem finds it at the strip's root). No trailing "Type Here"
+  // slot: the level carries parentItemId null and is NOT isStripRoot, so renderSubmenu shows no add row (a full strip has
+  // no room to add — VS widens it first; adding-while-overflowed is a deferred follow-up). Anchored just under the chevron
+  // rect, which the ToolStrip already paints into the PNG (so no overlay is drawn — only the hit region is synthetic).
+  function openOverflowFlyout(item) {
+    if (!item || !item.children || !item.children.length) { closeSubmenu(); return; }
+    // isOverflowRoot marks this root so a DEEPER add inside an overflowed item's submenu can auto-reopen the flyout after
+    // the commit (openNestedSlot → reopen {kind:'overflow',ownerId} → reopenFlyout re-finds the chevron). The root level
+    // itself carries no add-slot (parentItemId null, NOT isStripRoot → renderSubmenu shows none).
+    submenuLevels = [{ ownerId: item.ownerId, parentItemId: null, isOverflowRoot: true, items: item.children, ax: item.x, ay: item.y + item.height }];
+    submenuSel = null;
+    document.addEventListener('mousedown', onSubmenuDocDown, true);
+    renderSubmenu();
+  }
+  // open the synthetic flyout for an OFF-TREE strip surfaced in the tray (a ContextMenuStrip is never painted on the
+  // surface — VS docks it at the top of the design surface when selected). Its top-level Items ARE the flyout's ROOT
+  // level, so that level's "Type Here" slot is a TOP-LEVEL add (isStripRoot, parentItemId null → host applyStripAdd with
+  // no parent). Anchored at the VISIBLE surface top-left: the tray chip sits below the surface, outside surfaceWrap, so a
+  // chip-anchored flyout would be clipped by #stage's overflow; mapping the stage's visible top-left into surfaceWrap
+  // surface coords keeps it on-screen even when the form is scrolled. jsdom returns zero rects → anchors at the inset.
+  function openTrayStripFlyout(t) {
+    // A non-strip chip (Timer/ImageList/…) has no flyout — close any open one. An EMPTY strip (isStrip, items==[]) DOES
+    // open: its ROOT level shows just the "Type Here" add-first-item slot, the only on-canvas way to seed its Items.
+    // Keyed on isStrip (engine-supplied), NOT items.length: a non-strip and an empty strip both serialize an empty Items.
+    if (!t || !t.isStrip) { closeSubmenu(); return; }
+    var wrap = surfaceWrap.getBoundingClientRect(), st = stageEl ? stageEl.getBoundingClientRect() : wrap, z = zoom || 1;
+    var ax = Math.max(TRAY_FLYOUT_INSET, (st.left - wrap.left) / z + TRAY_FLYOUT_INSET);
+    var ay = Math.max(TRAY_FLYOUT_INSET, (st.top - wrap.top) / z + TRAY_FLYOUT_INSET);
+    submenuLevels = [{ ownerId: t.id, parentItemId: null, isStripRoot: true, items: t.items || [], ax: ax, ay: ay }];
+    submenuSel = null;
+    document.addEventListener('mousedown', onSubmenuDocDown, true);
+    renderSubmenu();
+  }
+  // Measure a rendered flyout row's top-left/right in surfaceWrap-local SURFACE px (× 1/zoom). Used for the rename
+  // editor anchor (left) and a nested level's anchor (right). getBoundingClientRect is pixel-exact at any zoom/scroll;
+  // jsdom returns zeros (tests assert structure/clicks, not pixel positions).
+  function submenuRowRect(rowEl) {
+    var wrap = surfaceWrap.getBoundingClientRect(), rr = rowEl.getBoundingClientRect(), z = zoom || 1;
+    return { left: (rr.left - wrap.left) / z, right: (rr.right - wrap.left) / z, top: (rr.top - wrap.top) / z };
+  }
+  // select a flyout row: highlight it, load ITS properties (nested item→Properties), and make it the nested Del/F2/
+  // rename target (submenuSel). Stores the row's measured anchor so the rename editor can overlay it even after the
+  // flyout closes. Does NOT open a nested level (that's onSubmenuRow's click-navigate step). No-op for an anonymous row.
+  function selectSubmenuRow(item, level, rowEl) {
+    if (!item || !item.itemId) return;
+    var L = submenuLevels[level];
+    var g = submenuRowRect(rowEl);
+    submenuSel = { ownerId: item.ownerId || (L && L.ownerId), itemId: item.itemId, itemType: item.itemType, text: item.text, ax: g.left, ay: g.top, level: level };
+    selectedItem = null;                           // a nested selection isn't the top-level Del/F2 target — drop the stale one
+    selection = []; current = null; canMove = false; canResize = false; // a nested item isn't a control — drop any control selection so Cut/Copy/nudge/z-order can't act on a lingering one (parity with selectStripItem)
+    vscode.postMessage({ type: 'selectItem', hostId: submenuSel.ownerId, itemId: item.itemId });
+    renderSelection();                             // clears the top-level highlight + refreshes the Delete-enabled state
+  }
+  // update the .sel highlight on the EXISTING flyout rows WITHOUT rebuilding them. A rebuild (renderSubmenu → innerHTML='')
+  // would destroy the row element a following dblclick needs — Chromium fires dblclick only when both clicks land on the
+  // same element, so a select-click that recreates the row makes dblclick-to-rename a dead gesture. Used for a
+  // selection-only click; a structural change (open/close a nested level) still re-renders.
+  function updateSubmenuSelClasses() {
+    for (var i = 0; i < submenuBoxes.length; i++) {
+      var rows = submenuBoxes[i].querySelectorAll('.stripflyoutrow');
+      for (var r = 0; r < rows.length; r++) {
+        var it = rows[r]._smItem;
+        var on = submenuSel && it && it.itemId && it.itemId === submenuSel.itemId;
+        // preserve the inert predicate — an in-place className rebuild must NOT re-grant hover/cursor to a dead anonymous
+        // leaf (no id, no children); otherwise selecting a sibling makes the dead row look clickable again (mirrors renderSubmenu)
+        var inert = !(it && (it.itemId || (it.children && it.children.length)));
+        rows[r].className = 'stripflyoutrow' + (inert ? ' inert' : '') + (on ? ' sel' : '');
+      }
+    }
+  }
+  // click a flyout row: a field-backed item loads ITS properties + becomes the target; a parent opens its children.
+  function onSubmenuRow(item, level, rowEl) {
+    var hadDeeper = submenuLevels.length > level + 1;  // a deeper level was open → navigating away rebuilds
+    submenuLevels = submenuLevels.slice(0, level + 1); // navigating from this level truncates any deeper open levels
+    var L = submenuLevels[level];
+    if (item.itemId) selectSubmenuRow(item, level, rowEl);
+    // navigating INTO an anonymous (id-less) submenu parent can't select it — but the truncation above may have just
+    // removed the DEEPER level that held the previously-selected row, leaving submenuSel pointing at a no-longer-visible
+    // item (a wrong-target Delete/F2 with no highlight). Drop the stale selection ONLY when its level was truncated
+    // (submenuSel.level > this clicked level); a selection at this level or shallower is still visible → keep it
+    // (codex fix-verify: an unconditional clear wrongly dropped a still-valid selection). (review wf_897ba719.)
+    else if (submenuSel && submenuSel.level > level) { submenuSel = null; selectedItem = null; renderSelection(); }
+    var opened = false;
+    if (item.children && item.children.length) {   // parent → open its nested level anchored to the ACTUAL parent row
+      var g = submenuRowRect(rowEl);
+      submenuLevels.push({ ownerId: item.ownerId || L.ownerId, parentItemId: item.itemId, items: item.children, ax: g.right, ay: g.top });
+      opened = true;
+    }
+    // a purely-selection click updates the highlight IN PLACE (keeps the row element alive so a dblclick can fire on it);
+    // only a structural change — a nested level opened, or a deeper one truncated — rebuilds the flyout DOM.
+    if (opened || hadDeeper) renderSubmenu(); else updateSubmenuSelClasses();
+  }
+  // right-click a flyout row → select it + open the item ctx menu (Rename / Delete Item). Reads the row's cached
+  // item/level (right-click has no per-row closure). The subsequent menu-item mousedown fires onSubmenuDocDown, which
+  // closes the flyout and clears submenuSel — so the menu actions capture the descriptor at build time (buildCtxMenu).
+  function onSubmenuCtx(e) {
+    e.preventDefault(); e.stopPropagation();
+    var rowEl = e.target;
+    while (rowEl && !(rowEl.className && String(rowEl.className).indexOf('stripflyoutrow') >= 0)) { if (rowEl.className === 'stripflyout') return; rowEl = rowEl.parentNode; }
+    if (!rowEl || !rowEl._smItem || !rowEl._smItem.itemId) return; // padding / separator / anonymous → no menu
+    selectSubmenuRow(rowEl._smItem, rowEl._smLevel, rowEl);
+    updateSubmenuSelClasses(); // highlight the right-clicked row (selectSubmenuRow doesn't re-render the flyout itself)
+    renderCtx(e.clientX, e.clientY);
+  }
+  // rename the selected nested item: the SAME inline editor as the top-level rename, anchored at the row (stored ax/ay
+  // — the flyout closes when openSlotShell runs). Enter posts `stripRename` keyed by the owner strip (the host recurses
+  // via findToolStripItem). A separator has no Text so it's inert. `sel` defaults to the live selection (keyboard F2).
+  function renameSubmenuSel(sel) {
+    sel = sel || submenuSel;
+    if (!sel || isSeparatorType(sel.itemType)) return;
+    openItemRenameEditor({ ownerId: sel.ownerId, itemId: sel.itemId, text: sel.text, x: sel.ax, y: sel.ay });
+  }
+  // delete the selected nested item (+ its subtree): the host omits the node from the owner strip's forest (the engine
+  // computes removedIds recursively). The commit's fresh layout closes the flyout. A vanished id is a graceful host
+  // no-op. `sel` defaults to the live selection (keyboard Del); the ctx menu passes a build-time-captured descriptor.
+  function deleteSubmenuSel(sel) {
+    sel = sel || submenuSel;
+    if (!sel) return;
+    vscode.postMessage({ type: 'stripDelete', hostId: sel.ownerId, itemId: sel.itemId });
+  }
+  function onSubmenuDocDown(e) {
+    for (var i = 0; i < submenuBoxes.length; i++) { if (submenuBoxes[i].style.display !== 'none' && submenuBoxes[i].contains(e.target)) return; }
+    closeSubmenu();
+  }
+  function closeSubmenu() {
+    document.removeEventListener('mousedown', onSubmenuDocDown, true);
+    submenuLevels = []; submenuSel = null; renderSubmenu();
+  }
+  // open the inline add-editor for a submenu level's trailing "Type Here" slot: append a new item to `parentItemId`'s
+  // DropDownItems (the host recurses via findToolStripItem keyed by the owner strip — the same depth-agnostic seam
+  // rename/delete use). Measure the slot's surface anchor FIRST (openSlotShell → closeSubmenu hides the flyout), then
+  // float the editor there. The editor's type list is the MENU set (a DropDownItems dropdown offers menu-item types).
+  function openNestedSlot(ownerId, parentItemId, slotEl, isRoot, level) {
+    if (!ownerId) return;                     // parentItemId may be null for an off-tree strip's root slot (top-level add)
+    var g = submenuRowRect(slotEl);
+    // Stash how to RE-OPEN this flyout after the add commits (the fresh layout closes it → the new item would be hidden).
+    // Snapshot the FULL navigation path NOW — submenuLevels is still intact (openSlotShell→closeSubmenu wipes it below).
+    // The ROOT descriptor (tray chip / menu-bar dropdown) plus the chain of parentItemIds for levels 1..level lets
+    // reopenFlyout replay the descent to ANY depth (each hop re-measures its parent row, since nested children carry no
+    // geometry). A level-0 add carries no path (an empty replay collapses to the original root-only reopen). openSlotEditor
+    // stashes this on the editor; commitSlotEditor promotes it to the live `slotReopen` ONLY on a real commit.
+    var reopen = null;
+    var root = submenuLevels[0];
+    if (root) {
+      if (root.isStripRoot) reopen = { kind: 'tray', ownerId: root.ownerId };
+      else if (root.isOverflowRoot) reopen = { kind: 'overflow', ownerId: root.ownerId };
+      else if (root.parentItemId) reopen = { kind: 'submenu', topItemId: root.parentItemId };
+      if (reopen && level > 0) reopen.path = submenuLevels.slice(1, level + 1).map(function (L) { return L.parentItemId; });
+    }
+    openSlotEditor({ ownerId: ownerId, parentItemId: parentItemId || null, x: g.left, y: g.top, reopen: reopen });
+  }
+
   // ---- on-canvas "Type Here" inline add-editor: clicking an add-slot opens a small floating popup (item-type
   // <select> + text <input>) anchored at the slot. Enter commits (posts a `stripAdd` gesture — the host fetches the
   // owner's item forest, appends one node, and reuses the ToolStrip commit path); Escape / click-away cancels. The
@@ -309,7 +580,21 @@
     if (t.indexOf('MenuStrip') >= 0) return [['ToolStripMenuItem', 'Menu Item'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripSeparator', 'Separator']];
     return [['ToolStripButton', 'Button'], ['ToolStripLabel', 'Label'], ['ToolStripSeparator', 'Separator'], ['ToolStripSplitButton', 'Split Button'], ['ToolStripDropDownButton', 'DropDown Button'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripProgressBar', 'Progress Bar']];
   }
-  var slotEditEl = null, slotEditSel = null, slotEditInput = null, slotEditOwner = null, slotEditMode = 'add', slotEditItemId = null, slotEditOrig = '';
+  var slotEditEl = null, slotEditSel = null, slotEditInput = null, slotEditOwner = null, slotEditMode = 'add', slotEditItemId = null, slotEditOrig = '', slotEditParentItemId = null, slotEditReopen = null, slotEditOrigType = '';
+  // Correlate a canvas-origin `pick` with the host's echoed `select`, so an add-editor can suppress EXACTLY the echo of
+  // the pick whose selection it dropped (to disarm the toolbar Delete) — and nothing else. Each canvas pick carries a
+  // monotonic token the host echoes back on `select`; `pendingPick` is the last canvas pick not yet echoed. openSlotEditor
+  // ADDS that pending token to `suppressPickTokens` IFF it belongs to the slot owner; the `select` handler suppresses only
+  // a reply whose token is in that SET (then removes it — each armed pick echoes exactly once, so the set drains itself).
+  // A SET, not a scalar: opening a second add-editor while a FIRST pick's echo is still in flight must not lose the first
+  // arm (codex review — a scalar overwrite let the first delayed echo re-arm Delete and remove the wrong strip). This
+  // supersedes both an earlier `!slotEditEl` lifetime guard AND an id-only suppression, which (codex review) mis-fired
+  // under valid orderings: a late echo after the editor closed re-armed Delete; a `layout` without a trailing `select`
+  // (a net48 live edit / a skipReselect render) wrongly disarmed it; and an id-only match swallowed a LEGITIMATE later
+  // select of the SAME owner. A host-authoritative select (fullRender / a Properties-panel pick) carries NO token → always applied.
+  var pickToken = 0, pendingPick = null, suppressPickTokens = new Set();
+  // Post a canvas-origin pick AND record it as the pending (not-yet-echoed) pick for select-echo correlation.
+  function postPick(id) { pendingPick = { token: ++pickToken, id: id }; vscode.postMessage({ type: 'pick', id: id, token: pickToken }); }
   function isSeparatorType(t) { return /Separator$/.test(t || ''); }
   function syncSlotEditText() {
     // a separator has no Text → hide the text field (and its width no longer matters); other types show + focus it
@@ -324,6 +609,7 @@
   // The caller fills in the mode-specific children (a type <select> for ADD; a prefilled input for RENAME).
   function openSlotShell(x, y) {
     closeSlotEditor(); // only one editor open at a time
+    closeSubmenu();    // an inline add/rename editor supersedes an open submenu flyout (e.g. dblclick-rename on a parent item)
     slotEditEl = document.createElement('div'); slotEditEl.className = 'slotedit';
     slotEditEl.style.left = (x * zoom) + 'px'; slotEditEl.style.top = (y * zoom) + 'px';
     slotEditEl.addEventListener('keydown', function (e) {
@@ -338,9 +624,30 @@
   function openSlotEditor(slot) {
     if (!slot || !slot.ownerId) return;
     openSlotShell(slot.x, slot.y);
-    slotEditMode = 'add'; slotEditOwner = slot.ownerId; slotEditItemId = null;
-    var owner = findControl(slot.ownerId);
-    var types = toolStripNewTypes(owner ? owner.type : '');
+    slotEditMode = 'add'; slotEditOwner = slot.ownerId; slotEditItemId = null; slotEditParentItemId = slot.parentItemId || null;
+    slotEditReopen = slot.reopen || null; // re-open the source flyout after a committed add (see commitSlotEditor + the `tray` handler)
+    // an ADD editor has no delete target: drop EVERY lingering delete target so the toolbar Delete can't fire while it's
+    // open. Two targets exist — the strip-ITEM selection (selectedItem) AND the CONTROL selection (selection/current).
+    // The nested add cleared both via selectStripItem before this; the OFF-TREE tray-strip root add reaches here with the
+    // strip still the selected CONTROL (the chip click set selection=[stripId]), so clearing only selectedItem would leave
+    // the toolbar Delete armed to remove the WHOLE ContextMenuStrip (a click cancels the editor, then doDelete falls
+    // through to selectableIds()=[stripId]). Clearing both makes the Delete button disabled (its enabled state consults
+    // selectableIds()+selectedItem+submenuSel), so it can't fire. Rename keeps its selectedItem (the renamed item IS its
+    // target), so this lives in openSlotEditor (add-only), not the shared openSlotShell.
+    selectedItem = null; selection = []; current = null; canMove = false; canResize = false;
+    // if the owner's OWN pick echo is still in flight (the tray chip / on-canvas click that preceded this add), arm
+    // suppression of EXACTLY that echo by its token, so its reply can't restore selection=[owner] and re-arm the Delete
+    // we just disarmed. ADD (never replace): a still-armed token from an earlier add-editor whose echo hasn't landed yet
+    // must survive. If no pick is pending for this owner — its echo already arrived, or the slot was opened without a
+    // preceding control pick (e.g. a top-level menu-bar "Type Here") — arm nothing: a later legitimate select applies.
+    if (pendingPick && pendingPick.id === slot.ownerId) suppressPickTokens.add(pendingPick.token);
+    renderSelection();
+    // an off-tree strip (a ContextMenuStrip) isn't in controls[] — it's a tray chip; fall back to the tray so its type
+    // drives the type set (a ContextMenuStrip's FullName contains "MenuStrip" → the MENU item set, which is correct).
+    var owner = findControl(slot.ownerId) || findTray(slot.ownerId);
+    // a nested submenu slot (parentItemId set) always offers the MENU item set (MenuItem/ComboBox/TextBox/Separator) —
+    // a DropDownItems dropdown holds menu items regardless of the top-level strip kind; a top-level slot uses the strip's set.
+    var types = slot.parentItemId ? toolStripNewTypes('MenuStrip') : toolStripNewTypes(owner ? owner.type : '');
     slotEditSel = document.createElement('select'); slotEditSel.className = 'slotEditType';
     types.forEach(function (pt) { var o = document.createElement('option'); o.value = pt[0]; o.textContent = pt[1]; slotEditSel.appendChild(o); });
     slotEditInput = document.createElement('input'); slotEditInput.type = 'text'; slotEditInput.className = 'slotEditInput';
@@ -349,13 +656,50 @@
     slotEditSel.addEventListener('change', syncSlotEditText);
     syncSlotEditText();
   }
-  // RENAME an existing top-level item: the SAME inline editor prefilled with the item's live caption (no type
-  // <select> — retype is a separate follow-up). Enter posts a `stripRename` gesture (the host fetches the owner's item
-  // forest, sets this item's Text, and reuses the ToolStrip commit path); Escape / click-away / empty caption cancel.
+  // RENAME an existing top-level item: the SAME inline editor prefilled with the item's live caption. A TOP-LEVEL,
+  // childless, non-separator item ALSO gets a type <select> pre-selected on its current type — changing it RETYPES the
+  // item (host = remove old + add a fresh item of the new type at the same position, carrying only Text; type-specific
+  // props are lost, hence "data-loss aware"). An item WITH a submenu can't be retyped (the engine can't add a submenu
+  // under a new item) and a nested item isn't in stripItems → no select there, text-only rename as before. Enter posts a
+  // `stripRename` (text only) or `stripRetype` (type changed) gesture; Escape / click-away / empty caption cancel.
   function openItemRenameEditor(item) {
     if (!item || !item.ownerId || !item.itemId) return;
     openSlotShell(item.x, item.y);
-    slotEditMode = 'rename'; slotEditOwner = item.ownerId; slotEditItemId = item.itemId; slotEditSel = null;
+    slotEditMode = 'rename'; slotEditOwner = item.ownerId; slotEditItemId = item.itemId; slotEditSel = null; slotEditOrigType = '';
+    // Resolve the item in the fresh TOP-LEVEL geometry: only a top-level item (found here), non-separator, with no
+    // children, offers retype. Its owner's type drives the type set (menu vs toolbar vs status). An OVERFLOW-placed item
+    // is a top-level Item too (host retype handles it), but it's a CHILD of the id-less chevron rather than a direct
+    // stripItems entry → also search chevron children (codex review). A deeper submenu grandchild stays out (not searched).
+    var geom = null;
+    for (var gi = 0; gi < stripItems.length; gi++) {
+      var s = stripItems[gi];
+      if (s.isTypeHere) continue;
+      if (!s.overflow && s.ownerId === item.ownerId && s.itemId === item.itemId) { geom = s; break; }
+      if (s.overflow && s.ownerId === item.ownerId && s.children) {
+        for (var ci = 0; ci < s.children.length; ci++) { if (s.children[ci].itemId === item.itemId) { geom = s.children[ci]; break; } }
+        if (geom) break;
+      }
+    }
+    var curType = item.itemType || (geom && geom.itemType) || '';
+    // The geometry emits an FQN (System.Windows.Forms.ToolStripButton) but toolStripNewTypes values are SHORT names
+    // (ToolStripButton) — the same short names the ADD path sends and the engine's ItemFqn resolves. Compare/send SHORT.
+    var curShort = curType ? String(curType).split('.').pop() : '';
+    var hasChildren = !!(geom && geom.children && geom.children.length);
+    if (geom && curType && !isSeparatorType(curType) && !hasChildren) {
+      var owner = findControl(item.ownerId) || findTray(item.ownerId);
+      var types = toolStripNewTypes(owner ? owner.type : '');
+      slotEditOrigType = curShort;
+      slotEditSel = document.createElement('select'); slotEditSel.className = 'slotEditType';
+      // Guarantee the current type is a selectable, pre-selected option so an untouched confirm never retypes: prepend it
+      // when the owner's standard set doesn't list it (an already-exotic item type).
+      var present = false;
+      for (var ti = 0; ti < types.length; ti++) { if (types[ti][0] === curShort) { present = true; break; } }
+      if (!present) { var o0 = document.createElement('option'); o0.value = curShort; o0.textContent = curShort; o0.selected = true; slotEditSel.appendChild(o0); }
+      types.forEach(function (pt) { var o = document.createElement('option'); o.value = pt[0]; o.textContent = pt[1]; if (pt[0] === curShort) o.selected = true; slotEditSel.appendChild(o); });
+      slotEditSel.value = curShort; // explicit initial selection (belt-and-suspenders: the untouched confirm must not retype)
+      slotEditSel.addEventListener('change', syncSlotEditText); // switching to Separator hides the text field (mirrors ADD)
+      slotEditEl.appendChild(slotEditSel);
+    }
     slotEditInput = document.createElement('input'); slotEditInput.type = 'text'; slotEditInput.className = 'slotEditInput';
     slotEditInput.value = item.text || '';
     slotEditOrig = slotEditInput.value; // baseline AFTER the input sanitizes it (strips CR/LF); an unedited confirm must
@@ -367,32 +711,86 @@
     if (!slotEditEl) return;
     if (slotEditMode === 'rename') {
       var rOwner = slotEditOwner, rItemId = slotEditItemId, rawVal = slotEditInput.value, origVal = slotEditOrig;
+      var newType = slotEditSel ? slotEditSel.value : null, origType = slotEditOrigType;
       closeSlotEditor();
-      // Compare the RAW input value against the prefill baseline: an unedited open+Enter must post nothing. Trimming
-      // (below) and the host's target.text!==newText guard both normalize, so without this a no-op confirm on a caption
-      // with leading/trailing space (or a newline the input stripped) would silently rewrite the source (review wf_df230de7).
-      if (rawVal === origVal) return;
+      var typeChanged = !!(newType && origType && newType !== origType);
+      // Compare the RAW input value against the prefill baseline: an unedited open+Enter (same text AND same type) must
+      // post nothing. Trimming (below) and the host's target.text!==newText guard both normalize, so without this a no-op
+      // confirm on a caption with leading/trailing space (or a newline the input stripped) would silently rewrite the
+      // source (review wf_df230de7).
+      if (rawVal === origVal && !typeChanged) return;
+      if (typeChanged) {
+        // RETYPE = remove the old item + add a fresh one of the new type at the SAME position (host applyStripRetype).
+        // Data-loss aware: only Text + position carry over; type-specific props (Image/ShortcutKeys/…) reset. Carry the
+        // RAW caption (NOT trimmed): the contract is "carry Text", so a type-only change on a padded caption ("  Save  ")
+        // must not silently trim it (codex review). A separator target carries no text.
+        vscode.postMessage({ type: 'stripRetype', hostId: rOwner, itemId: rItemId, itemType: newType, text: isSeparatorType(newType) ? '' : rawVal });
+        return;
+      }
       var newText = rawVal.trim();
       if (newText === '') return; // an emptied caption = no rename (VS keeps the old text; the engine rejects blank Text)
       vscode.postMessage({ type: 'stripRename', hostId: rOwner, itemId: rItemId, text: newText });
       return;
     }
-    var itemType = slotEditSel.value, owner = slotEditOwner;
+    var itemType = slotEditSel.value, owner = slotEditOwner, parentItemId = slotEditParentItemId, reopen = slotEditReopen;
     var sep = isSeparatorType(itemType);
     var text = sep ? '' : slotEditInput.value.trim();
     closeSlotEditor();
     // a non-separator with no text adds nothing (VS: an empty "Type Here" commits no item)
     if (!sep && text === '') return;
-    vscode.postMessage({ type: 'stripAdd', hostId: owner, itemType: itemType, text: text });
+    // Arm the flyout RE-OPEN for after this add's round-trip (the commit's fresh layout closes the flyout, hiding the new
+    // item). Mint a monotonic token, stamp both the arm and the outgoing stripAdd with it: the host echoes it back on
+    // stripAddDone once THIS add's outcome is known, and the canvas reopens ONLY on a matching-token ok:true (an empty/
+    // cancelled add returned above / discarded the descriptor in closeSlotEditor, so it never arms).
+    var reopenToken;
+    if (reopen) { reopenToken = ++reopenSeq; slotReopen = { token: reopenToken, kind: reopen.kind, ownerId: reopen.ownerId, topItemId: reopen.topItemId, path: reopen.path }; }
+    // parentItemId (set only for a nested submenu slot) tells the host to append into that item's DropDownItems instead
+    // of the strip's top level; omit it for a top-level add so the message shape is unchanged there.
+    vscode.postMessage({ type: 'stripAdd', hostId: owner, itemType: itemType, text: text, parentItemId: parentItemId || undefined, reopenToken: reopenToken });
   }
   function closeSlotEditor() {
     document.removeEventListener('mousedown', onSlotEditDocDown, true);
     if (slotEditEl && slotEditEl.parentNode) slotEditEl.parentNode.removeChild(slotEditEl);
-    slotEditEl = null; slotEditSel = null; slotEditInput = null; slotEditOwner = null; slotEditMode = 'add'; slotEditItemId = null; slotEditOrig = '';
+    slotEditEl = null; slotEditSel = null; slotEditInput = null; slotEditOwner = null; slotEditMode = 'add'; slotEditItemId = null; slotEditOrig = ''; slotEditParentItemId = null; slotEditReopen = null; slotEditOrigType = '';
   }
 
   function findControl(id) { for (var i = 0; i < controls.length; i++) { if (controls[i].id === id) return controls[i]; } return null; }
   function findTray(id) { for (var i = 0; i < tray.length; i++) { if (tray[i].id === id) return tray[i]; } return null; }
+  function findStripItemById(id) { if (!id) return null; for (var i = 0; i < stripItems.length; i++) { if (stripItems[i].itemId === id) return stripItems[i]; } return null; }
+  // Re-open a flyout after a committed add (armed as `slotReopen`, consumed by the token-matched `stripAddDone` once the
+  // fresh forest+tray have arrived). Opens the ROOT (tray chip / menu-bar dropdown), then replays the saved descent path
+  // (rr.path = parentItemId per level below the root) so a DEEP nested add re-reveals its new item at the right level. A
+  // vanished owner/item (strip/item removed meanwhile) is a graceful no-op / partial reopen.
+  function reopenFlyout(rr) {
+    if (!rr) return;
+    if (rr.kind === 'tray') { var t = findTray(rr.ownerId); if (!t) return; openTrayStripFlyout(t); }
+    else if (rr.kind === 'submenu') { var it = findStripItemById(rr.topItemId); if (!it) return; openSubmenu(it); }
+    else if (rr.kind === 'overflow') { var ch = findOverflowChevron(rr.ownerId); if (!ch) return; openOverflowFlyout(ch); }
+    else return;
+    if (rr.path && rr.path.length) reopenNestedPath(rr.path);
+  }
+  // The strip's overflow chevron geometry in the current top-level layout (id-less, overflow=true), or null. Used to
+  // re-open the overflow flyout after a deeper nested add committed against an overflowed item's submenu.
+  function findOverflowChevron(ownerId) {
+    for (var i = 0; i < stripItems.length; i++) { var it = stripItems[i]; if (it.overflow && it.ownerId === ownerId) return it; }
+    return null;
+  }
+  // Replay a saved navigation path to re-open a DEEP flyout: for each hop, find the parent row (by field id) in the
+  // current deepest level, measure it, and push its children level — the same push-and-measure onSubmenuRow does on a
+  // click. Runs synchronously right after the root render (rows are already in the DOM); stops at a vanished/childless
+  // hop (a graceful partial reopen). Renders each pushed level so the next hop can find its rows.
+  function reopenNestedPath(path) {
+    for (var i = 0; i < path.length; i++) {
+      var lvl = submenuLevels.length - 1, box = submenuBoxes[lvl];
+      if (!box) return;
+      var rows = box.querySelectorAll('.stripflyoutrow'), rowEl = null, item = null;
+      for (var r = 0; r < rows.length; r++) { if (rows[r]._smItem && rows[r]._smItem.itemId === path[i]) { rowEl = rows[r]; item = rows[r]._smItem; break; } }
+      if (!rowEl || !item || !item.children || !item.children.length) return; // the path item vanished / lost its submenu → partial reopen
+      var g = submenuRowRect(rowEl);
+      submenuLevels.push({ ownerId: item.ownerId || submenuLevels[lvl].ownerId, parentItemId: item.itemId, items: item.children, ax: g.right, ay: g.top });
+      renderSubmenu();
+    }
+  }
 
   // ---- component tray: non-visual components as a strip below the surface; click to select ----
   function renderTray() {
@@ -409,7 +807,11 @@
         // a tray component has no visual bounds → clear the canvas selection box, drive the Properties panel
         selectedItem = null;
         selection = [t.id]; current = t.id; canMove = false; canResize = false;
-        renderSelection(); renderTray(); vscode.postMessage({ type: 'pick', id: t.id });
+        renderSelection(); renderTray(); postPick(t.id);
+        // an off-tree strip (a ContextMenuStrip) also opens its synthetic items flyout — the on-canvas reach into its
+        // Items (Properties / rename / delete / add), the tray-chip counterpart of a menu-bar item's dropdown. A
+        // non-strip chip (Timer/ImageList/…) has no items → openTrayStripFlyout closes any open flyout instead.
+        openTrayStripFlyout(t);
       });
       trayEl.appendChild(chip);
     });
@@ -453,7 +855,7 @@
     renderSelection();
     renderRuler();
   }
-  function setZoom(z) { closeSlotEditor(); zoom = clampZoom(z); try { var s = (vscode.getState && vscode.getState()) || {}; s.zoom = zoom; if (vscode.setState) vscode.setState(s); } catch (_e) {} applyZoomStyles(); }
+  function setZoom(z) { closeSlotEditor(); closeSubmenu(); zoom = clampZoom(z); try { var s = (vscode.getState && vscode.getState()) || {}; s.zoom = zoom; if (vscode.setState) vscode.setState(s); } catch (_e) {} applyZoomStyles(); }
   function stepZoom(dir) {
     var idx = 0, best = Infinity;
     for (var i = 0; i < ZOOM_STEPS.length; i++) { var d = Math.abs(ZOOM_STEPS[i] - zoom); if (d < best) { best = d; idx = i; } }
@@ -584,7 +986,7 @@
     if (selection.length > 1) selName.textContent = TN('designer.sel.multi', selection.length);
     else if (pc) selName.textContent = (pc.isRoot ? pc.name + T('designer.formSuffix') : pc.name) + ' : ' + shortType(pc.type);
     else { var ti = current ? findTray(current) : null; selName.textContent = ti ? (ti.name + ' : ' + shortType(ti.type)) : '—'; }
-    if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0 && !selectedItem; // a selected strip item is deletable too
+    if (deleteCtlEl) deleteCtlEl.disabled = selectableIds().length === 0 && !selectedItem && !submenuSel; // a selected strip item (top-level or nested) is deletable too
     // the align/distribute/same-size tools apply only to a live 2+ selection on a rendered form — never show
     // them before the first render or while (re)loading (a stale retained selection would otherwise flash them)
     // ...and never while the selection contains a locked control (align/distribute/make-same-size would move/resize it)
@@ -675,19 +1077,19 @@
     flyoutOwner = current;
     flyoutEl = document.createElement('div'); flyoutEl.className = 'taskfly';
     var title = document.createElement('div'); title.className = 'tfTitle';
-    title.textContent = shortType(comp.type) + ' Tasks';
+    title.textContent = T('designer.smartTag.title', { type: shortType(comp.type) });
     flyoutEl.appendChild(title);
     var tasks = taskListFor(comp);
     if (!tasks.length) {
-      var note = document.createElement('div'); note.className = 'tfNote'; note.textContent = 'No common tasks'; flyoutEl.appendChild(note);
+      var note = document.createElement('div'); note.className = 'tfNote'; note.textContent = T('designer.smartTag.noTasks'); flyoutEl.appendChild(note);
     } else {
       for (var i = 0; i < tasks.length; i++) flyoutEl.appendChild(taskRow(comp, tasks[i]));
     }
     var links = document.createElement('div'); links.className = 'tfLinks';
-    var all = document.createElement('div'); all.className = 'tfLink'; all.textContent = 'All Properties…';
+    var all = document.createElement('div'); all.className = 'tfLink'; all.textContent = T('designer.menu.allProperties');
     all.addEventListener('click', function () { closeFlyout(); vscode.postMessage({ type: 'showProperties' }); });
     links.appendChild(all);
-    var learn = document.createElement('div'); learn.className = 'tfLink'; learn.textContent = 'Learn More Online';
+    var learn = document.createElement('div'); learn.className = 'tfLink'; learn.textContent = T('designer.menu.learnMore');
     learn.addEventListener('click', function () { closeFlyout(); vscode.postMessage({ type: 'learnMore', typeName: comp.type }); });
     links.appendChild(learn);
     flyoutEl.appendChild(links);
@@ -1001,7 +1403,7 @@
   function selectSingle(id) {
     selectedItem = null; // a control selection supersedes any on-canvas strip-item selection
     selection = [id]; current = id; canMove = false; canResize = false;
-    renderSelection(); vscode.postMessage({ type: 'pick', id: id });
+    renderSelection(); postPick(id);
   }
   function toggleSelect(id) {
     selectedItem = null; // a control selection supersedes any on-canvas strip-item selection
@@ -1009,7 +1411,7 @@
     if (idx >= 0) { if (selection.length > 1) { selection.splice(idx, 1); if (current === id) current = selection[selection.length - 1]; } }
     else { selection.push(id); current = id; }
     canMove = false; canResize = false;
-    renderSelection(); vscode.postMessage({ type: 'pick', id: current });
+    renderSelection(); postPick(current);
   }
 
   canvas.addEventListener('click', function (e) {
@@ -1027,8 +1429,15 @@
     // target) instead of its container strip. Checked before the control hit-test (mirrors dblclick-rename) so an item
     // is selectable even if its rect extends past the strip's hit area. Ctrl/Shift-click falls through to multi-select.
     if (!(e.ctrlKey || e.metaKey || e.shiftKey)) {
+      // a click on a strip's OVERFLOW chevron opens a synthetic flyout of the overflow items (checked first — the chevron
+      // sits within the strip's control hit area). No control/item selection changes: it just reveals the hidden items.
+      var ovf = overflowHit(px, py);
+      if (ovf) { openOverflowFlyout(ovf); return; }
       var sItem = stripItemHit(px, py);
-      if (sItem) { selectStripItem(sItem); return; }
+      // an item with nested DropDownItems also opens a synthetic submenu flyout (its children are reachable for
+      // Properties); a childless item just selects. Any previously-open flyout was already dismissed by the
+      // capture-phase onSubmenuDocDown on this same mousedown, so openSubmenu starts fresh.
+      if (sItem) { selectStripItem(sItem); if (sItem.children && sItem.children.length) openSubmenu(sItem); else closeSubmenu(); return; }
     }
     var id = hitTest(px, py);
     if (!id) return;
@@ -1207,7 +1616,7 @@
           if (!(c.x + c.width < rect.x1 || c.x > rect.x2 || c.y + c.height < rect.y1 || c.y > rect.y2)) hits.push(c.id);
         }
         selectedItem = null; // a marquee selects controls → drop any on-canvas strip-item selection
-        if (hits.length) { selection = hits; current = hits[hits.length - 1]; canMove = false; canResize = false; renderSelection(); vscode.postMessage({ type: 'pick', id: current }); }
+        if (hits.length) { selection = hits; current = hits[hits.length - 1]; canMove = false; canResize = false; renderSelection(); postPick(current); }
         else { selection = []; current = null; renderSelection(); }
       }
       // a band that never moved (a click on the form bg) → handled by the click → selectSingle('this')
@@ -1218,6 +1627,7 @@
   function doDelete() {
     if (nudge) flushNudge(); // commit a pending keyboard-nudge before it races this action's document change
     if (drag) return;
+    if (submenuSel) { deleteSubmenuSel(); return; } // a selected nested flyout item is the delete target
     if (selectedItem) { deleteStripItem(); return; } // an on-canvas strip item is the delete target
     var ids = selectableIds();
     if (!ids.length) return;
@@ -1248,6 +1658,10 @@
     if (e.key === 'F2') {
       var af2 = document.activeElement;
       if (af2 && /^(INPUT|SELECT|TEXTAREA)$/.test(af2.tagName)) return;
+      if (submenuSel) { // a selected nested flyout item renames via the same inline editor (separator = inert)
+        if (!(drag || band || tabOrderMode || isSeparatorType(submenuSel.itemType))) { e.preventDefault(); renameSubmenuSel(); }
+        return;
+      }
       if (!selectedItem || drag || band || tabOrderMode || isSeparatorType(selectedItem.itemType)) return;
       e.preventDefault(); openItemRenameEditor(selectedItem);
       return;
@@ -1338,6 +1752,16 @@
   function doPaste() { if (nudge) flushNudge(); vscode.postMessage({ type: 'paste', id: current || 'this' }); }
 
   function buildCtxMenu() {
+    // a selected NESTED flyout item gets the same focused menu. Capture the descriptor NOW: clicking a menu item fires
+    // a mousedown that onSubmenuDocDown treats as click-away → it closes the flyout and clears submenuSel before the
+    // action runs, so the closures must not read the (now-null) live selection.
+    if (submenuSel) {
+      var nsel = submenuSel, nm = [];
+      if (!isSeparatorType(nsel.itemType))
+        nm.push({ label: T('designer.menu.renameItem'), acc: 'F2', act: function () { renameSubmenuSel(nsel); } });
+      nm.push({ label: T('designer.menu.deleteItem'), acc: 'Del', act: function () { deleteSubmenuSel(nsel); } });
+      return nm;
+    }
     // a selected on-canvas strip item gets its own focused menu (Rename / Delete Item) — the generic control menu
     // (Cut/Copy/z-order/Delete-control) doesn't apply to a ToolStripItem.
     if (selectedItem) {
@@ -1389,11 +1813,11 @@
     // on its header; switching is a single click.
     if (!multi && primary && primary.isTabHost) {
       menu.push({ sep: 1 });
-      menu.push({ label: 'Add Tab', act: function () { vscode.postMessage({ type: 'addTab', hostId: primary.id }); } });
+      menu.push({ label: T('designer.menu.addTab'), act: function () { vscode.postMessage({ type: 'addTab', hostId: primary.id }); } });
       var activePage = null;
       for (var pi = 0; pi < controls.length; pi++) { if (controls[pi].parentId === primary.id) { activePage = controls[pi]; break; } }
       menu.push({
-        label: activePage ? ('Delete Tab "' + activePage.name + '"') : 'Delete Tab',
+        label: activePage ? T('designer.menu.deleteTabNamed', { name: activePage.name }) : T('designer.menu.deleteTab'),
         disabled: !activePage,
         act: function () { if (activePage) vscode.postMessage({ type: 'deleteTab', hostId: primary.id, pageId: activePage.id }); },
       });
@@ -1432,6 +1856,10 @@
   surfaceWrap.addEventListener('contextmenu', function (e) {
     e.preventDefault();
     if (!controls.length || drag || band) return;
+    // a flyout-ROW right-click is handled by onSubmenuCtx (which stopPropagation's) — so any contextmenu that reaches
+    // here is OUTSIDE the flyout. Close it + clear submenuSel now, else a KEYBOARD menu (Menu key / Shift+F10, no
+    // preceding mousedown to trigger onSubmenuDocDown) would build the nested item menu for a control the user targeted.
+    closeSubmenu();
     var rect = canvas.getBoundingClientRect();
     var px = (e.clientX - rect.left) / zoom, py = (e.clientY - rect.top) / zoom;
     // right-clicking a top-level strip item selects it and opens the item menu (Rename / Delete Item)
@@ -1450,7 +1878,7 @@
     var t = tray[idx]; if (!t) return;
     selectedItem = null;
     selection = [t.id]; current = t.id; canMove = false; canResize = false;
-    renderSelection(); renderTray(); vscode.postMessage({ type: 'pick', id: t.id });
+    renderSelection(); renderTray(); postPick(t.id);
     renderCtx(e.clientX, e.clientY);
   });
   document.addEventListener('mousedown', function (e) { if (ctxEl && ctxEl.classList.contains('open') && !ctxEl.contains(e.target)) closeCtx(); }, true);
@@ -1473,9 +1901,10 @@
       hasRendered = true; hideOverlay();
       drawPng(m.png, 0, 0, m.width, m.height, true, m.gen);
     } else if (m.type === 'layout') {
-      // strip/item geometry may have moved → dismiss a drifting inline add-editor. Done HERE (and in setZoom), NOT in
-      // renderSelection: a 'manip'/'select' push re-renders selection WITHOUT moving the slot, and must not eat typed text.
-      closeSlotEditor();
+      // strip/item geometry may have moved → dismiss a drifting inline add-editor and the synthetic submenu flyout
+      // (its anchor item may have moved/vanished). Done HERE (and in setZoom), NOT in renderSelection: a 'manip'/'select'
+      // push re-renders selection WITHOUT moving the slot/flyout, and must not eat typed text or snap the menu shut.
+      closeSlotEditor(); closeSubmenu();
       controls = m.controls || [];
       stripItems = m.toolStripItems || [];
       // drop any selected ids that no longer exist (e.g. after a remove), keeping tray ids
@@ -1485,14 +1914,43 @@
       renderSelection();
     } else if (m.type === 'tray') {
       tray = m.items || []; renderTray();
+    } else if (m.type === 'stripAddDone') {
+      // The host confirms an on-canvas add's OUTCOME, correlated by the token the stripAdd carried. Consume the matching
+      // reopen arm ONLY here — the ambient `tray` message can't tell adds apart and isn't sent for a rejected/superseded
+      // render, which is exactly how the tray-signal version resurrected stale flyouts / consumed the wrong arm (codex).
+      // This arrives AFTER this add's own render→layout→tray, so stripItems/tray are already fresh. ok:false → clear only.
+      if (slotReopen && m.token != null && slotReopen.token === m.token) {
+        var rr = slotReopen; slotReopen = null;
+        if (m.ok && !submenuLevels.length) reopenFlyout(rr); // !submenuLevels: don't clobber a flyout the user opened meanwhile
+      }
     } else if (m.type === 'patch') {
       drawPng(m.png, m.x, m.y, m.width, m.height, false, m.gen);
     } else if (m.type === 'select') {
       // host selection (after a render / group op). Keep the multi-set if the primary is part of it.
-      selectedItem = null; // an explicit host control-selection supersedes any on-canvas strip-item highlight
-      if (selection.indexOf(m.id) < 0) selection = [m.id];
-      if (m.id !== current) { canMove = false; canResize = false; }
-      current = m.id; renderSelection(); renderTray();
+      // Token bookkeeping FIRST: retire the pending canvas pick this echoes, then decide suppression. Suppress ONLY an
+      // echo whose token an add-editor armed against (openSlotEditor) — the one pick whose selection it dropped to disarm
+      // the toolbar Delete. Precise under every ordering (codex review): a late echo after the editor closed is still
+      // matched by token (P1); a `layout` / `select`-less render never disarms it (the set is untouched by layout); a
+      // DIFFERENT component's select — or any host-authoritative select (fullRender / a Properties-panel pick), which
+      // carries NO token — is never suppressed (P2 + the same-owner re-select leak); and a SET keeps every concurrently
+      // armed token, so a second add-editor can't drop a first still-in-flight arm.
+      if (m.token != null && pendingPick && m.token === pendingPick.token) pendingPick = null; // retire the echoed canvas pick
+      if (m.token != null && suppressPickTokens.has(m.token)) {
+        suppressPickTokens.delete(m.token); // consume this arm; a suppressed echo is a TRUE no-op — it must NOT clear the
+        // current strip-item selection nor close an open submenu (those belong to whatever the user selected meanwhile).
+      } else {
+        selectedItem = null;
+        // an explicit host control-selection supersedes any on-canvas strip-item highlight/flyout — EXCEPT the echo of a
+        // tray chip's own `pick`: an off-tree strip's flyout is dismissed by selecting a real CONTROL (or click-away /
+        // layout / zoom), never by a select that targets a TRAY component. Keying on findTray(m.id) (not the exact owner)
+        // also survives a rapid chip-to-chip switch, where a stale `select` echo for the PREVIOUS strip would otherwise
+        // arrive after the NEW flyout opened and wrongly close it. A real control select → findTray null → closes it.
+        if (!(submenuLevels.length && submenuLevels[0].isStripRoot && findTray(m.id))) closeSubmenu();
+        if (selection.indexOf(m.id) < 0) selection = [m.id];
+        if (m.id !== current) { canMove = false; canResize = false; }
+        current = m.id;
+        renderSelection(); renderTray();
+      }
     } else if (m.type === 'manip') {
       if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; renderSelection(); }
     } else if (m.type === 'tasks') {

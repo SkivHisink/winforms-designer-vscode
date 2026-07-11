@@ -205,6 +205,12 @@ namespace WinFormsDesigner.Engine
                         {
                             Console.WriteLine("       " + p.Name + " = " + (p.Value ?? "<null>"));
                         }
+                        // properties offering a dropdown (TypeConverter standard values) — incl. ImageIndex/ImageKey when
+                        // an ImageList is attached, enum/bool/Cursor/Color sets, etc.
+                        foreach (var p in c.Properties.Where(p => p.StandardValues != null && p.StandardValues.Count > 0))
+                        {
+                            Console.WriteLine("       [dropdown] " + p.Name + (p.StandardValuesExclusive ? " (exclusive)" : "") + ": " + string.Join(", ", p.StandardValues!)); // non-null: filtered above
+                        }
                         var wired = c.Events.Where(ev => ev.Handler != null).ToList();
                         if (wired.Count > 0)
                         {
@@ -976,15 +982,29 @@ namespace WinFormsDesigner.Engine
                     if (res.ToolStripItems.Count > 0)
                     {
                         Console.WriteLine("   -- strip items (on-canvas Type Here) --");
-                        foreach (var it in res.ToolStripItems)
-                            Console.WriteLine("   · " + it.OwnerId + " ▸ " + (it.IsTypeHere ? "[Type Here]" : it.ItemId + " : " + it.ItemType)
-                                              + "  @ (" + it.X + "," + it.Y + ") " + it.Width + "x" + it.Height);
+                        void PrintTsItem(WinFormsDesigner.Engine.ToolStripItemBounds it, int depth)
+                        {
+                            Console.WriteLine("   " + new string(' ', depth * 3) + "· " + it.OwnerId + " ▸ " + (it.IsTypeHere ? "[Type Here]" : it.ItemId + " : " + it.ItemType)
+                                              + "  @ (" + it.X + "," + it.Y + ") " + it.Width + "x" + it.Height
+                                              + (it.Children.Count > 0 ? "  {" + it.Children.Count + " child}" : ""));
+                            foreach (var kid in it.Children) PrintTsItem(kid, depth + 1);
+                        }
+                        foreach (var it in res.ToolStripItems) PrintTsItem(it, 0);
                     }
                     if (res.Tray.Count > 0)
                     {
                         Console.WriteLine("   -- tray (non-visual + off-tree components) --");
+                        void PrintTrayItem(WinFormsDesigner.Engine.ToolStripItemBounds it, int depth)
+                        {
+                            Console.WriteLine("   " + new string(' ', depth * 3) + "     ▸ " + it.ItemId + " : " + it.ItemType + " text=\"" + it.Text + "\""
+                                              + (it.Children.Count > 0 ? "  {" + it.Children.Count + " child}" : ""));
+                            foreach (var kid in it.Children) PrintTrayItem(kid, depth + 1);
+                        }
                         foreach (var t in res.Tray)
-                            Console.WriteLine("   [tray] " + t.Name + " [id=" + t.Id + "] : " + t.Type);
+                        {
+                            Console.WriteLine("   [tray] " + t.Name + " [id=" + t.Id + "] : " + t.Type + (t.IsStrip ? " [strip]" : "") + (t.Items.Count > 0 ? "  {" + t.Items.Count + " item}" : ""));
+                            foreach (var it in t.Items) PrintTrayItem(it, 0);
+                        }
                     }
                     Console.WriteLine(res.Controls.Count > 0 ? "RESULT: PASS" : "RESULT: FAIL");
                     return res.Controls.Count > 0 ? 0 : 1;

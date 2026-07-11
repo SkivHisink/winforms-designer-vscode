@@ -84,6 +84,8 @@
   "designer.ruler.hide": "रूलर छिपाएं",
   "designer.formSuffix": " (फ़ॉर्म)",
   "designer.typeHere": "यहाँ लिखें",
+  "designer.smartTag.title": "{type} टास्क",
+  "designer.smartTag.noTasks": "कोई सामान्य टास्क नहीं",
   "designer.dirtyBadge": "● असहेजित",
   "designer.sel.multi": {
     "one": "{n} कंट्रोल चयनित",
@@ -111,6 +113,9 @@
   "designer.menu.delete": "डिलीट करें",
   "designer.menu.renameItem": "नाम बदलें",
   "designer.menu.deleteItem": "आइटम डिलीट करें",
+  "designer.menu.addTab": "टैब जोड़ें",
+  "designer.menu.deleteTab": "टैब डिलीट करें",
+  "designer.menu.deleteTabNamed": "टैब \"{name}\" डिलीट करें",
   "designer.menu.properties": "प्रॉपर्टीज़",
   "panel.props.empty": "इसकी प्रॉपर्टीज़ संपादित करने के लिए WinForms डिज़ाइनर में कोई कंट्रोल चुनें।",
   "panel.itemProps.unavailable": "संकलित पूर्वावलोकन में आइटम प्रॉपर्टीज़ उपलब्ध नहीं हैं।",

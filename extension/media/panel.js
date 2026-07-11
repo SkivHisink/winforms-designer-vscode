@@ -367,6 +367,9 @@
   function editable(p) {
     if (p.readOnly) return false;
     if (p.isEnum) return true;
+    // a component-reference property (AcceptButton/CancelButton/ContextMenuStrip…) has no editable literal type, but
+    // its self-enumerated standardValues (sibling field names + "(none)") ARE a closed pick list — render the dropdown.
+    if (p.referenceValues) return true;
     return p.type === 'System.String' || p.type === 'System.Boolean' || p.type === 'System.Char' || NUM.has(p.type) || COMPLEX.has(p.type);
   }
   // The engine's ShouldSerializeValue over-reports a few ambient/runtime props on the interpreted host, so an
@@ -437,9 +440,15 @@
   function openPropMenu(x, y, c, p) {
     if (!tbMenuEl) return;
     var items = [
-      // Reset is disabled for a ToolStrip item (currentItemId): resetProperty carries no ownerId, so the host would
-      // misroute the refresh through the control path (and lose the item highlight). Item reset is a follow-up.
-      { label: T('panel.menu.reset'), disabled: !p.sourceExplicit || !!currentItemId, act: function () { vscode.postMessage({ type: 'resetProperty', id: c.id, prop: p.name }); } }
+      // Reset works for a ToolStrip item too, but only when it's editable (net9, or a resolved net48 item): the message
+      // is tagged with the strip host id (ownerId) — mirroring the edit path — so the host routes it to the item-reset
+      // path (splices the item field, refreshes via itemProps, keeps the canvas item highlight). A read-only item
+      // (net48 unresolved placeholder, currentItemEditable=false) keeps reset greyed like a non-source-explicit prop.
+      { label: T('panel.menu.reset'), disabled: !p.sourceExplicit || (!!currentItemId && !currentItemEditable), act: function () {
+        var rmsg = { type: 'resetProperty', id: c.id, prop: p.name };
+        if (currentItemId && c.id === currentItemId && currentItemOwner) rmsg.ownerId = currentItemOwner;
+        vscode.postMessage(rmsg);
+      } }
     ];
     tbMenuEl.innerHTML = '';
     items.forEach(function (mi) {
@@ -616,6 +625,10 @@
     // when the grid is showing a ToolStrip item, tag the edit with the strip host id so the host routes it to the
     // item-edit path (splices the item field, refreshes via itemProps, keeps the canvas highlight).
     if (currentItemId && id === currentItemId && currentItemOwner) msg.ownerId = currentItemOwner;
+    // a component-reference property (AcceptButton/CancelButton/ContextMenuStrip…): the picked value is a sibling field
+    // name (or "(none)"), NOT a literal — tag it so the host writes `this.<name>` / `null`. Control-edit path only (an
+    // item ref would need the item channel), so skip when the edit is already routed to an item.
+    else if (prop.referenceValues) msg.refEdit = true;
     vscode.postMessage(msg);
   }
   function editInput(title, value, onCommit) {
@@ -1754,8 +1767,19 @@
   function fetchCandidatesIfNeeded() {
     if (activeTab === 'events' && currentComponent && candFetchedFor !== currentComponent.id) {
       candFetchedFor = currentComponent.id;
+      // listHandlers is a READ that replies via `candidates` (keyed on currentComponent.id, works for items already) and
+      // never refreshes the props channel, so it needs no ownerId tag — unlike the wire/navigate messages below.
       vscode.postMessage({ type: 'listHandlers', id: currentComponent.id });
     }
+  }
+
+  // Tag an event-wiring message with the strip host id when the grid is showing a ToolStrip item (mirrors sendEdit at
+  // L618) — the host routes it to the item path (wires the item's field event, refreshes via itemProps not loadProps, so
+  // item→Properties mode + the canvas highlight survive; without the tag the post-wire loadProps(id) drops the item id
+  // and exits item mode). Returns the same object for inline use.
+  function tagItemOwner(msg) {
+    if (currentItemId && msg.id === currentItemId && currentItemOwner) msg.ownerId = currentItemOwner;
+    return msg;
   }
 
   var evtSeq = 0;
@@ -1772,10 +1796,10 @@
     function commit() {
       var val = inp.value.trim();
       if (val === cur) return;
-      if (val === '') { vscode.postMessage({ type: 'setHandler', id: c.id, event: ev.name, handler: '' }); return; }
+      if (val === '') { vscode.postMessage(tagItemOwner({ type: 'setHandler', id: c.id, event: ev.name, handler: '' })); return; }
       var known = eventCandidates[ev.name] || [];
-      if (known.indexOf(val) >= 0) vscode.postMessage({ type: 'setHandler', id: c.id, event: ev.name, handler: val });
-      else vscode.postMessage({ type: 'createHandler', id: c.id, event: ev.name, handler: val });
+      if (known.indexOf(val) >= 0) vscode.postMessage(tagItemOwner({ type: 'setHandler', id: c.id, event: ev.name, handler: val }));
+      else vscode.postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: ev.name, handler: val }));
     }
     inp.addEventListener('keydown', function (e2) { if (e2.key === 'Enter') { e2.preventDefault(); inp.blur(); } });
     inp.addEventListener('change', commit);
@@ -1808,8 +1832,8 @@
         nameTd.title = e.type + (e.handler ? T('panel.event.wiredTip') : T('panel.event.unwiredTip'));
         // VS-style: double-click an event → if wired, go to the handler; if unwired, CREATE one (auto-named) and go.
         nameTd.addEventListener('dblclick', function () {
-          if (e.handler) vscode.postMessage({ type: 'navigateHandler', id: c.id, event: e.name, handler: e.handler });
-          else vscode.postMessage({ type: 'createHandler', id: c.id, event: e.name });
+          if (e.handler) vscode.postMessage(tagItemOwner({ type: 'navigateHandler', id: c.id, event: e.name, handler: e.handler }));
+          else vscode.postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: e.name }));
         });
       })(ev);
       addColSplit(nameTd);

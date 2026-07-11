@@ -106,6 +106,8 @@ export const en: Catalog = {
   'designer.ruler.hide': 'Hide ruler',
   'designer.formSuffix': ' (form)',
   'designer.typeHere': 'Type Here',
+  'designer.smartTag.title': '{type} Tasks',
+  'designer.smartTag.noTasks': 'No common tasks',
   'designer.dirtyBadge': '● unsaved',
   'designer.sel.multi': { one: '{n} control selected', other: '{n} controls selected' },
   'designer.status.distSelectMore': 'select 3+ controls to distribute',
@@ -130,6 +132,9 @@ export const en: Catalog = {
   'designer.menu.delete': 'Delete',
   'designer.menu.renameItem': 'Rename',
   'designer.menu.deleteItem': 'Delete Item',
+  'designer.menu.addTab': 'Add Tab',
+  'designer.menu.deleteTab': 'Delete Tab',
+  'designer.menu.deleteTabNamed': 'Delete Tab "{name}"',
   'designer.menu.properties': 'Properties',
 
   // ---------- side panel (Properties / Outline / Toolbox) — HTML-owned labels (host-built HTML) ----------

@@ -84,6 +84,8 @@
   "designer.ruler.hide": "Lineal ausblenden",
   "designer.formSuffix": " (Formular)",
   "designer.typeHere": "Hier eingeben",
+  "designer.smartTag.title": "{type}-Aufgaben",
+  "designer.smartTag.noTasks": "Keine allgemeinen Aufgaben",
   "designer.dirtyBadge": "● nicht gespeichert",
   "designer.sel.multi": {
     "one": "{n} Steuerelement ausgewählt",
@@ -111,6 +113,9 @@
   "designer.menu.delete": "Löschen",
   "designer.menu.renameItem": "Umbenennen",
   "designer.menu.deleteItem": "Element löschen",
+  "designer.menu.addTab": "Registerkarte hinzufügen",
+  "designer.menu.deleteTab": "Registerkarte löschen",
+  "designer.menu.deleteTabNamed": "Registerkarte \"{name}\" löschen",
   "designer.menu.properties": "Eigenschaften",
   "panel.props.empty": "Wählen Sie im WinForms-Designer ein Steuerelement aus, um seine Eigenschaften zu bearbeiten.",
   "panel.itemProps.unavailable": "Elementeigenschaften sind in der kompilierten Vorschau nicht verfügbar.",
