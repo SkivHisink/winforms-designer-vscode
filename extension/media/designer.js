@@ -47,6 +47,9 @@
   // skipped, with an expandable categorized list; 'err' = a hard render failure while a prior render is kept on the
   // canvas ("showing the last successful preview"). Dismiss latches a signature so the SAME problem-set doesn't
   // re-nag across re-renders, but a CHANGED set (or a clean render) re-shows / resets. ----
+  var formNoticeEl = document.getElementById('formNotice');
+  var formNoticeMsgEl = document.getElementById('formNoticeMsg');
+  var formNoticeIconEl = document.getElementById('formNoticeIcon');
   var diagEl = document.getElementById('diag');
   var diagMsgEl = document.getElementById('diagMsg');
   var diagToggleEl = document.getElementById('diagToggle');
@@ -1972,6 +1975,21 @@
       // Delete pressed while focus was in the side panel (Toolbox/Properties tab); this canvas owns the
       // selection, so run the same delete path as the local Delete key / toolbar button.
       doDelete();
+    } else if (m.type === 'formNotice') {
+      // 0.10.0 trust-floor — persistent, non-dismissible form-level notice (localizable read-only, and
+      // reused by later fidelity banners). kind set → show with the given text; null → hide. Separate
+      // from #diag so a partial-render banner and this lock strip never overwrite each other.
+      if (formNoticeEl) {
+        if (m.kind) {
+          // always set the glyph (default 🔒) so a prior custom icon can't leak onto a later notice that
+          // supplies none. engine/host text → textContent, never innerHTML.
+          if (formNoticeIconEl) formNoticeIconEl.textContent = m.icon || '🔒';
+          formNoticeMsgEl.textContent = m.text || '';
+          formNoticeEl.style.display = '';
+        } else {
+          formNoticeEl.style.display = 'none';
+        }
+      }
     } else if (m.type === 'renderDiag') {
       // posted after every successful render: non-empty → warn banner listing what the partial render skipped;
       // empty → this render is clean, hide the banner and reset the dismiss latch so future issues re-surface.

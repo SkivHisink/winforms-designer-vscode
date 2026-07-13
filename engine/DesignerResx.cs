@@ -34,6 +34,7 @@ namespace WinFormsDesigner.Engine
     {
         private const long MaxBytes = 64L * 1024 * 1024; // skip absurdly large .resx (DoS bound; forms are tiny)
         private const int MaxNodes = 20000;              // cap held entries (a real form has < ~100)
+        private const int MaxScanNodes = 200000;         // bound the metadata count scan on a hostile file (still honest ≥1)
         private const long MaxImagePixels = 4096L * 4096L; // reject a materialized pixel-bomb image (~16.7M px / ~64MB @32bpp)
         private const int MaxImageDimension = 20000;       // and an absurd per-axis dimension
 
@@ -66,9 +67,62 @@ namespace WinFormsDesigner.Engine
             catch { return null; }
         }
 
+        /// <summary>0.10.0 S3: how many sibling-.resx resources this net9 preview can't render — BinaryFormatter/SOAP/
+        /// ImageStream nodes, external FileRefs, and non-allowlisted value types. Drives an honest "preview may be
+        /// incomplete" banner. Independent of <see cref="TryLoadForDesigner"/> so it is:
+        ///   • SIZE-INDEPENDENT — streams the XML metadata, so a .resx too big for the node-load bound still gets a
+        ///     truthful count instead of a false 0 (codex: oversized→no-banner);
+        ///   • UNCAPPED — not bounded by the MaxNodes node-hold cap (codex: past-cap FileRef/non-allowlisted→no-banner);
+        ///   • NAMESPACE-AGNOSTIC — matches &lt;data&gt; by LocalName like ResXResourceReader, not an exact no-namespace
+        ///     XName (codex: a namespaced .resx→false 0);
+        ///   • METADATA-ONLY — reads the mimetype/type ATTRIBUTES, never GetValue/GetValueTypeName (which can deserialize
+        ///     a mimetype-bearing node), so a BinaryFormatter payload is never materialized during counting;
+        ///   • MIMETYPE-AUTHORITATIVE — a binary/SOAP node counts regardless of any "safe" declared type.
+        /// A sibling .resx that exists but can't be scanned → 1 (fail-closed: its resources are omitted → honest banner).
+        /// net48 renders the real compiled instance (all resources present), so its host path reports 0.</summary>
+        public static int UnrenderableResourceCount(string designerFilePath)
+        {
+            string? path;
+            try { path = ResxPathFor(designerFilePath); } catch { return 0; }
+            if (path == null || !File.Exists(path)) return 0; // no sibling .resx → nothing to render
+            try
+            {
+                var settings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    IgnoreComments = true,
+                    IgnoreProcessingInstructions = true,
+                };
+                using var xr = XmlReader.Create(path, settings);
+                int n = 0, seen = 0;
+                while (xr.Read())
+                {
+                    if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "data") continue;
+                    if (++seen > MaxScanNodes) return Math.Max(n, 1); // bound worst-case CPU on a hostile file → still honest (≥1)
+                    if (IsUnrenderableMeta(xr.GetAttribute("mimetype"), xr.GetAttribute("type"))) n++;
+                }
+                return n;
+            }
+            catch { return 1; } // exists but unparseable/too-big-to-stream → fail-closed: resources may be missing → banner
+        }
+
+        // Classify a &lt;data&gt; node from its mimetype/type ATTRIBUTES alone (no materialization). mimetype is
+        // authoritative (checked first), so a binary/SOAP node counts even if it also declares an allowlisted type.
+        private static bool IsUnrenderableMeta(string? mimetype, string? type)
+        {
+            if (mimetype != null && (mimetype.IndexOf("binary.base64", StringComparison.OrdinalIgnoreCase) >= 0
+                                  || mimetype.IndexOf("soap.base64", StringComparison.OrdinalIgnoreCase) >= 0)) return true;
+            if (type == null) return false; // untyped node → a plain string value → renderable
+            string shortName = type.Split(',')[0].Trim();
+            if (shortName == "System.Resources.ResXFileRef") return true; // external file reference → refused
+            return !SafeTypes.Contains(shortName); // not an allowlisted safe value type
+        }
+
         /// <summary>Pre-scan the .resx XML (DTD/entity resolution disabled) for &lt;data&gt; entries with a
         /// BinaryFormatter/SOAP mimetype, so <see cref="GetObject"/> can refuse them without ever materializing.
-        /// A failed scan is non-fatal — the allowlist + runtime guard still apply.</summary>
+        /// Matches by LocalName (namespace-agnostic, like ResXResourceReader) so a namespaced binary node is still
+        /// refused. A failed scan is non-fatal — the allowlist + runtime guard still apply.</summary>
         private void ScanBinaryKeys(string path)
         {
             try
@@ -76,7 +130,7 @@ namespace WinFormsDesigner.Engine
                 var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
                 using var xr = XmlReader.Create(path, settings);
                 var doc = XDocument.Load(xr);
-                foreach (var data in doc.Root?.Elements("data") ?? Enumerable.Empty<XElement>())
+                foreach (var data in doc.Descendants().Where(e => e.Name.LocalName == "data"))
                 {
                     string? name = (string?)data.Attribute("name");
                     string? mime = (string?)data.Attribute("mimetype");

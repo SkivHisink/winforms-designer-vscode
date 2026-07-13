@@ -73,6 +73,7 @@ export function drainHarnesses(): void {
 
 // Designer canvas webview scaffold — element ids mirror designerEditor.ts designerHtml (:2850-2887).
 export const DESIGNER_SCAFFOLD = `
+  <div id="formNotice" style="display:none"><span id="formNoticeIcon">L</span><span id="formNoticeMsg"></span></div>
   <div id="diag" style="display:none">
     <div id="diagHead">
       <span id="diagIcon">!</span><span id="diagMsg"></span><span id="diagToggle"></span>

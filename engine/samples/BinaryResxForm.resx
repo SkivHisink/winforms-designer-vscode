@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms</value>
+  </resheader>
+  <data name="imageList1.ImageStream" type="System.Windows.Forms.ImageListStreamer, System.Windows.Forms" mimetype="application/x-microsoft.net.object.binary.base64">
+    <value>AAEAAAD/////AQAAAAAAAAAMAgAAAFdTeXN0ZW0uV2luZG93cy5Gb3JtcywgVmVyc2lvbj00LjAuMC4wBQEAAAAmU3lzdGVtLldpbmRvd3MuRm9ybXMuSW1hZ2VMaXN0U3RyZWFtZXIBAAAABERhdGEHAgIAAAAJAwAAAA8DAAAAtgAAAAI=</value>
+  </data>
+  <data name="okButton.HelpText" xml:space="preserve">
+    <value>A plain string resource that renders fine.</value>
+  </data>
+  <data name="external.file" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>.\missing-external.bin;System.Byte[], mscorlib</value>
+  </data>
+  <data name="cursorRes" type="System.Windows.Forms.Cursor, System.Windows.Forms" mimetype="application/x-microsoft.net.object.bytearray.base64">
+    <value>AA==</value>
+  </data>
+</root>

@@ -74,6 +74,11 @@ import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
 import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
 import { t, tn, injectL10nScript } from './i18n';
 import { categorizeUnrepresentable } from './renderDiagnostics';
+import { isLocalizableDesigner } from './localizable';
+import { chooseFormNoticeKind } from './formNotice';
+import { binaryResxCount } from './binaryResx';
+import { isByteLocalEdit } from './byteLocal';
+import { refuseWhileRenderFailed } from './renderGate';
 import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
 
@@ -101,6 +106,32 @@ function detectEngineKind(assemblyPath: string | undefined): EngineKind {
  *  now cut/paste — is mirrored (net9 splices the text; net48 mutates the live instance for the picture). 'save'
  *  just flushes the committed .Designer.cs text. */
 const NET48_READONLY_BLOCKED = new Set<string>([]);
+/**
+ * 0.10.0 trust-floor — every webview message that MUTATES the form (persists the .Designer.cs, and/or
+ * writes the .resx / the code-behind stub directly). On a [Localizable(true)] form the extension is a
+ * read-only preview: each of these is refused up front (before any live-picture mutation or file
+ * write), because an edit would either splice a direct `this.x.Prop = …` into the .Designer.cs while
+ * the real value lives in the .resx (a silent divergence VS drops on its next save) or write the
+ * .resx / code-behind of a form the banner promised not to touch. commit() is the airtight data-loss
+ * backstop for the .Designer.cs (the single funnel every persisted text edit flows through); this set
+ * additionally covers the direct-file-write ops (importImage/clearImage → .resx, createHandler → .cs)
+ * and gives an honest up-front refusal. Spans BOTH message handlers: the canvas (onMessage) and the
+ * Properties panel (WinFormsDesignerProvider.resolveWebviewView). Read-only messages (pick, select,
+ * copy, tabClick navigation, every list* collection read, navigate/list handler reads, viewCode,
+ * learnMore, showProperties, chooseItems, ready, save) are deliberately absent so inspection still
+ * works. Keep in sync with the mutating branches of BOTH handlers.
+ */
+const LOCALIZABLE_BLOCKED = new Set<string>([
+  // canvas (designer.js → onMessage)
+  'manipulate', 'manipulateGroup', 'edit', 'alignControls', 'centerInForm', 'resizeControls',
+  'dropControl', 'removeControl', 'removeControls', 'cut', 'cutControls', 'paste', 'duplicate',
+  'bringToFront', 'bringToFrontGroup', 'sendToBack', 'sendToBackGroup', 'tabRename',
+  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'addTab', 'deleteTab',
+  // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
+  'importImage', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
+  'setColumns', 'setGridColumns', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
+  'addControl', 'addComponent', 'deleteSelected',
+]);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
  *  diffs these against the current toolbox membership to add/remove/hide items. */
 type ChooseRow = { fqn: string; name: string; namespace?: string; assemblyName?: string; fromProject?: boolean; checked: boolean };
@@ -331,11 +362,22 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // Snapshot the exact text we write: if an edit/undo commits during the async write, the file holds this
     // snapshot, so only mark THAT as saved (a newer edit stays dirty — no silent data loss / reload-drop).
     const snapshot = this.designerText;
+    // 0.10.0 trust-floor — refuse to flush a DIRTY localizable buffer. commit() already blocks new edits,
+    // so the only way a localizable form is dirty here is a recovered hot-exit backup that a PRE-lock
+    // version left holding a direct `this.x.Prop = …` assignment which diverges from the .resx. This native
+    // save path never calls commit(), so without this guard it would persist the exact divergence the
+    // read-only lock forbids. Throw so VS Code keeps the document dirty and surfaces the reason — the user
+    // must revert the file (or hand-resolve the recovered content). A CLEAN localizable form is never dirty
+    // (isDirty === false → this is a no-op), so this never spuriously fails an ordinary save.
+    if (this.isDirty && isLocalizableDesigner(snapshot)) throw new Error(t('status.localizableSaveRefused'));
     await vscode.workspace.fs.writeFile(vscode.Uri.file(this.designerFile), this.bytesOf(snapshot));
     this.savedDesignerText = snapshot;
     this.session?.notifySaved();
   }
   async saveAs(dest: vscode.Uri): Promise<void> {
+    // 0.10.0 trust-floor — same recovered-dirty-buffer guard as save(): don't copy a divergent localizable
+    // buffer to a new file. A clean localizable form (isDirty === false) still saves-as a faithful copy.
+    if (this.isDirty && isLocalizableDesigner(this.designerText)) throw new Error(t('status.localizableSaveRefused'));
     // Save As on a designer writes the GENERATED partner, not generated code into a hand-edited .cs.
     const target = /\.Designer\.cs$/i.test(dest.fsPath) ? dest
       : /\.cs$/i.test(dest.fsPath) ? vscode.Uri.file(dest.fsPath.slice(0, -'.cs'.length) + '.Designer.cs')
@@ -440,6 +482,11 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     }) => {
       const s = DesignerHub.instance.activeSession;
       try {
+        // 0.10.0 trust-floor: a localizable form is read-only — refuse every mutating panel op (grid
+        // edit, image import/clear, reset, collections, event wiring, toolbox add) before it can splice
+        // the .Designer.cs or write the .resx / code-behind. Reads (list*, navigate, ready, pick) pass.
+        if (s?.refuseLocalizableEdit(m?.type)) return;
+        if (s?.refuseStaleRenderEdit(m?.type)) return; // 0.10.0 S5 — read-only while the last render failed (stale graph)
         if (m?.type === 'ready') { s?.refreshViews(); }
         else if (m?.type === 'pick' && m.id) { await s?.pick(m.id); }
         else if (m?.type === 'edit' && m.id && m.prop && m.propType !== undefined) {
@@ -497,6 +544,11 @@ class DesignerSession {
   private currentSelItem: { ownerId: string; itemId: string } | null = null;
   private renderSeq = 0;
   private controls: LayoutControl[] = [];
+  // 0.10.0 trust-floor S5 — false = the last render FAILED (or nothing has rendered yet). A hard load/render failure
+  // leaves a STALE preview on the canvas; while this is false, mutating gestures are refused fail-closed so an edit
+  // can't splice against a graph the designer couldn't load. Set true only at fullRender's clean success exit; set
+  // false in every failure branch. Stored (not derived from source — a parseable form can still fail to render).
+  private renderOk = false;
   private toolStripItems: ToolStripItemBounds[] = []; // per-item geometry from the last render (on-canvas "Type Here")
   private rootClient: { w: number; h: number } | null = null;
   private rootFrame: { w: number; h: number } | null = null;
@@ -613,6 +665,16 @@ class DesignerSession {
 
   /** True when this form is rendered by the net48 engine — a read-only compiled preview. */
   get isCompiledPreview(): boolean { return this.engineKind === 'net48'; }
+
+  /**
+   * 0.10.0 trust-floor — true when THIS form is [Localizable(true)] (its InitializeComponent uses
+   * ComponentResourceManager.ApplyResources), making it a read-only preview: a persisted edit would
+   * diverge from the .resx (VS drops it on its next save = silent data loss), and net9 mis-renders it.
+   * Computed FRESH from the current in-memory buffer on every read — never cached — so the read-only
+   * lock is authoritative regardless of render timing (no stale-false window before the first render,
+   * no stale-true window after an external edit). Cheap: two regex tests, only on user-gesture paths.
+   */
+  private get localizable(): boolean { return isLocalizableDesigner(this.doc.designerText); }
 
   /** The control assembly currently in effect: explicit override, else the auto-resolved framework assembly
    *  (net48/DevExpress) from the last render, else undefined (a net9 form → engine auto-discovery). */
@@ -751,8 +813,41 @@ class DesignerSession {
    * becomes dirty (not the generated file), and Ctrl+Z/Y restore the previous/next text through these
    * closures. Callers live-update the canvas (patch or full render) AFTER this; undo/redo do a full render.
    */
-  private commit(before: string, after: string, label: string): void {
-    if (after === before) return; // no-op edit → no dirty mark / no undo entry (don't desync VS Code dirty)
+  // Returns TRUE when the edit was applied (or was a no-op) and the caller may run its success follow-up; FALSE when a
+  // fail-closed gate (byte-local / render-failed / localizable) REFUSED it — the caller must then skip its success
+  // status + live-preview mutation so a refused edit never shows as applied (codex: commit() was void, callers diverged).
+  private commit(before: string, after: string, label: string): boolean {
+    if (after === before) return true; // no-op edit → nothing to persist, but the caller's (harmless) follow-up is fine
+    // 0.10.0 trust-floor S4 — byte-local firewall. Every persisted edit is a targeted net9 splice of `before`, which
+    // preserves the file outside the edited span by construction (net48 never writes source — it persists the SAME
+    // net9 splice). If `after` is NOT a confined edit of `before`, a non-splice path reached this funnel (a future
+    // refactor, a whole-file regenerate/reflow/EOL-normalize, or a recovered arbitrary buffer). Refuse it fail-closed:
+    // don't mutate designerText, don't fire an undo entry. COARSE by design (the tight per-statement confinement is
+    // already the engine's minimal/OnlyTargetChanged gate); this is the broad whole-file-catastrophe net.
+    if (!isByteLocalEdit(before, after)) {
+      this.output.appendLine('[designer] edit refused — byte-local invariant violated (' + label + ')');
+      this.post({ type: 'status', message: t('status.byteLocalRefused') });
+      return false;
+    }
+    // 0.10.0 trust-floor S5 — refuse to persist while the last render FAILED (stale/absent graph). Airtight backstop
+    // for any mutating edit that slipped past the refuseStaleRenderEdit dispatch gate (a non-gated ingress, or a
+    // render that failed AFTER the edit dispatched). undo/redo set designerText directly (below), NOT via commit(),
+    // so reverting still works; a later successful render flips renderOk true and re-enables editing.
+    if (!this.renderOk) {
+      this.output.appendLine('[designer] edit refused — last render failed / not fully rendered (' + label + ')');
+      this.post({ type: 'status', message: t('status.renderFailedReadonly') });
+      return false;
+    }
+    // 0.10.0 trust-floor — airtight data-loss backstop. Every persisted edit funnels through here; on a
+    // localizable form a forward edit would diverge from the .resx (VS drops it on its next save), so
+    // refuse to persist even if a mutating message slipped past the LOCALIZABLE_BLOCKED dispatch gate.
+    // Classified FRESH from the buffer (the getter), so it is correct even during a render race — the
+    // firewall never trusts a stale render-populated flag. (undo/redo set designerText directly, NOT via
+    // commit, so reverting a pre-lock edit still works.)
+    if (this.localizable) {
+      this.output.appendLine('[designer] edit refused — localizable form is read-only (' + label + ')');
+      return false;
+    }
     this.doc.rev++;
     this.doc.designerText = after;
     this.fireEdit({
@@ -761,6 +856,7 @@ class DesignerSession {
       undo: async () => { this.doc.rev++; this.doc.designerText = before; await this.rerenderFromDoc(); },
       redo: async () => { this.doc.rev++; this.doc.designerText = after; await this.rerenderFromDoc(); },
     });
+    return true;
   }
 
   /** Re-render the canvas from the current in-memory text (used by undo/redo and revert). */
@@ -776,6 +872,45 @@ class DesignerSession {
     this.postDirty();
   }
 
+  /**
+   * 0.10.0 trust-floor — the read-only lock for a [Localizable(true)] form. Returns true (and shows the
+   * read-only status) when this form is localizable AND `type` is a mutating message; the caller then
+   * returns without dispatching. Public because BOTH webview message handlers gate through it: the
+   * canvas (onMessage) and the Properties panel (WinFormsDesignerProvider.resolveWebviewView), which
+   * carries the direct-file-write ops (importImage/clearImage/createHandler) that never reach commit().
+   */
+  public refuseLocalizableEdit(type: string | undefined): boolean {
+    if (!type || !LOCALIZABLE_BLOCKED.has(type) || !this.localizable) return false;
+    this.post({ type: 'status', message: t('status.localizableReadonly') });
+    return true;
+  }
+
+  /**
+   * 0.10.0 trust-floor — method-level read-only guard (defense-in-depth beyond the dispatch gates).
+   * True (and shows the status) when this form is localizable. Called at the entry of the mutation
+   * methods that either write an IRREVERSIBLE side effect before commit() (importImage/clearImage → .resx)
+   * or are reachable via a NON-dispatch-gated ingress (navigateHandler → createHandler writes a code-behind
+   * stub), so a refused commit() can't be reached with the file already changed.
+   */
+  private refuseLocalizableMutation(): boolean {
+    if (!this.localizable) return false;
+    this.post({ type: 'status', message: t('status.localizableReadonly') });
+    return true;
+  }
+
+  /**
+   * 0.10.0 trust-floor S5 — read-only gate while the last render FAILED (or nothing has rendered yet). A hard
+   * load/render failure leaves a STALE preview on the canvas; refuse every mutating gesture so an edit can't
+   * splice against a graph the designer couldn't load. Reuses LOCALIZABLE_BLOCKED (the identical mutation surface);
+   * reads (pick/save/ready/list*) pass — `ready` is NOT in the set, so the FIRST render is never blocked. commit()
+   * backstops persistence. A subsequent successful render flips renderOk true and re-enables editing.
+   */
+  public refuseStaleRenderEdit(type: string | undefined): boolean {
+    if (!refuseWhileRenderFailed(type, LOCALIZABLE_BLOCKED, this.renderOk)) return false;
+    this.post({ type: 'status', message: t('status.renderFailedReadonly') });
+    return true;
+  }
+
   private async onMessage(m: {
     type: string; id?: string; mode?: string; x?: number; y?: number; width?: number; height?: number;
     ids?: string[]; dx?: number; dy?: number; prop?: string; propType?: string; isEnum?: boolean; value?: string;
@@ -788,6 +923,13 @@ class DesignerSession {
         this.post({ type: 'status', message: t('status.net48Unsupported') });
         return;
       }
+      // 0.10.0 trust-floor: a localizable form is a read-only preview — refuse every mutating gesture
+      // up front (before any live-picture mutation or text splice) so an edit can't diverge from the
+      // .resx. commit() backstops persistence; this gate keeps the UX honest and the picture stable.
+      if (this.refuseLocalizableEdit(m.type)) return;
+      // 0.10.0 trust-floor S5 — if the last render failed, the canvas is a stale preview of a form that didn't
+      // load; refuse mutating gestures so an edit can't target a graph the designer couldn't build.
+      if (this.refuseStaleRenderEdit(m.type)) return;
       if (m.type === 'ready') {
         this.gotReady = true;
         this.output.appendLine('[designer] webview ready: ' + this.designerFile);
@@ -1020,6 +1162,7 @@ class DesignerSession {
   }
 
   private fail(err: unknown): void {
+    this.renderOk = false; // S5: a hard render failure → read-only until a render succeeds again
     const msg = errMsg(err);
     // renderFailure:true distinguishes a real render failure (canvas is stale → the webview shows the persistent
     // "last successful preview" banner) from a failed user action routed through the generic onMessage catch
@@ -1076,6 +1219,7 @@ class DesignerSession {
     // to point the designer at a built control source.
     if (route.frameworkUnbuilt) {
       this.output.appendLine(`[designer] render #${seq}: .NET Framework project not built — prompting for control source`);
+      this.renderOk = false; // S5: an unbuilt framework project can't render → read-only (this path doesn't call fail())
       this.post({ type: 'error', message: t('host.frameworkUnbuilt'), renderFailure: true });
       this.promptControlSource(t('host.frameworkUnbuilt'));
       return false;
@@ -1119,6 +1263,12 @@ class DesignerSession {
     this.post({ type: 'render', png: result.png.toString('base64'), width: result.width, height: result.height, gen: seq });
     this.postLayout(result.controls, this.toolStripItems);
     this.post({ type: 'tray', items: result.tray }); // component tray (canvas strip)
+    // 0.10.0 S5 — the canvas now faithfully reflects this render → edits allowed. Set HERE (right after the render/
+    // layout/tray posts, BEFORE the awaited loadProps) so a loadProps rejection can't leave a visibly-rendered form
+    // read-only (false-refuse). GUARDED by the generation check so a SUPERSEDED render (whose newer sibling may have
+    // already fail()'d → renderOk=false) can never resurrect true — codex: an old fullRender resuming past its await
+    // must not overwrite a newer failure. (This runs synchronously right after the :1256 seq gate — no interleave.)
+    if (seq === this.renderSeq && !this.disposed) this.renderOk = true;
     // Keep the selection across a full re-render only if it still exists — as a visual control OR a tray component
     // (a ContextMenuStrip, Timer, …); otherwise fall back to the root form. Consulting the tray too matters after
     // editing a tray component's collection (e.g. a ContextMenuStrip's Items commits via this net9 fullRender):
@@ -1140,6 +1290,25 @@ class DesignerSession {
     // Empty items → the webview hides any stale banner (this render is clean). net48's compiled render is all-or-
     // nothing, so this is effectively net9 partial-render diagnostics; net48 per-control skip reasons are a follow-up.
     this.post({ type: 'renderDiag', items: categorizeUnrepresentable(result.unrepresentable) });
+    // 0.10.0 trust-floor: a persistent (non-dismissible) banner for a form the preview can't render/edit faithfully.
+    // Distinct from the dismissible #diag banner above so a partial-render notice can't hide the read-only lock (and
+    // vice-versa). THREE producers now (S1 localizable read-only lock, S2 inherited/unresolved-base, S3 binary/
+    // ImageStream resx resources) — all net9-only (net48 renders the real compiled type, so both flags read false
+    // there; gate defensively regardless). chooseFormNoticeKind picks the DOMINANT icon-kind; we compose the message
+    // text from EVERY true condition in precedence order so a single-slot banner never HIDES a disclosure (codex R#12).
+    const inheritedNet9 = this.engineKind === 'net9' && result.inheritedBase === true;
+    const binaryResx = this.engineKind === 'net9' && result.unrenderableResxCount > 0;
+    const noticeKind = chooseFormNoticeKind(this.localizable, inheritedNet9, binaryResx);
+    if (noticeKind === null) {
+      this.post({ type: 'formNotice', kind: null }); // clean render → hide
+    } else {
+      const parts: string[] = [];
+      if (this.localizable) parts.push(t('designer.notice.localizable'));
+      if (binaryResx) parts.push(t('designer.notice.binaryResx', { n: result.unrenderableResxCount }));
+      if (inheritedNet9) parts.push(t('designer.notice.inheritedBase', { base: result.baseTypeName }));
+      // 🔒 when the read-only lock is in play (edits blocked = primary state), else ⚠️ (incomplete/data-loss risk).
+      this.post({ type: 'formNotice', kind: noticeKind, icon: this.localizable ? '🔒' : '⚠️', text: parts.join(' ') });
+    }
     return true; // a fresh render→layout→tray was posted → the canvas forest is current
   }
 
@@ -1399,7 +1568,7 @@ class DesignerSession {
     }
     if (!applied) { this.post({ type: 'status', message: t('status.nothingMoved') }); await this.loadProps(this.currentId); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
-    this.commit(before, text, `Move ${applied} control${applied > 1 ? 's' : ''}`);
+    if (!this.commit(before, text, `Move ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`moved ${applied} controls by (${Math.round(dx)}, ${Math.round(dy)}) (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits));
     else await this.fullRender();
@@ -1475,7 +1644,7 @@ class DesignerSession {
     }
     if (!applied) { this.post({ type: 'status', message: t('status.nothingAligned') }); await this.loadProps(this.currentId); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
-    this.commit(before, text, `Align ${applied} control${applied > 1 ? 's' : ''}`);
+    if (!this.commit(before, text, `Align ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`aligned ${applied} controls (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
     else await this.fullRender();
@@ -1506,7 +1675,7 @@ class DesignerSession {
     }
     if (!applied) { this.post({ type: 'status', message: t('status.nothingResized') }); await this.loadProps(this.currentId); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
-    this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`);
+    if (!this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`resized ${applied} controls (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
     else await this.fullRender();
@@ -1533,7 +1702,7 @@ class DesignerSession {
     const applied = removed.length;
     if (!applied) { this.post({ type: 'status', message: t('status.removeRejectedNothing') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    this.commit(before, text, `Remove ${applied} control${applied > 1 ? 's' : ''}`);
+    if (!this.commit(before, text, `Remove ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = 'this';
     this.output.appendLine(`removed ${applied} controls (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, removed));
@@ -1643,7 +1812,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, finalText, `Set ${id}.${prop}`);
+    if (!this.commit(before, finalText, `Set ${id}.${prop}`)) return;
     this.output.appendLine(`set ${id}.${prop} = ${expr} (${res.mode}, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
 
@@ -1718,7 +1887,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, res.text, `Set ${itemId}.${prop}`);
+    if (!this.commit(before, res.text, `Set ${itemId}.${prop}`)) return;
     this.output.appendLine(`set ${itemId}.${prop} = ${expr} (${res.mode}, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id: itemId, prop }) });
 
@@ -1848,6 +2017,7 @@ class DesignerSession {
    */
   async importImageFromGrid(id: string, prop: string, propType: string): Promise<void> {
     if (!this.designerFile) return;
+    if (this.refuseLocalizableMutation()) return; // writes the .resx before commit() — guard the irreversible write
     const isIcon = propType === 'System.Drawing.Icon';
     const picked = await vscode.window.showOpenDialog({
       canSelectMany: false, openLabel: 'Import',
@@ -1877,9 +2047,35 @@ class DesignerSession {
         return;
       }
 
+      // 0.10.0 trust-floor TOCTOU close: the form could have turned localizable DURING the file picker /
+      // engine round-trip above (the entry guard ran before them). Re-check FRESH immediately before the
+      // irreversible .resx write, so a form that became read-only mid-operation can't have its .resx changed.
+      if (this.refuseLocalizableMutation()) { await this.loadProps(id); return; }
+      // 0.10.0 S3 fail-closed regenerate guard — two checks at the write boundary (the engine transformed the
+      // `resxText` SNAPSHOT read before the file-picker/engine round-trip):
+      // (1) CONCURRENCY: re-read the .resx FRESH; if it changed on disk since the snapshot (VS, git, another
+      //     extension), the engine's output is STALE and writing it would clobber that change → refuse (the .resx
+      //     analogue of the doc-rev check). This also makes the write atomic w.r.t. binary-node identity/bytes, not
+      //     just count (codex R: a same-count byte-change/rename must not be overwritten).
+      // (2) UPSERT REGRESSION: with the snapshot matching disk, verify the engine's output didn't DROP a binary
+      //     resource (count-based → robust to attribute quoting/order/malformed XML). A no-op on the normal path.
+      const freshResx = await this.readTextIfExists(resxUri);
+      if (freshResx !== resxText) {
+        this.output.appendLine('import refused: the .resx changed on disk during the import (stale engine output would clobber it)');
+        this.post({ type: 'status', message: t('status.docChangedImport') });
+        await this.loadProps(id);
+        return; // never write a .resx built from a now-stale snapshot
+      }
+      const droppedN = binaryResxCount(resxText) - binaryResxCount(res.resxText);
+      if (droppedN > 0) {
+        this.output.appendLine(`import refused: it would drop ${droppedN} binary resx resource(s)`);
+        this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: droppedN }) });
+        await this.loadProps(id);
+        return; // never write a .resx that dropped a binary node
+      }
       // write the .resx to disk FIRST (the engine reads it from disk on render), then commit the designer edit.
       await vscode.workspace.fs.writeFile(resxUri, Buffer.from(res.resxText, 'utf8'));
-      this.commit(before, res.designerText, `Import ${id}.${prop} image`);
+      if (!this.commit(before, res.designerText, `Import ${id}.${prop} image`)) return;
       this.output.appendLine(`imported image into ${id}.${prop} → ${res.resxKey} (${res.mode}; .resx written, designer unsaved)`);
       this.post({ type: 'status', message: t('status.imageImported', { id, prop }) });
 
@@ -1896,6 +2092,7 @@ class DesignerSession {
    *  entry is left as a harmless orphan (mirrors VS, which also doesn't prune unused resources on clear). */
   async clearImageFromGrid(id: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
+    if (this.refuseLocalizableMutation()) return; // read-only lock: no source mutation on a localizable form (this path resets the .cs assignment; it does NOT write the .resx, so no binary-resx regenerate risk)
     try {
       const eng = await this.ensureEngine();
       const before = this.doc.designerText;
@@ -1904,7 +2101,7 @@ class DesignerSession {
       if (!res.safe) { this.post({ type: 'status', message: t('status.clearRejected', { reason: res.reason || 'unsafe' }) }); await this.loadProps(id); return; }
       if (res.text == null) { this.post({ type: 'status', message: t('status.alreadyNone', { id, prop }) }); await this.loadProps(id); return; }
       if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedShort') }); await this.loadProps(id); return; }
-      this.commit(before, res.text, `Clear ${id}.${prop} image`);
+      if (!this.commit(before, res.text, `Clear ${id}.${prop} image`)) return;
       this.output.appendLine(`cleared image ${id}.${prop} (resx entry left as an orphan — harmless)`);
       this.post({ type: 'status', message: t('status.imageCleared', { id, prop }) });
       await this.fullRender();
@@ -1930,7 +2127,7 @@ class DesignerSession {
       if (!res.safe) { this.post({ type: 'status', message: t('status.resetRejected', { reason: res.reason || 'unsafe' }) }); await this.loadProps(id); return; }
       if (res.text == null) { this.post({ type: 'status', message: t('status.alreadyDefault', { id, prop }) }); await this.loadProps(id); return; }
       if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedShort') }); await this.loadProps(id); return; }
-      this.commit(before, res.text, `Reset ${id}.${prop}`);
+      if (!this.commit(before, res.text, `Reset ${id}.${prop}`)) return;
       this.output.appendLine(`reset ${id}.${prop} → default (unsaved)`);
       this.post({ type: 'status', message: t('status.propReset', { id, prop }) });
       if (this.engineKind === 'net48') {
@@ -1962,7 +2159,7 @@ class DesignerSession {
       if (!res.safe) { this.post({ type: 'status', message: t('status.resetRejected', { reason: res.reason || 'unsafe' }) }); await this.loadItemProps(ownerId, itemId); return; }
       if (res.text == null) { this.post({ type: 'status', message: t('status.alreadyDefault', { id: itemId, prop }) }); await this.loadItemProps(ownerId, itemId); return; }
       if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedShort') }); await this.loadItemProps(ownerId, itemId); return; }
-      this.commit(before, res.text, `Reset ${itemId}.${prop}`);
+      if (!this.commit(before, res.text, `Reset ${itemId}.${prop}`)) return;
       this.output.appendLine(`reset ${itemId}.${prop} → default (unsaved)`);
       this.post({ type: 'status', message: t('status.propReset', { id: itemId, prop }) });
       if (this.engineKind === 'net48') {
@@ -2025,7 +2222,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, res.text, `Set ${id}.${cell}`);
+    if (!this.commit(before, res.text, `Set ${id}.${cell}`)) return;
     this.output.appendLine(`set ${id}.${cell} = ${n} (table cell, unsaved)`);
     this.post({ type: 'status', message: t('status.cellSet', { id, cell }) });
 
@@ -2082,7 +2279,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, res.text, `Set ${id}.${prop}`);
+    if (!this.commit(before, res.text, `Set ${id}.${prop}`)) return;
     this.output.appendLine(`set ${id}.${prop} = ${items.length} item(s) (collection, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
     if (this.engineKind === 'net48') {
@@ -2143,7 +2340,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, res.text, `Set ${id}.${prop}`);
+    if (!this.commit(before, res.text, `Set ${id}.${prop}`)) return;
     this.output.appendLine(`set ${id}.${prop} = string[${items.length}] (unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
     if (this.engineKind === 'net48') {
@@ -2203,7 +2400,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, res.text, `Set ${id}.Columns`);
+    if (!this.commit(before, res.text, `Set ${id}.Columns`)) return;
     this.output.appendLine(`set ${id}.Columns = ${columns.length} column(s) (collection, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Columns' }) });
     if (this.engineKind === 'net48') {
@@ -2261,7 +2458,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, res.text, `Set ${id}.Nodes`);
+    if (!this.commit(before, res.text, `Set ${id}.Nodes`)) return;
     this.output.appendLine(`set ${id}.Nodes (tree, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Nodes' }) });
     if (this.engineKind === 'net48') {
@@ -2322,7 +2519,7 @@ class DesignerSession {
       return false;
     }
 
-    this.commit(before, res.text, `Edit ${id}.Items`);
+    if (!this.commit(before, res.text, `Edit ${id}.Items`)) return false; // refused → no fresh render reached the canvas
     this.output.appendLine(`edit ${id}.Items (toolstrip add/remove/rename/reorder, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Items' }) });
     // `rendered` = did a FRESH render→layout→tray reflecting this edit reach the canvas? net9 fullRender is true unless it
@@ -2574,7 +2771,7 @@ class DesignerSession {
       return;
     }
 
-    this.commit(before, res.text, `Set ${id}.Columns`);
+    if (!this.commit(before, res.text, `Set ${id}.Columns`)) return;
     this.output.appendLine(`set ${id}.Columns = ${columns.length} column(s) (grid collection, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Columns' }) });
     if (this.engineKind === 'net48') {
@@ -2618,7 +2815,7 @@ class DesignerSession {
       await this.loadProps(id);
       return;
     }
-    this.commit(before, text, `Set ${id} (${edits.length} properties)`);
+    if (!this.commit(before, text, `Set ${id} (${edits.length} properties)`)) return;
     this.output.appendLine(`set ${id} ${edits.map((e) => e.prop).join('+')} (${edits.length} edits, unsaved)`);
     if (this.engineKind === 'net48') {
       await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!,
@@ -2667,6 +2864,10 @@ class DesignerSession {
 
   async createHandler(id: string, eventName: string, handlerName?: string, ownerId?: string): Promise<void> {
     if (!this.designerFile) return;
+    // 0.10.0 trust-floor: reachable via navigateHandler (NOT a LOCALIZABLE_BLOCKED message) and the grid's
+    // "(new handler)" path — refuse here so a read-only localizable form can't gain a code-behind stub +
+    // event-wiring splice. Navigating to an EXISTING handler stays allowed (navigateToHandler's open branch).
+    if (this.refuseLocalizableMutation()) return;
     const codePath = this.codeFile();
     if (!codePath) { this.post({ type: 'status', message: t('status.noCodeBehindHandler') }); return; }
     const eng = await this.ensureEngine();
@@ -2689,6 +2890,10 @@ class DesignerSession {
       return;
     }
 
+    // 0.10.0 trust-floor TOCTOU close: the form could have turned localizable DURING the engine round-trip
+    // above (the entry guard ran before it). Re-check FRESH before writing the code-behind stub so a form
+    // that became read-only mid-operation can't gain a stub + wiring.
+    if (this.refuseLocalizableMutation()) return;
     // Apply the code-behind .cs stub FIRST (a real text edit the user reads/writes); only then commit the
     // in-memory .Designer.cs wiring — so we never wire an event to a handler stub that failed to write.
     if (gen.codeText != null) {
@@ -2697,7 +2902,9 @@ class DesignerSession {
       if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: t('status.couldNotWriteStub') }); return; }
       if (this.doc.rev !== designerRev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     }
-    if (gen.designerText != null) this.commit(designerBefore, gen.designerText, `Wire ${id}.${eventName}`);
+    // if the designer wiring is refused by a fail-closed gate, don't claim success or navigate (the code-behind stub
+    // written above is the user's own .cs — undoable — and stays; the wiring just isn't persisted).
+    if (gen.designerText != null && !this.commit(designerBefore, gen.designerText, `Wire ${id}.${eventName}`)) return;
 
     this.output.appendLine(`created handler ${gen.handlerName} for ${id}.${eventName}${gen.alreadyWired ? ' (already wired)' : ''} (unsaved)`);
     await this.refreshAfterWiring(id, ownerId);
@@ -2767,7 +2974,7 @@ class DesignerSession {
       await this.refreshAfterWiring(id, ownerId);
       return;
     }
-    this.commit(before, res.designerText, `${handler ? 'Wire' : 'Unwire'} ${id}.${event}`);
+    if (!this.commit(before, res.designerText, `${handler ? 'Wire' : 'Unwire'} ${id}.${event}`)) return;
     this.output.appendLine(`${handler ? 'wired' : 'unwired'} ${id}.${event}${handler ? ' → ' + handler : ''} (unsaved)`);
     this.post({ type: 'status', message: handler ? t('status.wired', { event, handler }) : t('status.unwired', { event }) });
     await this.refreshAfterWiring(id, ownerId);
@@ -2809,7 +3016,7 @@ class DesignerSession {
     const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm, projectFqns);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    this.commit(before, res.newText, `Add ${controlType}`);
+    if (!this.commit(before, res.newText, `Add ${controlType}`)) return;
     this.currentId = res.name;
     this.output.appendLine(`added ${controlType} → ${res.name} (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', controlType, res.name, locX, locY));
@@ -2903,7 +3110,7 @@ class DesignerSession {
     const res = await addComponent(eng, this.designerFile, componentType, before);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    this.commit(before, res.newText, `Add ${componentType}`);
+    if (!this.commit(before, res.newText, `Add ${componentType}`)) return;
     this.currentId = res.name;
     this.output.appendLine(`added component ${componentType} → ${res.name} (unsaved)`);
     await this.fullRender();
@@ -2918,7 +3125,7 @@ class DesignerSession {
     const res = await removeControl(eng, this.designerFile, id, before);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.removeRejected', { reason: res.reason || 'unsafe' }) }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    this.commit(before, res.newText, `Remove ${id}`);
+    if (!this.commit(before, res.newText, `Remove ${id}`)) return;
     this.currentId = 'this';
     this.output.appendLine(`removed ${id} (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, [id]));
@@ -2999,7 +3206,7 @@ class DesignerSession {
     }
     if (!applied) { this.post({ type: 'status', message: t('status.pasteRejected') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    this.commit(before, text, `Paste ${applied} control${applied > 1 ? 's' : ''}`);
+    if (!this.commit(before, text, `Paste ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = last || this.currentId;
     this.output.appendLine(`pasted ${applied} control(s) into ${parent} (unsaved)`);
     let net48Stale = false;
@@ -3056,7 +3263,7 @@ class DesignerSession {
     }
     if (!applied) { this.post({ type: 'status', message: t('status.duplicateRejected') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    this.commit(before, text, `Duplicate ${applied} control${applied > 1 ? 's' : ''}`);
+    if (!this.commit(before, text, `Duplicate ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = last || this.currentId;
     this.output.appendLine(`duplicated ${applied} control(s) (unsaved)`);
     let net48Stale = false;
@@ -3101,7 +3308,7 @@ class DesignerSession {
     }
     if (!applied) { this.post({ type: 'status', message: toFront ? t('status.alreadyFront') : t('status.alreadyBack') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    this.commit(before, text, toFront ? 'Bring to Front' : 'Send to Back');
+    if (!this.commit(before, text, toFront ? 'Bring to Front' : 'Send to Back')) return;
     this.output.appendLine(`${toFront ? 'brought to front' : 'sent to back'} ${applied} control(s) (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => setCompiledZOrder(e, this.designerFile!, this.asm()!, targets, toFront));
     else await this.fullRender();
@@ -3162,7 +3369,7 @@ class DesignerSession {
     const res = await addTabPage(eng, this.designerFile!, hostId, pageType, before);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'add tab rejected: ' + (res.reason || 'unsafe') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
-    this.commit(before, res.newText, `Add tab ${res.name}`);
+    if (!this.commit(before, res.newText, `Add tab ${res.name}`)) return;
     this.currentId = res.name;
     this.output.appendLine(`added tab ${res.name} to ${hostId} (unsaved)`);
     await this.live48((e) => addCompiledTab(e, this.designerFile!, asm, hostId, pageType, res.name));
@@ -3192,7 +3399,7 @@ class DesignerSession {
     const res = await removeTabPage(eng, this.designerFile!, hostId, pageId, before);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'delete tab rejected: ' + (res.reason || 'unsafe') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
-    this.commit(before, res.newText, `Delete tab ${pageId}`);
+    if (!this.commit(before, res.newText, `Delete tab ${pageId}`)) return;
     if (this.currentId === pageId) this.currentId = hostId;
     this.output.appendLine(`deleted tab ${pageId} from ${hostId} (unsaved)`);
     await this.live48((e) => removeCompiledTab(e, this.designerFile!, asm, hostId, pageId));
@@ -3223,6 +3430,7 @@ class DesignerSession {
       try {
         layout = await describeLayout(eng, this.designerFile, asm, text);
       } catch {
+        if (seq === this.renderSeq && !this.disposed) this.renderOk = false; // S5: current source didn't render → read-only
         return;
       }
       if (seq !== this.renderSeq || this.disposed) return;
@@ -3251,6 +3459,9 @@ class DesignerSession {
     try {
       frame = await renderWithLayout(eng, this.designerFile, asm, text);
     } catch (err) {
+      // S5: the full re-render of the current source FAILED → the form isn't renderable right now → read-only
+      // (fail-closed; self-recovers when a later render — e.g. after Undo restores a renderable buffer — succeeds).
+      if (seq === this.renderSeq && !this.disposed) this.renderOk = false;
       this.post({ type: 'status', message: t('status.renderFailed', { error: errMsg(err) }) });
       return;
     }
@@ -3451,6 +3662,12 @@ ${cspMeta(webview, nonce)}
   #diag { flex: 0 0 auto; max-height: 42%; overflow: auto; font-size: 12px; border-bottom: 1px solid var(--vscode-panel-border, #333); }
   #diag.warn { background: var(--vscode-inputValidation-warningBackground, #352a05); color: var(--vscode-inputValidation-warningForeground, inherit); border-bottom-color: var(--vscode-inputValidation-warningBorder, #b89500); }
   #diag.err { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); color: var(--vscode-inputValidation-errorForeground, inherit); border-bottom-color: var(--vscode-inputValidation-errorBorder, #be1100); }
+  /* 0.10.0 trust-floor — persistent (non-dismissible) read-only / fidelity notice strip. Distinct from #diag. */
+  #formNotice { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 12px;
+    background: var(--vscode-inputValidation-infoBackground, #063b49); color: var(--vscode-inputValidation-infoForeground, inherit);
+    border-bottom: 1px solid var(--vscode-inputValidation-infoBorder, #1c78c0); }
+  #formNoticeIcon { flex: 0 0 auto; }
+  #formNoticeMsg { flex: 1; }
   #diagHead { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
   #diagIcon { flex: 0 0 auto; }
   #diagToggle { cursor: pointer; text-decoration: underline; color: var(--vscode-textLink-foreground, #4ea1ff); }
@@ -3598,6 +3815,7 @@ ${cspMeta(webview, nonce)}
   .taskfly .tfLink:hover { background: var(--vscode-menu-selectionBackground, #04395e); color: #fff; }
 </style></head>
 <body>
+  <div id="formNotice" style="display:none"><span id="formNoticeIcon">🔒</span><span id="formNoticeMsg"></span></div>
   <div id="diag" style="display:none"><div id="diagHead"><span id="diagIcon">⚠</span><span id="diagMsg"></span><span id="diagToggle"></span><span id="diagSpacer"></span><button id="diagDismiss" title="${t('designer.diag.dismiss')}">×</button></div><ul id="diagList" style="display:none"></ul></div>
   <div id="stage"><div id="overlay">${t('designer.overlay.loading')}<noscript>${t('designer.overlay.noscript')}</noscript></div><div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="sel"></div></div></div>
   <div id="tray" style="display:none"></div>

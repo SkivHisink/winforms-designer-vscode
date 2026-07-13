@@ -1031,6 +1031,9 @@ namespace WinFormsDesigner.Engine
                     Console.WriteLine("   runtime  : " + RuntimeInformation.FrameworkDescription);
                     Console.WriteLine("   root     : " + res.RootType + "  frame " + res.Width + "x" + res.Height
                                       + "  (" + res.Representable + "/" + res.TotalStatements + " representable)");
+                    Console.WriteLine("   inherited: " + res.InheritedBase
+                                      + (res.InheritedBase ? "  base=" + res.BaseTypeName : ""));
+                    Console.WriteLine("   resx     : " + res.UnrenderableResxCount + " unrenderable");
                     Console.WriteLine("   png      : " + res.Png.Length + " bytes -> " + outPng
                                       + "  (" + colors + " distinct colors)");
                     Console.WriteLine("   controls : " + res.Controls.Count);

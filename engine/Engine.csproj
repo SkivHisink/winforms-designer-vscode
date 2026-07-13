@@ -19,10 +19,14 @@
     <PackageReference Include="System.CodeDom" Version="9.0.0" />
   </ItemGroup>
 
-  <!-- sample .Designer.cs files are DATA fixtures to render, not engine source -->
+  <!-- sample .Designer.cs / .resx files are DATA fixtures to render, not engine source/resources -->
   <ItemGroup>
     <Compile Remove="samples/**/*.cs" />
     <None Include="samples/**/*.cs" />
+    <!-- do NOT embed sample .resx into the engine assembly (they are input fixtures; one intentionally has a
+         dangling ResXFileRef the GenerateResource task would choke on) -->
+    <EmbeddedResource Remove="samples/**/*.resx" />
+    <None Include="samples/**/*.resx" />
   </ItemGroup>
 
 </Project>

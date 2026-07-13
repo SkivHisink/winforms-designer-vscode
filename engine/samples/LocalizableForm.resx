@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms</value>
+  </resheader>
+  <!-- Localizable form: per-control and $this properties live here, applied by ApplyResources at
+       runtime. The net9 interpreter does not read these (ApplyResources is unrepresentable) — they
+       exist so the fixture is an authentic localizable form. Plain string-serialized values only
+       (no BinaryFormatter), so this file itself is trivially safe. -->
+  <data name="$this.Text" xml:space="preserve">
+    <value>Localizable Form</value>
+  </data>
+  <data name="$this.ClientSize" type="System.Drawing.Size, System.Drawing">
+    <value>320, 180</value>
+  </data>
+  <data name="button1.Location" type="System.Drawing.Point, System.Drawing">
+    <value>30, 30</value>
+  </data>
+  <data name="button1.Size" type="System.Drawing.Size, System.Drawing">
+    <value>120, 32</value>
+  </data>
+  <data name="button1.Text" xml:space="preserve">
+    <value>Click me</value>
+  </data>
+  <data name="label1.Location" type="System.Drawing.Point, System.Drawing">
+    <value>30, 90</value>
+  </data>
+  <data name="label1.Size" type="System.Drawing.Size, System.Drawing">
+    <value>200, 20</value>
+  </data>
+  <data name="label1.Text" xml:space="preserve">
+    <value>Localized label</value>
+  </data>
+</root>

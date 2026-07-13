@@ -242,6 +242,9 @@ namespace WinFormsDesigner.Engine
                 ClientWidth = root.ClientSize.Width,
                 ClientHeight = root.ClientSize.Height,
                 RootType = g.RootType.FullName ?? g.RootType.Name,
+                InheritedBase = g.InheritedBase,
+                BaseTypeName = g.BaseTypeName,
+                UnrenderableResxCount = g.UnrenderableResxCount,
                 TotalStatements = g.Total,
                 Representable = g.Representable,
                 Unrepresentable = g.Unrepresentable,
@@ -1498,6 +1501,14 @@ namespace WinFormsDesigner.Engine
             public required DesignSurface Surface { get; init; }
             public required IDesignerHost Host { get; init; }
             public required Type RootType { get; init; }
+            /// <summary>0.10.0 S2: the real base is an unresolved/inherited (user/vendor) type → net9 silently drops
+            /// its controls. Surfaced as an honest banner (net9-only; net48 renders the real compiled type).</summary>
+            public bool InheritedBase { get; init; }
+            /// <summary>Name of the inherited/unresolved base (for the banner text); "" when the base resolved.</summary>
+            public string BaseTypeName { get; init; } = "";
+            /// <summary>0.10.0 S3: count of sibling-.resx resources this net9 preview can't render (binary/SOAP/
+            /// ImageStream/FileRef/non-allowlisted). Drives the honest banner; net48 path reports 0.</summary>
+            public int UnrenderableResxCount { get; init; }
             public required string ClassName { get; init; }
             public required List<Assembly> UserAsms { get; init; }
             public int Total { get; init; }
@@ -1590,7 +1601,8 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
-            Type rootType = DetectRootType(cls, designerFilePath);
+            var rootInfo = DetectRootType(cls, designerFilePath, userAsms);
+            Type rootType = rootInfo.Surface;
 
             var surface = new DesignSurface();
             try
@@ -1611,6 +1623,11 @@ namespace WinFormsDesigner.Engine
                     Surface = surface,
                     Host = host,
                     RootType = rootType,
+                    InheritedBase = rootInfo.InheritedBase,
+                    BaseTypeName = rootInfo.BaseTypeName,
+                    // S3: computed from a SEPARATE size-independent metadata scan (NOT resx?.Count) so an oversized /
+                    // unparseable .resx that TryLoadForDesigner refused still yields a truthful "incomplete" signal.
+                    UnrenderableResxCount = ResxResolver.UnrenderableResourceCount(designerFilePath),
                     ClassName = cls.Identifier.Text,
                     UserAsms = userAsms,
                     Total = total,
@@ -1689,41 +1706,175 @@ namespace WinFormsDesigner.Engine
             }
         }
 
-        private static Type DetectRootType(ClassDeclarationSyntax cls, string designerFilePath)
-        {
-            Type? fromDesigner = FromBaseList(cls.BaseList);
-            if (fromDesigner != null) return fromDesigner;
+        /// <summary>
+        /// Root-type classification: the framework <see cref="Surface"/> the interpreter loads (Form/UserControl),
+        /// plus a fail-closed signal that the REAL base is an unresolved/inherited (user- or vendor-defined) type
+        /// whose own InitializeComponent the net9 interpreter never replays — so the preview silently drops the
+        /// base's controls. <see cref="BaseTypeName"/> names that base for the honest "preview may be incomplete"
+        /// banner. net48 renders the real compiled type, so it has no such gap and emits no signal (0.10.0 S2).
+        /// </summary>
+        private readonly record struct RootTypeInfo(Type Surface, bool InheritedBase, string BaseTypeName);
 
-            // The .Designer.cs partial almost never carries the base clause — the base type (UserControl / Form,
-            // or a vendor base like XtraUserControl) is declared in the sibling main .cs (Foo.Designer.cs → Foo.cs).
-            // Consult it so a UserControl opened via its .Designer.cs isn't mis-typed (and rendered) as a Form.
+        private static RootTypeInfo DetectRootType(
+            ClassDeclarationSyntax cls, string designerFilePath, IReadOnlyList<Assembly> userAsms)
+        {
+            // Syntactic classification of the CURRENT source being interpreted (positive-evidence: null when no base
+            // clause is found on the .Designer.cs or its sibling). The net9 render REPLAYS this source, so it is
+            // authoritative for "does the source declare an inherited base" even when a stale build says otherwise.
+            RootTypeInfo? syn = ClassifyFromBaseList(cls.BaseList, cls.SyntaxTree.GetRoot())
+                ?? ClassifyFromSibling(cls, designerFilePath);
+
+            // Reflect the compiled DERIVED type's REAL immediate base where a build exists — the only signal that sees a
+            // cross-file / global-using base and a user type literally named "Form"/"UserControl".
+            if (userAsms.Count > 0)
+            {
+                try
+                {
+                    Type? compiled = ResolveCompiledRoot(cls, userAsms);
+                    if (compiled != null)
+                    {
+                        Type? baseT = compiled.BaseType;
+                        bool reflResolved = IsFrameworkRoot(baseT); // immediate base IS Form/UserControl → nothing dropped
+                        bool synInherited = syn is { InheritedBase: true };
+                        // FAIL-CLOSED UNION: flag if EITHER the compiled base OR the current source base is non-framework.
+                        // Reflection ALONE false-resolves against a STALE build (source added inheritance but wasn't
+                        // rebuilt) while the source-interpreted render already drops the base's controls (codex R#3). When
+                        // reflection resolves but the source flags, prefer the source's base name (the reflected base is
+                        // the stale framework root; the source names the real new base).
+                        bool inherited = !reflResolved || synInherited;
+                        string baseName = !inherited ? ""
+                            : !reflResolved ? (baseT?.FullName ?? baseT?.Name ?? "unknown")
+                            : (syn?.BaseTypeName ?? "unknown");
+                        return new RootTypeInfo(SurfaceFor(compiled), inherited, baseName);
+                    }
+                }
+                catch { /* reflection hiccup → fall through to the syntactic result (fail-closed) */ }
+            }
+
+            // Buildless / type not found: the syntactic result, or today's default (Form, no banner) when there is no
+            // base evidence anywhere (unreadable sibling + no build) — positive-evidence keeps plain forms un-bannered.
+            return syn ?? new RootTypeInfo(typeof(Form), false, "");
+        }
+
+        // Build the derived type's reflection FQN (namespace(s) + nested-type '+' chain, WITH CLR generic arity `n so a
+        // generic type isn't confused with a same-named nongeneric in a dependency — codex R#7) and resolve it against
+        // the loaded user assemblies. Mirrors engine-net48/RootTypeResolver but walks every ancestor.
+        private static Type? ResolveCompiledRoot(ClassDeclarationSyntax cls, IReadOnlyList<Assembly> userAsms)
+        {
+            string name = ReflectionSimpleName(cls);
+            foreach (var anc in cls.Ancestors())
+            {
+                if (anc is ClassDeclarationSyntax outer) name = ReflectionSimpleName(outer) + "+" + name;
+                else if (anc is BaseNamespaceDeclarationSyntax ns) name = ns.Name.ToString() + "." + name;
+            }
+            return ResolveType(name, userAsms);
+        }
+
+        // The two framework roots the interpreter can target with NOTHING dropped. Identity fast-path, else the type
+        // must live in the REAL System.Windows.Forms assembly (a different-ALC WinForms is fine — same assembly name),
+        // so a vendor type that merely REUSES the System.Windows.Forms.Form name via extern alias is rejected (codex R#6).
+        private static bool IsFrameworkRoot(Type? t)
+        {
+            if (t == null) return false;
+            if (t == typeof(Form) || t == typeof(UserControl)) return true;
+            if (t.Assembly.GetName().Name != "System.Windows.Forms") return false;
+            return t.FullName == "System.Windows.Forms.Form" || t.FullName == "System.Windows.Forms.UserControl";
+        }
+
+        // Best-effort render surface: walk the REAL base chain to the first framework root (assembly-checked → a
+        // same-named vendor type never masquerades as the surface family).
+        private static Type SurfaceFor(Type compiled)
+        {
+            for (Type? t = compiled; t != null; t = t.BaseType)
+            {
+                if (t.Assembly.GetName().Name != "System.Windows.Forms") continue;
+                if (t.FullName == "System.Windows.Forms.UserControl") return typeof(UserControl);
+                if (t.FullName == "System.Windows.Forms.Form") return typeof(Form);
+            }
+            return typeof(Form); // best-effort default (unchanged vs the pre-S2 fallback)
+        }
+
+        // EXACT-match classifier over the PARSED base-type node (not a ToString() substring, so comments/whitespace are
+        // trivia and a vendor base like XtraForm never coincidentally matches). Resolves a SAME-FILE `using X = Type;`
+        // alias first so `: U` (alias of a framework root) classifies correctly and picks the right surface (codex R#8).
+        // null = "no base clause here" so the caller can chain to the sibling; a non-framework base → flagged inherited.
+        private static RootTypeInfo? ClassifyFromBaseList(BaseListSyntax? baseList, SyntaxNode fileRoot)
+        {
+            if (baseList == null || baseList.Types.Count == 0) return null;
+            var t = baseList.Types[0].Type; // C# requires the base CLASS first (interfaces follow) → [0] is it
+            (string simple, string full) = ResolveAlias(SimpleName(t), t.ToString().Trim(), fileRoot);
+            if (simple == "Form" || full == "System.Windows.Forms.Form") return new RootTypeInfo(typeof(Form), false, "");
+            if (simple == "UserControl" || full == "System.Windows.Forms.UserControl") return new RootTypeInfo(typeof(UserControl), false, "");
+            Type surface = simple.Contains("UserControl") ? typeof(UserControl) : typeof(Form);
+            return new RootTypeInfo(surface, true, simple);
+        }
+
+        private static RootTypeInfo? ClassifyFromSibling(ClassDeclarationSyntax cls, string designerFilePath)
+        {
             try
             {
                 string? sibling = SiblingMainFile(designerFilePath);
                 if (sibling != null && File.Exists(sibling))
                 {
                     var sRoot = CSharpSyntaxTree.ParseText(File.ReadAllText(sibling)).GetRoot();
-                    string name = cls.Identifier.Text;
-                    var match = sRoot.DescendantNodes().OfType<ClassDeclarationSyntax>()
-                        .FirstOrDefault(c => c.Identifier.Text == name && c.BaseList != null);
-                    Type? fromSibling = FromBaseList(match?.BaseList);
-                    if (fromSibling != null) return fromSibling;
+                    // Match the sibling class by FULLY-QUALIFIED name (namespace + nested chain), not just its short
+                    // name, so an unrelated same-short-name type in another namespace can't classify this one (codex R#4).
+                    string want = QualifiedSyntaxName(cls);
+                    foreach (var c in sRoot.DescendantNodes().OfType<ClassDeclarationSyntax>())
+                    {
+                        if (c.BaseList == null || QualifiedSyntaxName(c) != want) continue;
+                        var r = ClassifyFromBaseList(c.BaseList, sRoot);
+                        if (r != null) return r;
+                    }
                 }
             }
-            catch { /* unreadable sibling → fall back to Form */ }
-
-            return typeof(Form);
+            catch { /* unreadable sibling → let the caller fall back to Form */ }
+            return null;
         }
 
-        // A base list mentioning UserControl (incl. vendor bases like XtraUserControl, which derive from it)
-        // → UserControl surface; Form → Form; anything else → null (undetermined).
-        private static Type? FromBaseList(BaseListSyntax? baseList)
+        // Rightmost simple identifier of a base-type node, stripping namespace qualifiers (System.Windows.Forms.Form
+        // → Form), alias qualifiers (global::…Form / Alias::Form → Form) and generic arity (BaseForm<T> → BaseForm).
+        private static string SimpleName(TypeSyntax type) => type switch
         {
-            if (baseList == null) return null;
-            string bases = baseList.ToString();
-            if (bases.Contains("UserControl")) return typeof(UserControl);
-            if (bases.Contains("Form")) return typeof(Form);
-            return null;
+            QualifiedNameSyntax q => SimpleName(q.Right),
+            AliasQualifiedNameSyntax a => SimpleName(a.Name),
+            GenericNameSyntax g => g.Identifier.Text,
+            IdentifierNameSyntax id => id.Identifier.Text,
+            _ => type.ToString().Trim(),
+        };
+
+        // If `simple` is a SAME-FILE `using Alias = Target;` directive, return the target's (simple, full) names so an
+        // aliased framework base classifies + picks the right surface. Cross-file / global-using aliases aren't visible
+        // here (the reflection path covers those when a build exists). No matching alias → the inputs unchanged.
+        private static (string simple, string full) ResolveAlias(string simple, string full, SyntaxNode fileRoot)
+        {
+            foreach (var u in fileRoot.DescendantNodes().OfType<UsingDirectiveSyntax>())
+            {
+                if (u.Alias?.Name.Identifier.Text == simple && u.Name is NameSyntax target)
+                    return (SimpleName(target), target.ToString().Trim());
+            }
+            return (simple, full);
+        }
+
+        // CLR metadata name of a class syntax: `Foo` or `Foo`1` (generic arity) so a generic type isn't confused with a
+        // same-named nongeneric when resolved by reflection.
+        private static string ReflectionSimpleName(ClassDeclarationSyntax c)
+        {
+            int arity = c.TypeParameterList?.Parameters.Count ?? 0;
+            return arity > 0 ? c.Identifier.Text + "`" + arity : c.Identifier.Text;
+        }
+
+        // Dotted namespace + nested-type '+' path + class name (generic arity IGNORED — partial decls of the same
+        // class match across the .Designer.cs and the sibling .cs). Used to match the sibling's class unambiguously.
+        private static string QualifiedSyntaxName(ClassDeclarationSyntax c)
+        {
+            string name = c.Identifier.Text;
+            foreach (var anc in c.Ancestors())
+            {
+                if (anc is ClassDeclarationSyntax outer) name = outer.Identifier.Text + "+" + name;
+                else if (anc is BaseNamespaceDeclarationSyntax ns) name = ns.Name.ToString() + "." + name;
+            }
+            return name;
         }
 
         // Foo.Designer.cs → Foo.cs (the main partial holding the base clause). Null when not a .Designer.cs name.

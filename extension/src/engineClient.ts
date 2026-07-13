@@ -234,6 +234,16 @@ export interface RenderLayout {
   toolStripItems: ToolStripItemBounds[]; // per-item geometry for on-canvas "Type Here"
   unrepresentable: string[]; // statements the interpreter couldn't run — incl. "unresolved type X" for a control
                              // whose assembly isn't loaded (drives the "select a control source" prompt)
+  /** net9 only (0.10.0 S2): the form's real base is an inherited/vendor type the interpreter can't reproduce, so this
+   *  best-effort preview silently drops the base's controls. Drives an honest "preview may be incomplete" banner.
+   *  net48 renders the real compiled type (all base controls present), so it always reports false. */
+  inheritedBase: boolean;
+  /** name of the inherited/unresolved base for the banner text; '' when the base resolved. */
+  baseTypeName: string;
+  /** net9 only (0.10.0 S3): count of sibling-.resx resources this preview can't render (BinaryFormatter/SOAP/
+   *  ImageStream/FileRef/non-allowlisted). >0 drives an honest "preview may be incomplete" banner. net48 renders
+   *  the real compiled instance (resources present), so it always reports 0. */
+  unrenderableResxCount: number;
   /** net48 compiled engine only: for a live property edit, whether the value was applied to the live instance
    *  (picture reflects it). Absent/true for a plain render. */
   applied?: boolean;
@@ -256,6 +266,7 @@ export async function renderWithLayout(
   const raw = await engine.connection.sendRequest<{
     png: string; width: number; height: number; clientWidth: number; clientHeight: number;
     rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; toolStripItems?: ToolStripItemBounds[]; unrepresentable?: string[];
+    inheritedBase?: boolean; baseTypeName?: string; unrenderableResxCount?: number;
   }>('RenderWithLayout', designerFilePath, ...asmTextTail(controlAssemblyPath, sourceText));
   return {
     png: Buffer.from(raw.png ?? '', 'base64'),
@@ -268,6 +279,14 @@ export async function renderWithLayout(
     tray: raw.tray ?? [],
     toolStripItems: raw.toolStripItems ?? [],
     unrepresentable: raw.unrepresentable ?? [],
+    // `InheritedBase` is a non-nullable engine bool, ALWAYS serialized (even false), and the engine is bundled in the
+    // VSIX with this client — so the field is present for every real render. The `?? false` guards only a version-skew
+    // dev build (new client + pre-S2 engine); we deliberately default false there rather than true (codex R#5): a
+    // default-true would banner EVERY form against such an engine (a worse, ship-blocking over-banner). Skew is a build
+    // problem, not a runtime state, and it would break far more than S2.
+    inheritedBase: raw.inheritedBase ?? false,
+    baseTypeName: raw.baseTypeName ?? '',
+    unrenderableResxCount: raw.unrenderableResxCount ?? 0, // pre-S3 engine → 0 (no banner), same version-skew default as inheritedBase
   };
 }
 
@@ -310,6 +329,12 @@ function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
     tray: raw.tray ?? [],
     toolStripItems: raw.toolStripItems ?? [],
     unrepresentable: raw.unrepresentable ?? [],
+    // net48 renders the real compiled type (base controls present), so it never flags inherited-base — S2 is net9-only.
+    inheritedBase: false,
+    baseTypeName: '',
+    // net48 instantiates the real compiled form: its ImageStream/BinaryFormatter resx resources materialize and
+    // render, so the preview is complete → 0 unrenderable. S3's banner is net9-only, same rationale as S2.
+    unrenderableResxCount: 0,
     applied: raw.applied ?? true,
     diagnostics: raw.diagnostics ?? '',
   };

@@ -28,6 +28,15 @@
          a non-Control tray Component. The compiled instance lets describe enumerate the ContextMenuStrip field names and
          TryApply's reference branch resolve a picked name to the live component (the tray-owner write path). -->
     <Compile Include="..\..\engine\samples\NotifyIconForm.Designer.cs" Link="NotifyIconForm.Designer.cs" />
+    <!-- 0.10.0 S2 VISUAL-INHERITANCE pair: DerivedForm : InheritedBaseForm : Form. Both partials of BOTH forms must
+         compile into ONE assembly so the net48 engine can instantiate the concrete DerivedForm and render baseButton
+         (from the base) AND derivedButton — proving net48 has NO inherited-form gap (so it emits no banner), unlike
+         net9 which drops baseButton. Framework-only, so they compile cleanly here (the vendor : XtraForm fixture is
+         net9 fallback-only and intentionally NOT linked). -->
+    <Compile Include="..\..\engine\samples\InheritedBaseForm.Designer.cs" Link="InheritedBaseForm.Designer.cs" />
+    <Compile Include="..\..\engine\samples\InheritedBaseForm.cs" Link="InheritedBaseForm.cs" />
+    <Compile Include="..\..\engine\samples\DerivedForm.Designer.cs" Link="DerivedForm.Designer.cs" />
+    <Compile Include="..\..\engine\samples\DerivedForm.cs" Link="DerivedForm.cs" />
   </ItemGroup>
 
 </Project>

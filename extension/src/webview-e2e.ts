@@ -184,6 +184,73 @@ test('diag banner (T2.2): warn shows, toggle expands, dismiss latches, changed s
   h.destroy();
 });
 
+test('formNotice (0.10.0): persistent read-only strip shows on a kind, hides on null, coexists with #diag, honors a custom icon', () => {
+  const h = loadDesigner();
+
+  // localizable read-only lock → the persistent strip shows with the given text
+  h.send({ type: 'formNotice', kind: 'localizable', text: 'Localizable form — read-only preview.' });
+  ok(h.el('formNotice').style.display !== 'none', 'formNotice visible when a kind is set');
+  eq(h.el('formNoticeMsg').textContent, 'Localizable form — read-only preview.', 'notice text set');
+
+  // independence from #diag: a partial-render warn banner and the lock strip must both be visible at once
+  h.send({ type: 'renderDiag', items: [{ category: 'unsupported', text: 'resources.ApplyResources(this.b, "b")', detail: '' }] });
+  ok(h.el('diag').style.display !== 'none', 'diag banner shows alongside…');
+  ok(h.el('formNotice').style.display !== 'none', '…the formNotice strip (neither overwrites the other)');
+
+  // a custom icon (reused by later fidelity notices) updates the glyph
+  h.send({ type: 'formNotice', kind: 'inherited', text: 'Inherited base — preview incomplete.', icon: '⚠' });
+  eq(h.el('formNoticeIcon').textContent, '⚠', 'custom icon applied');
+  eq(h.el('formNoticeMsg').textContent, 'Inherited base — preview incomplete.', 'notice text updated');
+
+  // codex fix-verify: a later notice with NO icon must RESET to the default lock glyph, not leak the prior ⚠
+  h.send({ type: 'formNotice', kind: 'localizable', text: 'Localizable form — read-only preview.' });
+  eq(h.el('formNoticeIcon').textContent, '🔒', 'icon resets to the lock default when a notice supplies none (no leak)');
+
+  // null kind clears it (a clean / non-localizable render)
+  h.send({ type: 'formNotice', kind: null });
+  eq(h.el('formNotice').style.display, 'none', 'formNotice hidden when kind is null');
+  h.destroy();
+});
+
+test('formNotice (0.10.0 S2): inherited-base notice shows the ⚠️ warning glyph + interpolated base name, then clears', () => {
+  const h = loadDesigner();
+
+  // the exact payload the host posts for a net9 inherited/unresolved-base form (designerEditor.ts): a distinct
+  // ⚠️ warning glyph (NOT the localizable lock) and the base type name interpolated into the honest banner text.
+  h.send({ type: 'formNotice', kind: 'inheritedBase', icon: '⚠️', text: 'Preview may be incomplete — this form inherits from BaseForm. The .NET preview can’t resolve the base type, so controls it defines aren’t shown.' });
+  ok(h.el('formNotice').style.display !== 'none', 'inherited-base notice visible');
+  eq(h.el('formNoticeIcon').textContent, '⚠️', 'inherited-base uses the warning glyph, not the lock');
+  ok(/inherits from BaseForm/.test(h.el('formNoticeMsg').textContent || ''), 'the base type name is interpolated into the notice text');
+
+  // a following localizable render (precedence: localizable wins) must reset the glyph back to the lock (no ⚠️ leak)
+  h.send({ type: 'formNotice', kind: 'localizable', text: 'Localizable form — read-only preview.' });
+  eq(h.el('formNoticeIcon').textContent, '🔒', 'switching to the localizable lock resets the glyph (no warning-icon leak)');
+
+  h.send({ type: 'formNotice', kind: null });
+  eq(h.el('formNotice').style.display, 'none', 'inherited-base notice clears on a clean render');
+  h.destroy();
+});
+
+test('formNotice (0.10.0 S3): binary-resx notice shows ⚠️ + count, and a COMPOSED lock+binaryResx message keeps 🔒', () => {
+  const h = loadDesigner();
+
+  // binaryResx-only: the exact host payload for a form whose .resx has binary/ImageStream resources (net9).
+  h.send({ type: 'formNotice', kind: 'binaryResx', icon: '⚠️', text: 'Preview may be incomplete — this form has 2 binary/ImageStream resource(s) the .NET preview can’t render.' });
+  ok(h.el('formNotice').style.display !== 'none', 'binaryResx notice visible');
+  eq(h.el('formNoticeIcon').textContent, '⚠️', 'binaryResx uses the warning glyph');
+  ok(/2 binary\/ImageStream/.test(h.el('formNoticeMsg').textContent || ''), 'the resource count is shown');
+
+  // composed (localizable + binaryResx): the host keeps the 🔒 lock glyph and appends the binaryResx clause, so the
+  // data-loss disclosure is never hidden by the read-only lock (codex R#12 generalized to S3).
+  h.send({ type: 'formNotice', kind: 'localizable', icon: '🔒', text: 'Localizable form — read-only preview. This form has 1 binary/ImageStream resource(s) the .NET preview can’t render.' });
+  eq(h.el('formNoticeIcon').textContent, '🔒', 'the composed lock+binaryResx notice keeps the lock glyph');
+  ok(/binary\/ImageStream/.test(h.el('formNoticeMsg').textContent || ''), 'the binaryResx disclosure is composed into the lock message (not hidden)');
+
+  h.send({ type: 'formNotice', kind: null });
+  eq(h.el('formNotice').style.display, 'none', 'binaryResx notice clears on a clean render');
+  h.destroy();
+});
+
 test('error (T2.2): overlay before first render, err-banner on a real render failure, footer status on an action error', () => {
   const h = loadDesigner();
 

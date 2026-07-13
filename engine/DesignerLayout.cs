@@ -134,6 +134,16 @@ namespace WinFormsDesigner.Engine
         public int ClientWidth { get; init; }
         public int ClientHeight { get; init; }
         public string RootType { get; init; } = "";
+        /// <summary>0.10.0 S2: net9 couldn't resolve the form's real base (an inherited/vendor type) → base-contributed
+        /// controls are silently dropped from this best-effort preview. The host shows an honest banner. net48 renders
+        /// the real compiled type, so it leaves this false.</summary>
+        public bool InheritedBase { get; init; }
+        /// <summary>Name of the inherited/unresolved base for the banner text; "" when the base resolved.</summary>
+        public string BaseTypeName { get; init; } = "";
+        /// <summary>0.10.0 S3: count of sibling-.resx resources this net9 preview can't render (BinaryFormatter/SOAP/
+        /// ImageStream/FileRef/non-allowlisted value types). Drives an honest banner. net48 renders the real compiled
+        /// instance (resources present), so it leaves this 0.</summary>
+        public int UnrenderableResxCount { get; init; }
         public int TotalStatements { get; init; }
         public int Representable { get; init; }
         public List<string> Unrepresentable { get; init; } = new();

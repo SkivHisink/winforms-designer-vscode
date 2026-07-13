@@ -102,6 +102,14 @@ export const en: Catalog = {
   'designer.diag.cat.missingType': 'Missing type:',
   'designer.diag.cat.initError': 'Init error:',
   'designer.diag.cat.unsupported': 'Unsupported:',
+  // 0.10.0 trust-floor — persistent read-only notice for a [Localizable(true)] form.
+  'designer.notice.localizable': 'Localizable form — read-only preview. Edits would diverge from the .resx, so the designer won’t change this form. Inherited resource values aren’t shown in the .NET preview.',
+  // 0.10.0 trust-floor — persistent notice when the form's real base is an inherited/vendor type the .NET preview
+  // can't reproduce (net9-only; {base} is the base type name). Best-effort preview drops the base's controls.
+  'designer.notice.inheritedBase': 'Preview may be incomplete — this form inherits from {base}. The .NET preview can’t resolve the base type, so controls it defines aren’t shown.',
+  // 0.10.0 trust-floor — persistent notice when the sibling .resx holds binary/ImageStream resources the .NET
+  // preview can't render (net9-only; {n} is the count). They're preserved on disk; the designer won't regenerate it.
+  'designer.notice.binaryResx': 'Preview may be incomplete — this form has {n} binary/ImageStream resource(s) the .NET preview can’t render. They’re preserved in the .resx; the designer won’t regenerate it.',
   'designer.ruler.show': 'Show ruler',
   'designer.ruler.hide': 'Hide ruler',
   'designer.formSuffix': ' (form)',
@@ -306,6 +314,10 @@ export const en: Catalog = {
   'status.diskChanged': '.Designer.cs changed on disk — keeping your unsaved designer edits',
   'status.saved': 'saved',
   'status.net48Unsupported': 'That operation isn’t supported yet in the .NET Framework compiled preview.',
+  'status.localizableReadonly': 'Localizable form — read-only preview (edits would diverge from the .resx).',
+  // 0.10.0 S5 — read-only while the last render failed (the canvas is a stale preview of a form that didn't load).
+  'status.renderFailedReadonly': 'Read-only — the last render failed; editing is disabled until the form renders successfully.',
+  'status.localizableSaveRefused': 'Localizable form is read-only — this recovered unsaved edit can’t be saved (it would diverge from the .resx). Revert the file to discard it.',
   'status.docChanged': 'document changed during edit — try again',
   'status.docChangedImport': 'document changed during import — try again',
   'status.docChangedShort': 'document changed — try again',
@@ -324,10 +336,14 @@ export const en: Catalog = {
   'status.invalidValue': "'{raw}' is not a valid {type} value",
   'status.cannotEditType': 'cannot edit {type} from the panel yet',
   'status.editRejected': 'edit rejected: {reason}',
+  // 0.10.0 S4 — the byte-local firewall refused a persisted edit that would rewrite the file beyond the intended change.
+  'status.byteLocalRefused': 'edit refused — it would rewrite the file beyond the intended change (byte-local safety)',
   'status.propSet': 'set {id}.{prop} — unsaved',
   'status.previewPartial': 'preview partial — {diag}; saved, renders fully after a rebuild',
   'status.imageTooLarge': 'image is too large (max 16 MB)',
   'status.importRejected': 'import rejected: {reason}',
+  // 0.10.0 S3 — fail-closed regenerate guard: the write would have dropped binary/ImageStream resx resources.
+  'status.binaryResxRegenRefused': 'import blocked — it would drop {n} binary/ImageStream resource(s) from the .resx (data loss); the .resx was not modified',
   'status.imageImported': 'imported image for {id}.{prop} — unsaved (.resx written)',
   'status.importFailed': 'import failed: {error}',
   'status.clearRejected': 'clear rejected: {reason}',

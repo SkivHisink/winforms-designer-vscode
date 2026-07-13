@@ -6,6 +6,11 @@ import { spawnSync } from 'child_process';
 import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
+import { isLocalizableDesigner } from './localizable';
+import { chooseFormNoticeKind } from './formNotice';
+import { hasBinaryResx, binaryResxKeys, binaryResxCount } from './binaryResx';
+import { isByteLocalEdit, diffLines, changedLines } from './byteLocal';
+import { refuseWhileRenderFailed } from './renderGate';
 import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
 
@@ -256,6 +261,246 @@ function verifyCsprojHelpers(repo: string): void {
 
     console.log('e2e: T2.2 render-diagnostics categorize verified — unresolved-type→missingType (jacket stripped), exception→initError (message), bare statement→unsupported; blank ignored + dup collapsed; empty/undefined→[]; signature order-independent, set-sensitive & collision-free; tail-anchored jacket (sibling "[Ex:]" literal kept); prose "unresolved type"→initError; "(unresolved type) X"→missingType');
   }
+
+  // ---- 0.10.0 trust-floor: localizable-form detection (read-only refusal) ----
+  // isLocalizableDesigner is the runtime-independent trust boundary that turns a [Localizable(true)] form into a
+  // read-only preview (a property edit on such a form would splice a direct assignment that diverges from the .resx =
+  // silent data loss). It is deliberately BROAD/fail-closed: it keys on the `ApplyResources(` CALL alone (the
+  // ComponentResourceManager bulk-apply only a localizable form emits), NOT the manager declaration shape — so no
+  // valid-C# declaration spelling can evade it (a false negative is the data-loss path). A false positive is a
+  // harmless read-only refusal (codex fix-verify: the two-signal rule was defeated by a cross-file `global using`
+  // alias, where the manager token never appears in the designer buffer).
+  {
+    // the real localizable fixture is detected…
+    const locSrc = fs.readFileSync(path.join(repo, 'engine', 'samples', 'LocalizableForm.Designer.cs'), 'utf8');
+    if (!isLocalizableDesigner(locSrc)) throw new Error('localizable: LocalizableForm fixture must be detected as localizable');
+    if (!/resources\.ApplyResources\(this\.button1, "button1"\)/.test(locSrc)) throw new Error('localizable: fixture missing the ApplyResources anchor it is meant to exercise');
+    // …and the sibling .resx actually holds the localized values (the divergence risk the read-only lock guards):
+    // editing button1.Text in the designer would splice a .Designer.cs assignment while the real value lives HERE.
+    const locResx = fs.readFileSync(path.join(repo, 'engine', 'samples', 'LocalizableForm.resx'), 'utf8');
+    if (!/name="button1\.Text"/.test(locResx) || !/name="\$this\.ClientSize"/.test(locResx))
+      throw new Error('localizable: fixture .resx must hold the localized values (button1.Text / $this.ClientSize)');
+
+    // NEGATIVE: a resx-image form that uses only resources.GetObject(...) is NOT localizable (no ApplyResources).
+    const imgSrc = fs.readFileSync(path.join(repo, 'engine', 'samples', 'ImageForm.Designer.cs'), 'utf8');
+    if (/ApplyResources/.test(imgSrc)) throw new Error('localizable: ImageForm fixture unexpectedly contains ApplyResources — pick another negative');
+    if (isLocalizableDesigner(imgSrc)) throw new Error('localizable: a GetObject-only (non-localizable) form must NOT be flagged');
+
+    // NEGATIVE: a plain form with no ComponentResourceManager at all.
+    if (isLocalizableDesigner(fs.readFileSync(path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs'), 'utf8')))
+      throw new Error('localizable: a plain form must NOT be flagged');
+
+    // POSITIVE — every valid-C# way to reach an ApplyResources call must be caught, because a false negative is the
+    // silent-data-loss path. Crucially this includes the two the narrow decl-shape AND the two-signal (manager-token)
+    // rules BOTH missed (codex fix-verify): a cross-file `global using` alias where the manager token never appears in
+    // the DESIGNER BUFFER, and a verbatim `@ApplyResources` method spelling.
+    const variants: Array<[string, string]> = [
+      ['conventional', 'System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.ApplyResources(this.b, "b");'],
+      ['renamed local', 'System.ComponentModel.ComponentResourceManager rm = new System.ComponentModel.ComponentResourceManager(typeof(F));\n rm.ApplyResources(this.b, "b");'],
+      ['var inference', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.ApplyResources(this.b, "b");'],
+      ['cross-file global-using alias', 'CRM resources = new CRM(typeof(F));\n resources.ApplyResources(this.b, "b"); // alias `global using CRM = ...ComponentResourceManager;` lives in GlobalUsings.cs — the manager token is NOT in this buffer'],
+      ['split decl/init', 'System.ComponentModel.ComponentResourceManager resources;\n resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.ApplyResources(this.b, "b");'],
+      ['verbatim @method', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.@ApplyResources(this.b, "b");'],
+      ['verbatim @id receiver', 'System.ComponentModel.ComponentResourceManager @resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n @resources.ApplyResources(this.b, "b");'],
+      ['nullable', 'System.ComponentModel.ComponentResourceManager? resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.ApplyResources(this.b, "b");'],
+      ['unicode id + whitespace', 'var rés = new System.ComponentModel.ComponentResourceManager(typeof(F));\n rés . ApplyResources ( this.b , "b" ) ;'],
+      // codex convergence: a comment BETWEEN `.` and `ApplyResources` is still a real call → must be caught
+      // (the lexical strip collapses the comment to whitespace).
+      ['comment-separated', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources./* generated */ApplyResources(this.b, "b");'],
+      // codex round-2 (fail-open bypasses): each is valid C# invoking the REAL ComponentResourceManager.ApplyResources.
+      // (1) Unicode identifier escape: C# decodes `R`→'R', so `ApplyResources` IS ApplyResources.
+      ['unicode-escaped method', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.Apply\\u0052esources(this.b, "b");'],
+      // codex R6: C# removes Unicode FORMAT chars (Cf, e.g. U+200C ZWNJ) when comparing identifiers (§6.4.3),
+      // so `ApplyResources` IS the identifier ApplyResources — decodeUnicodeEscapes must strip Cf too.
+      ['unicode Cf (ZWNJ) inside method name', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.Apply\\u200CResources(this.b, "b");'],
+      // (2) Method-group indirection: the member access is `.ApplyResources;` (no call paren) — matched by \b, not \(.
+      ['method-group indirection', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n System.Action<object,string> apply = resources.ApplyResources;\n apply(this.b, "b");'],
+      // (3) A C# 11 raw string with an embedded quote must NOT desync the lexer into swallowing the later real call.
+      ['raw-string-adjacent code', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n var d = """literal with a " quote""";\n resources.ApplyResources(this.b, "b");'],
+      // (4) line terminators: a `//` comment must stop at EACH of C#'s five line terminators, not swallow the
+      // code after it. \r (CR-only), plus the three Unicode separators C# also treats as line terminators
+      // (U+0085 NEL, U+2028 LINE SEP, U+2029 PARAGRAPH SEP) — each followed by a real call must be detected.
+      ['CR-only line comment before call', '// disabled-note\r resources.ApplyResources(this.b, "b");'],
+      ['NEL (U+0085) line comment before call', '// note\u0085 resources.ApplyResources(this.b, "b");'],
+      ['LSEP (U+2028) line comment before call', '// note\u2028 resources.ApplyResources(this.b, "b");'],
+      ['PSEP (U+2029) line comment before call', '// note\u2029 resources.ApplyResources(this.b, "b");'],
+      // codex fix-verify round-3 (fail-open in interpolation holes): a $-interpolated string EVALUATES its
+      // `{…}` holes, so a call reachable from a hole (via a lambda) is executable code — the stripper must NOT
+      // blank it. Both a raw interpolated string ($"""…""") and an ordinary one ($"…") must still be detected.
+      ['interpolated raw-string hole', 'static string Run(System.Action a){ a(); return ""; }\n var value = $"""{Run(() => resources.ApplyResources(this.b, key))}""";'],
+      ['interpolated string hole', 'var v = $"x {Run(() => resources.ApplyResources(this.b, key))} y";'],
+      // codex fix-verify round-3: a hole that contains a NESTED string literal — the outer $"…" scanner must
+      // walk the hole (consuming "x") and NOT terminate at the hole's first inner quote (which would leave a
+      // tail that blanks the real call). Verbatim-interpolated ($@"…") must behave the same.
+      ['interpolated hole with nested string arg', 'var v = $"{Run("x", () => resources.ApplyResources(this.b, key))}";'],
+      ['verbatim-interpolated hole with nested string', 'var v = $@"{Run("x", () => resources.ApplyResources(this.b, key))}";'],
+      // exotic multi-$ raw interpolation whose hole nests a same-delimiter raw string can mis-terminate the
+      // hole-aware scanner; the fail-closed safety net in isLocalizableDesigner (interpolation prefix +
+      // ApplyResources mention → lock) must still catch it. Never appears in a real .Designer.cs; proves the
+      // no-false-negative guarantee holds for EVERY interpolation input, not just the lexer's modelled cases.
+      ['multi-$ raw, nested raw in hole (safety net)', 'var v = $$"""{{ var t = $"""y"""; resources.ApplyResources(this.b, key); }}""";'],
+      // codex R4: the same mis-terminated multi-$ hole PLUS a Unicode-escaped method name — the safety net's
+      // ApplyResources word-match must run on the DECODED text, else `ApplyResources` slips through.
+      ['multi-$ raw + nested raw + unicode-escaped method (safety net)', 'var v = $$"""{{ var t = $"""y"""; resources.Apply\\u0052esources(this.b, key); }}""";'],
+    ];
+    for (const [name, src] of variants) {
+      if (!isLocalizableDesigner(src)) throw new Error('localizable: variant NOT detected (data-loss false negative): ' + name);
+    }
+
+    // NEGATIVE / edge (pure): empty/undefined/null; a ComponentResourceManager used ONLY for GetObject (no
+    // ApplyResources call); and — codex convergence — the two forms the RAW-text regex mis-flagged: a string
+    // value that merely CONTAINS `.ApplyResources(` (a code-snippet label on a NORMAL form) and a commented-out
+    // call. The lexical strip (ignore strings/comments) keeps those non-localizable.
+    if (isLocalizableDesigner('') || isLocalizableDesigner(undefined) || isLocalizableDesigner(null))
+      throw new Error('localizable: empty/undefined/null must be false');
+    const getObjOnly = 'System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n this.b.Image = ((System.Drawing.Image)(resources.GetObject("b.Image")));';
+    if (isLocalizableDesigner(getObjOnly)) throw new Error('localizable: a ComponentResourceManager used only for GetObject must NOT be flagged');
+    const stringSnippet = 'this.label1.Text = ".ApplyResources(";\n this.helpBox.Text = "call resources.ApplyResources(x, \\"y\\")";';
+    if (isLocalizableDesigner(stringSnippet)) throw new Error('localizable: a code-snippet STRING VALUE containing .ApplyResources( must NOT flag a normal form read-only (over-lock)');
+    const commentedOut = '// resources.ApplyResources(this.b, "b");  -- disabled\n /* resources.ApplyResources(this.c, "c"); */';
+    if (isLocalizableDesigner(commentedOut)) throw new Error('localizable: a commented-out ApplyResources call must NOT flag');
+    // codex round-2 counterparts to the new positives — the fixes must not over-reach into false negatives elsewhere:
+    // a call TEXT sitting inside a raw-string BODY is string data, not a call → must NOT flag.
+    const rawStringBody = 'var s = """\n resources.ApplyResources(x, y);\n """;\n this.b.Name = "b";';
+    if (isLocalizableDesigner(rawStringBody)) throw new Error('localizable: an ApplyResources call inside a raw-string BODY is string data, must NOT flag');
+    // a CR-only commented-out call (comment ends at \r, nothing real after) must NOT flag.
+    const crCommentedOut = '// resources.ApplyResources(this.b, "b");\r';
+    if (isLocalizableDesigner(crCommentedOut)) throw new Error('localizable: a CR-only commented-out ApplyResources call must NOT flag');
+    // \b precision: a LONGER identifier `.ApplyResourcesToChildren(` is a different method → must NOT flag (over-lock).
+    const longerId = 'this.helper.ApplyResourcesToChildren(this.b);';
+    if (isLocalizableDesigner(longerId)) throw new Error('localizable: a longer identifier (.ApplyResourcesToChildren) must NOT be matched by the \\b member-access regex');
+
+    console.log('e2e: 0.10.0 localizable detection verified — LocalizableForm flagged (+ .resx holds the localized values); GetObject-only/plain forms not; ALL reach-the-call variants caught (var/cross-file-alias/split/@verbatim/nullable/unicode/comment-separated/unicode-escaped-method/method-group/raw-string-adjacent/CR-only-comment/NEL+LSEP+PSEP-comment/interpolated-raw-hole/interpolated-hole/nested-string-in-hole/verbatim-interpolated-hole/multi-$-raw-safety-net/multi-$-raw+unicode-safety-net); string-snippet + commented-out + raw-string-body + CR-commented + longer-identifier NOT flagged; empty/undefined/null→false');
+  }
+
+  // ---- 0.10.0 trust-floor S2/S3: #formNotice single-slot DOMINANT-kind selection (pure) ----
+  // A form can be several at once: localizable (read-only lock), binaryResx (data-loss risk), inherited-base
+  // (incomplete preview). The banner is single-slot; chooseFormNoticeKind returns the DOMINANT icon-kind by
+  // precedence (localizable > binaryResx > inheritedBase) and the host composes the text from all true conditions
+  // so no disclosure is hidden (codex R#12). Engine-gating (net9-only for binaryResx/inherited) is upstream.
+  {
+    // S2 pairs (binaryResx defaults false — the existing 2-arg call sites keep their meaning)
+    if (chooseFormNoticeKind(true, true) !== 'localizableInherited') throw new Error('formNotice: localizable AND inherited → combined kind');
+    if (chooseFormNoticeKind(true, false) !== 'localizable') throw new Error('formNotice: localizable-only → localizable');
+    if (chooseFormNoticeKind(false, true) !== 'inheritedBase') throw new Error('formNotice: inherited-only → inheritedBase');
+    if (chooseFormNoticeKind(false, false) !== null) throw new Error('formNotice: clean render → null (banner hidden)');
+    // S3 binaryResx precedence
+    if (chooseFormNoticeKind(false, false, true) !== 'binaryResx') throw new Error('formNotice: binaryResx-only → binaryResx');
+    if (chooseFormNoticeKind(true, false, true) !== 'localizable') throw new Error('formNotice: localizable subsumes binaryResx (lock icon dominates)');
+    if (chooseFormNoticeKind(false, true, true) !== 'binaryResx') throw new Error('formNotice: binaryResx (data-loss) outranks inherited (incomplete)');
+    if (chooseFormNoticeKind(true, true, true) !== 'localizableInherited') throw new Error('formNotice: all three → localizableInherited (🔒), host appends binaryResx clause');
+    console.log('e2e: 0.10.0 formNotice kind selection verified — localizable > binaryResx > inheritedBase precedence, combined kinds, null (single-slot, no message hidden)');
+  }
+
+  // ---- 0.10.0 trust-floor S3: binary-resx host detector (pure) ----
+  // hasBinaryResx keys on the SAME BinaryFormatter/SOAP mimetype substrings the engine's ScanBinaryKeys uses, so
+  // host (write-guard) and engine (banner count) agree. It drives the fail-closed regenerate tripwire.
+  {
+    const binResx = fs.readFileSync(path.join(repo, 'engine', 'samples', 'BinaryResxForm.resx'), 'utf8');
+    if (!hasBinaryResx(binResx)) throw new Error('binaryResx: BinaryResxForm.resx (ImageStream binary node) must be flagged');
+    if (!binaryResxKeys(binResx).has('imageList1.ImageStream')) throw new Error('binaryResx: the ImageStream key must be detected by name');
+    // NEGATIVE: a bytearray-image (Bitmap) resx is NOT binary/SOAP → must NOT flag (it renders fine).
+    if (hasBinaryResx(fs.readFileSync(path.join(repo, 'engine', 'samples', 'ImageForm.resx'), 'utf8'))) throw new Error('binaryResx: a bytearray.base64 (Bitmap) resx must NOT be flagged');
+    // NEGATIVE: a string-only (localizable) resx is not binary.
+    if (hasBinaryResx(fs.readFileSync(path.join(repo, 'engine', 'samples', 'LocalizableForm.resx'), 'utf8'))) throw new Error('binaryResx: a string-only resx must NOT be flagged');
+    if (hasBinaryResx(null) || hasBinaryResx('') || hasBinaryResx(undefined)) throw new Error('binaryResx: empty/null/undefined → not flagged');
+    // codex R#2: the GUARD keys on binaryResxCount (mimetype-attr count), which must be robust where a name-keyed
+    // scan could MISS a node — a '>' inside an attribute value, a nameless node, single quotes, uppercase mime,
+    // duplicate names — so a DROP is always detected. Each of these has 2 binary nodes → count must be 2.
+    const gt = '<data name="a>b" mimetype="application/x-microsoft.net.object.binary.base64"><value>x</value></data><data name="c" mimetype="application/x-microsoft.net.object.soap.base64"><value>y</value></data>';
+    if (binaryResxCount(gt) !== 2) throw new Error(`binaryResx: count must be robust to '>' inside an attribute value + soap, got ${binaryResxCount(gt)}`);
+    const nameless = "<data mimetype='application/x-microsoft.net.object.binary.base64'><value>x</value></data><data name='k' mimetype='APPLICATION/X-MICROSOFT.NET.OBJECT.BINARY.BASE64'/>";
+    if (binaryResxCount(nameless) !== 2) throw new Error(`binaryResx: count must include nameless + uppercase + single-quote nodes, got ${binaryResxCount(nameless)}`);
+    // codex R: a mimetype written with XML numeric character references (an XML parser decodes `binary&#x2e;base64`
+    // to `binary.base64`) must still be counted — the host decodes char-refs before matching, so it agrees with the
+    // engine's XML-parsed scan.
+    const charRef = '<data name="cr" mimetype="application/x-microsoft.net.object.binary&#x2e;base64"><value>x</value></data>';
+    if (binaryResxCount(charRef) !== 1) throw new Error(`binaryResx: a char-ref mimetype (binary&#x2e;base64) must be decoded + counted, got ${binaryResxCount(charRef)}`);
+    // the guard's core inequality: dropping one binary node lowers the count → the tripwire refuses.
+    const twoBin = binaryResxCount(gt);
+    const oneBin = binaryResxCount(gt.replace(/<data name="c"[\s\S]*?<\/data>/, ''));
+    if (!(twoBin - oneBin > 0)) throw new Error('binaryResx: dropping a binary node must lower the count (the tripwire refuse condition)');
+    if (binaryResxCount(fs.readFileSync(path.join(repo, 'engine', 'samples', 'ImageForm.resx'), 'utf8')) !== 0) throw new Error('binaryResx: a bytearray-image resx must count 0 binary nodes');
+    console.log('e2e: 0.10.0 S3 binary-resx host detector verified — BinaryResxForm(ImageStream) flagged; bytearray/string/empty not; binaryResxCount robust to >-in-value / nameless / uppercase / single-quote / duplicate, and a dropped binary node lowers the count (tripwire refuse)');
+  }
+
+  // ---- 0.10.0 trust-floor S4: byte-local edit firewall (pure) ----
+  // Every persisted edit is a targeted net9 splice (net48 persists the SAME splice — it never writes source). The
+  // commit() firewall refuses a persisted `after` that is NOT a confined edit of `before` — a whole-file
+  // regenerate/reflow/EOL-normalize/reorder/total-deletion. COARSE by design: it must NEVER refuse a legit splice
+  // (even a bulk delete or a collection replace that dominates the file) and MUST refuse a catastrophe.
+  // isByteLocalEdit = churn-floor (<64 changed lines→allow) OR structural edges (head+tail survive→middle-confined
+  // splice of any size) OR high-survival fallback (≥half of the larger side survives, non-empty).
+  {
+    const real = fs.readFileSync(path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs'), 'utf8');
+    // no-op
+    if (!isByteLocalEdit(real, real)) throw new Error('byteLocal: an identical buffer must be byte-local');
+    // single-property splice → allowed; the changed region is ONLY the target line (not usings / field-decls)
+    const oneLine = real.replace('this.nameTextBox.Text = "Ada Lovelace";', 'this.nameTextBox.Text = "Grace Hopper";');
+    if (oneLine === real) throw new Error('byteLocal: test setup — the one-line replacement did not match the fixture');
+    if (!isByteLocalEdit(real, oneLine)) throw new Error('byteLocal: a one-line property splice must be byte-local');
+    const d1 = diffLines(real, oneLine);
+    if (d1.commonLines < d1.beforeLines - 2) throw new Error(`byteLocal: a one-line splice must keep ~all lines, got common=${d1.commonLines}/${d1.beforeLines}`);
+    const ch = changedLines(real, oneLine);
+    if (!ch.inserted.some((l) => l.includes('Grace Hopper')) || ch.inserted.some((l) => l.includes('namespace ') || l.includes('private System.')))
+      throw new Error('byteLocal: the changed region must be ONLY the target line (a tight splice, not a rewrite)');
+    // disjoint 2-span (add-control: a field-decl AND an InitializeComponent statement) → allowed (NOT single-span)
+    let added = real.replace('private System.Windows.Forms.Button cancelButton;', 'private System.Windows.Forms.Button cancelButton;\n        private System.Windows.Forms.Button extraButton;');
+    added = added.replace('this.Controls.Add(this.cancelButton);', 'this.Controls.Add(this.cancelButton);\n            this.Controls.Add(this.extraButton);');
+    if (added === real) throw new Error('byteLocal: test setup — the add-control 2-span edit did not match');
+    if (!isByteLocalEdit(real, added)) throw new Error('byteLocal: a disjoint 2-span add-control splice must be byte-local (the false-positive trap — must NOT be single-span)');
+    // synthetic large designer with a realistic HEADER + FOOTER (a real edit is always in the middle — it never
+    // touches the usings/namespace/class open or the closing braces), so the structural edge check is exercised faithfully.
+    const hdr = ['using System.Windows.Forms;', 'namespace Demo', '{', '  partial class Big : Form', '  {', '    private void InitializeComponent()', '    {'];
+    const ftr = ['    }', '  }', '}'];
+    const body = (tag: string) => Array.from({ length: 500 }, (_, i) => `      this.ctl${i}.Text = "${tag}${i}";`);
+    const big = [...hdr, ...body('a'), ...ftr].join('\n');
+    const wrap = (mid: string[]) => [...hdr, ...mid, ...ftr].join('\n');
+    // 50-hunk group op (every 10th BODY line) → head+tail survive → ALLOWED (predicate NOT too strict for a big multi-select)
+    if (!isByteLocalEdit(big, wrap(body('a').map((l, i) => (i % 10 === 0 ? l.replace(/"a\d+"/, '"z"') : l))))) throw new Error('byteLocal: a 50-hunk group op (head+tail preserved) must be ALLOWED — the predicate must not refuse a large multi-select');
+    // BULK DELETE (delete 70% of the controls, keeping the class shell) → head+tail survive → ALLOWED.
+    if (!isByteLocalEdit(big, wrap(body('a').slice(0, 150)))) throw new Error('byteLocal: a bulk delete (head+tail preserved) must be ALLOWED — not a whole-file rewrite');
+    // LARGE IN-PLACE BLOCK REPLACE (replace a 300-line collection block that DOMINATES the body, e.g. TreeView.Nodes /
+    // DataGridView.Columns) → before ≈ after, >50% churn, but head+tail survive → ALLOWED via the structural edge check.
+    if (!isByteLocalEdit(big, wrap([...body('a').slice(0, 100), ...Array.from({ length: 300 }, (_, i) => `      this.NEW${i}.Text = "x";`), ...body('a').slice(400)]))) throw new Error('byteLocal: a large in-place block replace (head+tail preserved) must be ALLOWED — a collection that dominates the file is still a confined middle edit');
+    // whole-file reindent (EVERY line differs, incl. the header) → REFUSED
+    if (isByteLocalEdit(big, big.split('\n').map((l) => '    ' + l).join('\n'))) throw new Error('byteLocal: a whole-file reindent must be REFUSED (every line differs, header included)');
+    // whole-file CRLF→LF normalization → REFUSED
+    if (isByteLocalEdit(big.split('\n').join('\r\n'), big)) throw new Error('byteLocal: a whole-file CRLF→LF normalization must be REFUSED');
+    // whole-file reorder (reverse — header becomes footer) → REFUSED (edges destroyed + low survival)
+    if (isByteLocalEdit(big, big.split('\n').reverse().join('\n'))) throw new Error('byteLocal: a whole-file reorder must be REFUSED (edges destroyed)');
+    // small-file high-FRACTION edit (12/20 lines) but low COUNT (churn 24 < 64) → allowed (the churn floor)
+    const small = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n');
+    if (!isByteLocalEdit(small, small.split('\n').map((l, i) => (i < 12 ? l + ' X' : l)).join('\n'))) throw new Error('byteLocal: a small-file edit (churn < 64) must be allowed even at a high changed-fraction');
+    // codex: a COMPACTED designer whose head+tail are each a SINGLE physical line (all usings/class on line 1) — a
+    // middle-only collection replace keeps commonPrefix=1 AND commonSuffix=1 → ALLOWED (EDGE_LINES=1, not 2).
+    const compactBefore = ['namespace D; partial class F { private System.Windows.Forms.ComboBox c = new(); private void InitializeComponent() { c.Items.AddRange(new object[] {',
+      ...Array.from({ length: 70 }, (_, i) => `    "old-${i}",`), '}); } }'].join('\n');
+    const compactAfter = ['namespace D; partial class F { private System.Windows.Forms.ComboBox c = new(); private void InitializeComponent() { c.Items.AddRange(new object[] {',
+      ...Array.from({ length: 70 }, (_, i) => `    "new-${i}",`), '}); } }'].join('\n');
+    if (!isByteLocalEdit(compactBefore, compactAfter)) throw new Error('byteLocal: a compacted single-physical-line-head/tail collection replace must be ALLOWED (codex compact false-positive)');
+    // codex: deleting the ENTIRE designer text (after empty) must be REFUSED — the min() denominator made survival
+    // trivially true (0>=0); the max() denominator + afterLines>0 guard refuse it.
+    if (isByteLocalEdit(big, '')) throw new Error('byteLocal: deleting the WHOLE file must be REFUSED (not byte-local)');
+    if (isByteLocalEdit(big, '}')) throw new Error('byteLocal: truncating the whole file to a single line must be REFUSED');
+    console.log('e2e: 0.10.0 S4 byte-local firewall verified — no-op / one-line-splice(tight) / disjoint-2-span / 50-hunk-group / bulk-delete / large-block-replace / compact-collection-replace ALLOWED; reindent / CRLF-normalize / reorder / delete-whole-file / truncate-to-line REFUSED; small-file(churn floor) allowed (codex: EDGE=1 + max()-denominator + afterLines>0)');
+  }
+
+  // ---- 0.10.0 trust-floor S5: fail-closed load-failure read-only gate (pure) ----
+  // When the last render FAILED, the canvas is a stale preview of a form that didn't load. refuseWhileRenderFailed
+  // refuses a MUTATING gesture (in the blocked surface) while renderOk is false, but lets a READ through and never
+  // blocks `ready` (the first-render trigger) — so the gate can't deadlock the initial render. A succeeded render
+  // (renderOk=true) allows everything.
+  {
+    const blocked = new Set(['manipulate', 'edit', 'delete', 'createHandler']); // sample mutation surface
+    if (refuseWhileRenderFailed('manipulate', blocked, false) !== true) throw new Error('renderGate: a mutating gesture while the last render FAILED must be refused');
+    if (refuseWhileRenderFailed('edit', blocked, false) !== true) throw new Error('renderGate: a grid edit while failed must be refused');
+    if (refuseWhileRenderFailed('manipulate', blocked, true) !== false) throw new Error('renderGate: a mutating gesture after a SUCCESSFUL render must be allowed');
+    if (refuseWhileRenderFailed('pick', blocked, false) !== false) throw new Error('renderGate: a READ (pick) while failed must be allowed — inspection survives');
+    if (refuseWhileRenderFailed('ready', blocked, false) !== false) throw new Error('renderGate: `ready` (first-render trigger) must NEVER be blocked — no deadlock');
+    if (refuseWhileRenderFailed(undefined, blocked, false) !== false) throw new Error('renderGate: an undefined type must not be refused');
+    console.log('e2e: 0.10.0 S5 render-failed read-only gate verified — mutating+failed REFUSED; read/ready/undefined and mutating+ok ALLOWED (no first-render deadlock)');
+  }
 }
 
 async function main(): Promise<void> {
@@ -356,6 +601,18 @@ async function main(): Promise<void> {
 
     const edit = await setProperty(engine, designer, 'agreeCheck', 'Text', '"Changed by grid"');
     if (!edit.safe || edit.text === null) throw new Error('setProperty rejected: ' + edit.reason);
+    // 0.10.0 S4: an ACTUAL engine property splice must pass the byte-local firewall AND be tightly confined to the
+    // target line — proving commit()'s backstop never false-refuses a real edit. This is the persisted text for a
+    // net48 edit too (net48 never writes source; it persists the SAME net9 splice), so it proves the net48 path
+    // byte-local by construction. (The disjoint-2-span add-control case is pinned in the pure byteLocal unit block.)
+    {
+      const disk = fs.readFileSync(designer, 'utf8');
+      if (!isByteLocalEdit(disk, edit.text)) throw new Error('S4: a real engine property splice must pass the byte-local firewall (must not be refused)');
+      const ins = changedLines(disk, edit.text).inserted;
+      if (!ins.some((l) => l.includes('Changed by grid')) || ins.some((l) => l.includes('namespace ') || l.includes('void InitializeComponent')))
+        throw new Error('S4: the engine splice changed region must be ONLY the target property line (a tight confined edit)');
+      console.log('e2e: 0.10.0 S4 engine-splice byte-locality verified — a real setProperty splice is byte-local + tightly confined (also the net48-persisted text)');
+    }
     const tmp2 = path.join(os.tmpdir(), `wfd-e2e-edit-${process.pid}.Designer.cs`);
     fs.writeFileSync(tmp2, edit.text, 'utf8');
     try {
@@ -873,6 +1130,101 @@ async function main(): Promise<void> {
       const overflowForm = path.join(repo, 'engine', 'samples', 'ToolStripOverflowForm.Designer.cs');
       const imageListForm = path.join(repo, 'engine', 'samples', 'ImageListForm.Designer.cs');
       const compRefForm48 = path.join(repo, 'engine', 'samples', 'ComponentRefForm.Designer.cs');
+
+      // ---- 0.10.0 trust-floor S2: net9 inherited/unresolved-base detection → honest banner signal ----
+      // The net9 interpreter targets a framework surface and replays ONLY the derived .Designer.cs, so a form whose
+      // REAL base is an inherited/vendor type renders best-effort with the base's controls silently DROPPED. S2 flags
+      // it (renderWithLayout → inheritedBase + baseTypeName) so the host shows an honest "preview may be incomplete"
+      // banner instead of a silent mis-render. No built assembly here → the syntactic EXACT-match fallback classifier.
+      const derivedForm = path.join(repo, 'engine', 'samples', 'DerivedForm.Designer.cs');
+      const inheritedBaseDes = path.join(repo, 'engine', 'samples', 'InheritedBaseForm.Designer.cs');
+      const vendorForm = path.join(repo, 'engine', 'samples', 'VendorForm.Designer.cs');
+      const qualifiedForm = path.join(repo, 'engine', 'samples', 'QualifiedForm.Designer.cs');
+      const aliasedUcForm = path.join(repo, 'engine', 'samples', 'AliasedUcForm.Designer.cs');
+      const nsCollisionForm = path.join(repo, 'engine', 'samples', 'NsCollisionForm.Designer.cs');
+      if (!fs.existsSync(derivedForm)) {
+        console.log('e2e: SKIPPED 0.10.0 S2 inherited-base detection — DerivedForm fixture absent (untracked on a fresh checkout)');
+      } else {
+        // the base fixture must ACTUALLY declare baseButton — else "baseButton dropped from the render" would be a
+        // vacuous absence (codex R#9). This makes the drop a proof of a REAL base control being lost by net9.
+        if (!fs.existsSync(inheritedBaseDes)) throw new Error('S2: InheritedBaseForm.Designer.cs fixture missing — the base-drop assertion would be vacuous');
+        if (!/\bbaseButton\b/.test(fs.readFileSync(inheritedBaseDes, 'utf8'))) throw new Error('S2: InheritedBaseForm.Designer.cs must declare baseButton (the control net9 must be shown to drop)');
+        // visual inheritance: DerivedForm : InheritedBaseForm (a USER base) → flagged, and the base's control IS dropped.
+        const der = await renderWithLayout(engine, derivedForm);
+        if (der.inheritedBase !== true) throw new Error("S2: DerivedForm (: InheritedBaseForm) must flag inheritedBase=true — a user base the net9 interpreter can't reproduce");
+        if (!/InheritedBaseForm/.test(der.baseTypeName)) throw new Error(`S2: DerivedForm baseTypeName must name the base, got ${JSON.stringify(der.baseTypeName)}`);
+        const derIds = der.controls.map((c) => c.id);
+        if (!derIds.includes('derivedButton')) throw new Error('S2: DerivedForm must still render its OWN control (derivedButton) on the best-effort surface');
+        if (derIds.includes('baseButton')) throw new Error('S2: DerivedForm must DROP the base control (baseButton) on net9 — that silent loss is exactly what the banner warns about');
+        // vendor base (: DevExpress...XtraForm) → flagged, base named by its simple identifier (the classic mis-render).
+        const ven = await renderWithLayout(engine, vendorForm);
+        if (ven.inheritedBase !== true) throw new Error('S2: VendorForm (: XtraForm) must flag inheritedBase=true');
+        if (ven.baseTypeName !== 'XtraForm') throw new Error(`S2: VendorForm baseTypeName must be the simple base name "XtraForm", got ${JSON.stringify(ven.baseTypeName)}`);
+        // NEGATIVE: a fully-qualified framework base must normalize → NOT flagged (no over-banner).
+        const qual = await renderWithLayout(engine, qualifiedForm);
+        if (qual.inheritedBase !== false) throw new Error('S2: QualifiedForm (: System.Windows.Forms.Form) must NOT flag — an FQN framework base is resolved');
+        // NEGATIVE: a plain `: Form` sample must stay unflagged (no regression on the common case).
+        const plain = await renderWithLayout(engine, path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs'));
+        if (plain.inheritedBase !== false || plain.baseTypeName !== '') throw new Error('S2: a plain : Form sample must not flag inheritedBase');
+        // codex R#8: a SAME-FILE alias of a framework root (`using U = ...UserControl; : U`) must RESOLVE (no banner)
+        // AND render on the UserControl surface (its own control present), not a mis-typed Form.
+        if (fs.existsSync(aliasedUcForm)) {
+          const uc = await renderWithLayout(engine, aliasedUcForm);
+          if (uc.inheritedBase !== false) throw new Error('S2: an aliased framework base (using U = ...UserControl) must NOT flag inherited — the alias resolves to UserControl');
+          if (!/UserControl/.test(uc.rootType)) throw new Error(`S2: aliased UserControl must render on the UserControl surface, got rootType ${JSON.stringify(uc.rootType)}`);
+          if (!uc.controls.map((c) => c.id).includes('ucButton')) throw new Error('S2: aliased UserControl must render its own control (ucButton)');
+        }
+        // codex R#4: a same-SHORT-name decoy class in ANOTHER namespace must not steal the classification — the
+        // sibling lookup matches the fully-qualified name, so SampleApp.NsCollisionForm resolves to its REAL base.
+        if (fs.existsSync(nsCollisionForm)) {
+          const coll = await renderWithLayout(engine, nsCollisionForm);
+          if (coll.inheritedBase !== true) throw new Error('S2: NsCollisionForm must flag inherited — a Decoy.NsCollisionForm(:Form) in the sibling must NOT be matched over SampleApp.NsCollisionForm(:InheritedBaseForm)');
+          if (!/InheritedBaseForm/.test(coll.baseTypeName)) throw new Error(`S2: NsCollisionForm base must be InheritedBaseForm (correct-namespace match), got ${JSON.stringify(coll.baseTypeName)}`);
+        }
+        console.log(`e2e: 0.10.0 S2 inherited-base detection verified — DerivedForm flagged (base=${der.baseTypeName}, baseButton dropped, derivedButton kept), VendorForm flagged (base=XtraForm), QualifiedForm(FQN)+SampleForm not flagged, aliased-UserControl resolved on UC surface (R#8), namespace-collision matched by FQN (R#4)`);
+      }
+
+      // ---- 0.10.0 trust-floor S3: binary/ImageStream resx → honest banner signal + upsert-preserves invariant ----
+      // A form whose sibling .resx holds a BinaryFormatter/ImageStream node can't render that resource on net9, so
+      // the render DTO reports unrenderableResxCount>0 (drives the banner). And the ONLY .resx writer (image import)
+      // is a scoped XML upsert — PIN that it preserves the binary node byte-faithfully when importing a DIFFERENT key.
+      const binaryResxForm = path.join(repo, 'engine', 'samples', 'BinaryResxForm.Designer.cs');
+      if (!fs.existsSync(binaryResxForm)) {
+        console.log('e2e: SKIPPED 0.10.0 S3 binary-resx render-signal — BinaryResxForm fixture absent (untracked on a fresh checkout)');
+      } else {
+        const bin = await renderWithLayout(engine, binaryResxForm);
+        // the fixture .resx exercises ALL THREE load-time gates: an ImageStream binary node, an external FileRef, and a
+        // non-allowlisted value type (Cursor) — so the count must span them (codex: FileRef/non-allowlisted must count,
+        // not just binary). A string node is renderable and must NOT count.
+        if (bin.unrenderableResxCount !== 3) throw new Error(`S3: BinaryResxForm must report 3 unrenderable (binary ImageStream + FileRef + non-allowlisted Cursor), got ${bin.unrenderableResxCount}`);
+        if (!bin.controls.map((c) => c.id).includes('okButton')) throw new Error('S3: BinaryResxForm must still RENDER (the refused binary resource must not abort the render)');
+        // NEGATIVE: a plain form (no resx) and a bytearray-image form must report 0 (no over-banner).
+        const plainResx = await renderWithLayout(engine, path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs'));
+        if (plainResx.unrenderableResxCount !== 0) throw new Error('S3: a form with no .resx must report 0 unrenderable');
+        const imgResx = await renderWithLayout(engine, path.join(repo, 'engine', 'samples', 'ImageForm.Designer.cs'));
+        if (imgResx.unrenderableResxCount !== 0) throw new Error('S3: a bytearray-image (Bitmap) resx must report 0 unrenderable (it renders fine)');
+
+        // PIN the no-regenerate invariant: import a NEW image into a DIFFERENT key and assert the pre-existing
+        // ImageStream binary node SURVIVES with the same base64 value (the upsert preserves all non-target nodes).
+        const resxBefore = fs.readFileSync(path.join(repo, 'engine', 'samples', 'BinaryResxForm.resx'), 'utf8');
+        const streamVal = /<data name="imageList1\.ImageStream"[^>]*>\s*<value>([^<]*)<\/value>/.exec(resxBefore)?.[1];
+        if (!streamVal) throw new Error('S3: could not read the ImageStream base64 from the fixture — the PIN would be vacuous');
+        const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+        const up = await setImageResource(engine, binaryResxForm, 'okButton', 'Image', 'System.Drawing.Image', tinyPng, resxBefore, fs.readFileSync(binaryResxForm, 'utf8'));
+        if (!up.safe || up.resxText == null) throw new Error(`S3: importing into a new key must succeed on a binary-resx form (upsert preserves), got safe=${up.safe}`);
+        if (!new RegExp('<data name="imageList1\\.ImageStream"').test(up.resxText)) throw new Error('S3 REGRESSION: the image upsert DROPPED the ImageStream binary node — data loss!');
+        if (!up.resxText.includes(streamVal)) throw new Error('S3 REGRESSION: the ImageStream base64 value was altered by the upsert');
+        if (binaryResxKeys(up.resxText).size !== binaryResxKeys(resxBefore).size) throw new Error('S3: the set of binary resx keys must be unchanged by an image upsert');
+        if (binaryResxCount(up.resxText) !== binaryResxCount(resxBefore)) throw new Error('S3: the binary resx COUNT (the tripwire signal) must be unchanged by an image upsert — else the guard would refuse a legit import');
+        // NEGATIVE: an unparseable .resx is refused (never clobbered).
+        const bad = await setImageResource(engine, binaryResxForm, 'okButton', 'Image', 'System.Drawing.Image', tinyPng, '<root><not-closed>', fs.readFileSync(binaryResxForm, 'utf8'));
+        // must be REFUSED (safe===false — the host gates its .resx write on !res.safe) AND carry no writable payload
+        // (resxText null/empty). Rejecting EITHER a true safe OR a non-empty resxText (codex: the old `&&` assertion
+        // passed for either wrong field; `|| bad.resxText` tolerates the engine's null-or-"" "no resx" representation).
+        if (bad.safe || bad.resxText) throw new Error('S3: an unparseable existing .resx must be REFUSED (safe===false, no writable resxText), never clobbered');
+        console.log(`e2e: 0.10.0 S3 binary-resx verified — BinaryResxForm reports ${bin.unrenderableResxCount} unrenderable (renders okButton), no-resx/bytearray report 0; image upsert PRESERVES the ImageStream binary node byte-faithfully; unparseable .resx refused`);
+      }
+
       if (fs.existsSync(ctxForm)) {
         const ctxLayout = await describeLayout(engine, ctxForm);
         if (ctxLayout.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) {
@@ -1119,9 +1471,34 @@ async function main(): Promise<void> {
       const net48Exe = process.env.WFD_ENGINE_NET48 || path.join(repo, 'engine-net48', 'bin', 'Release', 'net48', 'WinFormsDesigner.Engine.Net48.exe');
       const ctxFixtureDir = path.join(repo, 'fixtures', 'Net48CtxFixture');
       const ctxFixtureDll = path.join(ctxFixtureDir, 'bin', 'Release', 'net48', 'Net48CtxFixture.dll');
-      if (fs.existsSync(ctxForm) && fs.existsSync(net48Exe) && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, [ctxForm, overflowForm, imageListForm, compRefForm48])) {
+      const inheritedBaseFormDes = path.join(repo, 'engine', 'samples', 'InheritedBaseForm.Designer.cs');
+      const inheritedBaseFormCs = path.join(repo, 'engine', 'samples', 'InheritedBaseForm.cs');
+      const derivedFormCs = path.join(repo, 'engine', 'samples', 'DerivedForm.cs');
+      // codex R#10: make an unavailable net48 environment a VISIBLE skip (a coverage gap, not a silent pass) so the
+      // cross-runtime legs — including the S2 inherited-form parity proof — are never mistaken for having run. A fixture
+      // COMPILE failure is separately logged to stderr by ensureNet48Fixture (a bad <Compile> link surfaces there).
+      const net48FixtureReady = fs.existsSync(ctxForm) && fs.existsSync(net48Exe)
+        && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, [ctxForm, overflowForm, imageListForm, compRefForm48, derivedForm, derivedFormCs, inheritedBaseFormDes, inheritedBaseFormCs]);
+      if (!net48FixtureReady) {
+        console.log('e2e: SKIPPED net48 cross-runtime legs (incl. 0.10.0 S2 inherited-form parity) — net48 engine/toolchain or fixture build unavailable in this environment');
+      }
+      if (net48FixtureReady) {
         const n48 = await startEngine(net48Exe, { onLog: (l) => console.error(l) });
         try {
+          // ---- 0.10.0 S2 cross-runtime: net48 renders the inherited form CORRECTLY (no banner) ----
+          // net48 instantiates the real compiled DerivedForm, so the base ctor runs and baseButton is present
+          // ALONGSIDE derivedButton — the very control net9 silently drops. This is why S2's banner is net9-only:
+          // net48 has no inherited-form gap. The MEANINGFUL proof is control PRESENCE (baseButton + derivedButton);
+          // the inheritedBase=false check is secondary (the net48 adapter hardcodes it — codex R#11 — so it's a
+          // documentation assert, not an engine test). NOTE: reaching this requires the net48 toolchain AND a clean
+          // fixture build; a compile failure or absent toolchain SKIPS this leg (a coverage gap, not a pass — codex R#10).
+          const derived48 = await renderCompiledWithLayout(n48, derivedForm, ctxFixtureDll, 'SampleApp.DerivedForm');
+          const derived48Ids = derived48.controls.map((c) => c.id).sort();
+          if (!derived48Ids.includes('baseButton')) throw new Error(`S2 net48: the base control (baseButton) must render via real inheritance — got [${derived48Ids.join(', ')}]`);
+          if (!derived48Ids.includes('derivedButton')) throw new Error(`S2 net48: the derived control (derivedButton) must render — got [${derived48Ids.join(', ')}]`);
+          if (derived48.inheritedBase) throw new Error('S2 net48: the compiled engine must NOT flag inheritedBase — it renders the real base, so the banner is net9-only');
+          console.log(`e2e: 0.10.0 S2 net48 inherited-form parity verified — compiled DerivedForm renders BOTH baseButton + derivedButton (no gap), inheritedBase=false (net9 drops baseButton, so the banner is net9-only)`);
+
           const r48 = await renderCompiledWithLayout(n48, ctxForm, ctxFixtureDll);
           if (r48.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) throw new Error('net48 ctx: a ContextMenuStrip leaked into the compiled control layout (phantom rect)');
           const chip48 = r48.tray.find((t) => t.id === 'contextMenuStrip1');

@@ -8,6 +8,41 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-12
+
+**The trust floor — the most important release.** The designer now **fails closed**: when a form uses something the
+.NET-9 preview can't faithfully reproduce, it says so **honestly** and **refuses to silently corrupt or mis-render**
+your file, rather than quietly saving a divergent or incomplete result. Five safety pillars, each surfaced with a
+non-dismissible banner or a read-only lock. No feature you had is taken away — the designer just stops guessing when it
+shouldn't.
+
+### Added
+- **"Localizable form — read-only preview" banner + lock.** A `[Localizable(true)]` form keeps its real values in the
+  sibling `.resx`; the .NET-9 preview can't reproduce them, and an edit would splice a value Visual Studio drops on its
+  next save. The designer now marks such a form **read-only** and shows why, instead of persisting a silent divergence.
+- **"Preview may be incomplete — inherits from X" banner.** A form whose base class is an inherited or vendor type
+  (a visual-inheritance `BaseForm`, DevExpress `XtraForm`, …) used to render as a plain empty `Form` on the .NET-9
+  preview, silently dropping the base's controls. It now renders best-effort **and tells you** the base couldn't be
+  resolved, so controls may be missing. (The .NET Framework preview instantiates the real base and shows no banner.)
+- **"Binary / ImageStream resources not shown" banner.** A form whose `.resx` holds BinaryFormatter/SOAP/`ImageList`
+  ImageStream resources (which the .NET-9 runtime can't deserialize) now reports how many resources the preview can't
+  render — they are **preserved on disk**, and the designer won't regenerate the `.resx`.
+- **"Read-only — last render failed" lock.** When a form fails to load or render, its stale preview is no longer
+  silently editable — the designer refuses mutations until the form renders successfully again, so you can't edit a
+  graph that didn't load. Undo / revert / fixing the source re-enables editing.
+
+### Changed
+- **Byte-local save firewall.** Every persisted edit is verified to be a **confined splice** of the file — the designer
+  refuses any operation that would rewrite, reflow, re-indent, EOL-normalize, or regenerate the whole `.Designer.cs`
+  beyond the intended change. Layered under the existing statement-level gate, a save can only change the bytes you
+  edited.
+- **No unsafe `.resx` regeneration.** The image-import write path verifies, at the moment of writing, that no binary
+  resource would be dropped, and refuses the write (leaving the `.resx` untouched) if the file changed underneath it.
+- **Honest refusals.** A refused edit no longer shows a "success" status or a diverging live preview; refusals are
+  surfaced consistently across every read-only condition.
+
+The new banners and statuses are translated across all seven locales.
+
 ## [0.9.0] — 2026-07-11
 
 **Menu & toolbar editing goes all the way down.** The on-canvas item editing introduced in 0.8.x now reaches **nested
