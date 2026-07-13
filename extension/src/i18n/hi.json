@@ -364,5 +364,16 @@
   "status.renderFailed": "रेंडर विफल: {error}",
   "status.browseLoaded": "{asm} से {items} लोड किए (पहले से चेक किए — जोड़ने के लिए OK क्लिक करें)",
   "status.browseNoComponents": "कोई कॉम्पोनेंट नहीं जोड़ा गया।",
-  "status.browseNoToolbox": "कोई टूलबॉक्स कॉम्पोनेंट नहीं"
+  "status.browseNoToolbox": "कोई टूलबॉक्स कॉम्पोनेंट नहीं",
+  "status.selectImageListFirst": "पहले एक ImageList चुनें, फिर उसकी छवियाँ संपादित करें।",
+  "status.imageListSaved": "{id} अपडेट किया गया — {n} छवि(याँ), सहेजा नहीं गया (.resx लिखा गया)",
+  "imageList.title": "छवियाँ संपादित करें — {id}",
+  "imageList.add": "छवियाँ जोड़ें…",
+  "imageList.remove": "छवियाँ हटाएँ…",
+  "imageList.done": "हो गया",
+  "imageList.count": {
+    "one": "{n} छवि",
+    "other": "{n} छवियाँ"
+  },
+  "status.imageListUnreadable": "{id} संपादित नहीं किया जा सकता — इसकी मौजूदा छवियाँ सुरक्षित रूप से पढ़ी नहीं जा सकीं; उन्हें खोने से बचाने हेतु संपादन अस्वीकृत"
 }

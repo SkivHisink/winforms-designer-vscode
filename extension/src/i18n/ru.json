@@ -390,5 +390,18 @@
   "status.renderFailed": "отрисовка не удалась: {error}",
   "status.browseLoaded": "Загружено {items} из {asm} (предварительно отмечены — нажмите OK, чтобы добавить их)",
   "status.browseNoComponents": "Компоненты не добавлены.",
-  "status.browseNoToolbox": "нет компонентов панели элементов"
+  "status.browseNoToolbox": "нет компонентов панели элементов",
+  "status.selectImageListFirst": "Сначала выберите ImageList, затем измените её изображения.",
+  "status.imageListSaved": "{id} обновлён — {n} изобр., не сохранено (.resx записан)",
+  "imageList.title": "Изменить изображения — {id}",
+  "imageList.add": "Добавить изображения…",
+  "imageList.remove": "Удалить изображения…",
+  "imageList.done": "Готово",
+  "imageList.count": {
+    "one": "{n} изображение",
+    "few": "{n} изображения",
+    "many": "{n} изображений",
+    "other": "{n} изображения"
+  },
+  "status.imageListUnreadable": "нельзя изменить {id} — текущие изображения не удалось безопасно прочитать; правка отклонена, чтобы не потерять их"
 }

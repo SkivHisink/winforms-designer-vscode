@@ -183,7 +183,7 @@ namespace WinFormsDesigner.Engine
         /// <summary>Find (or insert) the <c>ComponentResourceManager</c> local in InitializeComponent. Returns the
         /// local's var name, the (possibly unchanged) source text, and whether a declaration was inserted. On the
         /// insert path the declaration is added as the FIRST body statement (VS's placement), named uniquely.</summary>
-        private static (string? varName, string text, bool inserted) EnsureResourcesLocal(string src, string className)
+        internal static (string? varName, string text, bool inserted) EnsureResourcesLocal(string src, string className)
         {
             var init = FindInitializeComponent(src);
             if (init?.Body == null) return (null, src, false);
@@ -226,7 +226,7 @@ namespace WinFormsDesigner.Engine
         /// <summary>safe-save gate for the resources-local insertion: the edited InitializeComponent is EXACTLY the
         /// original plus one added <c>ComponentResourceManager <paramref name="varName"/></c> local — every other
         /// statement is the same multiset, and the class field declarations are unchanged.</summary>
-        private static bool OnlyResourcesLocalAdded(string original, string edited, string varName)
+        internal static bool OnlyResourcesLocalAdded(string original, string edited, string varName)
         {
             var (origStmts, origCrm) = ClassifyStatements(original, varName);
             var (editStmts, editCrm) = ClassifyStatements(edited, varName);
@@ -264,7 +264,7 @@ namespace WinFormsDesigner.Engine
 
         // ---- shared Roslyn helpers (kept local so the security-sensitive gate is self-contained) ----
 
-        private static MethodDeclarationSyntax? FindInitializeComponent(string code)
+        internal static MethodDeclarationSyntax? FindInitializeComponent(string code)
         {
             var root = CSharpSyntaxTree.ParseText(code).GetRoot();
             foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
@@ -275,7 +275,7 @@ namespace WinFormsDesigner.Engine
             return null;
         }
 
-        private static string? ClassNameOf(string code)
+        internal static string? ClassNameOf(string code)
         {
             var root = CSharpSyntaxTree.ParseText(code).GetRoot();
             foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
@@ -299,14 +299,17 @@ namespace WinFormsDesigner.Engine
             return list;
         }
 
-        /// <summary>A name not used by any class field or InitializeComponent local — "resources", else "resourcesN".</summary>
+        /// <summary>A name not used by any class field or ANY identifier anywhere in InitializeComponent — "resources",
+        /// else "resourcesN". Scans the WHOLE method subtree (codex): a top-level-locals-only scan missed a name used by
+        /// a nested-block local / loop / catch / lambda, which would emit a method-scope `resources` that collides
+        /// (CS0136). Over-approximating with every IdentifierName token is safe — it only skips more candidate names.</summary>
         private static string UniqueName(string baseName, string src, MethodDeclarationSyntax init)
         {
             var used = new HashSet<string>(FieldNames(src), StringComparer.Ordinal);
-            foreach (var st in init.Body!.Statements)
-                if (st is LocalDeclarationStatementSyntax lds)
-                    foreach (var v in lds.Declaration.Variables)
-                        used.Add(v.Identifier.Text);
+            foreach (var id in init.DescendantNodes().OfType<IdentifierNameSyntax>())
+                used.Add(id.Identifier.Text);
+            foreach (var v in init.DescendantNodes().OfType<VariableDeclaratorSyntax>())
+                used.Add(v.Identifier.Text);
             if (!used.Contains(baseName)) return baseName;
             for (int i = 1; ; i++)
             {
@@ -353,8 +356,31 @@ namespace WinFormsDesigner.Engine
     internal static class ResxImageWriter
     {
         /// <summary>Return the .resx text with a <c>&lt;data name=<paramref name="key"/>…&gt;</c> entry set to the
-        /// embedded image, or null when an EXISTING non-empty resx is malformed (refuse rather than clobber).</summary>
-        public static string? Upsert(string? resxText, string key, string typeAttr, string base64)
+        /// embedded (bytearray.base64) image, or null when an EXISTING non-empty resx is malformed (refuse rather than
+        /// clobber). Used for BackgroundImage/PictureBox.Image/Icon — a raw image byte array.</summary>
+        public static string? Upsert(string? resxText, string key, string typeAttr, string base64) =>
+            UpsertCore(resxText, key, () => new XElement("data",
+                new XAttribute("name", key),
+                new XAttribute("type", typeAttr),
+                new XAttribute("mimetype", "application/x-microsoft.net.object.bytearray.base64"),
+                new XElement("value", base64)));
+
+        /// <summary>0.11.0 ImageList editor — upsert a BINARY-serialized object node (mimetype
+        /// <c>application/x-microsoft.net.object.binary.base64</c>, no <c>type</c> attribute — VS's exact shape for an
+        /// <c>ImageListStreamer</c>). <paramref name="base64"/> is produced by the net48 serializer; this side only
+        /// embeds it as XML (never (de)serializes). Same verbatim-preservation + malformed-refuse contract as Upsert.</summary>
+        public static string? UpsertBinaryObject(string? resxText, string key, string base64) =>
+            UpsertCore(resxText, key, () => new XElement("data",
+                new XAttribute("name", key),
+                new XAttribute("mimetype", "application/x-microsoft.net.object.binary.base64"),
+                new XElement("value", base64)));
+
+        /// <summary>Load-or-skeleton the resx, remove any existing entry for <paramref name="key"/>, append the node
+        /// built by <paramref name="makeNode"/>, and re-serialize. Returns null when an existing non-empty resx is
+        /// malformed (refuse rather than clobber). Every non-target &lt;data&gt;/&lt;metadata&gt;/&lt;resheader&gt; node is
+        /// preserved verbatim as opaque XML. (Known minor limitation, codex: document-level content OUTSIDE &lt;root&gt; —
+        /// a top-level comment or processing instruction — is not re-emitted; WinForms/VS never write those in a .resx.)</summary>
+        private static string? UpsertCore(string? resxText, string key, Func<XElement> makeNode)
         {
             XDocument doc;
             if (string.IsNullOrWhiteSpace(resxText))
@@ -379,13 +405,9 @@ namespace WinFormsDesigner.Engine
             }
 
             var root = doc.Root!;
-            // remove any existing entry (embedded or file-ref) for this key, then append the fresh embedded one.
+            // remove any existing entry (embedded or file-ref) for this key, then append the fresh node.
             root.Elements("data").Where(d => (string?)d.Attribute("name") == key).ToList().ForEach(d => d.Remove());
-            root.Add(new XElement("data",
-                new XAttribute("name", key),
-                new XAttribute("type", typeAttr),
-                new XAttribute("mimetype", "application/x-microsoft.net.object.bytearray.base64"),
-                new XElement("value", base64)));
+            root.Add(makeNode());
 
             return Serialize(doc);
         }

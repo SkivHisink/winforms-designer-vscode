@@ -74,6 +74,12 @@ namespace WinFormsDesigner.Engine.Net48
                 var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
                 if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
 
+                // 0.11.0 minimal (Collection) routing — mirror the net9 describe: an unhandled inline-serialized IList
+                // collection is shown as a READ-ONLY "(Collection)" (VS parity, fail-closed) instead of its ToString.
+                bool unhandledCollection = !isCollection && !isTableCell
+                    && vis != null && vis.Visibility == DesignerSerializationVisibility.Content
+                    && typeof(System.Collections.IList).IsAssignableFrom(pd.PropertyType);
+
                 object? raw = null;
                 try { raw = pd.GetValue(c); } catch { raw = null; }
 
@@ -84,7 +90,7 @@ namespace WinFormsDesigner.Engine.Net48
                 try { isDefault = !pd.ShouldSerializeValue(c); } catch { isDefault = null; }
 
                 // A Font carrying a non-default charset would lose it through the invariant string form — show read-only.
-                bool readOnly = pd.IsReadOnly;
+                bool readOnly = pd.IsReadOnly || unhandledCollection; // an unhandled collection has no edit path → read-only
                 if (raw is System.Drawing.Font font && (font.GdiCharSet != 1 || font.GdiVerticalFont))
                 {
                     readOnly = true;
@@ -128,8 +134,9 @@ namespace WinFormsDesigner.Engine.Net48
                 {
                     Name = pd.Name,
                     Type = pd.PropertyType.FullName ?? pd.PropertyType.Name,
-                    // a collection's live value isn't a literal — the "…" editor drives it, so leave Value null (parity with net9)
-                    Value = isCollection ? null : value,
+                    // a collection's live value isn't a literal — the "…" editor drives it, so leave Value null (parity with
+                    // net9); an unhandled (read-only) collection shows the clean "(Collection)" placeholder.
+                    Value = isCollection ? null : (unhandledCollection ? "(Collection)" : value),
                     IsDefault = isDefault,
                     SourceExplicit = false,
                     ReadOnly = readOnly,

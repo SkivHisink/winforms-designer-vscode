@@ -183,11 +183,49 @@ namespace WinFormsDesigner.Engine.Net48
                 return gone && post.Applied ? 0 : 4;
             }
 
+            if (Has(args, "--il-serialize", out _))
+            {
+                return ImageListSerializeCli(args);
+            }
+
             Console.WriteLine("usage: Engine.Net48 --pipe <name>");
             Console.WriteLine("       Engine.Net48 --render   <designerFile> --asm <assemblyPath> [--type T] [--out png] [--probe dir]...");
             Console.WriteLine("       Engine.Net48 --describe <designerFile> --asm <assemblyPath> --id <componentId|this> [--type T] [--probe dir]...");
             Console.WriteLine("       Engine.Net48 --list-toolbox --asm <assemblyPath> [--probe dir]...   (project/vendor controls the net9 enumerator can't load)");
+            Console.WriteLine("       Engine.Net48 --il-serialize --img <file> [--img <file>]... [--width N] [--height N] [--depth Depth32Bit] [--transparent Transparent]   (ImageList ImageStream blob)");
             return 2;
+        }
+
+        /// <summary>0.11.0 headless self-test for the ImageList serialize primitive: build an ImageStream blob from the
+        /// given image files (keys = file names) and report the payload length + self round-trip count. No assembly.</summary>
+        private static int ImageListSerializeCli(string[] args)
+        {
+            var imgs = args.Select((a, i) => (a, i)).Where(x => x.a == "--img").Select(x => args[x.i + 1]).ToArray();
+            if (imgs.Length == 0) { Console.Error.WriteLine("--img <file> required (repeatable)"); return 5; }
+            int w = int.TryParse(Value(args, "--width"), out var pw) ? pw : 16;
+            int h = int.TryParse(Value(args, "--height"), out var ph) ? ph : 16;
+            var spec = new ImageListSpec
+            {
+                Width = w, Height = h,
+                ColorDepth = Value(args, "--depth") ?? "",
+                TransparentColor = Value(args, "--transparent") ?? "",
+                Images = imgs.Select(p => new ImageListImage
+                {
+                    DataBase64 = Convert.ToBase64String(File.ReadAllBytes(p)),
+                    Key = Path.GetFileNameWithoutExtension(p),
+                }).ToArray(),
+            };
+            var res = ImageListSerializer.Serialize(spec);
+            Console.WriteLine("== engine-net48 ImageList serialize");
+            Console.WriteLine("   ok        : " + res.Ok + (res.Ok ? "" : " | reason: " + res.Reason));
+            Console.WriteLine("   base64    : " + res.Base64.Length + " chars");
+            Console.WriteLine("   mimetype  : " + res.MimeType);
+            Console.WriteLine("   keys      : " + string.Join(",", res.Keys));
+            Console.WriteLine("   roundtrip : " + res.Count + " image(s)");
+            string? outFile = Value(args, "--out");
+            if (outFile != null && res.Ok) { File.WriteAllText(outFile, res.Base64); Console.WriteLine("   wrote blob: " + outFile); }
+            Console.WriteLine(res.Ok && res.Count == imgs.Length ? "RESULT: PASS" : "RESULT: FAIL");
+            return res.Ok && res.Count == imgs.Length ? 0 : 4;
         }
 
         /// <summary>Headless self-test for the DevExpress-add toolbox: list the compiled assembly's own toolbox-eligible
@@ -505,6 +543,41 @@ namespace WinFormsDesigner.Engine.Net48
         private readonly DomainManager _domains = new DomainManager();
 
         public string Ping() => "winforms-engine-net48 ok / " + RuntimeInformation.FrameworkDescription;
+
+        /// <summary>0.11.0 ImageList editor — serialize the given images + settings into a VS-format ImageStream base64
+        /// payload (the one op that needs the .NET Framework runtime; the net9 interpreter can't serialize an
+        /// ImageListStreamer). No compiled assembly is touched — this builds a fresh ImageList from raw bytes, so the
+        /// host may route it through the bundled net48 engine even for a pure .NET project. The host embeds the payload
+        /// into the sibling .resx (net9 XML upsert) + emits the designer edit. POSITIONAL params (matching every other
+        /// RPC on this engine) so vscode-jsonrpc sends a params ARRAY, not a single object it would treat as named args.</summary>
+        public ImageStreamResult SerializeImageList(ImageListImage[] images, int width, int height, string colorDepth, string transparentColor) =>
+            ImageListSerializer.Serialize(new ImageListSpec
+            {
+                Images = images ?? Array.Empty<ImageListImage>(),
+                Width = width, Height = height,
+                ColorDepth = colorDepth ?? "", TransparentColor = transparentColor ?? "",
+            });
+
+        /// <summary>0.11.0 ImageList editor (READ side) — deserialize a VS-format ImageStream base64 blob back to the
+        /// current per-image PNG bytes + keys, so the editor can show the existing images before the user edits. Works
+        /// for any project (the bundled net48 engine owns the binary (de)serialization); Ok=false on a foreign blob.</summary>
+        public ImageListReadResult DeserializeImageList(string base64) => ImageListSerializer.Deserialize(base64 ?? "");
+
+        /// <summary>0.11.0 net48 undo reconcile — drop the cached live compiled instance for this form so the NEXT render
+        /// re-instantiates from the compiled baseline. The host calls this on undo/redo/revert (net48 renders the
+        /// instance, not the reverted text, so the cache would otherwise keep showing the undone edit). Idempotent;
+        /// returns true if an instance was dropped. Uses the SAME type resolution as the render so the key matches.</summary>
+        public bool DiscardCompiledLive(string designerFilePath, string assemblyPath, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyPath) || !File.Exists(assemblyPath)) return false;
+            try
+            {
+                string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+                var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+                return worker.DiscardLive(assemblyPath, typeName);
+            }
+            catch { return false; }
+        }
 
         public EngineCapabilities GetCapabilities() => new EngineCapabilities
         {

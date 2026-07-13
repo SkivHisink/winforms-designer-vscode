@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "preview": true,
   "license": "MIT",
   "author": {
@@ -122,6 +122,10 @@
         "command": "winformsDesigner.selectControlAssembly",
         "title": "%command.selectControlAssembly.title%",
         "icon": "$(package)"
+      },
+      {
+        "command": "winformsDesigner.editImageListImages",
+        "title": "%command.editImageListImages.title%"
       }
     ],
     "keybindings": [
@@ -143,6 +147,10 @@
         },
         {
           "command": "winformsDesigner.selectControlAssembly",
+          "when": "activeCustomEditorId == winformsDesigner.designer"
+        },
+        {
+          "command": "winformsDesigner.editImageListImages",
           "when": "activeCustomEditorId == winformsDesigner.designer"
         }
       ],

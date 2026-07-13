@@ -211,6 +211,12 @@ namespace WinFormsDesigner.Engine
                         {
                             Console.WriteLine("       [dropdown] " + p.Name + (p.StandardValuesExclusive ? " (exclusive)" : "") + ": " + string.Join(", ", p.StandardValues!)); // non-null: filtered above
                         }
+                        // 0.11.0 minimal (Collection) routing — surface the editable collections the grid shows: the
+                        // bespoke-edited ones (IsCollection, "…" editor) and the read-only "(Collection)" placeholders.
+                        foreach (var p in c.Properties.Where(p => p.IsCollection || p.Value == "(Collection)"))
+                        {
+                            Console.WriteLine("       [collection] " + p.Name + (p.IsCollection ? " (editable, item=" + (p.CollectionItemType ?? "?") + ")" : " (Collection) read-only"));
+                        }
                         var wired = c.Events.Where(ev => ev.Handler != null).ToList();
                         if (wired.Count > 0)
                         {
@@ -903,6 +909,54 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
+            if (Has(args, "--set-imagelist", out string? ilFile) && ilFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "imageList1";
+                string? blobFile = ArgAfter(args, "--blob");
+                bool write = Has(args, "--write", out _);
+                var keys = args.Select((a, i) => (a, i)).Where(x => x.a == "--key").Select(x => args[x.i + 1]).ToArray();
+                if (blobFile == null)
+                {
+                    Console.WriteLine("usage: --set-imagelist <designerFile> [--comp <id>] --blob <base64File> [--key k0]... [--write]");
+                    return 2;
+                }
+                try
+                {
+                    string resxPath = ResxPathBeside(ilFile);
+                    string? resxText = File.Exists(resxPath) ? File.ReadAllText(resxPath) : null;
+                    string blob = File.ReadAllText(blobFile).Trim();
+                    var res = DesignerRenderer.ApplySetImageList(ilFile, comp, blob, keys, resxText);
+                    Console.WriteLine("== engine set-imagelist (ImageStream binary node + SetKeyName, in-code Images.Add removed)");
+                    Console.WriteLine("   target : " + comp + " | key: " + res.ResxKey + " | keys: " + string.Join(",", keys) + (res.Reason.Length > 0 ? " | " + res.Reason : ""));
+                    if (!res.Ok || res.DesignerText == null || res.ResxText == null)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        File.WriteAllText(resxPath, res.ResxText, new System.Text.UTF8Encoding(false));
+                        File.Copy(ilFile, ilFile + ".bak", overwrite: true);
+                        File.WriteAllText(ilFile, res.DesignerText, new System.Text.UTF8Encoding(false));
+                        Console.WriteLine("   APPLIED: wrote " + ilFile + " + " + resxPath);
+                    }
+                    else
+                    {
+                        File.WriteAllText(ilFile + ".edited.txt", res.DesignerText, new System.Text.UTF8Encoding(false));
+                        File.WriteAllText(resxPath + ".preview.txt", res.ResxText, new System.Text.UTF8Encoding(false));
+                        Console.WriteLine("   dry-run: wrote previews " + ilFile + ".edited.txt + " + resxPath + ".preview.txt");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    return 1;
+                }
+            }
+
             if (Has(args, "--convert", out string? convType) && convType != null)
             {
                 string? value = ArgAfter(args, "--value");
@@ -1386,6 +1440,25 @@ namespace WinFormsDesigner.Engine
             {
                 Safe = r.Ok,
                 Mode = r.Mode.ToString(),
+                DesignerText = r.DesignerText,
+                ResxText = r.ResxText,
+                ResxKey = r.ResxKey,
+                Reason = r.Reason,
+            };
+        }
+
+        /// <summary>0.11.0 ImageList editor — embed a serialized ImageStream blob (produced by the net48 serializer)
+        /// into the sibling .resx and rewrite the ImageList's init (ImageStream assignment + SetKeyName, removing any
+        /// in-code Images.Add). Returns both new texts; the host persists them atomically + undoably.</summary>
+        public ImageEditPreview SetImageList(string designerFilePath, string componentId, string imageStreamBase64,
+            string[] keys, string? resxText = null, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplySetImageList(designerFilePath, componentId, imageStreamBase64 ?? "",
+                keys ?? Array.Empty<string>(), resxText, NullIfBlank(sourceText));
+            return new ImageEditPreview
+            {
+                Safe = r.Ok,
+                Mode = r.Ok ? "ImageList" : "Failed",
                 DesignerText = r.DesignerText,
                 ResxText = r.ResxText,
                 ResxKey = r.ResxKey,

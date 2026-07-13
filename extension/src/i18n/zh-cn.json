@@ -351,5 +351,15 @@
   "status.renderFailed": "渲染失败：{error}",
   "status.browseLoaded": "已从 {asm} 加载 {items}(已预先勾选 — 单击“OK”以添加)",
   "status.browseNoComponents": "未添加任何组件。",
-  "status.browseNoToolbox": "没有工具箱组件"
+  "status.browseNoToolbox": "没有工具箱组件",
+  "status.selectImageListFirst": "请先选择一个 ImageList，然后编辑其图像。",
+  "status.imageListSaved": "已更新 {id} — {n} 张图像，未保存（已写入 .resx）",
+  "imageList.title": "编辑图像 — {id}",
+  "imageList.add": "添加图像…",
+  "imageList.remove": "移除图像…",
+  "imageList.done": "完成",
+  "imageList.count": {
+    "other": "{n} 张图像"
+  },
+  "status.imageListUnreadable": "无法编辑 {id} — 无法安全读取其当前图像；为避免丢失已拒绝编辑"
 }

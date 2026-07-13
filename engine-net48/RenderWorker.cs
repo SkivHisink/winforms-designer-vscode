@@ -1074,6 +1074,21 @@ namespace WinFormsDesigner.Engine.Net48
             return live;
         }
 
+        /// <summary>0.11.0 net48 undo reconcile — drop the cached live instance for (assembly, type) so the NEXT render
+        /// re-instantiates from the compiled baseline. The host calls this after an undo/redo/revert reverts the
+        /// .Designer.cs text: the cached instance still carries the live mutations of the now-reverted edit (net48
+        /// renders the compiled INSTANCE, not the text), so reusing it would keep showing the undone change. Disposing
+        /// the form releases its GDI/window handles. Returns true if an entry was actually dropped.</summary>
+        public bool DiscardLive(string assemblyPath, string rootTypeName)
+        {
+            string key;
+            try { key = Path.GetFullPath(assemblyPath) + "|" + rootTypeName; } catch { return false; }
+            if (!_cache.TryGetValue(key, out var live)) return false;
+            _cache.Remove(key);
+            try { live.Form?.Dispose(); } catch { /* best effort — the entry is already dropped */ }
+            return true;
+        }
+
         private LiveDesign Build(string assemblyPath, string rootTypeName, int reqWidth, int reqHeight)
         {
             var diag = new StringBuilder();

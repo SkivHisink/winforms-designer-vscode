@@ -377,5 +377,17 @@
   "status.renderFailed": "error de renderizado: {error}",
   "status.browseLoaded": "Se cargaron {items} de {asm} (preseleccionados — haga clic en OK para agregarlos)",
   "status.browseNoComponents": "No se agregaron componentes.",
-  "status.browseNoToolbox": "no hay componentes en el cuadro de herramientas"
+  "status.browseNoToolbox": "no hay componentes en el cuadro de herramientas",
+  "status.selectImageListFirst": "Seleccione primero una ImageList y luego edite sus imágenes.",
+  "status.imageListSaved": "{id} actualizado: {n} imagen(es), sin guardar (.resx escrito)",
+  "imageList.title": "Editar imágenes: {id}",
+  "imageList.add": "Agregar imágenes…",
+  "imageList.remove": "Quitar imágenes…",
+  "imageList.done": "Listo",
+  "imageList.count": {
+    "one": "{n} imagen",
+    "many": "{n} imágenes",
+    "other": "{n} imágenes"
+  },
+  "status.imageListUnreadable": "no se puede editar {id}: no se pudieron leer sus imágenes actuales de forma segura; edición rechazada para no perderlas"
 }

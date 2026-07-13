@@ -377,5 +377,17 @@
   "status.renderFailed": "échec du rendu : {error}",
   "status.browseLoaded": "{items} chargés depuis {asm} (pré-cochés — cliquez sur OK pour les ajouter)",
   "status.browseNoComponents": "Aucun composant ajouté.",
-  "status.browseNoToolbox": "aucun composant de boîte à outils"
+  "status.browseNoToolbox": "aucun composant de boîte à outils",
+  "status.selectImageListFirst": "Sélectionnez d’abord une ImageList, puis modifiez ses images.",
+  "status.imageListSaved": "{id} mis à jour — {n} image(s), non enregistré (.resx écrit)",
+  "imageList.title": "Modifier les images — {id}",
+  "imageList.add": "Ajouter des images…",
+  "imageList.remove": "Supprimer des images…",
+  "imageList.done": "Terminé",
+  "imageList.count": {
+    "one": "{n} image",
+    "many": "{n} images",
+    "other": "{n} images"
+  },
+  "status.imageListUnreadable": "impossible de modifier {id} — ses images actuelles n’ont pas pu être lues en toute sécurité ; modification refusée pour ne pas les perdre"
 }

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds } from './engineClient';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setImageList, discardCompiledLive } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
@@ -778,6 +778,32 @@ async function main(): Promise<void> {
       console.log(`e2e: resx image resolution verified — ImageForm ${desc.representable}/${desc.totalStatements} representable, rendered ${rl.png.length}B, pictureBox1 ${pic.width}x${pic.height}, preview ${imgP.imagePreview.length}B base64`);
     }
 
+    // ---- 0.11.0 minimal (Collection) routing ----
+    // A ListView exposes several inline-serialized IList collections. `Columns` has a bespoke editor (isCollection,
+    // the "…" editor, item=ColumnHeader). The ones we DON'T bespoke-edit — Items / Groups / DataBindings — must be
+    // surfaced as READ-ONLY "(Collection)" (VS parity: visible; fail-closed: no edit path, no data-loss, no broken
+    // editor), NOT dropped and NOT shown as a raw ToString.
+    {
+      const lvForm = path.join(repo, 'engine', 'samples', 'ListViewForm.Designer.cs');
+      const lv = await describeComponent(engine, lvForm, 'listView1');
+      if (!lv) throw new Error('collection-routing: listView1 not described');
+      const prop = (n: string) => lv.properties?.find((p) => p.name === n);
+      const columns = prop('Columns');
+      if (!columns?.isCollection) throw new Error('collection-routing: Columns must be an editable (bespoke) collection');
+      if (columns.collectionItemType !== 'System.Windows.Forms.ColumnHeader') throw new Error(`collection-routing: Columns itemType ${columns.collectionItemType}`);
+      for (const name of ['Items', 'Groups']) {
+        const p = prop(name);
+        if (!p) throw new Error(`collection-routing: ${name} must be surfaced (not dropped)`);
+        if (p.isCollection) throw new Error(`collection-routing: ${name} is unhandled — must NOT be flagged isCollection (no broken "…")`);
+        if (p.value !== '(Collection)') throw new Error(`collection-routing: ${name} must show "(Collection)" (got ${JSON.stringify(p.value)})`);
+        if (!p.readOnly) throw new Error(`collection-routing: ${name} must be read-only (no edit path)`);
+      }
+      // a plain scalar prop is unaffected (regression guard): Name is editable text, not "(Collection)".
+      const nameP = prop('Name');
+      if (nameP && (nameP.value === '(Collection)' || nameP.readOnly)) throw new Error('collection-routing: a scalar (Name) must not be mis-flagged as a read-only collection');
+      console.log('e2e: 0.11.0 minimal (Collection) routing verified — Columns editable (item=ColumnHeader); Items/Groups surfaced READ-ONLY "(Collection)" (not dropped, not ToString, not a broken editor); scalar Name unaffected');
+    }
+
     // ---- resx image WRITE pipeline (Import… + (none)) ----
     // SetImageResource embeds a chosen image into the form's sibling .resx and writes the resources.GetObject
     // assignment (ensuring the resources local). The round-trip must then RENDER the image and the preview must
@@ -1498,6 +1524,88 @@ async function main(): Promise<void> {
           if (!derived48Ids.includes('derivedButton')) throw new Error(`S2 net48: the derived control (derivedButton) must render — got [${derived48Ids.join(', ')}]`);
           if (derived48.inheritedBase) throw new Error('S2 net48: the compiled engine must NOT flag inheritedBase — it renders the real base, so the banner is net9-only');
           console.log(`e2e: 0.10.0 S2 net48 inherited-form parity verified — compiled DerivedForm renders BOTH baseButton + derivedButton (no gap), inheritedBase=false (net9 drops baseButton, so the banner is net9-only)`);
+
+          // ---- 0.11.0 ImageList editor: net48 ImageStream serialize primitive (the binary WRITE linchpin) ----
+          // Serialize two real 16x16 PNGs into a VS-format ImageListStreamer blob. The engine self-round-trips the blob
+          // (deserialize → count) so a corrupt/empty payload can never reach a .resx; assert Ok, the binary mimetype,
+          // the key order, and count==2. No compiled assembly is touched — the primitive builds a fresh ImageList from
+          // raw bytes, which is why the host may route it through net48 even for a pure .NET project.
+          const RED16 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAdSURBVDhPY/jPwPCfEsyALkAqHjVg1IBRAwaLAQAwxP4Q7zYsrwAAAABJRU5ErkJggg==';
+          const BLUE16 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAzSURBVDhPpcihEQAwEASh67/pTwGrmAgM2+7+JFRCJVRCJVRCJVRCJVRCJVRCJVRCJcwDMqb+ELsBUIUAAAAASUVORK5CYII=';
+          const ilRes = await serializeImageList(n48, { width: 16, height: 16, colorDepth: 'Depth32Bit', transparentColor: 'Transparent', images: [{ dataBase64: RED16, key: 'red' }, { dataBase64: BLUE16, key: 'blue' }] });
+          if (!ilRes.ok) throw new Error('ImageList serialize: net48 primitive failed — ' + ilRes.reason);
+          if (ilRes.mimeType !== 'application/x-microsoft.net.object.binary.base64') throw new Error('ImageList serialize: wrong mimetype ' + ilRes.mimeType);
+          if (ilRes.count !== 2) throw new Error('ImageList serialize: self round-trip count ' + ilRes.count + ' (expected 2)');
+          if (ilRes.keys.join(',') !== 'red,blue') throw new Error('ImageList serialize: key order [' + ilRes.keys.join(',') + '] (expected red,blue)');
+          if (!ilRes.base64 || ilRes.base64.length < 1000 || /\s/.test(ilRes.base64)) throw new Error('ImageList serialize: blank/whitespaced base64 payload (len ' + ilRes.base64.length + ')');
+          // NEGATIVE: non-image bytes must be refused before anything is serialized (fed UI-supplied bytes).
+          const ilBad = await serializeImageList(n48, { width: 16, height: 16, colorDepth: '', transparentColor: '', images: [{ dataBase64: Buffer.from('not an image').toString('base64'), key: 'x' }] });
+          if (ilBad.ok) throw new Error('ImageList serialize: non-image bytes must be refused');
+          console.log(`e2e: 0.11.0 ImageList serialize primitive (net48) verified — 2 PNGs → ${ilRes.base64.length}-char binary.base64 ImageStream blob, self round-trips to 2 images, keys [${ilRes.keys.join(',')}]; non-image bytes refused`);
+
+          // ---- 0.11.0 ImageList editor: net48 DESERIALIZE (READ side — show current images before editing) ----
+          const ilRead = await deserializeImageList(n48, ilRes.base64);
+          if (!ilRead.ok) throw new Error('ImageList deserialize: failed — ' + ilRead.reason);
+          if (ilRead.images.length !== 2) throw new Error('ImageList deserialize: got ' + ilRead.images.length + ' images (expected 2)');
+          if (!ilRead.images.every((i) => isPng(Buffer.from(i.dataBase64, 'base64')))) throw new Error('ImageList deserialize: an image is not valid PNG');
+          if (ilRead.width !== 16 || ilRead.height !== 16) throw new Error('ImageList deserialize: size ' + ilRead.width + 'x' + ilRead.height + ' (expected 16x16)');
+          // The ImageStream blob does NOT carry keys — keys are a managed ImageCollection concept the designer restores
+          // via SetKeyName (why VS emits them separately). So deserialize returns EMPTY keys; the host pairs images (by
+          // index) with the SetKeyName keys parsed from the designer. Pin that: the blob-side keys are blank.
+          if (ilRead.images.some((i) => i.key !== '')) throw new Error('ImageList deserialize: the blob must not carry keys (they live in the designer SetKeyName calls)');
+          // round-trip: re-serialize the deserialized image bytes (host re-attaches keys) → still 2 images (lossless loop).
+          const withKeys = ilRead.images.map((im, i) => ({ dataBase64: im.dataBase64, key: ['red', 'blue'][i] }));
+          const ilReSer = await serializeImageList(n48, { width: ilRead.width, height: ilRead.height, colorDepth: ilRead.colorDepth, transparentColor: ilRead.transparentColor, images: withKeys });
+          if (!ilReSer.ok || ilReSer.count !== 2 || ilReSer.keys.join(',') !== 'red,blue') throw new Error('ImageList deserialize→serialize round-trip lost images/keys');
+          // NEGATIVE: a foreign/garbage blob deserializes to ok=false (never throws).
+          const ilReadBad = await deserializeImageList(n48, Buffer.from('not a stream').toString('base64'));
+          if (ilReadBad.ok) throw new Error('ImageList deserialize: a foreign blob must return ok=false');
+          console.log(`e2e: 0.11.0 ImageList deserialize (net48 READ) verified — blob → 2 valid-PNG images (16x16, blob carries no keys — designer-side), read→re-attach-keys→serialize round-trips to 2 (keys red,blue); foreign blob → ok=false`);
+
+          // ---- 0.11.0 ImageList editor: net9 SetImageList (embed blob + rewrite designer) ----
+          // Take the net48 blob and embed it into ImageListForm's designer + a fresh .resx: the in-code Images.Add
+          // lines must be REMOVED, an ImageStream = resources.GetObject(...) assignment inserted, SetKeyName(i,key)
+          // emitted per image, the ComponentResourceManager local ensured, and the .resx gain the binary ImageStream
+          // node. This is the write path the images editor drives (host then persists both texts atomically+undoably).
+          const ilSet = await setImageList(engine, imageListForm, 'imageList1', ilRes.base64, ilRes.keys, null, null);
+          if (!ilSet.safe || ilSet.designerText === null || ilSet.resxText === null) throw new Error('ImageList SetImageList: rejected — ' + ilSet.reason);
+          if (/imageList1\.Images\.Add\s*\(/.test(ilSet.designerText)) throw new Error('ImageList SetImageList: in-code Images.Add must be removed');
+          if (!/imageList1\.ImageStream\s*=\s*\(\(System\.Windows\.Forms\.ImageListStreamer\)\(resources\.GetObject\("imageList1\.ImageStream"\)\)\)/.test(ilSet.designerText)) throw new Error('ImageList SetImageList: ImageStream assignment not emitted');
+          if (!/imageList1\.Images\.SetKeyName\(0, "red"\)/.test(ilSet.designerText) || !/imageList1\.Images\.SetKeyName\(1, "blue"\)/.test(ilSet.designerText)) throw new Error('ImageList SetImageList: SetKeyName(i,key) not emitted in order');
+          if (!/ComponentResourceManager resources = new/.test(ilSet.designerText)) throw new Error('ImageList SetImageList: resources local not ensured');
+          if (ilSet.resxKey !== 'imageList1.ImageStream') throw new Error('ImageList SetImageList: wrong resx key ' + ilSet.resxKey);
+          if (!/name="imageList1\.ImageStream"/.test(ilSet.resxText) || !/application\/x-microsoft\.net\.object\.binary\.base64/.test(ilSet.resxText)) throw new Error('ImageList SetImageList: resx missing the binary ImageStream node');
+          if (!/imageList1\.ImageSize = new System\.Drawing\.Size\(16, 16\)/.test(ilSet.designerText)) throw new Error('ImageList SetImageList: an unrelated statement (ImageSize) must be preserved');
+          // NEGATIVE: an invalid component id must be refused (no injection into the LHS / resx key).
+          const ilBadId = await setImageList(engine, imageListForm, 'bad id"; evil', ilRes.base64, ilRes.keys, null, null);
+          if (ilBadId.safe) throw new Error('ImageList SetImageList: an invalid component id must be refused');
+          // NEGATIVE (codex #1): an arbitrary binary payload (valid base64, but NOT a serialized ImageListStreamer) must
+          // be refused — net9 must not be a confused deputy that embeds any BinaryFormatter blob as an object resource.
+          const ilBadBlob = await setImageList(engine, imageListForm, 'imageList1', Buffer.from('this is not an ImageList stream').toString('base64'), ['x'], null, null);
+          if (ilBadBlob.safe) throw new Error('ImageList SetImageList: a non-ImageListStreamer blob must be refused');
+          console.log(`e2e: 0.11.0 ImageList editor SetImageList (net9) verified — in-code Images.Add removed, ImageStream=GetObject + SetKeyName(0,"red")/(1,"blue") + resources local emitted, .resx gains the binary node, ImageSize preserved; invalid id refused`);
+
+          // ---- 0.11.0 net48 undo reconcile: discardCompiledLive drops the STALE live instance ----
+          // Render (populates the live cache), live-mutate a control's Location (shows on the compiled INSTANCE), then
+          // discardCompiledLive → the next render re-instantiates from the compiled BASELINE, so the mutation is GONE.
+          // This is exactly what the host does on undo/redo/revert (net48 renders the instance, not the reverted text),
+          // so a reverted edit no longer lingers in the preview.
+          // Use derivedForm's free-positioned Button (a docked control's Location can't move) as the probe.
+          const reconType = 'SampleApp.DerivedForm';
+          const reconBase = await renderCompiledWithLayout(n48, derivedForm, ctxFixtureDll, reconType);
+          const probe = reconBase.controls.find((c) => c.id === 'derivedButton') || reconBase.controls.find((c) => c.id !== 'this' && c.type.endsWith('Button'));
+          if (probe) {
+            const baseX = probe.x;
+            const moved = await setCompiledPropertyLive(n48, derivedForm, ctxFixtureDll, probe.id, 'Location', `${probe.x + 41}, ${probe.y + 23}`, reconType);
+            const movedCtl = moved.controls.find((c) => c.id === probe.id);
+            if (!movedCtl || movedCtl.x === baseX) throw new Error(`net48 reconcile: a live Location edit must change the rendered x (baseline ${baseX}, got ${movedCtl?.x})`);
+            const dropped = await discardCompiledLive(n48, derivedForm, ctxFixtureDll, reconType);
+            if (!dropped) throw new Error('net48 reconcile: discardCompiledLive must report it dropped the cached instance');
+            const afterDrop = await renderCompiledWithLayout(n48, derivedForm, ctxFixtureDll, reconType);
+            const revertedCtl = afterDrop.controls.find((c) => c.id === probe.id);
+            if (!revertedCtl || revertedCtl.x !== baseX) throw new Error(`net48 reconcile: after discard the control must revert to baseline x=${baseX} (got ${revertedCtl?.x}) — the undone live edit lingered`);
+            console.log(`e2e: 0.11.0 net48 undo reconcile verified — live Location edit on ${probe.id} moved x ${baseX}→${movedCtl.x}; discardCompiledLive drops the stale instance; next render reverts to baseline x=${baseX}`);
+          }
 
           const r48 = await renderCompiledWithLayout(n48, ctxForm, ctxFixtureDll);
           if (r48.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) throw new Error('net48 ctx: a ContextMenuStrip leaked into the compiled control layout (phantom rect)');

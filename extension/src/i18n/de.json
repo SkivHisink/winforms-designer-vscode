@@ -364,5 +364,16 @@
   "status.renderFailed": "Rendern fehlgeschlagen: {error}",
   "status.browseLoaded": "{items} aus {asm} geladen (vorab ausgewählt — zum Hinzufügen auf OK klicken)",
   "status.browseNoComponents": "Keine Komponenten hinzugefügt.",
-  "status.browseNoToolbox": "keine Toolbox-Komponenten"
+  "status.browseNoToolbox": "keine Toolbox-Komponenten",
+  "status.selectImageListFirst": "Wählen Sie zuerst eine ImageList aus, um ihre Bilder zu bearbeiten.",
+  "status.imageListSaved": "{id} aktualisiert – {n} Bild(er), ungespeichert (.resx geschrieben)",
+  "imageList.title": "Bilder bearbeiten – {id}",
+  "imageList.add": "Bilder hinzufügen…",
+  "imageList.remove": "Bilder entfernen…",
+  "imageList.done": "Fertig",
+  "imageList.count": {
+    "one": "{n} Bild",
+    "other": "{n} Bilder"
+  },
+  "status.imageListUnreadable": "kann {id} nicht bearbeiten – die aktuellen Bilder konnten nicht sicher gelesen werden; Bearbeitung abgelehnt, um Datenverlust zu vermeiden"
 }

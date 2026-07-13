@@ -242,6 +242,15 @@ namespace WinFormsDesigner.Engine
                 var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
                 if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
 
+                // 0.11.0 minimal (Collection) routing — an editable collection the designer serializes inline
+                // (DesignerSerializationVisibility.Content + IList) that we DON'T have a bespoke editor for reaches the
+                // grid here (Browsable + not Hidden). Rather than showing its useless ToString (the collection's type
+                // name), surface a clean READ-ONLY "(Collection)" entry: VS parity (the property is visible), fail-closed
+                // (no edit path = no data-loss / no broken "…"). A dedicated generic list editor is the deferred XL work.
+                bool unhandledCollection = !isCollection && !isTableCell
+                    && vis != null && vis.Visibility == DesignerSerializationVisibility.Content
+                    && typeof(System.Collections.IList).IsAssignableFrom(pd.PropertyType);
+
                 // read value and default-state in SEPARATE guarded blocks: a throwing ShouldSerializeValue
                 // must not discard a value that read fine, and vice versa.
                 object? raw = null;
@@ -260,7 +269,7 @@ namespace WinFormsDesigner.Engine
                 // GdiCharSet/GdiVerticalFont — so editing a Font that carries a non-default charset (e.g. 204 =
                 // RUSSIAN_CHARSET, common in Cyrillic/CJK forms) would silently drop the charset on save. Show
                 // such a Font read-only so the value can't be lost; plain fonts (charset 1) stay editable.
-                bool readOnly = pd.IsReadOnly;
+                bool readOnly = pd.IsReadOnly || unhandledCollection; // an unhandled collection has no edit path → read-only
                 if (raw is System.Drawing.Font font && (font.GdiCharSet != 1 || font.GdiVerticalFont))
                 {
                     readOnly = true;
@@ -307,8 +316,9 @@ namespace WinFormsDesigner.Engine
                 {
                     Name = pd.Name,
                     Type = pd.PropertyType.FullName ?? pd.PropertyType.Name,
-                    // a collection's live value isn't a literal — the "…" editor drives it, so leave Value null
-                    Value = isCollection ? null : value,
+                    // a collection's live value isn't a literal — the "…" editor drives it, so leave Value null; an
+                    // unhandled (read-only) collection shows the clean "(Collection)" placeholder instead of its ToString.
+                    Value = isCollection ? null : (unhandledCollection ? "(Collection)" : value),
                     IsDefault = isDefault,
                     SourceExplicit = explicitMembers.Contains((c, pd.Name)),
                     ReadOnly = readOnly,

@@ -49,6 +49,10 @@ import {
   setGridColumns,
   resetProperty,
   setImageResource,
+  serializeImageList,
+  deserializeImageList,
+  discardCompiledLive,
+  setImageList,
   generateEventHandler,
   listHandlerCandidates,
   setEventWiring,
@@ -303,6 +307,17 @@ export class DesignerHub {
 
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 
+/** 0.11.0 write-safety — process-global monotonic suffix for atomic-write temp files. Module scope (not per
+ *  session) so two designer sessions in one host can't collide; combined with `process.pid` at the use site it
+ *  is also unique across VS Code windows sharing a sibling .resx. */
+let atomicWriteSeq = 0;
+
+/** True when `e` is a VS Code "file not found" filesystem error (a delete of an already-absent file). Used so a
+ *  resx-undo delete treats "already gone" as success but lets a real lock/permission failure propagate. */
+function isFileNotFound(e: unknown): boolean {
+  return e instanceof vscode.FileSystemError && e.code === 'FileNotFound';
+}
+
 /** Read a file's bytes, stripping a leading UTF-8 BOM and remembering it (so a save can re-add it). */
 async function readDesignerBytesUri(uri: vscode.Uri): Promise<{ text: string; hadBom: boolean }> {
   const buf = Buffer.from(await vscode.workspace.fs.readFile(uri));
@@ -386,6 +401,10 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
   }
   async revert(): Promise<void> {
     if (!this.designerFile) return;
+    // 0.11.0 write-safety note: File → Revert discards unsaved .Designer.cs (code) edits only. It does NOT roll
+    // back a sibling .resx image import — the .resx is a resource file written+saved immediately (like VS, whose
+    // Revert of a form's code likewise doesn't un-write its .resx). Ctrl+Z reverts an import's resource (commit's
+    // undo closure); Revert is the "discard unsaved code" gesture, so a just-imported, referenced resource stays.
     const { text, hadBom } = await readDesignerBytesUri(vscode.Uri.file(this.designerFile));
     this.adoptDiskBaseline(text, hadBom);
     await this.session?.rerenderFromDoc();
@@ -531,6 +550,15 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     view.onDidDispose(() => { if (DesignerHub.instance.panel === view.webview) DesignerHub.instance.panel = null; });
   }
 }
+
+/**
+ * 0.11.0 write-safety — a sibling-.resx disk write bundled INTO a designer edit's undo/redo transaction.
+ * `before` is the resx content prior to the write (null when this edit created the .resx); `after` is what
+ * was written. Undo restores `before` (deleting a file this edit created); redo re-applies `after`. Both
+ * directions are conflict-guarded (a concurrent external change to the .resx is left alone, never clobbered),
+ * so a resx write and its code-behind assignment land — and revert — as one atomic unit.
+ */
+interface ResxTx { uri: vscode.Uri; before: string | null; after: string; }
 
 /** Manages one open designer editor: render, selection, property edits, and live-update. */
 class DesignerSession {
@@ -816,8 +844,20 @@ class DesignerSession {
   // Returns TRUE when the edit was applied (or was a no-op) and the caller may run its success follow-up; FALSE when a
   // fail-closed gate (byte-local / render-failed / localizable) REFUSED it — the caller must then skip its success
   // status + live-preview mutation so a refused edit never shows as applied (codex: commit() was void, callers diverged).
-  private commit(before: string, after: string, label: string): boolean {
-    if (after === before) return true; // no-op edit → nothing to persist, but the caller's (harmless) follow-up is fine
+  //
+  // 0.11.0 write-safety — an optional `resx` transaction ties a sibling-.resx disk write to THIS undoable edit: the
+  // caller writes the new .resx to disk atomically BEFORE calling commit(); we then thread the resx before/after into
+  // the undo/redo closures so Ctrl+Z reverts the resource too (deleting a resx this edit created, or restoring its
+  // prior bytes) and Ctrl+Y re-applies it. If a fail-closed gate REFUSES here, no edit is fired — the caller then
+  // rolls the resx back (revertResx) so neither half lands. The gates run before anything is mutated, so a refusal
+  // never leaves a half-applied transaction.
+  private commit(before: string, after: string, label: string, resx?: ResxTx): boolean {
+    // No-op edit → nothing to persist. But if a resx transaction is attached whose bytes actually CHANGED (a
+    // re-import of a new image into a property whose `resources.GetObject("key")` assignment is byte-identical —
+    // designer text unchanged, base64 payload different), we must still fire an undo entry so Ctrl+Z reverts the
+    // resource (codex: the no-op short-circuit dropped the resx-only undo). Fall through in that case.
+    const resxChanged = !!resx && resx.before !== resx.after;
+    if (after === before && !resxChanged) return true;
     // 0.10.0 trust-floor S4 — byte-local firewall. Every persisted edit is a targeted net9 splice of `before`, which
     // preserves the file outside the edited span by construction (net48 never writes source — it persists the SAME
     // net9 splice). If `after` is NOT a confined edit of `before`, a non-splice path reached this funnel (a future
@@ -853,8 +893,19 @@ class DesignerSession {
     this.fireEdit({
       document: this.doc,
       label,
-      undo: async () => { this.doc.rev++; this.doc.designerText = before; await this.rerenderFromDoc(); },
-      redo: async () => { this.doc.rev++; this.doc.designerText = after; await this.rerenderFromDoc(); },
+      // Do the resx disk op FIRST (it can fail — a locked/permission-denied file): if it throws, the in-memory
+      // designerText is left untouched and the undo/redo promise rejects, so the two halves never split (codex:
+      // mutating text before a fallible resx op leaves the code reverted while the resource didn't move).
+      undo: async () => {
+        if (resx) await this.revertResx(resx.uri, resx.before, resx.after);
+        this.doc.rev++; this.doc.designerText = before;
+        await this.rerenderFromDoc();
+      },
+      redo: async () => {
+        if (resx) await this.reapplyResx(resx.uri, resx.before, resx.after);
+        this.doc.rev++; this.doc.designerText = after;
+        await this.rerenderFromDoc();
+      },
     });
     return true;
   }
@@ -862,6 +913,17 @@ class DesignerSession {
   /** Re-render the canvas from the current in-memory text (used by undo/redo and revert). */
   async rerenderFromDoc(): Promise<void> {
     if (this.disposed) return;
+    // 0.11.0 net48 undo reconcile — a text-level revert (undo/redo/revert) makes the cached compiled instance STALE:
+    // net48 renders the live compiled INSTANCE (not the text), and that instance still carries the reverted edit's
+    // live mutation, so reusing it would keep showing the undone change. Drop it so the next render re-instantiates
+    // from the compiled baseline. (net9 interprets the text directly, so it needs no such reconcile.)
+    if (this.engineKind === 'net48') {
+      const asm = this.asm();
+      if (asm && this.designerFile) {
+        try { await discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, asm); }
+        catch { /* best effort — a failed discard just leaves the (pre-existing) staleness, never corrupts */ }
+      }
+    }
     await this.fullRender();
   }
 
@@ -1999,21 +2061,104 @@ class DesignerSession {
     return vscode.Uri.file(base + '.resx');
   }
 
-  /** Read a text file's UTF-8 content (BOM stripped), or null when it doesn't exist. */
+  /** Read a text file's UTF-8 content (BOM stripped), or null when it can't be read (missing/locked/etc). Used on
+   *  the import FORWARD path, where any read failure fails closed (null ≠ snapshot → the conflict guard refuses). */
   private async readTextIfExists(uri: vscode.Uri): Promise<string | null> {
     try {
-      const b = await vscode.workspace.fs.readFile(uri);
-      let s = Buffer.from(b).toString('utf8');
-      if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1); // strip a leading BOM so the XML parser is happy
-      return s;
-    } catch { return null; } // ENOENT → no .resx yet (the engine creates one)
+      return this.stripBom(await vscode.workspace.fs.readFile(uri));
+    } catch { return null; } // ENOENT → no .resx yet (the engine creates one); any error → fail-closed on the forward path
+  }
+
+  /** Read a text file, returning null ONLY for a genuine "file not found" and RETHROWING every other error. The
+   *  undo/redo resx preconditions use this (not readTextIfExists): a lock/permission read must reject the closure
+   *  so commit's undo/redo leaves the designer text unmoved, rather than being mistaken for "content changed →
+   *  skip revert" while the text still rewinds — that would recreate the split state (codex fix-verify). */
+  private async readTextStrict(uri: vscode.Uri): Promise<string | null> {
+    try {
+      return this.stripBom(await vscode.workspace.fs.readFile(uri));
+    } catch (e) {
+      if (isFileNotFound(e)) return null;
+      throw e;
+    }
+  }
+
+  private stripBom(b: Uint8Array): string {
+    let s = Buffer.from(b).toString('utf8');
+    if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1); // strip a leading BOM so the XML parser is happy
+    return s;
+  }
+
+  /**
+   * 0.11.0 write-safety — write `bytes` to `uri` ATOMICALLY: stage to a sibling temp file, then rename over the
+   * target. On a local filesystem the rename is atomic, so a crash / disk-full mid-write can never leave the .resx
+   * truncated or half-written (a real risk once it holds a large binary ImageListStreamer blob). The temp lives in
+   * the SAME directory as the target so the rename stays on one volume; it is cleaned up if the rename fails. The
+   * temp name is unique across sessions AND processes — a module-global counter plus the pid — so two windows
+   * importing into the same sibling .resx can never stage onto each other's temp file (codex: a per-session counter
+   * both restart at 0 → `Foo.resx.wfd0.tmp` collision → one session renames the other's staged bytes over the target).
+   *
+   * A SYMLINK target is written THROUGH with a direct write (which follows the link), never temp+renamed — a rename
+   * would replace the link entry with a regular file and destroy the link, leaving the real target stale (codex
+   * fix-verify; VS Code's own disk provider declines atomic writes for symlinks for the same reason).
+   */
+  private async atomicWriteFile(uri: vscode.Uri, bytes: Uint8Array): Promise<void> {
+    let isSymlink = false;
+    try { isSymlink = ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.SymbolicLink) !== 0; }
+    catch { /* not found / unreadable → treat as a normal new file (the atomic temp+rename path) */ }
+    if (isSymlink) { await vscode.workspace.fs.writeFile(uri, bytes); return; }
+    const tmp = uri.with({ path: `${uri.path}.wfd-${process.pid}-${atomicWriteSeq++}.tmp` });
+    try {
+      await vscode.workspace.fs.writeFile(tmp, bytes);
+      await vscode.workspace.fs.rename(tmp, uri, { overwrite: true });
+    } catch (e) {
+      // clean up a partially-staged temp on EITHER a failed write or a failed rename (codex fix-verify: the temp
+      // write was outside the cleanup scope, so an interrupted stage leaked a `.wfd-…tmp` sibling).
+      try { await vscode.workspace.fs.delete(tmp); } catch { /* best effort */ }
+      throw e;
+    }
+  }
+
+  /**
+   * 0.11.0 write-safety — undo half of a resx transaction: restore the .resx to its pre-edit state. CONFLICT-GUARDED:
+   * only reverts when the file on disk is still EXACTLY what this edit wrote (`afterText`); if something else changed
+   * it since (VS, git, a manual edit), it is left untouched — never clobber a concurrent change. When there was no
+   * prior .resx (`beforeText === null`) the file this edit created is deleted; otherwise its prior bytes are
+   * atomically restored. Errors OTHER than "already gone" propagate so the caller (commit's undo closure) leaves the
+   * in-memory designer text unmoved — the two halves never split. (TOCTOU note: the read→write window is inherent to
+   * the VS Code FS API, which offers no compare-and-swap; the equality guard keeps it as small as the forward path's.)
+   */
+  private async revertResx(uri: vscode.Uri, beforeText: string | null, afterText: string): Promise<void> {
+    const current = await this.readTextStrict(uri); // throws on lock/permission → undo rejects (no split), not "skip"
+    if (current !== afterText) { this.output.appendLine('[designer] resx undo skipped: .resx changed on disk since the edit'); return; }
+    if (beforeText === null) {
+      try { await vscode.workspace.fs.delete(uri); }
+      catch (e) { if (!isFileNotFound(e)) throw e; } // already gone = done; a lock/permission failure must reject the undo
+    } else {
+      await this.atomicWriteFile(uri, Buffer.from(beforeText, 'utf8'));
+    }
+  }
+
+  /**
+   * 0.11.0 write-safety — redo half of a resx transaction: re-apply the written .resx atomically. CONFLICT-GUARDED
+   * symmetrically to revertResx — only re-applies when the file on disk is still the pre-import state this redo
+   * transitions FROM (`beforeText`, restored by the matching undo); if an external change landed in between it is
+   * left alone (codex: an unguarded redo clobbered a concurrent .resx edit). A skipped redo re-render still reflects
+   * the (unchanged) designer text; the resource simply stays as the external editor left it.
+   */
+  private async reapplyResx(uri: vscode.Uri, beforeText: string | null, afterText: string): Promise<void> {
+    const current = await this.readTextStrict(uri); // throws on lock/permission → redo rejects (no split), not "skip"
+    if (current !== beforeText) { this.output.appendLine('[designer] resx redo skipped: .resx changed on disk since undo'); return; }
+    await this.atomicWriteFile(uri, Buffer.from(afterText, 'utf8'));
   }
 
   /**
    * Import an image into a resx-backed image/icon property ("Import…"): pick a file, embed it into the form's
    * sibling .resx and write the `resources.GetObject` assignment. The .resx is written to disk immediately (a
-   * resource file, like VS); the .Designer.cs edit is the undoable in-memory thing. On undo, the assignment
-   * reverts and the image drops from the render; the .resx entry is left as a harmless orphan.
+   * resource file, like VS), atomically (temp+rename); the .Designer.cs edit is the undoable in-memory thing.
+   * 0.11.0 write-safety — the resx write is bundled into the SAME undoable transaction (via commit's `resx` arg),
+   * so Ctrl+Z reverts BOTH the assignment and the resource (deleting a .resx this import created, or restoring
+   * its prior bytes), and Ctrl+Y re-applies both. The resx revert is conflict-guarded (a concurrent external
+   * change is left alone). Existing forward guards stay: localizable re-check, on-disk .resx conflict, binary-node drop.
    */
   async importImageFromGrid(id: string, prop: string, propType: string): Promise<void> {
     if (!this.designerFile) return;
@@ -2073,9 +2218,18 @@ class DesignerSession {
         await this.loadProps(id);
         return; // never write a .resx that dropped a binary node
       }
-      // write the .resx to disk FIRST (the engine reads it from disk on render), then commit the designer edit.
-      await vscode.workspace.fs.writeFile(resxUri, Buffer.from(res.resxText, 'utf8'));
-      if (!this.commit(before, res.designerText, `Import ${id}.${prop} image`)) return;
+      // 0.11.0 write-safety — write the .resx to disk ATOMICALLY (temp+rename; the engine reads it from disk on the
+      // render below), then commit the designer edit as ONE undoable transaction. The resx before/after is threaded
+      // into commit() so Ctrl+Z reverts the resource too (deleting a .resx this import created, or restoring its
+      // prior bytes) rather than leaving a permanent orphan. If a fail-closed gate refuses the designer edit AFTER
+      // the resx hit disk, roll the resx back so neither half lands (never a resx entry with no assignment).
+      await this.atomicWriteFile(resxUri, Buffer.from(res.resxText, 'utf8'));
+      const resxTx: ResxTx = { uri: resxUri, before: resxText, after: res.resxText };
+      if (!this.commit(before, res.designerText, `Import ${id}.${prop} image`, resxTx)) {
+        await this.revertResx(resxUri, resxText, res.resxText);
+        await this.loadProps(id);
+        return;
+      }
       this.output.appendLine(`imported image into ${id}.${prop} → ${res.resxKey} (${res.mode}; .resx written, designer unsaved)`);
       this.post({ type: 'status', message: t('status.imageImported', { id, prop }) });
 
@@ -2111,6 +2265,134 @@ class DesignerSession {
       this.post({ type: 'status', message: t('status.clearFailed', { error: errMsg(err) }) });
       try { await this.loadProps(id); } catch { /* best effort */ }
     }
+  }
+
+  /**
+   * 0.11.0 ImageList editor — edit the SELECTED ImageList's images (add / remove), then serialize the full set into
+   * the ImageStream binary resource (net48, the one op needing the .NET Framework runtime) and rewrite the designer
+   * (net9 SetImageList: ImageStream assignment + SetKeyName, in-code Images.Add removed), persisting BOTH texts
+   * atomically + undoably (reuses the Slice-1 write-safety machinery + the S3 conflict/binary-drop guards). Reads the
+   * CURRENT images by deserializing the existing .resx ImageStream blob (net48) and pairing them by index with the
+   * keys parsed from the designer. Works for ANY project — the bundled net48 engine owns the binary (de)serialization.
+   */
+  async editImageListImages(): Promise<void> {
+    if (!this.designerFile) return;
+    if (this.refuseLocalizableMutation()) return;         // writes the .resx (irreversible pre-commit) — guard up front
+    if (!this.renderOk) { this.post({ type: 'status', message: t('status.renderFailedReadonly') }); return; }
+    const id = this.currentId;
+    if (!id || id === 'this') { this.post({ type: 'status', message: t('status.selectImageListFirst') }); return; }
+    try {
+      const eng9 = await this.ensureEngine('net9');
+      const asm = this.asm();
+      // confirm the current selection really is an ImageList (else the SetKeyName/ImageStream rewrite is meaningless).
+      const desc = this.engineKind === 'net48' && asm
+        ? await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm, id, undefined, undefined, this.doc.designerText)
+        : await describeComponent(eng9, this.designerFile, id, asm, this.doc.designerText);
+      if (!desc || !/(^|\.)ImageList$/.test(desc.type)) { this.post({ type: 'status', message: t('status.selectImageListFirst') }); return; }
+
+      // read the CURRENT images: deserialize the existing .resx ImageStream blob (net48), pair with designer keys.
+      const resxUri = this.resxUri();
+      const resxText = await this.readTextIfExists(resxUri);
+      const blob = extractResxBinaryValue(resxText, id + '.ImageStream');
+      const eng48 = await this.ensureEngine('net48');
+      let images: { dataBase64: string; key: string }[] = [];
+      let width = 16, height = 16, colorDepth = 'Depth32Bit', transparentColor = 'Transparent';
+      if (blob) {
+        const read = await deserializeImageList(eng48, blob);
+        if (read.ok) {
+          const keys = parseImageListKeys(this.doc.designerText, id);
+          images = read.images.map((im, i) => ({ dataBase64: im.dataBase64, key: keys[i] ?? '' }));
+          width = read.width || 16; height = read.height || 16;
+          colorDepth = read.colorDepth || colorDepth; transparentColor = read.transparentColor || transparentColor;
+        }
+      }
+      // DATA-LOSS GUARD (fail-closed): saving REPLACES the whole image set. If this ImageList already HAS images we
+      // couldn't read back — a binary ImageStream node we failed to parse/deserialize, or an in-code `Images.Add`
+      // whose bytes this editor doesn't materialize — starting from an empty set would silently drop them on save.
+      // Refuse instead. A fresh/empty ImageList (no blob, no in-code Add) correctly proceeds so the user can add.
+      const hasInCodeImages = new RegExp('\\bthis\\.' + escapeRegex(id) + '\\.Images\\.Add\\(').test(this.doc.designerText);
+      if (images.length === 0 && (blob !== null || hasInCodeImages)) {
+        this.post({ type: 'status', message: t('status.imageListUnreadable', { id }) });
+        return;
+      }
+
+      const edited = await this.manageImagesUi(id, images);
+      if (!edited) return; // cancelled or unchanged
+
+      // serialize the full set (net48) → VS-format ImageStream blob (+ validated round-trip count).
+      const ser = await serializeImageList(eng48, { images: edited, width, height, colorDepth, transparentColor });
+      if (!ser.ok) { this.post({ type: 'status', message: t('status.importRejected', { reason: ser.reason || 'unsafe' }) }); return; }
+
+      // rewrite the designer + embed the blob (net9) — returns both new texts.
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+      const set = await setImageList(eng9, this.designerFile, id, ser.base64, ser.keys, resxText, before);
+      if (!set.safe || set.designerText === null || set.resxText === null) { this.post({ type: 'status', message: t('status.importRejected', { reason: set.reason || 'unsafe' }) }); return; }
+      if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
+      // TOCTOU close + S3 fail-closed guards, identical to importImageFromGrid (the .resx write is irreversible).
+      if (this.refuseLocalizableMutation()) return;
+      const freshResx = await this.readTextIfExists(resxUri);
+      if (freshResx !== resxText) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
+      const droppedN = binaryResxCount(resxText) - binaryResxCount(set.resxText);
+      if (droppedN > 0) { this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: droppedN }) }); return; }
+
+      // atomic + undoable write (Slice 1): .resx to disk (temp+rename), designer as one undoable transaction.
+      await this.atomicWriteFile(resxUri, Buffer.from(set.resxText, 'utf8'));
+      const resxTx: ResxTx = { uri: resxUri, before: resxText, after: set.resxText };
+      if (!this.commit(before, set.designerText, `Edit ${id} images`, resxTx)) { await this.revertResx(resxUri, resxText, set.resxText); return; }
+      this.output.appendLine(`edited ImageList ${id} → ${ser.count} image(s) (.resx written, designer unsaved)`);
+      this.post({ type: 'status', message: t('status.imageListSaved', { id, n: ser.count }) });
+      await this.fullRender();
+      await this.loadProps(id);
+      await this.postDirty();
+    } catch (err) {
+      this.post({ type: 'status', message: t('status.importFailed', { error: errMsg(err) }) });
+    }
+  }
+
+  /** Native add/remove manage loop for the ImageList editor. Returns the new image set, or null if the user made no
+   *  change / cancelled. Reorder + key-rename are follow-ups; add + remove cover the core (and are undoable as one edit). */
+  private async manageImagesUi(id: string, images: { dataBase64: string; key: string }[]): Promise<{ dataBase64: string; key: string }[] | null> {
+    const cur = images.slice();
+    let changed = false;
+    for (; ;) {
+      const menu: Array<vscode.QuickPickItem & { action: string }> = [
+        { label: '$(add) ' + t('imageList.add'), action: 'add' },
+      ];
+      if (cur.length) menu.push({ label: '$(trash) ' + t('imageList.remove'), action: 'remove' });
+      menu.push({ label: '$(check) ' + t('imageList.done'), action: 'done' });
+      const pick = await vscode.window.showQuickPick(menu, {
+        title: t('imageList.title', { id }),
+        placeHolder: tn('imageList.count', cur.length, { n: cur.length }),
+      });
+      if (!pick || pick.action === 'done') break;
+      if (pick.action === 'add') {
+        const files = await vscode.window.showOpenDialog({
+          canSelectMany: true, openLabel: t('imageList.add'),
+          filters: { Images: ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'ico'] },
+        });
+        for (const f of files ?? []) {
+          try {
+            const bytes = await vscode.workspace.fs.readFile(f);
+            if (bytes.byteLength > 16 * 1024 * 1024) continue; // per-image bound (engine also enforces)
+            const key = uniqueImageKey(path.basename(f.fsPath).replace(/\.[^.]+$/, ''), cur);
+            cur.push({ dataBase64: Buffer.from(bytes).toString('base64'), key });
+            changed = true;
+          } catch { /* skip an unreadable file */ }
+        }
+      } else if (pick.action === 'remove') {
+        const rmPicks = await vscode.window.showQuickPick(
+          cur.map((im, i) => ({ label: im.key || `#${i}`, description: `#${i}`, idx: i })),
+          { canPickMany: true, title: t('imageList.remove') },
+        );
+        if (rmPicks && rmPicks.length) {
+          const rm = new Set(rmPicks.map((r) => r.idx));
+          for (let i = cur.length - 1; i >= 0; i--) if (rm.has(i)) cur.splice(i, 1);
+          changed = true;
+        }
+      }
+    }
+    return changed ? cur : null;
   }
 
   /** Per-property Reset (VS grid right-click → "Reset"): delete the property's source assignment via the
@@ -3531,6 +3813,48 @@ function errMsg(err: unknown): string {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 0.11.0 ImageList editor — pull the whitespace-stripped base64 <value> of a binary resx <data> node by name
+ *  (e.g. "imageList1.ImageStream"), or null if absent. The payload is base64 (no XML-special chars), so a focused
+ *  regex is safe and avoids an XML dependency; whitespace inside <value> is stripped to a clean base64 blob. */
+function extractResxBinaryValue(resxText: string | null, key: string): string | null {
+  if (!resxText) return null;
+  const dataRe = new RegExp('<data\\b[^>]*\\bname="' + escapeRegex(key) + '"[^>]*>([\\s\\S]*?)</data>', 'i');
+  const dm = dataRe.exec(resxText);
+  if (!dm) return null;
+  const vm = /<value>([\s\S]*?)<\/value>/i.exec(dm[1]);
+  if (!vm) return null;
+  const b64 = vm[1].replace(/\s+/g, '');
+  return b64.length ? b64 : null;
+}
+
+/** 0.11.0 ImageList editor — parse the index→key map for an ImageList from the designer text: primarily the
+ *  `this.<comp>.Images.SetKeyName(i, "key")` calls (the serialized form), falling back to `this.<comp>.Images.Add("key", …)`
+ *  order (the in-code form). Keys are C#-unescaped. Used to pair the (keyless) deserialized image bytes back to keys. */
+function parseImageListKeys(designer: string, comp: string): string[] {
+  const keys: string[] = [];
+  const c = escapeRegex(comp);
+  const setRe = new RegExp('\\bthis\\.' + c + '\\.Images\\.SetKeyName\\(\\s*(\\d+)\\s*,\\s*"((?:[^"\\\\]|\\\\.)*)"\\s*\\)', 'g');
+  let m: RegExpExecArray | null; let any = false;
+  while ((m = setRe.exec(designer)) !== null) { any = true; keys[parseInt(m[1], 10)] = unescapeCsString(m[2]); }
+  if (any) return keys;
+  const addRe = new RegExp('\\bthis\\.' + c + '\\.Images\\.Add\\(\\s*"((?:[^"\\\\]|\\\\.)*)"', 'g');
+  while ((m = addRe.exec(designer)) !== null) keys.push(unescapeCsString(m[1]));
+  return keys;
+}
+
+/** Minimal C# string-literal unescape for the common escapes that appear in image keys. */
+function unescapeCsString(s: string): string {
+  return s.replace(/\\(["\\'nrt0])/g, (_m, c) => (c === 'n' ? '\n' : c === 'r' ? '\r' : c === 't' ? '\t' : c === '0' ? '\0' : c));
+}
+
+/** A key not already used by any image in `existing` — the file base name, else name+N. */
+function uniqueImageKey(base: string, existing: { key: string }[]): string {
+  const used = new Set(existing.map((e) => e.key));
+  const b = base || 'image';
+  if (base && !used.has(base)) return base;
+  for (let i = 1; ; i++) { const k = b + i; if (!used.has(k)) return k; }
 }
 
 /** Placeholder shown when a .cs has no .Designer.cs partner (nothing to render). */

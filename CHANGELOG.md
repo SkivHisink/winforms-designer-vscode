@@ -8,7 +8,38 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
-## [0.10.0] — 2026-07-12
+## [0.11.0] — 2026-07-13
+
+**Resource write-safety + the ImageList images editor.** Building on the 0.10.0 trust floor, this release makes the
+`.resx` write path **atomic, undoable and conflict-checked**, and adds the first **image-list editor** — you can now
+add and remove an ImageList's images directly, with the binary `ImageStream` serialized faithfully (the way Visual
+Studio does it) through the .NET Framework engine. Unhandled collections are now shown honestly, and undo on the
+compiled (.NET Framework) preview no longer lingers.
+
+### Added
+- **ImageList images editor.** Select an ImageList and run **"WinForms: Edit ImageList Images…"** (Command Palette /
+  editor context menu) to add or remove its images. The images are serialized into the sibling `.resx` as a
+  Visual-Studio-format `ImageListStreamer` (binary) resource via the .NET Framework engine — the one operation the
+  .NET-9 preview can't do itself — and the `.Designer.cs` is rewritten to the canonical `ImageStream` +
+  `Images.SetKeyName(...)` form. **Fail-closed:** if the current images can't be read back safely, the edit is refused
+  rather than risk dropping them; the payload is validated as a genuine image-list stream before it's written.
+- **`(Collection)` property routing.** A collection property the designer doesn't have a dedicated editor for
+  (e.g. a `ListView`'s `Items` / `Groups` / `DataBindings`) is now shown as a clean **read-only `(Collection)`** entry —
+  visible, like Visual Studio, instead of a raw type name or nothing — with no editable surface that couldn't round-trip.
+
+### Changed
+- **Atomic, undoable, conflict-checked `.resx` writes.** Embedding an image now writes the `.resx` **atomically**
+  (staged temp file + rename, so a crash can't leave it half-written) and ties the write into the **same undo step** as
+  the code edit — pressing Ctrl+Z reverts both the code and the resource (deleting a resource the import created, or
+  restoring its prior bytes), conflict-guarded so a concurrent external change to the `.resx` is never clobbered. A
+  symlinked `.resx` is written through rather than replaced.
+- **Undo on the compiled (.NET Framework) preview no longer lingers.** Previously, undoing an edit on a compiled-preview
+  form could keep showing the undone change (the live instance was reused); the preview now re-renders from the compiled
+  baseline so undo/redo/revert are reflected.
+
+### Fixed
+- A re-import of a new image into a property that already referenced a resource is now undoable (previously it changed
+  the resource on disk with no undo step).
 
 **The trust floor — the most important release.** The designer now **fails closed**: when a form uses something the
 .NET-9 preview can't faithfully reproduce, it says so **honestly** and **refuses to silently corrupt or mis-render**

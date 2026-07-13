@@ -160,6 +160,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('winformsDesigner.selectControlAssembly', () => selectControlAssembly(context)),
   );
 
+  // 0.11.0 ImageList editor — edit the selected ImageList's images (add/remove) on the active designer.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.editImageListImages',
+      () => DesignerHub.instance.activeSession?.editImageListImages()),
+  );
+
   // Status bar: show which assembly is providing controls for the focused form; click → change it.
   controlStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
   controlStatus.command = 'winformsDesigner.selectControlAssembly';

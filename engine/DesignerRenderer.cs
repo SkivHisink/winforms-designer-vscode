@@ -761,6 +761,16 @@ namespace WinFormsDesigner.Engine
             return DesignerImageEditor.SetImageResource(src, componentName, propertyName, propertyTypeName, imageBytes, resxText);
         }
 
+        /// <summary>0.11.0 ImageList editor — embed a serialized ImageStream blob (from the net48 serializer) into the
+        /// sibling .resx + rewrite the ImageList's init to the canonical ImageStream + SetKeyName form. Returns both new
+        /// texts; the host persists them atomically + undoably.</summary>
+        public static ImageListEditResult ApplySetImageList(string designerFilePath, string componentId,
+            string imageStreamBase64, string[] keys, string? resxText, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerImageListEditor.SetImages(src, componentId, resxText, imageStreamBase64, keys);
+        }
+
         /// <summary>Safe-save-gated TableLayoutPanel column/row size-style edit: rewrite the Nth ColumnStyle/RowStyle ctor args to
         /// (SizeType, value). Mirrors <see cref="ApplyTableCellEdit"/> (buffer-or-disk, parse-check +
         /// <see cref="DesignerTableStyleEditor.OnlyTableStyleChanged"/> gate); SizeType is a validated enum member and

@@ -445,6 +445,47 @@ export async function setCompiledStringArrayLive(
   return fromCompiledRaw(raw);
 }
 
+/** 0.11.0 ImageList editor — one image to embed (decoded bytes as base64 + its key, "" = keyless). */
+export interface ImageListImage { dataBase64: string; key: string; }
+/** The images + settings to serialize into an ImageList's ImageStream resource (net48 binary primitive). */
+export interface ImageListSpec { images: ImageListImage[]; width: number; height: number; colorDepth: string; transparentColor: string; }
+/** Result of serializeImageList: VS-format ImageStream base64 (+ mimetype), key order, self round-trip count. */
+export interface ImageStreamResult { ok: boolean; base64: string; mimeType: string; keys: string[]; count: number; reason: string; }
+
+/** 0.11.0 ImageList editor — serialize images into a VS-format ImageStream base64 blob via the net48 engine (the one
+ *  op that needs the .NET Framework runtime; net9 can't serialize an ImageListStreamer). No compiled assembly is
+ *  touched, so the host may route it through the bundled net48 engine even for a pure .NET project. The host embeds
+ *  the payload into the sibling .resx (net9 XML upsert) and emits the matching designer edit. */
+export async function serializeImageList(engine: EngineHandle, spec: ImageListSpec): Promise<ImageStreamResult> {
+  // POSITIONAL args (not the spec object) — vscode-jsonrpc sends a lone object as JSON-RPC *named* params, which
+  // StreamJsonRpc would try to bind field-by-field; spreading the fields sends a params array it binds positionally.
+  return await engine.connection.sendRequest<ImageStreamResult>(
+    'SerializeImageList', spec.images, spec.width, spec.height, spec.colorDepth, spec.transparentColor);
+}
+
+/** Result of deserializeImageList: the current images (PNG base64 + keys) + size/depth/transparent an ImageStream
+ *  blob decodes to, so the editor can show existing images (ok=false on a foreign/malformed blob). */
+export interface ImageListReadResult {
+  ok: boolean; images: ImageListImage[]; width: number; height: number;
+  colorDepth: string; transparentColor: string; reason: string;
+}
+
+/** 0.11.0 ImageList editor (READ side) — deserialize an ImageStream blob back to its current images via the net48
+ *  engine, so the editor can show the existing images before the user edits them. Works for any project. */
+export async function deserializeImageList(engine: EngineHandle, base64: string): Promise<ImageListReadResult> {
+  return await engine.connection.sendRequest<ImageListReadResult>('DeserializeImageList', base64);
+}
+
+/** 0.11.0 net48 undo reconcile — drop the cached live compiled instance so the next render re-instantiates from the
+ *  compiled baseline. Called on undo/redo/revert (net48 renders the instance, not the reverted text, so the cache
+ *  would otherwise keep showing the undone edit). Returns true if an instance was dropped. */
+export async function discardCompiledLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, rootTypeName?: string, probeDirs?: string[],
+): Promise<boolean> {
+  return await engine.connection.sendRequest<boolean>(
+    'DiscardCompiledLive', designerFilePath, assemblyPath, rootTypeName ?? null, probeDirs ?? null);
+}
+
 /** One live property edit for the net48 batch-mutate (drag/resize/align). */
 export interface CompiledEdit { componentId: string; propName: string; rawValue: string; }
 
@@ -1372,6 +1413,23 @@ export function setImageResource(
 ): Promise<ImageEditPreview> {
   return engine.connection.sendRequest<ImageEditPreview>(
     'SetImageResource', designerFilePath, componentId, propertyName, propertyTypeName, imageBase64, resxText, sourceText,
+  );
+}
+
+/** 0.11.0 ImageList editor — embed a serialized ImageStream blob (from {@link serializeImageList}) into the sibling
+ *  .resx and rewrite the ImageList's init (ImageStream assignment + SetKeyName, removing any in-code Images.Add).
+ *  Returns both new texts (safe=false with a reason on rejection); the host persists them atomically + undoably. */
+export function setImageList(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  imageStreamBase64: string,
+  keys: string[],
+  resxText: string | null,
+  sourceText: string | null,
+): Promise<ImageEditPreview> {
+  return engine.connection.sendRequest<ImageEditPreview>(
+    'SetImageList', designerFilePath, componentId, imageStreamBase64, keys, resxText, sourceText,
   );
 }
 
