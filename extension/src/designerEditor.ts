@@ -37,6 +37,7 @@ import {
   describeComponent,
   renderControl,
   setProperty,
+  setModifier,
   convertValue,
   setTableCell,
   listCollectionItems,
@@ -494,7 +495,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     DesignerHub.instance.attachPanel(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage(async (m: {
       type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string; ownerId?: string;
-      refEdit?: boolean;
+      refEdit?: boolean; designTime?: boolean;
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
       items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; nodes?: TreeNodeItem[];
       toolStripItems?: ToolStripItemModel[];
@@ -512,7 +513,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
           // an `ownerId` marks this as a ToolStripItem edit (the grid is showing item→Properties) → route to the
           // item-edit path (targets the item field, refreshes via itemProps, keeps the canvas item highlight).
           if (m.ownerId) await s?.editItemFromGrid(m.ownerId, m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '');
-          else await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '', !!m.refEdit);
+          else await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '', !!m.refEdit, !!m.designTime);
         }
         else if (m?.type === 'importImage' && m.id && m.prop && m.propType) { await s?.importImageFromGrid(m.id, m.prop, m.propType); }
         else if (m?.type === 'clearImage' && m.id && m.prop) { await s?.clearImageFromGrid(m.id, m.prop); }
@@ -1773,16 +1774,16 @@ class DesignerSession {
   }
 
   /** Grid edit from the Properties view, with its own error/restore handling. */
-  async editFromGrid(id: string, prop: string, propType: string, isEnum: boolean, value: string, refEdit = false): Promise<void> {
+  async editFromGrid(id: string, prop: string, propType: string, isEnum: boolean, value: string, refEdit = false, designTime = false): Promise<void> {
     try {
-      await this.applyEdit(id, prop, propType, isEnum, value, refEdit);
+      await this.applyEdit(id, prop, propType, isEnum, value, refEdit, designTime);
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
       try { await this.loadProps(id); } catch { /* best effort */ }
     }
   }
 
-  private async applyEdit(id: string, prop: string, propType: string, isEnum: boolean, raw: string, refEdit = false): Promise<void> {
+  private async applyEdit(id: string, prop: string, propType: string, isEnum: boolean, raw: string, refEdit = false, designTime = false): Promise<void> {
     if (!this.designerFile) return;
 
     if (COMPLEX_TYPE_SET.has(propType) && raw.trim() === '') {
@@ -1800,6 +1801,34 @@ class DesignerSession {
     const revBefore = this.doc.rev;
 
     const eng = await this.ensureEngine();
+
+    // Modifiers (design-time pseudo-property, 0.12.0): a byte-local field-declaration access-keyword splice, NOT a
+    // normal InitializeComponent property edit. It has no visual effect, so we commit + refresh the grid without a
+    // re-render. Safe on every form (even ones the whole-file serializer refuses — it never regenerates). Routed
+    // through the net9 engine: SetModifier is pure Roslyn text surgery (it never LOADS the form), so it works for a
+    // net48/DevExpress buffer too — only the net9 engine hosts it. (Modifiers is currently surfaced on net9 forms;
+    // net48 describe-injection is a follow-up.) Gated on the engine's designTime flag (NOT the name) so a real control
+    // property that happens to be named "Modifiers" stays on the normal setProperty path.
+    if (designTime && prop === 'Modifiers') {
+      const modEng = await this.ensureEngine('net9');
+      const mr = await setModifier(modEng, this.designerFile, id, raw, before);
+      if (!mr.safe || mr.text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: mr.reason || 'unsafe' }) });
+        await this.loadProps(id);
+        return;
+      }
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(id);
+        return;
+      }
+      if (!this.commit(before, mr.text, `Set ${id}.Modifiers`)) return;
+      this.output.appendLine(`set ${id}.Modifiers = ${raw} (unsaved)`);
+      this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
+      await this.loadProps(id);
+      await this.postDirty();
+      return;
+    }
 
     let expr: string | null;
     let liveRaw = raw; // what the net48 live path receives (canonicalized for a reference clear)

@@ -622,6 +622,9 @@
       return;
     }
     var msg = { type: 'edit', id: id, prop: prop.name, propType: prop.type, isEnum: prop.isEnum, value: value };
+    // a design-time pseudo-property (Modifiers): route to the field-declaration splice, not setProperty. Tag on the
+    // engine's designTime flag, not the name, so a real control property named "Modifiers" stays on the normal path.
+    if (prop.designTime) msg.designTime = true;
     // when the grid is showing a ToolStrip item, tag the edit with the strip host id so the host routes it to the
     // item-edit path (splices the item field, refreshes via itemProps, keeps the canvas highlight).
     if (currentItemId && id === currentItemId && currentItemOwner) msg.ownerId = currentItemOwner;

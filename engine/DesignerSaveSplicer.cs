@@ -137,12 +137,12 @@ namespace WinFormsDesigner.Engine
             // Suspend/Resume/PerformLayout are designer-managed layout scaffolding: the loader treats them as
             // no-ops and the serializer regenerates them canonically (exactly as VS does), so their presence/
             // absence is canonicalization, not user-code loss — exclude from the gate.
-            // NOTE: ISupportInitialize BeginInit/EndInit are deliberately NOT excluded. The loader treats them as
-            // a representable no-op so the form still renders, but the whole-file serializer does NOT re-emit them
-            // (there is no InjectBeginInit counterpart to DesignerSerializer.InjectEventWirings). Excluding them
-            // would let a save silently drop the brackets while reporting Safe; keeping them in the gate makes such
-            // a form fail the safe-save gate and fall back to read-only (refuse-to-save) instead. (Event wirings, by contrast,
-            // ARE re-emitted verbatim, so they round-trip and legitimately stay in the gate.)
+            // NOTE: ISupportInitialize BeginInit/EndInit are intentionally still in the gate (NOT excluded here). As of
+            // 0.12.0 R1 the serializer re-emits them verbatim (DesignerSerializer.InjectSupportInit, the BeginInit
+            // counterpart to InjectEventWirings), so they now MATCH the generated code and pass the gate naturally —
+            // and if that re-emit ever regressed (a bracket not re-emitted), keeping them in the gate makes the form
+            // fail safe-save and fall back to read-only instead of silently dropping the brackets. Event wirings work
+            // the same way: re-emitted verbatim, so they round-trip and legitimately stay in the gate.
             return init.Body.Statements
                 .Where(s => !IsLayoutBoilerplate(s))
                 .Select(s => s.ToString());

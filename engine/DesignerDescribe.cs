@@ -69,6 +69,11 @@ namespace WinFormsDesigner.Engine
         /// design container to list them, which a plain runtime instance lacks). The grid renders the dropdown; the
         /// host translates a pick to `this.&lt;name&gt;` / `null` on write (net9 splice, net48 live resolve).</summary>
         public bool ReferenceValues { get; init; }
+        /// <summary>True for a design-time PSEUDO-property (Modifiers / GenerateMember) that is NOT a live component
+        /// property — it's a source artifact (a field's access keyword / whether a field exists). The host routes its
+        /// edit to the dedicated field-declaration splice, NOT setProperty; distinguishing on this flag (not the name)
+        /// keeps a real control property that happens to be named "Modifiers" on the normal edit path.</summary>
+        public bool DesignTime { get; init; }
     }
 
     /// <summary>One event of a component, for the Events tab. <see cref="Handler"/> is the wired handler
@@ -125,7 +130,8 @@ namespace WinFormsDesigner.Engine
         public static DescribeResult Describe(IDesignerHost host, string rootName,
             HashSet<(IComponent, string)> explicitMembers,
             int total, int representable, List<string> unrepresentable,
-            Dictionary<string, Dictionary<string, string>>? eventWirings = null)
+            Dictionary<string, Dictionary<string, string>>? eventWirings = null,
+            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null)
         {
             var root = host.RootComponent;
             var all = host.Container.Components.Cast<IComponent>().ToList();
@@ -134,7 +140,7 @@ namespace WinFormsDesigner.Engine
             // so exclude it (matches the net48 side, whose FieldNames map holds no root entry).
             var siblings = all.Where(x => !ReferenceEquals(x, root)).ToList();
             var components = all
-                .Select(c => BuildComponentInfo(c, root, rootName, explicitMembers, eventWirings, siblings))
+                .Select(c => BuildComponentInfo(c, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers))
                 .OrderByDescending(c => c.IsRoot)
                 .ThenBy(c => c.Name, StringComparer.Ordinal)
                 .ToList();
@@ -152,7 +158,8 @@ namespace WinFormsDesigner.Engine
         /// <summary>Describe a single component by edit id ("this" = root). null if not found.</summary>
         public static ComponentInfo? DescribeComponent(IDesignerHost host, string rootName,
             HashSet<(IComponent, string)> explicitMembers, string componentId,
-            Dictionary<string, Dictionary<string, string>>? eventWirings = null)
+            Dictionary<string, Dictionary<string, string>>? eventWirings = null,
+            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null)
         {
             var root = host.RootComponent;
             var all = host.Container.Components.Cast<IComponent>().ToList();
@@ -160,18 +167,21 @@ namespace WinFormsDesigner.Engine
             IComponent? target = (componentId is "this" or "")
                 ? root
                 : all.FirstOrDefault(c => c.Site?.Name == componentId);
-            return target == null ? null : BuildComponentInfo(target, root, rootName, explicitMembers, eventWirings, siblings);
+            return target == null ? null : BuildComponentInfo(target, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers);
         }
 
         private static ComponentInfo BuildComponentInfo(IComponent c, IComponent root, string rootName,
             HashSet<(IComponent, string)> explicitMembers,
             Dictionary<string, Dictionary<string, string>>? eventWirings,
-            IReadOnlyList<IComponent> siblings)
+            IReadOnlyList<IComponent> siblings,
+            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null)
         {
             bool isRoot = ReferenceEquals(c, root);
             string idKey = isRoot ? "this" : (c.Site?.Name ?? "");
             Dictionary<string, string>? wired = null;
             eventWirings?.TryGetValue(idKey, out wired);
+            var props = DescribeProperties(c, explicitMembers, siblings, root);
+            InjectDesignTimeProperties(props, c, root, fieldModifiers);
             return new ComponentInfo
             {
                 Id = idKey,
@@ -179,9 +189,71 @@ namespace WinFormsDesigner.Engine
                 Type = c.GetType().FullName ?? c.GetType().Name,
                 Parent = ParentName(c, root, rootName),
                 IsRoot = isRoot,
-                Properties = DescribeProperties(c, explicitMembers, siblings, root),
+                Properties = props,
                 Events = DescribeEvents(c, wired),
             };
+        }
+
+        /// <summary>Append the design-time "Modifiers" (editable) and "GenerateMember" (read-only) pseudo-properties
+        /// for a non-root, field-backed component (VS parity, 0.12.0). These are SOURCE artifacts, not live component
+        /// properties: Modifiers is the field's access keyword (edited via a byte-local field-declaration splice, safe
+        /// on every form), and GenerateMember is "a field exists" (its toggle is a structural field↔local change that
+        /// is NOT round-trip-safe, so it is read-only). The root form ("this" — a class, not a field) is skipped.</summary>
+        private static void InjectDesignTimeProperties(List<PropertyInfo> props, IComponent c, IComponent root,
+            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers)
+        {
+            if (ReferenceEquals(c, root)) return;
+            // A ToolStripItem is described through the SAME DescribeComponent path but edited via the item channel
+            // (ownerId), which the host prioritizes over the design-time route — so an injected item "Modifiers" would
+            // mis-route to setProperty and splice a non-compiling `item.Modifiers = "..."` (codex F6). Menu-item field
+            // modifiers are a follow-up; don't surface the pseudo on items.
+            if (c is ToolStripItem) return;
+            string name = c.Site?.Name ?? "";
+            if (name.Length == 0) return;
+            // Don't shadow a REAL browsable property of the same name (a custom control could expose one) — the real
+            // property keeps the normal edit path; skip the pseudo entirely to avoid a duplicate/conflicting row (codex F6).
+            bool hasRealModifiers = props.Any(p => p.Name == "Modifiers");
+            bool hasRealGenerateMember = props.Any(p => p.Name == "GenerateMember");
+
+            DesignerModifiers.FieldMod fm = default;
+            bool hasField = fieldModifiers != null && fieldModifiers.TryGetValue(name, out fm);
+            string modifier = hasField ? fm.Display : "Private";
+            bool modifierEditable = hasField && fm.Editable;
+
+            if (!hasRealGenerateMember)
+            {
+                props.Add(new PropertyInfo
+                {
+                    Name = "GenerateMember",
+                    Type = "System.Boolean",
+                    Value = hasField ? "true" : "false",
+                    ReadOnly = true,
+                    IsEnum = false,
+                    Category = "Design",
+                    Description = "Whether the designer generates a member (field) for this component. Read-only preview — toggling field↔local is not round-trip-safe.",
+                    StandardValues = new List<string> { "true", "false" },
+                    StandardValuesExclusive = true,
+                    DesignTime = true,
+                });
+            }
+            if (!hasRealModifiers)
+            {
+                props.Add(new PropertyInfo
+                {
+                    Name = "Modifiers",
+                    Type = "System.String",
+                    Value = modifier,
+                    // editable only for a normal single-declarator field; a multi-declarator field is read-only (a change
+                    // would affect its siblings). A no-field component (GenerateMember=false) shows the default read-only.
+                    ReadOnly = !modifierEditable,
+                    IsEnum = false,
+                    Category = "Design",
+                    Description = "Indicates the visibility level of the object's generated member (field).",
+                    StandardValues = DesignerModifiers.DisplayNames,
+                    StandardValuesExclusive = true,
+                    DesignTime = true,
+                });
+            }
         }
 
         /// <summary>Enumerate a component's browsable events (name + delegate type + category) with the

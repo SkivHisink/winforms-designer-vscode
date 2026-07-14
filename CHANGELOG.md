@@ -8,6 +8,45 @@ This is a **preview** — expect rough edges and breaking changes between minor 
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-14
+
+**Release-candidate hardening — round-trip fidelity, re-verified end to end.** This release closes the loop on
+"can the designer safely regenerate this form?" It makes **ISupportInitialize** forms round-trip, adds an
+**authoritative capability preflight** (so the designer never claims a form is save-safe when a statement would be
+lost), locks the whole behaviour down with a **golden-corpus** test, and adds a **Modifiers** editor. Nothing you had
+becomes less safe — the designer just tells the truth about what it can and can't regenerate, and can now regenerate more.
+
+### Added
+- **`BeginInit` / `EndInit` round-trip.** A form with any `DataGridView`, `BindingSource`, `PictureBox`,
+  `NumericUpDown`, `SplitContainer` (or similar `ISupportInitialize` control) emits
+  `((ISupportInitialize)(x)).BeginInit()/.EndInit()` brackets. These are now **re-emitted faithfully** when the form
+  round-trips (previously they held the form in read-only fallback to avoid dropping them). The safe-save gate stays
+  strict — if a bracket ever failed to round-trip, the form still falls back to read-only rather than lose it.
+- **Modifiers editor.** A control's design-time **Modifiers** property (the access level of its generated field —
+  Public / Private / Protected / Internal / …) is now editable from the property grid, applied as a **byte-local edit**
+  of the field declaration that never touches `InitializeComponent`, so it is safe on **every** form. **GenerateMember**
+  is shown read-only (toggling a field to a local is a structural change that isn't round-trip-safe).
+- **Capability preflight + reason.** The save-safety preview now reports a **category** explaining why a form is or
+  isn't safe to whole-file regenerate — `safe`, `localizable`, `binaryResx`, `unresolvedType`, `lostStatements` or
+  `unrepresentable` — so a regenerate-based operation can gate honestly instead of guessing.
+
+### Changed
+- **Honest `--roundtrip` diagnostic.** The engine's round-trip check used to report the render-only "RoundTripSafe"
+  signal as PASS, which could look save-safe when it wasn't. It now also runs the authoritative safe-save gate and
+  agrees with `--save`, so `renders` and `saves` are never conflated.
+- **Round-trip fidelity re-verified end to end.** Event wirings, component-reference assignments and `BeginInit`
+  brackets were re-checked against a **16-form golden corpus**: every form is either fully save-safe or **fail-closed
+  with a named reason** — never silently divergent. (This closes a long-standing documentation discrepancy: the
+  previous "sturdier round-trip saving" claim was accurate; the designer refused rather than dropped, and now
+  round-trips the `ISupportInitialize` case outright.)
+
+### Notes
+- Some forms remain **honestly read-only** for whole-file regenerate and continue to edit safely via targeted edits:
+  binary/`ImageStream` resources, `[Localizable(true)]` forms, unresolved vendor/custom controls, and a few
+  canonicalization cases (`TabPages.AddRange`, `TreeView` node locals) that render and edit fine but aren't
+  whole-file-round-trippable yet. The **Modifiers** editor is surfaced on the .NET-9 preview; its edit path is
+  engine-agnostic and ready to extend to the .NET Framework preview.
+
 ## [0.11.0] — 2026-07-13
 
 **Resource write-safety + the ImageList images editor.** Building on the 0.10.0 trust floor, this release makes the

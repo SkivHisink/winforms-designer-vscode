@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setImageList, discardCompiledLive } from './engineClient';
+import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setImageList, discardCompiledLive } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
@@ -3236,22 +3236,100 @@ async function main(): Promise<void> {
       if (!(rl.x - sc.x >= 120 && rl.x - sc.x < 170)) throw new Error(`SplitContainer: rightLabel should sit just past SplitterDistance=120, not the ~50% (≈198) default: rl.x-sc.x=${rl.x - sc.x}`);
       console.log(`e2e: SplitContainer verified — leftButton→Panel1 (x ${lb.x}), rightLabel→Panel2 (x ${rl.x}); SplitterDistance=120 applied (panel boundary ≈${rl.x - sc.x}px from container, not ~50%)`);
 
-      // ---- T2.1 review fix: ISupportInitialize BeginInit/EndInit must NOT be silently dropped on save ----
+      // ---- 0.12.0 R1: ISupportInitialize BeginInit/EndInit now ROUND-TRIP (re-emitted verbatim, not dropped) ----
       // SplitterForm's SplitContainer emits ((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).BeginInit()/
-      // .EndInit(). These are a representable no-op for RENDER (so the form still renders and RoundTripSafe==true), BUT the
-      // whole-file serializer does NOT re-emit them. Before the fix they were excluded from the safe-save gate, so a save
-      // reported Safe while silently deleting the brackets (data loss). After the fix they stay in the gate: previewSave
-      // must REFUSE (safe=false) and list them in missingStatements — a genuine round-trip is impossible, so we fall back
-      // to read-only instead of corrupting the file.
+      // .EndInit(). These are a representable no-op for RENDER (RoundTripSafe==true). BEFORE 0.12.0 the serializer did not
+      // re-emit them, so the safe-save gate correctly REFUSED (fail-closed, no silent drop). AS OF 0.12.0 R1 the serializer
+      // re-emits them verbatim (DesignerSerializer.InjectSupportInit), so the form now round-trips: previewSave is SAFE and
+      // the spliced output CONTAINS both brackets. The gate stays strict — if a bracket regressed to being dropped, its
+      // absence from the generated code would re-fail the gate. This proves round-trip preservation, not just "renders".
       const splitRt = await serializeDesigner(engine, splitForm);
-      if (splitRt.safe !== true) throw new Error('T2.1-fix: SplitterForm should still RENDER / be RoundTripSafe (BeginInit is a representable no-op); got safe=' + splitRt.safe + ' unrep=' + splitRt.unrepresentable.join('; '));
+      if (splitRt.safe !== true) throw new Error('0.12.0 R1: SplitterForm should be RoundTripSafe (BeginInit is a representable no-op); got safe=' + splitRt.safe + ' unrep=' + splitRt.unrepresentable.join('; '));
       const splitSave = await previewSave(engine, splitForm);
-      if (splitSave.safe !== false) throw new Error('T2.1-fix: SplitterForm save must be REFUSED (BeginInit/EndInit are not re-emitted), got safe=' + splitSave.safe);
-      if (!splitSave.missingStatements.some((m) => /BeginInit/.test(m)) || !splitSave.missingStatements.some((m) => /EndInit/.test(m)))
-        throw new Error('T2.1-fix: refused save must list the dropped BeginInit/EndInit in missingStatements, got: ' + splitSave.missingStatements.join(' | '));
-      console.log(`e2e: T2.1-fix BeginInit/EndInit no-silent-drop verified — SplitterForm renders (RoundTripSafe) but previewSave REFUSES (safe=false), missingStatements lists ${splitSave.missingStatements.length} bracket(s) instead of silently dropping them`);
+      if (splitSave.safe !== true) throw new Error('0.12.0 R1: SplitterForm save must now be SAFE (BeginInit/EndInit re-emitted), got safe=' + splitSave.safe + ' missing=' + splitSave.missingStatements.join(' | '));
+      if (splitSave.reasonCategory !== 'safe') throw new Error('0.12.0 R1: SplitterForm capability must be "safe", got ' + splitSave.reasonCategory);
+      if (splitSave.text === null || !/\.BeginInit\(\)/.test(splitSave.text) || !/\.EndInit\(\)/.test(splitSave.text))
+        throw new Error('0.12.0 R1: spliced save output must re-emit both the BeginInit and EndInit brackets (round-trip preserved), not drop them');
+      console.log(`e2e: 0.12.0 R1 BeginInit/EndInit round-trip verified — SplitterForm previewSave is SAFE (capability=safe) and the spliced output re-emits both ISupportInitialize brackets instead of dropping them`);
     } else {
       console.log('e2e: SplitContainer SKIPPED — engine/samples/SplitterForm.Designer.cs missing');
+    }
+
+    // ---- 0.12.0 golden-corpus round-trip matrix (capability preflight) ----
+    // Lock the AUTHORITATIVE save-safe verdict + reason category for the whole sample corpus. This is the
+    // "re-verify the 0.5.0 round-trip claim end-to-end" contract: every form is EITHER save-safe OR honestly
+    // fail-closed with a NAMED reason — never silently. A serializer/gate regression (a form flipping safe↔unsafe,
+    // or a wrong reason) fails CI. `previewSave().safe` is the authoritative predicate (NOT RoundTripSafe alone).
+    const roundTripCorpus: Array<{ form: string; safe: boolean; reason: string }> = [
+      // save-safe — fully round-trips:
+      { form: 'SampleForm', safe: true, reason: 'safe' },
+      { form: 'EventForm', safe: true, reason: 'safe' },            // += event wirings re-emitted verbatim
+      { form: 'ComponentRefForm', safe: true, reason: 'safe' },     // this.AcceptButton = this.okButton round-trips
+      { form: 'SplitterForm', safe: true, reason: 'safe' },         // 0.12.0 R1: BeginInit/EndInit re-emitted
+      { form: 'TabForm', safe: true, reason: 'safe' },
+      { form: 'FlowForm', safe: true, reason: 'safe' },
+      { form: 'ListViewForm', safe: true, reason: 'safe' },
+      { form: 'TableLayoutForm', safe: true, reason: 'safe' },
+      // honest fail-closed (the fail-closed 1.0 bar) — each read-only for a NAMED reason, never silently:
+      { form: 'GridForm', safe: false, reason: 'binaryResx' },
+      { form: 'MenuStripForm', safe: false, reason: 'binaryResx' },
+      { form: 'ImageListForm', safe: false, reason: 'binaryResx' },
+      { form: 'LocalizableForm', safe: false, reason: 'localizable' },
+      { form: 'CustomForm', safe: false, reason: 'unresolvedType' },     // net9 can't load the vendor control (net48 renders)
+      { form: 'TabAddRangeForm', safe: false, reason: 'lostStatements' }, // TabPages.AddRange / Hidden SelectedTab (deferred R2/R3)
+      { form: 'TreeForm', safe: false, reason: 'lostStatements' },        // TreeNode local-variable naming (deferred R4)
+      { form: 'AnchorDockForm', safe: false, reason: 'lostStatements' },  // anchored bounds recomputed on load
+    ];
+    let corpusChecked = 0;
+    for (const row of roundTripCorpus) {
+      const fp = path.join(repo, 'engine', 'samples', row.form + '.Designer.cs');
+      if (!fs.existsSync(fp)) continue;
+      const ps = await previewSave(engine, fp);
+      if (ps.safe !== row.safe)
+        throw new Error(`golden-corpus: ${row.form} save-safe expected ${row.safe}, got ${ps.safe} (reason ${ps.reasonCategory}, missing ${ps.missingStatements.length}: ${ps.missingStatements.join(' | ')})`);
+      if (ps.reasonCategory !== row.reason)
+        throw new Error(`golden-corpus: ${row.form} reason expected "${row.reason}", got "${ps.reasonCategory}"`);
+      corpusChecked++;
+    }
+    if (corpusChecked < 12) throw new Error(`golden-corpus: expected >=12 corpus fixtures present, only ${corpusChecked} found`);
+    console.log(`e2e: 0.12.0 golden-corpus round-trip matrix verified — ${corpusChecked} fixtures assert their authoritative save-safe verdict + reason category (safe / binaryResx / localizable / unresolvedType / lostStatements)`);
+
+    // ---- 0.12.0 Modifiers / GenerateMember design-time pseudo-properties ----
+    // Modifiers is the field-declaration access keyword, edited via a byte-local splice (safe on EVERY form — it never
+    // touches InitializeComponent); GenerateMember (a field exists) is read-only (its toggle isn't round-trip-safe).
+    // Verify describe surfaces both, Modifiers is an editable exclusive dropdown defaulting to the source value, and a
+    // SetModifier edit changes ONLY the field declaration's keyword — one line, InitializeComponent untouched.
+    {
+      const modForm = path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs');
+      const dc = await describeComponent(engine, modForm, 'okButton');
+      if (!dc) throw new Error('Modifiers: okButton not described');
+      const modProp = dc.properties.find((p) => p.name === 'Modifiers');
+      const genProp = dc.properties.find((p) => p.name === 'GenerateMember');
+      if (!modProp) throw new Error('Modifiers: pseudo-property missing from describe');
+      if (modProp.readOnly) throw new Error('Modifiers: a single-declarator field must be editable');
+      if (modProp.value !== 'Private') throw new Error(`Modifiers: okButton default should be "Private", got "${modProp.value}"`);
+      if (!(modProp.standardValues || []).includes('Public') || !modProp.standardValuesExclusive)
+        throw new Error('Modifiers: must be an exclusive dropdown including Public');
+      // designTime flag drives the host's routing to setModifier (not the name) — real property named "Modifiers" is safe
+      if (modProp.designTime !== true) throw new Error('Modifiers: pseudo-property must be tagged designTime (host routes on the flag, not the name)');
+      if (!genProp || !genProp.readOnly || genProp.value !== 'true')
+        throw new Error(`GenerateMember: expected read-only "true", got readOnly=${genProp?.readOnly} value=${genProp?.value}`);
+      if (genProp.designTime !== true) throw new Error('GenerateMember: pseudo-property must be tagged designTime');
+      // byte-local edit: private → public, ONLY okButton's field line changes; InitializeComponent untouched
+      const src = fs.readFileSync(modForm, 'utf8');
+      const em = await setModifier(engine, modForm, 'okButton', 'Public', src);
+      if (!em.safe || em.text === null) throw new Error('Modifiers: setModifier(okButton, Public) refused: ' + em.reason);
+      const beforeLines = src.split('\n'), afterLines = em.text.split('\n');
+      if (beforeLines.length !== afterLines.length) throw new Error('Modifiers: edit changed the line count (not byte-local)');
+      const diffIdx = beforeLines.map((l, i) => (l === afterLines[i] ? -1 : i)).filter((i) => i >= 0);
+      if (diffIdx.length !== 1) throw new Error(`Modifiers: expected exactly 1 changed line, got ${diffIdx.length}`);
+      if (!/\bpublic\s+System\.Windows\.Forms\.Button\s+okButton\s*;/.test(afterLines[diffIdx[0]]))
+        throw new Error('Modifiers: the changed line must be okButton\'s public field declaration, got: ' + afterLines[diffIdx[0]]);
+      if (em.text.indexOf('this.okButton = new System.Windows.Forms.Button()') < 0)
+        throw new Error('Modifiers: InitializeComponent (okButton construction) must be untouched');
+      const bad = await setModifier(engine, modForm, 'okButton', 'Bogus', src);
+      if (bad.safe) throw new Error('Modifiers: an unknown modifier must be refused (fail-closed)');
+      console.log('e2e: 0.12.0 Modifiers/GenerateMember verified — describe surfaces an editable exclusive Modifiers dropdown (default Private) + read-only GenerateMember; setModifier is byte-local (1 field line changes, InitializeComponent untouched); unknown modifier refused');
     }
 
     // ---- FlowLayoutPanel reorder (slice d) ----

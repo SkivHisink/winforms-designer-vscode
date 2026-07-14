@@ -611,6 +611,10 @@ export interface PropertyDesc {
    * `standardValues` are the compatible sibling field names + a leading "(none)"; the panel tags the edit with
    * `refEdit` so the host writes `this.<name>` / `null` (net9 splice, net48 live resolve) instead of a literal. */
   referenceValues?: boolean;
+  /** True for a design-time PSEUDO-property (Modifiers / GenerateMember) — a source artifact, not a live component
+   * property. The panel tags its edit `designTime` so the host routes to the field-declaration splice (setModifier),
+   * not setProperty. Routing on this flag (not the name) keeps a real property named "Modifiers" on the normal path. */
+  designTime?: boolean;
 }
 
 export interface EventDesc {
@@ -657,6 +661,7 @@ export interface SavePreview {
   text: string | null;            // spliced whole-file text; null when not safe (read-only fallback)
   unrepresentable: string[];
   missingStatements: string[];    // safe-save gate: original statements the re-serialization fails to reproduce
+  reasonCategory: string;         // capability preflight: safe | localizable | binaryResx | unresolvedType | lostStatements | unrepresentable
 }
 
 /** Enumerate the form's controls + properties (read side for a property grid). */
@@ -680,10 +685,11 @@ export function serializeDesigner(engine: EngineHandle, designerFilePath: string
 
 /**
  * Full safe-save gate preview (no write): re-serialize + splice into the existing file and report whether
- * it is safe to save back. Unlike {@link serializeDesigner} (`safe` == RoundTripSafe, an interpret-only
- * signal), `safe` here also requires that no original statement is lost by the re-serialization
- * (`missingStatements` empty) — e.g. an ISupportInitialize BeginInit/EndInit form renders (RoundTripSafe)
- * yet is refused here because the serializer does not re-emit the brackets.
+ * it is safe to save back. This is the AUTHORITATIVE capability-preflight signal. Unlike {@link serializeDesigner}
+ * (`safe` == RoundTripSafe, an interpret/render-only signal), `safe` here also requires that no original statement
+ * is lost by the re-serialization (`missingStatements` empty) — e.g. a form whose serializer canonicalizes
+ * `TabPages.AddRange` to per-page `Controls.Add`, or one with TreeNode local-variable naming, renders fully
+ * (RoundTripSafe) yet is refused here. `reasonCategory` explains why when `safe` is false.
  */
 export function previewSave(engine: EngineHandle, designerFilePath: string, controlAssemblyPath?: string): Promise<SavePreview> {
   return engine.connection.sendRequest<SavePreview>('PreviewSave', ...withAsm(designerFilePath, controlAssemblyPath));
@@ -1101,6 +1107,22 @@ export function setProperty(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetProperty', designerFilePath, componentId, propertyName, newValueExpr, ...tail);
+}
+
+/**
+ * Edit the design-time "Modifiers" pseudo-property (no write) — a byte-local splice of the component's field-
+ * declaration access keyword, safe on EVERY form (never touches InitializeComponent / the whole-file serializer).
+ * `newModifier` is a VS display name ("Public"/"Private"/…). Returns the would-be-saved file text.
+ */
+export function setModifier(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  newModifier: string,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetModifier', designerFilePath, componentId, newModifier, ...tail);
 }
 
 /** Safe-save-gated grid-cell edit: move a TableLayoutPanel child to a new column/row (rewrites the cell args of its 3-arg

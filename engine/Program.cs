@@ -94,7 +94,7 @@ namespace WinFormsDesigner.Engine
                     Console.WriteLine("   runtime        : " + RuntimeInformation.FrameworkDescription);
                     Console.WriteLine("   class          : " + res.ClassName);
                     Console.WriteLine("   statements     : " + res.TotalStatements + " (representable " + res.Representable + ")");
-                    Console.WriteLine("   round-trip safe: " + res.RoundTripSafe + " (unrepresentable " + res.Unrepresentable.Count + ")");
+                    Console.WriteLine("   render-safe (RoundTripSafe): " + res.RoundTripSafe + " (unrepresentable " + res.Unrepresentable.Count + ")");
                     foreach (var u in res.Unrepresentable) Console.WriteLine("       ! " + u);
                     Console.WriteLine("   over-emit removed: " + res.DefaultsDropped);
                     foreach (var d in res.DroppedDefaults) Console.WriteLine("       - " + d);
@@ -105,12 +105,41 @@ namespace WinFormsDesigner.Engine
                     Console.WriteLine("   no spurious Enabled=true: " + !res.Code.Contains(".Enabled = true")
                                       + " | Visible=true: " + !res.Code.Contains(".Visible = true"));
 
-                    // safe-save gate: a file is safe to round-trip back to disk ONLY when fully representable.
-                    bool pass = res.RoundTripSafe;
-                    if (pass)
+                    // AUTHORITATIVE save-safe gate (capability preflight). RoundTripSafe above is render-only and
+                    // over-optimistic: a form can render fully yet lose statements on re-serialization (a Hidden
+                    // component-ref, TabPages.AddRange, TreeNode locals). The verdict a regenerate must trust is
+                    // "renders AND no original statement is lost" — mirror DesignerRenderer.SaveSplice's gate here so
+                    // --roundtrip and --save agree instead of --roundtrip reporting a misleading "PASS".
+                    var rtMissing = res.RoundTripSafe
+                        ? DesignerSaveSplicer.MissingOriginalStatements(File.ReadAllText(rtFile), res.Code)
+                        : new List<string>();
+                    if (rtMissing.Count > 0)
+                    {
+                        Console.WriteLine("   statements lost by re-serialization: " + rtMissing.Count);
+                        foreach (var m in rtMissing) Console.WriteLine("       ? " + m);
+                    }
+                    bool saveSafe = res.RoundTripSafe && rtMissing.Count == 0;
+                    Console.WriteLine("   save-safe (authoritative): " + saveSafe
+                        + " | capability: " + SaveSafety.CategoryName(SaveSafety.Classify(res.Unrepresentable, rtMissing)));
+
+                    if (saveSafe)
                     {
                         if (outCs != null)
                         {
+                            // --out writes the NORMALIZED whole-file serializer artifact (namespace WinFormsDesigner.Generated),
+                            // NOT splice-safe source — it is a diagnostic dump, never a write-back. Refuse to point it at the
+                            // input (or its sibling .cs), which would replace the real namespace / partial / Dispose / comments
+                            // with the artifact (codex F3). The safe whole-file writer is --save (it splices, preserving structure).
+                            // --out writes a normalized diagnostic dump, NOT splice-safe source. Refuse if the target
+                            // (or its ".raw.cs" sibling) already EXISTS — a fresh path can't alias the source, whereas a
+                            // string-equality check misses a hard-link/symlink alias of the input (codex round-3 F3).
+                            // --out is diagnostic-only (the product writes via --save / the RPCs), so requiring a fresh
+                            // path is the fail-closed choice.
+                            if (File.Exists(outCs) || File.Exists(outCs + ".raw.cs"))
+                            {
+                                Console.WriteLine("REFUSED: --out (and its .raw.cs sibling) must be a fresh path — a normalized diagnostic dump, never an overwrite (could alias the source via a hard/symlink); use --save to write.");
+                                return 2;
+                            }
                             File.WriteAllText(outCs, res.Code);
                             File.WriteAllText(outCs + ".raw.cs", res.RawCode);
                             Console.WriteLine("   wrote          : " + outCs + " (+ .raw.cs)");
@@ -119,13 +148,13 @@ namespace WinFormsDesigner.Engine
                     else
                     {
                         // never overwrite the source with a lossy result — skip --out entirely
-                        Console.WriteLine("WARNING: source has unrepresentable constructs — NOT safe to save (read-only fallback); --out skipped");
+                        Console.WriteLine("WARNING: source not save-safe (read-only fallback); --out skipped");
                     }
                     Console.WriteLine();
                     Console.WriteLine("--- normalized InitializeComponent ---");
                     Console.WriteLine(res.Code);
-                    Console.WriteLine(pass ? "RESULT: PASS" : "RESULT: FAIL");
-                    return pass ? 0 : 1;
+                    Console.WriteLine(saveSafe ? "RESULT: PASS" : "RESULT: FAIL");
+                    return saveSafe ? 0 : 1;
                 }
                 catch (Exception ex)
                 {
@@ -154,6 +183,8 @@ namespace WinFormsDesigner.Engine
                         Console.WriteLine("   statements lost by re-serialization: " + res.MissingStatements.Count);
                         foreach (var m in res.MissingStatements) Console.WriteLine("       ? " + m);
                     }
+                    Console.WriteLine("   capability     : " + SaveSafety.CategoryName(
+                        SaveSafety.Classify(res.RoundTrip.Unrepresentable, res.MissingStatements)));
 
                     if (!res.Safe)
                     {
@@ -291,6 +322,55 @@ namespace WinFormsDesigner.Engine
                     {
                         string preview = spFile + ".edited.txt";
                         File.WriteAllText(preview, res.NewText!, res.Encoding);
+                        Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
+                    }
+                    Console.WriteLine("RESULT: PASS");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("RESULT: FAIL — " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    return 1;
+                }
+            }
+
+            if (Has(args, "--set-modifier", out string? smFile) && smFile != null)
+            {
+                string comp = ArgAfter(args, "--comp") ?? "";
+                string? mod = ArgAfter(args, "--mod");
+                bool write = Has(args, "--write", out _);
+                if (comp.Length == 0 || mod == null)
+                {
+                    Console.WriteLine("usage: --set-modifier <file> --comp <fieldName> --mod <Public|Private|Protected|Internal|Protected Internal|Private Protected> [--write]");
+                    return 2;
+                }
+                try
+                {
+                    // read with BOM/encoding detection so --write round-trips the original encoding (codex F7: a
+                    // File.ReadAllText + default-UTF-8 write would rewrite a UTF-16/BOM source outside the token).
+                    var (enc, src) = DesignerRenderer.ReadWithEncoding(smFile);
+                    var res = DesignerModifiers.SetModifier(src, comp, mod);
+                    Console.WriteLine("== engine set-modifier (byte-local field-declaration access keyword)");
+                    Console.WriteLine("   target : " + comp + " -> " + mod);
+                    Console.WriteLine("   reason : " + res.Reason);
+                    if (!res.Safe || res.Text == null)
+                    {
+                        Console.WriteLine("WARNING: edit rejected — " + (res.Reason.Length > 0 ? res.Reason : "unsafe"));
+                        Console.WriteLine("RESULT: FAIL");
+                        return 1;
+                    }
+                    if (write)
+                    {
+                        string bak = smFile + ".bak";
+                        File.Copy(smFile, bak, overwrite: true);
+                        File.WriteAllText(smFile, res.Text, enc);
+                        Console.WriteLine("   APPLIED: wrote " + smFile + " (backup: " + bak + ")");
+                    }
+                    else
+                    {
+                        string preview = smFile + ".modifier.txt";
+                        File.WriteAllText(preview, res.Text, enc);
                         Console.WriteLine("   dry-run: wrote preview " + preview + " (use --write to apply)");
                     }
                     Console.WriteLine("RESULT: PASS");
@@ -1371,6 +1451,7 @@ namespace WinFormsDesigner.Engine
                 Text = r.Safe ? r.SplicedText : null,
                 Unrepresentable = r.RoundTrip.Unrepresentable.ToArray(),
                 MissingStatements = r.MissingStatements.ToArray(),
+                ReasonCategory = SaveSafety.CategoryName(SaveSafety.Classify(r.RoundTrip.Unrepresentable, r.MissingStatements)),
             };
         });
         }
@@ -1405,6 +1486,18 @@ namespace WinFormsDesigner.Engine
         {
             var r = DesignerRenderer.ApplyPropertyEdit(designerFilePath, componentName, propertyName, newValueExpr, sourceText);
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>
+        /// Edit the design-time "Modifiers" pseudo-property WITHOUT writing (host applies as WorkspaceEdit). Byte-local:
+        /// only the target component's field-declaration access keyword changes, so it is safe on EVERY form (it never
+        /// touches InitializeComponent / the whole-file serializer). A pure Roslyn text edit — no graph load / STA.
+        /// </summary>
+        public EditPreview SetModifier(string designerFilePath, string componentName, string newModifier, string? sourceText = null)
+        {
+            string source = sourceText ?? System.IO.File.ReadAllText(designerFilePath);
+            var r = DesignerModifiers.SetModifier(source, componentName, newModifier);
+            return new EditPreview { Safe = r.Safe, Mode = r.Safe ? "Modifier" : "Failed", Text = r.Text, Reason = r.Reason };
         }
 
         /// <summary>safe-save-gated grid-cell edit: move a TableLayoutPanel child to column/row by swapping the cell args of
@@ -1739,6 +1832,9 @@ namespace WinFormsDesigner.Engine
         public string? Text { get; set; }
         public string[] Unrepresentable { get; set; } = Array.Empty<string>();
         public string[] MissingStatements { get; set; } = Array.Empty<string>();
+        /// <summary>Capability-preflight category explaining WHY the form isn't save-safe (or "safe"): one of
+        /// safe / localizable / binaryResx / unresolvedType / lostStatements / unrepresentable.</summary>
+        public string ReasonCategory { get; set; } = "safe";
     }
 
     /// <summary>DTO for the no-write serialize (round-trip) preview RPC.</summary>

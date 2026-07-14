@@ -587,7 +587,7 @@ namespace WinFormsDesigner.Engine
             RoundTripResult r;
             try
             {
-                r = DesignerSerializer.Serialize(g.Surface, g.Host, g.ClassName, normalizeDefaults, g.ExplicitMembers, g.EventWiringStatements);
+                r = DesignerSerializer.Serialize(g.Surface, g.Host, g.ClassName, normalizeDefaults, g.ExplicitMembers, g.EventWiringStatements, g.SupportInitStatements);
             }
             catch (Exception ex)
             {
@@ -656,14 +656,24 @@ namespace WinFormsDesigner.Engine
         public static DescribeResult Describe(string designerFilePath, string? controlAssemblyPath = null)
         {
             using var g = LoadGraph(designerFilePath, controlAssemblyPath);
-            return DesignerDescribe.Describe(g.Host, g.ClassName, g.ExplicitMembers, g.Total, g.Representable, g.Unrepresentable, g.EventWirings);
+            var mods = DesignerModifiers.ParseFieldModifiers(SafeRead(designerFilePath));
+            return DesignerDescribe.Describe(g.Host, g.ClassName, g.ExplicitMembers, g.Total, g.Representable, g.Unrepresentable, g.EventWirings, mods);
         }
 
         /// <summary>Describe one component by edit id ("this" = root) — the bounded per-selection path for a grid.</summary>
         public static ComponentInfo? DescribeComponent(string designerFilePath, string componentId, string? controlAssemblyPath = null, string? sourceText = null)
         {
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
-            return DesignerDescribe.DescribeComponent(g.Host, g.ClassName, g.ExplicitMembers, componentId, g.EventWirings);
+            var mods = DesignerModifiers.ParseFieldModifiers(sourceText ?? SafeRead(designerFilePath));
+            return DesignerDescribe.DescribeComponent(g.Host, g.ClassName, g.ExplicitMembers, componentId, g.EventWirings, mods);
+        }
+
+        /// <summary>Read a file's text for a describe pseudo-property parse; empty on any IO error (the pseudo-props
+        /// simply won't be injected — describe still works).</summary>
+        private static string SafeRead(string path)
+        {
+            try { return File.ReadAllText(path); }
+            catch { return ""; }
         }
 
         /// <summary>
@@ -1486,7 +1496,9 @@ namespace WinFormsDesigner.Engine
         /// byte-faithfully (codex finding: default WriteAllText strips a UTF-8 BOM that real
         /// VS designer files carry → whole-file churn). Handles UTF-8 ±BOM and UTF-16 LE/BE.
         /// </summary>
-        private static (Encoding encoding, string text) ReadWithEncoding(string path)
+        /// <summary>Read a file's text with BOM/encoding detection (UTF-8/UTF-16 LE/BE), returning the encoding so a
+        /// write-back preserves it. Public so the CLI edit paths (e.g. --set-modifier) can round-trip the encoding.</summary>
+        public static (Encoding encoding, string text) ReadWithEncoding(string path)
         {
             byte[] b = File.ReadAllBytes(path);
             if (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF)
@@ -1530,6 +1542,10 @@ namespace WinFormsDesigner.Engine
             /// <summary>Verbatim event-wiring statements (this.X.Event += …) — re-emitted by the serializer so the
             /// round-trip preserves them exactly (they can't be wired to code-behind handlers on the surface).</summary>
             public required List<string> EventWiringStatements { get; init; }
+            /// <summary>Verbatim ISupportInitialize BeginInit/EndInit brackets — re-emitted by the serializer so a form
+            /// with them round-trips instead of forcing read-only (0.12.0 R1). The CodeDom serializer never produces
+            /// them on its own; they're a representable no-op for render (see IsSupportInitBracket).</summary>
+            public required List<string> SupportInitStatements { get; init; }
             public void Dispose() => Surface.Dispose();
         }
 
@@ -1626,7 +1642,7 @@ namespace WinFormsDesigner.Engine
                 // resolve resources.GetObject(...) against the form's sibling .resx (image/icon properties).
                 // null when there is no .resx → forms without resources are entirely unaffected.
                 var resx = ResxResolver.TryLoadForDesigner(designerFilePath);
-                var (total, ok, unrep, explicitMembers, eventWirings) = Interpret(cls, host, userAsms, resx);
+                var (total, ok, unrep, explicitMembers, eventWirings, supportInit) = Interpret(cls, host, userAsms, resx);
 
                 return new LoadedGraph
                 {
@@ -1646,6 +1662,7 @@ namespace WinFormsDesigner.Engine
                     ExplicitMembers = explicitMembers,
                     EventWirings = ExtractEventWirings(cls),
                     EventWiringStatements = eventWirings,
+                    SupportInitStatements = supportInit,
                 };
             }
             catch
@@ -1965,7 +1982,7 @@ namespace WinFormsDesigner.Engine
         /// serialized on the single STA thread; <see cref="Eval"/> reads it to resolve resources.GetObject(...).</summary>
         [ThreadStatic] private static (HashSet<string> vars, ResxResolver? resolver)? _resx;
 
-        private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers, List<string> eventWirings) Interpret(
+        private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers, List<string> eventWirings, List<string> supportInit) Interpret(
             ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms, ResxResolver? resx = null)
         {
             var root = (Control)host.RootComponent;
@@ -1978,6 +1995,12 @@ namespace WinFormsDesigner.Engine
             // Verbatim event-wiring statements (this.X.Event += …) captured for the serializer to re-emit exactly —
             // they can't be wired to the code-behind handlers on the surface, so we preserve them textually.
             var eventWirings = new List<string>();
+            // Verbatim ISupportInitialize BeginInit/EndInit brackets captured for the serializer to re-emit exactly.
+            // They are a representable no-op for RENDER (our static render sets properties directly), but the CodeDom
+            // serializer does not produce them on its own, so we preserve them textually to make the form round-trip
+            // instead of silently dropping the brackets (0.12.0 R1). Suspend/Resume, by contrast, are regenerated
+            // canonically by the serializer and so are NOT captured here.
+            var supportInit = new List<string>();
             int total = 0, ok = 0;
 
             // names of `IContainer components = new Container()` fields — lets a provider ctor
@@ -1998,7 +2021,7 @@ namespace WinFormsDesigner.Engine
             if (init?.Body == null)
             {
                 unrep.Add("InitializeComponent not found");
-                return (0, 0, unrep, explicitMembers, eventWirings);
+                return (0, 0, unrep, explicitMembers, eventWirings, supportInit);
             }
 
             // find the `[System.ComponentModel.]ComponentResourceManager resources = new ...(typeof(Form))` local(s)
@@ -2056,7 +2079,14 @@ namespace WinFormsDesigner.Engine
                             }
                             if (es.Expression is InvocationExpressionSyntax inv)
                             {
-                                if (HandleInvocation(inv, root, comps, userAsms, out string? why)) ok++;
+                                if (HandleInvocation(inv, root, comps, userAsms, out string? why))
+                                {
+                                    ok++;
+                                    // Capture ISupportInitialize BeginInit/EndInit brackets verbatim so the serializer
+                                    // re-emits them (round-trip): representable no-op for render, but must not be
+                                    // silently dropped on save (0.12.0 R1).
+                                    if (IsSupportInitBracket(inv)) supportInit.Add(stmt.ToString().Trim());
+                                }
                                 else unrep.Add(why ?? stmt.ToString().Trim());
                                 continue;
                             }
@@ -2078,7 +2108,7 @@ namespace WinFormsDesigner.Engine
                 }
             }
             finally { _resx = prevResx; }
-            return (total, ok, unrep, explicitMembers, eventWirings);
+            return (total, ok, unrep, explicitMembers, eventWirings, supportInit);
         }
 
         // ---- TreeView.Nodes rendering ------------------------------------------------------------------------------
@@ -2335,6 +2365,19 @@ namespace WinFormsDesigner.Engine
             return c.Count == 1 && containerNames.Contains(c[0]);
         }
 
+        /// <summary>
+        /// ISupportInitialize init bracketing: ((System.ComponentModel.ISupportInitialize)(this.x)).BeginInit()/.EndInit()
+        /// — designer-managed init scaffolding VS emits around any DataGridView/BindingSource/PictureBox/NumericUpDown/
+        /// SplitContainer. A representable no-op for RENDER; captured verbatim so the serializer re-emits it on a
+        /// round-trip (0.12.0 R1). Matched by the FULLY-QUALIFIED System.ComponentModel.ISupportInitialize so an
+        /// unrelated user interface that merely shares the short name isn't silently swallowed as scaffolding.
+        /// </summary>
+        private static bool IsSupportInitBracket(InvocationExpressionSyntax inv) =>
+            inv.Expression is MemberAccessExpressionSyntax ma
+            && ma.Name.Identifier.Text is "BeginInit" or "EndInit"
+            && ma.Expression is ParenthesizedExpressionSyntax pe && pe.Expression is CastExpressionSyntax ce
+            && ce.Type.ToString() == "System.ComponentModel.ISupportInitialize";
+
         private static bool HandleInvocation(InvocationExpressionSyntax inv, Control root,
             Dictionary<string, IComponent> comps, IReadOnlyList<Assembly> userAsms, out string? why)
         {
@@ -2348,18 +2391,12 @@ namespace WinFormsDesigner.Engine
 
             if (method is "SuspendLayout" or "ResumeLayout" or "PerformLayout") return true;
 
-            // ISupportInitialize bracketing: ((System.ComponentModel.ISupportInitialize)(this.x)).BeginInit()/.EndInit()
-            // — designer-managed init scaffolding VS emits around any DataGridView/BindingSource/PictureBox/NumericUpDown/
-            // SplitContainer. Like Suspend/Resume it's a representable no-op for RENDER: our static render sets properties
-            // directly, so bracketing the init has no effect on the preview. It is NOT round-trip-safe, though — the
-            // whole-file serializer does not re-emit these brackets (there is no InjectBeginInit counterpart to
-            // InjectEventWirings), so they stay in the safe-save gate (DesignerSaveSplicer) and a form that has them
-            // correctly falls back to read-only (refuse-to-save) instead of silently dropping them. Matched by the
-            // FULLY-QUALIFIED System.ComponentModel.ISupportInitialize so an unrelated user interface that merely shares
-            // the short name isn't silently swallowed as scaffolding.
-            if (method is "BeginInit" or "EndInit"
-                && ma.Expression is ParenthesizedExpressionSyntax pe && pe.Expression is CastExpressionSyntax ce
-                && ce.Type.ToString() == "System.ComponentModel.ISupportInitialize")
+            // ISupportInitialize BeginInit/EndInit bracketing — a representable no-op for RENDER (see IsSupportInitBracket).
+            // The caller ALSO captures it verbatim into the `supportInit` list so the serializer re-emits it on a
+            // round-trip (0.12.0 R1: DesignerSerializer.InjectSupportInit), which is why it now round-trips instead of
+            // forcing read-only. Suspend/Resume/PerformLayout above are regenerated canonically by the serializer, so
+            // they need no capture.
+            if (IsSupportInitBracket(inv))
                 return true;
 
             var targetChain = Flatten(ma.Expression);
