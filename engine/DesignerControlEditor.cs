@@ -152,23 +152,48 @@ namespace WinFormsDesigner.Engine
         private static readonly Dictionary<string, string> Category = new(StringComparer.Ordinal)
         {
             // Common Controls
-            ["Button"] = "Common Controls", ["CheckBox"] = "Common Controls", ["CheckedListBox"] = "Common Controls",
-            ["ComboBox"] = "Common Controls", ["DateTimePicker"] = "Common Controls", ["Label"] = "Common Controls",
-            ["LinkLabel"] = "Common Controls", ["ListBox"] = "Common Controls", ["ListView"] = "Common Controls",
-            ["MaskedTextBox"] = "Common Controls", ["MonthCalendar"] = "Common Controls", ["NumericUpDown"] = "Common Controls",
-            ["PictureBox"] = "Common Controls", ["ProgressBar"] = "Common Controls", ["RadioButton"] = "Common Controls",
-            ["RichTextBox"] = "Common Controls", ["TextBox"] = "Common Controls", ["TreeView"] = "Common Controls",
-            ["DomainUpDown"] = "Common Controls", ["TrackBar"] = "Common Controls", ["WebBrowser"] = "Common Controls",
-            ["PropertyGrid"] = "Common Controls", ["HScrollBar"] = "Common Controls", ["VScrollBar"] = "Common Controls",
+            ["Button"] = "Common Controls",
+            ["CheckBox"] = "Common Controls",
+            ["CheckedListBox"] = "Common Controls",
+            ["ComboBox"] = "Common Controls",
+            ["DateTimePicker"] = "Common Controls",
+            ["Label"] = "Common Controls",
+            ["LinkLabel"] = "Common Controls",
+            ["ListBox"] = "Common Controls",
+            ["ListView"] = "Common Controls",
+            ["MaskedTextBox"] = "Common Controls",
+            ["MonthCalendar"] = "Common Controls",
+            ["NumericUpDown"] = "Common Controls",
+            ["PictureBox"] = "Common Controls",
+            ["ProgressBar"] = "Common Controls",
+            ["RadioButton"] = "Common Controls",
+            ["RichTextBox"] = "Common Controls",
+            ["TextBox"] = "Common Controls",
+            ["TreeView"] = "Common Controls",
+            ["DomainUpDown"] = "Common Controls",
+            ["TrackBar"] = "Common Controls",
+            ["WebBrowser"] = "Common Controls",
+            ["PropertyGrid"] = "Common Controls",
+            ["HScrollBar"] = "Common Controls",
+            ["VScrollBar"] = "Common Controls",
             // Containers
-            ["FlowLayoutPanel"] = "Containers", ["GroupBox"] = "Containers", ["Panel"] = "Containers",
-            ["SplitContainer"] = "Containers", ["TabControl"] = "Containers", ["TableLayoutPanel"] = "Containers",
+            ["FlowLayoutPanel"] = "Containers",
+            ["GroupBox"] = "Containers",
+            ["Panel"] = "Containers",
+            ["SplitContainer"] = "Containers",
+            ["TabControl"] = "Containers",
+            ["TableLayoutPanel"] = "Containers",
             ["Splitter"] = "Containers",
             // Menus & Toolbars
-            ["MenuStrip"] = "Menus & Toolbars", ["StatusStrip"] = "Menus & Toolbars",
-            ["ToolStrip"] = "Menus & Toolbars", ["ToolStripContainer"] = "Menus & Toolbars", ["ToolStripPanel"] = "Menus & Toolbars",
+            ["MenuStrip"] = "Menus & Toolbars",
+            ["StatusStrip"] = "Menus & Toolbars",
+            ["ToolStrip"] = "Menus & Toolbars",
+            ["ToolStripContainer"] = "Menus & Toolbars",
+            ["ToolStripPanel"] = "Menus & Toolbars",
             // Data / Printing
-            ["DataGridView"] = "Data", ["BindingNavigator"] = "Data", ["PrintPreviewControl"] = "Printing",
+            ["DataGridView"] = "Data",
+            ["BindingNavigator"] = "Data",
+            ["PrintPreviewControl"] = "Printing",
         };
 
         private static string CategoryFor(string name) => Category.TryGetValue(name, out var c) ? c : DefaultCategory;
@@ -312,7 +337,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null)
                 return new ControlAddResult { Safe = false, Reason = "InitializeComponent not found" };
 
@@ -499,7 +524,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null)
                 return new ControlAddResult { Safe = false, Reason = "InitializeComponent not found" };
 
@@ -569,7 +594,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return new ControlAddResult { Safe = false, Reason = "InitializeComponent not found" };
 
             var names = GatherFieldNames(cls);
@@ -654,7 +679,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return new ControlRemoveResult { Safe = false, Reason = "InitializeComponent not found" };
             if (!GatherFieldNames(cls).Contains(controlId)) return new ControlRemoveResult { Safe = false, Reason = "unknown control: " + controlId };
 
@@ -783,7 +808,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return new ControlRemoveResult { Safe = false, Reason = "InitializeComponent not found" };
             var names = GatherFieldNames(cls);
             if (!names.Contains(hostId)) return new ControlRemoveResult { Safe = false, Reason = "unknown tab host: " + hostId };
@@ -1086,7 +1111,7 @@ namespace WinFormsDesigner.Engine
         private static List<StatementSyntax> InitStatementNodes(SyntaxNode root)
         {
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             return init?.Body != null ? init.Body.Statements.ToList() : new List<StatementSyntax>();
         }
 
@@ -1118,7 +1143,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return new ControlCopyResult { Safe = false, Reason = "InitializeComponent not found" };
             if (!GatherFieldNames(cls).Contains(controlId)) return new ControlCopyResult { Safe = false, Reason = "unknown control: " + controlId };
 
@@ -1222,7 +1247,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return new ControlPasteResult { Safe = false, Reason = "InitializeComponent not found" };
 
             var names = GatherFieldNames(cls);
@@ -1449,7 +1474,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return new ControlReorderResult { Safe = false, Reason = "InitializeComponent not found" };
             if (!GatherFieldNames(cls).Contains(controlId)) return new ControlReorderResult { Safe = false, Reason = "unknown control: " + controlId };
 
@@ -1567,7 +1592,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return new ControlReorderResult { Safe = false, Reason = "InitializeComponent not found" };
             var names = GatherFieldNames(cls);
             if (!names.Contains(childId)) return new ControlReorderResult { Safe = false, Reason = "unknown control: " + childId };
@@ -1675,7 +1700,7 @@ namespace WinFormsDesigner.Engine
         {
             var root = CSharpSyntaxTree.ParseText(code).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             var non = new List<string>(); var tgts = new List<StatementSyntax>();
             if (init?.Body != null)
                 foreach (var st in init.Body.Statements)
@@ -1724,24 +1749,19 @@ namespace WinFormsDesigner.Engine
             return (start, end);
         }
 
-        // ---- helpers (own copies — the proven property/event editors stay untouched) ----
+        // ---- helpers ----
 
-        private static ClassDeclarationSyntax? FindClassWithIC(SyntaxNode root)
-        {
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-                if (cls.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent"))
-                    return cls;
-            return null;
-        }
+        // THE form class, via the one shared rule (see FormClassResolver). This used to be a private copy taking the
+        // first class in the file declaring InitializeComponent BY NAME; every editor had its own. They agreed only by
+        // luck, and a disagreement splices one class's body into another's. Null (no single designer class) is what
+        // every caller already turns into a refusal.
+        private static ClassDeclarationSyntax? FindClassWithIC(SyntaxNode root) =>
+            FormClassResolver.FormClass(root);
 
-        private static HashSet<string> GatherFieldNames(ClassDeclarationSyntax cls)
-        {
-            var set = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
-                foreach (var v in f.Declaration.Variables)
-                    set.Add(v.Identifier.Text);
-            return set;
-        }
+        // The form's component fields across ALL its partials (shared rule) — not just the InitializeComponent-bearing
+        // one. These names both generate fresh ids and answer "is this control mine": a partial-blind scan could mint a
+        // name that collides with a field in the form's OTHER partial (CS0102), or refuse a control that plainly exists.
+        private static HashSet<string> GatherFieldNames(ClassDeclarationSyntax cls) => FormClassResolver.FieldNamesOf(cls);
 
         private static List<string> FieldDeclNames(SyntaxNode root)
         {
@@ -1757,7 +1777,7 @@ namespace WinFormsDesigner.Engine
         private static List<string> InitStatements(SyntaxNode root)
         {
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             var list = new List<string>();
             if (init?.Body != null)
                 foreach (var st in init.Body.Statements)
@@ -1893,10 +1913,14 @@ namespace WinFormsDesigner.Engine
         public static bool IsValidIdentifier(string s)
         {
             if (string.IsNullOrEmpty(s)) return false;
-            if (!(char.IsLetter(s[0]) || s[0] == '_')) return false;
+            // Component ids are interpolated into generated source without an @ prefix. Keep the accepted
+            // alphabet deliberately ASCII: it covers the identifiers emitted by Visual Studio while refusing
+            // keyword spellings and visually-confusable Unicode (Cyrillic а vs Latin a) at the injection boundary.
+            if (!((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z') || s[0] == '_')) return false;
             for (int i = 1; i < s.Length; i++)
-                if (!(char.IsLetterOrDigit(s[i]) || s[i] == '_')) return false;
-            return true;
+                if (!((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')
+                    || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) return false;
+            return SyntaxFacts.GetKeywordKind(s) == SyntaxKind.None && SyntaxFacts.IsValidIdentifier(s);
         }
 
         private static List<string> Flatten(ExpressionSyntax expr)

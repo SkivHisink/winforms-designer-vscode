@@ -9,6 +9,17 @@ namespace WinFormsDesigner.Engine.Net48
     // net48 lacks IsExternalInit for). A future refactor can hoist these into a shared netstandard2.0 assembly
     // referenced by both engines; duplicated here to ship the first increment without touching the net9 build.
 
+    /// <summary>1.0.0 — outcome of releasing every held build output (the "release for rebuild" command). The host
+    /// shows success only when Failed == 0; a non-zero Failed means some AppDomain refused to unload and is still
+    /// pinning the user's dlls, so the host recycles the whole net48 engine process to free them.</summary>
+    [Serializable]
+    public sealed class ReleaseResult
+    {
+        public int Attempted { get; set; }
+        public int Released { get; set; }
+        public int Failed { get; set; }
+    }
+
     /// <summary>Engine self-description for the capability handshake — lets the host disable edit affordances
     /// and show an honest "compiled preview" badge for the net48 (render-first) engine.</summary>
     [Serializable]
@@ -41,6 +52,28 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>True for a non-visual component (added to the tray). Always false here — net48 enumerates
         /// visual controls only — carried for DTO-shape parity with the net9 engine.</summary>
         public bool IsComponent { get; set; }
+    }
+
+    /// <summary>One entry of a vendor control's DECLARED smart-tag menu (the DevExpress "XtraTabControl Tasks"
+    /// panel), read off the compiled type's attributes — see VendorSmartTags for why this is metadata-only and the
+    /// vendor's action is never invoked. Display + identity only: the host decides which verbs it can honour with its
+    /// own source-first edit and shows the rest disabled. Crosses the child-AppDomain boundary → [Serializable].</summary>
+    [Serializable]
+    public sealed class VendorSmartTag
+    {
+        /// <summary>The vendor's own label, exactly as its panel shows it ("Add Tab Page").</summary>
+        public string DisplayName { get; set; } = "";
+        /// <summary>The verb's method name on the vendor actions class ("AddTabPage") — the host's mapping key.</summary>
+        public string MethodName { get; set; } = "";
+        /// <summary>FQN of the vendor's actions class ("DevExpress.XtraEditors.XtraTabControlActions"); "" if unreadable.
+        /// Diagnostic only — never loaded or invoked.</summary>
+        public string ActionsType { get; set; } = "";
+        /// <summary>The vendor's declared sort key; -1 (the default) for every action shipped today.</summary>
+        public int SortOrder { get; set; }
+        /// <summary>Vendor flagged the verb CloseAfterExecute — its panel closes once the action runs.</summary>
+        public bool ClosesPanel { get; set; }
+        /// <summary>Order the attribute appears on the type; the tie-break that reproduces the vendor's panel order.</summary>
+        public int DeclarationIndex { get; set; }
     }
 
     /// <summary>One control's window-space placement + minimal tree info — the click-to-select hit-test unit.
@@ -224,6 +257,8 @@ namespace WinFormsDesigner.Engine.Net48
         /// ContextMenuStrip). StandardValues are the compatible sibling field names + a leading "(none)"; the host
         /// translates a pick to `this.&lt;name&gt;` / `null`. Parity with net9's PropertyInfo.ReferenceValues.</summary>
         public bool ReferenceValues { get; set; }
+        /// <summary>True for a source-backed design-time pseudo-property (Modifiers / GenerateMember).</summary>
+        public bool DesignTime { get; set; }
     }
 
     /// <summary>One event row for the Events tab. Mirrors WinFormsDesigner.Engine.EventInfo (→ TS EventDesc).</summary>
@@ -245,6 +280,9 @@ namespace WinFormsDesigner.Engine.Net48
         public string Type { get; set; } = "";
         public string? Parent { get; set; }
         public bool IsRoot { get; set; }
+        /// <summary>Host-only guard: ToolStripItem properties use the item edit channel and must not receive
+        /// control-field Modifiers pseudo-properties.</summary>
+        public bool IsToolStripItem { get; set; }
         public List<PropertyDesc> Properties { get; set; } = new List<PropertyDesc>();
         public List<EventDesc> Events { get; set; } = new List<EventDesc>();
     }
@@ -272,6 +310,18 @@ namespace WinFormsDesigner.Engine.Net48
     [Serializable]
     public sealed class RenderLayoutResult
     {
+        /// <summary>DIAGNOSTIC-ONLY — identity of the live compiled instance this result was drawn from. Changes
+        /// whenever the instance is (re)created: explicit discard, engine crash, control-source change, hot-exit
+        /// recovery, or DomainManager unloading the AppDomain because the target assembly was rebuilt. The host's
+        /// divergence LOCK built on these ids was descoped (the unconditional "last build"
+        /// disclosure replaced it); the host reads them only for diagnostics/e2e. Empty when no instance produced
+        /// the result.</summary>
+        public string LiveInstanceId { get; set; } = "";
+        /// <summary>DIAGNOSTIC-ONLY — identity of the compiled BUILD this instance came from (assembly mtime+length;
+        /// NOT a content hash — a same-second same-length rebuild is indistinguishable, which is one reason the
+        /// divergence lock was descoped). A new LiveInstanceId on the SAME LiveBuildId is a reload of the same stale
+        /// build; a new LiveBuildId is a genuine rebuild. See LiveDesign.</summary>
+        public string LiveBuildId { get; set; } = "";
         public byte[] Png { get; set; } = Array.Empty<byte>();
         public int Width { get; set; }
         public int Height { get; set; }
@@ -291,5 +341,12 @@ namespace WinFormsDesigner.Engine.Net48
         public bool Applied { get; set; } = true;
         /// <summary>Non-fatal diagnostics (load reason, license note, why a live edit wasn't applied) for the host.</summary>
         public string Diagnostics { get; set; } = "";
+        /// <summary>Which net48 render produced this: "compiled" (the last build, default),
+        /// "interpreted" (the live source via the IR interpreter — VS model), or "compiledFallback" (the interpreter
+        /// couldn't cover this form, so the compiled last build is shown WITH <see cref="FallbackReason"/>). The host
+        /// drives the two-axis mode (engineKind × renderMode) and the banner from this.</summary>
+        public string RenderMode { get; set; } = "compiled";
+        /// <summary>A stable RenderFallbackReason code when RenderMode=="compiledFallback"; "" otherwise.</summary>
+        public string FallbackReason { get; set; } = "";
     }
 }

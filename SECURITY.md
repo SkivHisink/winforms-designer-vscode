@@ -15,7 +15,10 @@ Two layers contain this:
 1. **Workspace Trust** — the extension declares `untrustedWorkspaces.supported:
    false`, so it is **disabled in untrusted workspaces**. Only open projects you
    trust.
-2. **Interpreter allowlists** — the engine's `Eval` path executes code from
+2. **Local Windows workspace only** — virtual workspaces are unsupported and the
+   stable package targets `win32-x64`; Linux, macOS, WSL and Linux-hosted remote
+   workspaces cannot run the WinForms engine.
+3. **Interpreter allowlists** — the engine's `Eval` path executes code from
    `.Designer.cs` only through strict allowlists (known-safe constructions,
    static invocations, and static reads), and edits are guarded by minimality /
    statement-diff gates. Arbitrary code in the file is treated as
@@ -28,13 +31,13 @@ spawning **without** an explicit project-assembly reference) is considered a
 
 ## Supported versions
 
-This project is in preview; security fixes are applied to the latest release on
-the `main` branch.
+Security fixes are applied to the latest stable release and the current `main`
+branch.
 
 | Version | Supported |
 |---------|-----------|
-| latest `main` / newest release | ✅ |
-| older preview builds | ❌ |
+| latest `main` / newest stable release | ✅ |
+| preview and older stable builds | ❌ |
 
 ## Reporting a vulnerability
 

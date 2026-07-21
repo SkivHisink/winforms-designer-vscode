@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, describeDesigner, describeComponent, describeCompiledComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setImageList, discardCompiledLive } from './engineClient';
+import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
@@ -15,9 +15,9 @@ import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
 
 /** Build the net48 ctx fixture on demand (it compiles the SAME engine/samples/ContextMenuForm.Designer.cs the net9
- *  ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
- *  missing or older than its inputs; any build failure (no net48 toolchain, locked output) → false, so the net48
- *  e2e leg SKIPS instead of failing (the suite stays green on a net9-only box). */
+* ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
+* missing or older than its inputs; any build failure (no net48 toolchain, locked output) → false, so the net48
+* e2e leg SKIPS instead of failing (the suite stays green on a net9-only box). */
 function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFiles: string[]): boolean {
   try {
     const csproj = path.join(fixtureDir, 'Net48CtxFixture.csproj');
@@ -44,7 +44,7 @@ const isPng = (b: Buffer): boolean =>
   b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
 
 /** Build a minimal valid PNG declaring the given IHDR dimensions (header-only decodable). Used to craft a
- *  "pixel bomb" (tiny file, huge declared dimensions) for the image-import DoS-guard regression test. */
+* "pixel bomb" (tiny file, huge declared dimensions) for the image-import DoS-guard regression test. */
 function pngWithDims(w: number, h: number): Buffer {
   const crc32 = (b: Buffer): number => {
     let c = ~0;
@@ -63,16 +63,16 @@ function pngWithDims(w: number, h: number): Buffer {
 }
 
 /**
- * Headless end-to-end proof of the extension's engine-client side (no VS Code GUI):
- * spawn the engine in --pipe mode, Ping it, render the sample .Designer.cs, write PNG,
- * then prove the live-update path: a content change yields a different render. The final
- * check inside the actual VS Code Extension Host (F5) is left to the user.
- */
+* Headless end-to-end proof of the extension's engine-client side (no VS Code GUI):
+* spawn the engine in --pipe mode, Ping it, render the sample .Designer.cs, write PNG,
+* then prove the live-update path: a content change yields a different render. The final
+* check inside the actual VS Code Extension Host (F5) is left to the user.
+*/
 /**
- * Headless proof of the "auto-add a project reference when a control from a non-referenced assembly is
- * dropped" helpers (src/csprojRef.ts). Pure string/fs logic — the vscode glue (prompt + WorkspaceEdit) in
- * designerEditor.ts stays F5-only, but the risky parsing/insertion is verified here against a REAL .csproj.
- */
+* Headless proof of the "auto-add a project reference when a control from a non-referenced assembly is
+* dropped" helpers (src/csprojRef.ts). Pure string/fs logic — the vscode glue (prompt + WorkspaceEdit) in
+* designerEditor.ts stays F5-only, but the risky parsing/insertion is verified here against a REAL .csproj.
+*/
 function verifyCsprojHelpers(repo: string): void {
   const engineCsproj = path.join(repo, 'engine', 'Engine.csproj');
   if (!fs.existsSync(engineCsproj)) throw new Error('csprojRef: fixture missing — ' + engineCsproj);
@@ -85,7 +85,7 @@ function verifyCsprojHelpers(repo: string): void {
   // csprojReferencesAssembly: a PackageReference is detected (any name form); an absent one is not.
   if (!csprojReferencesAssembly(engineText, 'StreamJsonRpc')) throw new Error('csprojRef: existing PackageReference not detected');
   if (!csprojReferencesAssembly(engineText, 'streamjsonrpc')) throw new Error('csprojRef: reference match must be case-insensitive');
-  if (csprojReferencesAssembly(engineText, 'PgmUiControls')) throw new Error('csprojRef: false positive for an unreferenced assembly');
+  if (csprojReferencesAssembly(engineText, 'VendorControls')) throw new Error('csprojRef: false positive for an unreferenced assembly');
   // strong-named <Reference> (simple name before the comma) and <ProjectReference> path (file base name).
   if (!csprojReferencesAssembly('<Reference Include="MyControls, Version=1.0.0.0, Culture=neutral" />', 'MyControls')) throw new Error('csprojRef: strong-named Reference simple-name match broken');
   if (!csprojReferencesAssembly('<ProjectReference Include="..\\Lib\\MyControls.csproj" />', 'MyControls')) throw new Error('csprojRef: ProjectReference base-name match broken');
@@ -96,12 +96,12 @@ function verifyCsprojHelpers(repo: string): void {
 
   // addReferenceToCsproj: inserts a well-formed ItemGroup before the single </Project>, and the result then
   // reports the assembly as referenced (round-trip). Original content and the closing tag are preserved.
-  const added = addReferenceToCsproj(engineText, 'PgmUiControls', '..\\PgmUi\\bin\\PgmUiControls.dll');
-  if (!/<Reference Include="PgmUiControls">/.test(added)) throw new Error('csprojRef: addReferenceToCsproj did not add the <Reference>');
-  if (!/<HintPath>\.\.\\PgmUi\\bin\\PgmUiControls\.dll<\/HintPath>/.test(added)) throw new Error('csprojRef: addReferenceToCsproj did not add the HintPath');
+  const added = addReferenceToCsproj(engineText, 'VendorControls', '..\\Vendor\\bin\\VendorControls.dll');
+  if (!/<Reference Include="VendorControls">/.test(added)) throw new Error('csprojRef: addReferenceToCsproj did not add the <Reference>');
+  if (!/<HintPath>\.\.\\Vendor\\bin\\VendorControls\.dll<\/HintPath>/.test(added)) throw new Error('csprojRef: addReferenceToCsproj did not add the HintPath');
   if ((added.match(/<\/Project>/g) || []).length !== 1) throw new Error('csprojRef: addReferenceToCsproj must keep exactly one </Project>');
   if (added.indexOf(engineText.slice(0, engineText.lastIndexOf('</Project>'))) !== 0) throw new Error('csprojRef: addReferenceToCsproj altered the original body');
-  if (!csprojReferencesAssembly(added, 'PgmUiControls')) throw new Error('csprojRef: added reference is not detected by csprojReferencesAssembly (round-trip)');
+  if (!csprojReferencesAssembly(added, 'VendorControls')) throw new Error('csprojRef: added reference is not detected by csprojReferencesAssembly (round-trip)');
   // idempotent guard direction: XML special chars are escaped in the include name.
   if (addReferenceToCsproj('<Project></Project>', 'A&B', 'x.dll').indexOf('Include="A&amp;B"') < 0) throw new Error('csprojRef: include name is not XML-escaped');
   // EOL preservation: a CRLF project stays CRLF (no stray lone \n introduced by the insert).
@@ -109,18 +109,18 @@ function verifyCsprojHelpers(repo: string): void {
   const crlfOut = addReferenceToCsproj(crlf, 'X', 'x.dll');
   if (/[^\r]\n/.test(crlfOut)) throw new Error('csprojRef: addReferenceToCsproj introduced a lone \\n into a CRLF file');
 
-  // review fix (#5, nit): a mostly-LF file with one stray CRLF must NOT gain CRLFs (snippet follows the majority LF).
+  // A mostly-LF file with one stray CRLF must NOT gain CRLFs (snippet follows the majority LF).
   const mixed = '<Project>\r\n<PropertyGroup>\n</PropertyGroup>\n</Project>\n';
   const mixedOut = addReferenceToCsproj(mixed, 'M', 'm.dll');
   if ((mixedOut.match(/\r\n/g) || []).length !== (mixed.match(/\r\n/g) || []).length) throw new Error('csprojRef: mixed-EOL insert changed the CRLF count (should follow the majority LF)');
 
-  // review fix (#3, low): a trailing comment that contains "</Project>" must NOT divert the insert into the comment.
+  // A trailing comment that contains "</Project>" must NOT divert the insert into the comment.
   const trailing = '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup />\n</Project>\n<!-- legacy </Project> -->\n';
   const trailingOut = addReferenceToCsproj(trailing, 'Z', 'z.dll');
   if (!csprojReferencesAssembly(trailingOut, 'Z')) throw new Error('csprojRef: reference not registered — insert diverted into a trailing comment');
   if (trailingOut.indexOf('<Reference Include="Z">') > trailingOut.indexOf('<!--')) throw new Error('csprojRef: <Reference> inserted after the root </Project> (into the trailing comment)');
 
-  // review fix (#1/#2, high): projectReferencesAssembly resolves a <ProjectReference> to a project whose
+  // projectReferencesAssembly resolves a <ProjectReference> to a project whose
   // <AssemblyName> differs from its file name, so an existing reference is detected (no redundant <Reference>).
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-csprojref-'));
   try {
@@ -168,8 +168,8 @@ function verifyCsprojHelpers(repo: string): void {
       fs.mkdirSync(net9Dir, { recursive: true });
       const net48Dll = path.join(net48Dir, 'App.dll');
       const net9Dll = path.join(net9Dir, 'App.dll');
-      fs.writeFileSync(net48Dll, 'MZ');                          // net4x build — no sidecar
-      fs.writeFileSync(net9Dll, 'MZ');                           // .NET build — has a .deps.json sidecar
+      fs.writeFileSync(net48Dll, 'MZ'); // net4x build — no sidecar
+      fs.writeFileSync(net9Dll, 'MZ'); // .NET build — has a .deps.json sidecar
       fs.writeFileSync(path.join(net9Dir, 'App.deps.json'), '{}');
       // make the net9 output strictly NEWER so "freshest overall" ≠ "framework-only" — the case that would
       // wrongly route a vendor form to net9 without the framework-only resolver.
@@ -192,11 +192,11 @@ function verifyCsprojHelpers(repo: string): void {
       if (multiTargetHasFramework('<Project><PropertyGroup><TargetFrameworks>net8.0;net9.0-windows</TargetFrameworks></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework false positive (no .NET Framework TFM)');
       if (multiTargetHasFramework('<Project><PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework must be false for a single-target net48 project');
       if (multiTargetHasFramework('<Project><PropertyGroup><TargetFrameworks>net48</TargetFrameworks></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework must be false for a single TFM in a plural tag');
-      // review fix (MEDIUM): comment-blindness — a commented-out <TargetFrameworks> must NOT be read as live config,
+      // Comment-blindness — a commented-out <TargetFrameworks> must NOT be read as live config,
       // and a commented net48 leftover must not mask the real (pure-.NET) multi-target.
       if (multiTargetHasFramework('<!-- <TargetFrameworks>net48;net9.0-windows</TargetFrameworks> -->')) throw new Error('csprojRef: multiTargetHasFramework must ignore a commented-out <TargetFrameworks>');
       if (multiTargetHasFramework('<!-- old <TargetFrameworks>net48;net9.0-windows</TargetFrameworks> --><TargetFrameworks>net8.0;net9.0-windows</TargetFrameworks>')) throw new Error('csprojRef: multiTargetHasFramework must read the LIVE (pure-.NET) TFMs, not the commented net48 one');
-      // review fix (LOW): a conditioned/attributed <TargetFrameworks Condition="…"> tag is still recognized.
+      // A conditioned/attributed <TargetFrameworks Condition="…"> tag is still recognized.
       if (!multiTargetHasFramework("<TargetFrameworks Condition=\"'$(Config)'==''\">net48;net9.0-windows</TargetFrameworks>")) throw new Error('csprojRef: multiTargetHasFramework must handle a conditioned <TargetFrameworks> tag');
 
       // an unbuilt multi-target project → no framework output yet (drives the "build it" notice, not a switch).
@@ -222,8 +222,8 @@ function verifyCsprojHelpers(repo: string): void {
       'this.numericUpDown1.Maximum = new decimal(new int[] { 500, 0, 0, 0 });  [InvalidOperationException: unresolved type decimal]',
       'this.grid1 = new Vendor.FancyGrid();  [TargetInvocationException: license check failed]',
       '((Acme.Licensing.ISupportInitialize)(this.button1)).BeginInit()',
-      '   ',                                                                  // blank → ignored
-      'this.numericUpDown1.Maximum = new decimal(new int[] { 500, 0, 0, 0 });  [InvalidOperationException: unresolved type decimal]', // dup → collapsed
+    ' ', // blank → ignored
+    'this.numericUpDown1.Maximum = new decimal(new int[] { 500, 0, 0, 0 }); [InvalidOperationException: unresolved type decimal]', // dup → collapsed
     ]);
     if (items.length !== 3) throw new Error('T2.2 categorize: expected 3 items (blank ignored, dup collapsed), got ' + items.length + ' → ' + JSON.stringify(items));
     const missing = items.find((i) => i.category === 'missingType');
@@ -241,7 +241,7 @@ function verifyCsprojHelpers(repo: string): void {
     if (sigA !== sigB) throw new Error('T2.2 signature must be order-independent');
     if (sigA === diagnosticsSignature(items.slice(0, 2))) throw new Error('T2.2 signature must change when the problem set changes');
 
-    // ---- review fixes (wf_85ad7886) ----
+    // ---- csproj resolution edge cases ----
     // categorizer-0: a statement whose text contains a LITERAL "[XxxException: …]" before the real trailing jacket
     // must strip only the TAIL jacket (not the sibling literal) — greedy leading group anchors to the rightmost.
     const sib = categorizeUnrepresentable(['this.errLabel.Text = "[SqlException: connection failed]";  [NotSupportedException: converter missing]']);
@@ -268,7 +268,7 @@ function verifyCsprojHelpers(repo: string): void {
   // silent data loss). It is deliberately BROAD/fail-closed: it keys on the `ApplyResources(` CALL alone (the
   // ComponentResourceManager bulk-apply only a localizable form emits), NOT the manager declaration shape — so no
   // valid-C# declaration spelling can evade it (a false negative is the data-loss path). A false positive is a
-  // harmless read-only refusal (codex fix-verify: the two-signal rule was defeated by a cross-file `global using`
+  // harmless read-only refusal (the two-signal rule was defeated by a cross-file `global using`
   // alias, where the manager token never appears in the designer buffer).
   {
     // the real localizable fixture is detected…
@@ -292,7 +292,7 @@ function verifyCsprojHelpers(repo: string): void {
 
     // POSITIVE — every valid-C# way to reach an ApplyResources call must be caught, because a false negative is the
     // silent-data-loss path. Crucially this includes the two the narrow decl-shape AND the two-signal (manager-token)
-    // rules BOTH missed (codex fix-verify): a cross-file `global using` alias where the manager token never appears in
+    // rules BOTH missed: a cross-file `global using` alias where the manager token never appears in
     // the DESIGNER BUFFER, and a verbatim `@ApplyResources` method spelling.
     const variants: Array<[string, string]> = [
       ['conventional', 'System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.ApplyResources(this.b, "b");'],
@@ -304,13 +304,13 @@ function verifyCsprojHelpers(repo: string): void {
       ['verbatim @id receiver', 'System.ComponentModel.ComponentResourceManager @resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n @resources.ApplyResources(this.b, "b");'],
       ['nullable', 'System.ComponentModel.ComponentResourceManager? resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.ApplyResources(this.b, "b");'],
       ['unicode id + whitespace', 'var rés = new System.ComponentModel.ComponentResourceManager(typeof(F));\n rés . ApplyResources ( this.b , "b" ) ;'],
-      // codex convergence: a comment BETWEEN `.` and `ApplyResources` is still a real call → must be caught
+      // A comment BETWEEN `.` and `ApplyResources` is still a real call → must be caught
       // (the lexical strip collapses the comment to whitespace).
       ['comment-separated', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources./* generated */ApplyResources(this.b, "b");'],
-      // codex round-2 (fail-open bypasses): each is valid C# invoking the REAL ComponentResourceManager.ApplyResources.
+      // Each is valid C# invoking the REAL ComponentResourceManager.ApplyResources.
       // (1) Unicode identifier escape: C# decodes `R`→'R', so `ApplyResources` IS ApplyResources.
       ['unicode-escaped method', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.Apply\\u0052esources(this.b, "b");'],
-      // codex R6: C# removes Unicode FORMAT chars (Cf, e.g. U+200C ZWNJ) when comparing identifiers (§6.4.3),
+      // C# removes Unicode FORMAT chars (Cf, e.g. U+200C ZWNJ) when comparing identifiers (§6.4.3),
       // so `ApplyResources` IS the identifier ApplyResources — decodeUnicodeEscapes must strip Cf too.
       ['unicode Cf (ZWNJ) inside method name', 'var resources = new System.ComponentModel.ComponentResourceManager(typeof(F));\n resources.Apply\\u200CResources(this.b, "b");'],
       // (2) Method-group indirection: the member access is `.ApplyResources;` (no call paren) — matched by \b, not \(.
@@ -324,12 +324,12 @@ function verifyCsprojHelpers(repo: string): void {
       ['NEL (U+0085) line comment before call', '// note\u0085 resources.ApplyResources(this.b, "b");'],
       ['LSEP (U+2028) line comment before call', '// note\u2028 resources.ApplyResources(this.b, "b");'],
       ['PSEP (U+2029) line comment before call', '// note\u2029 resources.ApplyResources(this.b, "b");'],
-      // codex fix-verify round-3 (fail-open in interpolation holes): a $-interpolated string EVALUATES its
+      // A $-interpolated string EVALUATES its
       // `{…}` holes, so a call reachable from a hole (via a lambda) is executable code — the stripper must NOT
       // blank it. Both a raw interpolated string ($"""…""") and an ordinary one ($"…") must still be detected.
       ['interpolated raw-string hole', 'static string Run(System.Action a){ a(); return ""; }\n var value = $"""{Run(() => resources.ApplyResources(this.b, key))}""";'],
       ['interpolated string hole', 'var v = $"x {Run(() => resources.ApplyResources(this.b, key))} y";'],
-      // codex fix-verify round-3: a hole that contains a NESTED string literal — the outer $"…" scanner must
+      // A hole that contains a NESTED string literal — the outer $"…" scanner must
       // walk the hole (consuming "x") and NOT terminate at the hole's first inner quote (which would leave a
       // tail that blanks the real call). Verbatim-interpolated ($@"…") must behave the same.
       ['interpolated hole with nested string arg', 'var v = $"{Run("x", () => resources.ApplyResources(this.b, key))}";'],
@@ -339,7 +339,7 @@ function verifyCsprojHelpers(repo: string): void {
       // ApplyResources mention → lock) must still catch it. Never appears in a real .Designer.cs; proves the
       // no-false-negative guarantee holds for EVERY interpolation input, not just the lexer's modelled cases.
       ['multi-$ raw, nested raw in hole (safety net)', 'var v = $$"""{{ var t = $"""y"""; resources.ApplyResources(this.b, key); }}""";'],
-      // codex R4: the same mis-terminated multi-$ hole PLUS a Unicode-escaped method name — the safety net's
+      // The same mis-terminated multi-$ hole PLUS a Unicode-escaped method name — the safety net's
       // ApplyResources word-match must run on the DECODED text, else `ApplyResources` slips through.
       ['multi-$ raw + nested raw + unicode-escaped method (safety net)', 'var v = $$"""{{ var t = $"""y"""; resources.Apply\\u0052esources(this.b, key); }}""";'],
     ];
@@ -348,7 +348,7 @@ function verifyCsprojHelpers(repo: string): void {
     }
 
     // NEGATIVE / edge (pure): empty/undefined/null; a ComponentResourceManager used ONLY for GetObject (no
-    // ApplyResources call); and — codex convergence — the two forms the RAW-text regex mis-flagged: a string
+    // ApplyResources call); and the two forms the RAW-text regex mis-flagged: a string
     // value that merely CONTAINS `.ApplyResources(` (a code-snippet label on a NORMAL form) and a commented-out
     // call. The lexical strip (ignore strings/comments) keeps those non-localizable.
     if (isLocalizableDesigner('') || isLocalizableDesigner(undefined) || isLocalizableDesigner(null))
@@ -357,9 +357,9 @@ function verifyCsprojHelpers(repo: string): void {
     if (isLocalizableDesigner(getObjOnly)) throw new Error('localizable: a ComponentResourceManager used only for GetObject must NOT be flagged');
     const stringSnippet = 'this.label1.Text = ".ApplyResources(";\n this.helpBox.Text = "call resources.ApplyResources(x, \\"y\\")";';
     if (isLocalizableDesigner(stringSnippet)) throw new Error('localizable: a code-snippet STRING VALUE containing .ApplyResources( must NOT flag a normal form read-only (over-lock)');
-    const commentedOut = '// resources.ApplyResources(this.b, "b");  -- disabled\n /* resources.ApplyResources(this.c, "c"); */';
+    const commentedOut = '// resources.ApplyResources(this.b, "b"); -- disabled\n /* resources.ApplyResources(this.c, "c"); */';
     if (isLocalizableDesigner(commentedOut)) throw new Error('localizable: a commented-out ApplyResources call must NOT flag');
-    // codex round-2 counterparts to the new positives — the fixes must not over-reach into false negatives elsewhere:
+    // Counterparts to the new positives — the fixes must not over-reach into false negatives elsewhere:
     // a call TEXT sitting inside a raw-string BODY is string data, not a call → must NOT flag.
     const rawStringBody = 'var s = """\n resources.ApplyResources(x, y);\n """;\n this.b.Name = "b";';
     if (isLocalizableDesigner(rawStringBody)) throw new Error('localizable: an ApplyResources call inside a raw-string BODY is string data, must NOT flag');
@@ -377,7 +377,7 @@ function verifyCsprojHelpers(repo: string): void {
   // A form can be several at once: localizable (read-only lock), binaryResx (data-loss risk), inherited-base
   // (incomplete preview). The banner is single-slot; chooseFormNoticeKind returns the DOMINANT icon-kind by
   // precedence (localizable > binaryResx > inheritedBase) and the host composes the text from all true conditions
-  // so no disclosure is hidden (codex R#12). Engine-gating (net9-only for binaryResx/inherited) is upstream.
+  // so no disclosure is hidden. Engine-gating (net9-only for binaryResx/inherited) is upstream.
   {
     // S2 pairs (binaryResx defaults false — the existing 2-arg call sites keep their meaning)
     if (chooseFormNoticeKind(true, true) !== 'localizableInherited') throw new Error('formNotice: localizable AND inherited → combined kind');
@@ -389,7 +389,20 @@ function verifyCsprojHelpers(repo: string): void {
     if (chooseFormNoticeKind(true, false, true) !== 'localizable') throw new Error('formNotice: localizable subsumes binaryResx (lock icon dominates)');
     if (chooseFormNoticeKind(false, true, true) !== 'binaryResx') throw new Error('formNotice: binaryResx (data-loss) outranks inherited (incomplete)');
     if (chooseFormNoticeKind(true, true, true) !== 'localizableInherited') throw new Error('formNotice: all three → localizableInherited (🔒), host appends binaryResx clause');
-    console.log('e2e: 0.10.0 formNotice kind selection verified — localizable > binaryResx > inheritedBase precedence, combined kinds, null (single-slot, no message hidden)');
+    // 1.0.0 — the 4th flag is `net48Preview`, the UNCONDITIONAL
+    // "this canvas is your last build" disclosure. net48 forms stay editable, so it is NOT a read-only lock; it
+    // outranks the two ⚠️ modern disclosures but not the localizable read-only lock. Order: localizable >
+    // compiledPreview > binaryResx > inheritedBase.
+    if (chooseFormNoticeKind(false, false, false, true) !== 'compiledPreview') throw new Error('formNotice: net48Preview-only → compiledPreview');
+    if (chooseFormNoticeKind(false, false, true, true) !== 'compiledPreview') throw new Error('formNotice: compiledPreview outranks binaryResx (net48 never flags binaryResx anyway)');
+    if (chooseFormNoticeKind(false, true, false, true) !== 'compiledPreview') throw new Error('formNotice: compiledPreview outranks inheritedBase');
+    if (chooseFormNoticeKind(true, false, false, true) !== 'localizable') throw new Error('formNotice: localizable read-only lock subsumes the net48 disclosure');
+    // REGRESSION GUARD: the pre-1.0 2-arg/3-arg call sites must keep their exact meaning — the new param defaults
+    // false, so adding it cannot silently re-classify an existing caller.
+    if (chooseFormNoticeKind(false, false) !== null) throw new Error('formNotice: clean render must stay null with the new param defaulted');
+    if (chooseFormNoticeKind(false, true) !== 'inheritedBase') throw new Error('formNotice: 2-arg inherited-only must stay inheritedBase');
+    if (chooseFormNoticeKind(false, false, true) !== 'binaryResx') throw new Error('formNotice: 3-arg binaryResx-only must stay binaryResx');
+    console.log('e2e: 1.0.0 formNotice kind selection verified — localizable > compiledPreview > binaryResx > inheritedBase; localizable is the only 🔒 read-only lock, net48 compiledPreview is an ℹ️ editable disclosure, binaryResx/inheritedBase are ⚠️; pre-1.0 call sites unchanged');
   }
 
   // ---- 0.10.0 trust-floor S3: binary-resx host detector (pure) ----
@@ -404,14 +417,14 @@ function verifyCsprojHelpers(repo: string): void {
     // NEGATIVE: a string-only (localizable) resx is not binary.
     if (hasBinaryResx(fs.readFileSync(path.join(repo, 'engine', 'samples', 'LocalizableForm.resx'), 'utf8'))) throw new Error('binaryResx: a string-only resx must NOT be flagged');
     if (hasBinaryResx(null) || hasBinaryResx('') || hasBinaryResx(undefined)) throw new Error('binaryResx: empty/null/undefined → not flagged');
-    // codex R#2: the GUARD keys on binaryResxCount (mimetype-attr count), which must be robust where a name-keyed
+    // The GUARD keys on binaryResxCount (mimetype-attr count), which must be robust where a name-keyed
     // scan could MISS a node — a '>' inside an attribute value, a nameless node, single quotes, uppercase mime,
     // duplicate names — so a DROP is always detected. Each of these has 2 binary nodes → count must be 2.
     const gt = '<data name="a>b" mimetype="application/x-microsoft.net.object.binary.base64"><value>x</value></data><data name="c" mimetype="application/x-microsoft.net.object.soap.base64"><value>y</value></data>';
     if (binaryResxCount(gt) !== 2) throw new Error(`binaryResx: count must be robust to '>' inside an attribute value + soap, got ${binaryResxCount(gt)}`);
     const nameless = "<data mimetype='application/x-microsoft.net.object.binary.base64'><value>x</value></data><data name='k' mimetype='APPLICATION/X-MICROSOFT.NET.OBJECT.BINARY.BASE64'/>";
     if (binaryResxCount(nameless) !== 2) throw new Error(`binaryResx: count must include nameless + uppercase + single-quote nodes, got ${binaryResxCount(nameless)}`);
-    // codex R: a mimetype written with XML numeric character references (an XML parser decodes `binary&#x2e;base64`
+    // A mimetype written with XML numeric character references (an XML parser decodes `binary&#x2e;base64`
     // to `binary.base64`) must still be counted — the host decodes char-refs before matching, so it agrees with the
     // engine's XML-parsed scan.
     const charRef = '<data name="cr" mimetype="application/x-microsoft.net.object.binary&#x2e;base64"><value>x</value></data>';
@@ -472,18 +485,18 @@ function verifyCsprojHelpers(repo: string): void {
     // small-file high-FRACTION edit (12/20 lines) but low COUNT (churn 24 < 64) → allowed (the churn floor)
     const small = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n');
     if (!isByteLocalEdit(small, small.split('\n').map((l, i) => (i < 12 ? l + ' X' : l)).join('\n'))) throw new Error('byteLocal: a small-file edit (churn < 64) must be allowed even at a high changed-fraction');
-    // codex: a COMPACTED designer whose head+tail are each a SINGLE physical line (all usings/class on line 1) — a
+    // A COMPACTED designer whose head+tail are each a SINGLE physical line (all usings/class on line 1) — a
     // middle-only collection replace keeps commonPrefix=1 AND commonSuffix=1 → ALLOWED (EDGE_LINES=1, not 2).
     const compactBefore = ['namespace D; partial class F { private System.Windows.Forms.ComboBox c = new(); private void InitializeComponent() { c.Items.AddRange(new object[] {',
       ...Array.from({ length: 70 }, (_, i) => `    "old-${i}",`), '}); } }'].join('\n');
     const compactAfter = ['namespace D; partial class F { private System.Windows.Forms.ComboBox c = new(); private void InitializeComponent() { c.Items.AddRange(new object[] {',
       ...Array.from({ length: 70 }, (_, i) => `    "new-${i}",`), '}); } }'].join('\n');
-    if (!isByteLocalEdit(compactBefore, compactAfter)) throw new Error('byteLocal: a compacted single-physical-line-head/tail collection replace must be ALLOWED (codex compact false-positive)');
-    // codex: deleting the ENTIRE designer text (after empty) must be REFUSED — the min() denominator made survival
+    if (!isByteLocalEdit(compactBefore, compactAfter)) throw new Error('byteLocal: a compacted single-physical-line-head/tail collection replace must be ALLOWED');
+    // Deleting the ENTIRE designer text (after empty) must be REFUSED — the min() denominator made survival
     // trivially true (0>=0); the max() denominator + afterLines>0 guard refuse it.
     if (isByteLocalEdit(big, '')) throw new Error('byteLocal: deleting the WHOLE file must be REFUSED (not byte-local)');
     if (isByteLocalEdit(big, '}')) throw new Error('byteLocal: truncating the whole file to a single line must be REFUSED');
-    console.log('e2e: 0.10.0 S4 byte-local firewall verified — no-op / one-line-splice(tight) / disjoint-2-span / 50-hunk-group / bulk-delete / large-block-replace / compact-collection-replace ALLOWED; reindent / CRLF-normalize / reorder / delete-whole-file / truncate-to-line REFUSED; small-file(churn floor) allowed (codex: EDGE=1 + max()-denominator + afterLines>0)');
+    console.log('e2e: 0.10.0 S4 byte-local firewall verified — no-op / one-line-splice(tight) / disjoint-2-span / 50-hunk-group / bulk-delete / large-block-replace / compact-collection-replace ALLOWED; reindent / CRLF-normalize / reorder / delete-whole-file / truncate-to-line REFUSED; small-file(churn floor) allowed (EDGE=1 + max()-denominator + afterLines>0)');
   }
 
   // ---- 0.10.0 trust-floor S5: fail-closed load-failure read-only gate (pure) ----
@@ -507,7 +520,7 @@ async function main(): Promise<void> {
   const repo = path.resolve(__dirname, '..', '..');
   // WFD_ENGINE_DLL lets a run point at a freshly-built engine in an alternate output dir (e.g. when the default
   // bin/Release copy is locked by a live Dev-Host); defaults to the standard build output.
-  const dll = process.env.WFD_ENGINE_DLL || path.join(repo, 'engine', 'bin', 'Release', 'net9.0-windows', 'WinFormsDesigner.Engine.dll');
+  const dll = process.env.WFD_ENGINE_DLL || path.join(repo, 'engine', 'bin', 'Release', 'net10.0-windows', 'WinFormsDesigner.Engine.dll');
   const designer = path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs');
   const outPng = path.resolve(__dirname, '..', 'e2e-render.png');
 
@@ -516,6 +529,20 @@ async function main(): Promise<void> {
 
   // The auto-add-project-reference helpers are pure string/fs functions (no engine) — verify them up front.
   verifyCsprojHelpers(repo);
+
+  // Startup diagnostics must fail immediately and retain the actionable OS/apphost error. This is the installed-user
+  // path for a missing .NET 10 Desktop Runtime or a wrong-architecture package; a ten-second pipe timeout hides it.
+  {
+    const missingEntry = path.join(os.tmpdir(), 'wfd-engine-does-not-exist', 'WinFormsDesigner.Engine.exe');
+    const started = Date.now();
+    let message = '';
+    try { await startEngine(missingEntry, { onLog: () => undefined }); }
+    catch (error) { message = error instanceof Error ? error.message : String(error); }
+    if (!message.includes('failed to start WinForms designer engine'))
+      throw new Error(`engine startup: missing apphost must return the actionable startup error, got ${JSON.stringify(message)}`);
+    if (Date.now() - started > 3_000) throw new Error('engine startup: missing apphost waited for the pipe timeout instead of failing immediately');
+    console.log('e2e: engine startup failure is immediate and actionable (missing runtime/apphost path)');
+  }
 
   console.log('e2e: starting engine…');
   const engine = await startEngine(dll, { onLog: (l) => console.error(l) });
@@ -770,7 +797,7 @@ async function main(): Promise<void> {
       const pic = rl.controls.find((c) => c.id === 'pictureBox1');
       if (!pic) throw new Error('resx: pictureBox1 missing from layout');
       if (pic.width !== 64 || pic.height !== 64) throw new Error(`resx: pictureBox1 size ${pic.width}x${pic.height} (expected 64x64)`);
-      // Slice 2 (describe + preview): the image prop is flagged isImage and carries a valid PNG thumbnail.
+      // Describe + preview: the image prop is flagged isImage and carries a valid PNG thumbnail.
       const pcComp = await describeComponent(engine, imageForm, 'pictureBox1');
       const imgP = pcComp?.properties?.find((p) => p.name === 'Image');
       if (!imgP?.isImage) throw new Error('resx: pictureBox1.Image should be flagged isImage');
@@ -917,10 +944,10 @@ async function main(): Promise<void> {
     // resolves it fully — proving the optional asm param threads through Render/Describe/Serialize RPCs. The
     // 1-arg calls (no override) also confirm the optional positional param stays interop-compatible.
     const customForm = path.join(repo, 'engine', 'samples', 'CustomForm.Designer.cs');
-    const customDll = path.join(repo, 'samples', 'CustomControls', 'bin', 'Release', 'net9.0-windows', 'CustomControls.dll');
+    const customDll = path.join(repo, 'samples', 'CustomControls', 'bin', 'Release', 'net10.0-windows', 'CustomControls.dll');
     if (fs.existsSync(customForm) && fs.existsSync(customDll)) {
-      const autoSer = await serializeDesigner(engine, customForm);                // 1-arg → auto-discover
-      const explicitSer = await serializeDesigner(engine, customForm, customDll);  // 2-arg → explicit override
+      const autoSer = await serializeDesigner(engine, customForm); // 1-arg → auto-discover
+      const explicitSer = await serializeDesigner(engine, customForm, customDll); // 2-arg → explicit override
       if (explicitSer.safe !== true) {
         throw new Error('explicit-asm serialize should be safe; unrepresentable: ' + explicitSer.unrepresentable.join('; '));
       }
@@ -1080,7 +1107,7 @@ async function main(): Promise<void> {
       }
       console.log(`e2e: combined render+layout verified — RenderWithLayout png == renderDesigner (${combined.png.length}B), ${combined.controls.length} controls == describeLayout, one graph load`);
 
-      // ---- on-canvas "Type Here" per-item geometry (Slice A) on a STRIP form ----
+      // ---- on-canvas "Type Here" per-item geometry on a STRIP form ----
       // SampleForm has no strip, so the leg above never exercised BuildToolStripItems (which forces a per-strip
       // PerformLayout AFTER the PNG capture). Pin that ordering here: on MenuForm (a MenuStrip with 2 top-level
       // items) the combined PNG must STILL be byte-identical to renderDesigner (the post-capture layout-force can't
@@ -1102,7 +1129,7 @@ async function main(): Promise<void> {
       if (realItems.some((it) => it.ownerId !== stripHost.id || it.itemId.length === 0 || it.width <= 0 || it.height <= 0)) {
         throw new Error('strip geometry: an item has the wrong owner, an empty id, or a degenerate rect');
       }
-      // each real item carries its live caption (Slice C — the canvas prefills the inline rename editor with it)
+      // each real item carries its live caption
       // assert the EMISSION order directly (NOT sorted): the flyout draws items in this order, so a reorder regression
       // (menuStrip1.Items.AddRange sequence) must fail here rather than be normalized away.
       const captions = realItems.map((it) => it.text);
@@ -1142,7 +1169,7 @@ async function main(): Promise<void> {
           throw new Error(`strip geometry: item[${i}] renderWithLayout != describeLayout ("${a.itemId}" "${a.text}" ${a.x},${a.y} vs "${b.itemId}" "${b.text}" ${b.x},${b.y}) — geometry or nested children drifted`);
         }
       }
-      console.log(`e2e: strip item geometry (Slice A/C + nested flyout) verified — MenuForm png byte-identical, ${realItems.length} items (${captions.join(', ')}) + File submenu [${kidCaptions.join(', ')}] + 1 Type-Here slot on "${stripHost.id}", renderWithLayout == describeLayout geometry+captions+children`);
+      console.log(`e2e: strip item geometry verified — MenuForm png byte-identical, ${realItems.length} items (${captions.join(', ')}) + File submenu [${kidCaptions.join(', ')}] + 1 Type-Here slot on "${stripHost.id}", renderWithLayout == describeLayout geometry+captions+children`);
 
       // ---- off-tree ContextMenuStrip → the TRAY, never a phantom control rect (hit-test-theft fix) ----
       // A ContextMenuStrip is a sited Control field that is never added to any Controls collection (Parent==null):
@@ -1172,7 +1199,7 @@ async function main(): Promise<void> {
         console.log('e2e: SKIPPED 0.10.0 S2 inherited-base detection — DerivedForm fixture absent (untracked on a fresh checkout)');
       } else {
         // the base fixture must ACTUALLY declare baseButton — else "baseButton dropped from the render" would be a
-        // vacuous absence (codex R#9). This makes the drop a proof of a REAL base control being lost by net9.
+        // vacuous absence. This makes the drop a proof of a REAL base control being lost by net9.
         if (!fs.existsSync(inheritedBaseDes)) throw new Error('S2: InheritedBaseForm.Designer.cs fixture missing — the base-drop assertion would be vacuous');
         if (!/\bbaseButton\b/.test(fs.readFileSync(inheritedBaseDes, 'utf8'))) throw new Error('S2: InheritedBaseForm.Designer.cs must declare baseButton (the control net9 must be shown to drop)');
         // visual inheritance: DerivedForm : InheritedBaseForm (a USER base) → flagged, and the base's control IS dropped.
@@ -1192,7 +1219,7 @@ async function main(): Promise<void> {
         // NEGATIVE: a plain `: Form` sample must stay unflagged (no regression on the common case).
         const plain = await renderWithLayout(engine, path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs'));
         if (plain.inheritedBase !== false || plain.baseTypeName !== '') throw new Error('S2: a plain : Form sample must not flag inheritedBase');
-        // codex R#8: a SAME-FILE alias of a framework root (`using U = ...UserControl; : U`) must RESOLVE (no banner)
+        // A SAME-FILE alias of a framework root (`using U = ...UserControl; : U`) must RESOLVE (no banner)
         // AND render on the UserControl surface (its own control present), not a mis-typed Form.
         if (fs.existsSync(aliasedUcForm)) {
           const uc = await renderWithLayout(engine, aliasedUcForm);
@@ -1200,14 +1227,14 @@ async function main(): Promise<void> {
           if (!/UserControl/.test(uc.rootType)) throw new Error(`S2: aliased UserControl must render on the UserControl surface, got rootType ${JSON.stringify(uc.rootType)}`);
           if (!uc.controls.map((c) => c.id).includes('ucButton')) throw new Error('S2: aliased UserControl must render its own control (ucButton)');
         }
-        // codex R#4: a same-SHORT-name decoy class in ANOTHER namespace must not steal the classification — the
+        // A same-SHORT-name decoy class in ANOTHER namespace must not steal the classification — the
         // sibling lookup matches the fully-qualified name, so SampleApp.NsCollisionForm resolves to its REAL base.
         if (fs.existsSync(nsCollisionForm)) {
           const coll = await renderWithLayout(engine, nsCollisionForm);
           if (coll.inheritedBase !== true) throw new Error('S2: NsCollisionForm must flag inherited — a Decoy.NsCollisionForm(:Form) in the sibling must NOT be matched over SampleApp.NsCollisionForm(:InheritedBaseForm)');
           if (!/InheritedBaseForm/.test(coll.baseTypeName)) throw new Error(`S2: NsCollisionForm base must be InheritedBaseForm (correct-namespace match), got ${JSON.stringify(coll.baseTypeName)}`);
         }
-        console.log(`e2e: 0.10.0 S2 inherited-base detection verified — DerivedForm flagged (base=${der.baseTypeName}, baseButton dropped, derivedButton kept), VendorForm flagged (base=XtraForm), QualifiedForm(FQN)+SampleForm not flagged, aliased-UserControl resolved on UC surface (R#8), namespace-collision matched by FQN (R#4)`);
+        console.log(`e2e: 0.10.0 S2 inherited-base detection verified — DerivedForm flagged (base=${der.baseTypeName}, baseButton dropped, derivedButton kept), VendorForm flagged (base=XtraForm), QualifiedForm(FQN)+SampleForm not flagged, aliased-UserControl resolved on UC surface, namespace-collision matched by FQN`);
       }
 
       // ---- 0.10.0 trust-floor S3: binary/ImageStream resx → honest banner signal + upsert-preserves invariant ----
@@ -1220,7 +1247,7 @@ async function main(): Promise<void> {
       } else {
         const bin = await renderWithLayout(engine, binaryResxForm);
         // the fixture .resx exercises ALL THREE load-time gates: an ImageStream binary node, an external FileRef, and a
-        // non-allowlisted value type (Cursor) — so the count must span them (codex: FileRef/non-allowlisted must count,
+        // non-allowlisted value type (Cursor) — so the count must span them (FileRef/non-allowlisted must count,
         // not just binary). A string node is renderable and must NOT count.
         if (bin.unrenderableResxCount !== 3) throw new Error(`S3: BinaryResxForm must report 3 unrenderable (binary ImageStream + FileRef + non-allowlisted Cursor), got ${bin.unrenderableResxCount}`);
         if (!bin.controls.map((c) => c.id).includes('okButton')) throw new Error('S3: BinaryResxForm must still RENDER (the refused binary resource must not abort the render)');
@@ -1245,7 +1272,7 @@ async function main(): Promise<void> {
         // NEGATIVE: an unparseable .resx is refused (never clobbered).
         const bad = await setImageResource(engine, binaryResxForm, 'okButton', 'Image', 'System.Drawing.Image', tinyPng, '<root><not-closed>', fs.readFileSync(binaryResxForm, 'utf8'));
         // must be REFUSED (safe===false — the host gates its .resx write on !res.safe) AND carry no writable payload
-        // (resxText null/empty). Rejecting EITHER a true safe OR a non-empty resxText (codex: the old `&&` assertion
+        // (resxText null/empty). Rejecting EITHER a true safe OR a non-empty resxText (the old `&&` assertion
         // passed for either wrong field; `|| bad.resxText` tolerates the engine's null-or-"" "no resx" representation).
         if (bad.safe || bad.resxText) throw new Error('S3: an unparseable existing .resx must be REFUSED (safe===false, no writable resxText), never clobbered');
         console.log(`e2e: 0.10.0 S3 binary-resx verified — BinaryResxForm reports ${bin.unrenderableResxCount} unrenderable (renders okButton), no-resx/bytearray report 0; image upsert PRESERVES the ImageStream binary node byte-faithfully; unparseable .resx refused`);
@@ -1336,7 +1363,7 @@ async function main(): Promise<void> {
         const ctxEdit = ctxCombined.toolStripItems.find((it) => it.itemId === 'editMenu');
         if (!ctxEdit) throw new Error('nested flyout: editMenu missing from ContextMenuForm strip geometry');
         // emission order (editMenu.DropDownItems.AddRange): undoItem then redoItem — asserted directly. A prior `.sort()`
-        // here REVERSED this to [redo, undo] and would have hidden a real reorder regression (codex review).
+        // here REVERSED this to [redo, undo] and would have hidden a real reorder regression.
         const ctxEditKids = (ctxEdit.children ?? []).map((k) => `${k.itemId}:${k.text}`);
         if (JSON.stringify(ctxEditKids) !== JSON.stringify(['undoItem:Undo', 'redoItem:Redo'])) {
           throw new Error(`nested flyout: editMenu children [${ctxEditKids.join(', ')}] != [undoItem:Undo, redoItem:Redo] — the flyout would have nothing to draw (or drew out of order)`);
@@ -1374,7 +1401,7 @@ async function main(): Promise<void> {
         if (!(chevron.width > 0 && chevron.height > 0)) throw new Error('overflow (net9): the chevron must carry real bounds (the canvas hit-tests it)');
         console.log(`e2e: OVERFLOW items (net9) verified — toolStrip1 chevron (id-less, ${chevron.width}x${chevron.height}) carries [${overflowIds.join(', ')}]; main [${mainIds.join(', ')}] + overflow == all six buttons; no Type-Here slot`);
       } else {
-        console.log('e2e: OVERFLOW items (net9) SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (an UNTRACKED sample: git add it, or this coverage silently vanishes on a fresh checkout — review wf_897ba719)');
+        console.log('e2e: OVERFLOW items (net9) SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (an UNTRACKED sample: git add it, or this coverage silently vanishes on a fresh checkout)');
       }
 
       // ---- RETYPE mechanism (net9): the host's applyStripRetype re-mints a node (id="" + new type) at the same position ----
@@ -1401,13 +1428,13 @@ async function main(): Promise<void> {
           if (!/menuStrip1\.Items\.AddRange\([\s\S]*?toolStripButton1[\s\S]*?editMenu[\s\S]*?\}\)/.test(rt.text)) throw new Error('retype mechanism (net9): the re-minted item did not keep its position (must precede editMenu in the AddRange, as fileMenu did)');
           console.log('e2e: RETYPE mechanism (net9) verified — re-minting fileMenu (id="" + ToolStripButton) in one SetToolStripItems drops the old field, constructs the new type, and preserves editMenu (host applyStripRetype path)');
         } else {
-          throw new Error('retype mechanism (net9): fileMenu not found in menuStrip1 forest — listToolStripItems regressed or the fixture changed (a present fixture MUST expose the item, else this data-loss leg silently no-ops — review wf_897ba719)');
+          throw new Error('retype mechanism (net9): fileMenu not found in menuStrip1 forest — listToolStripItems regressed or the fixture changed (a present fixture MUST expose the item, else this data-loss leg silently no-ops)');
         }
       }
 
       // RETYPE middle-item position: fileMenu is FIRST, so "before editMenu" would also pass a broken index-0 insert.
       // Retype a MIDDLE item of the six-button overflow strip (btnThree) and assert BOTH neighbours stay on their sides
-      // (btnTwo before, btnFour after) — a real position-preservation check (codex review).
+      // (btnTwo before, btnFour after) — a real position-preservation check.
       if (fs.existsSync(overflowForm)) {
         const lstO = await listToolStripItems(engine, overflowForm, 'toolStrip1');
         const forestO = lstO.ok ? lstO.items.map((it) => ({ ...it })) : [];
@@ -1425,17 +1452,17 @@ async function main(): Promise<void> {
           if (/\bthis\.btnThree\b/.test(rtO.text)) throw new Error('retype middle (net9): the old field (this.btnThree) survived');
           console.log('e2e: RETYPE middle-item position (net9) verified — btnThree re-minted as toolStripLabel1 stays between btnTwo and btnFour in the AddRange');
         } else {
-          throw new Error(`retype middle (net9): btnThree not found (or forest too small: ${forestO.length}) in toolStrip1 — a present overflow fixture MUST expose it, else this position leg silently no-ops (review wf_897ba719)`);
+          throw new Error(`retype middle (net9): btnThree not found (or forest too small: ${forestO.length}) in toolStrip1 — a present overflow fixture MUST expose it, else this position leg silently no-ops`);
         }
       } else {
-        console.log('e2e: RETYPE middle-item position (net9) SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (UNTRACKED sample — review wf_897ba719)');
+        console.log('e2e: RETYPE middle-item position (net9) SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (UNTRACKED sample)');
       }
 
       // ---- C3 fail-closed: a nested add under a NON-dropdown item is refused ENGINE-side (offer ⇔ accept) ----
       // The UI never offers a nested "Type Here" on a non-dropdown item (a flyout opens only for an item that already
       // has children), but a direct RPC/CLI caller can send a parentItemId pointing at a ToolStripButton — which would
       // emit an invalid `btnOne.DropDownItems.AddRange(...)` (ToolStripButton has no DropDownItems) → non-compiling
-      // source. The engine must REFUSE it, not return a safe splice. Pin the guard directly (codex review, wf_897ba719).
+      // source. The engine must REFUSE it, not return a safe splice. Pin the guard directly.
       if (fs.existsSync(overflowForm)) {
         const lstC3 = await listToolStripItems(engine, overflowForm, 'toolStrip1');
         const forestC3 = lstC3.ok ? lstC3.items.map((it) => ({ ...it, children: (it.children ?? []).slice() })) : [];
@@ -1447,10 +1474,10 @@ async function main(): Promise<void> {
           if (!/DropDownItems/.test(rtC3.reason || '')) throw new Error(`C3: the refusal reason must name the missing DropDownItems collection — got "${rtC3.reason}"`);
           console.log(`e2e: C3 nested-add fail-closed verified — a child under btnOne (ToolStripButton) is refused engine-side (reason: ${rtC3.reason})`);
         } else {
-          throw new Error('C3: btnOne not found in toolStrip1 forest — a present overflow fixture MUST expose it (review wf_897ba719)');
+          throw new Error('C3: btnOne not found in toolStrip1 forest — a present overflow fixture MUST expose it');
         }
       } else {
-        console.log('e2e: C3 nested-add fail-closed SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (UNTRACKED sample — review wf_897ba719)');
+        console.log('e2e: C3 nested-add fail-closed SKIPPED — engine/samples/ToolStripOverflowForm.Designer.cs missing (UNTRACKED sample)');
       }
 
       // ---- ImageIndex / ImageKey dropdown (Tier-4): describe-time context lets ImageKeyConverter/ImageIndexConverter
@@ -1470,7 +1497,7 @@ async function main(): Promise<void> {
         if (!(flat9?.standardValues && flat9.standardValues.length >= 2)) throw new Error(`ImageList (net9): a normal enum dropdown (Button.FlatStyle) regressed — the image-scoped context change must not affect other converters (got ${JSON.stringify(flat9?.standardValues)})`);
         console.log(`e2e: ImageIndex/ImageKey (net9) verified — an empty (interpreter-unpopulated) ImageList offers NO image dropdown (plain field, no regression); a normal enum dropdown (FlatStyle: ${flat9!.standardValues!.join(', ')}) is unaffected by the scoped context change`);
       } else {
-        console.log('e2e: ImageIndex/ImageKey (net9) SKIPPED — engine/samples/ImageListForm.Designer.cs missing (UNTRACKED sample — review wf_897ba719)');
+        console.log('e2e: ImageIndex/ImageKey (net9) SKIPPED — engine/samples/ImageListForm.Designer.cs missing (UNTRACKED sample)');
       }
 
       // ---- selection-retention across a full re-render (regression for the tray-partition fix) ----
@@ -1500,13 +1527,23 @@ async function main(): Promise<void> {
       const inheritedBaseFormDes = path.join(repo, 'engine', 'samples', 'InheritedBaseForm.Designer.cs');
       const inheritedBaseFormCs = path.join(repo, 'engine', 'samples', 'InheritedBaseForm.cs');
       const derivedFormCs = path.join(repo, 'engine', 'samples', 'DerivedForm.cs');
-      // codex R#10: make an unavailable net48 environment a VISIBLE skip (a coverage gap, not a silent pass) so the
+      // Every LINKED sample must be a staleness input (ensureNet48Fixture covers the csproj + fixture-local companions
+      // itself). NotifyIconForm.Designer.cs was linked but missing here, so editing it could serve a stale fixture DLL
+      // on a local on-demand run (CI's unconditional build masked it).
+      const notifyIconFormDes = path.join(repo, 'engine', 'samples', 'NotifyIconForm.Designer.cs');
+      const treeFormDes = path.join(repo, 'engine', 'samples', 'TreeForm.Designer.cs');
+      const treeFormCs = path.join(repo, 'engine', 'samples', 'TreeForm.cs');
+      const tabFormDes = path.join(repo, 'engine', 'samples', 'TabForm.Designer.cs');
+      const tabFormCs = path.join(repo, 'engine', 'samples', 'TabForm.cs');
+      // Make an unavailable net48 environment a VISIBLE skip (a coverage gap, not a silent pass) so the
       // cross-runtime legs — including the S2 inherited-form parity proof — are never mistaken for having run. A fixture
       // COMPILE failure is separately logged to stderr by ensureNet48Fixture (a bad <Compile> link surfaces there).
       const net48FixtureReady = fs.existsSync(ctxForm) && fs.existsSync(net48Exe)
-        && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, [ctxForm, overflowForm, imageListForm, compRefForm48, derivedForm, derivedFormCs, inheritedBaseFormDes, inheritedBaseFormCs]);
+        && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, [ctxForm, overflowForm, imageListForm, compRefForm48, notifyIconFormDes, derivedForm, derivedFormCs, inheritedBaseFormDes, inheritedBaseFormCs, treeFormDes, treeFormCs, tabFormDes, tabFormCs]);
       if (!net48FixtureReady) {
-        console.log('e2e: SKIPPED net48 cross-runtime legs (incl. 0.10.0 S2 inherited-form parity) — net48 engine/toolchain or fixture build unavailable in this environment');
+        const message = 'net48 cross-runtime legs unavailable: build engine-net48 and install the .NET Framework 4.8 targeting toolchain';
+        if (process.env.WFD_REQUIRE_NET48 === '1') throw new Error(message);
+        console.log(`e2e: SKIPPED ${message}`);
       }
       if (net48FixtureReady) {
         const n48 = await startEngine(net48Exe, { onLog: (l) => console.error(l) });
@@ -1515,15 +1552,130 @@ async function main(): Promise<void> {
           // net48 instantiates the real compiled DerivedForm, so the base ctor runs and baseButton is present
           // ALONGSIDE derivedButton — the very control net9 silently drops. This is why S2's banner is net9-only:
           // net48 has no inherited-form gap. The MEANINGFUL proof is control PRESENCE (baseButton + derivedButton);
-          // the inheritedBase=false check is secondary (the net48 adapter hardcodes it — codex R#11 — so it's a
+          // the inheritedBase=false check is secondary (the net48 adapter hardcodes it — so it's a
           // documentation assert, not an engine test). NOTE: reaching this requires the net48 toolchain AND a clean
-          // fixture build; a compile failure or absent toolchain SKIPS this leg (a coverage gap, not a pass — codex R#10).
+          // fixture build; a compile failure or absent toolchain SKIPS this leg (a coverage gap, not a pass.
           const derived48 = await renderCompiledWithLayout(n48, derivedForm, ctxFixtureDll, 'SampleApp.DerivedForm');
           const derived48Ids = derived48.controls.map((c) => c.id).sort();
           if (!derived48Ids.includes('baseButton')) throw new Error(`S2 net48: the base control (baseButton) must render via real inheritance — got [${derived48Ids.join(', ')}]`);
           if (!derived48Ids.includes('derivedButton')) throw new Error(`S2 net48: the derived control (derivedButton) must render — got [${derived48Ids.join(', ')}]`);
           if (derived48.inheritedBase) throw new Error('S2 net48: the compiled engine must NOT flag inheritedBase — it renders the real base, so the banner is net9-only');
           console.log(`e2e: 0.10.0 S2 net48 inherited-form parity verified — compiled DerivedForm renders BOTH baseButton + derivedButton (no gap), inheritedBase=false (net9 drops baseButton, so the banner is net9-only)`);
+
+          // ---- INTERPRETED render (VS model) — the net48 engine renders the LIVE .Designer.cs source
+          // by instantiating the BASE type and replaying the parsed IR onto it, instead of the compiled last build.
+          // DerivedForm is the strongest proof: visual inheritance. The interpreter must surface baseButton (inherited,
+          // from the compiled base instance) AND derivedButton (current source), matching the compiled control set.
+          const derivedSrc = fs.readFileSync(derivedForm, 'utf8');
+          const di = await renderInterpretedWithLayout(n48, derivedForm, ctxFixtureDll, derivedSrc, 'SampleApp.DerivedForm');
+          if (di.renderMode !== 'interpreted') throw new Error(`net48: DerivedForm must render INTERPRETED — got ${di.renderMode} (${di.fallbackReason})`);
+          if (di.png.length === 0) throw new Error('net48: interpreted render produced no PNG');
+          const diIds = di.controls.map((c) => c.id).sort();
+          if (!diIds.includes('baseButton')) throw new Error(`net48: interpreted DerivedForm must surface the INHERITED baseButton — got [${diIds.join(', ')}]`);
+          if (!diIds.includes('derivedButton')) throw new Error(`net48: interpreted DerivedForm must render the current-source derivedButton — got [${diIds.join(', ')}]`);
+          // geometry parity with the compiled render (the differential-comparator contract): same field-backed rects.
+          for (const c of derived48.controls.filter((x) => !x.isRoot && diIds.includes(x.id))) {
+            const b = di.controls.find((x) => x.id === c.id)!;
+            if (Math.abs(c.x - b.x) > 2 || Math.abs(c.y - b.y) > 2 || Math.abs(c.width - b.width) > 2 || Math.abs(c.height - b.height) > 2)
+              throw new Error(`net48: interpreted geometry diverges for ${c.id} — compiled (${c.x},${c.y},${c.width}x${c.height}) vs interpreted (${b.x},${b.y},${b.width}x${b.height})`);
+          }
+          // and a form whose IC uses constructs the v1 IR doesn't cover FALLS BACK with a named reason (never silent).
+          const ilSrc = fs.readFileSync(imageListForm, 'utf8');
+          const ilInterp = await renderInterpretedWithLayout(n48, imageListForm, ctxFixtureDll, ilSrc, 'SampleApp.ImageListForm');
+          if (ilInterp.renderMode !== 'compiledFallback') throw new Error(`net48: ImageListForm (ImageList images) must FALL BACK — got ${ilInterp.renderMode}`);
+          if (!ilInterp.fallbackReason) throw new Error('net48: a fallback must carry a named reason (never silent)');
+          if (ilInterp.png.length === 0) throw new Error('net48: a compiled fallback still renders a picture');
+          console.log(`e2e: net48 INTERPRETED render verified — DerivedForm renders via the IR interpreter (base instantiated, VS model) surfacing inherited baseButton + current-source derivedButton with geometry parity to compiled; ImageListForm falls back (${ilInterp.fallbackReason}) with a picture + reason, never silent`);
+
+          // ---- IR coverage: TreeView (nodes are LOCAL variables, bottom-up) — the TreeNode interpreter subsystem must
+          // render TreeForm interpreted (not fall back), proving local-variable node construction + Nodes.AddRange.
+          const treeSrc = fs.readFileSync(treeFormDes, 'utf8');
+          const treeI = await renderInterpretedWithLayout(n48, treeFormDes, ctxFixtureDll, treeSrc, 'SampleApp.TreeForm');
+          if (treeI.renderMode !== 'interpreted') throw new Error(`TreeNode: TreeForm must render INTERPRETED — got ${treeI.renderMode} (${treeI.fallbackReason})`);
+          if (!treeI.controls.some((c) => c.id === 'treeView1')) throw new Error('TreeNode: the TreeView control must render');
+          console.log('e2e: TreeNode subsystem verified — TreeForm (nodes serialized as local variables, nested via ctor arrays + Nodes.AddRange) renders INTERPRETED, not fallback');
+
+          // ---- interpreted DESCRIBE parity. The property panel must read the INTERPRETED
+          // live-source instance, not the compiled build. Edit okButton.Text in an IN-MEMORY buffer (not the build),
+          // then assert the interpreted describe reflects the edit while the compiled describe (of the unmodified build)
+          // shows the built value — proving the panel matches the interpreted canvas on an unsaved edit. Also assert the
+          // LOGICAL root identity (name + child.parent = the derived form, not the base 'Form') and that reference
+          // candidates come from the interpreter's identity model, and that an unknown id is fail-closed (null, never a
+          // compiled substitute).
+          {
+            const crBase = fs.readFileSync(compRefForm48, 'utf8');
+            const crEdited = crBase.replace('this.okButton.Text = "OK";', 'this.okButton.Text = "OK-EDITED";');
+            if (crEdited === crBase) throw new Error('could not stage the okButton.Text edit');
+            const crType = 'WinFormsDesigner.Samples.ComponentRefForm';
+
+            const iOk = await describeInterpretedComponent(n48, compRefForm48, ctxFixtureDll, crEdited, 'okButton', crType);
+            if (!iOk) throw new Error('interpreted describe of okButton returned null (must interpret)');
+            const iText = iOk.properties.find((p) => p.name === 'Text')?.value;
+            if (iText !== 'OK-EDITED') throw new Error(`interpreted describe must read the LIVE edited Text — got "${iText}"`);
+
+            const cOk = await describeCompiledComponent(n48, compRefForm48, ctxFixtureDll, 'okButton', crType);
+            const cText = cOk?.properties.find((p) => p.name === 'Text')?.value;
+            if (cText !== 'OK') throw new Error(`compiled describe must read the BUILT Text — got "${cText}"`);
+
+            const iRoot = await describeInterpretedComponent(n48, compRefForm48, ctxFixtureDll, crBase, 'this', crType);
+            if (iRoot?.name !== 'ComponentRefForm') throw new Error(`interpreted root name must be the LOGICAL type — got "${iRoot?.name}"`);
+            if (iOk.parent !== 'ComponentRefForm') throw new Error(`interpreted child parent must be the LOGICAL root — got "${iOk.parent}"`);
+            const acceptCand = iRoot.properties.find((p) => p.name === 'AcceptButton')?.standardValues ?? [];
+            if (!acceptCand.includes('okButton') || !acceptCand.includes('cancelButton'))
+              throw new Error(`interpreted reference candidates must come from the identity model — got [${acceptCand.join(', ')}]`);
+
+            const iBogus = await describeInterpretedComponent(n48, compRefForm48, ctxFixtureDll, crBase, 'no_such_field', crType);
+            if (iBogus !== null) throw new Error('interpreted describe of an unknown id must be null (panel unavailable, never a compiled substitute)');
+
+            console.log('e2e:  interpreted-describe RPC verified — the interpreted describe reads the LIVE source (okButton.Text "OK-EDITED" while the build says "OK"), reports the logical root identity (name + child.parent = ComponentRefForm, not the base Form), draws reference candidates from the interpreter identity model (okButton, cancelButton), and returns null (fail-closed) for an unknown id; the host loadProps/loadItemProps/describeFor route to this endpoint when the canvas is interpreted');
+          }
+
+          // ---- interpreted TAB view-state. TabForm interprets (SelectedIndex=0 → page 1's
+          // pageButton1); a transient selected-tab override renders the OTHER page's content STAYING interpreted — the
+          // engine foundation for a tab-click that switches pages without flipping the canvas to the compiled build.
+          {
+            const tabSrc = fs.readFileSync(tabFormDes, 'utf8');
+            const tabDefault = await renderInterpretedWithLayout(n48, tabFormDes, ctxFixtureDll, tabSrc, 'SampleApp.TabForm');
+            if (tabDefault.renderMode !== 'interpreted') throw new Error(`tabs: TabForm must interpret — got ${tabDefault.renderMode} (${tabDefault.fallbackReason})`);
+            if (!tabDefault.controls.some((c) => c.id === 'pageButton1')) throw new Error('tabs: default view (SelectedIndex=0) must show page 1 (pageButton1)');
+            const tabP2 = await renderInterpretedWithLayout(n48, tabFormDes, ctxFixtureDll, tabSrc, 'SampleApp.TabForm', undefined, 0, 0, ['tabControl1=tabPage2']);
+            if (tabP2.renderMode !== 'interpreted') throw new Error(`tabs: the view-state render must STAY interpreted — got ${tabP2.renderMode}`);
+            if (!tabP2.controls.some((c) => c.id === 'pageLabel2')) throw new Error('tabs: the selected-tab override must render page 2 (pageLabel2)');
+            if (tabP2.controls.some((c) => c.id === 'pageButton1')) throw new Error('tabs: the page-2 view must NOT still show page-1 content (pageButton1)');
+            // a foreign/unresolvable override is a safe no-op (narrow adapter) — stays on the source-selected page 1
+            const tabBogus = await renderInterpretedWithLayout(n48, tabFormDes, ctxFixtureDll, tabSrc, 'SampleApp.TabForm', undefined, 0, 0, ['tabControl1=no_such_page']);
+            if (!tabBogus.controls.some((c) => c.id === 'pageButton1')) throw new Error('tabs: a bogus tab override must be a no-op (stay on the source-selected page)');
+            console.log('e2e:  interpreted tab view-state verified — TabForm interprets (default page 1 = pageButton1); a "tabControl1=tabPage2" override renders page 2 (pageLabel2) STAYING interpreted (never the compiled build); a bogus override is a safe no-op');
+          }
+
+          // ---- FakeVendor corpus — the interpreter must reproduce DEVEXPRESS-LIKE patterns without a
+          // real vendor install (legally uncommittable). FakeVendorForm uses a control with an Appearance SUB-OBJECT
+          // (property-chain assignment) and an ISupportInitialize control (real Begin/EndInit replay). It must render
+          // INTERPRETED with geometry parity to the compiled truth. Built by CI ('Build sample fixtures'); on a local
+          // box without it, WFD_REQUIRE_NET48 makes the absence a visible failure, else a skip.
+          const fakeVendorDll = path.join(repo, 'fixtures', 'FakeVendor', 'bin', 'Release', 'net48', 'FakeVendor.dll');
+          const fakeVendorSrc = path.join(repo, 'fixtures', 'FakeVendor', 'FakeVendorForm.Designer.cs');
+          if (!fs.existsSync(fakeVendorDll)) {
+            const built = spawnSync('dotnet', ['build', path.join(repo, 'fixtures', 'FakeVendor'), '-c', 'Release', '-p:PlatformTarget=x64', '--nologo', '-v', 'q'], { encoding: 'utf8' });
+            if (built.status !== 0 && process.env.WFD_REQUIRE_NET48 === '1') throw new Error('FakeVendor fixture failed to build: ' + ((built.stderr || built.stdout || '').trim().split('\n').slice(-3).join(' | ')));
+          }
+          if (fs.existsSync(fakeVendorDll)) {
+            const fvSrc = fs.readFileSync(fakeVendorSrc, 'utf8');
+            const fvType = 'FakeVendor.FakeVendorForm';
+            const fvI = await renderInterpretedWithLayout(n48, fakeVendorSrc, fakeVendorDll, fvSrc, fvType);
+            if (fvI.renderMode !== 'interpreted') throw new Error(`FakeVendor: vendor-pattern form must render INTERPRETED — got ${fvI.renderMode} (${fvI.fallbackReason})`);
+            const fvIds = fvI.controls.filter((c) => !c.isRoot).map((c) => c.id).sort();
+            if (!fvIds.includes('fancyButton1') || !fvIds.includes('dataPanel1')) throw new Error(`FakeVendor: both vendor controls must render — got [${fvIds.join(', ')}]`);
+            const fvC = await renderCompiledWithLayout(n48, fakeVendorSrc, fakeVendorDll, fvType);
+            for (const c of fvC.controls.filter((x) => !x.isRoot && fvIds.includes(x.id))) {
+              const b = fvI.controls.find((x) => x.id === c.id)!;
+              if (Math.abs(c.x - b.x) > 2 || Math.abs(c.y - b.y) > 2 || Math.abs(c.width - b.width) > 2 || Math.abs(c.height - b.height) > 2)
+                throw new Error(`FakeVendor: interpreted geometry diverges for ${c.id} — compiled (${c.x},${c.y},${c.width}x${c.height}) vs interpreted (${b.x},${b.y},${b.width}x${b.height})`);
+            }
+            console.log('e2e: FakeVendor corpus verified — a DevExpress-like form (Appearance sub-object property-chain + ISupportInitialize control) renders INTERPRETED with geometry parity to compiled, proving vendor-pattern interpretation without a real vendor install');
+          } else {
+            console.log('e2e: SKIPPED FakeVendor (fixture not built; set WFD_REQUIRE_NET48=1 to require it)');
+          }
 
           // ---- 0.11.0 ImageList editor: net48 ImageStream serialize primitive (the binary WRITE linchpin) ----
           // Serialize two real 16x16 PNGs into a VS-format ImageListStreamer blob. The engine self-round-trips the blob
@@ -1560,6 +1712,29 @@ async function main(): Promise<void> {
           // NEGATIVE: a foreign/garbage blob deserializes to ok=false (never throws).
           const ilReadBad = await deserializeImageList(n48, Buffer.from('not a stream').toString('base64'));
           if (ilReadBad.ok) throw new Error('ImageList deserialize: a foreign blob must return ok=false');
+
+          // 1.0 strengthened parity: committing an ImageList edit must update the already-cached compiled form now,
+          // rather than requiring a rebuild/reopen. The dependent button's converter is a useful observable: after
+          // replacing [first,second] with [red,blue], its ImageKey dropdown must immediately expose the new keys.
+          await setCompiledImageListLive(n48, imageListForm, ctxFixtureDll, 'imageList1', ilRes.base64, ilRes.keys);
+          const ilLiveButton = await describeCompiledComponent(n48, imageListForm, ctxFixtureDll, 'button1');
+          const liveKeys = ilLiveButton?.properties?.find((p) => p.name === 'ImageKey')?.standardValues ?? [];
+          if (!(liveKeys.includes('red') && liveKeys.includes('blue')) || liveKeys.includes('first') || liveKeys.includes('second')) {
+            throw new Error(`ImageList live reconcile (net48): expected new keys [red, blue] immediately, got [${liveKeys.join(', ')}]`);
+          }
+
+          // The same compiled describe path now surfaces source-derived design-time pseudo-properties. These are not
+          // runtime TypeDescriptor properties, so their presence proves SourceMetadata parity with the modern engine.
+          const mod48 = ilLiveButton?.properties?.find((p) => p.name === 'Modifiers');
+          const gen48 = ilLiveButton?.properties?.find((p) => p.name === 'GenerateMember');
+          if (mod48?.designTime !== true || mod48.value !== 'Private' || mod48.readOnly) {
+            throw new Error(`Modifiers (net48): expected editable design-time Private, got ${JSON.stringify(mod48)}`);
+          }
+          if (gen48?.designTime !== true || gen48.value !== 'true' || !gen48.readOnly) {
+            throw new Error(`GenerateMember (net48): expected read-only design-time true, got ${JSON.stringify(gen48)}`);
+          }
+          console.log('e2e: 1.0 net48 parity verified — ImageList live reconciliation updates dependent key choices immediately; Modifiers=Private and GenerateMember=true surface through compiled describe');
+          await setCompiledImageListLive(n48, imageListForm, ctxFixtureDll, 'imageList1', ilRes.base64, ['first', 'second']);
           console.log(`e2e: 0.11.0 ImageList deserialize (net48 READ) verified — blob → 2 valid-PNG images (16x16, blob carries no keys — designer-side), read→re-attach-keys→serialize round-trips to 2 (keys red,blue); foreign blob → ok=false`);
 
           // ---- 0.11.0 ImageList editor: net9 SetImageList (embed blob + rewrite designer) ----
@@ -1579,7 +1754,7 @@ async function main(): Promise<void> {
           // NEGATIVE: an invalid component id must be refused (no injection into the LHS / resx key).
           const ilBadId = await setImageList(engine, imageListForm, 'bad id"; evil', ilRes.base64, ilRes.keys, null, null);
           if (ilBadId.safe) throw new Error('ImageList SetImageList: an invalid component id must be refused');
-          // NEGATIVE (codex #1): an arbitrary binary payload (valid base64, but NOT a serialized ImageListStreamer) must
+          // NEGATIVE: an arbitrary binary payload (valid base64, but NOT a serialized ImageListStreamer) must
           // be refused — net9 must not be a confused deputy that embeds any BinaryFormatter blob as an object resource.
           const ilBadBlob = await setImageList(engine, imageListForm, 'imageList1', Buffer.from('this is not an ImageList stream').toString('base64'), ['x'], null, null);
           if (ilBadBlob.safe) throw new Error('ImageList SetImageList: a non-ImageListStreamer blob must be refused');
@@ -1605,6 +1780,65 @@ async function main(): Promise<void> {
             const revertedCtl = afterDrop.controls.find((c) => c.id === probe.id);
             if (!revertedCtl || revertedCtl.x !== baseX) throw new Error(`net48 reconcile: after discard the control must revert to baseline x=${baseX} (got ${revertedCtl?.x}) — the undone live edit lingered`);
             console.log(`e2e: 0.11.0 net48 undo reconcile verified — live Location edit on ${probe.id} moved x ${baseX}→${movedCtl.x}; discardCompiledLive drops the stale instance; next render reverts to baseline x=${baseX}`);
+
+            // ---- 1.0.0: liveInstanceId / liveBuildId are DIAGNOSTIC lifecycle facts (the divergence lock they once
+            // fed was descoped — but the ids are still reported for diagnostics + the release proof
+            // below depends on the build id advancing on a real rebuild). Pin the engine contract on the real engine:
+            // (1) every response carries an instance id;
+            // (2) it is STABLE while the engine reuses its cached instance (a live edit and a plain re-render are the
+            // same instance);
+            // (3) it CHANGES once the instance is actually dropped (discard / crash / release reload).
+            // liveBuildId is STABLE across an edit and a discard (same build) and advances ONLY on a real rebuild.
+            if (!reconBase.liveInstanceId) throw new Error('1.0.0: a net48 render must report a liveInstanceId (diagnostics + lifecycle)');
+            if (moved.liveInstanceId !== reconBase.liveInstanceId)
+              throw new Error(`1.0.0: a live edit reuses the cached instance, so liveInstanceId must be STABLE (${reconBase.liveInstanceId} → ${moved.liveInstanceId})`);
+            if (afterDrop.liveInstanceId === reconBase.liveInstanceId)
+              throw new Error(`1.0.0: after discardCompiledLive the next render re-instantiates, so liveInstanceId MUST change (still ${afterDrop.liveInstanceId})`);
+            if (!afterDrop.liveInstanceId) throw new Error('1.0.0: the post-discard render must still report a liveInstanceId');
+            if (!reconBase.liveBuildId) throw new Error('1.0.0: a net48 render must report a liveBuildId');
+            if (moved.liveBuildId !== reconBase.liveBuildId || afterDrop.liveBuildId !== reconBase.liveBuildId)
+              throw new Error(`1.0.0: liveBuildId must be STABLE across a live edit and a discard (no rebuild happened): ${reconBase.liveBuildId} → edit ${moved.liveBuildId} → discard ${afterDrop.liveBuildId}`);
+            console.log(`e2e: 1.0.0 net48 lifecycle ids verified — liveInstanceId reported on every render, STABLE across a live edit (${reconBase.liveInstanceId.slice(0, 8)}…) and CHANGED after discard (→ ${afterDrop.liveInstanceId.slice(0, 8)}…); liveBuildId STABLE (${reconBase.liveBuildId}) across both (a rebuild below advances it)`);
+
+            // ---- 1.0.0: releaseCompiledAssembly actually lets the user REBUILD their own project ----
+            // The preview loads the user's dlls in place (ShadowCopyFiles must stay off for delay-signed vendor
+            // graphs), which PINS them: with a net48 designer live, the user's own build failed outright with
+            // MSB3027 "The file is locked by: WinFormsDesigner.Engine.Net48". Nothing released them — so every
+            // "rebuild to refresh the preview" instruction in the product was unfollowable, and the mtime-reload
+            // in DomainManager could never fire because the mtime could never change. Prove BOTH halves against a
+            // real MSBuild, since a mocked handle proves nothing about a file lock:
+            // (1) while the assembly is loaded, a rebuild FAILS (the bug is real, and this test would rot silently
+            // if it ever stopped reproducing);
+            // (2) after releaseCompiledAssembly, the SAME rebuild SUCCEEDS (the fix is real);
+            // (3) rendering still works afterwards, from a freshly loaded domain with a new instance id.
+            const ctxFixtureProj = path.join(ctxFixtureDir, 'Net48CtxFixture.csproj');
+            const rebuild = () => spawnSync('dotnet', ['build', ctxFixtureProj, '-c', 'Release', '-t:Rebuild', '--nologo', '-v:quiet'],
+              { encoding: 'utf8', shell: true });
+            const lockedBuild = rebuild();
+            if (lockedBuild.status === 0)
+              throw new Error('1.0.0 release-for-rebuild: expected the build to FAIL while the assembly is loaded (the lock this fix exists for). If the engine no longer pins the output, delete this half of the test — but verify why first.');
+            if (!/MSB3027|MSB3021|being used by another process/i.test((lockedBuild.stdout || '') + (lockedBuild.stderr || '')))
+              throw new Error(`1.0.0 release-for-rebuild: the build failed, but not with a file-lock error — this test is no longer proving what it claims. Output: ${(lockedBuild.stdout || '').slice(-400)}`);
+
+            const released = await releaseCompiledAssembly(n48, ctxFixtureDll);
+            if (released.released !== 1 || released.failed !== 0) throw new Error(`1.0.0 release-for-rebuild: releaseCompiledAssembly must report it unloaded the domain (got ${JSON.stringify(released)})`);
+            const freeBuild = rebuild();
+            if (freeBuild.status !== 0)
+              throw new Error(`1.0.0 release-for-rebuild: after releasing the assembly the user's rebuild MUST succeed — the handles were not returned. Output: ${((freeBuild.stdout || '') + (freeBuild.stderr || '')).slice(-600)}`);
+
+            const afterRebuild = await renderCompiledWithLayout(n48, derivedForm, ctxFixtureDll, reconType);
+            if (!afterRebuild.liveInstanceId) throw new Error('1.0.0 release-for-rebuild: the post-rebuild render must still report a liveInstanceId');
+            if (afterRebuild.liveInstanceId === afterDrop.liveInstanceId)
+              throw new Error('1.0.0 release-for-rebuild: the rebuilt assembly must load into a NEW instance');
+            // 1.0.0 — the rebuild MUST advance liveBuildId (a different assembly on disk); the release-for-rebuild
+            // proof depends on that, and it is the diagnostic signal a rebuild happened.
+            if (afterRebuild.liveBuildId === reconBase.liveBuildId)
+              throw new Error(`1.0.0: a real rebuild must advance liveBuildId (still ${afterRebuild.liveBuildId})`);
+            // Repeated release is idempotent: the first call already unloaded the (rebuilt) domain, so a second finds
+            // nothing loaded (attempted 0) and never throws.
+            const again = await releaseCompiledAssembly(n48, ctxFixtureDll);
+            if (again.failed !== 0) throw new Error(`1.0.0 release-for-rebuild: a repeat release must not report a failure (got ${JSON.stringify(again)})`);
+            console.log(`e2e: 1.0.0 net48 release-for-rebuild verified — a real MSBuild rebuild FAILS with a file lock while the preview holds the assembly, SUCCEEDS after releaseCompiledAssembly, loads the fresh build into a new instance (${afterDrop.liveInstanceId.slice(0, 8)}… → ${afterRebuild.liveInstanceId.slice(0, 8)}…) AND advances liveBuildId (${reconBase.liveBuildId} → ${afterRebuild.liveBuildId})`);
           }
 
           const r48 = await renderCompiledWithLayout(n48, ctxForm, ctxFixtureDll);
@@ -1630,7 +1864,7 @@ async function main(): Promise<void> {
           if (net9Ids.join(',') !== net48Ids.join(',')) throw new Error(`net48 ctx: control partition diverges from net9 — net9 [${net9Ids.join(', ')}] vs net48 [${net48Ids.join(', ')}]`);
           // cross-runtime nested GEOMETRY parity: the flyout draws from `children`, so net48's emitted nested forest for
           // editMenu (ids/order/captions/owner) must equal net9's — a describe-only match wouldn't catch a BuildItemChildren
-          // divergence (a stray Available/Placement filter, reordering, or a different id source) (review wf_537a5916-95d).
+          // divergence (a stray Available/Placement filter, reordering, or a different id source).
           const editKids = (its: ToolStripItemBounds[]): string =>
             (its.find((i) => i.itemId === 'editMenu')?.children ?? []).map((k) => `${k.itemId}:${k.text}:${k.ownerId}`).join('|');
           const net9Kids = editKids(net9Layout.toolStripItems);
@@ -1652,16 +1886,16 @@ async function main(): Promise<void> {
           if (net9CtxItems !== net48CtxItems) throw new Error(`net48 ctx: tray chip items diverge from net9 — net9 [${net9CtxItems}] vs net48 [${net48CtxItems}]`);
           console.log(`e2e: net48 off-tree ContextMenuStrip verified — compiled render agrees with net9 (controls [${net48Ids.join(', ')}], contextMenuStrip1 tray-only, tray [${r48.tray.map((t) => t.id).join(', ')}], no strip items; editMenu nested children match net9 [${net48Kids}]; tray chip items match net9 [${net48CtxItems}])`);
 
-          // ---- net48 item→Properties describe parity (Slice 1b) ----
-          // A field-backed ToolStripItem is a Component, not a Control, so before Slice 1b the net48 engine's
+          // ---- net48 item→Properties describe parity ----
+          // A field-backed ToolStripItem is a Component, not a Control, so previously the net48 engine's
           // DescribeOn (ByField = Control-only) returned null for it and the item→Properties panel showed a
           // placeholder. Now DescribeOn falls back to ByFieldComponent → the item describes. Assert the compiled
           // engine returns the SAME item facts as net9 for a top-level menu item (fileMenu: Text="File", and — per
-          // net9 ParentName — a Component reports no Parent). Read-only editing is a later slice; this is the read.
+          // net9 ParentName — a Component reports no Parent). Editing is a later step; this is the read.
           const item9 = await describeComponent(engine, ctxForm, 'fileMenu');
           const item48 = await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, 'fileMenu');
           if (!item9) throw new Error('net9: fileMenu (top-level menu item) failed to describe');
-          if (!item48) throw new Error('net48 item describe (Slice 1b): fileMenu returned null — DescribeOn did not fall back to ByFieldComponent');
+          if (!item48) throw new Error('net48 item describe: fileMenu returned null — DescribeOn did not fall back to ByFieldComponent');
           if (!item48.type.endsWith('ToolStripMenuItem')) throw new Error(`net48 item describe: fileMenu wrong type ${item48.type}`);
           const text9 = item9.properties?.find((p) => p.name === 'Text')?.value;
           const text48 = item48.properties?.find((p) => p.name === 'Text')?.value;
@@ -1679,7 +1913,7 @@ async function main(): Promise<void> {
             if (dd && (dd.referenceValues === true || (dd.standardValues && dd.standardValues.length)))
               throw new Error(`component-ref (${en}): a ToolStripItem's DropDown must NOT get a reference dropdown (item edits don't translate refEdit) — got referenceValues=${dd.referenceValues}, [${(dd.standardValues ?? []).join(', ')}]`);
           }
-          // WRITE-side mirror of the item exclusion (codex + workflow review): describe never offers a reference dropdown on
+          // WRITE-side mirror of the item exclusion: describe never offers a reference dropdown on
           // a ToolStripItem, so a direct RPC/CLI write of a reference onto one must be REFUSED too (offer ⇔ accept) — even
           // when it is otherwise assignable. fileMenu.DropDown is a ReferenceConverter typed ToolStripDropDown, and
           // contextMenuStrip1 (a ContextMenuStrip) IS a ToolStripDropDown → assignable, so only the item-exclusion guard
@@ -1709,12 +1943,12 @@ async function main(): Promise<void> {
           const setCmpNone = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'panel1', 'ContextMenuStrip', '(none)');
           if (!setCmpNone.applied) throw new Error(`component-ref (net48): panel1.ContextMenuStrip=(none) (clear) must apply live (diag: ${setCmpNone.diagnostics || 'none'})`);
           // a RESOLVABLE but WRONG-TYPE reference (menuStrip1 is a MenuStrip, not a ContextMenuStrip) must be rejected by
-          // the net48 assignability contract — not silently mis-assigned or left to SetValue to throw (codex review #2).
+          // the net48 assignability contract — not silently mis-assigned or left to SetValue to throw.
           const setCmpBadType = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'panel1', 'ContextMenuStrip', 'menuStrip1');
           if (setCmpBadType.applied) throw new Error('component-ref (net48): panel1.ContextMenuStrip=menuStrip1 (a MenuStrip, not assignable) must be rejected by the assignability check');
           console.log(`e2e: component-ref dropdown COMPONENT ref verified — panel1.ContextMenuStrip [${cms9}] pre-selecting "contextMenuStrip1" on both engines; net48 live-set resolves the component via the FieldNames reverse-scan, "(none)" clears, an incompatible-type sibling is rejected`);
 
-          // ---- net48 dirty-buffer metadata (codex review — item Events / Reset must reflect the UNSAVED edit) ----
+          // ---- net48 dirty-buffer metadata ----
           // The net48 source-metadata pass (grid bold + wired-handler) previously ALWAYS read the on-disk .Designer.cs, so
           // a just-reset item property stayed bold / a just-wired event showed unwired until Save. Now describe takes the
           // unsaved buffer. Prove it: fileMenu.Text is source-explicit from disk; describe with a buffer whose Text
@@ -1745,30 +1979,30 @@ async function main(): Promise<void> {
           if (nested48.parent != null) throw new Error(`net48 nested describe: a nested Component item must report no Parent (net9 parity), got ${JSON.stringify(nested48.parent)}`);
           console.log(`e2e: net48 NESTED submenu item describe parity verified — undoItem (child of editMenu) describes on the compiled engine (type ${nested48.type}, Text "${nText48}"), matching net9 → the on-canvas flyout resolves nested items on net48 too`);
 
-          // ---- net48 item→Properties EDITING (Slice 2) ----
+          // ---- net48 item→Properties EDITING ----
           // Widening TryApply (the net48 live-edit primitive) to resolve a non-Control component — the same FieldNames
           // reverse-scan describe uses — makes a designer-originated item edit update the live COMPILED picture, not
-          // just the source. Drive the live-edit RPC on the menu item: `applied` MUST be true (before Slice 2 it came
+          // just the source. Drive the live-edit RPC on the menu item: `applied` MUST be true (previously it came
           // back false — "no control 'fileMenu'"), and the re-rendered item geometry MUST carry the new caption (the
           // picture actually changed on the live instance, so the net48 canvas updates without a rebuild).
           const edit48 = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'fileMenu', 'Text', 'Fichier');
-          if (!edit48.applied) throw new Error(`net48 item edit (Slice 2): fileMenu.Text was not applied live — TryApply did not resolve the item (diag: ${edit48.diagnostics || 'none'})`);
+          if (!edit48.applied) throw new Error(`net48 item edit: fileMenu.Text was not applied live — TryApply did not resolve the item (diag: ${edit48.diagnostics || 'none'})`);
           const editedItem = edit48.toolStripItems.find((i) => i.itemId === 'fileMenu');
-          if (!editedItem) throw new Error('net48 item edit (Slice 2): fileMenu absent from the re-rendered strip geometry');
-          if (editedItem.text !== 'Fichier') throw new Error(`net48 item edit (Slice 2): fileMenu caption did not update live — expected "Fichier", got ${JSON.stringify(editedItem.text)}`);
+          if (!editedItem) throw new Error('net48 item edit: fileMenu absent from the re-rendered strip geometry');
+          if (editedItem.text !== 'Fichier') throw new Error(`net48 item edit: fileMenu caption did not update live — expected "Fichier", got ${JSON.stringify(editedItem.text)}`);
           console.log(`e2e: net48 item→Properties EDITING verified — a live fileMenu.Text edit applied on the compiled instance (caption now "${editedItem.text}"), picture updated without a rebuild`);
 
-          // ---- net48 item editing must NOT live-mutate a non-Control non-item component (review wf_65a6b395-205) ----
-          // The Slice-2 widening resolves a field-backed ToolStripItem for a live edit — but ONLY a ToolStripItem. A
-          // Timer (a field-backed non-Control component, describable since Slice 1b and reachable via the tray→control
+          // ---- net48 item editing must NOT live-mutate a non-Control non-item component ----
+          // The live-edit widening resolves a field-backed ToolStripItem for a live edit — but ONLY a ToolStripItem. A
+          // Timer (a field-backed non-Control component, describable and reachable via the tray→control
           // edit path) must stay INERT: the preview is a real running instance, so live-setting timer1.Enabled=true
           // would Start() it and run the compiled Tick handler inside the design surface. Assert the live edit is
           // refused (applied===false) AND the live instance's Enabled is untouched — proving the timer never started.
           const timerEdit = await setCompiledPropertyLive(n48, ctxForm, ctxFixtureDll, 'timer1', 'Enabled', 'true');
-          if (timerEdit.applied) throw new Error('net48 item edit (Slice 2 safety): setting timer1.Enabled live was APPLIED — a non-Control non-item component must not be live-mutated (a design surface must never Start() a timer)');
+          if (timerEdit.applied) throw new Error('net48 item edit: setting timer1.Enabled live was APPLIED — a non-Control non-item component must not be live-mutated (a design surface must never Start() a timer)');
           const timerDesc = await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, 'timer1');
           const enabledVal = timerDesc?.properties?.find((p) => p.name === 'Enabled')?.value;
-          if (enabledVal !== 'False') throw new Error(`net48 item edit (Slice 2 safety): timer1.Enabled changed to ${JSON.stringify(enabledVal)} on the live instance — the refused edit still mutated the timer`);
+          if (enabledVal !== 'False') throw new Error(`net48 item edit: timer1.Enabled changed to ${JSON.stringify(enabledVal)} on the live instance — the refused edit still mutated the timer`);
           console.log('e2e: net48 item-editing safety verified — a Timer (non-Control non-item component) is NOT live-mutable (timer1.Enabled=true refused, live instance still disabled); only ToolStripItems are newly editable');
 
           // ---- OVERFLOW items (net48 parity) ----
@@ -1798,7 +2032,7 @@ async function main(): Promise<void> {
           // ---- ImageIndex / ImageKey dropdown (net48 — the real feature) ----
           // The compiled ImageListForm's ImageList actually holds its keyed images (Images.Add runs), so describe's
           // context-aware ImageKeyConverter/ImageIndexConverter enumerate the REAL keys/indices → the grid shows a
-          // dropdown of them (VS parity). This is the primary target of the slice (net9 can't populate the ImageList).
+          // dropdown of them (VS parity). This is the primary target here (net9 can't populate the ImageList).
           if (fs.existsSync(imageListForm)) {
             const il48 = await describeCompiledComponent(n48, imageListForm, ctxFixtureDll, 'button1');
             if (!il48) throw new Error('ImageList (net48): button1 failed to describe on the compiled instance');
@@ -1807,11 +2041,11 @@ async function main(): Promise<void> {
             if (!(key48.includes('first') && key48.includes('second'))) throw new Error(`ImageList (net48): ImageKey dropdown must list the real ImageList keys [first, second] — got [${key48.join(', ')}]`);
             if (!(idx48.includes('0') && idx48.includes('1'))) throw new Error(`ImageList (net48): ImageIndex dropdown must list the real indices [0, 1] — got [${idx48.join(', ')}]`);
             // The "(none)"/-1 SENTINEL must be filtered out — it doesn't round-trip through the primitive write path
-            // (would splice a stale key literally "(none)" / reject the non-numeric int) — codex review #1.
+            // (would splice a stale key literally "(none)" / reject the non-numeric int).
             if (key48.includes('(none)')) throw new Error(`ImageList (net48): the ImageKey dropdown must NOT offer the "(none)" sentinel (it doesn't round-trip) — got [${key48.join(', ')}]`);
             if (idx48.includes('(none)') || idx48.includes('-1')) throw new Error(`ImageList (net48): the ImageIndex dropdown must NOT offer the "(none)"/-1 sentinel — got [${idx48.join(', ')}]`);
             // A control whose ImageIndex uses the internal NoneExcludedImageIndexConverter (no sentinel) must still get its
-            // dropdown — the old "<2" gate wrongly hid a 1-image list; here the 2-image TreeView must show [0, 1] — codex #2.
+            // dropdown — the old "<2" gate wrongly hid a 1-image list; here the 2-image TreeView must show [0, 1].
             const tv48 = await describeCompiledComponent(n48, imageListForm, ctxFixtureDll, 'treeView1');
             const tvIdx = tv48?.properties?.find((p) => p.name === 'ImageIndex')?.standardValues ?? [];
             if (!(tvIdx.includes('0') && tvIdx.includes('1')) || tvIdx.includes('(none)')) throw new Error(`ImageList (net48): treeView1.ImageIndex (NoneExcludedImageIndexConverter, no sentinel) must show [0, 1] with no "(none)" — got [${tvIdx.join(', ')}]`);
@@ -1906,8 +2140,6 @@ async function main(): Promise<void> {
         } finally {
           n48.dispose();
         }
-      } else {
-        console.log('e2e: net48 ContextMenuStrip partition SKIPPED — net48 engine exe or fixture toolchain unavailable');
       }
 
       // hardening: the byte/field-identity must ALSO hold on the explicit-asm path (custom controls from
@@ -1992,7 +2224,7 @@ async function main(): Promise<void> {
       }
       if (!(btn.x > lbl.x)) throw new Error(`TLP: cellButton (col 1) must be right of cellLabel (col 0): btn.x=${btn.x} lbl.x=${lbl.x}`);
       if (!(txt.y > lbl.y)) throw new Error(`TLP: cellText (row 1) must be below cellLabel (row 0): txt.y=${txt.y} lbl.y=${lbl.y}`);
-      // ColumnStyles/RowStyles applied (slice c): col0 = ColumnStyle(Percent, 25) and row0 = RowStyle(Absolute, 40),
+      // ColumnStyles/RowStyles applied: col0 = ColumnStyle(Percent, 25) and row0 = RowStyle(Absolute, 40),
       // so the col0/col1 boundary (cellButton.x) sits well left of center and the row0/row1 boundary (cellText.y)
       // well above the middle — both ≈25-27%, not the ≈50% they'd be if the styles were dropped (equal-sized cells).
       const tlp = tl.controls.find((c) => c.id === 'tableLayoutPanel1');
@@ -2003,7 +2235,7 @@ async function main(): Promise<void> {
       if (!(rowFrac < 0.4)) throw new Error(`TLP: RowStyle(Absolute,40) not applied — row0/row1 boundary at ${(rowFrac * 100).toFixed(0)}% (equal cells = 50%)`);
       console.log(`e2e: TableLayoutPanel cells verified — 3-arg Controls.Add honored (btn right of lbl x ${btn.x}>${lbl.x}, txt below lbl y ${txt.y}>${lbl.y}); ColumnStyle/RowStyle applied (col0 ${(colFrac * 100).toFixed(0)}%, row0 ${(rowFrac * 100).toFixed(0)}% — not equal 50%)`);
 
-      // grid-cell edit (slice b): the Column/Row extenders surface for a TLP child, and SetTableCell relocates it.
+      // grid-cell edit: the Column/Row extenders surface for a TLP child, and SetTableCell relocates it.
       const cellInfo = await describeComponent(engine, tlpForm, 'cellLabel');
       const colProp = cellInfo?.properties.find((p) => p.name === 'Column');
       const rowProp = cellInfo?.properties.find((p) => p.name === 'Row');
@@ -2119,7 +2351,7 @@ async function main(): Promise<void> {
       const lb = await listCollectionItems(engine, listForm, 'comboBox1', 'Items', bound);
       if (lb.ok) throw new Error('collection: a non-literal element must make the collection read-only (ok:false)');
 
-      // adversarial guard (review Fix A): a comment attached to a dropped collection statement must NOT be silently
+      // adversarial guard: a comment attached to a dropped collection statement must NOT be silently
       // lost — consolidating two Add calls would drop the comment, so the safe-save gate must REFUSE (safe:false).
       const commented = 'namespace S{partial class F{private System.Windows.Forms.ComboBox comboBox1;' +
         'private void InitializeComponent(){this.comboBox1=new System.Windows.Forms.ComboBox();\n' +
@@ -2277,24 +2509,58 @@ async function main(): Promise<void> {
       const uk = await setColumns(engine, lvForm, 'listView1', [{ id: 'colBOGUS', text: 'X', width: 60, textAlign: 'Left' }], disk);
       if (uk.safe) throw new Error('columns: an unknown column id must be refused');
 
+      // SAFETY (1.0) — the ListView editor carries the DataGridView editor's split-partial fault independently:
+      // this edit rewrites only the InitializeComponent-bearing declaration, so a column whose field lives in the
+      // form's OTHER partial can't be removed atomically (construction deleted, declaration stranded → a field that
+      // compiles and is forever null, reported safe), and a cls-only reference scan can't see a helper using it.
+      const splitList = `namespace WinFormsDesigner.Samples
+{
+    partial class ListViewForm
+    {
+        private void InitializeComponent()
+        {
+            this.listView1 = new System.Windows.Forms.ListView();
+            this.colName = new System.Windows.Forms.ColumnHeader();
+            this.listView1.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] { this.colName });
+            this.colName.Text = "Name";
+            this.Controls.Add(this.listView1);
+            this.ClientSize = new System.Drawing.Size(400, 300);
+            this.Name = "ListViewForm";
+        }
+    }
+
+    partial class ListViewForm
+    {
+        private System.Windows.Forms.ListView listView1;
+        private System.Windows.Forms.ColumnHeader colName;
+    }
+}
+`;
+      if ((await setColumns(engine, lvForm, 'listView1', [], splitList)).safe)
+        throw new Error('columns: removing a column whose field is declared in ANOTHER partial must refuse — the declaration would survive with its construction deleted');
+      const splitListUsed = splitList.replace('        private System.Windows.Forms.ColumnHeader colName;',
+        '        private System.Windows.Forms.ColumnHeader colName;\n\n        private void ApplyBusinessCaption() { this.colName.Text = "Customer"; }');
+      if ((await setColumns(engine, lvForm, 'listView1', [], splitListUsed)).safe)
+        throw new Error('columns: removing a column used by a helper in the form\'s OTHER partial must refuse — the reference scan must span every partial');
+
       // SAFETY — a comment attached to a column statement must not be silently dropped (comment-loss guard → refuse)
-      const commented = disk.replace('this.colName.Text = "Name";', '// KEEP-THIS-COLUMN-NOTE\n            this.colName.Text = "Name";');
+      const commented = disk.replace('this.colName.Text = "Name";', '// KEEP-THIS-COLUMN-NOTE\n this.colName.Text = "Name";');
       const cm = await setColumns(engine, lvForm, 'listView1', [
         { id: 'colName', text: 'Name', width: 300, textAlign: 'Left' },
         { id: 'colSize', text: 'Size', width: 120, textAlign: 'Left' },
       ], commented);
       if (cm.safe) throw new Error('columns: editing a collection with a comment in the column block must be refused (comment-loss guard)');
 
-      // SAFETY (review fix) — an object-initializer construction (new ColumnHeader { Tag = … }) carries unmodeled
+      // SAFETY — an object-initializer construction (new ColumnHeader { Tag = … }) carries unmodeled
       // state; it must read ok:false AND the edit must be refused, not silently drop the initializer.
       const initz = disk.replace('this.colName = new System.Windows.Forms.ColumnHeader();', 'this.colName = new System.Windows.Forms.ColumnHeader() { Tag = "keep-me" };');
       if ((await listColumns(engine, lvForm, 'listView1', initz)).ok) throw new Error('columns: an object-initializer construction must make the collection read-only');
       if ((await setColumns(engine, lvForm, 'listView1', [{ id: 'colName', text: 'Name', width: 60, textAlign: 'Left' }], initz)).safe)
         throw new Error('columns: editing a collection with an object-initializer construction must be refused (silent-clobber guard)');
 
-      // SAFETY (review fix) — a comment on a REMOVED column's FIELD DECLARATION (outside the IC body) must not be
+      // SAFETY — a comment on a REMOVED column's FIELD DECLARATION (outside the IC body) must not be
       // silently dropped; removing that column must be refused (whole-class comment-loss guard).
-      const declCmt = disk.replace('private System.Windows.Forms.ColumnHeader colSize;', '// colSize is the size column\n        private System.Windows.Forms.ColumnHeader colSize;');
+      const declCmt = disk.replace('private System.Windows.Forms.ColumnHeader colSize;', '// colSize is the size column\n private System.Windows.Forms.ColumnHeader colSize;');
       if ((await setColumns(engine, lvForm, 'listView1', [{ id: 'colName', text: 'Name', width: 220, textAlign: 'Left' }], declCmt)).safe)
         throw new Error('columns: removing a column whose field declaration carries a comment must be refused (field-decl comment-loss guard)');
 
@@ -2305,13 +2571,13 @@ async function main(): Promise<void> {
 
     // ---- Hierarchical collection editor (TreeView.Nodes) ----
     // TreeForm has treeView1 with Fruits[Apple,Banana] + Vegetables[Carrot] as TreeNode LOCAL variables (not fields).
-    // Assert: the interpreter renders it (Slice A); describe flags Nodes as a TreeNode collection; ListNodes reads the
+    // Assert: the interpreter renders it; describe flags Nodes as a TreeNode collection; ListNodes reads the
     // recursive forest; SetNodes edits/reparents/removes/clears, round-trips, and refuses an unmanaged tree.
     const treeForm = path.join(repo, 'engine', 'samples', 'TreeForm.Designer.cs');
     if (fs.existsSync(treeForm)) {
       const disk = fs.readFileSync(treeForm, 'utf8');
 
-      // Slice A — a TreeView populated via TreeNode locals + Nodes.AddRange renders (previously the nodes dropped)
+      // A TreeView populated via TreeNode locals + Nodes.AddRange renders (previously the nodes dropped)
       const treePng = await renderDesigner(engine, treeForm);
       if (!isPng(treePng)) throw new Error('treenodes: TreeForm did not render');
 
@@ -2368,7 +2634,7 @@ async function main(): Promise<void> {
       if ((await setTreeNodes(engine, treeForm, 'treeView1', [{ id: 'treeNodeBOGUS', text: 'X', name: '', children: [] }], disk)).safe)
         throw new Error('treenodes: an unknown node id must be refused');
 
-      // SAFETY (review fix) — an all-inline TreeView (Nodes.Add(new TreeNode(...)) with NO locals) must read ok:false,
+      // SAFETY — an all-inline TreeView (Nodes.Add(new TreeNode(...)) with NO locals) must read ok:false,
       // NOT a misleading empty forest that a later commit would then silently drop the inline nodes from.
       const inlineTree = 'namespace S { partial class T { private System.Windows.Forms.TreeView tv;'
         + ' private void InitializeComponent() { this.tv = new System.Windows.Forms.TreeView();'
@@ -2376,7 +2642,7 @@ async function main(): Promise<void> {
       if ((await listTreeNodes(engine, treeForm, 'tv', inlineTree)).ok)
         throw new Error('treenodes: an all-inline TreeView must read ok:false (no misleading empty forest → silent drop)');
 
-      console.log('e2e: hierarchical collection editor (TreeView.Nodes) verified — renders (Slice A); Nodes flagged TreeNode; list [Fruits[Apple,Banana],Vegetables[Carrot]]; edit (rename+add child round-trips); reparent (Carrot→root); clear (all removed); unmanaged prop → ok:false + refused; unknown id refused');
+      console.log('e2e: hierarchical collection editor (TreeView.Nodes) verified — renders; Nodes flagged TreeNode; list [Fruits[Apple,Banana],Vegetables[Carrot]]; edit (rename+add child round-trips); reparent (Carrot→root); clear (all removed); unmanaged prop → ok:false + refused; unknown id refused');
     } else {
       console.log('e2e: TreeView.Nodes editor SKIPPED — engine/samples/TreeForm.Designer.cs missing');
     }
@@ -2416,14 +2682,14 @@ async function main(): Promise<void> {
       if (!e2.safe || e2.text === null || !/ImageKey = "apricot\.png";/.test(e2.text) || /ImageKey = "apple\.png";/.test(e2.text))
         throw new Error('treenodes-img: editing an image key must re-emit the new key: ' + (e2.reason || 'no apricot'));
 
-      // MUTUAL EXCLUSIVITY (review fix — ImageKey/ImageIndex are mutually exclusive, last-write-wins at runtime):
+      // MUTUAL EXCLUSIVITY (ImageKey/ImageIndex are mutually exclusive, last-write-wins at runtime):
       // (a) a hand-written node with index-THEN-key has the KEY effective — the read collapses to the effective member
       // (imageIndex cleared) and the save emits ONLY the key, never a competing ImageIndex that would silently shadow it.
       const bothSrc = 'namespace S{partial class F{private System.Windows.Forms.TreeView tv;private void InitializeComponent(){'
         + 'System.Windows.Forms.TreeNode tn1 = new System.Windows.Forms.TreeNode("A");'
         + 'this.tv = new System.Windows.Forms.TreeView();'
-        + 'tn1.ImageIndex = 5;'          // index first…
-        + 'tn1.ImageKey = "keyWins";'    // …then key → KEY is the effective image at runtime
+        + 'tn1.ImageIndex = 5;' // index first…
+        + 'tn1.ImageKey = "keyWins";' // …then key → KEY is the effective image at runtime
         + 'tn1.Name = "n1";'
         + 'this.tv.Location = new System.Drawing.Point(1, 1);'
         + 'this.tv.Name = "tv";'
@@ -2530,7 +2796,7 @@ async function main(): Promise<void> {
       if ((await listTreeNodes(engine, treeImg, 'tv', badFontSrc)).ok)
         throw new Error('treenodes-style: an uninstalled font family must make the node read-only (substitution would lose the family)');
 
-      // REGRESSION (review wf_8bc83096-371, HIGH): a non-Point GraphicsUnit must NOT be reinterpreted as a FontStyle
+      // REGRESSION (HIGH): a non-Point GraphicsUnit must NOT be reinterpreted as a FontStyle
       // (a wrong-overload bug read new Font(f, 12, GraphicsUnit.Pixel) as "12pt, style=Italic" and persisted it).
       const unitSrc = styleSrc.replace('new System.Drawing.Font("Microsoft Sans Serif", 9F, System.Drawing.FontStyle.Bold)',
         'new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.GraphicsUnit.Pixel)');
@@ -2542,10 +2808,10 @@ async function main(): Promise<void> {
       if (!ue.safe || ue.text === null || !/GraphicsUnit\.Pixel/.test(ue.text) || /FontStyle\.(Italic|Underline)/.test(ue.text))
         throw new Error('treenodes-style: a Pixel font must re-emit GraphicsUnit.Pixel, never a reinterpreted FontStyle, got ' + (ue.reason || ue.text));
 
-      console.log('e2e: TreeView node style verified — ForeColor/BackColor/NodeFont parse to invariant strings + round-trip (named/ARGB/system color, Bold font, fully-qualified re-emit); edit→system color; clearing drops all three; a user-type color and an uninstalled font family both keep the node read-only (no clobber); a non-Point GraphicsUnit (Pixel) is preserved, never reinterpreted as a FontStyle (review wf_8bc83096-371 regression)');
+      console.log('e2e: TreeView node style verified — ForeColor/BackColor/NodeFont parse to invariant strings + round-trip (named/ARGB/system color, Bold font, fully-qualified re-emit); edit→system color; clearing drops all three; a user-type color and an uninstalled font family both keep the node read-only (no clobber); a non-Point GraphicsUnit (Pixel) is preserved, never reinterpreted as a FontStyle (regression)');
     }
 
-    // ---- TreeView.Nodes owner-scoping (review fix) — two TreeViews on one form edit INDEPENDENTLY ----
+    // ---- TreeView.Nodes owner-scoping — two TreeViews on one form edit INDEPENDENTLY ----
     // Regression guard for the form-global-orphan defect: TwoTreeForm has treeLeft (Left-B[Left-A]) + treeRight (Right-A).
     const twoTree = path.join(repo, 'engine', 'samples', 'TwoTreeForm.Designer.cs');
     if (fs.existsSync(twoTree)) {
@@ -2564,12 +2830,12 @@ async function main(): Promise<void> {
       if (!rr2.ok || rr2.nodes.length !== 1 || rr2.nodes[0].text !== 'Right-A' || rr2.nodes[0].name !== 'rightA')
         throw new Error('treenodes(2): editing treeLeft corrupted treeRight: ' + JSON.stringify(rr2));
       if (!/Left-B-EDITED/.test(le.text)) throw new Error('treenodes(2): treeLeft edit did not apply');
-      console.log('e2e: TreeView.Nodes owner-scoping verified — two TreeViews on one form read + edit independently (editing one preserves the other, review fix)');
+      console.log('e2e: TreeView.Nodes owner-scoping verified — two TreeViews on one form read + edit independently (editing one preserves the other)');
     } else {
       console.log('e2e: TreeView.Nodes owner-scoping SKIPPED — engine/samples/TwoTreeForm.Designer.cs missing');
     }
 
-    // ---- ToolStrip / MenuStrip item editor (Slice 1: read + reorder) ----
+    // ---- ToolStrip / MenuStrip item editor ----
     // MenuForm has menuStrip1 with File[Open,Save] + Edit (ToolStripMenuItem fields via Items/DropDownItems.AddRange).
     // Assert: describe flags Items as ToolStripItem; list reads the recursive tree; a top-level / submenu reorder
     // rewrites ONLY the relevant AddRange (item property blocks + the other collection untouched); add/remove refused.
@@ -2610,12 +2876,12 @@ async function main(): Promise<void> {
       const openIdx = e2.text.indexOf('this.openToolStripMenuItem', ddIdx);
       if (!(ddIdx > 0 && saveIdx > 0 && openIdx > saveIdx)) throw new Error('toolstrip: DropDownItems must list Save before Open after submenu reorder');
 
-      // ---- ADD ("Type Here") Slice 2 ----
+      // ---- ADD ("Type Here") ----
       // a NEW item is an empty-id node: the engine synthesizes a field + construction + Name/Text and appends the id
       // into the Items AddRange; existing items stay byte-identical and the new item round-trips on re-read.
       const newHelp: ToolStripItemModel = { id: '', text: 'Help', name: '', itemType: 'ToolStripMenuItem', children: [] };
       const addTop = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, newHelp], disk);
-      if (!addTop.safe || addTop.text === null) throw new Error('toolstrip: adding a top-level item must be allowed (Slice 2): ' + addTop.reason);
+      if (!addTop.safe || addTop.text === null) throw new Error('toolstrip: adding a top-level item must be allowed: ' + addTop.reason);
       if (!/private System\.Windows\.Forms\.ToolStripMenuItem toolStripMenuItem1;/.test(addTop.text)) throw new Error('toolstrip: add must synthesize a new field decl');
       if (!/this\.toolStripMenuItem1 = new System\.Windows\.Forms\.ToolStripMenuItem\(\);/.test(addTop.text)) throw new Error('toolstrip: add must synthesize a construction');
       if (!/this\.toolStripMenuItem1\.Text = "Help";/.test(addTop.text)) throw new Error('toolstrip: add must synthesize the Text');
@@ -2658,7 +2924,7 @@ async function main(): Promise<void> {
       const tricky = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, { id: '', text: 'goto this.fileToolStripMenuItem', name: '', itemType: 'ToolStripMenuItem', children: [] }], disk);
       if (!tricky.safe) throw new Error('toolstrip: an item Text containing "this.<field>" must not false-trip the gate (AST field-ref check)');
 
-      // ---- REGRESSION (adversarial review wf_9f94fae1) ----
+      // ---- REGRESSION ----
       // #HIGH: rooting the editor on a MENU ITEM (its DropDownItems) and creating a first child must synthesize a
       // DropDownItems AddRange, NOT Items (a ToolStripMenuItem has no Items property → would not compile).
       const rootedOnItem = await setToolStripItems(engine, tsMenuForm, 'editToolStripMenuItem', [{ id: '', text: 'Undo', name: '', itemType: 'ToolStripMenuItem', children: [] }], disk);
@@ -2667,7 +2933,7 @@ async function main(): Promise<void> {
         throw new Error('toolstrip: a menu-item-rooted create must use DropDownItems, never Items');
       // #LOW: a leading comment on the first AddRange element must not be DUPLICATED onto the appended new element
       // (which would false-reject the add via the comment-multiset gate).
-      const cmtSrc = disk.replace('this.fileToolStripMenuItem,', '// first item\n            this.fileToolStripMenuItem,');
+      const cmtSrc = disk.replace('this.fileToolStripMenuItem,', '// first item\n this.fileToolStripMenuItem,');
       const cmtAdd = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, { id: '', text: 'Help', name: '', itemType: 'ToolStripMenuItem', children: [] }], cmtSrc);
       if (!cmtAdd.safe || cmtAdd.text === null) throw new Error('toolstrip: adding to a menu whose first element has a leading comment must be allowed (comment not duplicated): ' + cmtAdd.reason);
       if ((cmtAdd.text.match(/\/\/ first item/g) || []).length !== 1) throw new Error('toolstrip: the leading comment must not be duplicated by an append');
@@ -2690,11 +2956,11 @@ async function main(): Promise<void> {
       const lateAdd = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileToolStripMenuItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }, { id: 'editToolStripMenuItem', text: 'Edit', name: '', itemType: 'ToolStripMenuItem', children: [{ id: '', text: 'Undo', name: '', itemType: 'ToolStripMenuItem', children: [] }] }], lateSrc);
       if (lateAdd.safe) throw new Error('toolstrip: a first-child create under a late/interleaved-construction receiver must be refused (runtime null-ref guard)');
 
-      // ---- REMOVE (Slice 3) ----
+      // ---- REMOVE ----
       // removing a top-level item deletes its field decl + construction + property block and strips it from the Items
       // AddRange; every surviving item (and the other submenu) stays byte-identical and round-trips.
       const rmEdit = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file], disk);
-      if (!rmEdit.safe || rmEdit.text === null) throw new Error('toolstrip: removing a top-level item must be allowed (Slice 3): ' + rmEdit.reason);
+      if (!rmEdit.safe || rmEdit.text === null) throw new Error('toolstrip: removing a top-level item must be allowed: ' + rmEdit.reason);
       if (/this\.editToolStripMenuItem\b/.test(rmEdit.text) || /editToolStripMenuItem;/.test(rmEdit.text))
         throw new Error('toolstrip: a removed item must leave no code trace (field decl / construction / property / AddRange)');
       if (!/this\.fileToolStripMenuItem\.Text = "File";/.test(rmEdit.text) || !/this\.openToolStripMenuItem\.Text = "Open";/.test(rmEdit.text))
@@ -2768,7 +3034,7 @@ async function main(): Promise<void> {
       const refRm = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileToolStripMenuItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }], refSrc);
       if (refRm.safe) throw new Error('toolstrip: removing an item still referenced by non-item code (MdiWindowListItem = this.edit) must be refused');
 
-      // FAIL-SAFE (adversarial review wf_ad3bad03-7a8, HIGH): a removed item whose field decl SHARES a physical line
+      // FAIL-SAFE (HIGH): a removed item whose field decl SHARES a physical line
       // with an unrelated survivor’s decl must be refused — a whole-line splice would collaterally delete the neighbour
       // (its surviving statements then dangle) and the member-count gate would balance, so this must never save.
       const shareSrc = [
@@ -2790,7 +3056,7 @@ async function main(): Promise<void> {
       const shareRm = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileToolStripMenuItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }], shareSrc);
       if (shareRm.safe) throw new Error('toolstrip: removing an item whose field decl shares a physical line with a survivor’s decl must be refused (collateral-deletion guard)');
 
-      // FAIL-SAFE (adversarial review wf_ad3bad03-7a8, gate backstop): a `this`-less designer file (removed item's
+      // FAIL-SAFE (gate backstop): a `this`-less designer file (removed item's
       // statements written as `editItem = …` not `this.editItem = …`) — Phase 0's this.-scan skips those statements so
       // only the field decl is deleted, leaving a dangling bare reference. The gate backstop (any lingering occurrence
       // of a removed id's name) must refuse it, never save uncompilable code.
@@ -2819,8 +3085,8 @@ async function main(): Promise<void> {
       if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', nested, disk)).safe)
         throw new Error('toolstrip: a submenu under a brand-new item must be refused (nested-new)');
 
-      // ---- REGRESSION (adversarial review wf_55284a72-7f3) ----
-      // #3 formatting-drift: a reorder must be a pure line-permutation — the rewritten AddRange element lines keep the
+      // ---- REGRESSION ----
+      // Formatting-drift: a reorder must be a pure line-permutation — the rewritten AddRange element lines keep the
       // SAME leading indent as the `.AddRange(` statement line (previously they drifted to statement-indent + 4).
       const e1Lines = e1.text.split(/\r?\n/);
       const indentOf = (s?: string): number => (s ? s.match(/^[ \t]*/)![0].length : -1);
@@ -2829,7 +3095,7 @@ async function main(): Promise<void> {
       if (elIndent < 0 || arIndent < 0 || elIndent !== arIndent)
         throw new Error(`toolstrip: reorder must not re-indent AddRange elements (AddRange indent ${arIndent} vs element ${elIndent})`);
 
-      // #1 data-loss: a hand-written comment INSIDE an Items/DropDownItems AddRange initializer must never be silently
+      // Data-loss: a hand-written comment INSIDE an Items/DropDownItems AddRange initializer must never be silently
       // dropped by a reorder. The gate guarantees this — the comment is preserved (safe), or the edit is refused;
       // it is NEVER lost with safe:true. (VS never emits such comments, but a hand-edited file may carry one.)
       const cSrc = disk.replace('this.fileToolStripMenuItem,', 'this.fileToolStripMenuItem, // KEEP-THIS-COMMENT');
@@ -2837,7 +3103,7 @@ async function main(): Promise<void> {
       if (cEdit.safe && (cEdit.text === null || !cEdit.text.includes('// KEEP-THIS-COMMENT')))
         throw new Error('toolstrip: a comment inside an AddRange was silently dropped by a reorder (reported safe)');
 
-      // #2 read-scope: a menu populated ONLY by an unmodelled Add shape (the 3-arg Items.Add(string, Image,
+      // Read-scope: a menu populated ONLY by an unmodelled Add shape (the 3-arg Items.Add(string, Image,
       // EventHandler) overload) must be refused read-only (ok:false), not silently presented as an empty collection.
       const addSrc = [
         'namespace S {', '  partial class F {',
@@ -2856,7 +3122,7 @@ async function main(): Promise<void> {
       if (addRead.ok)
         throw new Error('toolstrip: a menu built only via the 3-arg Items.Add overload must be refused read-only, not read as empty');
 
-      // ---- RENAME an existing item's Text (Slice 4) ----
+      // ---- RENAME an existing item's Text ----
       // Top-level rename File → "Datei": ONLY the one `.Text = "…"` literal changes — the edited text is byte-for-byte the
       // disk text with just that substitution (AddRange order, sibling items, every other statement untouched).
       const rnFile = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ ...file, text: 'Datei' }, edit], disk);
@@ -2889,7 +3155,7 @@ async function main(): Promise<void> {
       if (!rnEmpty.safe || rnEmpty.text === null) throw new Error('toolstrip: empty-Text edit rejected: ' + rnEmpty.reason);
       if (!/this\.fileToolStripMenuItem\.Text = "File";/.test(rnEmpty.text)) throw new Error('toolstrip: an empty desired Text must leave the existing literal unchanged, never clear it');
 
-      // REFUSE: renaming an item that has no simple `.Text = "…"` literal (adding a Text property is a follow-up, not this slice).
+      // REFUSE: renaming an item that has no simple `.Text = "…"` literal (adding a Text property is a follow-up).
       const noTextSrc = [
         'namespace S { partial class F {',
         '  private System.Windows.Forms.MenuStrip menuStrip1;',
@@ -2906,7 +3172,7 @@ async function main(): Promise<void> {
       const noTextRn = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }, { id: 'editItem', text: 'Renamed', name: '', itemType: 'ToolStripMenuItem', children: [] }], noTextSrc);
       if (noTextRn.safe) throw new Error('toolstrip: renaming an item with no `.Text = "…"` literal must be refused (adding a Text property is a follow-up)');
 
-      // ---- item-TYPE picker (Slice 5) ----
+      // ---- item-TYPE picker ----
       // A NEW item may be any allowlisted ToolStrip type (not only ToolStripMenuItem): the engine mints the right
       // `new <Type>()` and skips Text for a separator. Add a separator + a button + a combobox in one edit.
       const addTyped = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [
@@ -2928,7 +3194,7 @@ async function main(): Promise<void> {
       const addBad = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, { id: '', text: 'X', name: '', itemType: 'System.Evil.Type', children: [] }], disk);
       if (addBad.safe) throw new Error('toolstrip: a non-allowlisted new item type must be refused (no arbitrary type injection)');
 
-      console.log('e2e: ToolStrip/MenuStrip item editor verified — Items flagged ToolStripItem; recursive read; reorder rewrites ONLY the AddRange as a pure indent-preserving permutation; ADD (Type Here) synthesizes a new field+ctor+Name/Text and grows/creates the AddRange (construction precedes it), round-trips, and combines with reorder; REMOVE (Slice 3) deletes an item’s field+ctor+property block+AddRange membership (whole subtree for a parent; empties delete the AddRange; combines with add), leaves survivors byte-identical, and refuses when it would drop an in-AddRange comment or an item still referenced by non-item code; reparent/nested-new refused; intra-AddRange comment never silently dropped; a 3-arg Items.Add menu refused read-only; RENAME (Slice 4) rewrites an existing item’s `.Text = "…"` literal in place (byte-identical elsewhere), round-trips, nests, combines with remove+reorder, never clears on an empty desired Text, and refuses an item with no Text literal; TYPE picker (Slice 5) adds any allowlisted item type (separator/button/combobox, separator carries no Text) and refuses a non-allowlisted type (Slice 2/3/4/5 + review wf_55284a72-7f3 regressions)');
+      console.log('e2e: ToolStrip/MenuStrip item editor verified — Items flagged ToolStripItem; recursive read; reorder rewrites ONLY the AddRange as a pure indent-preserving permutation; ADD (Type Here) synthesizes a new field+ctor+Name/Text and grows/creates the AddRange (construction precedes it), round-trips, and combines with reorder; REMOVE deletes an item’s field+ctor+property block+AddRange membership (whole subtree for a parent; empties delete the AddRange; combines with add), leaves survivors byte-identical, and refuses when it would drop an in-AddRange comment or an item still referenced by non-item code; reparent/nested-new refused; intra-AddRange comment never silently dropped; a 3-arg Items.Add menu refused read-only; RENAME rewrites an existing item’s `.Text = "…"` literal in place (byte-identical elsewhere), round-trips, nests, combines with remove+reorder, never clears on an empty desired Text, and refuses an item with no Text literal; TYPE picker adds any allowlisted item type (separator/button/combobox, separator carries no Text) and refuses a non-allowlisted type');
     } else {
       console.log('e2e: ToolStrip item editor SKIPPED — engine/samples/MenuForm.Designer.cs missing');
     }
@@ -3000,7 +3266,7 @@ async function main(): Promise<void> {
       if ((await listGridColumns(engine, gridColForm, 'dataGridView1', renamed)).ok) throw new Error('gridcolumns: a column whose Name != field id must be read-only');
 
       // SAFETY — a REAL developer note (multi-word) in the column block must still be refused (separator exclusion is narrow)
-      const note = disk.replace('this.nameColumn.HeaderText = "Name";', '// TODO revisit this column mapping\n            this.nameColumn.HeaderText = "Name";');
+      const note = disk.replace('this.nameColumn.HeaderText = "Name";', '// TODO revisit this column mapping\n this.nameColumn.HeaderText = "Name";');
       if ((await setGridColumns(engine, gridColForm, 'dataGridView1', [
         { id: 'nameColumn', headerText: 'X', width: 150, readOnly: false, visible: true },
         { id: 'valueColumn', headerText: 'Value', width: 100, readOnly: false, visible: true },
@@ -3010,12 +3276,60 @@ async function main(): Promise<void> {
       if ((await setGridColumns(engine, gridColForm, 'dataGridView1', [{ id: 'colBOGUS', headerText: 'X', width: 100, readOnly: false, visible: true }], disk)).safe)
         throw new Error('gridcolumns: an unknown column id must be refused');
 
-      // SAFETY (review fix) — a column referenced in AddRange but never `new`-constructed (malformed source) must be
+      // SAFETY (1.0) — a form SPLIT ACROSS PARTIALS. This edit rewrites exactly one declaration (the one
+      // holding InitializeComponent), so a column whose FIELD lives in the sibling partial cannot be removed
+      // atomically: the construction + AddRange would go while the declaration stayed, leaving a field that still
+      // compiles but is forever null — and it was reported SAFE. The reference scan is now form-wide too, so a
+      // helper method in the sibling partial is seen rather than silently invalidated. Both must REFUSE.
+      const splitGrid = `namespace WinFormsDesigner.Samples
+{
+    partial class GridForm
+    {
+        private void InitializeComponent()
+        {
+            this.dataGridView1 = new System.Windows.Forms.DataGridView();
+            this.nameColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.dataGridView1.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] { this.nameColumn });
+            this.nameColumn.HeaderText = "Name";
+            this.nameColumn.Name = "nameColumn";
+            this.Controls.Add(this.dataGridView1);
+            this.ClientSize = new System.Drawing.Size(400, 300);
+            this.Name = "GridForm";
+        }
+    }
+
+    partial class GridForm
+    {
+        private System.Windows.Forms.DataGridView dataGridView1;
+        private System.Windows.Forms.DataGridViewTextBoxColumn nameColumn;
+
+        private void RestoreColumnHeader()
+        {
+            this.nameColumn.HeaderText = "Customer";
+        }
+    }
+}
+`;
+      const splitRemove = await setGridColumns(engine, gridColForm, 'dataGridView1', [], splitGrid);
+      if (splitRemove.safe)
+        throw new Error('gridcolumns: removing a column used by a helper in the form\'s OTHER partial must refuse — the cls-only reference scan could not see it and would delete the field out from under it');
+
+      // …and the same shape WITHOUT any outside use, which isolates the second half of the guard: nothing references
+      // the column, so the reference scan is happy, yet the field still cannot be removed atomically (it is declared
+      // in the partial this edit does not rewrite). Removing it anyway strands a declaration whose construction is
+      // gone — a field that compiles and is forever null.
+      const splitGridUnused = splitGrid.replace(/\n        private void RestoreColumnHeader\(\)\n        \{\n            this\.nameColumn\.HeaderText = "Customer";\n        \}\n/, '');
+      if (splitGridUnused === splitGrid) throw new Error('gridcolumns: fixture setup — the helper-method strip did not match');
+      const splitRemoveUnused = await setGridColumns(engine, gridColForm, 'dataGridView1', [], splitGridUnused);
+      if (splitRemoveUnused.safe)
+        throw new Error('gridcolumns: removing a column whose field is declared in ANOTHER partial must refuse — this edit rewrites only the InitializeComponent-bearing declaration, so the field would survive with its construction deleted');
+
+      // SAFETY — a column referenced in AddRange but never `new`-constructed (malformed source) must be
       // read-only, not "repaired" with a synthesized ctor that could mismatch the field's declared type
       const noCtor = disk.replace('this.nameColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();', '');
       if ((await listGridColumns(engine, gridColForm, 'dataGridView1', noCtor)).ok) throw new Error('gridcolumns: a construction-less column must be read-only');
 
-      // SAFETY (review fix) — removing a column that shares a multi-variable field declaration must be refused
+      // SAFETY — removing a column that shares a multi-variable field declaration must be refused
       // (dropping the whole decl would delete its sibling; VS never emits multi-var decls, but be airtight)
       const multiVar = disk
         .replace('private System.Windows.Forms.DataGridViewTextBoxColumn nameColumn;', 'private System.Windows.Forms.DataGridViewTextBoxColumn nameColumn, valueColumn;')
@@ -3028,7 +3342,7 @@ async function main(): Promise<void> {
       console.log('e2e: DataGridView collection editor SKIPPED — engine/samples/GridForm.Designer.cs missing');
     }
 
-    // ---- Tabs: net9 hidden-tab hit-test filter (#3 parity) + add-tab text splice (#2) ----
+    // ---- Tabs: net9 hidden-tab hit-test filter (parity) + add-tab text splice ----
     // TabForm: tabControl1 with tabPage1 (active, holds pageButton1) + tabPage2 (holds pageLabel2). The layout must
     // DROP controls on the non-active tab (pageLabel2) so a click can't hit them under the active page; AddTabPage
     // must splice a new field + `TabPages.Add` past the OnlyControlAdded gate and still render.
@@ -3123,7 +3437,7 @@ async function main(): Promise<void> {
         '    this.tc.Controls.Add(this.pa);\n' +
         '    this.tc.Controls.Add(this.pb);\n' +
         '    this.pa.Controls.Add(this.ba);\n' +
-        '    ba.Text = "bare-ref-no-this";\n' +           // the corruption trigger: bare id
+        ' ba.Text = "bare-ref-no-this";\n' + // the corruption trigger: bare id
         '    this.pa.Name = "pa";\n' +
         '  }\n} }\n';
       const bare = await removeTabPage(engine, dummy, 'tc', 'pa', bareSrc);
@@ -3137,8 +3451,8 @@ async function main(): Promise<void> {
         '    this.tc = new System.Windows.Forms.TabControl();\n' +
         '    this.pa = new System.Windows.Forms.TabPage();\n' +
         '    this.pb = new System.Windows.Forms.TabPage();\n' +
-        '    this.tc.TabPages.Add(this.pa);\n' +                                                   // 1-arg parenting (found first)
-        '    this.tc.TabPages.AddRange(new System.Windows.Forms.TabPage[] { this.pa, this.pb });\n' + // host-rooted, holds survivor pb
+        ' this.tc.TabPages.Add(this.pa);\n' + // 1-arg parenting (found first)
+        ' this.tc.TabPages.AddRange(new System.Windows.Forms.TabPage[] { this.pa, this.pb });\n' + // host-rooted, holds survivor pb
         '    this.pa.Name = "pa";\n' +
         '  }\n} }\n';
       const surv = await removeTabPage(engine, dummy, 'tc', 'pa', survSrc);
@@ -3194,15 +3508,15 @@ async function main(): Promise<void> {
       // (4) reject an invalid component identifier (guards against a crafted id reaching the gate).
       if ((await resetProperty(engine, adForm, 'bad id!', 'Anchor', adDisk)).safe) throw new Error('ResetProperty must reject an invalid component id');
       // (5) same-line DUPLICATE targets (hand-edited): both assignments share one physical line → identical
-      //     whole-line span. The merge must delete that line EXACTLY ONCE (not twice) so following trivia — the
-      //     KEEP comment — survives. (Adversarial review found the un-merged loop over-deleted the comment.)
+      // whole-line span. The merge must delete that line EXACTLY ONCE (not twice) so following trivia — the
+      // KEEP comment — survives. (Adversarial review found the un-merged loop over-deleted the comment.)
       const dupBuf = [
         'namespace S { partial class F {',
         '    private System.Windows.Forms.Panel p;',
         '    private void InitializeComponent() {',
         '        this.p = new System.Windows.Forms.Panel();',
         '        this.p.Dock = System.Windows.Forms.DockStyle.Right; this.p.Dock = System.Windows.Forms.DockStyle.Left;',
-        '        // KEEP THIS COMMENT LINE — long enough to be over-deleted by the stale-offset bug',
+        ' // KEEP THIS COMMENT LINE — long enough to be over-deleted by the stale-offset bug',
         '        this.p.Name = "p";',
         '        this.Controls.Add(this.p);',
         '    }',
@@ -3214,12 +3528,63 @@ async function main(): Promise<void> {
       if (/this\.p\.Dock\s*=/.test(rDup.text)) throw new Error('ResetProperty must remove BOTH same-line Dock assignments');
       if (!rDup.text.includes('// KEEP THIS COMMENT LINE')) throw new Error('ResetProperty over-deleted the following comment (stale-offset bug not fixed)');
       if (!/this\.p\.Name\s*=\s*"p"/.test(rDup.text)) throw new Error('ResetProperty over-deleted the following statement');
-      console.log('e2e: ResetProperty verified — panel1.Anchor (multi-line) removed with siblings + other controls intact; btn2.Dock reset leaves Anchor (conjugate); same-line duplicate removed once (following comment survives); no-op & invalid-id handled');
+      // (6) a TRAILING comment on the target's own line. A reset deletes whole lines, and OnlyPropertyReset compares
+      // statements + field names — a comment is trivia, invisible to it — so this silently deleted the user's
+      // comment and still reported success. Reachable from the UI via Dock/Anchor mutual exclusivity. Must refuse.
+      const cmtBuf = [
+        'namespace S { partial class F {',
+        '    private System.Windows.Forms.Panel p;',
+        '    private void InitializeComponent() {',
+        '        this.p = new System.Windows.Forms.Panel();',
+        ' this.p.Dock = System.Windows.Forms.DockStyle.Right; // KEEP: pinned by ticket #4711',
+        '        this.p.Name = "p";',
+        '        this.Controls.Add(this.p);',
+        '    }',
+        '} }',
+        '',
+      ].join('\n');
+      const rCmt = await resetProperty(engine, adForm, 'p', 'Dock', cmtBuf);
+      if (rCmt.safe || rCmt.text != null)
+        throw new Error('ResetProperty must REFUSE when the target line carries a trailing comment (it would be silently deleted), got safe=' + rCmt.safe);
+      // (7) a comment INSIDE the statement. A Roslyn span covers the trivia between its first and last token, so the
+      // per-line residue check blanks such a comment along with the statement and cannot see it.
+      const innerBuf = cmtBuf.replace(
+        ' this.p.Dock = System.Windows.Forms.DockStyle.Right; // KEEP: pinned by ticket #4711',
+        '        this.p.Dock /* KEEP: ticket 4711 */ = System.Windows.Forms.DockStyle.Right;');
+      if (innerBuf === cmtBuf) throw new Error('ResetProperty inner-comment fixture did not apply');
+      const rInner = await resetProperty(engine, adForm, 'p', 'Dock', innerBuf);
+      if (rInner.safe || rInner.text != null)
+        throw new Error('ResetProperty must REFUSE when the target statement CONTAINS a comment (span trivia hides it from the line check), got safe=' + rInner.safe);
+      // (8) a PREPROCESSOR DIRECTIVE inside the target statement. Directive trivia is invisible to the statement/field
+      // comparison too, so this reset used to delete the whole #if/#else/#endif block — build-affecting source
+      // structure — and report success. Any non-whitespace trivia in the span must refuse, not just comments.
+      const dirBuf = [
+        'namespace S { partial class F {',
+        '    private System.Windows.Forms.Panel p;',
+        '    private void InitializeComponent() {',
+        '        this.p = new System.Windows.Forms.Panel();',
+        '        this.p.Dock =',
+        '#if FOO',
+        '            System.Windows.Forms.DockStyle.Top',
+        '#else',
+        '            System.Windows.Forms.DockStyle.Bottom',
+        '#endif',
+        '            ;',
+        '        this.p.Name = "p";',
+        '        this.Controls.Add(this.p);',
+        '    }',
+        '} }',
+        '',
+      ].join('\n');
+      const rDir = await resetProperty(engine, adForm, 'p', 'Dock', dirBuf);
+      if (rDir.safe || rDir.text != null)
+        throw new Error('ResetProperty must REFUSE when the target statement contains a #if/#else directive (it would be silently deleted), got safe=' + rDir.safe);
+      console.log('e2e: ResetProperty verified — panel1.Anchor (multi-line) removed with siblings + other controls intact; btn2.Dock reset leaves Anchor (conjugate); same-line duplicate removed once (following comment survives); a trailing comment on the target line REFUSES instead of being silently deleted; no-op & invalid-id handled');
     } else {
       console.log('e2e: ResetProperty SKIPPED — engine/samples/AnchorDockForm.Designer.cs missing');
     }
 
-    // ---- SplitContainer cell placement (slice e) ----
+    // ---- SplitContainer cell placement ----
     // Children are added via a sub-container PROPERTY: splitContainer1.Panel1.Controls.Add(child). The interpreter
     // must walk the intermediate "Panel1"/"Panel2" segment and parent into the SplitterPanel (not the container,
     // which rejects a direct Controls.Add). The bug left both children piled at the form's client origin. Assert
@@ -3263,22 +3628,33 @@ async function main(): Promise<void> {
     const roundTripCorpus: Array<{ form: string; safe: boolean; reason: string }> = [
       // save-safe — fully round-trips:
       { form: 'SampleForm', safe: true, reason: 'safe' },
-      { form: 'EventForm', safe: true, reason: 'safe' },            // += event wirings re-emitted verbatim
-      { form: 'ComponentRefForm', safe: true, reason: 'safe' },     // this.AcceptButton = this.okButton round-trips
-      { form: 'SplitterForm', safe: true, reason: 'safe' },         // 0.12.0 R1: BeginInit/EndInit re-emitted
+      { form: 'EventForm', safe: true, reason: 'safe' }, // += event wirings re-emitted verbatim
+      { form: 'ComponentRefForm', safe: true, reason: 'safe' }, // this.AcceptButton = this.okButton round-trips
+      { form: 'SplitterForm', safe: true, reason: 'safe' }, // 0.12.0 R1: BeginInit/EndInit re-emitted
       { form: 'TabForm', safe: true, reason: 'safe' },
       { form: 'FlowForm', safe: true, reason: 'safe' },
       { form: 'ListViewForm', safe: true, reason: 'safe' },
       { form: 'TableLayoutForm', safe: true, reason: 'safe' },
+      // 1.0 R4: a VS-generated TreeView form round-trips. The serializer used to name generated TreeNode locals
+      // "treenode1" (the framework's fallback lower-casing) while every VS-generated source says "treeNode1", so
+      // the text-comparing gate reported all of them lost and refused a faithful round-trip (a FALSE refusal).
+      // VsNameCreationService now emits VS's camelCase; the gate itself is untouched and just as strict.
+      { form: 'TreeForm', safe: true, reason: 'safe' },
+      { form: 'TwoTreeForm', safe: true, reason: 'safe' }, // two TreeViews → per-graph node numbering
       // honest fail-closed (the fail-closed 1.0 bar) — each read-only for a NAMED reason, never silently:
       { form: 'GridForm', safe: false, reason: 'binaryResx' },
       { form: 'MenuStripForm', safe: false, reason: 'binaryResx' },
       { form: 'ImageListForm', safe: false, reason: 'binaryResx' },
       { form: 'LocalizableForm', safe: false, reason: 'localizable' },
-      { form: 'CustomForm', safe: false, reason: 'unresolvedType' },     // net9 can't load the vendor control (net48 renders)
+    { form: 'CustomForm', safe: false, reason: 'unresolvedType' }, // net9 can't load the vendor control (net48 renders)
       { form: 'TabAddRangeForm', safe: false, reason: 'lostStatements' }, // TabPages.AddRange / Hidden SelectedTab (deferred R2/R3)
-      { form: 'TreeForm', safe: false, reason: 'lostStatements' },        // TreeNode local-variable naming (deferred R4)
-      { form: 'AnchorDockForm', safe: false, reason: 'lostStatements' },  // anchored bounds recomputed on load
+    { form: 'AnchorDockForm', safe: false, reason: 'lostStatements' }, // anchored bounds recomputed on load
+    // Hand-simplified (NOT VS-canonical) source: VS emits Color.FromArgb(((int)(((byte)(255)))), …) and the
+    // image-index TreeNode ctor. Regenerating these would rewrite bytes the user never edited, so refusing is
+    // correct fail-closed behaviour — NOT the R4 naming bug. Written VS-canonically both are save-safe (asserted
+    // in the R4 canonical-form leg below), which is the shape real VS-generated files actually have.
+    { form: 'TreeImageForm', safe: false, reason: 'lostStatements' }, // ctor: new TreeNode("Banana") vs ("Banana", 1, 2)
+    { form: 'TreeStyleForm', safe: false, reason: 'lostStatements' }, // short Color.FromArgb(255, 224, 192)
     ];
     let corpusChecked = 0;
     for (const row of roundTripCorpus) {
@@ -3293,6 +3669,526 @@ async function main(): Promise<void> {
     }
     if (corpusChecked < 12) throw new Error(`golden-corpus: expected >=12 corpus fixtures present, only ${corpusChecked} found`);
     console.log(`e2e: 0.12.0 golden-corpus round-trip matrix verified — ${corpusChecked} fixtures assert their authoritative save-safe verdict + reason category (safe / binaryResx / localizable / unresolvedType / lostStatements)`);
+
+    // ---- 1.0 R4: a VS-CANONICAL TreeView form round-trips ----
+    // The corpus keeps TreeImageForm/TreeStyleForm fail-closed because those fixtures are hand-simplified. Real
+    // .Designer.cs files are machine-generated by VS, which emits the verbose Color cast and the image-index
+    // TreeNode ctor. Written the way VS actually writes them they MUST be save-safe — otherwise the R4 naming fix
+    // would only be cosmetic. This is the leg that proves R4 helps real-world files.
+    {
+      const canonDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-r4canon-'));
+      try {
+        const styleSrc = fs.readFileSync(path.join(repo, 'engine', 'samples', 'TreeStyleForm.Designer.cs'), 'utf8');
+        const styleCanon = styleSrc.replace(
+          'System.Drawing.Color.FromArgb(255, 224, 192)',
+          'System.Drawing.Color.FromArgb(((int)(((byte)(255)))), ((int)(((byte)(224)))), ((int)(((byte)(192)))))');
+        if (styleCanon === styleSrc) throw new Error('1.0 R4: TreeStyleForm canonicalization did not apply — fixture changed?');
+        const styleFp = path.join(canonDir, 'TreeStyleForm.Designer.cs');
+        fs.writeFileSync(styleFp, styleCanon);
+        const styleSave = await previewSave(engine, styleFp);
+        if (!styleSave.safe || styleSave.reasonCategory !== 'safe')
+          throw new Error(`1.0 R4: VS-canonical TreeStyleForm must be save-safe, got safe=${styleSave.safe} reason=${styleSave.reasonCategory} missing=${styleSave.missingStatements.join(' | ')}`);
+
+        const imgSrc = fs.readFileSync(path.join(repo, 'engine', 'samples', 'TreeImageForm.Designer.cs'), 'utf8');
+        const imgCanon = imgSrc.replace(
+          'System.Windows.Forms.TreeNode treeNode2 = new System.Windows.Forms.TreeNode("Banana");',
+          'System.Windows.Forms.TreeNode treeNode2 = new System.Windows.Forms.TreeNode("Banana", 1, 2);');
+        if (imgCanon === imgSrc) throw new Error('1.0 R4: TreeImageForm canonicalization did not apply — fixture changed?');
+        const imgFp = path.join(canonDir, 'TreeImageForm.Designer.cs');
+        fs.writeFileSync(imgFp, imgCanon);
+        const imgSave = await previewSave(engine, imgFp);
+        if (!imgSave.safe || imgSave.reasonCategory !== 'safe')
+          throw new Error(`1.0 R4: VS-canonical TreeImageForm must be save-safe, got safe=${imgSave.safe} reason=${imgSave.reasonCategory} missing=${imgSave.missingStatements.join(' | ')}`);
+
+        console.log('e2e: 1.0 R4 verified — VS-canonical TreeView forms (verbose Color cast + image-index TreeNode ctor) are save-safe, and the generated TreeNode locals are camelCase (treeNode1) exactly as VS emits; hand-simplified fixtures stay honestly fail-closed');
+      } finally {
+        try { fs.rmSync(canonDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    }
+
+    // ---- 1.0 R4 guard: VS-style generated-local naming must NOT leak into the LOAD path ----
+    // VsNameCreationService is handed ONLY to the serialization manager (SerializerServices). A previous cut of the
+    // fix registered it on the DesignSurface itself, which regressed loading, because the host consults the service
+    // even when a name is given explicitly (found by independent review):
+    // • a legal verbatim identifier field (@class) hit ValidateName → "Invalid name: @class" → unrepresentable;
+    // • the ROOT was auto-named "form", so a real field named `form` threw "Duplicate component name".
+    // Both turned perfectly legal forms read-only — the exact FALSE-refusal class R4 exists to remove. Pin them.
+    {
+      const nameDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-r4names-'));
+      try {
+        const mk = (cls: string, field: string, nameProp: string) => `namespace SampleApp
+{
+    partial class ${cls}
+    {
+        private System.Windows.Forms.Button ${field};
+        private void InitializeComponent()
+        {
+            this.${field} = new System.Windows.Forms.Button();
+            this.SuspendLayout();
+            this.${field}.Location = new System.Drawing.Point(12, 12);
+            this.${field}.Name = "${nameProp}";
+            this.${field}.Size = new System.Drawing.Size(75, 23);
+            this.${field}.TabIndex = 0;
+            this.${field}.Text = "Hi";
+            this.Controls.Add(this.${field});
+            this.ClientSize = new System.Drawing.Size(284, 161);
+            this.Name = "${cls}";
+            this.ResumeLayout(false);
+        }
+    }
+}
+`;
+        for (const [cls, field, nameProp, why] of [
+          ['AtClassForm', '@class', 'class', 'a legal verbatim-identifier field must not hit a hand-rolled name validator'],
+          ['CleanFormField', 'form', 'form', 'a field named like the root type\'s camelCase name must not collide with an auto-named root'],
+        ] as Array<[string, string, string, string]>) {
+          const fp = path.join(nameDir, cls + '.Designer.cs');
+          fs.writeFileSync(fp, mk(cls, field, nameProp));
+      const ps = await previewSave(engine, fp);
+          if (!ps.safe || ps.reasonCategory !== 'safe')
+            throw new Error(`1.0 R4 naming leak: ${cls} must stay save-safe (${why}); got safe=${ps.safe} reason=${ps.reasonCategory} missing=${ps.missingStatements.join(' | ')}`);
+        }
+        console.log('e2e: 1.0 R4 load-path guard verified — VS-style generated-local naming stays scoped to the serializer: a @class field and a field named "form" both remain save-safe (they regressed to unrepresentable when the service was registered surface-wide)');
+      } finally {
+        try { fs.rmSync(nameDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    }
+
+    // ---- 1.0: the engine renders THE DESIGNER CLASS, never "the first class in the file" ----
+    // The renderer used to take the first ClassDeclarationSyntax in the file. A .Designer.cs with a second class
+    // ahead of the form therefore rendered the WRONG class and reported it save-safe with no banner, while the
+    // property editor and save splicer keyed off InitializeComponent — three components, three answers. All three
+    // now share DesignerModifiers.DesignerFormClass (InitializeComponent-declaring, partial-preferred, file-name
+    // tiebreak, fail-closed when absent).
+    {
+      const clsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-clsel-'));
+      try {
+        // (a) the form is NOT the first class → must still render the form's controls, not the other class's
+        const twoClass = path.join(clsDir, 'TwoClass.Designer.cs');
+        fs.writeFileSync(twoClass, `namespace SampleApp
+{
+    partial class SidePanel
+    {
+        private System.Windows.Forms.Label sideLabel;
+    }
+
+    partial class TwoClass
+    {
+        private System.Windows.Forms.Button okButton;
+        private void InitializeComponent()
+        {
+            this.okButton = new System.Windows.Forms.Button();
+            this.SuspendLayout();
+            this.okButton.Location = new System.Drawing.Point(12, 12);
+            this.okButton.Name = "okButton";
+            this.okButton.Size = new System.Drawing.Size(75, 23);
+            this.okButton.TabIndex = 0;
+            this.okButton.Text = "OK";
+            this.Controls.Add(this.okButton);
+            this.ClientSize = new System.Drawing.Size(400, 300);
+            this.Name = "TwoClass";
+            this.Text = "Two Class Form";
+            this.ResumeLayout(false);
+        }
+    }
+}
+`);
+        const twoDesc = await describeDesigner(engine, twoClass);
+        const twoIds = twoDesc.components.map(c => c.id);
+        if (!twoIds.includes('okButton'))
+          throw new Error(`class selection: the FORM's control must render when the form isn't the first class; got components [${twoIds.join(', ')}]`);
+        if (twoIds.includes('sideLabel'))
+          throw new Error(`class selection: rendered the wrong class (sideLabel belongs to SidePanel, not the form); got [${twoIds.join(', ')}]`);
+        const twoSave = await previewSave(engine, twoClass);
+        if (!twoSave.safe || twoSave.reasonCategory !== 'safe')
+          throw new Error(`class selection: TwoClass should be save-safe once the right class is picked, got safe=${twoSave.safe} reason=${twoSave.reasonCategory}`);
+
+        // (b) a form legitimately split across partials (fields in one, InitializeComponent in another)
+        const splitForm = path.join(clsDir, 'SplitForm.Designer.cs');
+        fs.writeFileSync(splitForm, `namespace SampleApp
+{
+    partial class SplitForm
+    {
+        private System.Windows.Forms.Button okButton;
+    }
+
+    partial class SplitForm
+    {
+        private void InitializeComponent()
+        {
+            this.okButton = new System.Windows.Forms.Button();
+            this.SuspendLayout();
+            this.okButton.Location = new System.Drawing.Point(12, 12);
+            this.okButton.Name = "okButton";
+            this.okButton.Size = new System.Drawing.Size(75, 23);
+            this.okButton.TabIndex = 0;
+            this.okButton.Text = "OK";
+            this.Controls.Add(this.okButton);
+            this.ClientSize = new System.Drawing.Size(300, 200);
+            this.Name = "SplitForm";
+            this.ResumeLayout(false);
+        }
+    }
+}
+`);
+      const splitSave = await previewSave(engine, splitForm);
+        if (!splitSave.safe || splitSave.reasonCategory !== 'safe')
+          throw new Error(`class selection: a form split across partials must be save-safe (its fields live in the other partial), got safe=${splitSave.safe} reason=${splitSave.reasonCategory} missing=${splitSave.missingStatements.join(' | ')}`);
+
+        // (c) no designer class at all → fail CLOSED, never render an arbitrary class
+        const noForm = path.join(clsDir, 'NoForm.Designer.cs');
+        fs.writeFileSync(noForm, 'namespace SampleApp\n{\n    class JustAHelper\n    {\n        private int x;\n    }\n}\n');
+        let failedClosed = false;
+        try { await describeDesigner(engine, noForm); } catch { failedClosed = true; }
+        if (!failedClosed) throw new Error('class selection: a file with no designer class must fail closed, not render some other class');
+
+        // (d) AMBIGUOUS — two top-level classes both declaring InitializeComponent. This MUST fail closed rather than
+        // pick one: the save splicer and the byte-surgical editors resolve the class independently (first
+        // declarer), so any rule that picks a different one here splices the generated body of one class into
+        // the other and reports a successful save. A file-name tiebreak did exactly that: the renderer
+        // chose Foo while the splicer rewrote Helper's empty body, producing a file that no longer compiles.
+        const ambiguous = path.join(clsDir, 'Foo.Designer.cs');
+        fs.writeFileSync(ambiguous, `namespace N
+{
+    partial class Helper
+    {
+        private void InitializeComponent() { }
+    }
+
+    partial class Foo
+    {
+        private System.Windows.Forms.Button okButton;
+        private void InitializeComponent()
+        {
+            this.okButton = new System.Windows.Forms.Button();
+            this.okButton.Text = "real form";
+            this.Controls.Add(this.okButton);
+        }
+    }
+}
+`);
+        let ambiguousRefused = false;
+        try { await describeDesigner(engine, ambiguous); } catch { ambiguousRefused = true; }
+        if (!ambiguousRefused)
+          throw new Error('class selection: two classes declaring InitializeComponent are AMBIGUOUS and must fail closed — picking one disagrees with the splicer and regenerates into the wrong class');
+
+        // (e) a NESTED declarer counts too. The splicer/editors scan ALL descendant classes, so skipping nested ones
+        // here (a top-level-only filter) recreated the very divergence above: the renderer chose the real form
+        // while the splicer rewrote Helper.Inner.InitializeComponent — save-safe, non-compiling output.
+        const nested = path.join(clsDir, 'NestedProbe.Designer.cs');
+        fs.writeFileSync(nested, `namespace N
+{
+    class Helper
+    {
+        class Inner
+        {
+            private void InitializeComponent() { }
+        }
+    }
+
+    partial class NestedProbe
+    {
+        private System.Windows.Forms.Button okButton;
+        private void InitializeComponent()
+        {
+            this.okButton = new System.Windows.Forms.Button();
+            this.okButton.Text = "real form";
+            this.Controls.Add(this.okButton);
+            this.ClientSize = new System.Drawing.Size(300, 200);
+            this.Name = "NestedProbe";
+        }
+    }
+}
+`);
+        let nestedRefused = false;
+        try { await describeDesigner(engine, nested); } catch { nestedRefused = true; }
+        if (!nestedRefused)
+          throw new Error('class selection: a NESTED InitializeComponent declarer must make the file ambiguous (the splicer would pick it) and fail closed');
+
+        // (f) an InitializeComponent OVERLOAD ahead of the real one. Every consumer used to take the first method
+        // matching the NAME, so the interpreter replayed the empty `InitializeComponent(int)` and rendered an
+        // EMPTY form with no banner — a mis-render, and the save splicer would then rewrite that overload's body.
+        // Now the class and the method are one decision (FormClassResolver), shared by every consumer, so the
+        // parameterless one is unambiguously THE InitializeComponent. This tightening was only safe once the
+        // resolver was shared: applied to one selector alone it is precisely the divergence (d)/(e) guard against.
+        const overload = path.join(clsDir, 'OverloadForm.Designer.cs');
+        fs.writeFileSync(overload, `namespace N
+{
+    partial class OverloadForm
+    {
+        private System.Windows.Forms.Button okButton;
+
+        private void InitializeComponent(int unused) { }
+
+        private void InitializeComponent()
+        {
+            this.okButton = new System.Windows.Forms.Button();
+            this.okButton.Location = new System.Drawing.Point(12, 12);
+            this.okButton.Name = "okButton";
+            this.okButton.Size = new System.Drawing.Size(75, 23);
+            this.okButton.TabIndex = 0;
+            this.okButton.Text = "OK";
+            this.Controls.Add(this.okButton);
+            this.ClientSize = new System.Drawing.Size(300, 200);
+            this.Name = "OverloadForm";
+        }
+    }
+}
+`);
+        const ovDesc = await describeDesigner(engine, overload);
+        const ovIds = ovDesc.components.map(c => c.id);
+        if (!ovIds.includes('okButton'))
+          throw new Error(`class selection: an InitializeComponent(int) overload ahead of the real one must NOT be interpreted — the form rendered empty; got [${ovIds.join(', ')}]`);
+        const ovSave = await previewSave(engine, overload);
+        if (!ovSave.safe || ovSave.reasonCategory !== 'safe')
+          throw new Error(`class selection: OverloadForm must stay save-safe (the splicer rewrites the parameterless IC), got safe=${ovSave.safe} reason=${ovSave.reasonCategory} missing=${ovSave.missingStatements.join(' | ')}`);
+
+        // (g) a class declaring ONLY an overload is not a designer class at all → the file fails closed rather than
+        // rendering an empty form from a method that was never InitializeComponent.
+        const onlyOverload = path.join(clsDir, 'OnlyOverload.Designer.cs');
+        fs.writeFileSync(onlyOverload, 'namespace N\n{\n    class OnlyOverload\n    {\n        private void InitializeComponent(int x) { }\n    }\n}\n');
+        let onlyOverloadRefused = false;
+        try { await describeDesigner(engine, onlyOverload); } catch { onlyOverloadRefused = true; }
+        if (!onlyOverloadRefused)
+          throw new Error('class selection: a class declaring only an InitializeComponent(int) overload is not a designer class and must fail closed');
+
+        // (h) CODE-BEHIND identity. The designer file's class rule is shared now, but the paired .cs was matched by
+        // SIMPLE name, first hit — so a helper `namespace Other { class Form1 }` ahead of the real form made the
+        // events dropdown offer Other.Form1's methods and HasMethod validate against them, while the wiring went
+        // into Product.Ui.Form1, which has no such method: both files parse, the save reports success, and the
+        // project no longer compiles. Matched on the full namespace-qualified identity now.
+        const cbDir = path.join(clsDir, 'cb');
+        fs.mkdirSync(cbDir, { recursive: true });
+        const cbDesigner = path.join(cbDir, 'Form1.Designer.cs');
+        fs.writeFileSync(cbDesigner, `namespace Product.Ui
+{
+    partial class Form1 : System.Windows.Forms.Form
+    {
+        private System.Windows.Forms.Button button1;
+
+        private void InitializeComponent()
+        {
+            this.button1 = new System.Windows.Forms.Button();
+            this.button1.Location = new System.Drawing.Point(10, 10);
+            this.button1.Name = "button1";
+            this.button1.Size = new System.Drawing.Size(75, 23);
+            this.button1.Text = "Run";
+            this.Controls.Add(this.button1);
+            this.ClientSize = new System.Drawing.Size(300, 200);
+            this.Name = "Form1";
+        }
+    }
+}
+`);
+        // The decoy declares a signature-compatible handler and comes FIRST in the file.
+        const cbCode = `namespace Other
+{
+    class Form1
+    {
+        private void button1_Click(object sender, System.EventArgs e) { }
+    }
+}
+
+namespace Product.Ui
+{
+    partial class Form1
+    {
+    }
+}
+`;
+        fs.writeFileSync(path.join(cbDir, 'Form1.cs'), cbCode);
+        const cbCands = await listHandlerCandidates(engine, cbDesigner, 'button1', null, cbCode, null);
+        const clickCands = cbCands['Click'] || [];
+        if (clickCands.includes('button1_Click'))
+          throw new Error(`code-behind identity: offered button1_Click, which belongs to Other.Form1 — wiring it into Product.Ui.Form1 produces a non-compiling project; got Click candidates [${clickCands.join(', ')}]`);
+        // The "new handler" flow must put the stub in Product.Ui.Form1, NOT in the decoy that merely shares the name.
+        const cbGen = await generateEventHandler(engine, cbDesigner, 'button1', 'Click', null, null, cbCode, null);
+        if (!cbGen.safe || cbGen.codeText == null)
+          throw new Error(`code-behind identity: generating a handler should succeed on the real form, got safe=${cbGen.safe} reason=${cbGen.reason}`);
+        // The decoy's own text must be untouched, and the stub must appear in the REAL form's declaration. (Don't
+        // search for the handler name globally: the decoy already declares a method of exactly that name+signature —
+        // that is the whole point of the fixture.)
+        const decoyBefore = cbCode.slice(cbCode.indexOf('namespace Other'), cbCode.indexOf('namespace Product.Ui'));
+        const decoyAfter = cbGen.codeText.slice(cbGen.codeText.indexOf('namespace Other'), cbGen.codeText.indexOf('namespace Product.Ui'));
+        if (decoyAfter !== decoyBefore)
+          throw new Error('code-behind identity: the stub was written into Other.Form1 — a class that merely shares the form\'s simple name; the wiring would reference a method Product.Ui.Form1 does not have');
+        const realPart = cbGen.codeText.slice(cbGen.codeText.indexOf('namespace Product.Ui'));
+        if (!realPart.includes(cbGen.handlerName + '(object sender'))
+          throw new Error(`code-behind identity: the stub ${cbGen.handlerName} did not land in Product.Ui.Form1`);
+
+        // (i) The GLOBAL-namespace form — the identity has no dot, so a "does it look qualified?" shortcut would fall
+        // back to simple-name matching here and re-open (h) for a NESTED decoy. Identity is compared in full,
+        // always: "Helper+GlobalForm" is not "GlobalForm".
+        const gDesigner = path.join(cbDir, 'GlobalForm.Designer.cs');
+        fs.writeFileSync(gDesigner, `partial class GlobalForm : System.Windows.Forms.Form
+{
+    private System.Windows.Forms.Button button1;
+
+    private void InitializeComponent()
+    {
+        this.button1 = new System.Windows.Forms.Button();
+        this.button1.Location = new System.Drawing.Point(10, 10);
+        this.button1.Name = "button1";
+        this.button1.Size = new System.Drawing.Size(75, 23);
+        this.button1.Text = "Run";
+        this.Controls.Add(this.button1);
+        this.ClientSize = new System.Drawing.Size(300, 200);
+        this.Name = "GlobalForm";
+    }
+}
+`);
+        const gCode = `class Helper
+{
+    class GlobalForm
+    {
+        private void button1_Click(object sender, System.EventArgs e) { }
+    }
+}
+
+partial class GlobalForm
+{
+}
+`;
+        const gCands = await listHandlerCandidates(engine, gDesigner, 'button1', null, gCode, null);
+        if ((gCands['Click'] || []).includes('button1_Click'))
+          throw new Error('code-behind identity: a NESTED same-named class (Helper+GlobalForm) was treated as the global-namespace form — its method would be wired into a form that does not have it');
+
+        // (j) HANDLER SIGNATURE identity. Candidate parameter types were compared by their LAST segment, so a user's
+        // own Custom.EventArgs passed as System.EventArgs: the dropdown offered WrongClick, and wiring it emitted
+        // `Click += new EventHandler(this.WrongClick)` — not compatible with EventHandler, project stops compiling.
+        // A qualified spelling must now agree with the real namespace; correctly-typed handlers still show up.
+        const sigCode = `namespace Product.Ui
+{
+    partial class Form1
+    {
+        private void WrongClick(object sender, Custom.EventArgs e) { }
+        private void RightClick(object sender, System.EventArgs e) { }
+        private void AlsoRight(object sender, System.Windows.Forms.MouseEventArgs e) { }
+    }
+}
+
+namespace Custom
+{
+    public sealed class EventArgs : System.EventArgs { }
+}
+`;
+        const sigCands = await listHandlerCandidates(engine, cbDesigner, 'button1', null, sigCode, null);
+        const sigClick = sigCands['Click'] || [];
+        if (sigClick.includes('WrongClick'))
+          throw new Error(`code-behind signature: WrongClick takes Custom.EventArgs, which is NOT System.EventArgs — offering it wires an incompatible method group and breaks the build; got [${sigClick.join(', ')}]`);
+        if (!sigClick.includes('RightClick'))
+          throw new Error(`code-behind signature: a correctly-typed System.EventArgs handler must still be offered; got Click candidates [${sigClick.join(', ')}]`);
+        // partial qualification is legal C# and must still match (MouseEventArgs → MouseDown, not Click)
+        const sigMouse = sigCands['MouseDown'] || [];
+        if (!sigMouse.includes('AlsoRight'))
+          throw new Error(`code-behind signature: a fully-qualified MouseEventArgs handler must be offered for MouseDown; got [${sigMouse.join(', ')}]`);
+
+        // (k) A `using` ALIAS makes a qualified spelling mean something the syntactic comparison cannot see. Matching
+        // "does the real name end with what was written?" accepted `Forms.MouseEventArgs` for
+        // System.Windows.Forms.MouseEventArgs even though the alias binds it elsewhere — wiring it breaks the build.
+        const aliasCode = `using Forms = Product.CustomForms;
+
+namespace Product.Ui
+{
+    partial class Form1
+    {
+        private void button1_MouseDown(object sender, Forms.MouseEventArgs e) { }
+    }
+}
+
+namespace Product.CustomForms
+{
+    public sealed class MouseEventArgs : System.EventArgs { }
+}
+`;
+        const aliasCands = await listHandlerCandidates(engine, cbDesigner, 'button1', null, aliasCode, null);
+        if ((aliasCands['MouseDown'] || []).includes('button1_MouseDown'))
+          throw new Error('code-behind signature: `using Forms = Product.CustomForms;` makes Forms.MouseEventArgs a DIFFERENT type from System.Windows.Forms.MouseEventArgs — offering it wires an incompatible method group');
+
+        // (l) An ESCAPED identifier is a legal C# spelling whose metadata name has no '@'. Building the identity from
+        // the raw spelling produced "@Ui.@Form1", which matches no compiled type — the .NET 4.8 host then reported
+        // a perfectly current assembly as a stale build, and the code-behind match failed too.
+        const escDesigner = path.join(cbDir, 'EscForm.Designer.cs');
+        fs.writeFileSync(escDesigner, `namespace @Ui
+{
+    partial class @EscForm : System.Windows.Forms.Form
+    {
+        private System.Windows.Forms.Button button1;
+
+        private void InitializeComponent()
+        {
+            this.button1 = new System.Windows.Forms.Button();
+            this.button1.Name = "button1";
+            this.button1.Text = "Run";
+            this.Controls.Add(this.button1);
+            this.ClientSize = new System.Drawing.Size(300, 200);
+            this.Name = "EscForm";
+        }
+    }
+}
+`);
+        const escCode = `namespace Ui
+{
+    partial class EscForm
+    {
+        private void button1_Click(object sender, System.EventArgs e) { }
+    }
+}
+`;
+        const escCands = await listHandlerCandidates(engine, escDesigner, 'button1', null, escCode, null);
+        if (!(escCands['Click'] || []).includes('button1_Click'))
+          throw new Error(`escaped identifiers: @Ui.@EscForm denotes Ui.EscForm — its code-behind handler must be found; got [${(escCands['Click'] || []).join(', ')}]`);
+
+        console.log('e2e: 1.0 class-selection verified — the engine renders the InitializeComponent-declaring form (not the first class in the file), a form split across partials is save-safe, an InitializeComponent(int) overload no longer renders the form empty, the code-behind is matched by full identity (a same-named class in another namespace is not the form), and "no designer class" / "two candidates" / "overload only" all fail closed');
+      } finally {
+        try { fs.rmSync(clsDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    }
+
+    // ---- 1.0: a negative literal keeps its sign for EVERY numeric type ----
+    // Eval's unary-minus used to negate only int/double/long and return anything else UNNEGATED, silently: a
+    // decimal `Minimum = -100` was described and rendered as 100. A wrong number presented as fact is exactly what
+    // the fail-closed bar forbids; unnegatable operands now throw → unrepresentable (banner), never a wrong value.
+    {
+      const negDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-neg-'));
+      try {
+        const negForm = path.join(negDir, 'NegForm.Designer.cs');
+        fs.writeFileSync(negForm, `namespace SampleApp
+{
+    partial class NegForm
+    {
+        private System.Windows.Forms.NumericUpDown numericUpDown1;
+        private void InitializeComponent()
+        {
+            this.numericUpDown1 = new System.Windows.Forms.NumericUpDown();
+            this.SuspendLayout();
+            this.numericUpDown1.Location = new System.Drawing.Point(-10, -20);
+            this.numericUpDown1.Minimum = -100;
+            this.numericUpDown1.Name = "numericUpDown1";
+            this.numericUpDown1.Size = new System.Drawing.Size(120, 23);
+            this.numericUpDown1.TabIndex = 0;
+            this.Controls.Add(this.numericUpDown1);
+            this.ClientSize = new System.Drawing.Size(284, 161);
+            this.Name = "NegForm";
+            this.ResumeLayout(false);
+        }
+    }
+}
+`);
+        const nud = await describeComponent(engine, negForm, 'numericUpDown1');
+        if (!nud) throw new Error('negative literals: numericUpDown1 should describe');
+        const propVal = (n: string) => nud.properties.find(p => p.name === n)?.value;
+        // decimal — the one the int/double/long ladder silently dropped the sign on
+        if (propVal('Minimum') !== '-100')
+          throw new Error(`negative literals: Minimum must stay -100 (decimal), got ${propVal('Minimum')}`);
+        // int — was already correct; pin it so the rewrite didn't cost anything
+        if (propVal('Location') !== '-10, -20')
+          throw new Error(`negative literals: Location must stay -10, -20 (int), got ${propVal('Location')}`);
+        console.log('e2e: 1.0 negative-literal sign verified — a decimal Minimum = -100 describes as -100 (it silently became 100 when unary-minus only handled int/double/long) and int Point(-10, -20) is unchanged');
+      } finally {
+        try { fs.rmSync(negDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    }
 
     // ---- 0.12.0 Modifiers / GenerateMember design-time pseudo-properties ----
     // Modifiers is the field-declaration access keyword, edited via a byte-local splice (safe on EVERY form — it never
@@ -3332,7 +4228,7 @@ async function main(): Promise<void> {
       console.log('e2e: 0.12.0 Modifiers/GenerateMember verified — describe surfaces an editable exclusive Modifiers dropdown (default Private) + read-only GenerateMember; setModifier is byte-local (1 field line changes, InitializeComponent untouched); unknown modifier refused');
     }
 
-    // ---- FlowLayoutPanel reorder (slice d) ----
+    // ---- FlowLayoutPanel reorder ----
     // A FlowLayoutPanel positions children by the order of their Controls.Add — exactly what MoveZOrder (gate
     // OnlyReordered) relocates. So "reorder a flow child" reuses the z-order path: Bring to Front moves a child's
     // Controls.Add first → it now flows first (leftmost). Verify the flow follows Add order and that MoveZOrder
@@ -3474,7 +4370,7 @@ async function main(): Promise<void> {
       if (inj.safe || inj.designerText != null || inj.codeText != null) throw new Error('GenerateEventHandler MUST reject a non-identifier handler name (injection): safe=' + inj.safe);
       console.log(`e2e: create-event-handler verified — okButton.MouseDown wired + typed stub generated (safe-save gate: +1 wiring only), wired form renders (${wiredPng.png.length}B), already-wired Click → no change, injection handler name rejected`);
 
-      // ---- events dropdown (#2): compatible-handler candidates + wire/rewire/unwire ----
+      // ---- events dropdown: compatible-handler candidates + wire/rewire/unwire ----
       const cands = await listHandlerCandidates(engine, eventForm, 'okButton', dText, cText, null);
       // Click is EventHandler(object,EventArgs) → all 3 fixture methods match
       if (!cands['Click'] || cands['Click'].indexOf('okButton_Click') < 0) throw new Error('ListHandlerCandidates: Click should list okButton_Click; got ' + JSON.stringify(cands['Click']));
@@ -3500,7 +4396,23 @@ async function main(): Promise<void> {
       // refuse wiring to a method that doesn't exist in the code-behind (would not compile)
       const bad = await setEventWiring(engine, eventForm, 'okButton', 'MouseLeave', 'NoSuchMethod', dText, cText, null);
       if (bad.safe) throw new Error('SetEventWiring must refuse wiring to a non-existent handler method');
-      console.log(`e2e: events dropdown verified — candidates by precise signature (Click→${cands['Click'].length}, MouseDown→none), rewire/unwire/wire-to-existing safe, missing method rejected`);
+
+      // 1.0 — EXISTING is not COMPATIBLE. The write path checked only that a method of that name exists, so a
+      // wrong-signature method could be wired: `Click += new EventHandler(this.WrongClick)` where WrongClick takes a
+      // string is not a valid method group, and the project stops compiling. The dropdown filters by signature; this
+      // path is reachable from the panel with any value, so it must apply the same rule rather than trust the UI.
+      const withWrong = cText.replace(
+        'private void okButton_Click(object sender, EventArgs e)',
+        'private void WrongSig(string text) { }\n\n        private void okButton_Click(object sender, EventArgs e)');
+      if (withWrong === cText) throw new Error('events: fixture setup — could not inject WrongSig into the code-behind');
+      const incompat = await setEventWiring(engine, eventForm, 'okButton', 'MouseLeave', 'WrongSig', dText, withWrong, null);
+      if (incompat.safe)
+        throw new Error('SetEventWiring must refuse a handler whose SIGNATURE does not match the event — wiring it emits an invalid method group and breaks the build');
+      // …and a compatible one still wires from the same code-behind (the guard is not just "refuse everything")
+      const stillOk = await setEventWiring(engine, eventForm, 'okButton', 'MouseLeave', 'okButton_Click', dText, withWrong, null);
+      if (!stillOk.safe) throw new Error('SetEventWiring: a correctly-typed handler must still wire; got ' + stillOk.reason);
+
+      console.log(`e2e: events dropdown verified — candidates by precise signature (Click→${cands['Click'].length}, MouseDown→none), rewire/unwire/wire-to-existing safe, missing method rejected, wrong-signature handler rejected`);
     } else {
       console.log('e2e: Events tab SKIPPED — engine/samples/EventForm.Designer.cs missing');
     }
@@ -3936,17 +4848,17 @@ async function main(): Promise<void> {
       // container-with-children (leaf-only): reparenting optionsGroup (holds optionA/optionB) even to the root is
       // refused by the leaf check (root skips the target-type check, so this exercises leaf-only directly).
       if ((await reparentControl(engine, designer, 'optionsGroup', 'this', rpDisk)).safe) throw new Error('reparent must refuse a container with children (leaf-only)');
-      // review fix — the target must be a container that accepts a DIRECT child: a leaf Control (CheckBox) is refused.
+      // The target must be a container that accepts a DIRECT child: a leaf Control (CheckBox) is refused.
       if ((await reparentControl(engine, designer, 'okButton', 'agreeCheck', rpDisk)).safe) throw new Error('reparent must refuse a non-container target (agreeCheck is a CheckBox)');
       if (fs.readFileSync(designer, 'utf8') !== rpDisk) throw new Error('reparent must not touch disk (buffer path)');
-      // review fix (MED) — reparenting into a NON-Control tray field (ToolTip) is refused: it would emit
+      // Reparenting into a NON-Control tray field (ToolTip) is refused: it would emit
       // non-compiling `toolTip1.Controls.Add(...)`.
       const extForm = path.join(repo, 'engine', 'samples', 'ExtenderForm.Designer.cs');
       if (fs.existsSync(extForm)) {
         const extDisk2 = fs.readFileSync(extForm, 'utf8');
         if ((await reparentControl(engine, extForm, 'helpButton', 'toolTip1', extDisk2)).safe) throw new Error('reparent must refuse a non-Control (tray component) target — would not compile');
       }
-      // review fix (LOW) / cycle-safety — a TableLayoutPanel's 3-arg cell children still make it a container, so
+      // Cycle-safety — a TableLayoutPanel's 3-arg cell children still make it a container, so
       // reparenting it (even to root) is refused by the robust leaf check.
       if (fs.existsSync(tlpForm)) {
         const tlpDisk2 = fs.readFileSync(tlpForm, 'utf8');
@@ -3993,12 +4905,12 @@ async function main(): Promise<void> {
     }
 
     // ---- MSBuild design-time resolver (auto-discovery for complex projects) ----
-    // ComplexProject is multi-target (net8/net9-windows) with a <BaseOutputPath>build-out\</BaseOutputPath>
+    // ComplexProject is multi-target (net8/net9/net10-windows) with a <BaseOutputPath>build-out\</BaseOutputPath>
     // that redirects output OUT of bin/. The lightweight bin-search cannot find it (no bin/ dir); only the
     // MSBuild eval + TFM selection resolve it. Asserts ResolveAssembly returns the build-out net9 dll and
     // that the fixture invariant (no bin/) holds, so TFM-selection + custom-OutputPath has a regression test.
     const complexFixture = path.join(repo, 'samples', 'ComplexProject', 'MainForm.Designer.cs');
-    const complexDll = path.join(repo, 'samples', 'ComplexProject', 'build-out', 'Debug', 'net9.0-windows', 'ComplexProject.dll');
+    const complexDll = path.join(repo, 'samples', 'ComplexProject', 'build-out', 'Debug', 'net10.0-windows', 'ComplexProject.dll');
     if (fs.existsSync(complexFixture) && fs.existsSync(complexDll)) {
       if (fs.existsSync(path.join(repo, 'samples', 'ComplexProject', 'bin'))) {
         throw new Error('fixture invariant broken: ComplexProject must have no bin/ dir (BaseOutputPath redirects output)');
@@ -4010,7 +4922,7 @@ async function main(): Promise<void> {
       }
       console.log(`e2e: MSBuild resolver verified — multi-target/custom-output fixture → ${resolved} (bin-search alone could not)`);
     } else {
-      console.log('e2e: MSBuild resolver SKIPPED — build samples/ComplexProject (-f net9.0-windows -c Debug) to exercise it');
+      console.log('e2e: MSBuild resolver SKIPPED — build samples/ComplexProject (-f net10.0-windows -c Debug -p:TargetFrameworks=net10.0-windows) to exercise it');
     }
 
     console.log('E2E RESULT: PASS — extension client renders, live-updates, edits properties (incl. Point/Size/Color/Font/Padding), renders single-control dirty-region patches, resolves complex-project output via MSBuild, and honors an explicit assembly override via the engine over named-pipe JSON-RPC');

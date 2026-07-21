@@ -311,7 +311,7 @@ namespace WinFormsDesigner.Engine
             if (!IsIdentifier(ownerId)) return Failed("invalid owner id: " + ownerId);
             var root = CSharpSyntaxTree.ParseText(sourceText).GetRoot();
             var cls = FindClass(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return Failed("InitializeComponent not found");
 
             // the whole current forest must be modelled — else dropping it would lose a value.
@@ -453,11 +453,18 @@ namespace WinFormsDesigner.Engine
                 if (!ResolveIds(d.Children ?? new List<TreeNodeItem>(), currentSet, used, seen, out var kids, out reason)) return false;
                 normalized.Add(new TreeNodeItem
                 {
-                    Id = id, Text = d.Text ?? "", Name = d.Name ?? "",
-                    ImageKey = d.ImageKey ?? "", ImageIndex = d.ImageIndex,
-                    SelectedImageKey = d.SelectedImageKey ?? "", SelectedImageIndex = d.SelectedImageIndex,
-                    ToolTipText = d.ToolTipText ?? "", Checked = d.Checked,
-                    ForeColor = d.ForeColor ?? "", BackColor = d.BackColor ?? "", NodeFont = d.NodeFont ?? "",
+                    Id = id,
+                    Text = d.Text ?? "",
+                    Name = d.Name ?? "",
+                    ImageKey = d.ImageKey ?? "",
+                    ImageIndex = d.ImageIndex,
+                    SelectedImageKey = d.SelectedImageKey ?? "",
+                    SelectedImageIndex = d.SelectedImageIndex,
+                    ToolTipText = d.ToolTipText ?? "",
+                    Checked = d.Checked,
+                    ForeColor = d.ForeColor ?? "",
+                    BackColor = d.BackColor ?? "",
+                    NodeFont = d.NodeFont ?? "",
                     Children = kids,
                 });
             }
@@ -785,19 +792,14 @@ namespace WinFormsDesigner.Engine
 
         private static bool IsIdentifier(string s) => !string.IsNullOrEmpty(s) && SyntaxFacts.IsValidIdentifier(s);
 
-        private static MethodDeclarationSyntax? FindInitializeComponent(SyntaxNode root)
-        {
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                var m = cls.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(x => x.Identifier.Text == "InitializeComponent");
-                if (m != null) return m;
-            }
-            return null;
-        }
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        private static MethodDeclarationSyntax? FindInitializeComponent(SyntaxNode root) =>
+            FormClassResolver.InitMethod(root);
 
-        private static ClassDeclarationSyntax? FindClass(SyntaxNode root) =>
-            root.DescendantNodes().OfType<ClassDeclarationSyntax>()
-                .FirstOrDefault(c => c.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent"));
+        private static ClassDeclarationSyntax? FindClass(SyntaxNode root) => FormClassResolver.FormClass(root);
 
         private static ClassDeclarationSyntax? FindClassOf(SyntaxNode node) =>
             node.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault();

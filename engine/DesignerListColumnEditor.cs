@@ -96,7 +96,7 @@ namespace WinFormsDesigner.Engine
 
             var root = CSharpSyntaxTree.ParseText(sourceText).GetRoot();
             var cls = FindClass(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return Failed("InitializeComponent not found");
 
             if (!TryColumnIds(init, ownerId, out var currentIds, out var reason)) return Failed(reason);
@@ -136,14 +136,21 @@ namespace WinFormsDesigner.Engine
             // delete the field out from under another statement. Its own construction/property/AddRange statements
             // are excluded (those are dropped by this edit).
             var currentColumnStmts = init.Body.Statements.Where(st => IsColumnRelated(st, ownerId, currentSet)).ToList();
+            // Across the form's WHOLE declaration, not just the partial holding InitializeComponent — a cls-only scan
+            // is blind to a sibling partial's `this.customerColumn.Text = …` and would delete the field it uses.
+            var formParts = FormClassResolver.PartialsOf(cls);
             foreach (var rid in currentIds.Where(id => !finalIds.Contains(id)))
             {
                 // an IdentifierName occurrence of the field id that isn't inside one of the dropped column
                 // statements — a field declaration names the variable with a TOKEN (not an IdentifierName), so
                 // decls never match here; only real references (this.colX / bare colX uses) do.
-                bool referencedOutside = cls.DescendantNodes().OfType<IdentifierNameSyntax>()
+                bool referencedOutside = formParts.SelectMany(p => p.DescendantNodes().OfType<IdentifierNameSyntax>())
                     .Any(idn => idn.Identifier.Text == rid && !currentColumnStmts.Any(cs => cs.Span.Contains(idn.Span)));
                 if (referencedOutside) return Failed("column " + rid + " is referenced outside the collection; can't remove it here");
+                // This edit rewrites exactly ONE declaration (cls). A column whose FIELD lives in another partial would
+                // have its construction + AddRange deleted while the declaration survived — a field that still compiles
+                // but is forever null, reported save-safe. Only remove what can be removed atomically.
+                if (!DeclaresField(cls, rid)) return Failed("column " + rid + " is declared in another partial of the form; can't remove it here");
                 // a column sharing a multi-variable declaration (`private ColumnHeader a, b;`) can't be removed
                 // cleanly (dropping the whole decl would delete its sibling) — refuse rather than leave a vestige.
                 if (IsMultiVarDecl(cls, rid)) return Failed("column " + rid + " shares a field declaration; can't remove it here");
@@ -596,30 +603,25 @@ namespace WinFormsDesigner.Engine
 
         private static bool IsIdentifier(string s) => !string.IsNullOrEmpty(s) && SyntaxFacts.IsValidIdentifier(s);
 
-        private static MethodDeclarationSyntax? FindInitializeComponent(SyntaxNode root)
-        {
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                var m = cls.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(x => x.Identifier.Text == "InitializeComponent");
-                if (m != null) return m;
-            }
-            return null;
-        }
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        private static MethodDeclarationSyntax? FindInitializeComponent(SyntaxNode root) =>
+            FormClassResolver.InitMethod(root);
 
-        private static ClassDeclarationSyntax? FindClass(SyntaxNode root) =>
-            root.DescendantNodes().OfType<ClassDeclarationSyntax>()
-                .FirstOrDefault(c => c.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent"));
+        private static ClassDeclarationSyntax? FindClass(SyntaxNode root) => FormClassResolver.FormClass(root);
 
         private static ClassDeclarationSyntax? FindClassOf(SyntaxNode node) =>
             node.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault();
 
-        private static HashSet<string> GatherFieldNames(ClassDeclarationSyntax cls)
-        {
-            var set = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var fd in cls.Members.OfType<FieldDeclarationSyntax>())
-                foreach (var v in fd.Declaration.Variables) set.Add(v.Identifier.Text);
-            return set;
-        }
+        // The form's component fields across ALL its partials (shared rule) — see DesignerControlEditor.GatherFieldNames.
+        private static HashSet<string> GatherFieldNames(ClassDeclarationSyntax cls) => FormClassResolver.FieldNamesOf(cls);
+
+        /// <summary>True when <paramref name="id"/>'s field is declared in THIS declaration — the only one this edit
+        /// rewrites. See the removal guard: a field in a sibling partial cannot be removed atomically.</summary>
+        private static bool DeclaresField(ClassDeclarationSyntax cls, string id) =>
+            cls.Members.OfType<FieldDeclarationSyntax>().Any(fd => fd.Declaration.Variables.Any(v => v.Identifier.Text == id));
 
         /// <summary>True when <paramref name="id"/> is declared in a field declaration that also declares other
         /// variables (<c>private ColumnHeader a, b;</c>) — such a decl can't be dropped without losing its siblings.</summary>

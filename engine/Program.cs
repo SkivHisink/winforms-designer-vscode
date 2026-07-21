@@ -59,6 +59,65 @@ namespace WinFormsDesigner.Engine
                 }
             }
 
+            if (Has(args, "--coverage-report", out string? covDir) && covDir != null)
+            {
+                // M6 fallback-rate gate mechanism: measure the SOURCE-COVERAGE interpreted-vs-fallback rate over a
+                // corpus of .Designer.cs files. Coverage (does the closed IR fully represent InitializeComponent?) is
+                // the dominant, engine-agnostic driver of the interpreted-vs-compiledFallback decision, and it is a
+                // pure source-parse property — no compiled assembly needed. (Runtime fallbacks — a real vendor ctor
+                // that throws, a base changed since the last build — need the actual build and are measured separately
+                // against the user's corpus.) Usage: engine --coverage-report <dir> [--min-rate <pct>]; a non-zero exit
+                // when the interpreted rate is below --min-rate makes this a CI/release gate against a chosen corpus.
+                double minRate = double.TryParse(ArgAfter(args, "--min-rate"), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var mr) ? mr : -1;
+                int total = 0, interp = 0;
+                var reasons = new Dictionary<string, int>(StringComparer.Ordinal);
+                var fellBack = new List<string>();
+                IEnumerable<string> files;
+                try { files = Directory.EnumerateFiles(covDir, "*.Designer.cs", SearchOption.AllDirectories); }
+                catch (Exception ex) { Console.WriteLine("RESULT: FAIL — cannot enumerate '" + covDir + "': " + ex.Message); return 1; }
+                foreach (var f in files.OrderBy(x => x, StringComparer.Ordinal))
+                {
+                    total++;
+                    string reason;
+                    try
+                    {
+                        var doc = DesignerIrBuilder.Build(File.ReadAllText(f));
+                        var decision = RenderModeClassifier.FromCoverage(doc);
+                        if (decision.Mode == RenderMode.Interpreted) { interp++; continue; }
+                        reason = decision.FallbackReason ?? "unknown";
+                    }
+                    catch (Exception ex) { reason = "parseError:" + ex.GetType().Name; }
+                    reasons[reason] = reasons.TryGetValue(reason, out var c) ? c + 1 : 1;
+                    fellBack.Add(Path.GetFileName(f) + "  (" + reason + ")");
+                }
+                int fb = total - interp;
+                double rate = total == 0 ? 0 : 100.0 * interp / total;
+                var inv = System.Globalization.CultureInfo.InvariantCulture;
+                Console.WriteLine("== coverage report (source-coverage interpreted-vs-fallback) over " + covDir);
+                Console.WriteLine("   runtime     : " + RuntimeInformation.FrameworkDescription);
+                Console.WriteLine("   forms       : " + total);
+                Console.WriteLine("   interpreted : " + interp);
+                Console.WriteLine("   fallback    : " + fb);
+                Console.WriteLine("   rate        : " + rate.ToString("F1", inv) + "% interpreted");
+                if (fellBack.Count > 0)
+                {
+                    Console.WriteLine("   fallback reasons:");
+                    foreach (var kv in reasons.OrderByDescending(k => k.Value)) Console.WriteLine("       " + kv.Value + "x  " + kv.Key);
+                    Console.WriteLine("   fallback forms:");
+                    foreach (var s in fellBack) Console.WriteLine("       - " + s);
+                }
+                Console.WriteLine("COVERAGE_JSON {\"total\":" + total + ",\"interpreted\":" + interp + ",\"fallback\":" + fb
+                    + ",\"rate\":" + rate.ToString("F2", inv) + "}");
+                if (minRate >= 0 && rate < minRate)
+                {
+                    Console.WriteLine("RESULT: FAIL — interpreted rate " + rate.ToString("F1", inv) + "% < required " + minRate.ToString("F1", inv) + "%");
+                    return 1;
+                }
+                Console.WriteLine("RESULT: PASS");
+                return 0;
+            }
+
             if (Has(args, "--selftest-custom", out string? customDll) && customDll != null)
             {
                 string typeName = ArgAfter(args, "--type") ?? "CustomControls.GaugeControl";
@@ -129,10 +188,10 @@ namespace WinFormsDesigner.Engine
                             // --out writes the NORMALIZED whole-file serializer artifact (namespace WinFormsDesigner.Generated),
                             // NOT splice-safe source — it is a diagnostic dump, never a write-back. Refuse to point it at the
                             // input (or its sibling .cs), which would replace the real namespace / partial / Dispose / comments
-                            // with the artifact (codex F3). The safe whole-file writer is --save (it splices, preserving structure).
+                            // with the artifact. The safe whole-file writer is --save (it splices, preserving structure).
                             // --out writes a normalized diagnostic dump, NOT splice-safe source. Refuse if the target
                             // (or its ".raw.cs" sibling) already EXISTS — a fresh path can't alias the source, whereas a
-                            // string-equality check misses a hard-link/symlink alias of the input (codex round-3 F3).
+                            // string-equality check misses a hard-link/symlink alias of the input.
                             // --out is diagnostic-only (the product writes via --save / the RPCs), so requiring a fresh
                             // path is the fail-closed choice.
                             if (File.Exists(outCs) || File.Exists(outCs + ".raw.cs"))
@@ -347,7 +406,7 @@ namespace WinFormsDesigner.Engine
                 }
                 try
                 {
-                    // read with BOM/encoding detection so --write round-trips the original encoding (codex F7: a
+                    // read with BOM/encoding detection so --write round-trips the original encoding (a
                     // File.ReadAllText + default-UTF-8 write would rewrite a UTF-16/BOM source outside the token).
                     var (enc, src) = DesignerRenderer.ReadWithEncoding(smFile);
                     var res = DesignerModifiers.SetModifier(src, comp, mod);
@@ -675,11 +734,18 @@ namespace WinFormsDesigner.Engine
                         int ImgIdx(int k) => p.Length > k && int.TryParse(p[k], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : -1;
                         return (depth, node: new TreeNodeItem
                         {
-                            Id = p.Length > 1 ? p[1] : "", Text = p.Length > 2 ? p[2] : "", Name = p.Length > 3 ? p[3] : "",
-                            ImageKey = p.Length > 4 ? p[4] : "", ImageIndex = ImgIdx(5),
-                            SelectedImageKey = p.Length > 6 ? p[6] : "", SelectedImageIndex = ImgIdx(7),
-                            ToolTipText = p.Length > 8 ? p[8] : "", Checked = p.Length > 9 && p[9] == "true",
-                            ForeColor = p.Length > 10 ? p[10] : "", BackColor = p.Length > 11 ? p[11] : "", NodeFont = p.Length > 12 ? p[12] : "",
+                            Id = p.Length > 1 ? p[1] : "",
+                            Text = p.Length > 2 ? p[2] : "",
+                            Name = p.Length > 3 ? p[3] : "",
+                            ImageKey = p.Length > 4 ? p[4] : "",
+                            ImageIndex = ImgIdx(5),
+                            SelectedImageKey = p.Length > 6 ? p[6] : "",
+                            SelectedImageIndex = ImgIdx(7),
+                            ToolTipText = p.Length > 8 ? p[8] : "",
+                            Checked = p.Length > 9 && p[9] == "true",
+                            ForeColor = p.Length > 10 ? p[10] : "",
+                            BackColor = p.Length > 11 ? p[11] : "",
+                            NodeFont = p.Length > 12 ? p[12] : "",
                         });
                     }).ToList();
                 var roots = new System.Collections.Generic.List<TreeNodeItem>();
@@ -1355,6 +1421,17 @@ namespace WinFormsDesigner.Engine
         }
     }
 
+    /// <summary>Engine self-description returned by the capability handshake.</summary>
+    public sealed class EngineCapabilities
+    {
+        public string Engine { get; set; } = "";
+        public bool Render { get; set; }
+        public bool Edit { get; set; }
+        public bool LivePreviewUnsavedEdits { get; set; }
+        public string Runtime { get; set; } = "";
+        public string Notes { get; set; } = "";
+    }
+
     /// <summary>JSON-RPC surface exposed to the VS Code extension.</summary>
     public sealed class EngineApi
     {
@@ -1362,6 +1439,16 @@ namespace WinFormsDesigner.Engine
         public EngineApi(StaDispatcher sta) => _sta = sta;
 
         public string Ping() => "winforms-engine ok / " + RuntimeInformation.FrameworkDescription;
+
+        public EngineCapabilities GetCapabilities() => new EngineCapabilities
+        {
+            Engine = "modern-interpreted",
+            Render = true,
+            Edit = true,
+            LivePreviewUnsavedEdits = true,
+            Runtime = RuntimeInformation.FrameworkDescription,
+            Notes = "Allowlisted source interpretation with immediate unsaved-buffer preview and source-first edits.",
+        };
 
         /// <summary>Blank/whitespace → null, so a client can send "" to mean "auto-discover the assembly".</summary>
         private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
@@ -1414,10 +1501,10 @@ namespace WinFormsDesigner.Engine
         /// separate calls. controlAssemblyPath optionally overrides project auto-discovery (see
         /// <see cref="RenderDesigner"/>).
         /// </summary>
-        public RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null)
+        public RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null, int renderScale = 1)
         {
             Prewarm(designerFilePath, controlAssemblyPath);
-            return _sta.Invoke(() => DesignerRenderer.RenderWithLayout(designerFilePath, NullIfBlank(controlAssemblyPath), sourceText));
+            return _sta.Invoke(() => DesignerRenderer.RenderWithLayout(designerFilePath, NullIfBlank(controlAssemblyPath), sourceText, renderScale));
         }
 
         /// <summary>
@@ -1653,7 +1740,7 @@ namespace WinFormsDesigner.Engine
         public ToolStripItemsResult ListToolStripItems(string designerFilePath, string ownerId, string? sourceText = null)
             => DesignerRenderer.ListToolStripItems(designerFilePath, ownerId, NullIfBlank(sourceText));
 
-        /// <summary>Reorder a ToolStrip/MenuStrip item tree (Slice 1): rewrite each Items/DropDownItems AddRange to the
+        /// <summary>Reorder a ToolStrip/MenuStrip item tree: rewrite each Items/DropDownItems AddRange to the
         /// given order (same items, no add/remove/rename), leaving every other statement byte-identical. Host applies
         /// <see cref="EditPreview.Text"/>.</summary>
         public EditPreview SetToolStripItems(string designerFilePath, string ownerId, ToolStripItemModel[] items, string? sourceText = null)

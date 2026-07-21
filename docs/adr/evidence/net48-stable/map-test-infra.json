@@ -1,0 +1,168 @@
+{
+ "summary": "Cross-engine test infrastructure maps to 5 automated tiers (C# unit / TS unit / headless e2e / jsdom webview-e2e / Extension Host smoke) plus perf-baseline, all wired into ci.yml+release.yml on windows-latest. The net48 legs live in ONE guarded block of extension/src/e2e.ts (~line 1519-2015): they compile fixtures/Net48CtxFixture (net48 Library, on-demand via ensureNet48Fixture) from the SAME engine/samples/*.Designer.cs sources the net9 interpreter reads, then start engine-net48 and assert cross-runtime agreement (ctx-menu partition, nested item geometry, overflow, item describe/edit, component-ref/tray-ref dropdowns, ImageList blob serialize/deserialize, undo reconcile, lifecycle ids) plus the real-MSBuild lock/release e2e (rebuild fails MSB3027 while the preview pins the DLL, succeeds after releaseCompiledAssembly). WFD_REQUIRE_NET48=1 (set in both workflows' e2e step) turns a missing net48 toolchain from visible-skip into hard failure. The golden round-trip corpus is the 19-row previewSave() verdict matrix (e2e.ts ~3505-3548) over engine/samples — every form is either safe or fail-closed with a named reason (binaryResx/localizable/unresolvedType/lostStatements); *.spliced.txt files are engine-CLI dry-run artifacts, not golden inputs. No sample project targets net4x except Net48CtxFixture; no vendor/DevExpress binary exists in-repo — the DevExpress claim was proven only by the S5 spike run manually against a local PGMUI 1.2 install outside the repo, and in-repo vendor coverage is text-only (VendorForm.cs : XtraForm deliberately never compiled). engine-net48 has ZERO unit-test coverage (tests/Engine.UnitTests references only engine/Engine.csproj); all net48 verification is the single e2e block.",
+ "keyFacts": [
+  "NET48 E2E GATE: WFD_REQUIRE_NET48 checked at extension/src/e2e.ts:1537 — if the fixture/exe/toolchain is unavailable, message 'net48 cross-runtime legs unavailable...' is thrown when =1, else logged as a VISIBLE skip (codex R#10: coverage gap, not silent pass). Both .github/workflows/ci.yml:109 and release.yml:114 set WFD_REQUIRE_NET48=1 on the 'End-to-end (headless)' step, so CI/release always run the net48 legs.",
+  "NET48 FIXTURE BUILD: ensureNet48Fixture (e2e.ts:21-41) rebuilds fixtures/Net48CtxFixture on demand via 'dotnet build -c Release' with mtime staleness over csproj + companion .cs + all linked samples; any failure returns false (skip). CI pre-builds it with -p:PlatformTarget=x64 (ci.yml:52). Net48CtxFixture.csproj is a net48 Library (RootNamespace SampleApp) that <Compile Link>s engine/samples: ContextMenuForm, ToolStripOverflowForm, ImageListForm, ComponentRefForm, NotifyIconForm, InheritedBaseForm(+.cs), DerivedForm(+.cs) — 'same input → cross-runtime parity'; companions ComponentRefForm.cs/ContextMenuForm.cs/ImageListForm.cs/NotifyIconForm.cs/ToolStripOverflowForm.cs supply the non-designer partials (incl. a Timer for the live-mutation safety leg).",
+  "NET48 ENGINE PATH: e2e uses process.env.WFD_ENGINE_NET48 || engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe (e2e.ts:1524); net9 engine via WFD_ENGINE_DLL || engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll (e2e.ts:523). Single startEngine(net48Exe) block e2e.ts:1541 hosts ALL net48 scenarios.",
+  "NET48 SCENARIO LIST (all inside the one guarded block, e2e.ts ~1540-2015): S2 inherited-form parity (compiled DerivedForm renders baseButton+derivedButton, inheritedBase=false); ImageList ImageStreamer serialize primitive + deserialize READ + re-serialize round-trip + live reconcile; Modifiers=Private + GenerateMember=true via compiled describe; undo reconcile (discardCompiledLive drops stale live instance, render reverts); 1.0.0 lifecycle ids (liveInstanceId stable across edit, changes after discard; liveBuildId advances only on rebuild); MSBUILD LOCK/RELEASE e2e (e2e.ts:1680-1718): real 'dotnet build -t:Rebuild' MUST fail with MSB3027/MSB3021 while the preview pins Net48CtxFixture.dll, releaseCompiledAssembly→{released:1,failed:0}, same rebuild then succeeds, fresh instanceId+advanced buildId, repeat release idempotent; off-tree ContextMenuStrip partition parity (controls vs tray, isStrip, no ToolStripItem tray leak, nested children geometry byte-equal to net9, tray chip items parity); item→Properties describe parity Slice 1b (FieldNames reverse-scan); reference-write refusal on items; component-ref COMPONENT live-set (panel1.ContextMenuStrip incl. wrong-type reject); dirty-buffer metadata (describe reads unsaved buffer, not disk); NESTED submenu item describe parity; item EDITING Slice 2 (live fileMenu.Text→'Fichier' without rebuild); Timer safety (non-Control non-item NOT live-mutable); OVERFLOW chevron set parity vs net9; ImageIndex/ImageKey dropdowns from real keyed compiled ImageList (sentinel '(none)'/-1 filtered); component-ref CONTROL ref (AcceptButton [(none),cancelButton,okButton], live-set/clear/bogus-reject); tray-owner ref (notifyIcon1.ContextMenuStrip) + non-reference tray edit stays inert + errorProvider1.ContainerControl ROOT '(this)' resolve/clear/wrong-type-reject.",
+  "CROSS-RUNTIME ROUTING HELPERS (net9-side, no engine): T1.3 leg e2e.ts:157-210 uses SYNTHETIC csproj/dll files in temp dirs to pin resolveFrameworkOnlyOutput (picks the no-sidecar net48 output over a newer net9 one) and multiTargetHasFramework (true for net48;net9, false for single-target/commented-out/pure-.NET).",
+  "GOLDEN ROUND-TRIP CORPUS: e2e.ts:3500-3548 '0.12.0 golden-corpus round-trip matrix' — 19-row table over engine/samples/<Form>.Designer.cs asserting previewSave().safe + reasonCategory as the AUTHORITATIVE verdict: 10 safe (SampleForm, EventForm, ComponentRefForm, SplitterForm, TabForm, FlowForm, ListViewForm, TableLayoutForm, TreeForm, TwoTreeForm), 9 fail-closed with named reason: binaryResx (GridForm, MenuStripForm, ImageListForm), localizable (LocalizableForm), unresolvedType (CustomForm — net9 can't load vendor control), lostStatements (TabAddRangeForm, AnchorDockForm, TreeImageForm, TreeStyleForm — the last two hand-simplified, non-VS-canonical). Requires >=12 fixtures present. Followed by the '1.0 R4 VS-CANONICAL' leg: temp-dir rewrites of TreeStyle/TreeImage into VS-canonical spelling MUST be save-safe.",
+  "SPLICED.TXT SAMPLES ARE ARTIFACTS, NOT GOLDENS: engine/Program.cs (e.g. :207, :323...) writes '<file>.spliced.txt'/'.edited.txt' as CLI dry-run previews. No test reads them. engine/samples/SampleForm.Designer.cs.{spliced,edited}.txt remain in-tree; engine/samples/{ComponentRefForm,EventForm}.Designer.cs.spliced.txt are DELETED in the working tree (git status) — cleanup of previously committed dry-run output.",
+  "SAMPLES TFM MATRIX — NO net4x app project exists: samples/DemoApp = net10.0-windows WinExe (refs CustomControls; used only as the Extension Host smoke workspace, scripts/run-extension-host-tests.mjs:31); samples/ComplexProject = multi-target net8/net9/net10-windows Library with BaseOutputPath=build-out (MSBuild resolver fixture, e2e.ts:4785+; CI builds each TFM separately, ci.yml:49-51); samples/CustomControls = net10.0-windows Library (GaugeControl; explicit-assembly override leg e2e.ts:941-990, SKIP if not built); fixtures/Net48CtxFixture = the ONLY net4x target (net48 Library). engine/samples/ = ~40 .Designer.cs source-only fixtures (never compiled by the engine build; Net48CtxFixture links 8 of them).",
+  "DEVEXPRESS / VENDOR HANDLING: no vendor binary in-repo anywhere. (1) engine/samples/VendorForm.cs declares 'partial class VendorForm : DevExpress.XtraEditors.XtraForm' but is deliberately NEVER compiled — net9 fallback-only text fixture for inheritedBase detection (S2 leg e2e.ts:1194-1237, baseTypeName='XtraForm'); Net48CtxFixture.csproj comment says the vendor fixture is 'intentionally NOT linked'. (2) DevExpress appears elsewhere only at string level: learnMoreUrl routing (e2e.ts:142-153), XtraTabControl TabPages.AddRange delete-tab surgery on synthetic source (e2e.ts:3272), CustomForm→unresolvedType corpus row. (3) The real-DevExpress render proof was the S5 spike (docs/plans/spikes/S5-Net48Render/Program.cs): a manual CLI ('--exe <Demo.exe> --type <FullTypeName>') run against a LOCAL PGMUI 1.2 (DevExpress fork) install probed at 'C:\\Program Files (x86)\\PGMUI 1.2\\Components\\Bin\\Framework' — i.e. validated against a project OUTSIDE the repo, unreproducible in CI.",
+  "ENGINE UNIT TESTS (tests/Engine.UnitTests, net10.0-windows, xUnit, InternalsVisibleTo): SaveSafetyTests.cs (114 loc) — OnlyTargetChanged/OnlyWiringAdded accept-target/reject-sibling, AddControl→RemoveControl restores ORIGINAL BYTES, RemoveControl rejects root/unknown/container-with-children, MissingOriginalStatements accepts AddRange↔Add + local-spelling equivalence but stays FAIL-CLOSED on invocation elements and reports unrelated changes; SecurityAndResolverTests.cs (63 loc) — IsValidIdentifier (rejects injection, keywords, Cyrillic homoglyph, @class), interpreter allowlists IsConstructionAllowed(Point/Padding yes, FileStream/Bitmap/Cursor no), IsFactoryInvocationAllowed(Color.FromArgb yes, MessageBox.Show/Image.FromFile no), IsStaticReadAllowed(SystemColors yes, Environment no), ProjectResolver.NetCoreTfm regex (net48→false) + ChooseTfm (prefers -windows, highest ≤ hostMajor); ValueConverterTests.cs (37 loc) — ToExpression for Point/Size/Rectangle/Padding/Color/Font, null on invalid/uninstalled-font. CRITICALLY: references ONLY engine/Engine.csproj — engine-net48/ (CompiledDescriber, DomainManager, RenderWorker, RootTypeResolver, SourceMetadata) has ZERO unit tests; its only coverage is the e2e block.",
+  "WEBVIEW-E2E (extension/src/webview-e2e.ts, 2896 loc, 130 test() registrations currently): drives the REAL media/designer.js + media/panel.js in headless jsdom (webviewHarness.ts, 237 loc), asserting posted host messages + DOM — the 'T2.3 F5-debt' replacement. Engine-free, so cross-engine RELEVANCE is indirect: it pins the canvas/panel side of item ops (stripAdd/stripRename/stripDelete/selectItem, flyouts, itemProps read-only gating) whose host handlers fan out to either engine; it cannot catch engine divergence itself.",
+  "SCRIPTS: run-extension-host-tests.mjs (38 loc) — @vscode/test-electron boots real VS Code (1.84.0 + stable in CI) with samples/DemoApp as workspace and runs dist/extension-host-suite.cjs (52 loc: manifest floor, 6 commands registered, activation, exportDiagnostics proves the .NET 10 engine starts and 'net48: stopped; starts=0' lifecycle line); ci-l10n-parity.mjs (88 loc) — key/placeholder/CLDR-plural parity for 6 locales × 2 layers (src/i18n runtime + package.nls), --strict in CI; release-preflight.mjs (89 loc) — version/changelog/lockfile/workflow invariants incl. 'CI workflow must run dotnet test tests/Engine.UnitTests' and tag==v<version>; assert-vsix.ps1 (101 loc) — VSIX must contain BOTH bundled engines and both PE machines == 0x8664 (AMD64).",
+  "CI (ci.yml, 140 loc, single windows-latest job): build engine (net10) → build engine-net48 (x64) → dotnet test Engine.UnitTests → build sample fixtures (CustomControls Release, ComplexProject ×3 TFMs, Net48CtxFixture x64) → npm ci/audit/preflight/typecheck/vitest/build/perf-baseline → node --check webview scripts → l10n --strict → e2e with WFD_REQUIRE_NET48=1 → webview-e2e → Extension Host smoke ×2 versions → vsce package → assert-vsix → upload artifact. release.yml (246 loc) = same gauntlet + secrets validation fail-fast, draft GitHub release → Marketplace publish (retry ×3) → un-draft only after Marketplace success → optional Open VSX. Comment at ci.yml:43-45: sample bin/ is gitignored, without the fixture-build step e2e SILENTLY SKIPS custom-control and multi-target legs on a clean checkout.",
+  "VITEST TS UNIT LAYER (npm test): engineClient.test.ts (27), engineRecovery.test.ts (19, bounded restart/backoff policy), formNotice.test.ts (40, notice-kind precedence incl. net48Preview→compiledPreview editable disclosure), valueExpr.test.ts (41, C# expression composition). Plus performance-baseline.ts: engine cold start + 7 warm render/layout RPCs vs WFD_PERF_STARTUP_MS/WARM_MEDIAN_MS/WARM_P95_MS thresholds, required in CI+release.",
+  "BYTE-IDENTITY / PERSISTENCE PARITY: net48 NEVER writes source — it persists the identical net9 splice; pinned by the S4 byte-locality leg (e2e.ts:633-641, 'also the net48-persisted text') and by formNotice semantics (net48Preview = editable ℹ️ disclosure, not a read-only lock, e2e.ts:392-405).",
+  "PLANS HARVEST (aspirational winforms-designer-plan.md, 1011 loc): mandates /tests/golden-corpus of REAL .Designer.cs+.resx (ToolStrip/DataGridView/BindingSource/tray) + /tests/perf-corpus (4K, 300 controls) (:596-597); zero-diff sentinel-normalized golden as Phase-0 exit gate (§6.12:469) with bidirectional VS SDK reverse-roundtrip harness (:442); cross-runtime golden 'same graph under net8 AND net48 → diff → normalize at splicer' + canonicalDesignTimeTfm (:458); 'read-only fallback rate' as a tracked CI metric/gate (:51); DPI property-based coordinate tests at 100/125/150/200% (:312); min 2 QA/test-infra heads (:82,:964); vendor-license access listed as an explicit staffing/legal dependency (:985). Delta plan vs-parity-completion-plan.md (114 loc): T2.3 live-webview autotests (since DONE as webview-e2e), T1.1 net48 collection-editor parity via routing reads to the net9 pure-text Roslyn parser (literal Add/AddRange need no compiled type), T1.3 cross-runtime fallback routing for multi-target vendor forms, T3.1 engine-authoritative manipulation gated on observed geometry drift.",
+  "DOCS/TESTING.MD (125 loc) is the canonical tier table (unit/perf/e2e/webview/host-smoke/manual-F5) and states the release posture: 'Release CI sets WFD_REQUIRE_NET48=1, so missing net48 coverage is a failure rather than a skip'; unit-layer rationale = pin the security boundary (safe-save gates + interpreter allowlists = the line between safe preview and RCE-on-open); P3 rollout item 'golden fixtures for fragile constructs (DataGridView, BindingSource)' is still open.",
+  "DURABLE MAPS: docs/maps/ has property-editor-pipeline.md + oncanvas-toolstrip-pipeline.md (+README convention: spot-check 2-3 anchors, re-map deltas only) — neither covers test infra; this Task-4 map fills that gap."
+ ],
+ "files": [
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\src\\e2e.ts",
+   "loc": 4814,
+   "role": "Headless cross-engine e2e harness: net9 engine legs + the single net48 block (~1519-2015: ensureNet48Fixture, WFD_REQUIRE_NET48 gate at :1537, all cross-runtime parity legs, MSBuild lock/release proof :1680-1718) + golden round-trip corpus matrix (:3500-3548) + R4 canonical leg + csprojRef/T1.3 synthetic multi-target helpers (:157-210)"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\fixtures\\Net48CtxFixture\\Net48CtxFixture.csproj",
+   "loc": 45,
+   "role": "The ONLY net4x fixture project: net48 Library compiling 8 linked engine/samples designer sources (ctx-menu, overflow, ImageList, component-ref, NotifyIcon, inheritance pair) so both engines consume identical input; built on demand by e2e + pre-built x64 in CI"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\engine\\samples",
+   "loc": 62,
+   "role": "Source-only fixture corpus (~40 .Designer.cs + partials/resx) fed to the net9 interpreter, the golden round-trip matrix, and (via Net48CtxFixture links) the net48 compiled engine; VendorForm.cs = never-compiled DevExpress(:XtraForm) text fixture; *.spliced.txt/*.edited.txt = CLI dry-run artifacts, not goldens"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\tests\\Engine.UnitTests\\SaveSafetyTests.cs",
+   "loc": 114,
+   "role": "xUnit: save-safe gate minimality (OnlyTargetChanged/OnlyWiringAdded), add→remove byte restoration, MissingOriginalStatements equivalence vs fail-closed"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\tests\\Engine.UnitTests\\SecurityAndResolverTests.cs",
+   "loc": 63,
+   "role": "xUnit: identifier injection/homoglyph guard, interpreter allowlists (construction/factory/static-read), NetCoreTfm regex + ChooseTfm — the interpretation-security surface; net9 engine ONLY"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\tests\\Engine.UnitTests\\ValueConverterTests.cs",
+   "loc": 37,
+   "role": "xUnit: DesignerValueConverter.ToExpression representable/invalid matrix"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\tests\\Engine.UnitTests\\Engine.UnitTests.csproj",
+   "loc": 25,
+   "role": "net10.0-windows test project referencing engine/Engine.csproj only — proves engine-net48 has zero unit coverage"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\src\\webview-e2e.ts",
+   "loc": 2896,
+   "role": "Headless jsdom tests (130 test()) of real media/designer.js + panel.js — canvas/panel interaction layer incl. strip-item gestures; engine-free"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\src\\webviewHarness.ts",
+   "loc": 237,
+   "role": "jsdom loader/harness for the webview scripts (message capture, synthetic mouse/keyboard)"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\src\\extension-host-suite.ts",
+   "loc": 52,
+   "role": "In-VS-Code smoke suite: activation, commands, exportDiagnostics proves .NET 10 engine start + engine-lifecycle lines (net48 reported 'stopped' at idle)"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\scripts\\run-extension-host-tests.mjs",
+   "loc": 38,
+   "role": "@vscode/test-electron runner (1.84.0 + stable) using samples/DemoApp as workspace"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\scripts\\ci-l10n-parity.mjs",
+   "loc": 88,
+   "role": "6-locale × 2-layer key/placeholder/plural parity checker, --strict in CI"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\scripts\\release-preflight.mjs",
+   "loc": 89,
+   "role": "Release metadata invariants: version/lockfile/changelog/tag + asserts workflows keep running engine unit tests, npm test, perf baseline"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\scripts\\assert-vsix.ps1",
+   "loc": 101,
+   "role": "VSIX gate: both engines bundled and both PE-AMD64 (0x8664)"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\.github\\workflows\\ci.yml",
+   "loc": 140,
+   "role": "windows-latest gauntlet: both engine builds, unit tests, fixture builds (CustomControls/ComplexProject×3TFM/Net48CtxFixture x64), vitest, perf, l10n strict, e2e with WFD_REQUIRE_NET48=1, webview-e2e, host smoke ×2, VSIX package+assert"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\.github\\workflows\\release.yml",
+   "loc": 246,
+   "role": "Tag-driven release: same test gauntlet (incl. WFD_REQUIRE_NET48=1) + fail-fast secret validation, draft-release → Marketplace → un-draft → Open VSX"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\samples\\ComplexProject\\ComplexProject.csproj",
+   "loc": 30,
+   "role": "MSBuild-resolver fixture: multi-target net8/9/10-windows + BaseOutputPath redirect (no bin/ invariant asserted at e2e.ts:4792)"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\samples\\CustomControls\\CustomControls.csproj",
+   "loc": 15,
+   "role": "net10 custom-control library (GaugeControl) for explicit-assembly-override + unresolvedType corpus row"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\samples\\DemoApp\\DemoApp.csproj",
+   "loc": 17,
+   "role": "net10 WinExe workspace for the Extension Host smoke"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\docs\\plans\\spikes\\S5-Net48Render\\Program.cs",
+   "loc": 180,
+   "role": "The DevExpress proof: manual net48 STA render spike, probes local 'C:\\Program Files (x86)\\PGMUI 1.2\\Components\\Bin\\Framework' + a user-supplied exe — validated OUTSIDE the repo, not CI-reproducible"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\docs\\TESTING.md",
+   "loc": 125,
+   "role": "Canonical test-tier doc: pyramid table, WFD_REQUIRE_NET48 release posture, unit-layer security rationale, open P3 golden-fixture item"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\docs\\plans\\winforms-designer-plan.md",
+   "loc": 1011,
+   "role": "Aspirational plan: golden-corpus/perf-corpus dirs, zero-diff sentinel gate, VS SDK reverse-roundtrip harness, cross-runtime net8/net48 golden diff, read-only-fallback-rate metric, DPI property tests"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\docs\\plans\\vs-parity-completion-plan.md",
+   "loc": 114,
+   "role": "Delta plan: T1.1 net48 collection parity via net9 pure-text reads, T1.3 cross-runtime routing fallback, T2.3 live-webview tests (now done), T3.1 drift-triggered engine-authoritative layer"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\src\\performance-baseline.ts",
+   "loc": 120,
+   "role": "Perf gate: cold start + 7 warm RPCs vs WFD_PERF_* thresholds; WFD_ENGINE override"
+  },
+  {
+   "path": "D:\\Data\\Code\\CSharpWinformExtension\\engine\\Program.cs",
+   "loc": 1100,
+   "role": "Engine CLI writes the .spliced.txt/.edited.txt dry-run previews (e.g. :207) — provenance of the sample-dir artifacts"
+  }
+ ],
+ "risks": [
+  "engine-net48 (CompiledDescriber/DomainManager/RenderWorker/RootTypeResolver/SourceMetadata) has NO unit tests — every net48 behavior is guarded only by the single sequential e2e block; a refactor there localizes failures poorly and any e2e-infra crash masks real regressions (memory already records skeptic-verify runs mislabeled 'refuted' on infra crashes).",
+  "DevExpress/vendor behavior is validated by NOTHING automated: the S5 spike needed a local PGMUI install and a user exe outside the repo; the in-repo 'devexpress' keyword in package.json is marketing backed only by framework-only proxies (VendorForm text fixture, synthetic XtraTabControl source). Any vendor-specific regression (licensing, skins, ctor side effects, custom designers) ships blind.",
+  "The net48 legs share ONE engine process and ONE fixture DLL sequentially; the MSBuild lock/release leg mutates real build state (rebuild of Net48CtxFixture) mid-suite — later legs depend on the post-rebuild instance, so reordering legs or a failed rebuild leaves the suite in a hard-to-reason state.",
+  "e2e skip semantics outside the net48 block are still silent-ish: CustomControls/ComplexProject legs SKIP with a console line when fixtures aren't built (no WFD_REQUIRE_* equivalent), so local runs can green-pass with less coverage than CI.",
+  "webview-e2e cannot detect engine divergence (engine-free) and the golden corpus covers only hand-written engine/samples — no REAL VS-generated .Designer.cs corpus exists in-repo, so the 'read-only fallback rate' on real-world forms (the aspirational plan's own top risk, plan:51) is unmeasured.",
+  "Fixture staleness logic in ensureNet48Fixture is mtime-based; a clock-skewed checkout or a copied tree can serve a stale DLL and produce false parity passes.",
+  "Extension Host smoke asserts hardcoded version '1.0.0' (extension-host-suite.ts:11) — every version bump must touch the test or the smoke fails (deliberate but a recurring maintenance tripwire)."
+ ],
+ "portBlockers": [
+  "No net4x-TFM APP/sample project exists (only the Net48CtxFixture Library); a net48-interpretation corpus needs real net48 WinForms project fixtures (csproj + Designer.cs idioms: ISupportInitialize brackets, licenses.licx, legacy resx, AutoScaleMode differences) that today have zero representation.",
+  "Vendor assemblies cannot be committed — current strategy is (a) framework-only compile fixtures, (b) never-compiled vendor TEXT fixtures, (c) manual off-repo spike. A net48-interpretation corpus would need either a committed MIT 'fake vendor' control library that mimics DevExpress patterns (custom designers, ctor side effects, licensing checks, skin statics) or an opt-in local-machine leg (env-gated like WFD_REQUIRE_NET48, probing an installed DevExpress/PGMUI) that CI marks as a visible skip — neither exists.",
+  "tests/Engine.UnitTests targets net10.0-windows and references engine/Engine.csproj only; a net48 interpretation layer needs its own unit-test project (net48 or netfx-multi-target) plus InternalsVisibleTo from engine-net48 — none of that scaffolding exists.",
+  "The interpreter allowlist tests (IsConstructionAllowed etc.) pin the NET9 DesignerRenderer; if interpretation is ported to net48 the same allowlist surface must be re-exported and re-pinned there or the security boundary forks silently.",
+  "The golden round-trip matrix keys off previewSave() on the net9 engine; a net48-interpretation corpus needs an equivalent authoritative-verdict RPC on the net48 side plus a cross-engine verdict-parity leg (verdicts must agree per fixture) — no such contract exists today.",
+  "CI relies on windows-latest happening to carry the .NET Framework 4.8 targeting pack ('dotnet build net48' works); a larger net48 corpus (WinExe apps, x86 variants, designer-time msbuild eval on old-style csproj) would need explicit toolchain guarantees — old-style/non-SDK csproj is entirely untested (ProjectResolver e2e covers SDK-style only).",
+  "Byte-identity persistence contract (net48 persists the net9 splice, never writes source) is pinned in one leg; if net48 gains its own serializer/interpretation, a bidirectional cross-runtime golden diff (aspirational plan :458, 'same graph under net8 and net48 → diff → normalize at splicer') must be built from scratch."
+ ]
+}

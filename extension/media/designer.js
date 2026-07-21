@@ -830,7 +830,15 @@
     img.onload = function () {
       if (g < lastDrawnGen) return;
       lastDrawnGen = g;
-      if (full) { canvas.width = dw; canvas.height = dh; natW = dw; natH = dh; applyZoomStyles(); ctx.drawImage(img, 0, 0); }
+      if (full) {
+        // Backing store = the PNG's REAL pixel size (the engine renders at the display's devicePixelRatio, so text is
+        // crisp on 4K instead of an upscaled blur). natW/natH stay the LOGICAL form size so zoom, overlays and
+        // hit-testing keep working in form pixels; CSS size is logical×zoom (applyZoomStyles). natScale (physical/logical)
+        // drives image-rendering — a high-DPI backing must NOT be pixelated (that would throw away the extra pixels).
+        canvas.width = img.naturalWidth || dw; canvas.height = img.naturalHeight || dh;
+        natW = dw; natH = dh; natScale = (dw > 0 && img.naturalWidth) ? (img.naturalWidth / dw) : 1;
+        applyZoomStyles(); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      }
       else { ctx.clearRect(dx, dy, dw, dh); ctx.drawImage(img, dx, dy); }
     };
     img.onerror = function () { /* leave the prior frame; a later event refreshes */ };
@@ -840,6 +848,7 @@
   // ---- zoom (display scaling) ----
   var zoom = 1;
   var natW = 1, natH = 1;
+  var natScale = 1; // physical PNG px / logical form px (the engine's DPI capture scale) — 1 unless rendered high-DPI
   var ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2, 3, 4];
   var zoomOutEl = document.getElementById('zoomOut');
   var zoomInEl = document.getElementById('zoomIn');
@@ -853,7 +862,9 @@
   function applyZoomStyles() {
     canvas.style.width = (natW * zoom) + 'px'; canvas.style.height = (natH * zoom) + 'px';
     surfaceWrap.style.width = (natW * zoom) + 'px'; surfaceWrap.style.height = (natH * zoom) + 'px';
-    canvas.style.imageRendering = zoom >= 1 ? 'pixelated' : 'auto';
+    // Pixelate only a genuine upscale of a 1x render (crisp VS-style zoom-in). A high-DPI backing (natScale > 1) already
+    // has the pixels, so 'auto' lets the browser resample it cleanly instead of nearest-neighbour throwing detail away.
+    canvas.style.imageRendering = (zoom >= 1 && natScale <= 1) ? 'pixelated' : 'auto';
     if (zoomLabelEl) zoomLabelEl.textContent = Math.round(zoom * 100) + '%';
     renderSelection();
     renderRuler();
@@ -1033,10 +1044,44 @@
     for (var i = 0; i < want.length; i++) if (arr.indexOf(want[i]) < 0) return false;
     return true;
   }
+  // The vendor's declared Tasks menu for the current selection (DevExpress "Add Tab Page"…), as sent by the host.
+  // Labels are the vendor's own; the verb each one runs is OURS (a source-first edit) — an entry with no verb is shown
+  // disabled rather than hidden, so the menu still reads like the vendor's.
+  function vendorTagsNow() {
+    return (tasksState && tasksState.id === current && tasksState.vendorTags) ? tasksState.vendorTags : [];
+  }
+  /** The tab host's ACTIVE page. The engine's layout only emits controls on the currently-shown surface (it excludes
+   *  a standard TabControl's hidden pages by Control.Visible, and a vendor tab control's non-selected pages by a
+   *  reflective SelectedTabPage check), so the host's one visible child IS the active page. Where that does NOT hold —
+   *  two children surfaced, i.e. the engine could not tell which page is active, or the children aren't pages at all —
+   *  we return null and the verb goes inert: this feeds a .Designer.cs DELETION, so ambiguity must fail closed rather
+   *  than guess a page. */
+  function activePageOf(hostId) {
+    var found = null;
+    for (var i = 0; i < controls.length; i++) {
+      if (controls[i].parentId !== hostId) continue;
+      if (found) return null;   // ambiguous → refuse rather than delete the wrong page
+      found = controls[i];
+    }
+    return found;
+  }
+  /** Whether WE can honour a vendor verb right now. The vendor's method name is a LABEL, never authority: any assembly
+   *  can declare an attribute of that name, and we do not evaluate the vendor's own SmartTagFilter (running vendor code
+   *  is exactly what this design avoids). So every source-writing verb is gated on OUR OWN facts about the selected
+   *  control — the engine's isTabHost and a resolvable active page — not on the declared name. */
+  function vendorEnabled(v) {
+    if (!v || !v.verb) return false;
+    var c = current ? findControl(current) : null;
+    if (!c) return false;
+    if (v.verb === 'addTab') return !!c.isTabHost;
+    if (v.verb === 'deleteTab') return !!c.isTabHost && !!activePageOf(current);
+    return true;   // showProperties writes nothing
+  }
   function renderSmartTag() {
     var comp = (tasksState && tasksState.id === current) ? tasksState.comp : null;
     var c = current ? findControl(current) : null;
-    var show = !tabOrderMode && !drag && selection.length === 1 && !!c && !!comp && taskListFor(comp).length > 0;
+    var show = !tabOrderMode && !drag && selection.length === 1 && !!c && !!comp &&
+      (taskListFor(comp).length > 0 || vendorTagsNow().length > 0);
     if (!smartTagEl) {
       smartTagEl = document.createElement('div'); smartTagEl.className = 'smarttag'; smartTagEl.textContent = '▸'; // ▸
       smartTagEl.title = 'Tasks';
@@ -1082,11 +1127,22 @@
     var title = document.createElement('div'); title.className = 'tfTitle';
     title.textContent = T('designer.smartTag.title', { type: shortType(comp.type) });
     flyoutEl.appendChild(title);
+    // the vendor's own verbs first (as its panel orders them), then our curated property rows
+    var vtags = vendorTagsNow();
+    if (vtags.length) {
+      var vbox = document.createElement('div'); vbox.className = 'tfVerbs';
+      for (var vi = 0; vi < vtags.length; vi++) vbox.appendChild(vendorRow(vtags[vi]));
+      flyoutEl.appendChild(vbox);
+    }
     var tasks = taskListFor(comp);
     if (!tasks.length) {
-      var note = document.createElement('div'); note.className = 'tfNote'; note.textContent = T('designer.smartTag.noTasks'); flyoutEl.appendChild(note);
+      if (!vtags.length) {
+        var note = document.createElement('div'); note.className = 'tfNote'; note.textContent = T('designer.smartTag.noTasks'); flyoutEl.appendChild(note);
+      }
     } else {
-      for (var i = 0; i < tasks.length; i++) flyoutEl.appendChild(taskRow(comp, tasks[i]));
+      var pbox = document.createElement('div'); pbox.className = 'tfProps';
+      for (var i = 0; i < tasks.length; i++) pbox.appendChild(taskRow(comp, tasks[i]));
+      flyoutEl.appendChild(pbox);
     }
     var links = document.createElement('div'); links.className = 'tfLinks';
     var all = document.createElement('div'); all.className = 'tfLink'; all.textContent = T('designer.menu.allProperties');
@@ -1099,6 +1155,36 @@
     document.body.appendChild(flyoutEl);
     positionFlyout();
     setTimeout(function () { document.addEventListener('mousedown', onFlyoutOutside, true); document.addEventListener('keydown', onFlyoutKey, true); }, 0);
+  }
+  /** One vendor-declared verb row. The label is the vendor's; clicking runs OUR source-first equivalent (the same
+   *  message the canvas context menu sends). A verb we can't express — or can't right now (no tab page to remove) —
+   *  renders inert with a tooltip saying why, never a no-op that looks like it worked. */
+  function vendorRow(v) {
+    var owner = current;
+    var row = document.createElement('div');
+    var on = vendorEnabled(v);
+    row.className = 'tfVerb' + (on ? '' : ' tfDisabled');
+    row.textContent = v.label;
+    if (!on) {
+      row.title = v.verb ? T('designer.smartTag.vendorNoTarget') : T('designer.smartTag.vendorUnsupported');
+      return row;
+    }
+    row.addEventListener('click', function () {
+      // Re-check at CLICK time, not just at render time. renderSelection retracts the flyout when the selection moves,
+      // but these verbs write .Designer.cs, so they must not rest on that being airtight: re-prove the row still owns
+      // the current selection and the operation still applies before posting anything.
+      if (owner !== current || !vendorEnabled(v)) { closeFlyout(); return; }
+      if (v.closesPanel) closeFlyout();
+      if (v.verb === 'addTab') {
+        vscode.postMessage({ type: 'addTab', hostId: owner });
+      } else if (v.verb === 'deleteTab') {
+        var page = activePageOf(owner);
+        if (page) vscode.postMessage({ type: 'deleteTab', hostId: owner, pageId: page.id });
+      } else if (v.verb === 'showProperties') {
+        vscode.postMessage({ type: 'showProperties' });
+      }
+    });
+    return row;
   }
   function taskRow(comp, p) {
     var owner = current;
@@ -1957,8 +2043,9 @@
     } else if (m.type === 'manip') {
       if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; renderSelection(); }
     } else if (m.type === 'tasks') {
-      // the selected control's property descriptors — feeds the on-canvas smart-tag flyout
-      tasksState = m.component ? { id: m.id, comp: m.component } : null;
+      // the selected control's property descriptors + the vendor's own declared Tasks menu (net48 only; [] elsewhere,
+      // which also clears a stale vendor menu when selection moves to a framework control) — feeds the smart-tag flyout
+      tasksState = m.component ? { id: m.id, comp: m.component, vendorTags: m.vendorTags || [] } : null;
       renderSmartTag();
     } else if (m.type === 'loading') {
       // hide the align tools while (re)loading — the retained-context DOM can still show them from a prior
@@ -1985,6 +2072,8 @@
           // supplies none. engine/host text → textContent, never innerHTML.
           if (formNoticeIconEl) formNoticeIconEl.textContent = m.icon || '🔒';
           formNoticeMsgEl.textContent = m.text || '';
+          // The strip is line-clamped to two lines (see #formNoticeMsg CSS); expose the full disclosure on hover.
+          formNoticeMsgEl.title = m.text || '';
           formNoticeEl.style.display = '';
         } else {
           formNoticeEl.style.display = 'none';
@@ -2007,5 +2096,6 @@
     }
   });
 
-  vscode.postMessage({ type: 'ready' });
+  // Report devicePixelRatio so the host asks the engine to render the PNG at the display's resolution (crisp on 4K).
+  vscode.postMessage({ type: 'ready', dpr: window.devicePixelRatio || 1 });
 })();

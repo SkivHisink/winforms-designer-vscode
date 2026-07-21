@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -60,7 +61,7 @@ namespace WinFormsDesigner.Engine
             try { root = CSharpSyntaxTree.ParseText(sourceText).GetRoot(); }
             catch { return map; }
             // ONLY the designer form class's own field members (across its same-name partials in this file) — never a
-            // nested type's fields nor an unrelated helper's (codex F4: a nested/earlier `class Helper { string okButton; }`
+            // nested type's fields nor an unrelated helper's (a nested/earlier `class Helper { string okButton; }`
             // must not shadow the real component field).
             foreach (var cls in DesignerFormClasses(root))
             {
@@ -80,47 +81,42 @@ namespace WinFormsDesigner.Engine
             return map;
         }
 
-        /// <summary>The designer form's class declarations in this file: the TOP-LEVEL (not nested) class that declares
-        /// <c>InitializeComponent</c> — preferring a <c>partial</c> one so an earlier/nested non-partial helper that
-        /// happens to declare InitializeComponent isn't chosen (codex F4) — plus every OTHER top-level partial of the
-        /// same name (a form legitimately split across partials in one file). Its fields are the component fields; a
-        /// nested helper type's fields are deliberately out of scope.</summary>
-        private static IReadOnlyList<ClassDeclarationSyntax> DesignerFormClasses(SyntaxNode root)
+        /// <summary>
+        /// THE form class to render/edit in this file, or null if the file declares none — or more than one (→ the
+        /// caller must fail closed, never fall back to "some class"). Thin alias for
+        /// <see cref="FormClassResolver.FormClass"/>, which every consumer — both engines included — now shares;
+        /// see that file for why the resolver is one physical file rather than agreeing duplicates.
+        /// <paramref name="designerFilePath"/> is kept for diagnostics only.
+        /// </summary>
+        public static ClassDeclarationSyntax? DesignerFormClass(SyntaxNode root, string? designerFilePath = null)
         {
-            var all = root.DescendantNodes().OfType<ClassDeclarationSyntax>().ToList();
-            static bool TopLevel(ClassDeclarationSyntax c) => c.Parent is not TypeDeclarationSyntax;
-            static bool DeclaresInit(ClassDeclarationSyntax c) =>
-                c.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent");
-            var form = all.FirstOrDefault(c => TopLevel(c) && c.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)) && DeclaresInit(c))
-                    ?? all.FirstOrDefault(c => TopLevel(c) && DeclaresInit(c))
-                    ?? all.FirstOrDefault(DeclaresInit);
-            if (form == null) return Array.Empty<ClassDeclarationSyntax>();
-            // match the form's partials by FULLY-QUALIFIED name (namespace + class), NOT the simple name — an unrelated
-            // `namespace Other { partial class SameName { ... } }` must not be treated as a partial of the form (codex
-            // round-3 F4: it crossed namespaces and edited the wrong field).
-            string fq = QualifiedName(form);
-            return all.Where(c => TopLevel(c) && QualifiedName(c) == fq).ToList();
+            _ = designerFilePath;
+            return FormClassResolver.FormClass(root);
         }
 
-        /// <summary>The namespace-qualified name of a class declaration ("Ns.Sub.Class"), for matching a form's
-        /// partials without crossing namespaces.</summary>
-        private static string QualifiedName(ClassDeclarationSyntax c)
+        /// <summary>Every top-level declaration of the form in its file (its partials) — see
+        /// <see cref="FormClassResolver.PartialsOf"/>.</summary>
+        public static IReadOnlyList<ClassDeclarationSyntax> PartialsOf(ClassDeclarationSyntax form) =>
+            FormClassResolver.PartialsOf(form);
+
+        /// <summary>"…/Foo.Designer.cs" → "Foo"; "…/Foo.cs" → "Foo". Null when there is no usable file name.</summary>
+        internal static string? FormNameFromPath(string? designerFilePath)
         {
-            string ns = "";
-            for (SyntaxNode? p = c.Parent; p != null; p = p.Parent)
-            {
-                if (p is BaseNamespaceDeclarationSyntax nd)
-                {
-                    string seg = nd.Name.ToString();
-                    ns = ns.Length == 0 ? seg : seg + "." + ns;
-                }
-            }
-            // include generic ARITY (reflection `-suffix) so `Dup<T>` and `Dup<T,U>` in one namespace are distinct —
-            // otherwise an unrelated same-name-different-arity class would be treated as a partial of the form (codex
-            // round-4 F4). (Designer form classes are effectively never generic, but keep the match exact.)
-            int arity = c.TypeParameterList?.Parameters.Count ?? 0;
-            string name = arity > 0 ? c.Identifier.Text + "`" + arity : c.Identifier.Text;
-            return ns.Length == 0 ? name : ns + "." + name;
+            if (string.IsNullOrEmpty(designerFilePath)) return null;
+            string name = Path.GetFileName(designerFilePath);
+            if (name.Length == 0) return null;
+            int dot = name.IndexOf('.');                       // strip ".Designer.cs" / ".cs" (a form name has no dot)
+            return dot > 0 ? name.Substring(0, dot) : name;
+        }
+
+        /// <summary>The designer form's class declarations in this file: the form plus every OTHER top-level partial of
+        /// the same namespace-qualified name (a form legitimately split across partials in one file). Its fields are the
+        /// component fields; a nested helper type's fields are deliberately out of scope. Empty when the file declares
+        /// no single designer class (→ fail closed).</summary>
+        internal static IReadOnlyList<ClassDeclarationSyntax> DesignerFormClasses(SyntaxNode root, string? designerFilePath = null)
+        {
+            var form = DesignerFormClass(root, designerFilePath);
+            return form == null ? Array.Empty<ClassDeclarationSyntax>() : FormClassResolver.PartialsOf(form);
         }
 
         /// <summary>Byte-local: replace the access-modifier keyword(s) of the field declaring <paramref name="fieldName"/>
@@ -140,7 +136,7 @@ namespace WinFormsDesigner.Engine
 
             FieldDeclarationSyntax? field = null;
             // ONLY the designer form's own field members (across its same-name partials) — never a nested type's fields
-            // nor an unrelated helper's (codex F4).
+            // nor an unrelated helper's.
             foreach (var f in classes.SelectMany(c => c.Members.OfType<FieldDeclarationSyntax>()))
             {
                 var vars = f.Declaration.Variables;
@@ -159,12 +155,12 @@ namespace WinFormsDesigner.Engine
                 return new ModifierResult { Reason = "field '" + fieldName + "' has no explicit access modifier; refusing" };
 
             int start = access[0].Span.Start;         // after the leading indent (trivia is outside .Span)
-            int end = access[^1].Span.End;            // before the trailing space + type
+            int end = access[access.Count - 1].Span.End; // before the trailing space + type (also net48-compatible)
             string current = sourceText.Substring(start, end - start);
             // ONLY the [start,end) span is replaced, so check THAT exact text (not token trivia, which can reach a
-            // comment AFTER the last access token and false-refuse — codex round-3 F5). The span must be ONLY access
+            // comment AFTER the last access token and false-refuse). The span must be ONLY access
             // keywords + whitespace; a comment, a preprocessor directive, or a non-access modifier (static/readonly)
-            // BETWEEN the access tokens would be silently deleted (codex F5) → refuse. Strip the access keywords: any
+            // BETWEEN the access tokens would be silently deleted → refuse. Strip the access keywords: any
             // non-whitespace residue means interior content that would be lost. A single-keyword field → empty residue.
             string residue = current;
             foreach (var (_, kw) in Kinds) residue = residue.Replace(kw, " ");

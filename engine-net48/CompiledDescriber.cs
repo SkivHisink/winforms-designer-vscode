@@ -27,6 +27,7 @@ namespace WinFormsDesigner.Engine.Net48
                 Type = target.GetType().FullName ?? target.GetType().Name,
                 Parent = parent,
                 IsRoot = isRoot,
+                IsToolStripItem = target is ToolStripItem,
                 Properties = DescribeProperties(target, siblings ?? System.Array.Empty<KeyValuePair<string, IComponent>>(), root),
                 Events = DescribeEvents(target),
             };
@@ -205,7 +206,7 @@ namespace WinFormsDesigner.Engine.Net48
                 // (NotifyIcon.ContextMenuStrip, ErrorProvider.ContainerControl, …). A ToolStripItem's ReferenceConverter
                 // props (ToolStripMenuItem.DropDown) route through the ITEM channel (ownerId), which doesn't translate a
                 // pick, so offering the dropdown there would half-wire a mis-write — exclude only items. Parity with
-                // net9. (A synthetic root token for ErrorProvider.ContainerControl = this is a separate future slice.)
+                // net9. (A synthetic root token for ErrorProvider.ContainerControl = this is a separate future step.)
                 if (owner is ToolStripItem) return null;
                 if (pd.PropertyType.IsEnum) return null;
                 var conv = pd.Converter;
@@ -234,7 +235,7 @@ namespace WinFormsDesigner.Engine.Net48
                 // Only offer the dropdown when there is at least one candidate (a sibling OR the root) AND the CURRENT
                 // reference is representable (null/"(none)", the root token, or a listed sibling). A live reference the
                 // pairs can't name (a base-class field) leaves current == "(none)" though raw is non-null — keep the
-                // plain field so we don't display it as cleared and don't diverge from net9 (codex review).
+                // plain field so we don't display it as cleared and don't diverge from net9.
                 if (names.Count == 0 && !rootAssignable) return null;              // no candidate at all → plain field
                 if (raw is IComponent && current == ReferenceNone) return null;    // a live reference we could not name → out of scope
                 if (current != ReferenceNone && current != ReferenceThis && !names.Contains(current)) return null;
@@ -272,7 +273,7 @@ namespace WinFormsDesigner.Engine.Net48
                     if (sv == null) continue;
                     // Skip the image converters' "no image" SENTINEL (ImageKey ""/ImageIndex -1, both displayed "(none)") — it
                     // does NOT round-trip through the primitive write path, so offer only REAL keys/indices. Filter by the
-                    // actual value (not the display) so a legit key literally "(none)" survives (codex). Mirrors net9.
+                    // actual value (not the display) so a legit key literally "(none)" survives. Mirrors net9.
                     if (isImageConv && ((sv is string ks && ks.Length == 0) || (sv is int ki && ki < 0))) continue;
                     string? s = null;
                     try { if (conv.CanConvertTo(typeof(string))) s = conv.ConvertToInvariantString(sv); } catch { s = null; }

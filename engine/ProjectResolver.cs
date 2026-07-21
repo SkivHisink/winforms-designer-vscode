@@ -336,7 +336,7 @@ namespace WinFormsDesigner.Engine
         // net8.0-windows7.0) — common for WinForms projects pinning a Windows SDK. Group 3 captures only
         // the platform name (so the windows bonus still fires); the trailing version is matched but
         // discarded. Legacy net48 / netstandard2.0 / netcoreapp3.1 still fall through (no '.' major.minor).
-        private static readonly Regex NetCoreTfm =
+        internal static readonly Regex NetCoreTfm =
             new(@"^net(\d+)\.(\d+)(?:-([a-z]+)[\d.]*)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
@@ -346,11 +346,12 @@ namespace WinFormsDesigner.Engine
         /// (all-legacy net4x / netstandard / higher-than-host), so the caller skips MSBuild and lets the
         /// bin-search fallback run rather than returning an assembly this runtime cannot load.
         /// </summary>
-        private static string? ChooseTfm(string targetFrameworks)
+        internal static string? ChooseTfm(string targetFrameworks, int? hostMajor = null)
         {
+            int loadableMajor = hostMajor ?? HostMajor;
             return targetFrameworks
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(t => (tfm: t, score: ScoreLoadable(t)))
+                .Select(t => (tfm: t, score: ScoreLoadable(t, loadableMajor)))
                 .Where(x => x.score > 0)
                 .OrderByDescending(x => x.score)
                 .Select(x => x.tfm)
@@ -358,7 +359,7 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>Score a host-loadable modern TFM (windows preferred, then version); 0 if not loadable.</summary>
-        private static long ScoreLoadable(string tfm)
+        internal static long ScoreLoadable(string tfm, int? hostMajor = null)
         {
             var m = NetCoreTfm.Match(tfm);
             if (!m.Success)
@@ -367,7 +368,7 @@ namespace WinFormsDesigner.Engine
             }
             int major = int.Parse(m.Groups[1].Value);
             int minor = int.Parse(m.Groups[2].Value);
-            if (major > HostMajor)
+            if (major > (hostMajor ?? HostMajor))
             {
                 return 0; // a higher-major assembly cannot load on this runtime
             }

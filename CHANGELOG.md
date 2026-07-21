@@ -4,9 +4,299 @@ All notable changes to **WinForms Designer for VS Code** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-This is a **preview** — expect rough edges and breaking changes between minor versions.
+From **1.0** the core designer loop is stable and follows semantic versioning; the .NET Framework 4.8 compiled preview (for `net4x` / DevExpress) remains **experimental**.
 
 ## [Unreleased]
+
+## [1.0.0] — 2026-07-21
+
+**1.0 — out of preview.** The core designer loop is stable, and this release makes the project's central promise
+explicit: **safe persistence**. Supported edits are written as byte-local, conflict-checked source splices; anything
+the designer can't persist safely is refused with a stated reason, never guessed — backed by the capability preflight,
+the byte-local save firewall, and the golden-corpus round-trip that landed across 0.10–0.12. The **modern** engine
+renders your current source. The **experimental .NET Framework** engine renders a compiled instance of your last build,
+applies supported live edits best-effort, and always discloses that a rebuild is authoritative; it stays editable, and
+your source edits stay byte-local on either engine.
+
+The stable package is deliberately **Windows x64 only** (`win32-x64`). Its modern engine now targets
+**.NET 10 LTS** and supports WinForms projects targeting .NET 8, .NET 9, or .NET 10; Linux, macOS, WSL and
+Linux-hosted remote workspaces are not supported. The .NET Framework 4.8 / DevExpress x64 engine remains experimental.
+
+Getting to 1.0 meant auditing that promise instead of asserting it. An adversarial sweep of the engine, the host and
+the webview — plus repeated independent review — turned up a series of paths that genuinely broke it, and they are
+fixed below: a form could render **the wrong class entirely** and call it save-safe, a save could **silently overwrite
+someone else's change** or **truncate the form outright**, an event handler could be written into **a different class
+than the one wired to it**, a negative number could be **shown wrong**, and an ImageList edit could **replace the images
+it failed to read**. Three long-standing **false** refusals are gone too. The VSIX also no longer ships local scratch
+files.
+
+The root cause behind several of these was the same: **~30 places each decided for themselves which class in a
+`.Designer.cs` was the form**, and the preview and the save path only agreed by luck. There is now **one resolver, in
+one file, compile-linked into both engines** — the modern .NET 10 designer and the .NET Framework 4.8 compiled preview
+literally cannot answer that question differently. That is what made it safe to tighten the rule at all.
+
+### Strengthened stable core
+
+- **The .NET Framework preview is now honest about what it is, without pretending to be more.** The experimental net48
+  engine renders a compiled instance of your **last build**, never the live `.Designer.cs` — and it fundamentally
+  *cannot* prove the build matches your source, because you can hand-edit the file and never rebuild. Earlier release
+  candidates tried to infer divergence and put the form **read-only** when the picture looked stale. Across repeated
+  review that inference proved unable to converge — it produced both false locks (bricking a perfectly good edit) and
+  false unlocks (clearing the lock over a genuinely stale picture) — and a lock that can misclassify is *less*
+  trustworthy than a plain statement of the facts. So net48 forms are **fully editable**, and the fact that the picture
+  is a compiled instance of your **last build** (live updates best-effort; rebuild is authoritative) is recorded in the
+  **WinForms Designer output channel** rather than occupying the canvas with an always-on banner. Source safety does not
+  depend on that disclosure at all — it comes from the byte-local save firewall, which refuses any edit that isn't a
+  confined source splice, on either engine. The modern engine, which renders your current buffer directly, is unaffected.
+- **High-DPI rendering — the canvas is crisp on 4K.** Both engines now render the form PNG at the display's device
+  pixel ratio by scaling the control tree before capture (so text and metrics are drawn at the higher resolution),
+  instead of upscaling a logical-size bitmap after the fact. Layout, hit-testing and zoom stay in logical form pixels,
+  so selection, drag and the rulers are unchanged; only the picture gains resolution. The default (1×) path is
+  byte-identical to before, and a differential test pins that a 2× render carries real detail rather than a plain upscale.
+- **Adding or deleting a tab now updates an interpreted .NET Framework canvas immediately.** On an interpreted net48
+  form, an on-canvas tab add/delete (WinForms `TabControl` / DevExpress `XtraTabControl`) re-interprets the committed
+  source instead of mutating the compiled instance — closing a case where deleting a page changed the `.Designer.cs` but
+  left the on-screen tab in place. The pure-text page-removal splice is unchanged and pinned for the DevExpress shape.
+- **A Properties/describe race is closed.** A control or item describe now captures the source revision together with
+  the text it reads (no `await` between), so a describe that resolves after a concurrent edit can no longer repaint the
+  property grid or item grid with values from the superseded source.
+- **You can rebuild your project again while using the .NET Framework designer.** This one was hiding behind every
+  "rebuild to refresh the preview" instruction the product gives. Because the preview loads your build output *in
+  place* — shadow-copying it would break delay-signed vendor control assemblies — the engine **pinned your dll for as
+  long as it lived**, and nothing ever released it. So `dotnet build` failed outright with
+  `MSB3027: The file is locked by: WinFormsDesigner.Engine.Net48`, the engine's own "reload when the assembly changes"
+  check could never fire (the timestamp it waited for could never change), and every instruction that said *rebuild*
+  was unfollowable. The engine now exposes an explicit release. The designer calls it automatically when the last form
+  using an output closes (and when a form switches to a different control source, releasing the one it used to pin),
+  and **WinForms: Release .NET Framework Assembly** does it on demand — asking the engine to free *everything* it has
+  loaded, since a form that switched sources no longer names the output it forgot. If a preview's own control started a
+  thread that refuses to unload, or the engine is wedged, the command recycles the whole preview process so the handles
+  are freed the operating-system way rather than reporting a release that didn't happen. A regression test drives a real
+  MSBuild rebuild against a live engine and requires it to fail while the assembly is held and to succeed once it is
+  released — pinning both halves, so this cannot quietly come back.
+- **A clearer promise, unchanged behavior: an *incomplete* preview is not a locked one.** The README's one-line summary
+  of fail-closed read as though anything the designer can't fully draw becomes read-only. The rule the designer has
+  always applied — and the one its own "Fail-closed by design" section spells out — is narrower and is what 1.0 keeps:
+  a form it can't faithfully reproduce is **disclosed** (a banner naming what was skipped) and **never whole-file
+  regenerated**, while property and geometry edits continue to apply as targeted byte-surgical splices. Those splices
+  preserve everything outside the edited span *by construction* — including the very constructs the preview couldn't
+  draw — so locking such forms outright would remove a working, advertised capability without making anything safer.
+  The summary now says that, rather than implying a stricter rule than the product has.
+- **The planned 1.1 hardening ships in 1.0.0.** A fast `net10.0-windows` xUnit layer directly pins the
+  safe-save minimality gates, statement equivalence, interpreter allowlists, ASCII/keyword identifier boundary,
+  framework value conversion, and TFM selection. A pure Vitest layer pins TypeScript expression conversion and
+  bounded per-engine crash recovery. Both layers are mandatory in CI and release workflows.
+- **Fewer false read-only results without a wider trust boundary.** The statement firewall now alpha-normalizes
+  generated locals by declaration order and treats a side-effect-free `AddRange(new T[] { ... })` as the same
+  ordered collection operation as equivalent `Add(...)` statements. Invocations, object construction, and every
+  unproved collection element still fail closed.
+- **Tighter .NET Framework parity.** Compiled describes now surface source-derived `Modifiers` and read-only
+  `GenerateMember`; a committed ImageList transaction reconciles the cached compiled instance immediately, so
+  dependent `ImageKey` / `ImageIndex` choices and the canvas no longer wait for a rebuild.
+- **Operational hardening.** Diagnostics now include extension/engine versions, capabilities, ping latency, memory,
+  engine PID, starts, startup time, recent crashes, and last exit. Unexpected exits get two bounded exponential-
+  backoff restarts before a crash-loop guard pauses recovery. CI/release also enforce a cold-start + warm-render
+  performance baseline and a release preflight that verifies .NET 10, unit layers, and workflow gates.
+- **The .NET Framework release/recycle and shutdown lifecycle is fail-closed.** Freeing a pinned build output now
+  waits for a **confirmed** process exit before telling you a rebuild is safe, never starts a replacement engine beside
+  a process that might still hold the dll, and quarantines an AppDomain that refuses to unload rather than handing it
+  back. The host **owns every engine child from the instant it spawns** — including one still connecting — so none is
+  orphaned (and left pinning your dll) when a window closes or the extension deactivates, and a failed spawn is cleaned
+  up rather than leaked. The compiled-preview banner's *last build* / clean-vs-dirty disclosure now updates the moment
+  the document changes, so it can't lag behind a stalled render. These paths were audited across repeated independent
+  review specifically for orphaned processes, stuck locks, and dishonest status.
+
+### Fixed
+- **The engine rendered the first class in the file, not the form.** A `.Designer.cs` that declares a second class
+  ahead of the form rendered **that** class, reported it **save-safe with no banner**, and let a regenerate splice
+  generated code into it — producing a file that no longer compiles. The renderer now resolves the form the same way
+  the save splicer and the byte-surgical editors already did — the class declaring `InitializeComponent` — so the
+  parts of the engine can no longer disagree about which class the file even is. If a file declares **no** such class,
+  or **more than one** (a second form, or a helper — including a **nested** one), the designer now **fails closed** and
+  renders nothing rather than picking one: whichever it picked, the splicer might pick the other and regenerate one
+  class's body into the other's. The same fix ends a **false read-only** on a form legitimately split across partials
+  (component fields in one, `InitializeComponent` in another) — its fields are now found across all of them.
+- **Saving could silently overwrite an external change.** The `.Designer.cs` write went to disk unconditionally: if
+  the file had changed underneath the open designer (a `git checkout`, Visual Studio, a generator — or simply an
+  event the watcher never delivered), Ctrl+S destroyed that revision without a word. The save now re-reads the file
+  and refuses — keeping your edits unsaved and saying why — when it no longer matches the version the designer last
+  saw, when it carries a different byte-order mark, or when it was **deleted** since being opened; an unreadable
+  file (locked, permissions) surfaces the error instead of being written over. And a form whose file couldn't be read
+  when it was opened holds no trustworthy baseline at all: rather than let you edit against a file it has never seen,
+  the designer treats it as **read-only** — every edit, resource write and *Save As* refuses — until a successful read
+  establishes one (the next change to the file clears it automatically; *File → Revert* does so on demand). *Save As*
+  also no longer overwrites an existing generated partner: picking `NewForm.cs` writes `NewForm.Designer.cs`, a path
+  the overwrite prompt never mentioned, so it is **created conditionally** and refused — not clobbered — if it already
+  exists (a form you really mean to replace can be picked directly, where VS Code's own prompt covers it). The sibling `.resx` write
+  path was already conflict-guarded; the primary artifact now matches it. Note the ordinary-save check is a re-read,
+  not an atomic compare-and-swap — the VS Code filesystem API offers no conditional write, so a write landing in the
+  instant between the check and ours can still win. That window is far smaller than the previous behaviour (which
+  never looked at all), but it is not zero.
+- **A negative number could be rendered and reported wrong.** Unary minus was only applied to `int`, `double` and
+  `long` literals — every other numeric literal came back **unnegated and without complaint**, so a
+  `numericUpDown1.Minimum = -100` (a `decimal`) showed as **100** in the preview and the property grid, and
+  `new SizeF(-6F, -13F)` lost both signs. Negation now happens in the literal's own type, and anything that can't be
+  negated is reported as `unrepresentable` — disclosed on the banner and refused a whole-file regenerate — rather than
+  shown as a plausible wrong number.
+- **An ImageList edit could replace images it hadn't read.** The reader that feeds the editor's data-loss guard
+  matched only the canonical `name="…"` spelling, so a `.resx` written by hand or round-tripped through another tool
+  (`name='…'`, `name = "…"`) read back as *no images* — precisely the state the guard lets through — and saving then
+  replaced the real image set. The reader now tolerates the same attribute spellings the binary-resource scanner
+  already did, and the guard additionally refuses whenever the `.resx` demonstrably holds binary resources but none
+  resolved for that ImageList: ambiguity fails closed instead of defaulting to "replace everything".
+- **TreeView forms round-trip again (a false read-only is gone).** The serializer named the locals it generates for
+  `TreeNode`s using the framework's fallback rule, which lower-cases the whole type name (`treenode1`). Every
+  Visual-Studio-generated `.Designer.cs` spells them `treeNode1`, and the save gate compares statement **text** — so
+  every generated `TreeNode` line looked *lost* and an otherwise perfectly faithful TreeView form was refused
+  read-only with a `lostStatements` reason. The engine now emits VS's camelCase, so a VS-generated TreeView form is
+  **save-safe**, its regenerate is idempotent, and node names / text / structure are preserved. **The safe-save gate
+  itself is untouched and exactly as strict** — this fixes the generator, not the guard. A form written in a spelling
+  VS never emits (a hand-simplified `Color.FromArgb(255, 224, 192)`, or `TabPages.AddRange`) still refuses honestly,
+  because regenerating it would rewrite bytes you never edited.
+- **Resetting a property no longer eats the comment next to it.** A reset deletes whole lines, and its gate compares
+  statements — a comment is trivia, invisible to it — so `this.p.Dock = …; // KEEP: pinned by ticket #4711` lost the
+  comment and still reported success (reachable from the UI, since setting `Dock` resets `Anchor`). It now refuses
+  when the target's line carries anything else, **or** when the assignment itself contains a comment
+  (`this.p.Dock /* KEEP */ = …`) or a **preprocessor directive** (a `#if`/`#else` around the value — build-affecting
+  structure that was being deleted just as silently). Two assignments of the same property on one line still reset fine.
+- **On-canvas menu/toolbar edits could splice a stale item tree.** The add / rename / retype / delete paths read the
+  item forest and only then snapshotted the document revision, leaving that read unguarded: an undo landing during
+  the round-trip meant the edit was applied to text that no longer existed and could resurrect a removed item. They
+  now snapshot the revision before the read, like every other edit path.
+- **A handler stub could be written on a form that failed to render.** `navigateHandler` reached `createHandler`
+  without the stale-render gate (it isn't one of the blocked message types), so the code-behind stub was written to
+  your `.cs` and only the wiring was refused — leaving an orphan handler. It now refuses up front, and re-checks after
+  the stub write so the refusal names the real reason rather than arriving as a generic backstop.
+- **The .NET Framework 4.8 preview had the same wrong-class bug — and edited a different class than it showed.** It
+  resolved the form by taking the **first class in the file**, without even checking for `InitializeComponent`: a
+  helper class ahead of the form was instantiated and previewed as your form, with no banner, while the modern host
+  spliced your edits into the *real* form. Preview one class, edit another. Both engines now share **one** resolver —
+  the same physical file, compile-linked into each — so this cannot recur by drift. The 4.8 host also **built the type
+  name itself** and got it wrong for a form nested inside a `record`/`struct` or a generic type; when that name then
+  failed to resolve, it quietly fell back to *any unique control with the same short name* — rendering a different
+  form as yours, with the explanation written to a buffer nobody reads. The name now comes from the shared identity
+  (already reflection's own format), and a lookup miss is reported honestly as a stale build.
+- **An event handler could be created in — and validated against — the wrong class.** The `.Designer.cs` class rule is
+  shared now, but the paired code-behind was matched by **simple name**, first hit. A `.cs` holding
+  `namespace Other { class Form1 }` ahead of the real `namespace Product.Ui { partial class Form1 }` made the events
+  dropdown offer *Other.Form1's* methods, made the "does this handler exist?" check validate against them, and wrote
+  new stubs **into Other.Form1** — while the wiring went into `Product.Ui.Form1`, which has no such method. Both files
+  parse, the save reports success, and the project no longer compiles. The code-behind is now matched on the full
+  identity (namespace + enclosing type chain + generic arity), with no simple-name fallback even for a form in the
+  global namespace — where a nested `Helper.Form1` decoy would otherwise slip straight back in.
+- **The events dropdown could offer a handler that doesn't compile.** Candidate parameter types were compared by their
+  **last segment**, so a handler taking your own `Custom.EventArgs` matched `System.EventArgs`: picking it emitted
+  `Click += new EventHandler(this.WrongClick)` — not a compatible method group — and the build broke. A qualified
+  spelling must now match the real type exactly; a spelling that goes through a `using` **alias** (or an `extern
+  alias`) is refused rather than guessed at, since the alias carries the binding that decides compatibility and
+  nothing here can resolve it. Bare `EventArgs` — what Visual Studio actually generates — is unaffected.
+- **Creating an event handler could erase concurrent edits to your code-behind.** The stub was applied by replacing
+  the **entire** `.cs` with a copy generated from a snapshot taken before the round-trip. `applyEdit` has no version
+  precondition, so anything that touched the file while that write was in flight — format-on-save, a source
+  generator, your own typing — was silently overwritten. The stub is now applied as a **one-point insert**, so the
+  rest of the file is untouched no matter what else lands.
+- **A handler stub for an exotic event signature could be written without compiling.** The stub's parameter types came
+  from a name that truncated at the first backtick, so an event whose argument type is **nested inside a generic**
+  (`Outer<int>.ChangedArgs<string>`) produced `Outer<int, string>` — a different, often nonexistent type. A
+  **multidimensional** `int[,]` parameter likewise came out as `int[]`, because every array was spelled `[]`
+  regardless of rank. Both parsed, so the parse-only guard passed and the wiring was written. Ranks are now emitted
+  correctly, and signatures that can't be spelled faithfully (nested-in-generic, by-ref, pointer, open type
+  parameters — including the event's own delegate type) are **refused with a reason** instead of a stub that only
+  looks right.
+- **Any method with the right NAME could be wired to an event.** The write path checked only that a method of that
+  name existed somewhere in the form — not its signature — so `void WrongClick(string text)` could be wired to
+  `Click`, emitting a method group that isn't an `EventHandler` and breaking the build. The dropdown had always
+  filtered by signature; the write path now applies the same rule rather than trusting the UI that called it. That
+  rule also got stricter: a non-void **return type** is compared (only void-ness was), and a `ref`/`out`/`in`
+  parameter — which this comparison cannot decide — is no longer offered.
+- **Wiring to an existing handler never checked the code-behind for changes.** The engine confirmed the handler
+  existed in a snapshot, then the wiring was committed after an `await` during which the method could have been
+  renamed or deleted — `Click += new EventHandler(this.button1_Click)` against a method that no longer exists,
+  reported as wired. It now re-checks the code-behind document, exactly as the stub-writing path does.
+- **A form using escaped identifiers rendered as a "stale build".** `namespace @Ui { partial class @Form1 }` is legal
+  C# whose metadata name is plainly `Ui.Form1`, but the identity was built from the raw spelling (`@Ui.@Form1`) — so
+  the .NET 4.8 host could not find the type in a perfectly current assembly, and the code-behind match failed too.
+  Identities are now built from the decoded identifier text.
+- **Removing a grid/list column from a split form could strand a field forever null.** The typed `DataGridView.Columns`
+  and `ListView.Columns` editors rewrite exactly one declaration — the one holding `InitializeComponent`. For a form
+  split across partials they would delete a column's construction and `AddRange` while its **field declaration**,
+  living in the sibling partial, survived: the file still compiled, the field was permanently `null`, and the edit was
+  reported **safe**. Their "is anything else using this column?" scan was likewise blind to a helper method in that
+  sibling partial. Both editors now scan every partial of the form, and refuse to remove a column they cannot remove
+  atomically.
+- **An unreadable `.resx` was treated as an absent one — and overwritten.** The image and ImageList paths collapsed
+  *every* read error into "there is no `.resx`", so a resource file that couldn't be read but could be written
+  (permissions, a virtual/remote provider, a transient failure) was rebuilt from scratch: the freshness check compared
+  nothing to nothing and passed, the binary-resource drop guard saw zero resources and disarmed, and the atomic rename
+  replaced the real file. Only a genuine *file not found* now means "absent"; anything else surfaces as an error.
+- **The `.Designer.cs` is now written atomically.** The sibling `.resx` has been written temp-then-rename since 0.11.0,
+  but the form itself went out with a plain write — so a crash, a full disk or a power cut mid-save could leave it
+  **truncated**. Guarding the resource file while writing the form unprotected had it backwards: a half-written `.resx`
+  costs an image, a half-written `.Designer.cs` costs the form. Both now take the same path.
+- **An image import no longer strips the `.resx` BOM.** Visual Studio writes `.resx` files with a UTF-8 byte-order
+  mark; the engine round-trips the stripped text, so writing it back plain quietly dropped the mark and turned a
+  one-image import into a whole-file diff in your history. The original mark is preserved on every write (a `.resx`
+  the designer *creates* still has none), and the conflict guards — forward, undo and redo alike — now treat a
+  BOM-only external change as the conflict it is.
+
+### Changed
+- **Left preview.** The Marketplace listing no longer carries the **Preview** flag; `1.0.0` is the first stable release.
+- **The VSIX no longer ships local scratch.** `.vscodeignore` now excludes `.claude/**`, `**/*.log` and `*.vsix`, which
+  were being packaged into the published extension.
+- **Published support matrix.** The README now states, per runtime, exactly what is supported and — crucially — what the
+  designer **refuses to whole-file regenerate** rather than risk corrupting: `Localizable = true` forms, binary `.resx`,
+  unresolved base types, and unrepresentable statements, each named by the capability preflight (`safe` / `localizable` /
+  `binaryResx` / `unresolvedType` / `lostStatements` / `unrepresentable`). Individual property and geometry edits still
+  apply as targeted byte-surgical splices even on those forms. (A `Localizable = true` form is the one case that is
+  read-only outright: its layout lives in per-culture `.resx`, so any edit here would diverge from it.)
+
+### Notes
+- The **.NET Framework 4.8 compiled preview** (for `net4x` / DevExpress forms) remains **experimental** — render is
+  proven and the live edit flow is wired, but it is best confirmed with an F5 run.
+- **Post-1.0**, read-only-safe today: `DesignerActionList` / vendor smart-tag action lists, advanced `.resx` (non-image
+  resources, the full `ApplyResources` per-culture localization workflow), generic `IList<T>` collection editors, and RTL.
+- **External changes now lock the canvas while it catches up.** Adopting an externally-changed `.Designer.cs` used to
+  leave the old canvas actionable until the replacement render finished, so a click or drag aimed at what was on
+  screen could splice into source the user had never seen; overlapping watcher events could also let an older read
+  re-adopt superseded text. Edits are now refused for the whole re-render, the newest read wins, and a read that
+  **fails** after the form was opened (the file deleted, locked, or the provider erroring) latches the same read-only
+  state instead of being ignored — previously the stale preview stayed fully editable, and the `.resx` paths kept
+  writing, against a source that no longer existed.
+
+- **One resolver, one identity.** The class and the `InitializeComponent` method are now a **single decision**, made in
+  one file (`FormClassResolver`) that both engines compile-link. That is what allowed the rule to be tightened: a
+  class declaring an `InitializeComponent(int)` **overload ahead of** the real parameterless one used to render the
+  form **empty** with no banner (every consumer took the first method matching the *name*), and a class declaring only
+  such an overload was treated as a designer class at all. Both are fixed. Applying that tightening to one selector
+  alone — the shape of an earlier attempt — is precisely the disagreement that regenerates one class's body into
+  another's, which is why it waited for the unification rather than shipping as a local patch.
+- Known limits, honestly stated — neither loses data:
+  - **The ordinary save is a re-read, not a compare-and-swap.** The VS Code filesystem API offers no conditional
+    write, so a write landing in the instant between our check and ours can still win. Nothing is awaited between the
+    two, making the window as small as the platform allows — and vastly smaller than the previous behaviour, which
+    never checked at all — but it is not zero.
+  - **A refused handler stub stays.** If a fail-closed gate flips *while* the code-behind stub is being written, the
+    wiring is refused but the stub — an unused empty method — remains in your `.cs`, undoable with Ctrl+Z. Taking it
+    back would mean re-reading and replacing the whole file, and `applyEdit` carries no version precondition, so a
+    concurrent edit landing in that gap would be **erased** by the rollback. Leaving an empty method is the smaller
+    harm, and refusing to roll back is the fail-closed side of that trade. For the same want of a version precondition,
+    an edit landing during the stub's own (awaited) write can shift where it lands; because that write is now a
+    one-point insert rather than a whole-file replace, the worst case is a visibly misplaced method you can undo — not
+    the silent loss of everything else in the file.
+  - **The events dropdown is matched syntactically, so it can omit a valid handler.** Deciding a parameter type
+    exactly needs a semantic model (which `using` directives are in scope). A **bare** name is therefore matched by
+    simple name — correct unless the file imports a same-named type in place of the delegate's — while a
+    **partially-qualified** spelling (`Windows.Forms.MouseEventArgs`), one reached through an alias, or one whose
+    alias is a `global using` in another file, is not offered at all. Because the qualified comparison is exact, an
+    alias the parser cannot see can only cause a miss, never a wrong match. A missing entry in a dropdown is
+    recoverable; a wired handler that doesn't compile is not.
+  - **The designer reads one code-behind file, not the whole compilation.** It parses `Foo.Designer.cs` and `Foo.cs`
+    — so a handler living in a *third* partial file (`Foo.Events.cs`) isn't seen, and "new handler" would add a
+    second one; a `global using` alias declared elsewhere isn't seen either (see above). Likewise, deleting a control
+    or a grid/list column that code in `Foo.cs` refers to leaves that reference dangling. These produce **compiler
+    errors you can see and undo**, not silent corruption — and the last is what Visual Studio's own designer does
+    too. The fail-closed guarantee is that the designer never quietly writes something wrong; it does not promise to
+    predict every consequence of a deletion you asked for.
 
 ## [0.12.0] — 2026-07-14
 
@@ -79,6 +369,8 @@ compiled (.NET Framework) preview no longer lingers.
 ### Fixed
 - A re-import of a new image into a property that already referenced a resource is now undoable (previously it changed
   the resource on disk with no undo step).
+
+## [0.10.0] — 2026-07-13
 
 **The trust floor — the most important release.** The designer now **fails closed**: when a form uses something the
 .NET-9 preview can't faithfully reproduce, it says so **honestly** and **refuses to silently corrupt or mis-render**
@@ -533,10 +825,10 @@ one automatically.
   `.deps.json` / `.runtimeconfig.json` sidecar) → the net48 engine; everything else → the
   .NET 9 engine. Each engine starts lazily and self-heals if its process exits.
 - **Live editing on the compiled preview** — the **property grid**, **drag / move / resize
-  / align**, **add / remove**, and **z-order** all apply **live** against the instantiated
-  instance; the change is persisted as `.Designer.cs` text (via the .NET 9 splice) and
-  re-renders on the next build. A **compiled-preview badge** (🔒 *preview*) appears in the
-  status bar. *Cut / paste and dropping project-specific (non-framework) controls are not
+  / align**, **add / remove**, and **z-order** apply **live** against the instantiated
+  instance on a **best-effort basis** (a rebuild is authoritative); the change is persisted
+  as `.Designer.cs` text (via the .NET 9 splice) and re-renders on the next build. A
+  **compiled-preview badge** (🔒 *preview*) appears in the status bar. *Cut / paste and dropping project-specific (non-framework) controls are not
   supported on this engine yet — manual source edits appear after a rebuild.*
 
 ### Changed
@@ -691,7 +983,11 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.12.0...v1.0.0
+[0.12.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.7.1...v0.8.0

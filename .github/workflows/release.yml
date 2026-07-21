@@ -15,20 +15,56 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+
+      # Fail fast, before ANY public artifact exists: the publish steps used to discover a missing VSCE_PAT only
+      # after `gh release create` had already made the tag public, leaving a released version with no Marketplace
+      # publish. Same tag gate as the publish steps below, so workflow_dispatch runs are unaffected. OVSX_PAT stays
+      # OPTIONAL (warning only) — the Open VSX step skips itself when it's unset.
+      - name: Validate publication secrets
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        shell: pwsh
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if (-not $env:VSCE_PAT) { Write-Error 'VSCE_PAT secret not set - stable Marketplace publish cannot continue.'; exit 1 }
+          Write-Host 'VSCE_PAT is set.'
+          if (-not $env:OVSX_PAT) {
+            Write-Host '::warning::OVSX_PAT secret not set - the Open VSX publish will be skipped.'
+          } else {
+            Write-Host 'OVSX_PAT is set.'
+          }
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
 
       - name: Build engine (Release)
         run: dotnet build engine -c Release
 
+      - name: Build .NET Framework engine (Release, x64)
+        run: dotnet build engine-net48 -c Release -p:PlatformTarget=x64
+
+      - name: Unit tests (engine)
+        run: dotnet test tests/Engine.UnitTests -c Release
+
+      - name: Unit tests (engine, net48)
+        run: dotnet test tests/Engine.Net48.UnitTests -c Release
+
       - name: Build sample fixtures
         run: |
           dotnet build samples/CustomControls -c Release
-          dotnet build samples/ComplexProject -f net9.0-windows -c Debug
+          dotnet build samples/ComplexProject -f net8.0-windows -c Debug -p:TargetFrameworks=net8.0-windows
+          dotnet build samples/ComplexProject -f net9.0-windows -c Debug -p:TargetFrameworks=net9.0-windows
+          dotnet build samples/ComplexProject -f net10.0-windows -c Debug -p:TargetFrameworks=net10.0-windows
+          dotnet build fixtures/Net48CtxFixture -c Release -p:PlatformTarget=x64
+          dotnet build fixtures/FakeVendor -c Release -p:PlatformTarget=x64
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -41,55 +77,74 @@ jobs:
         working-directory: extension
         run: npm ci
 
+      - name: Audit extension dependencies
+        working-directory: extension
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            npm audit --audit-level=moderate
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -lt 3) { Start-Sleep -Seconds (10 * $i) }
+          }
+          exit 1
+
+      - name: Release metadata preflight
+        working-directory: extension
+        run: npm run release:preflight
+
       - name: Typecheck
         working-directory: extension
         run: npm run typecheck
+
+      - name: Unit tests (extension)
+        working-directory: extension
+        run: npm test
 
       - name: Build extension
         working-directory: extension
         run: npm run build
 
+      - name: Performance baseline
+        working-directory: extension
+        run: npm run perf:baseline
+
+      - name: Localization parity
+        working-directory: extension
+        run: npm run l10n:parity -- --strict
+
       - name: End-to-end (headless)
         working-directory: extension
+        env:
+          WFD_REQUIRE_NET48: "1"
         run: npm run e2e
 
       - name: Live-webview tests (headless jsdom)
         working-directory: extension
         run: npm run webview-e2e
 
+      - name: VS Code 1.84 Extension Host smoke
+        working-directory: extension
+        run: npm run extension-host-e2e -- --version=1.84.0
+
+      - name: VS Code Stable Extension Host smoke
+        working-directory: extension
+        run: npm run extension-host-e2e -- --version=stable
+
       # Runs `vscode:prepublish` (build + bundle the engine into extension/engine/ + copy LICENSE).
       - name: Package VSIX
         working-directory: extension
-        run: npx --yes @vscode/vsce package --no-dependencies -o winforms-designer.vsix
+        run: npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix
 
       - name: Assert VSIX contains the bundled engine
         working-directory: extension
-        run: |
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD\winforms-designer.vsix")
-          $names = $zip.Entries.FullName
-          $zip.Dispose()
-          $required = @(
-            'extension/engine/WinFormsDesigner.Engine.dll',
-            'extension/engine/WinFormsDesigner.Engine.deps.json',
-            'extension/engine/WinFormsDesigner.Engine.runtimeconfig.json',
-            'extension/engine-net48/WinFormsDesigner.Engine.Net48.exe'
-          )
-          $missing = @()
-          foreach ($r in $required) {
-            if ($names -notcontains $r) { $missing += $r }
-          }
-          if ($missing.Count -gt 0) {
-            Write-Error ("VSIX is missing required engine files: " + ($missing -join ', '))
-            exit 1
-          }
-          Write-Host "VSIX contains the bundled engine."
+        shell: pwsh
+        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v7
         with:
           name: winforms-designer-vsix
-          path: extension/*.vsix
+          path: extension/winforms-designer-win32-x64.vsix
           if-no-files-found: error
 
       # The publish/release steps only run for a real tag push (v*).
@@ -116,16 +171,30 @@ jobs:
           Write-Host "----- release notes for $version -----"
           Write-Host $body
 
-      - name: Create GitHub Release
+      # Created as a DRAFT — nothing is public until the Marketplace publish below succeeds, so an expired VSCE_PAT
+      # can no longer strand a public release with no Marketplace version. Idempotent: a re-run of a half-failed job
+      # finds the release from the previous attempt and re-uploads the VSIX (--clobber) instead of dying on
+      # `gh release create`. The existing-release path deliberately does NOT rewrite the notes: they were generated
+      # (curated body + --generate-notes) by the attempt that created it, and `gh release edit --notes-file` cannot
+      # regenerate the appended "What's Changed" section, so rewriting would silently drop it.
+      - name: Create draft GitHub Release
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         working-directory: extension
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >
-          gh release create "${{ github.ref_name }}" winforms-designer.vsix
-          --title "${{ github.ref_name }}"
-          --notes-file "${{ github.workspace }}/release-notes.md"
-          --generate-notes
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $null = & gh release view $tag 2>&1   # exit 0 = a release for this tag already exists (draft or public)
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists (previous attempt) - re-uploading the VSIX instead of recreating it."
+            & gh release upload $tag winforms-designer-win32-x64.vsix --clobber
+            if ($LASTEXITCODE -ne 0) { Write-Error "gh release upload failed for $tag."; exit 1 }
+          } else {
+            $notes = "${{ github.workspace }}/release-notes.md"
+            & gh release create $tag winforms-designer-win32-x64.vsix --draft --title $tag --notes-file $notes --generate-notes
+            if ($LASTEXITCODE -ne 0) { Write-Error "gh release create failed for $tag."; exit 1 }
+          }
 
       # Publishing occasionally dies on a transient network reset (read ECONNRESET) against the
       # Marketplace API — retry a few times, and treat an "already published" error as success in
@@ -136,10 +205,10 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          if (-not $env:VSCE_PAT) { Write-Host 'VSCE_PAT secret not set - skipping Marketplace publish.'; exit 0 }
+          if (-not $env:VSCE_PAT) { Write-Error 'VSCE_PAT secret not set - stable Marketplace publish cannot continue.'; exit 1 }
           for ($i = 1; $i -le 3; $i++) {
             Write-Host "Marketplace publish attempt $i/3..."
-            $out = & npx --yes @vscode/vsce publish --packagePath winforms-designer.vsix 2>&1 | Out-String
+            $out = & npx --yes @vscode/vsce@3.9.2 publish --packagePath winforms-designer-win32-x64.vsix 2>&1 | Out-String
             Write-Host $out
             if ($LASTEXITCODE -eq 0) { Write-Host 'Published to Marketplace.'; exit 0 }
             if ($out -match 'already exists') { Write-Host 'Version already published - treating as success.'; exit 0 }
@@ -147,6 +216,20 @@ jobs:
             if ($i -lt 3) { Start-Sleep -Seconds (15 * $i) }
           }
           Write-Error 'Marketplace publish failed after 3 attempts.'; exit 1
+
+      # The point of no return: the draft only goes public now that the Marketplace serves the same VSIX. Gated on
+      # the Marketplace step (not Open VSX, which is optional) so an Open VSX outage can't hold the release back.
+      # Idempotent: --draft=false on an already-public release is a no-op, so a re-run passes straight through.
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          & gh release edit $tag --draft=false
+          if ($LASTEXITCODE -ne 0) { Write-Error "gh release edit --draft=false failed for $tag."; exit 1 }
+          Write-Host "GitHub release $tag is now public."
 
       - name: Publish to Open VSX
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
@@ -157,7 +240,7 @@ jobs:
           if (-not $env:OVSX_PAT) { Write-Host 'OVSX_PAT secret not set - skipping Open VSX publish.'; exit 0 }
           for ($i = 1; $i -le 3; $i++) {
             Write-Host "Open VSX publish attempt $i/3..."
-            $out = & npx --yes ovsx publish winforms-designer.vsix -p $env:OVSX_PAT 2>&1 | Out-String
+            $out = & npx --yes ovsx@1.0.2 publish winforms-designer-win32-x64.vsix -p $env:OVSX_PAT 2>&1 | Out-String
             Write-Host $out
             if ($LASTEXITCODE -eq 0) { Write-Host 'Published to Open VSX.'; exit 0 }
             if ($out -match 'already exists') { Write-Host 'Version already published - treating as success.'; exit 0 }

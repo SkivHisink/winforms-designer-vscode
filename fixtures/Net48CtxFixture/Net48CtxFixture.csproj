@@ -37,6 +37,12 @@
     <Compile Include="..\..\engine\samples\InheritedBaseForm.cs" Link="InheritedBaseForm.cs" />
     <Compile Include="..\..\engine\samples\DerivedForm.Designer.cs" Link="DerivedForm.Designer.cs" />
     <Compile Include="..\..\engine\samples\DerivedForm.cs" Link="DerivedForm.cs" />
+    <!-- TREEVIEW: nodes serialized as LOCAL variables (bottom-up) + Nodes.AddRange — the TreeNode interpreter subsystem. -->
+    <Compile Include="..\..\engine\samples\TreeForm.Designer.cs" Link="TreeForm.Designer.cs" />
+    <Compile Include="..\..\engine\samples\TreeForm.cs" Link="TreeForm.cs" />
+    <!-- TABCONTROL (M4 Slice 5): TabControl + TabPages via Controls.Add + SelectedIndex — for interpreted tab view-state. -->
+    <Compile Include="..\..\engine\samples\TabForm.Designer.cs" Link="TabForm.Designer.cs" />
+    <Compile Include="..\..\engine\samples\TabForm.cs" Link="TabForm.cs" />
   </ItemGroup>
 
 </Project>

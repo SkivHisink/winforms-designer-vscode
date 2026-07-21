@@ -20,15 +20,37 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
 
       - name: Build engine (Release)
         run: dotnet build engine -c Release
+
+      - name: Build .NET Framework engine (Release, x64)
+        run: dotnet build engine-net48 -c Release -p:PlatformTarget=x64
+
+      - name: Unit tests (engine)
+        run: dotnet test tests/Engine.UnitTests -c Release
+
+      # net48 unit floor (ADR 0001): runs the shared IR core (front-end / validator / executor) on the ACTUAL
+      # .NET Framework 4.8 runtime with real net48 WinForms controls — where the interpreter runs in production.
+      - name: Unit tests (engine, net48)
+        run: dotnet test tests/Engine.Net48.UnitTests -c Release
+
+      # M6 fallback-rate gate (ADR 0002 §Release GO checklist): measure the source-coverage interpreted-vs-fallback
+      # rate over the sample corpus and FAIL below the floor, so a regression that drops a construct out of the closed
+      # IR (raising the fallback rate) blocks the pipeline with the rate visible in the log. The same CLI runs against a
+      # real (e.g. DevExpress) corpus — `--coverage-report <dir> --min-rate <pct>` — for the maintainer's release gate.
+      - name: M6 coverage gate (engine samples)
+        run: dotnet run --project engine -c Release --coverage-report engine/samples --min-rate 80
 
       # Build the sample fixtures the e2e relies on. Their bin/ output is gitignored,
       # so without this step e2e silently skips the custom-control and multi-target
@@ -36,7 +58,11 @@ jobs:
       - name: Build sample fixtures
         run: |
           dotnet build samples/CustomControls -c Release
-          dotnet build samples/ComplexProject -f net9.0-windows -c Debug
+          dotnet build samples/ComplexProject -f net8.0-windows -c Debug -p:TargetFrameworks=net8.0-windows
+          dotnet build samples/ComplexProject -f net9.0-windows -c Debug -p:TargetFrameworks=net9.0-windows
+          dotnet build samples/ComplexProject -f net10.0-windows -c Debug -p:TargetFrameworks=net10.0-windows
+          dotnet build fixtures/Net48CtxFixture -c Release -p:PlatformTarget=x64
+          dotnet build fixtures/FakeVendor -c Release -p:PlatformTarget=x64
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -49,13 +75,36 @@ jobs:
         working-directory: extension
         run: npm ci
 
+      - name: Audit extension dependencies
+        working-directory: extension
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            npm audit --audit-level=moderate
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -lt 3) { Start-Sleep -Seconds (10 * $i) }
+          }
+          exit 1
+
+      - name: Release metadata preflight
+        working-directory: extension
+        run: npm run release:preflight
+
       - name: Typecheck
         working-directory: extension
         run: npm run typecheck
 
+      - name: Unit tests (extension)
+        working-directory: extension
+        run: npm test
+
       - name: Build extension
         working-directory: extension
         run: npm run build
+
+      - name: Performance baseline
+        working-directory: extension
+        run: npm run perf:baseline
 
       - name: Syntax-check webview scripts
         working-directory: extension
@@ -63,45 +112,42 @@ jobs:
           node --check media/designer.js
           node --check media/panel.js
 
+      - name: Localization parity
+        working-directory: extension
+        run: npm run l10n:parity -- --strict
+
       - name: End-to-end (headless)
         working-directory: extension
+        env:
+          WFD_REQUIRE_NET48: "1"
         run: npm run e2e
 
       - name: Live-webview tests (headless jsdom)
         working-directory: extension
         run: npm run webview-e2e
 
+      - name: VS Code 1.84 Extension Host smoke
+        working-directory: extension
+        run: npm run extension-host-e2e -- --version=1.84.0
+
+      - name: VS Code Stable Extension Host smoke
+        working-directory: extension
+        run: npm run extension-host-e2e -- --version=stable
+
       - name: Package VSIX
         # `vsce package` runs the `vscode:prepublish` script, which builds, bundles the engine
         # into extension/engine/, and copies the LICENSE — so the artifact is self-contained.
         working-directory: extension
-        run: npx --yes @vscode/vsce package --no-dependencies -o winforms-designer.vsix
+        run: npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix
 
       - name: Assert VSIX contains the bundled engine
         working-directory: extension
-        run: |
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD\winforms-designer.vsix")
-          $names = $zip.Entries.FullName
-          $zip.Dispose()
-          $required = @(
-            'extension/engine/WinFormsDesigner.Engine.dll',
-            'extension/engine/WinFormsDesigner.Engine.deps.json',
-            'extension/engine/WinFormsDesigner.Engine.runtimeconfig.json'
-          )
-          $missing = @()
-          foreach ($r in $required) {
-            if ($names -notcontains $r) { $missing += $r }
-          }
-          if ($missing.Count -gt 0) {
-            Write-Error ("VSIX is missing required engine files: " + ($missing -join ', '))
-            exit 1
-          }
-          Write-Host "VSIX contains the bundled engine."
+        shell: pwsh
+        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v7
         with:
           name: winforms-designer-vsix
-          path: extension/*.vsix
+          path: extension/winforms-designer-win32-x64.vsix
           if-no-files-found: error

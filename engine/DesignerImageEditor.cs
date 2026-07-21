@@ -264,43 +264,26 @@ namespace WinFormsDesigner.Engine
 
         // ---- shared Roslyn helpers (kept local so the security-sensitive gate is self-contained) ----
 
-        internal static MethodDeclarationSyntax? FindInitializeComponent(string code)
-        {
-            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                var m = cls.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(x => x.Identifier.Text == "InitializeComponent");
-                if (m != null) return m;
-            }
-            return null;
-        }
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        internal static MethodDeclarationSyntax? FindInitializeComponent(string code) =>
+            FormClassResolver.InitMethod(CSharpSyntaxTree.ParseText(code).GetRoot());
 
-        internal static string? ClassNameOf(string code)
-        {
-            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-                if (cls.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent"))
-                    return cls.Identifier.Text;
-            return null;
-        }
+        /// <summary>The form class's simple name — via the ONE shared rule (see FormClassResolver).</summary>
+        internal static string? ClassNameOf(string code) =>
+            FormClassResolver.FormClass(CSharpSyntaxTree.ParseText(code).GetRoot())?.Identifier.Text;
 
+        /// <summary>The form's component field names, across all its partials — via the ONE shared rule.</summary>
         private static List<string> FieldNames(string code)
         {
-            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            var list = new List<string>();
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                if (!cls.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent")) continue;
-                foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
-                    foreach (var v in f.Declaration.Variables)
-                        list.Add(v.Identifier.Text);
-                break;
-            }
-            return list;
+            var form = FormClassResolver.FormClass(CSharpSyntaxTree.ParseText(code).GetRoot());
+            return form == null ? new List<string>() : FormClassResolver.FieldNamesOf(form).ToList();
         }
 
         /// <summary>A name not used by any class field or ANY identifier anywhere in InitializeComponent — "resources",
-        /// else "resourcesN". Scans the WHOLE method subtree (codex): a top-level-locals-only scan missed a name used by
+        /// else "resourcesN". Scans the WHOLE method subtree: a top-level-locals-only scan missed a name used by
         /// a nested-block local / loop / catch / lambda, which would emit a method-scope `resources` that collides
         /// (CS0136). Over-approximating with every IdentifierName token is safe — it only skips more candidate names.</summary>
         private static string UniqueName(string baseName, string src, MethodDeclarationSyntax init)
@@ -378,7 +361,7 @@ namespace WinFormsDesigner.Engine
         /// <summary>Load-or-skeleton the resx, remove any existing entry for <paramref name="key"/>, append the node
         /// built by <paramref name="makeNode"/>, and re-serialize. Returns null when an existing non-empty resx is
         /// malformed (refuse rather than clobber). Every non-target &lt;data&gt;/&lt;metadata&gt;/&lt;resheader&gt; node is
-        /// preserved verbatim as opaque XML. (Known minor limitation, codex: document-level content OUTSIDE &lt;root&gt; —
+        /// preserved verbatim as opaque XML. (Known minor limitation: document-level content OUTSIDE &lt;root&gt; —
         /// a top-level comment or processing instruction — is not re-emitted; WinForms/VS never write those in a .resx.)</summary>
         private static string? UpsertCore(string? resxText, string key, Func<XElement> makeNode)
         {

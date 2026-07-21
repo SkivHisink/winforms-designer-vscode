@@ -1,0 +1,122 @@
+<mxfile host="app.diagrams.net" agent="codex-roadmap-2" version="24.0.0">
+  <diagram id="roadmap-2-0-0" name="Roadmap to 2.0.0">
+    <mxGraphModel dx="1600" dy="1400" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="h_title" value="WinForms Designer for VS Code — Release Roadmap   (current 1.0.0 → 2.0.0)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="1300" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="h_sub" value="1.0.0 established the fail-closed trust floor. The 1.x line grows from stable editing into data-bound, general-editor, layout/platform, and localized enterprise workflows. 2.0.0 is reserved for an extensible design-time host and any intentional protocol break." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1300" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h_ship" value="✅  SHIPPED — 0.1.0 → 1.0.0" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="40" y="56" width="800" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n010" value="&lt;b&gt;0.1.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Initial preview&lt;/i&gt;&lt;br&gt;• WinForms designer in VS Code (net9)&lt;br&gt;• Copy/paste controls + z-order" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="86" width="270" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="n020" value="&lt;b&gt;0.2.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Property editors &amp;amp; sources&lt;/i&gt;&lt;br&gt;• Property-grid value editors&lt;br&gt;• .resx image support&lt;br&gt;• Layout &amp;amp; control source tracking" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="340" y="86" width="270" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="n030" value="&lt;b&gt;0.3.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;net48 second engine&lt;/i&gt;&lt;br&gt;• Compiled-instance rendering&lt;br&gt;• DevExpress / vendor controls&lt;br&gt;• Pixel-accurate PNG preview" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="640" y="86" width="270" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="n040" value="&lt;b&gt;0.4.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Localization + net48 editing&lt;/i&gt;&lt;br&gt;• UI localization (6 languages)&lt;br&gt;• net48 tab add / delete / rename&lt;br&gt;• Vendor toolbox, cut/paste parity&lt;br&gt;• On-canvas smart-tag Tasks flyout" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="940" y="86" width="270" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="n050" value="&lt;b&gt;0.5.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Collection editors + trust&lt;/i&gt;&lt;br&gt;• Collection Editors on both engines&lt;br&gt;• Nudge / Duplicate / Reset / bold-nondefault&lt;br&gt;• Lock Controls; cross-runtime routing&lt;br&gt;• Sturdier round-trip; load-failure UX&lt;br&gt;• Live-webview test harness (CI)" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="86" width="270" height="180" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n060" value="&lt;b&gt;0.6.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Deeper value editors&lt;/i&gt;&lt;br&gt;• TreeView node editor (images/check/color/font)&lt;br&gt;• ToolStrip/MenuStrip &amp;quot;Type Here&amp;quot; (reorder + add)&lt;br&gt;• Cursor picker; string[] (Lines) editor" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="296" width="270" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="n070" value="&lt;b&gt;0.7.0 + 0.7.1&lt;/b&gt;&lt;br&gt;&lt;i&gt;Item editor grows&lt;/i&gt;&lt;br&gt;• ToolStrip item remove / rename / type picker&lt;br&gt;• 0.7.1: Hindi → 7 languages" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="340" y="296" width="270" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="n080" value="&lt;b&gt;0.8.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;On-canvas item geometry&lt;/i&gt;&lt;br&gt;• Menu/toolbar item rects drawn in place&lt;br&gt;• &amp;quot;Type Here&amp;quot; slot on canvas&lt;br&gt;• Off-tree ContextMenuStrip → tray fix" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="640" y="296" width="270" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="n081" value="&lt;b&gt;0.8.1&lt;/b&gt;&lt;br&gt;&lt;i&gt;On-canvas item editing&lt;/i&gt;&lt;br&gt;• Add (Type-Here + type picker) / rename (F2) / delete&lt;br&gt;• Single-item Properties grid (both engines)&lt;br&gt;• Tray excludes strip items&lt;br&gt;&lt;br&gt;&lt;i&gt;nested + off-tree flyout followed in 0.9.0&lt;/i&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="940" y="296" width="270" height="170" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h_road" value="✅  SHIPPED ROAD TO STABLE — 0.9.0 · 0.10.0 · 0.11.0 · 0.12.0 · 1.0.0" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="40" y="490" width="1400" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n090" value="&lt;b&gt;0.9.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Complete on-canvas strip &amp;amp; context-menu editing&lt;/i&gt;&lt;br&gt;• Nested-submenu item props/rename/delete/add&lt;br&gt;• Off-tree ContextMenuStrip on-canvas editing&lt;br&gt;• ToolStrip overflow-item parity&lt;br&gt;• Item events end-to-end; nested auto-reopen&lt;br&gt;• ImageIndex/ImageKey dropdown foundations&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#2E7D32&quot;&gt;shipped&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="520" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n100" value="&lt;b&gt;⚠ 0.10.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Safe form lifecycle: detect / preserve / refuse&lt;/i&gt;&lt;br&gt;• net48 whole-file save-safety matrix + enforced byte-local invariant&lt;br&gt;• BinaryFormatter-resx / ImageStream detection → no unsafe regenerate&lt;br&gt;• Localizable=true → honest read-only refusal&lt;br&gt;• Inherited / unresolved-base → honest banner (no typeof(Form) mis-render)&lt;br&gt;• Fail-closed load-failure / partial-render UX&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;the trust floor — most important release&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="340" y="520" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n110" value="&lt;b&gt;0.11.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Resource write-safety + ImageList editor&lt;/i&gt;&lt;br&gt;• Atomic / undoable / conflict-checked .resx writes&lt;br&gt;• Verbatim binary/typed resx-node preservation&lt;br&gt;• Minimal generic UITypeEditor / &amp;quot;(Collection)&amp;quot; routing&lt;br&gt;• ImageList editor + ImageIndex/ImageKey WRITE path (binary via net48)&lt;br&gt;• net48 live↔text undo reconcile&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#2E7D32&quot;&gt;shipped behind the 0.10 trust gate&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="640" y="520" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n120" value="&lt;b&gt;0.12.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;1.0 release candidate: hardening&lt;/i&gt;&lt;br&gt;• Golden-corpus round-trip (modern / net48 / vendor archetypes)&lt;br&gt;• BeginInit / events / component-reference re-verification&lt;br&gt;• Capability preflight: supported / limited / read-only unambiguous&lt;br&gt;• Modifiers design-time editor&lt;br&gt;• Broader live-webview + cross-runtime regression&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#2E7D32&quot;&gt;shipped&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="940" y="520" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n1_0_0" value="&lt;b&gt;★ 1.0.0 — CURRENT&lt;/b&gt;&lt;br&gt;&lt;i&gt;Stable — out of preview&lt;/i&gt;&lt;br&gt;• Stable modern .NET 8 / 9 / 10 workflow&lt;br&gt;• Experimental net48 / DevExpress compiled preview&lt;br&gt;• Data-loss invariant: round-trip &lt;b&gt;or&lt;/b&gt; safe-refuse&lt;br&gt;• Public capability matrix + named refusal reasons&lt;br&gt;• Atomic/conflict-checked saves and release preflight" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#ffd966;strokeColor=#d6b656;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="520" width="270" height="230" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h_beyond" value="🎯  ROADMAP TO 2.0.0 — outcome milestones, not calendar commitments" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#1565C0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="768" width="1200" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n1_1" value="&lt;b&gt;✓ 1.1.0 PLAN ABSORBED INTO 1.0.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Strengthened stable core — shipped&lt;/i&gt;&lt;br&gt;• Fast C# + TypeScript unit-test layer&lt;br&gt;• Fewer false read-only results without weaker gates&lt;br&gt;• net48 Modifiers + ImageList live parity&lt;br&gt;• Diagnostics, bounded recovery, performance baselines&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#2E7D32&quot;&gt;result: 1.0-compatible, easier to trust and debug&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=10;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="798" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n1_2" value="&lt;b&gt;1.2.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Data-bound forms&lt;/i&gt;&lt;br&gt;• BindingSource / DataSource / DataBindings UI&lt;br&gt;• DataGridView styles, formats, binding editors&lt;br&gt;• Richer component tray + extender workflows&lt;br&gt;• Safe cross-form copy/paste&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#1565C0&quot;&gt;exit: routine LOB binding work needs no code edits&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="340" y="798" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n1_3" value="&lt;b&gt;1.3.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;General editor framework&lt;/i&gt;&lt;br&gt;• Editable IList / IList&amp;lt;T&amp;gt; collections&lt;br&gt;• TypeConverter expandable/vendor value objects&lt;br&gt;• Isolated, cancellable UITypeEditor bridge&lt;br&gt;• Source-first complex-editor transactions&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#1565C0&quot;&gt;exit: new editors use metadata/adapters, not bespoke stacks&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="640" y="798" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n1_4" value="&lt;b&gt;1.4.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Layout, inheritance, DPI &amp;amp; ARM64&lt;/i&gt;&lt;br&gt;• Safe editable inherited forms&lt;br&gt;• Visual TLP / Flow tools + outline reparent&lt;br&gt;• Engine-authoritative geometry where needed&lt;br&gt;• HiDPI verification + native modern ARM64 package&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#1565C0&quot;&gt;exit: complex layouts stay pixel- and source-correct&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="940" y="798" width="270" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="n1_5" value="&lt;b&gt;★ 1.5.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Enterprise localization&lt;/i&gt;&lt;br&gt;• Edit Localizable=true forms (ApplyResources)&lt;br&gt;• Neutral + per-culture .resx + $this.Language&lt;br&gt;• Atomic multi-file undo/conflict safety&lt;br&gt;• RTL / RightToLeftLayout / mirroring&lt;br&gt;• Cross-culture golden corpus&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;headline: localized forms become safely editable&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="798" width="270" height="230" as="geometry" />
+        </mxCell>
+
+        <mxCell id="release_rules" value="&lt;b&gt;Release rules&lt;/b&gt;&lt;br&gt;• Fail-closed is permanent — roadmap features never bypass it&lt;br&gt;• Every writer needs byte-local or round-trip proof + undo + conflict handling&lt;br&gt;• Cross-engine features need parity tests or a visible documented difference&lt;br&gt;• 1.x preserves project/settings compatibility; breaking migrations belong in 2.0" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#ffffff;strokeColor=#cccccc;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1080" width="570" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="n2_0" value="&lt;b&gt;★ 2.0.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Extensible design-time platform&lt;/i&gt;&lt;br&gt;• Isolated IDesignerHost / IDesigner service host&lt;br&gt;• Real ControlDesigner + DesignerActionList / vendor verbs&lt;br&gt;• Runtime / bitness worker isolation, timeout, unload &amp;amp; recovery&lt;br&gt;• Versioned protocol + vendor adapter surface&lt;br&gt;• Migration / self-repair for settings, caches and workers&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#6A1B9A&quot;&gt;major boundary: extensibility without weakening 1.0 safety&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="640" y="1080" width="570" height="250" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="n010" target="n020"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="n020" target="n030"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="n030" target="n040"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="n040" target="n050"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="n050" target="n060"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="n060" target="n070"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="n070" target="n080"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="n080" target="n081"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;strokeColor=#d79b00;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="n081" target="n090"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#6c8ebf;" edge="1" parent="1" source="n090" target="n100"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#6c8ebf;" edge="1" parent="1" source="n100" target="n110"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#6c8ebf;" edge="1" parent="1" source="n110" target="n120"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;strokeColor=#d6b656;" edge="1" parent="1" source="n120" target="n1_0_0"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#6c8ebf;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="n1_0_0" target="n1_1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#6c8ebf;" edge="1" parent="1" source="n1_1" target="n1_2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#6c8ebf;" edge="1" parent="1" source="n1_2" target="n1_3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#6c8ebf;" edge="1" parent="1" source="n1_3" target="n1_4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#d6b656;" edge="1" parent="1" source="n1_4" target="n1_5"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;strokeColor=#9673a6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="n1_5" target="n2_0"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#2E7D32&quot;&gt;■&lt;/font&gt; shipped&lt;br&gt;&lt;font color=&quot;#d6b656&quot;&gt;■&lt;/font&gt; current / headline 1.x milestone&lt;br&gt;&lt;font color=&quot;#6c8ebf&quot;&gt;■&lt;/font&gt; planned 1.x minor&lt;br&gt;&lt;font color=&quot;#9673a6&quot;&gt;■&lt;/font&gt; 2.0 major architecture&lt;br&gt;&lt;br&gt;&lt;b&gt;Priority rule:&lt;/b&gt; security, data-loss prevention, and stable-workflow regressions may move roadmap features between minors. Version boxes describe exit outcomes, not dates." style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;fillColor=#ffffff;strokeColor=#cccccc;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="1080" width="270" height="250" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

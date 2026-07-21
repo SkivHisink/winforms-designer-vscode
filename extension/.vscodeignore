@@ -2,6 +2,10 @@
 # The extension ships only the bundled output + media + manifest/docs.
 
 .vscode/**
+.vscode-test/**
+.dotnet-home/**
+.dotnet-temp/**
+.npm-cache*/**
 src/**
 tmp/**
 node_modules/**
@@ -14,12 +18,16 @@ tsconfig.json
 .eslintrc*
 *.map
 dist/*e2e.cjs
+dist/extension-host-suite.cjs
 dist/**/*.map
 
 # Tests / scratch
 **/*.test.*
 e2e-render.png
 bash.exe.stackdump
+**/*.log
+.claude/**
+*.vsix
 
 # Bundled engines (published into engine/ + engine-net48/ at package time) — ship the runtime, not debug symbols
 engine/**/*.pdb

@@ -98,24 +98,43 @@ export const en: Catalog = {
   'designer.diag.hide': 'Hide details',
   'designer.diag.dismiss': 'Dismiss',
   'designer.diag.more': '+{n} more',
-  'designer.diag.stalePreview': 'Render failed — showing the last successful preview. {message}',
+  'designer.diag.stalePreview': 'Render failed — still showing the last form that rendered. {message}',
   'designer.diag.cat.missingType': 'Missing type:',
   'designer.diag.cat.initError': 'Init error:',
   'designer.diag.cat.unsupported': 'Unsupported:',
   // 0.10.0 trust-floor — persistent read-only notice for a [Localizable(true)] form.
-  'designer.notice.localizable': 'Localizable form — read-only preview. Edits would diverge from the .resx, so the designer won’t change this form. Inherited resource values aren’t shown in the .NET preview.',
+  'designer.notice.localizable': 'Localizable form — read-only. Edits would diverge from the .resx, so the designer won’t change this form. Inherited resource values aren’t drawn by the built-in modern .NET renderer.',
   // 0.10.0 trust-floor — persistent notice when the form's real base is an inherited/vendor type the .NET preview
-  // can't reproduce (net9-only; {base} is the base type name). Best-effort preview drops the base's controls.
-  'designer.notice.inheritedBase': 'Preview may be incomplete — this form inherits from {base}. The .NET preview can’t resolve the base type, so controls it defines aren’t shown.',
+  // can't reproduce (modern-engine-only; {base} is the base type name). Best-effort preview drops the base's controls.
+  'designer.notice.inheritedBase': 'This rendering is incomplete — the form inherits from {base}, which the built-in modern .NET renderer can’t load, so controls the base defines aren’t drawn. Point the designer at your built .NET Framework assembly to render the real type.',
   // 0.10.0 trust-floor — persistent notice when the sibling .resx holds binary/ImageStream resources the .NET
-  // preview can't render (net9-only; {n} is the count). They're preserved on disk; the designer won't regenerate it.
-  'designer.notice.binaryResx': 'Preview may be incomplete — this form has {n} binary/ImageStream resource(s) the .NET preview can’t render. They’re preserved in the .resx; the designer won’t regenerate it.',
+  // preview can't render (modern-engine-only; {n} is the count). They're preserved on disk; the designer won't regenerate it.
+  'designer.notice.binaryResx': 'This rendering is incomplete — the form has {n} binary/ImageStream resource(s) the built-in modern .NET renderer can’t draw. They are preserved in the .resx; the designer won’t regenerate it.',
+  // 1.0.0 — UNCONDITIONAL, always-visible disclosure on every .NET Framework (net48) render. The
+  // net48 engine renders a compiled INSTANCE of the last build, never the live source text, and cannot prove the two
+  // match. This is NOT a lock: net48 forms stay editable, and source safety comes from the byte-local firewall. It is
+  // an honest statement of what the canvas is. Independent of dirty/save/build identity/route — purely engine-derived.
+  'designer.notice.compiledPreview': '.NET Framework compiled preview — this canvas is based on your last build and may not match .Designer.cs. Live updates are best-effort; rebuild for the authoritative picture. Editing stays enabled and your source edits stay byte-local.',
+  // Same disclosure, strengthened when the buffer has unsaved source changes.
+  'designer.notice.compiledPreviewDirty': '.NET Framework compiled preview — this canvas is based on your last build and may not yet reflect all your unsaved changes. Some edits appear only after you rebuild. Editing stays enabled and your source edits stay byte-local.',
+  // 1.0.0 — {diag} fallback for a net48 live op whose source committed but the compiled instance didn't reflect it
+  // (an unconvertible value, a component the preview won't mutate, or a reconcile miss). Substituted into
+  // status.previewPartial. Honest, not restrictive: the edit is in the source and appears after a rebuild.
+  'designer.notice.liveNotReflected': 'the preview couldn’t apply it live',
+  // 1.0.0 — {diag} fallback for a ToolStrip/MenuStrip reconcile the host couldn't resolve. Was a hardcoded English
+  // literal sitting inside the (now fully translated) status.previewPartial frame, so a non-English user got an
+  // English clause in their own sentence.
+  'designer.notice.stripItemsAwaitingRebuild': 'menu items were edited in the source',
   'designer.ruler.show': 'Show ruler',
   'designer.ruler.hide': 'Hide ruler',
   'designer.formSuffix': ' (form)',
   'designer.typeHere': 'Type Here',
   'designer.smartTag.title': '{type} Tasks',
   'designer.smartTag.noTasks': 'No common tasks',
+  // vendor-declared verbs (DevExpress). The menu is read from the control's own metadata; the actions are this
+  // designer's, so a verb with no source-first equivalent is shown inert with the reason rather than silently omitted.
+  'designer.smartTag.vendorUnsupported': 'This designer has no equivalent for this command yet — running the control vendor’s own version would change only the preview, never your code.',
+  'designer.smartTag.vendorNoTarget': 'Nothing to apply this to right now — switch to the tab page you want to remove.',
   'designer.dirtyBadge': '● unsaved',
   'designer.sel.multi': { one: '{n} control selected', other: '{n} controls selected' },
   'designer.status.distSelectMore': 'select 3+ controls to distribute',
@@ -147,7 +166,7 @@ export const en: Catalog = {
 
   // ---------- side panel (Properties / Outline / Toolbox) — HTML-owned labels (host-built HTML) ----------
   'panel.props.empty': 'Select a control in the WinForms designer to edit its properties.',
-  'panel.itemProps.unavailable': 'Item properties are unavailable in the compiled preview.',
+  'panel.itemProps.unavailable': 'Item properties are unavailable when rendering from the compiled assembly.',
   'panel.sort.categorized': 'Categorized',
   'panel.sort.alphabetical': 'Alphabetical',
   'panel.tab.props': 'Properties',
@@ -282,42 +301,59 @@ export const en: Catalog = {
   'host.notify.controlSource.set': 'Control source: {name}',
   'host.notify.controlSource.cleared': 'Control source cleared — using auto-detection.',
   'host.notify.assemblyPath.missing': 'WinForms: configured assemblyPath was not found — using auto-discovery instead: {path}',
+  // 1.0.0 release-for-rebuild — the .NET Framework preview runs the user's compiled form, so it holds that project's
+  // build output open (MSB3027) until the last designer using it closes, or this command hands it back.
+  'host.notify.releaseAssembly.done': '.NET Framework build output released — you can rebuild the project now. The designer reloads it on its next render.',
+  'host.notify.releaseAssembly.none': 'Nothing to release — no .NET Framework designer is holding a build output open.',
+  // 1.0.0 — shown when a domain wouldn't unload (or the engine didn't answer), so the whole preview engine was
+  // recycled to free the handles the OS way. Still safe to rebuild; the engine restarts on the next render.
+  'host.notify.releaseAssembly.recycled': '.NET Framework build output released — the preview engine was restarted to free it. You can rebuild the project now.',
+  // 1.0.0 — the preview process would not exit within the deadline, so its file handles may still be held.
+  // Do NOT promise a clean rebuild; tell the user the honest fallback.
+  'host.notify.releaseAssembly.stuck': 'Couldn’t fully release the .NET Framework build output — the preview engine didn’t stop in time. Close all WinForms designer tabs, or reload the window, before rebuilding.',
+  // 1.0.0 — thrown when a net48 render is requested while a prior preview process is still being torn
+  // down and hasn't confirmed exit; starting a replacement beside it would re-pin the dll. Reload the window to clear.
+  'host.net48.recycleBlocked': 'The .NET Framework preview engine is still shutting down. Reload the window if the designer doesn’t recover on its own.',
 
   // ---------- host: control-source status bar (extension.ts) ----------
   'host.statusbar.controls': '$(package) Controls: {name}',
   'host.statusbar.auto': 'auto',
   'host.statusbar.autoSuffix': ' (auto)',
-  'host.statusbar.previewBadge': ' · $(lock) preview',
+  'host.statusbar.previewBadge': ' · $(package) .NET Framework',
   'host.statusbar.tip.explicit': 'WinForms control source (explicit): {path}',
   'host.statusbar.tip.auto': 'WinForms control source: auto-detected from the project.',
   'host.statusbar.tip.autoResolved': 'WinForms control source (auto-detected): {path}',
   'host.statusbar.tip.clickChange': 'Click to change.',
   'host.statusbar.tip.clickOverride': 'Click to override.',
-  'host.statusbar.tip.previewNote': '.NET Framework compiled preview — property edits are live; drag/add and manual source edits reflect after a rebuild.',
+  // Keep this list honest — it names exactly the ops that DON'T reconcile live. Property edits, drag/resize, add and
+  // remove all mirror onto the live instance now; images, table cells and tray components still wait for a rebuild.
+  'host.statusbar.tip.previewNote': 'Rendered from your built .NET Framework assembly (the last build). Supported edits — property, drag, add/remove — are mirrored onto the preview best-effort; image import/clear, table-cell edits, new tray components and hand edits to the source appear after you rebuild. Rebuild is the authoritative picture.',
 
   // ---------- host: designer session notifications / loading (designerEditor.ts) ----------
   'host.error': 'WinForms Designer: {msg}',
-  'host.initTimeout': 'WinForms Designer: the preview did not initialize (no "ready" from the webview). Its script may be blocked.',
+  'host.initTimeout': 'WinForms Designer: the designer did not initialize (no "ready" from the webview). Its script may be blocked.',
   'host.unresolved': "This form uses controls that couldn't be loaded ({names}). Select the project or assembly that provides them.",
   'host.unresolved.button': 'Select control source…',
   'host.frameworkUnbuilt': "This form's project targets .NET Framework and hasn't been built yet. Build it so its controls can load, or select the project or assembly that provides them.",
-  'host.crossRuntime.offer': "This form uses controls that only load on .NET Framework ({names}). Switch to the .NET Framework compiled preview?",
-  'host.crossRuntime.switch': 'Switch to .NET Framework preview',
-  'host.crossRuntime.unbuilt': "This form uses controls that only load on .NET Framework ({names}), but the project's .NET Framework target isn't built yet. Build it to preview them, or select a control source.",
+  'host.crossRuntime.offer': "This form uses controls that only load on .NET Framework ({names}). Render it from your built .NET Framework assembly?",
+  'host.crossRuntime.switch': 'Use the .NET Framework assembly',
+  'host.crossRuntime.unbuilt': "This form uses controls that only load on .NET Framework ({names}), but the project's .NET Framework target isn't built yet. Build it so they can be drawn, or select a control source.",
   'host.addReference': "{asm} isn't referenced by {proj}. Add a reference so the added control compiles?",
   'host.addReference.yes': 'Add reference',
   'host.addReference.no': 'Not now',
   'host.loading.starting': 'Starting engine…',
+  'host.loading.restarting': 'Designer engine stopped; restarting in {ms} ms…',
+  'host.engineCrashLoop': 'Designer engine repeatedly crashed. Automatic restart paused; reload or edit the form to retry.',
   'host.loading.rendering': 'Rendering…',
 
   // ---------- canvas status-line messages the host posts to the webview (designerEditor.ts) ----------
   'status.diskChanged': '.Designer.cs changed on disk — keeping your unsaved designer edits',
   'status.saved': 'saved',
-  'status.net48Unsupported': 'That operation isn’t supported yet in the .NET Framework compiled preview.',
   'status.localizableReadonly': 'Localizable form — read-only preview (edits would diverge from the .resx).',
   // 0.10.0 S5 — read-only while the last render failed (the canvas is a stale preview of a form that didn't load).
   'status.renderFailedReadonly': 'Read-only — the last render failed; editing is disabled until the form renders successfully.',
   'status.localizableSaveRefused': 'Localizable form is read-only — this recovered unsaved edit can’t be saved (it would diverge from the .resx). Revert the file to discard it.',
+  'status.designerDiskConflict': 'The .Designer.cs changed on disk since it was opened — saving would overwrite that change. Revert the file to take the version on disk (discarding your designer edits), or save a copy elsewhere first.',
   'status.docChanged': 'document changed during edit — try again',
   'status.docChangedImport': 'document changed during import — try again',
   'status.docChangedShort': 'document changed — try again',
@@ -339,7 +375,7 @@ export const en: Catalog = {
   // 0.10.0 S4 — the byte-local firewall refused a persisted edit that would rewrite the file beyond the intended change.
   'status.byteLocalRefused': 'edit refused — it would rewrite the file beyond the intended change (byte-local safety)',
   'status.propSet': 'set {id}.{prop} — unsaved',
-  'status.previewPartial': 'preview partial — {diag}; saved, renders fully after a rebuild',
+  'status.previewPartial': 'Your code was updated, but the view can’t show this change yet ({diag}) — it appears after you rebuild the project.',
   'status.imageTooLarge': 'image is too large (max 16 MB)',
   'status.importRejected': 'import rejected: {reason}',
   // 0.10.0 S3 — fail-closed regenerate guard: the write would have dropped binary/ImageStream resx resources.

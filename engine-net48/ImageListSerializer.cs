@@ -80,7 +80,7 @@ namespace WinFormsDesigner.Engine.Net48
         private const int MaxDimension = 20000;
         private const long MaxPixels = 4096L * 4096L;       // per-image decoded-raster bound (pixel-bomb guard)
         private const long MaxTotalBytes = 64 * 1024 * 1024; // aggregate ENCODED-input bound
-        // aggregate DECODED-raster bound (codex: MaxTotalBytes caps compressed input, but 256 highly-compressible
+        // aggregate DECODED-raster bound (MaxTotalBytes caps compressed input, but 256 highly-compressible
         // 4096² images each decode to ~64MB → ~16GB peak. Bound the decoded pixels we materialize+retain, so a
         // flat-colour pixel-bomb set can't exhaust memory before the first serialize).
         private const long MaxTotalPixels = 64L * 1024 * 1024; // 64M px ≈ 256MB @32bpp — generous for an ImageList
@@ -261,8 +261,10 @@ namespace WinFormsDesigner.Engine.Net48
                             }
                             return new ImageListReadResult
                             {
-                                Ok = true, Images = imgs.ToArray(),
-                                Width = il.ImageSize.Width, Height = il.ImageSize.Height,
+                                Ok = true,
+                                Images = imgs.ToArray(),
+                                Width = il.ImageSize.Width,
+                                Height = il.ImageSize.Height,
                                 ColorDepth = il.ColorDepth.ToString(),
                                 TransparentColor = il.TransparentColor.IsKnownColor ? il.TransparentColor.Name : "Transparent",
                             };

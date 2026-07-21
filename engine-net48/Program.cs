@@ -10,7 +10,7 @@ using StreamJsonRpc;
 namespace WinFormsDesigner.Engine.Net48
 {
     /// <summary>
-    /// Second engine host (.NET Framework 4.8) for rendering Framework + DevExpress(PGMUI) controls the net9
+    /// Second engine host (.NET Framework 4.8) for rendering Framework + DevExpress controls the net9
     /// engine can't load. Same JSON-RPC-over-named-pipe contract as the net9 engine (StreamJsonRpc +
     /// HeaderDelimited + camelCase Newtonsoft), so the VS Code host routes to it transparently for net4x
     /// projects. Also a --render CLI for headless verification through the full engine path.
@@ -41,6 +41,21 @@ namespace WinFormsDesigner.Engine.Net48
             if (Has(args, "--render", out string? designer) && designer != null)
             {
                 return RenderCli(args, designer);
+            }
+
+            if (Has(args, "--render-interpreted", out string? idesigner) && idesigner != null)
+            {
+                return RenderInterpretedCli(args, idesigner);
+            }
+
+            if (Has(args, "--compare", out string? cmpdesigner) && cmpdesigner != null)
+            {
+                return CompareCli(args, cmpdesigner);
+            }
+
+            if (Has(args, "--describe-interpreted", out string? didesigner) && didesigner != null)
+            {
+                return DescribeInterpretedCli(args, didesigner);
             }
 
             if (Has(args, "--describe", out string? ddesigner) && ddesigner != null)
@@ -206,7 +221,8 @@ namespace WinFormsDesigner.Engine.Net48
             int h = int.TryParse(Value(args, "--height"), out var ph) ? ph : 16;
             var spec = new ImageListSpec
             {
-                Width = w, Height = h,
+                Width = w,
+                Height = h,
                 ColorDepth = Value(args, "--depth") ?? "",
                 TransparentColor = Value(args, "--transparent") ?? "",
                 Images = imgs.Select(p => new ImageListImage
@@ -284,7 +300,119 @@ namespace WinFormsDesigner.Engine.Net48
             }
         }
 
+        /// <summary>Headless self-test for the INTERPRETED render: parse the live .Designer.cs source,
+        /// interpret it onto the compiled base type (VS model), and report the mode + control set. Falls back to the
+        /// compiled render with a named reason when the interpreter can't cover the form.</summary>
+        private static int RenderInterpretedCli(string[] args, string designer)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            string? type = Value(args, "--type");
+            string? outPng = Value(args, "--out");
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            // transient tab overrides: --select-tab tabControl1=tabPage2 (repeatable).
+            var selectedTabs = args.Select((a, i) => (a, i)).Where(x => x.a == "--select-tab").Select(x => args[x.i + 1]).ToArray();
+            string src = File.Exists(designer) ? File.ReadAllText(designer) : "";
+
+            var api = new EngineApi();
+            try
+            {
+                var r = api.RenderInterpretedWithLayout(designer, asm, src, type, probes, 0, 0, selectedTabs);
+                Console.WriteLine($"[render-interpreted] mode={r.RenderMode}" +
+                    (string.IsNullOrEmpty(r.FallbackReason) ? "" : " fallback=" + r.FallbackReason) +
+                    $" rootType={r.RootType} size={r.Width}x{r.Height} controls={r.Controls.Count} tray={r.Tray.Count} png={r.Png.Length}B");
+                foreach (var c in r.Controls.Take(12))
+                    Console.WriteLine($"   {(c.IsRoot ? "*" : " ")} id={c.Id} type={c.Type} @({c.X},{c.Y}) {c.Width}x{c.Height} parent={c.ParentId}");
+                if (!string.IsNullOrEmpty(r.Diagnostics)) Console.WriteLine("[render-interpreted] diag: " + r.Diagnostics);
+                if (!string.IsNullOrEmpty(outPng)) { File.WriteAllBytes(outPng!, r.Png); Console.WriteLine("[render-interpreted] wrote " + Path.GetFullPath(outPng!)); }
+                return r.Png.Length > 0 ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                for (var e = ex; e != null; e = e.InnerException)
+                    Console.Error.WriteLine($"[render-interpreted] {e.GetType().FullName}: {e.Message}");
+                return 4;
+            }
+        }
+
+        /// <summary>Differential comparator — render a form BOTH ways (compiled last build + interpreted
+        /// live source) and diff the field-backed control geometry. The interpreted render must reproduce the compiled
+        /// truth: same id set, same rects (within a small tolerance). Reports EQUIVALENT / DIVERGENT with the deltas —
+        /// the trust gate for the interpreter (an interpreter defect shows here as an unexplained geometry divergence).
+        /// NOTE: a first cut renders both in the same worker sequentially; the release comparator isolates each leg in
+        /// its own fresh AppDomain against hash-matched sources — a later step.</summary>
+        private static int CompareCli(string[] args, string designer)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            string? type = Value(args, "--type");
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            string src = File.Exists(designer) ? File.ReadAllText(designer) : "";
+
+            var api = new EngineApi();
+            var interp = api.RenderInterpretedWithLayout(designer, asm, src, type, probes, 0, 0);
+            if (interp.RenderMode != "interpreted")
+            {
+                Console.WriteLine($"[compare] {Path.GetFileName(designer)}: interpreted FELL BACK ({interp.FallbackReason}) — nothing to compare, compiled is authoritative");
+                return 0; // a disclosed fallback is a valid outcome, not a divergence
+            }
+            var compiled = api.RenderCompiledWithLayout(designer, asm, type, probes, 0, 0);
+
+            var cmap = compiled.Controls.Where(c => !c.IsRoot).GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First());
+            var imap = interp.Controls.Where(c => !c.IsRoot).GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First());
+            var onlyC = cmap.Keys.Where(k => !imap.ContainsKey(k)).ToList();
+            var onlyI = imap.Keys.Where(k => !cmap.ContainsKey(k)).ToList();
+            int mismatched = 0;
+            foreach (var id in cmap.Keys.Where(imap.ContainsKey))
+            {
+                var a = cmap[id]; var b = imap[id];
+                if (Math.Abs(a.X - b.X) > 2 || Math.Abs(a.Y - b.Y) > 2 || Math.Abs(a.Width - b.Width) > 2 || Math.Abs(a.Height - b.Height) > 2)
+                {
+                    mismatched++;
+                    Console.WriteLine($"   ≠ {id}: compiled ({a.X},{a.Y},{a.Width}x{a.Height}) vs interpreted ({b.X},{b.Y},{b.Width}x{b.Height})");
+                }
+            }
+            foreach (var id in onlyC) Console.WriteLine($"   - only compiled: {id}");
+            foreach (var id in onlyI) Console.WriteLine($"   + only interpreted: {id}");
+            bool ok = onlyC.Count == 0 && onlyI.Count == 0 && mismatched == 0;
+            Console.WriteLine($"[compare] {Path.GetFileName(designer)}: {(ok ? "EQUIVALENT" : "DIVERGENT")} — compiled={cmap.Count} interpreted={imap.Count} onlyC={onlyC.Count} onlyI={onlyI.Count} mismatched={mismatched}");
+            return ok ? 0 : 4;
+        }
+
         /// <summary>Headless self-test for the property panel: describe one control of the live compiled instance.</summary>
+        /// <summary>headless self-test for INTERPRETED describe: describe one component of the live
+        /// interpreted graph (identity model), proving the panel reads the live-source value, the logical root name, and
+        /// current-source-only reference siblings. Returns 4 when the form doesn't interpret / the id isn't current.</summary>
+        private static int DescribeInterpretedCli(string[] args, string designer)
+        {
+            string? asm = Value(args, "--asm");
+            if (asm == null) { Console.Error.WriteLine("--asm <assemblyPath> required"); return 5; }
+            string id = Value(args, "--id") ?? "this";
+            string? type = Value(args, "--type");
+            var probes = args.Select((a, i) => (a, i)).Where(x => x.a == "--probe").Select(x => args[x.i + 1]).ToArray();
+            string src = File.Exists(designer) ? File.ReadAllText(designer) : "";
+
+            var api = new EngineApi();
+            try
+            {
+                var d = api.DescribeInterpretedComponent(designer, asm, src, id, type, probes, 0, 0);
+                if (d == null) { Console.Error.WriteLine("[describe-interpreted] not interpreted or no current component id '" + id + "'"); return 4; }
+                int explicitCount = d.Properties.Count(p => p.SourceExplicit);
+                Console.WriteLine($"[describe-interpreted] id={d.Id} type={d.Type} name={d.Name} isRoot={d.IsRoot} parent={d.Parent} props={d.Properties.Count} ({explicitCount} explicit) events={d.Events.Count}");
+                foreach (var p in d.Properties.Take(24))
+                    Console.WriteLine($"   {(p.SourceExplicit ? "*" : " ")} {p.Name} : {p.Type} = {p.Value ?? "(null)"}");
+                foreach (var p in d.Properties.Where(p => p.StandardValues != null && p.StandardValues.Count > 0))
+                    Console.WriteLine($"   [dropdown] {p.Name}{(p.StandardValuesExclusive ? " (exclusive)" : "")}: {string.Join(", ", p.StandardValues)}");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                for (var e = ex; e != null; e = e.InnerException)
+                    Console.Error.WriteLine($"[describe-interpreted] {e.GetType().FullName}: {e.Message}");
+                return 4;
+            }
+        }
+
         private static int DescribeCli(string[] args, string designer)
         {
             string? asm = Value(args, "--asm");
@@ -536,8 +664,11 @@ namespace WinFormsDesigner.Engine.Net48
         }
     }
 
-    /// <summary>JSON-RPC surface. Render-first (M1): render/layout are implemented; edit RPCs report unsupported
-    /// via <see cref="GetCapabilities"/> so the host disables edit affordances and shows a "compiled preview" badge.</summary>
+    /// <summary>JSON-RPC surface. ALL RPCs are implemented (render/layout/describe/live edits/release);
+    /// <see cref="GetCapabilities"/> reports Render=true, Edit=true, LivePreviewUnsavedEdits=false — live edits
+    /// mirror the committed net9 source splice onto the cached compiled instance; manual source edits appear after
+    /// a rebuild. (An earlier revision of this comment claimed edit RPCs report unsupported — long stale, and it
+    /// mis-scoped a months-scale plan once.)</summary>
     public sealed class EngineApi
     {
         private readonly DomainManager _domains = new DomainManager();
@@ -554,8 +685,10 @@ namespace WinFormsDesigner.Engine.Net48
             ImageListSerializer.Serialize(new ImageListSpec
             {
                 Images = images ?? Array.Empty<ImageListImage>(),
-                Width = width, Height = height,
-                ColorDepth = colorDepth ?? "", TransparentColor = transparentColor ?? "",
+                Width = width,
+                Height = height,
+                ColorDepth = colorDepth ?? "",
+                TransparentColor = transparentColor ?? "",
             });
 
         /// <summary>0.11.0 ImageList editor (READ side) — deserialize a VS-format ImageStream base64 blob back to the
@@ -579,6 +712,49 @@ namespace WinFormsDesigner.Engine.Net48
             catch { return false; }
         }
 
+        /// <summary>1.0.0 — release every handle this process holds on the project's build output, by unloading the
+        /// child AppDomain that loaded it. Idempotent; returns a <see cref="ReleaseResult"/> ({Attempted, Released,
+        /// Failed}) so the host can tell "nothing was loaded" (Attempted 0) from "found it but the unload FAILED and it
+        /// still pins the dll" (Failed > 0) — the two used to both read as a bare false.
+        ///
+        /// The net48 preview loads the user's dlls IN PLACE (ShadowCopyFiles must stay off, or delay-signed vendor
+        /// assemblies fail to load — see DomainManager.Create), which pins them: while a net48 designer is open, the
+        /// user's own `dotnet build` fails with MSB3027 "The file is locked by: WinFormsDesigner.Engine.Net48". The
+        /// host calls this when the last session using an output closes, and from the "release for rebuild" command,
+        /// so the user can actually rebuild — which every "rebuild to refresh the preview" instruction assumed.
+        ///
+        /// Deliberately keyed on the OUTPUT DIRECTORY, not the form: one domain serves every form built into the same
+        /// bin dir, so releasing on behalf of one form releases them all. That is why the host refcounts sessions per
+        /// assembly and only calls this for the last one.
+        ///
+        /// Unlike DiscardCompiledLive (which drops one cached form instance but keeps the domain — and therefore the
+        /// file handles — alive), this tears the domain down. The next render pays a full domain+assembly load, so it
+        /// is not a per-edit operation.</summary>
+        public ReleaseResult ReleaseCompiledAssembly(string assemblyPath)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyPath)) return new ReleaseResult { Attempted = 0, Released = 0, Failed = 0 };
+            try { return _domains.ReleaseBinDir(assemblyPath); }
+            // A crash in the release path must never take the engine down. Report Failed=1 (not "nothing loaded") so
+            // the host treats it as a doubtful release and can recycle, rather than falsely claiming it's safe to build.
+            catch { return new ReleaseResult { Attempted = 1, Released = 0, Failed = 1 }; }
+        }
+
+        /// <summary>1.0.0 — release EVERY build output this engine currently holds open; returns a
+        /// <see cref="ReleaseResult"/> ({Attempted, Released, Failed}) — Failed > 0 means a domain refused to unload and
+        /// still pins its dll, so the host recycles the process. Backs the project-wide "release for rebuild" command.
+        ///
+        /// The host asks the engine rather than naming directories itself because only the engine knows what it really
+        /// loaded: a session that switched control source forgets the output it previously pinned, so a host-derived
+        /// list silently misses it and that project stays unbuildable.</summary>
+        public ReleaseResult ReleaseAllCompiledAssemblies()
+        {
+            // Do NOT swallow into {0,0,0} — the host reads that triple as "nothing was held", which would leave every
+            // domain pinned while the command reports it's safe to rebuild. Let the exception cross the
+            // RPC; the host's release path catches an errored/timed-out release and RECYCLES the engine, which is the
+            // correct fail-safe when the release accounting itself is in doubt.
+            return _domains.ReleaseAll();
+        }
+
         public EngineCapabilities GetCapabilities() => new EngineCapabilities
         {
             Engine = "net48-compiled",
@@ -593,11 +769,46 @@ namespace WinFormsDesigner.Engine.Net48
         /// output (the host resolves it); rootTypeName is optional (derived from the designer file when blank);
         /// probeDirs are fallback assembly-probe locations (target bin + vendor dirs).</summary>
         public RenderLayoutResult RenderCompiledWithLayout(string designerFilePath, string assemblyPath,
-            string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0)
+            string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0, int renderScale = 1)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
-            return worker.RenderWithLayout(assemblyPath, typeName, width, height);
+            return worker.RenderWithLayout(assemblyPath, typeName, width, height, renderScale);
+        }
+
+        /// <summary>Render the LIVE .Designer.cs source through the IR interpreter (VS model), or fall
+        /// back to the compiled last build with a named reason. The host passes the unsaved buffer as
+        /// <paramref name="sourceText"/>; the result's RenderMode/FallbackReason drive the two-axis mode + banner.</summary>
+        public RenderLayoutResult RenderInterpretedWithLayout(string designerFilePath, string assemblyPath, string sourceText,
+            string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0, string[]? selectedTabs = null, int renderScale = 1)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            // Parse the source into IR HERE, in the engine's DEFAULT AppDomain — Roslyn must never load into the render
+            // child domain (its binding redirects are unified on the user's assembly versions, which would redirect
+            // Roslyn's own graph, e.g. System.Collections.Immutable, and break it). Only the [Serializable] IrDocument
+            // crosses the boundary. RootTypeResolver/SourceMetadata already parse here.
+            // selectedTabs () = transient "hostField=pageField" tab overrides, re-supplied each render.
+            var doc = DesignerIrBuilder.Build(sourceText ?? "");
+            return worker.RenderInterpretedWithLayout(designerFilePath, assemblyPath, doc, typeName, width, height, selectedTabs, renderScale);
+        }
+
+        /// <summary>describe one component of the INTERPRETED live-source instance so the
+        /// property panel matches the interpreted canvas on an unsaved edit. Roslyn parses the buffer into IR HERE (the
+        /// default AppDomain invariant); the worker builds a request-local interpreted graph and describes the
+        /// target from the executor's identity model. Returns null when the form doesn't fully interpret or the id names
+        /// no current component — the host then keeps the panel unavailable (never compiled values under an interpreted
+        /// canvas). Source metadata (assigned-in-source, wired events) is applied HERE from the same buffer.</summary>
+        public ComponentDesc? DescribeInterpretedComponent(string designerFilePath, string assemblyPath, string sourceText,
+            string componentId, string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            var doc = DesignerIrBuilder.Build(sourceText ?? "");
+            var desc = worker.DescribeInterpretedComponent(designerFilePath, assemblyPath, doc, typeName,
+                string.IsNullOrEmpty(componentId) ? "this" : componentId, width, height);
+            if (desc != null) SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
+            return desc;
         }
 
         /// <summary>Property-grid + events for one control of the LIVE compiled instance ("this" = root, else its
@@ -613,6 +824,22 @@ namespace WinFormsDesigner.Engine.Net48
             // passes the UNSAVED buffer (sourceText), parse THAT so an item's just-wired event / just-reset prop is fresh.
             SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
             return desc;
+        }
+
+        /// <summary>The vendor smart-tag menu a control's compiled type declares (the DevExpress "Tasks" panel:
+        /// "Add Tab Page", "Tab Pages", …). Metadata only — the vendor's action is never invoked; the host maps the
+        /// verbs it can express onto its own source-first edits and shows the rest disabled. [] on any failure.</summary>
+        public VendorSmartTag[] ListCompiledVendorSmartTags(string designerFilePath, string assemblyPath, string componentId,
+            string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyPath) || !File.Exists(assemblyPath)) return Array.Empty<VendorSmartTag>();
+            try
+            {
+                string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+                var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+                return worker.ListVendorSmartTags(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId);
+            }
+            catch { return Array.Empty<VendorSmartTag>(); }
         }
 
         /// <summary>Enumerate the project/vendor (DevExpress/net4x) assembly's own toolbox-eligible controls — the
@@ -711,6 +938,16 @@ namespace WinFormsDesigner.Engine.Net48
         }
 
         /// <summary>Apply a BATCH of property edits to the live instance + re-render once (drag/resize/align).</summary>
+        /// <summary>Reconcile a source/.resx ImageList edit on the cached compiled instance so the net48 canvas updates
+        /// immediately instead of waiting for a project rebuild.</summary>
+        public RenderLayoutResult SetCompiledImageListLive(string designerFilePath, string assemblyPath, string componentId,
+            string imageStreamBase64, string[] keys, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.SetImageListLive(assemblyPath, typeName, componentId ?? "", imageStreamBase64 ?? "", keys ?? Array.Empty<string>());
+        }
+
         public RenderLayoutResult ApplyCompiledEdits(string designerFilePath, string assemblyPath, PropEdit[] edits,
             string? rootTypeName = null, string[]? probeDirs = null)
         {
@@ -767,6 +1004,20 @@ namespace WinFormsDesigner.Engine.Net48
             return worker.HitTestTab(assemblyPath, typeName, hostId ?? "this", x, y);
         }
 
+        /// <summary>the INTERPRETED tab hit-test: which page's header is under the point on the
+        /// LIVE-SOURCE geometry, so a tab-click on an interpreted canvas resolves to a page and the host re-renders
+        /// interpreted with that page selected (staying interpreted). Roslyn parses in the DEFAULT domain; the
+        /// [Serializable] IR + the transient selectedTabs cross to the worker. PageId "" when off a header / not a tab
+        /// host / not interpretable.</summary>
+        public TabHit HitTestInterpretedTab(string designerFilePath, string assemblyPath, string sourceText, string hostId,
+            int x, int y, string[]? selectedTabs = null, string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            var doc = DesignerIrBuilder.Build(sourceText ?? "");
+            return worker.HitTestInterpretedTab(designerFilePath, assemblyPath, doc, typeName, hostId ?? "this", x, y, selectedTabs);
+        }
+
         /// <summary>Add a new empty tab page (type pageTypeFqn) to the tab host on the live instance + re-render (the
         /// persisted field/statements are the host's net9 splice).</summary>
         public RenderLayoutResult AddCompiledTab(string designerFilePath, string assemblyPath, string hostId, string pageTypeFqn, string newId,
@@ -797,13 +1048,35 @@ namespace WinFormsDesigner.Engine.Net48
             return typeName;
         }
 
+        /// <summary>Env var carrying extra assembly-probe dirs (PATH-style, <see cref="Path.PathSeparator"/>-separated).
+        /// The VS Code host sets it from the `winformsDesigner.net48.probeDirectories` setting when it spawns this
+        /// engine; the --render CLI honors it too. This is the ONLY source of vendor-specific probe locations — no
+        /// install path is hardcoded here, so any user can point the resolver at their own SDK.</summary>
+        internal const string ProbeDirsEnvVar = "WINFORMS_DESIGNER_PROBE_DIRS";
+
+        /// <summary>Fallback probe dirs for one target, in precedence order: caller-supplied (RPC `probeDirs`), the
+        /// target's own bin dir, then the user-configured dirs from <see cref="ProbeDirsEnvVar"/> (a vendor SDK
+        /// installed outside the target's output and out of the GAC). Non-existent dirs are dropped, so a stale
+        /// setting degrades to "not probed" rather than breaking resolution.</summary>
         private static string[] ComputeProbes(string assemblyPath, string[]? probeDirs)
         {
             string binDir = Path.GetDirectoryName(Path.GetFullPath(assemblyPath))!;
             return (probeDirs ?? Array.Empty<string>())
-                .Concat(new[] { binDir, @"C:\Program Files (x86)\PGMUI 1.2\Components\Bin\Framework" })
+                .Concat(new[] { binDir })
+                .Concat(EnvProbeDirs())
                 .Where(Directory.Exists)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        /// <summary>Parse <see cref="ProbeDirsEnvVar"/>. Read per call (not cached) so it stays a pure function of the
+        /// environment; the value is a handful of paths, and Directory.Exists above dominates the cost either way.</summary>
+        private static string[] EnvProbeDirs()
+        {
+            string raw = Environment.GetEnvironmentVariable(ProbeDirsEnvVar) ?? string.Empty;
+            return raw.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(d => d.Trim())
+                .Where(d => d.Length > 0)
                 .ToArray();
         }
     }

@@ -15,7 +15,7 @@ namespace WinFormsDesigner.Engine.Net48
 {
     /// <summary>
     /// Lives INSIDE a child AppDomain (created by <see cref="DomainManager"/>) whose ApplicationBase is the
-    /// user project's output dir, so the DevExpress/PGMUI dependency graph + the app's own .config binding
+    /// user project's output dir, so the DevExpress dependency graph + the app's own .config binding
     /// redirects resolve exactly as they do at runtime. It loads the compiled control assembly and instantiates
     /// the real root control type on a dedicated STA thread (proven by spike S5), then KEEPS that live instance
     /// (per assembly+type) so render / describe / (future) edit all read & mutate the same object — a single
@@ -33,9 +33,54 @@ namespace WinFormsDesigner.Engine.Net48
             public Type Type = default!;
             public Dictionary<object, string> FieldNames = default!;
             public Dictionary<string, Control> ByField = default!;
+            /// <summary>1.0.0 fail-closed — identity of THIS compiled instance, stamped once at construction and
+            /// reported to the host on every response (<see cref="RenderLayoutResult.LiveInstanceId"/>).
+            ///
+            /// net48 renders a live compiled INSTANCE, never the .Designer.cs text, so the host can only trust the
+            /// picture while it knows the instance still carries the buffer's unsaved edits. The host cannot infer
+            /// that: an instance is replaced by an explicit DiscardLive, by an engine crash, by a control-source
+            /// change (different cache key), by hot-exit recovery — and, invisibly to the host, by DomainManager
+            /// unloading the whole AppDomain when it notices the target assembly was rebuilt. Every one of those
+            /// reaches the host as a fresh id, which is the ONE fact it needs: a new id means this picture came from
+            /// the assembly, so if the buffer is dirty the two have provably parted company.
+            ///
+            /// A GUID, not a counter: DomainManager builds a brand-new worker per AppDomain, so a per-worker counter
+            /// would restart at the same value and read as "unchanged" across exactly the replacement it must catch.</summary>
+            public string InstanceId = Guid.NewGuid().ToString("N");
+            /// <summary>1.0.0 fail-closed — identity of the BUILD this instance was created from: the compiled
+            /// assembly's last-write time + length. Distinct from InstanceId, which changes on every (re)instantiation
+            /// (a discard/release reload keeps the SAME build). The host needs both: a new InstanceId on the SAME
+            /// BuildId means the picture reloaded from the same stale build (still divergent from unbuilt source edits),
+            /// whereas a new BuildId means the user actually rebuilt, which is the only thing that re-syncs the preview.
+            /// Cheap + robust (no hashing); a rebuild always changes at least the timestamp.</summary>
+            public string BuildId = "";
+            /// <summary>How this tree was built: "compiled" (the last build — default), "interpreted"
+            /// (the live source via the IR interpreter), or "compiledFallback". Snapshot stamps it on the result.</summary>
+            public string Mode = "compiled";
+            /// <summary>Stable RenderFallbackReason when Mode=="compiledFallback"; "" otherwise.</summary>
+            public string FallbackReason = "";
+            /// <summary>The LOGICAL designed type name reported as RootType. Null on the compiled path (Type is the
+            /// designed type there); set on the interpreted path, where Type is the instantiated BASE type.</summary>
+            public string? DesignedTypeName = null;
+        }
+
+        /// <summary>The build identity the host compares across renders — see <see cref="LiveDesign.BuildId"/>.
+        /// "0:0" when the file can't be stat'd (treated as an unknown, never-advancing build).</summary>
+        private static string ComputeBuildId(string assemblyPath)
+        {
+            try
+            {
+                var fi = new FileInfo(Path.GetFullPath(assemblyPath));
+                return fi.LastWriteTimeUtc.Ticks + ":" + fi.Length;
+            }
+            catch { return "0:0"; }
         }
 
         private readonly StaDispatcher _sta = new StaDispatcher();
+
+        // Integer DPI capture scale for the picture (1 = logical, 2 = 4K@200%…). Set by the full-render entry points and
+        // reused by every Snapshot (incl. live-op re-renders) so the whole session stays crisp at the display's ratio.
+        private int _renderScale = 1;
         private readonly Dictionary<string, LiveDesign> _cache = new Dictionary<string, LiveDesign>(StringComparer.OrdinalIgnoreCase);
         private string[] _probeDirs = Array.Empty<string>();
 
@@ -43,8 +88,9 @@ namespace WinFormsDesigner.Engine.Net48
         // expire and later calls would throw RemotingException.
         public override object? InitializeLifetimeService() => null;
 
-        /// <summary>Register the fallback assembly-probe dirs (target bin dir + PGMUI Framework dir). Runs in
-        /// THIS (child) domain, so the handler it installs resolves the user's assemblies here.</summary>
+        /// <summary>Register the fallback assembly-probe dirs (target bin dir + any user-configured vendor dirs; see
+        /// Program.ComputeProbes). Runs in THIS (child) domain, so the handler it installs resolves the user's
+        /// assemblies here.</summary>
         public void Init(string[] probeDirs)
         {
             _probeDirs = probeDirs ?? Array.Empty<string>();
@@ -77,9 +123,342 @@ namespace WinFormsDesigner.Engine.Net48
 
         /// <summary>Render the (cached) compiled control + build the window-space hit-test map. Geometry matches
         /// the net9 engine's transform so a selection rectangle drawn by the host lines up.</summary>
-        public RenderLayoutResult RenderWithLayout(string assemblyPath, string rootTypeName, int reqWidth, int reqHeight)
+        public RenderLayoutResult RenderWithLayout(string assemblyPath, string rootTypeName, int reqWidth, int reqHeight, int renderScale = 1)
         {
+            _renderScale = renderScale;
             return _sta.Invoke(() => Snapshot(GetOrCreate(assemblyPath, rootTypeName, reqWidth, reqHeight)));
+        }
+
+        /// <summary>Render the LIVE .Designer.cs source via the IR interpreter (VS model: instantiate
+        /// the immediate BASE type, replay the parsed statements onto it against the project's COMPILED control
+        /// types), or FALL BACK to the compiled last build with a named reason when the interpreter can't fully cover
+        /// the form. Always returns a picture; RenderMode ("interpreted" | "compiledFallback") + FallbackReason tell
+        /// the host which it got. NOT cached — it reflects the exact source buffer on every call (the whole point).</summary>
+        public RenderLayoutResult RenderInterpretedWithLayout(string designerFilePath, string assemblyPath, IrDocument? doc,
+            string rootTypeName, int reqWidth, int reqHeight, string[]? selectedTabs = null, int renderScale = 1)
+        {
+            _renderScale = renderScale;
+            return _sta.Invoke(() =>
+            {
+                Assembly asm;
+                try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); }
+                catch (Exception ex)
+                {
+                    return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
+                        RenderFallbackReason.ExecutorFailure, "assembly load: " + ex.Message);
+                }
+
+                // NOTE: `doc` was parsed by Roslyn in the DEFAULT domain and marshaled here (it is [Serializable]) —
+                // Roslyn never loads in this child domain. This method only resolves compiled types + runs
+                // the executor, no parsing.
+                //
+                // FAIL-CLOSED + DETERMINISTIC TEARDOWN. The container holds
+                // every sited component; a Form realized off-screen holds the whole HWND/GDI tree. This render is NOT
+                // cached (it must reflect the exact source buffer each call), so nothing outlives the snapshot — the
+                // `finally` disposes the Form, any partly-built root, and the container (reverse-order, incl. a target
+                // left BeginInit'd). And ANY failure after the assembly loads (executor throw, a forged/edge doc that
+                // trips the coverage classifier, the Control cast, layout, or paint) degrades to the DISCLOSED compiled
+                // fallback, never a hard RPC error: the method's contract is "always return a picture; RenderMode +
+                // FallbackReason say which".
+                var container = new DesignTimeContainer();
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath));
+                Form? builtForm = null;
+                InterpretedRenderPlan? plan = null;
+                try
+                {
+                    // Resolve the BASE type from the COMPILED designed type's BaseType — the reliable source, since a VS
+                    // form declares its base in the NON-designer partial the parsed .Designer.cs never contains. A source
+                    // that changed the base since the last build shows up as a mismatch → stale-type handshake → fallback.
+                    Type? baseType = null;
+                    var designedType = asm.GetType(rootTypeName, throwOnError: false);
+                    if (designedType != null)
+                    {
+                        baseType = designedType.BaseType;
+                        if (doc != null && baseType != null && !string.IsNullOrEmpty(doc.BaseTypeSyntaxName)
+                            && !SameBase(doc.BaseTypeSyntaxName, baseType))
+                        {
+                            return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
+                                RenderFallbackReason.BaseTypeChanged,
+                                "source base '" + doc.BaseTypeSyntaxName + "' != compiled base '" + baseType.FullName + "' (rebuild)");
+                        }
+                    }
+
+                    plan = InterpretedRenderPlan.Plan(doc, host, baseType);
+                    if (!plan.Interpreted)
+                    {
+                        return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
+                            plan.Decision.FallbackReason ?? RenderFallbackReason.ExecutorFailure, plan.Decision.Detail ?? "");
+                    }
+
+                    var rootCtl = (Control)plan.Root!;
+                    ApplyTabViewState(plan.Execution!, selectedTabs); // transient selected-tab override
+                    builtForm = HostOffscreen(rootCtl, reqWidth, reqHeight);
+                    for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    rootCtl.PerformLayout();
+                    Application.DoEvents();
+
+                    var exec = plan.Execution!;
+                    // FieldNames = the interpreter's own name→instance table inverted (the analogue of the reflection map),
+                    // which already merges inherited base components + current-source ones (hybrid identity).
+                    var fieldNames = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
+                    foreach (var kv in exec.Instances)
+                        if (kv.Key.Length != 0 && !fieldNames.ContainsKey(kv.Value)) fieldNames[kv.Value] = kv.Key;
+                    var byField = new Dictionary<string, Control>(StringComparer.Ordinal);
+                    foreach (var kv in fieldNames)
+                        if (kv.Key is Control c && !byField.ContainsKey(kv.Value)) byField[kv.Value] = c;
+
+                    var live = new LiveDesign
+                    {
+                        Form = builtForm,
+                        Root = rootCtl,
+                        Type = rootCtl.GetType(),
+                        FieldNames = fieldNames,
+                        ByField = byField,
+                        BuildId = ComputeBuildId(assemblyPath),
+                        Mode = "interpreted",
+                        DesignedTypeName = plan.DesignedTypeName,
+                    };
+                    return Snapshot(live);
+                }
+                catch (Exception ex)
+                {
+                    return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
+                        RenderFallbackReason.ExecutorFailure, "interpreted render: " + ex.Message);
+                }
+                finally
+                {
+                    // Snapshot has already drawn the tree to PNG + geometry (it keeps no live reference), so tearing the
+                    // graph down here runs AFTER the result is computed. Best-effort — a teardown failure must not mask it.
+                    try { builtForm?.Dispose(); } catch { /* cascades to the realized child-control HWND/GDI tree */ }
+                    try { if (builtForm == null && plan?.Root is IDisposable d) d.Dispose(); } catch { /* partly-built root on a late fallback */ }
+                    try { container.Dispose(); } catch { /* reverse-order dispose of every sited component */ }
+                }
+            });
+        }
+
+        /// <summary>Render the compiled last build and stamp it as a disclosed fallback (the interpreter couldn't
+        /// cover this form). Reuses the exact compiled path so a fallback is byte-identical to a plain compiled render.</summary>
+        private RenderLayoutResult CompiledFallback(string assemblyPath, string rootTypeName, int w, int h, string reason, string detail)
+        {
+            var r = Snapshot(GetOrCreate(assemblyPath, rootTypeName, w, h));
+            r.RenderMode = "compiledFallback";
+            r.FallbackReason = reason ?? "";
+            if (!string.IsNullOrEmpty(detail)) r.Diagnostics = detail;
+            return r;
+        }
+
+        /// <summary>describe one component of the INTERPRETED live-source instance (not the
+        /// compiled build), so the property panel matches the interpreted canvas on an unsaved edit. Builds a
+        /// REQUEST-LOCAL interpreted graph (the same lifecycle as RenderInterpretedWithLayout — host/show/layout so
+        /// parity-grade property values realize, then fail-closed dispose in finally), resolves the target + its
+        /// reference-dropdown siblings ONLY through the executor's identity model (Instances + Origins), and describes
+        /// via CompiledDescriber. Returns null when the form doesn't fully interpret or the id names no current
+        /// component — the host then leaves the panel UNAVAILABLE (it must NEVER substitute compiled values under an
+        /// interpreted canvas). NOT cached, like the interpreted render.</summary>
+        public ComponentDesc? DescribeInterpretedComponent(string designerFilePath, string assemblyPath, IrDocument? doc,
+            string rootTypeName, string componentId, int reqWidth, int reqHeight)
+        {
+            return _sta.Invoke(() =>
+            {
+                Assembly asm;
+                try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); } catch { return (ComponentDesc?)null; }
+                var container = new DesignTimeContainer();
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath));
+                Form? builtForm = null;
+                InterpretedRenderPlan? plan = null;
+                try
+                {
+                    var designedType = asm.GetType(rootTypeName, throwOnError: false);
+                    Type? baseType = designedType?.BaseType;
+                    // Stale-base handshake (parity with RenderInterpretedWithLayout): a source whose base changed since the
+                    // last build must NOT be replayed onto the stale compiled base — describe returns null (panel
+                    // unavailable), exactly as render falls back rather than describing the wrong graph.
+                    if (doc != null && baseType != null && !string.IsNullOrEmpty(doc.BaseTypeSyntaxName)
+                        && !SameBase(doc.BaseTypeSyntaxName, baseType))
+                        return null;
+                    plan = InterpretedRenderPlan.Plan(doc, host, baseType);
+                    if (!plan.Interpreted || plan.Execution == null) return null; // not interpreted → panel stays unavailable
+                    var rootCtl = (Control)plan.Root!;
+                    builtForm = HostOffscreen(rootCtl, reqWidth, reqHeight);
+                    for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    rootCtl.PerformLayout();
+                    Application.DoEvents();
+                    return DescribeInterpretedOn(plan, rootCtl, componentId ?? "");
+                }
+                catch { return null; }
+                finally
+                {
+                    try { builtForm?.Dispose(); } catch { }
+                    try { if (builtForm == null && plan?.Root is IDisposable d) d.Dispose(); } catch { }
+                    try { container.Dispose(); } catch { }
+                }
+            });
+        }
+
+        /// <summary>Describe a target resolved ONLY from the interpreter's identity model. Root
+        /// ("" / "this") → the LOGICAL designed type's short name (NOT the base runtime type); a named component →
+        /// Execution.Instances[id]. Reference-dropdown siblings are the current-source components
+        /// (Origins == DeclaredInCurrentSource) — the ones the derived .Designer.cs can actually spell as this.&lt;field&gt;
+        /// — never reflection over the base-type runtime root (which would surface the wrong base fields). An
+        /// inherited/absent target returns null (the host keeps that selection read-only/unavailable).</summary>
+        private ComponentDesc? DescribeInterpretedOn(InterpretedRenderPlan plan, Control root, string componentId)
+        {
+            // Identity-model resolution (target + current-source siblings + logical root/parent) lives in the shared,
+            // unit-tested InterpretedDescribeResolver; a null result means the id is inherited/unknown → the panel stays
+            // unavailable. The one net48-only step — turning the resolved target into a ComponentDesc through the real
+            // TypeDescriptor — stays here.
+            var t = InterpretedDescribeResolver.Resolve(plan.Execution!, plan.DesignedTypeName, root, componentId);
+            if (t == null) return null;
+            return CompiledDescriber.Describe(t.Target, t.IsRoot ? "this" : componentId, t.Name, t.IsRoot, t.Parent, t.Siblings, root);
+        }
+
+        /// <summary>the INTERPRETED analogue of HitTestTab: which tab page's header is under the
+        /// window-space point, hit-tested against the LIVE-SOURCE geometry (not the compiled build). Builds a
+        /// request-local interpreted graph (applying the current tab view-state so the header layout matches what the
+        /// user sees), resolves the host TabControl from the identity model, and GetTabRect-hit-tests it via the shared
+        /// PageAt. PageId "" when off a header / not interpretable / the id isn't a tab host. Fail-closed dispose.</summary>
+        public TabHit HitTestInterpretedTab(string designerFilePath, string assemblyPath, IrDocument? doc, string rootTypeName,
+            string hostId, int winX, int winY, string[]? selectedTabs)
+        {
+            return _sta.Invoke(() =>
+            {
+                Assembly asm;
+                try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); } catch { return new TabHit(); }
+                var container = new DesignTimeContainer();
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath));
+                Form? builtForm = null;
+                InterpretedRenderPlan? plan = null;
+                try
+                {
+                    var baseType = asm.GetType(rootTypeName, throwOnError: false)?.BaseType;
+                    plan = InterpretedRenderPlan.Plan(doc, host, baseType);
+                    if (!plan.Interpreted || plan.Execution == null) return new TabHit();
+                    var rootCtl = (Control)plan.Root!;
+                    ApplyTabViewState(plan.Execution, selectedTabs);
+                    builtForm = HostOffscreen(rootCtl, 0, 0);
+                    for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    rootCtl.PerformLayout();
+                    Application.DoEvents();
+                    Control? hostCtl = (hostId == "this" || hostId.Length == 0)
+                        ? rootCtl
+                        : (plan.Execution.Instances.TryGetValue(hostId, out var h) && h is Control hc ? hc : null);
+                    if (hostCtl == null) return new TabHit();
+                    var (hx, hy) = ComputeWindowOffset(hostCtl, rootCtl);
+                    var page = PageAt(hostCtl, winX - hx, winY - hy);
+                    if (page == null) return new TabHit();
+                    string pid = "";
+                    foreach (var kv in plan.Execution.Instances)
+                        if (kv.Key.Length != 0 && ReferenceEquals(kv.Value, page)) { pid = kv.Key; break; }
+                    return new TabHit { PageId = pid, Text = page.Text ?? "" };
+                }
+                catch { return new TabHit(); }
+                finally
+                {
+                    try { builtForm?.Dispose(); } catch { }
+                    try { if (builtForm == null && plan?.Root is IDisposable d) d.Dispose(); } catch { }
+                    try { container.Dispose(); } catch { }
+                }
+            });
+        }
+
+        private static IEnumerable<Assembly> ProbeAssembliesFor(Assembly userAsm) => new[]
+        {
+            userAsm, typeof(Control).Assembly, typeof(Color).Assembly, typeof(Point).Assembly,
+            typeof(ISupportInitialize).Assembly, typeof(object).Assembly,
+        };
+
+        private static SafeResxResolver LoadSiblingResx(string designerFilePath)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(designerFilePath))
+                {
+                    const string suffix = ".Designer.cs";
+                    string resx = designerFilePath.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                        ? designerFilePath.Substring(0, designerFilePath.Length - suffix.Length) + ".resx"
+                        : Path.ChangeExtension(designerFilePath, ".resx");
+                    // Size cap: a sibling .resx is repository-controlled input read into an XML DOM on
+                    // every render — bound it so a hostile/pathological multi-hundred-MB .resx can't exhaust memory.
+                    // 32 MiB is far above any real form's string table yet well below an OOM. Over-cap → empty (fail
+                    // closed): any GetString/GetObject then falls back, exactly as for a refused node.
+                    const long MaxResxBytes = 32L << 20;
+                    if (File.Exists(resx) && new FileInfo(resx).Length <= MaxResxBytes)
+                        return SafeResxResolver.Parse(File.ReadAllText(resx));
+                }
+            }
+            catch { /* fall through to empty (fail closed) */ }
+            return SafeResxResolver.Parse("");
+        }
+
+        /// <summary>apply transient tab VIEW STATE: set each named TabControl's SelectedTab to the
+        /// named TabPage so a tab-click stays interpreted (the source's SelectedIndex is overridden by the user's
+        /// navigation, re-supplied on every render since the interpreted graph is uncached). NARROW, allowlisted adapter:
+        /// ONLY System.Windows.Forms.TabControl + TabPage resolved from the executor's identity model — a vendor tab type
+        /// or an unresolvable/foreign page is a NO-OP (interpreted tab-nav for those is disabled, never guessed). Each
+        /// entry is "hostFieldName=pageFieldName".</summary>
+        private static void ApplyTabViewState(IrExecutionResult exec, string[]? selectedTabs)
+        {
+            if (selectedTabs == null) return;
+            foreach (var pair in selectedTabs)
+            {
+                int eq = pair?.IndexOf('=') ?? -1;
+                if (eq <= 0) continue;
+                string hostName = pair!.Substring(0, eq);
+                string pageName = pair.Substring(eq + 1);
+                if (exec.Instances.TryGetValue(hostName, out var h) && h is TabControl tc
+                    && exec.Instances.TryGetValue(pageName, out var p) && p is TabPage tp && tc.TabPages.Contains(tp))
+                    try { tc.SelectedTab = tp; } catch { /* a bad view-state is a no-op, never a throw */ }
+            }
+        }
+
+        /// <summary>Realize a root control off-screen so its handle tree (and vendor skinning) initializes exactly as
+        /// at runtime — a Form hosted directly, any other Control wrapped in a borderless host form (mirrors Build).</summary>
+        private static Form HostOffscreen(Control rootCtl, int reqWidth, int reqHeight)
+        {
+            Form form;
+            if (rootCtl is Form rootForm)
+            {
+                rootForm.StartPosition = FormStartPosition.Manual;
+                rootForm.ShowInTaskbar = false;
+                rootForm.Location = new Point(-20000, -20000);
+                if (reqWidth > 0 && reqHeight > 0) rootForm.ClientSize = new Size(reqWidth, reqHeight);
+                form = rootForm;
+            }
+            else
+            {
+                form = new Form
+                {
+                    FormBorderStyle = FormBorderStyle.None,
+                    ShowInTaskbar = false,
+                    StartPosition = FormStartPosition.Manual,
+                    Location = new Point(-20000, -20000),
+                };
+                Size sz = (rootCtl.Size.IsEmpty || rootCtl.Width < 4 || rootCtl.Height < 4) ? new Size(1000, 700) : rootCtl.Size;
+                if (reqWidth > 0 && reqHeight > 0) sz = new Size(reqWidth, reqHeight);
+                rootCtl.Location = Point.Empty;
+                rootCtl.Size = sz;
+                form.ClientSize = sz;
+                form.Controls.Add(rootCtl);
+            }
+            // Show realizes the handle tree; if a vendor OnHandleCreated/OnLayout throws, dispose the WRAPPER Form we own
+            // (the Form-root case disposes via the caller's plan.Root) so a throwing control can't leak a Form/HWND per
+            // render/describe call lost the wrapper on throw).
+            try { form.Show(); }
+            catch { if (!ReferenceEquals(form, rootCtl)) { try { form.Dispose(); } catch { } } throw; }
+            return form;
+        }
+
+        /// <summary>Whether the source's declared base name refers to the same type as the compiled base. A QUALIFIED
+        /// source base (has a namespace) must match the FULL name — a short-name match across DIFFERENT namespaces
+        /// (OldVendor.BaseForm vs NewVendor.BaseForm) is a real base change, not a match, and must NOT be silently
+        /// rendered from the stale compiled base. A short-name match is only trusted for an UNQUALIFIED
+        /// source base (a `using`-imported name the front-end can't fully qualify). A false mismatch merely forces a
+        /// safe compiled fallback.</summary>
+        private static bool SameBase(string sourceBaseSyntax, Type compiledBase)
+        {
+            if (sourceBaseSyntax == compiledBase.FullName) return true;
+            if (sourceBaseSyntax.IndexOf('.') >= 0) return false; // qualified → require full-name equality
+            return sourceBaseSyntax == compiledBase.Name; // unqualified → short-name match is all we have
         }
 
         /// <summary>Describe one control of the live instance ("this" = root, else its .Designer.cs field name).
@@ -87,6 +466,23 @@ namespace WinFormsDesigner.Engine.Net48
         public ComponentDesc? DescribeComponent(string assemblyPath, string rootTypeName, string componentId)
         {
             return _sta.Invoke(() => DescribeOn(GetOrCreate(assemblyPath, rootTypeName, 0, 0), componentId));
+        }
+
+        /// <summary>The vendor smart-tag menu a component's compiled type DECLARES (DevExpress "Tasks") — read
+        /// only, never invoked; see VendorSmartTags for why. [] for a plain framework control, an unknown id, or any
+        /// failure, so the host simply shows no vendor section.</summary>
+        public VendorSmartTag[] ListVendorSmartTags(string assemblyPath, string rootTypeName, string componentId)
+        {
+            return _sta.Invoke(() =>
+            {
+                try
+                {
+                    var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                    var target = ResolveLiveTarget(live, componentId);
+                    return target == null ? Array.Empty<VendorSmartTag>() : VendorSmartTags.Read(target);
+                }
+                catch { return Array.Empty<VendorSmartTag>(); }
+            });
         }
 
         /// <summary>Apply one property edit to the LIVE instance (via its TypeConverter) and re-render, so the picture
@@ -263,6 +659,47 @@ namespace WinFormsDesigner.Engine.Net48
         /// Best-effort: a non-<see cref="System.Windows.Forms.TreeNodeCollection"/> Nodes (a DevExpress TreeList) or
         /// any failure leaves the picture on the built tree and returns Applied=false + a reason (host surfaces
         /// "renders fully after a rebuild").</summary>
+        /// <summary>Replace a live compiled ImageList's images from the already self-verified ImageStream payload and
+        /// re-render immediately. The persisted .resx/designer transaction is owned by the host; this method changes
+        /// only the cached preview instance so net48 has the same immediate reconciliation as other collections.</summary>
+        public RenderLayoutResult SetImageListLive(string assemblyPath, string rootTypeName, string componentId,
+            string imageStreamBase64, string[] keys)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                if (!(ResolveLiveTarget(live, componentId) is ImageList target))
+                    return Note(live, "no ImageList '" + componentId + "'");
+                var decoded = ImageListSerializer.Deserialize(imageStreamBase64 ?? "");
+                if (!decoded.Ok) return Note(live, "could not decode ImageList: " + decoded.Reason);
+                try
+                {
+                    target.Images.Clear();
+                    if (decoded.Width > 0 && decoded.Height > 0)
+                        target.ImageSize = new Size(decoded.Width, decoded.Height);
+                    if (Enum.TryParse(decoded.ColorDepth, out ColorDepth depth)) target.ColorDepth = depth;
+                    if (!string.IsNullOrWhiteSpace(decoded.TransparentColor))
+                        target.TransparentColor = Color.FromName(decoded.TransparentColor);
+                    for (int i = 0; i < decoded.Images.Length; i++)
+                    {
+                        byte[] bytes = Convert.FromBase64String(decoded.Images[i].DataBase64 ?? "");
+                        using (var stream = new MemoryStream(bytes, writable: false))
+                        using (var source = Image.FromStream(stream, useEmbeddedColorManagement: false, validateImageData: true))
+                        using (var owned = new Bitmap(source))
+                        {
+                            string key = i < (keys?.Length ?? 0) ? (keys[i] ?? "") : (decoded.Images[i].Key ?? "");
+                            if (key.Length == 0) target.Images.Add(owned);
+                            else target.Images.Add(key, owned);
+                        }
+                    }
+                    live.Root.PerformLayout();
+                    Application.DoEvents();
+                    return Snapshot(live);
+                }
+                catch (Exception ex) { return Note(live, "could not update ImageList: " + ex.GetBaseException().Message); }
+            });
+        }
+
         public RenderLayoutResult SetTreeNodesLive(string assemblyPath, string rootTypeName, string componentId, string propName, LiveTreeNode[] nodes)
         {
             return _sta.Invoke(() =>
@@ -984,7 +1421,7 @@ namespace WinFormsDesigner.Engine.Net48
                         // NOW an offered candidate (the "(this)" token) whenever it is assignable, so it is no longer
                         // rejected here — the assignability check below is the SAME gate describe uses to offer root, so the
                         // two sides can never diverge (offer-root ⟺ accept-root). Still reject a component referencing
-                        // ITSELF: describe never offers it, yet a self-typed prop would be assignable (codex review: defense
+                        // ITSELF: describe never offers it, yet a self-typed prop would be assignable (defense
                         // in depth; the host never sends a non-candidate).
                         if (ReferenceEquals(inst, target))
                         { reason = "cannot reference itself from " + propName + " (not an offered candidate)"; return false; }
@@ -1089,13 +1526,100 @@ namespace WinFormsDesigner.Engine.Net48
             return true;
         }
 
+        /// <summary>
+        /// Construct the user's root control the way THEIR OWN code would write `new TheControl()`.
+        ///
+        /// Activator.CreateInstance(type) only ever finds a PUBLIC, genuinely zero-argument constructor, so it refused
+        /// two shapes that are perfectly constructible in C#:
+        /// internal TheControl() -> non-public; `new TheControl()` compiles inside its own
+        /// assembly, and reflection may call it just as well
+        /// internal TheControl(IWavelet wavelet = null) -> every parameter OPTIONAL; `new TheControl()` compiles
+        /// and the C# compiler simply passes the author's default,
+        /// but in IL the ctor still takes an argument, so a
+        /// zero-arg lookup misses it entirely
+        /// Both previously died as "No parameterless constructor defined for this object" on a control the project
+        /// itself constructs with no arguments.
+        ///
+        /// We never invent an argument: an optional parameter is filled with the DEFAULT THE AUTHOR DECLARED, which is
+        /// exactly what the compiler would pass. A constructor with a REQUIRED parameter is still refused — guessing a
+        /// value there would run their code against something they never chose. Fewest parameters wins, so a real
+        /// zero-arg ctor is always preferred over an all-optional one.
+        /// </summary>
+        private static object CreateRoot(Type type)
+        {
+            var ctors = type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                            .OrderBy(c => c.GetParameters().Length)
+                            .ToList();
+            foreach (var c in ctors)
+            {
+                var ps = c.GetParameters();
+                if (ps.Length > 0 && !ps.All(p => p.IsOptional)) continue; // needs a real argument → not ours to guess
+                object[] args = ps.Select(DefaultArgFor).ToArray();
+                return c.Invoke(args); // a ctor throw surfaces via the caller's unwrap
+            }
+            // Nothing callable with no arguments: say so with the signatures we DID find, so the message is actionable
+            // instead of the framework's bare "No parameterless constructor defined for this object."
+            string sigs = ctors.Count == 0
+                ? "it declares no constructors"
+                : "its constructors are: " + string.Join(" | ", ctors.Select(Signature).ToArray());
+            throw new MissingMethodException(
+                type.FullName + " cannot be constructed with no arguments — " + sigs +
+                ". The compiled preview builds the real control, so it needs a constructor callable with no arguments" +
+                " (a parameterless one, or one whose parameters are all optional).");
+        }
+
+        private static object? DefaultArgFor(ParameterInfo p)
+        {
+            if (p.HasDefaultValue) return p.DefaultValue; // the author's own default
+            return p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
+        }
+
+        private static string Signature(ConstructorInfo c)
+        {
+            string vis = c.IsPublic ? "public" : c.IsAssembly ? "internal" : c.IsFamily ? "protected" : "private";
+            return vis + " .ctor(" + string.Join(", ", c.GetParameters()
+                .Select(p => p.ParameterType.Name + (p.IsOptional ? " = default" : "")).ToArray()) + ")";
+        }
+
+        /// <summary>Flatten an exception chain into one honest line for the host, dropping reflection's contentless
+        /// wrapper. TargetInvocationException's own message ("Exception has been thrown by the target of an
+        /// invocation.") names nothing; the chain underneath is the answer. Keeps the intermediate links too — e.g. a
+        /// TypeInitializationException says WHICH type's initializer failed, which GetBaseException() alone loses —
+        /// and stops at 4 so one runaway chain can't flood the status line.</summary>
+        private static string DescribeFailure(Exception ex)
+        {
+            var sb = new StringBuilder();
+            int shown = 0;
+            for (Exception? c = ex; c != null && shown < 4; c = c.InnerException)
+            {
+                if (c is TargetInvocationException && c.InnerException != null) continue; // wrapper, no information
+                if (sb.Length > 0) sb.Append(" <- ");
+                sb.Append(c.GetType().Name).Append(": ").Append(c.Message);
+                shown++;
+            }
+            return sb.Length > 0 ? sb.ToString() : ex.GetType().Name + ": " + ex.Message;
+        }
+
         private LiveDesign Build(string assemblyPath, string rootTypeName, int reqWidth, int reqHeight)
         {
             var diag = new StringBuilder();
             Assembly asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath));
             Type type = ResolveType(asm, rootTypeName, diag);
 
-            object instance = Activator.CreateInstance(type); // may throw LicenseException (surfaced to host)
+            object instance;
+            try { instance = CreateRoot(type); }
+            catch (Exception ex)
+            {
+                // Reflection wraps whatever the control's ctor threw in a TargetInvocationException whose OWN message is
+                // the contentless "Exception has been thrown by the target of an invocation." — which is exactly what
+                // reached the user as "designer render failed", telling them nothing. A ctor that needs runtime
+                // services/DI, a license check, or a missing dependency is the single most common reason a compiled
+                // control can't be previewed, so the refusal has to name the real cause to be honest rather than merely
+                // safe. (The add-control / collection paths already unwrap this way; the ROOT instantiation — the one
+                // that matters most — did not.)
+                throw new InvalidOperationException(
+                    rootTypeName + " could not be constructed — " + DescribeFailure(ex), ex);
+            }
             if (!(instance is Control rootCtl))
             {
                 throw new InvalidOperationException(rootTypeName + " is not a System.Windows.Forms.Control");
@@ -1149,36 +1673,63 @@ namespace WinFormsDesigner.Engine.Net48
                 if (kv.Key is Control ctl && !byField.ContainsKey(kv.Value)) byField[kv.Value] = ctl;
             }
 
-            return new LiveDesign { Form = form, Root = rootCtl, Type = type, FieldNames = fieldNames, ByField = byField };
+            return new LiveDesign { Form = form, Root = rootCtl, Type = type, FieldNames = fieldNames, ByField = byField, BuildId = ComputeBuildId(assemblyPath) };
+        }
+
+        /// <summary>Capture <paramref name="root"/> to a PNG at an integer DPI scale. scale &gt; 1 scales the control tree
+        /// UP so text/metrics draw at the higher resolution (crisp) — a bigger DrawToBitmap alone would only upscale.
+        /// Scale mutates the tree, so it is restored in finally; an integer factor keeps up/down scaling exactly
+        /// reversible, which matters for the CACHED compiled instance (the interpreted tree is fresh each render).</summary>
+        private static byte[] CaptureScaledPng(Control root, int w, int h, int scale)
+        {
+            if (scale > 1)
+            {
+                root.Scale(new SizeF(scale, scale));
+                try
+                {
+                    using (var big = new Bitmap(w * scale, h * scale, PixelFormat.Format32bppArgb))
+                    {
+                        big.SetResolution(96, 96);
+                        root.DrawToBitmap(big, new Rectangle(0, 0, w * scale, h * scale));
+                        using (var ms = new MemoryStream()) { big.Save(ms, ImageFormat.Png); return ms.ToArray(); }
+                    }
+                }
+                finally { root.Scale(new SizeF(1f / scale, 1f / scale)); }
+            }
+            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                root.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
+                using (var ms = new MemoryStream()) { bmp.Save(ms, ImageFormat.Png); return ms.ToArray(); }
+            }
         }
 
         private RenderLayoutResult Snapshot(LiveDesign live)
         {
             Control root = live.Root;
             int w = Math.Max(root.Width, 1), h = Math.Max(root.Height, 1);
-            byte[] png;
-            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
-            {
-                root.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
-                using (var ms = new MemoryStream())
-                {
-                    bmp.Save(ms, ImageFormat.Png);
-                    png = ms.ToArray();
-                }
-            }
+            byte[] png = CaptureScaledPng(root, w, h, _renderScale);
 
-            var controls = BuildLayoutControls(root, live.Type.Name, live.FieldNames, w, h);
+            string rootClassName = live.DesignedTypeName != null ? InterpretedDescribeResolver.ShortName(live.DesignedTypeName) : live.Type.Name;
+            var controls = BuildLayoutControls(root, rootClassName, live.FieldNames, w, h);
             var tray = BuildTray(live);
             var toolStripItems = BuildToolStripItemGeometry(live);
 
             return new RenderLayoutResult
             {
+                RenderMode = live.Mode,
+                FallbackReason = live.FallbackReason,
+                // 1.0.0 fail-closed — stamp EVERY response with the identity of the instance it was drawn from.
+                // Snapshot is the single construction site for RenderLayoutResult, so no net48 response can reach the
+                // host without it, and the host never has to guess whether the instance it is looking at is the one
+                // its unsaved edits were mirrored onto.
+                LiveInstanceId = live.InstanceId,
+                LiveBuildId = live.BuildId,
                 Png = png,
                 Width = w,
                 Height = h,
                 ClientWidth = root.ClientSize.Width,
                 ClientHeight = root.ClientSize.Height,
-                RootType = live.Type.FullName ?? live.Type.Name,
+                RootType = live.DesignedTypeName ?? live.Type.FullName ?? live.Type.Name,
                 TotalStatements = controls.Count,
                 Representable = controls.Count, // compiled render: no interpreted-subset gaps
                 Controls = controls,
@@ -1213,7 +1764,7 @@ namespace WinFormsDesigner.Engine.Net48
             // VALUE off live.Root (== the user's form/UC instance, whose runtime type IS live.Type; live.Form may be a
             // wrapper) binds name→the EXACT instance that field holds, so a live reference to a base/hidden instance
             // simply has no candidate and stays a plain field (fail-closed). net9's interpreter never sees base
-            // components either, so this keeps offer⇔accept AND cross-runtime parity. (codex review, High + fix-verify.)
+            // components either, so this keeps offer⇔accept AND cross-runtime parity.
             var siblings = new List<KeyValuePair<string, IComponent>>();
             var seenSib = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach (var f in live.Type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
@@ -1251,12 +1802,12 @@ namespace WinFormsDesigner.Engine.Net48
 
         /// <summary>Resolve a component id for a live property EDIT / RESET — like <see cref="ResolveLiveTarget"/> (the
         /// describe resolver) but RESTRICTED to a Control or a ToolStripItem. A field-backed non-Control non-item
-        /// component (a Timer / BackgroundWorker / ToolTip / ImageList) is describable (Slice 1b read) yet must NOT be
+        /// component (a Timer / BackgroundWorker / ToolTip / ImageList) is describable yet must NOT be
         /// live-mutated: this is a real running preview instance, so e.g. Timer.Enabled=true would Start() it and the
         /// render pump (Application.DoEvents) would dispatch the compiled Tick handler INSIDE the preview — a design
         /// surface must never run a component's runtime behavior. Such an id returns null here → the live edit is an
         /// inert no-op (Applied=false; the source edit still persists via the net9 splice, and VS likewise only
-        /// serializes the value, it does not run the component). This precisely restores the pre-Slice-2 behavior for
+        /// serializes the value, it does not run the component). This precisely restores the earlier behavior for
         /// every non-item component (only a ToolStripItem is newly live-editable). Null for an unknown id too.</summary>
         private IComponent? ResolveLiveEditTarget(LiveDesign live, string componentId)
         {
@@ -1284,18 +1835,24 @@ namespace WinFormsDesigner.Engine.Net48
             return null;
         }
 
+        /// <summary>
+        /// The compiled form type, by EXACT name only.
+        ///
+        /// There used to be a fallback: if the exact lookup missed, take the unique Control in the assembly with the
+        /// same SHORT name. That is a guess, and it rendered a different form as yours with no banner — the
+        /// "resolved root by simple name" note it left went into a StringBuilder nobody reads. It also
+        /// papered over the real bug: this host built the type name itself and got it wrong for a form nested in a
+        /// record/struct, or a generic one. The name now comes from the shared FormClassResolver identity, which is
+        /// already reflection's format, and in C# a type's source-declared full name IS its runtime name (unlike VB,
+        /// RootNamespace does not rewrite it) — so an exact miss means the assembly genuinely lacks this type: a
+        /// stale build, not something to guess around. Say so.
+        /// </summary>
         private static Type ResolveType(Assembly asm, string rootTypeName, StringBuilder diag)
         {
             Type t = asm.GetType(rootTypeName, throwOnError: false);
             if (t != null) return t;
-            string simple = rootTypeName.Contains('.') ? rootTypeName.Substring(rootTypeName.LastIndexOf('.') + 1) : rootTypeName;
-            var byName = asm.GetTypes().Where(x => typeof(Control).IsAssignableFrom(x) && x.Name == simple).ToArray();
-            if (byName.Length == 1)
-            {
-                diag.Append("resolved root by simple name '").Append(simple).Append("'; ");
-                return byName[0];
-            }
-            throw new InvalidOperationException("root type not found in assembly: " + rootTypeName);
+            throw new InvalidOperationException(
+                "root type not found in assembly: " + rootTypeName + " (is the project built and up to date?)");
         }
 
         /// <summary>Map each Control/Component instance to the field that holds it — the compiled analogue of the
@@ -1406,7 +1963,7 @@ namespace WinFormsDesigner.Engine.Net48
 
                 try { strip.PerformLayout(); } catch { /* layout hiccup → bounds may be default */ }
                 var (ox, oy) = ComputeWindowOffset(strip, root);
-                var disp = strip.DisplayRectangle;                 // the item-row area, in strip coords
+                var disp = strip.DisplayRectangle; // the item-row area, in strip coords
                 bool horizontal = strip.Orientation == Orientation.Horizontal;
                 int contentEnd = horizontal ? disp.Left : disp.Top; // running right/bottom edge of the last item
                 var overflowItems = new List<ToolStripItemBounds>(); // items pushed off the main strip (Placement==Overflow)
@@ -1436,7 +1993,7 @@ namespace WinFormsDesigner.Engine.Net48
                         OwnerId = ownerId,
                         ItemId = ToolStripItemId(it, live),
                         ItemType = it.GetType().FullName ?? it.GetType().Name,
-                        Text = it.Text ?? "",                          // live caption → canvas prefills the rename editor
+                        Text = it.Text ?? "", // live caption → canvas prefills the rename editor
                         X = ox + b.X,
                         Y = oy + b.Y,
                         Width = Math.Max(b.Width, 1),
@@ -1452,7 +2009,7 @@ namespace WinFormsDesigner.Engine.Net48
                 bool overflowing = overflowItems.Count > 0 && ob != null;
                 if (overflowing)
                 {
-                    var obb = ob.Bounds;                               // strip-relative, like item.Bounds
+                    var obb = ob.Bounds; // strip-relative, like item.Bounds
                     items.Add(new ToolStripItemBounds
                     {
                         OwnerId = ownerId,
@@ -1534,7 +2091,7 @@ namespace WinFormsDesigner.Engine.Net48
                     if (pagesProp.GetValue(parent) is not System.Collections.IEnumerable pages) continue;
                     bool cIsPage = false;
                     foreach (var pg in pages) if (ReferenceEquals(pg, c)) { cIsPage = true; break; }
-                    if (!cIsPage) continue;                       // c is an internal part, not one of the pages
+                    if (!cIsPage) continue; // c is an internal part, not one of the pages
                     var active = selProp.GetValue(parent) as Control;
                     if (active != null && !ReferenceEquals(active, c)) return false; // c is a non-selected page
                 }

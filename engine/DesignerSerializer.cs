@@ -46,8 +46,8 @@ namespace WinFormsDesigner.Engine
     /// Why normalization is needed: the standalone DesignSurface host over-emits
     /// default-valued primitive properties (Enabled=true, Visible=true, TabIndex=0, …)
     /// that real Visual Studio omits via ShouldSerialize/DefaultValue filtering. That
-    /// over-emission is the #1 source of round-trip merge noise (FINDINGS S2a finding #1,
-    /// codex risk C2). We drop, post-serialization, any primitive assignment whose value
+    /// over-emission is the #1 source of round-trip merge noise.
+    /// We drop, post-serialization, any primitive assignment whose value
     /// equals the property's default — taken from a <see cref="DefaultValueAttribute"/>
     /// when present, otherwise from a fresh reference instance of the component type.
     ///
@@ -71,7 +71,10 @@ namespace WinFormsDesigner.Engine
             IReadOnlyList<string>? eventWirings = null, IReadOnlyList<string>? supportInit = null)
         {
             var root = host.RootComponent;
-            var manager = new DesignerSerializationManager(surface);
+            // SerializerServices (NOT the surface itself) so VsNameCreationService is visible ONLY here: it makes the
+            // generated locals match VS (treeNode1, not treenode1) without letting the host's load path name or
+            // validate real source components with it.
+            var manager = new DesignerSerializationManager(new SerializerServices(surface));
             using (manager.CreateSession())
             {
                 var serializer = (TypeCodeDomSerializer)manager.GetSerializer(root.GetType(), typeof(TypeCodeDomSerializer))!;
@@ -160,7 +163,7 @@ namespace WinFormsDesigner.Engine
 
             // Classify each captured snippet by PARSING its outer invocation (BeginInit vs EndInit) and extracting the
             // initialized target — NOT by substring, so a receiver/argument that happens to contain ".BeginInit("/
-            // ".EndInit(" can't put one statement in both lists and double-emit (codex F2).
+            // ".EndInit(" can't put one statement in both lists and double-emit.
             var begins = new List<string>();
             var ends = new List<(string target, string stmt)>();
             foreach (var s in supportInit)
@@ -172,7 +175,7 @@ namespace WinFormsDesigner.Engine
             }
 
             // EndInit(X) goes before X's OWN ResumeLayout — VS finalizes deferred init before the control's layout
-            // resumes (codex F1: "before the last ResumeLayout" reordered it after the control's resume). Fall back to
+            // resumes ("before the last ResumeLayout" reordered it after the control's resume). Fall back to
             // before the last ResumeLayout only when the target's own resume isn't emitted. Recompute the index each
             // time so a prior insert doesn't stale a later anchor.
             foreach (var (target, stmt) in ends)

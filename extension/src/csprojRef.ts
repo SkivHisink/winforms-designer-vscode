@@ -29,6 +29,89 @@ export function findNearestCsproj(startDir: string, stopDir?: string): string | 
   return null;
 }
 
+/**
+ * Walk up from `startDir` and return the first directory's `*.projitems` (a SHARED PROJECT's item list), or null.
+ * Same bounds as {@link findNearestCsproj}.
+ */
+export function findNearestProjitems(startDir: string, stopDir?: string): string | null {
+  const stop = stopDir ? path.resolve(stopDir) : null;
+  let dir = path.resolve(startDir);
+  for (let i = 0; i < 40; i++) {
+    let entries: string[];
+    try { entries = fs.readdirSync(dir); } catch { return null; }
+    const hits = entries.filter((e) => /\.projitems$/i.test(e)).sort((a, b) => a.localeCompare(b));
+    if (hits.length) return path.join(dir, hits[0]);
+    if (stop && dir === stop) return null;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Every .csproj under `root` that `<Import>`s `projitemsPath` — i.e. every real project that COMPILES a shared
+ * project's sources. Matched on the file name, which is how the import is written (`<Import Project="..\X\X.projitems"
+ * Label="Shared" />`), and confirmed by resolving that relative path back to the same file, so a same-named
+ * .projitems elsewhere in the tree can't be mistaken for this one.
+ *
+ * Bounded: skips bin/obj/node_modules/.git/.vs, caps the depth and the number of projects examined.
+ */
+export function findCsprojsImporting(projitemsPath: string, root: string): string[] {
+  const target = path.resolve(projitemsPath);
+  const want = path.basename(target).toLowerCase();
+  const found: string[] = [];
+  const skip = new Set(['bin', 'obj', 'node_modules', '.git', '.vs', '.vscode', 'packages', 'artifacts']);
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 12 || found.length >= 16) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!skip.has(e.name.toLowerCase())) walk(full, depth + 1);
+        continue;
+      }
+      if (!/\.csproj$/i.test(e.name)) continue;
+      let text = '';
+      try { text = fs.readFileSync(full, 'utf8'); } catch { continue; }
+      // cheap reject before the (relative-path) resolve
+      if (!text.toLowerCase().includes(want)) continue;
+      const re = /<Import\s+[^>]*Project\s*=\s*"([^"]+\.projitems)"/gi;
+      for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+        let resolved: string;
+        try { resolved = path.resolve(path.dirname(full), m[1]); } catch { continue; }
+        if (resolved.toLowerCase() === target.toLowerCase()) { found.push(full); break; }
+      }
+    }
+  };
+  try { walk(path.resolve(root), 0); } catch { /* unreadable root → no matches */ }
+  return found.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The .csproj that OWNS the sources in `startDir`: the nearest one up the tree, or — when they live in a SHARED
+ * PROJECT (a `.shproj`/`.projitems` pair, which has no `.csproj` of its own) — the project that imports them.
+ *
+ * Shared projects are a normal Visual Studio layout, and a form inside one used to resolve to NOTHING: the walk up
+ * found no .csproj, so the designer silently fell back to the .NET 9 renderer with no assembly, which cannot load a
+ * .NET Framework vendor control — every `new DevExpress.XtraTab.XtraTabControl()` came back "missing type" and the form
+ * rendered EMPTY, with no offer to pick an assembly (the offers are all gated behind having found a project).
+ *
+ * Returns null when the shared project is imported by NO project, or by MORE THAN ONE: two importers can produce
+ * two different assemblies, and guessing which one this form belongs to is exactly the kind of coin-flip that
+ * renders the wrong thing. The caller then prompts, which is the honest answer.
+ */
+export function findOwningCsproj(startDir: string, wsRoot?: string): string | null {
+  const direct = findNearestCsproj(startDir, wsRoot);
+  if (direct) return direct;
+  if (!wsRoot) return null;                       // no bounded root to search for importers
+  const shared = findNearestProjitems(startDir, wsRoot);
+  if (!shared) return null;
+  const importers = findCsprojsImporting(shared, wsRoot);
+  return importers.length === 1 ? importers[0] : null;
+}
+
 /** The assembly a .csproj produces: its <AssemblyName>, or the project file name without the extension. */
 export function projectAssemblyName(csprojText: string, csprojPath: string): string {
   const m = /<AssemblyName>\s*([^<]+?)\s*<\/AssemblyName>/i.exec(csprojText);

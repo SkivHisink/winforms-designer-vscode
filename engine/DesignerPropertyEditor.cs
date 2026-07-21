@@ -171,6 +171,56 @@ namespace WinFormsDesigner.Engine
             if (targets.Count == 0)
                 return new PropertyResetResult { Ok = true, Changed = false, NewText = null, Reason = "property has no explicit assignment (already default)" };
 
+            // A reset deletes WHOLE LINES, so it also takes whatever else shares the line. OnlyPropertyReset compares
+            // statements and field names, and a comment is trivia — invisible to it — so a trailing
+            // `// KEEP: pinned by ticket #4711` was silently deleted while the reset still reported success (the
+            // twin case, two statements on one line, the gate does catch). This path is reachable from the UI via
+            // Dock/Anchor mutual exclusivity. Refuse instead: nothing outside the target statement may be removed.
+            // Mirrors the residue guard DesignerModifiers.SetModifier already applies to its replaced span.
+            // Residue is judged PER LINE with every TARGET assignment blanked out: two assignments of the same
+            // property on one line are both removed, so they are not "other content" and that case stays safe.
+            // Content can also live INSIDE the statement: `this.p.Dock /* KEEP */ = …;`, a rationale between the
+            // operands of a multi-line Anchor, or — worse — a preprocessor directive:
+            //     this.p.Dock =
+            //     #if FOO
+            //         DockStyle.Top
+            //     #else
+            //         DockStyle.Bottom
+            //     #endif
+            //     ;
+            // A Roslyn span covers the trivia between its first and last token, so the per-line residue check below
+            // blanks all of that along with the statement and never sees it, and OnlyPropertyReset compares
+            // statements + field names — trivia is invisible there too. Deleting the lines would silently drop
+            // build-affecting source structure and still report success. So refuse on ANY non-whitespace
+            // trivia inside the span, not just comments — whitespace/newlines are the only thing safe to remove.
+            foreach (var st in targets)
+            {
+                var lost = st.DescendantTrivia()
+                    .FirstOrDefault(tr => tr.SpanStart >= st.SpanStart && tr.Span.End <= st.Span.End
+                                       && !tr.IsKind(SyntaxKind.WhitespaceTrivia)
+                                       && !tr.IsKind(SyntaxKind.EndOfLineTrivia));
+                if (lost != default)
+                    return new PropertyResetResult
+                    {
+                        Reason = "the assignment contains a comment or directive that a reset would delete",
+                    };
+            }
+
+            foreach (var (ls, le) in targets.Select(t => LineRange(sourceText, t.SpanStart, t.Span.End)).Distinct())
+            {
+                var line = new StringBuilder(sourceText.Substring(ls, le - ls));
+                foreach (var st in targets)
+                {
+                    if (st.SpanStart < ls || st.Span.End > le) continue;   // not on this line
+                    for (int i = st.SpanStart; i < st.Span.End; i++) line[i - ls] = ' ';
+                }
+                if (line.ToString().Trim().Length > 0)
+                    return new PropertyResetResult
+                    {
+                        Reason = "the assignment shares its line with other content (a comment or another statement) that a reset would delete",
+                    };
+            }
+
             var ranges = new List<(int s, int e)>();
             foreach (var st in targets) ranges.Add(LineRange(sourceText, st.SpanStart, st.Span.End));
             ranges.Sort((a, b) => b.s.CompareTo(a.s)); // descending so earlier splices don't shift later offsets
@@ -273,16 +323,12 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>First class that actually declares InitializeComponent (skips helper classes).</summary>
-        private static MethodDeclarationSyntax? FindInitializeComponent(string code)
-        {
-            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                var m = cls.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(x => x.Identifier.Text == "InitializeComponent");
-                if (m != null) return m;
-            }
-            return null;
-        }
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        private static MethodDeclarationSyntax? FindInitializeComponent(string code) =>
+            FormClassResolver.InitMethod(CSharpSyntaxTree.ParseText(code).GetRoot());
 
         private static bool MultisetEqual(List<string> a, List<string> b)
         {
@@ -316,21 +362,12 @@ namespace WinFormsDesigner.Engine
             return (start, end);
         }
 
-        /// <summary>Field-declaration names of the class that declares InitializeComponent — used by
+        /// <summary>The form's field-declaration names, across all its partials (via the ONE shared rule) — used by
         /// <see cref="OnlyPropertyReset"/> to assert a reset touched no field declaration.</summary>
         private static List<string> FieldNames(string code)
         {
-            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            var list = new List<string>();
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                if (!cls.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent")) continue;
-                foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
-                    foreach (var v in f.Declaration.Variables)
-                        list.Add(v.Identifier.Text);
-                break;
-            }
-            return list;
+            var form = FormClassResolver.FormClass(CSharpSyntaxTree.ParseText(code).GetRoot());
+            return form == null ? new List<string>() : FormClassResolver.FieldNamesOf(form).ToList();
         }
 
         private static string LeadingIndent(string text, int pos)

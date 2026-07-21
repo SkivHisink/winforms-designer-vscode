@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- M1 (ADR 0001) — the net48 unit floor. engine-net48 had ZERO unit tests; this project runs
+       the SHARED IR core (front-end / validator / executor) on the ACTUAL .NET Framework 4.8 runtime with REAL net48
+       WinForms controls — i.e. exactly where the executor runs in production (the render child AppDomain). It
+       compile-links the same shared sources the engine links, so it proves cross-TFM parity independent of the
+       engine exe. -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <AssemblyName>Engine.Net48.UnitTests</AssemblyName>
+    <RootNamespace>Engine.Net48.UnitTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- The Roslyn front-end parses source; same version the net48 engine uses. netstandard2.0 -> net48 OK. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+  </ItemGroup>
+
+  <!-- The SAME shared sources the engines compile-link — proving they build and behave identically on net48. -->
+  <ItemGroup>
+    <Compile Include="..\..\engine\FormClassResolver.cs" Link="Shared\FormClassResolver.cs" />
+    <Compile Include="..\..\engine\DesignerModifiers.cs" Link="Shared\DesignerModifiers.cs" />
+    <Compile Include="..\..\engine\DesignerIr.cs" Link="Shared\DesignerIr.cs" />
+    <Compile Include="..\..\engine\DesignerAllowlists.cs" Link="Shared\DesignerAllowlists.cs" />
+    <Compile Include="..\..\engine\DesignerIrBuilder.cs" Link="Shared\DesignerIrBuilder.cs" />
+    <Compile Include="..\..\engine\DesignerIrExecutor.cs" Link="Shared\DesignerIrExecutor.cs" />
+    <Compile Include="..\..\engine\DesignTimeSite.cs" Link="Shared\DesignTimeSite.cs" />
+    <Compile Include="..\..\engine\InterpretedDescribeResolver.cs" Link="Shared\InterpretedDescribeResolver.cs" />
+    <Compile Include="..\..\engine-net48\IsExternalInit.cs" Link="Shared\IsExternalInit.cs" />
+  </ItemGroup>
+
+</Project>

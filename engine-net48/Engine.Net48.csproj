@@ -1,10 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Second engine host: renders .NET Framework + DevExpress(PGMUI) controls the net9 engine can't load.
+  <!-- Second engine host: renders .NET Framework + DevExpress controls the modern engine can't load.
        Approach (proven by spike S5): instantiate the COMPILED control type on an STA thread and DrawToBitmap.
-       Isolation: the user's assembly graph loads in a child AppDomain (ShadowCopy + the app's own .config
-       binding redirects), so it can't clash with this host's StreamJsonRpc/Newtonsoft stack, and can be
-       unloaded/reloaded when the project is rebuilt. Same JSON-RPC/named-pipe contract as the net9 engine. -->
+       Isolation: the user's assembly graph loads IN PLACE (ShadowCopyFiles is intentionally OFF — it would break
+       delay-signed vendor assemblies; see DomainManager.Create) in a child AppDomain configured with the app's own
+       .config plus synthesized binding redirects, so it can't clash with this host's StreamJsonRpc/Newtonsoft stack.
+       Loading in place PINS the user's dll until an explicit release (ReleaseBinDir/ReleaseAll), after which a rebuild
+       reloads it. Same JSON-RPC/named-pipe contract as the modern engine. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
@@ -18,10 +20,44 @@
     <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
   </PropertyGroup>
 
+  <!-- THE form-class rule, COMPILE-LINKED (not copied) from the modern engine. Both engines must answer "which class
+       in this .Designer.cs is the form" identically: this host renders the compiled type it resolves here, while
+       the modern host splices edits into the class IT resolves — a disagreement previews one class and edits another.
+       A linked file makes that divergence unrepresentable; a copy would only make it unlikely. -->
   <ItemGroup>
-    <PackageReference Include="StreamJsonRpc" Version="2.19.27" />
+    <Compile Include="../engine/FormClassResolver.cs" Link="Shared/FormClassResolver.cs" />
+    <Compile Include="../engine/DesignerModifiers.cs" Link="Shared/DesignerModifiers.cs" />
+    <!-- M0 (ADR 0001): the CLOSED statement-IR contract for live-source interpretation. Produced by the Roslyn
+         front-end in this process's DEFAULT domain, consumed by the child-AppDomain executor; one linked file =
+         one vocabulary + one validator on both sides of the boundary (a copy would fork the security contract). -->
+    <Compile Include="../engine/DesignerIr.cs" Link="Shared/DesignerIr.cs" />
+    <!-- The three interpreter security allowlists (RCE-on-open boundary) — ONE set consulted by the net10
+         interpreter, the net48 parser and the net48 executor (M0/ADR 0001; a copy would fork the boundary). -->
+    <Compile Include="../engine/DesignerAllowlists.cs" Link="Shared/DesignerAllowlists.cs" />
+    <!-- M0 slice 3: the Roslyn front-end (parse InitializeComponent -> IR). Runs in this process's DEFAULT domain
+         (syntax-only, no user assemblies) to produce the IR the child-domain executor consumes. -->
+    <Compile Include="../engine/DesignerIrBuilder.cs" Link="Shared/DesignerIrBuilder.cs" />
+    <!-- M1: the IR executor. Runs in the render CHILD domain, replaying the closed IR onto live COMPILED instances
+         (VS model). Re-validates + semantically checks every op (never trusts the producer). BCL-only, shared. -->
+    <Compile Include="../engine/DesignerIrExecutor.cs" Link="Shared/DesignerIrExecutor.cs" />
+    <!-- M1: the narrow truthful design-time site (DesignMode=true) the executor sites constructed components into. -->
+    <Compile Include="../engine/DesignTimeSite.cs" Link="Shared/DesignTimeSite.cs" />
+    <!-- M1->M3 seam: per-form render-mode decision + stable fallback reason codes (two-axis host contract). -->
+    <Compile Include="../engine/RenderModeDecision.cs" Link="Shared/RenderModeDecision.cs" />
+    <!-- M1 BLOCKER #1: the SAFE resx resolver — refuses binary/SOAP/FileRef (BinaryFormatter never runs on repo bytes). -->
+    <Compile Include="../engine/SafeResxResolver.cs" Link="Shared/SafeResxResolver.cs" />
+    <!-- M1: the production IIrHost — type resolution + siting + safe resource resolution — the render child wires one. -->
+    <Compile Include="../engine/AssemblyIrHost.cs" Link="Shared/AssemblyIrHost.cs" />
+    <!-- M1: base-root construction (VS model) + the interpreted-render plan (cover→resolve base→instantiate→execute). -->
+    <Compile Include="../engine/CompiledRootFactory.cs" Link="Shared/CompiledRootFactory.cs" />
+    <Compile Include="../engine/InterpretedRenderPlan.cs" Link="Shared/InterpretedRenderPlan.cs" />
+    <Compile Include="../engine/InterpretedDescribeResolver.cs" Link="Shared/InterpretedDescribeResolver.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StreamJsonRpc" Version="2.25.29" />
     <!-- Roslyn parse (root type-name resolution today; interpret/edit reuse later). netstandard2.0 → net48 OK. -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
   </ItemGroup>
 
 </Project>

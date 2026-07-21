@@ -105,16 +105,12 @@ namespace WinFormsDesigner.Engine
         /// First class that actually declares InitializeComponent — so a multi-class file with a
         /// helper class before the form partial can't make the splicer target the wrong method.
         /// </summary>
-        private static MethodDeclarationSyntax? FindInitializeComponent(string code)
-        {
-            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                var m = cls.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(x => x.Identifier.Text == "InitializeComponent");
-                if (m != null) return m;
-            }
-            return null;
-        }
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        private static MethodDeclarationSyntax? FindInitializeComponent(string code) =>
+            FormClassResolver.InitMethod(CSharpSyntaxTree.ParseText(code).GetRoot());
 
         /// <summary>
         /// Safe-save statement-level diff: the original InitializeComponent statements that the
@@ -124,16 +120,45 @@ namespace WinFormsDesigner.Engine
         /// </summary>
         public static List<string> MissingOriginalStatements(string originalText, string generatedText)
         {
-            var generated = new HashSet<string>(StatementTexts(generatedText).Select(NormalizeStmt));
-            return StatementTexts(originalText)
-                .Where(s => !generated.Contains(NormalizeStmt(s)))
-                .ToList();
+            var generated = Counter(CanonicalStatements(generatedText).SelectMany(s => s.Atoms));
+            var missing = new List<string>();
+            foreach (var source in CanonicalStatements(originalText))
+            {
+                var needed = Counter(source.Atoms);
+                bool available = needed.All(kv => generated.TryGetValue(kv.Key, out int count) && count >= kv.Value);
+                if (!available)
+                {
+                    missing.Add(source.Original);
+                    continue;
+                }
+                foreach (var kv in needed) generated[kv.Key] -= kv.Value;
+            }
+            return missing;
         }
 
-        private static IEnumerable<string> StatementTexts(string code)
+        private sealed class CanonicalStatement
+        {
+            public string Original { get; init; } = "";
+            public IReadOnlyList<string> Atoms { get; init; } = Array.Empty<string>();
+        }
+
+        /// <summary>
+        /// Canonical statement atoms used only by the round-trip firewall. Two narrow, semantics-preserving designer
+        /// dialect differences are normalized here:
+        ///   * generated locals are alpha-renamed by declaration order, so <c>treeNode1</c> and <c>treenode1</c>
+        ///     compare equal without ignoring any statement that uses them;
+        ///   * a side-effect-free <c>AddRange(new T[] { a, b })</c> is expanded to the same ordered Add atoms as
+        ///     <c>Add(a); Add(b);</c>.
+        /// Everything else remains token-for-token strict. In particular, an AddRange element containing an
+        /// invocation/object construction is NOT normalized: the gate cannot prove that splitting it preserves
+        /// evaluation semantics, so it continues to fail closed.
+        /// </summary>
+        private static IEnumerable<CanonicalStatement> CanonicalStatements(string code)
         {
             var init = FindInitializeComponent(code);
-            if (init?.Body == null) return Enumerable.Empty<string>();
+            if (init?.Body == null) return Enumerable.Empty<CanonicalStatement>();
+            var locals = BuildLocalMap(init);
+            var rewriter = new LocalCanonicalizer(locals);
             // Suspend/Resume/PerformLayout are designer-managed layout scaffolding: the loader treats them as
             // no-ops and the serializer regenerates them canonically (exactly as VS does), so their presence/
             // absence is canonicalization, not user-code loss — exclude from the gate.
@@ -145,15 +170,123 @@ namespace WinFormsDesigner.Engine
             // the same way: re-emitted verbatim, so they round-trip and legitimately stay in the gate.
             return init.Body.Statements
                 .Where(s => !IsLayoutBoilerplate(s))
-                .Select(s => s.ToString());
+                .Select(s => new CanonicalStatement
+                {
+                    Original = s.ToString(),
+                    Atoms = CanonicalAtoms(s, locals, rewriter),
+                });
+        }
+
+        private static Dictionary<string, string> BuildLocalMap(MethodDeclarationSyntax init)
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            int ordinal = 0;
+            if (init.Body == null) return map;
+            foreach (var decl in init.Body.Statements.OfType<LocalDeclarationStatementSyntax>())
+                foreach (var variable in decl.Declaration.Variables)
+                    map[variable.Identifier.ValueText] = "__wfdLocal" + ordinal++;
+            return map;
+        }
+
+        private static IReadOnlyList<string> CanonicalAtoms(StatementSyntax statement,
+            IReadOnlyDictionary<string, string> locals, LocalCanonicalizer rewriter)
+        {
+            if (statement is ExpressionStatementSyntax
+                {
+                    Expression: InvocationExpressionSyntax
+                    {
+                        Expression: MemberAccessExpressionSyntax ma,
+                        ArgumentList.Arguments.Count: 1,
+                    } invocation,
+                }
+                && ma.Name.Identifier.ValueText == "AddRange"
+                && TryArrayElements(invocation.ArgumentList.Arguments[0].Expression, out var elements)
+                && elements.All(e => IsSafeCollectionElement(e, locals)))
+            {
+                SyntaxNode receiver = rewriter.Visit(ma.Expression) ?? ma.Expression;
+                string receiverText = NormalizeSyntax(receiver);
+                return elements
+                    .Select(e => rewriter.Visit(e) ?? e)
+                    .Select(e => receiverText + ".Add(" + NormalizeSyntax(e) + ");")
+                    .ToList();
+            }
+
+            SyntaxNode rewritten = rewriter.Visit(statement) ?? statement;
+            return new[] { NormalizeSyntax(rewritten) };
+        }
+
+        private static bool TryArrayElements(ExpressionSyntax expression, out IReadOnlyList<ExpressionSyntax> elements)
+        {
+            InitializerExpressionSyntax? initializer = expression switch
+            {
+                ArrayCreationExpressionSyntax a => a.Initializer,
+                ImplicitArrayCreationExpressionSyntax a => a.Initializer,
+                _ => null,
+            };
+            if (initializer == null)
+            {
+                elements = Array.Empty<ExpressionSyntax>();
+                return false;
+            }
+            elements = initializer.Expressions.ToList();
+            return true;
+        }
+
+        private static bool IsSafeCollectionElement(ExpressionSyntax expression,
+            IReadOnlyDictionary<string, string> locals) => expression switch
+            {
+                LiteralExpressionSyntax => true,
+                IdentifierNameSyntax id => locals.ContainsKey(id.Identifier.ValueText),
+                MemberAccessExpressionSyntax
+                {
+                    Expression: ThisExpressionSyntax,
+                    Name: SimpleNameSyntax name,
+                } => SyntaxFacts.IsValidIdentifier(name.Identifier.ValueText),
+                ParenthesizedExpressionSyntax p => IsSafeCollectionElement(p.Expression, locals),
+                CastExpressionSyntax c => IsSafeCollectionElement(c.Expression, locals),
+                PrefixUnaryExpressionSyntax p when p.IsKind(SyntaxKind.UnaryMinusExpression)
+                    || p.IsKind(SyntaxKind.UnaryPlusExpression) => IsSafeCollectionElement(p.Operand, locals),
+                _ => false,
+            };
+
+        private static string NormalizeSyntax(SyntaxNode node) =>
+            string.Concat(node.DescendantTokens().Select(t => t.Text));
+
+        private static Dictionary<string, int> Counter(IEnumerable<string> values)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (string value in values)
+                counts[value] = counts.TryGetValue(value, out int count) ? count + 1 : 1;
+            return counts;
+        }
+
+        private sealed class LocalCanonicalizer : CSharpSyntaxRewriter
+        {
+            private readonly IReadOnlyDictionary<string, string> _locals;
+            public LocalCanonicalizer(IReadOnlyDictionary<string, string> locals) => _locals = locals;
+
+            public override SyntaxNode? VisitVariableDeclarator(VariableDeclaratorSyntax node)
+            {
+                var visited = (VariableDeclaratorSyntax)base.VisitVariableDeclarator(node)!;
+                if (!_locals.TryGetValue(node.Identifier.ValueText, out string? replacement)) return visited;
+                return visited.WithIdentifier(SyntaxFactory.Identifier(replacement).WithTriviaFrom(visited.Identifier));
+            }
+
+            public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
+            {
+                var visited = (IdentifierNameSyntax)base.VisitIdentifierName(node)!;
+                if (!_locals.TryGetValue(node.Identifier.ValueText, out string? replacement)) return visited;
+                // In this.field / Type.Member the right-hand identifier names a member/type, never a local binding.
+                if (node.Parent is MemberAccessExpressionSyntax ma && ma.Name == node) return visited;
+                if (node.Parent is QualifiedNameSyntax or AliasQualifiedNameSyntax or NameColonSyntax or NameEqualsSyntax)
+                    return visited;
+                return SyntaxFactory.IdentifierName(replacement).WithTriviaFrom(visited);
+            }
         }
 
         private static bool IsLayoutBoilerplate(StatementSyntax s) =>
             s is ExpressionStatementSyntax { Expression: InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax ma } }
             && ma.Name.Identifier.Text is "SuspendLayout" or "ResumeLayout" or "PerformLayout";
-
-        private static string NormalizeStmt(string s) =>
-            new string(s.Where(c => !char.IsWhiteSpace(c)).ToArray());
 
         /// <summary>Leading whitespace of the line containing <paramref name="pos"/>.</summary>
         private static string LeadingIndent(string text, int pos)

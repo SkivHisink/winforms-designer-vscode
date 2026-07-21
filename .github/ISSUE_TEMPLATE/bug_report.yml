@@ -19,7 +19,7 @@ body:
           required: true
         - label: The workspace is **trusted** (the extension is disabled in untrusted workspaces).
           required: true
-        - label: I'm on **Windows** with the **.NET 9 SDK** installed.
+        - label: I'm on **Windows x64** with the **.NET 10 Desktop Runtime (x64)** installed.
           required: true
   - type: textarea
     id: what-happened
@@ -53,7 +53,7 @@ body:
     id: ext-version
     attributes:
       label: Extension version
-      placeholder: "0.1.0"
+      placeholder: "1.0.0"
     validations:
       required: true
   - type: input
@@ -67,9 +67,9 @@ body:
   - type: input
     id: dotnet-version
     attributes:
-      label: .NET SDK version
-      description: Output of `dotnet --version`.
-      placeholder: "9.0.308"
+      label: .NET runtime information
+      description: Output of `dotnet --list-runtimes` (and `dotnet --version` if you also have the SDK).
+      placeholder: "Microsoft.WindowsDesktop.App 10.0.x [C:\\Program Files\\dotnet\\shared\\Microsoft.WindowsDesktop.App]"
     validations:
       required: true
   - type: input

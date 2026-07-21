@@ -285,15 +285,12 @@ namespace WinFormsDesigner.Engine
             return chain.Count >= 1 && chain[0] == owner;
         }
 
-        private static MethodDeclarationSyntax? FindInitializeComponent(SyntaxNode root)
-        {
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                var m = cls.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(x => x.Identifier.Text == "InitializeComponent");
-                if (m != null) return m;
-            }
-            return null;
-        }
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        private static MethodDeclarationSyntax? FindInitializeComponent(SyntaxNode root) =>
+            FormClassResolver.InitMethod(root);
 
         private static bool MultisetEqual(List<string> a, List<string> b)
         {

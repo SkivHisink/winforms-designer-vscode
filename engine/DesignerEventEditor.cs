@@ -19,6 +19,13 @@ namespace WinFormsDesigner.Engine
         public bool AlreadyWired { get; init; }
         public string? DesignerText { get; init; }
         public string? CodeText { get; init; }
+        /// <summary>The code-behind stub as a MINIMAL edit against the codeText the caller passed in: insert
+        /// <see cref="CodeInsertText"/> at this offset (-1 = no code-behind edit). The host applies THIS rather than
+        /// writing <see cref="CodeText"/> over the whole file: a full-document replace is built from a snapshot, so a
+        /// concurrent edit landing during the awaited write — a formatter, a source generator, the user typing — was
+        /// silently erased by it. A one-point insert leaves the rest of the document alone.</summary>
+        public int CodeInsertOffset { get; init; } = -1;
+        public string? CodeInsertText { get; init; }
         public bool StubCreated { get; init; }
     }
 
@@ -193,46 +200,117 @@ namespace WinFormsDesigner.Engine
         /// <summary>Methods in the FORM class whose signature matches an event delegate: same parameter count,
         /// matching parameter type simple-names, and the same void-ness. Best-effort syntactic match (no
         /// semantic model) — good enough to offer "compatible handlers" in the dropdown.</summary>
+        /// <param name="returnTypeName">The delegate's reflected return type FullName ("System.Void" for void).</param>
         public static List<string> FindCompatibleHandlers(string codeText, string formClassName,
-            IReadOnlyList<string> paramTypeNames, bool returnsVoid)
+            IReadOnlyList<string> paramTypeNames, string returnTypeName)
         {
             var result = new List<string>();
             var root = CSharpSyntaxTree.ParseText(codeText).GetRoot();
-            var cls = root.DescendantNodes().OfType<ClassDeclarationSyntax>().FirstOrDefault(c => c.Identifier.Text == formClassName);
-            if (cls == null) return result;
-            foreach (var m in cls.Members.OfType<MethodDeclarationSyntax>())
+            var aliases = UsingAliases(root);
+            bool wantVoid = string.Equals(returnTypeName, "System.Void", StringComparison.Ordinal);
+            // Across every partial of the form — and ONLY the form (identity, not simple name; see CodeBehindFormParts).
+            foreach (var m in CodeBehindFormParts(root, formClassName).SelectMany(c => c.Members.OfType<MethodDeclarationSyntax>()))
             {
                 var ps = m.ParameterList.Parameters;
                 if (ps.Count != paramTypeNames.Count) continue;
                 bool mVoid = m.ReturnType is PredefinedTypeSyntax pt && pt.Keyword.IsKind(SyntaxKind.VoidKeyword);
-                if (mVoid != returnsVoid) continue;
+                if (mVoid != wantVoid) continue;
+                // A NON-void return type has to match too. Only void-ness was compared, so a `delegate int Query(...)`
+                // happily offered `string Wrong(…)` — an incompatible method group.
+                if (!wantVoid && !TypeSimpleNameMatches(m.ReturnType.ToString(), returnTypeName, aliases)) continue;
                 bool ok = true;
                 for (int i = 0; i < ps.Count; i++)
                 {
-                    if (!TypeSimpleNameMatches(ps[i].Type?.ToString() ?? "", paramTypeNames[i])) { ok = false; break; }
+                    // ref/out/in change the signature and this comparison can't see them on the delegate side (a
+                    // by-ref delegate parameter is refused upstream anyway), so a modifier here means "can't decide" →
+                    // don't offer it. `params` is not part of the method-group conversion, so it is allowed through.
+                    if (ps[i].Modifiers.Any(mod => mod.IsKind(SyntaxKind.RefKeyword)
+                                                || mod.IsKind(SyntaxKind.OutKeyword)
+                                                || mod.IsKind(SyntaxKind.InKeyword))) { ok = false; break; }
+                    if (!TypeSimpleNameMatches(ps[i].Type?.ToString() ?? "", paramTypeNames[i], aliases)) { ok = false; break; }
                 }
                 if (ok) result.Add(m.Identifier.Text);
             }
             return result;
         }
 
-        /// <summary>Compare a syntactic parameter type (e.g. "object", "System.EventArgs", "MouseEventArgs")
-        /// against a reflected type's simple Name (e.g. "Object", "EventArgs", "MouseEventArgs").</summary>
-        private static bool TypeSimpleNameMatches(string syntacticType, string reflectedName)
+        /// <summary>
+        /// Does a syntactic parameter type (as WRITTEN in the code-behind: "object", "System.EventArgs",
+        /// "MouseEventArgs", "global::System.EventArgs") denote <paramref name="reflectedFullName"/> (the event
+        /// delegate's real parameter type, e.g. "System.EventArgs")?
+        ///
+        /// A QUALIFIED spelling must agree with the real namespace: this used to keep only the last segment, so a
+        /// user's own `Custom.EventArgs` matched `System.EventArgs`, the dropdown offered that handler, and wiring it
+        /// emitted `Click += new EventHandler(this.WrongClick)` — a method group that isn't compatible with
+        /// EventHandler, so the project no longer compiled. Partial qualification ("Windows.Forms.MouseEventArgs")
+        /// is legal C# and still matches, on a segment boundary.
+        ///
+        /// An UNQUALIFIED spelling is still matched by simple name: deciding it exactly would need a semantic model
+        /// (which using-directives are in scope), and a file where the bare name resolves to a DIFFERENT type than the
+        /// delegate's would have to import a same-named type — at which point the wiring the user picked is the least
+        /// of it. This is a real (narrow) limit, not a claim of completeness.
+        /// </summary>
+        private static bool TypeSimpleNameMatches(string syntacticType, string reflectedFullName, HashSet<string> usingAliases)
         {
             string s = syntacticType.Trim();
-            int dot = s.LastIndexOf('.');
-            if (dot >= 0) s = s.Substring(dot + 1);
-            // map C# keyword aliases to their CLR type Name
+            string full = reflectedFullName.Replace('+', '.');          // reflection writes a nested type as Outer+Inner
+
+            int sep = s.IndexOf("::", StringComparison.Ordinal);
+            if (sep >= 0)
+            {
+                // `global::Ns.T` is bound to the root namespace and is therefore decidable. An EXTERN ALIAS
+                // (`MyAsm::Ns.T`) names a specific assembly — stripping it and matching the rest would ignore exactly
+                // the binding that decides compatibility, so refuse rather than guess.
+                if (!string.Equals(s.Substring(0, sep), "global", StringComparison.Ordinal)) return false;
+                return string.Equals(s.Substring(sep + 2), full, StringComparison.Ordinal);
+            }
+
+            int dot = s.IndexOf('.');
+            if (dot >= 0)
+            {
+                // A `using X = …;` alias makes the first segment mean something this comparison cannot see:
+                // `using Forms = Product.CustomForms;` + `Forms.MouseEventArgs` is NOT
+                // System.Windows.Forms.MouseEventArgs. Refuse.
+                if (usingAliases.Contains(s.Substring(0, dot))) return false;
+                // EXACT match only. A suffix match ("does the real name END with what was written?") looked like a
+                // reasonable allowance for partial qualification, but it accepted `Forms.MouseEventArgs` for
+                // `System.Windows.Forms.MouseEventArgs` — and a plain `using Product;` makes `Forms.MouseEventArgs`
+                // resolve to `Product.Forms.MouseEventArgs` with no alias to detect. Deciding that needs a
+                // semantic model. So a partially-qualified spelling is simply not offered: a false refusal, and the
+                // dropdown omitting a handler is recoverable in a way a non-compiling project is not.
+                return string.Equals(s, full, StringComparison.Ordinal);
+            }
+
+            // written bare → compare with the real type's simple name, mapping C# keyword aliases to CLR names.
+            if (usingAliases.Contains(s)) return false;                 // `using EventArgs = Custom.EventArgs;`
+            string simple = full.Substring(full.LastIndexOf('.') + 1);
             s = s switch
             {
-                "object" => "Object", "string" => "String", "bool" => "Boolean", "int" => "Int32",
-                "long" => "Int64", "short" => "Int16", "byte" => "Byte", "double" => "Double",
-                "float" => "Single", "char" => "Char", "decimal" => "Decimal", "uint" => "UInt32",
+                "object" => "Object",
+                "string" => "String",
+                "bool" => "Boolean",
+                "int" => "Int32",
+                "long" => "Int64",
+                "short" => "Int16",
+                "byte" => "Byte",
+                "double" => "Double",
+                "float" => "Single",
+                "char" => "Char",
+                "decimal" => "Decimal",
+                "uint" => "UInt32",
                 _ => s,
             };
-            return string.Equals(s, reflectedName, StringComparison.Ordinal);
+            return string.Equals(s, simple, StringComparison.Ordinal);
         }
+
+        /// <summary>Names introduced by `using X = …;` in this file. A written type whose first segment is one of them
+        /// cannot be compared against a reflected name without resolving the alias, so it is refused.</summary>
+        private static HashSet<string> UsingAliases(SyntaxNode root) =>
+            new HashSet<string>(
+                root.DescendantNodes().OfType<UsingDirectiveSyntax>()
+                    .Where(u => u.Alias != null)
+                    .Select(u => u.Alias!.Name.Identifier.ValueText),
+                StringComparer.Ordinal);
 
         private static (List<string> nonTarget, int targetCount) ClassifyWirings(string code, string comp, string evt, bool isRoot)
         {
@@ -266,8 +344,9 @@ namespace WinFormsDesigner.Engine
         public static bool HasMethod(string codeText, string formClassName, string name)
         {
             var root = CSharpSyntaxTree.ParseText(codeText).GetRoot();
-            var cls = root.DescendantNodes().OfType<ClassDeclarationSyntax>().FirstOrDefault(c => c.Identifier.Text == formClassName);
-            return cls != null && cls.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == name);
+            return CodeBehindFormParts(root, formClassName)
+                .SelectMany(c => c.Members.OfType<MethodDeclarationSyntax>())
+                .Any(m => m.Identifier.Text == name);
         }
 
         /// <summary>A plain C# identifier (letter/underscore start, then letters/digits/underscore). Used to
@@ -285,6 +364,12 @@ namespace WinFormsDesigner.Engine
         {
             public bool Ok { get; init; }
             public string? NewText { get; init; }
+            /// <summary>The stub as a MINIMAL edit: insert <see cref="InsertText"/> at this offset in the ORIGINAL
+            /// text. Identical in effect to <see cref="NewText"/>, but it lets the host apply a one-point insert
+            /// instead of replacing the whole document — so a concurrent edit elsewhere in the user's .cs survives.
+            /// -1 when there is no edit.</summary>
+            public int InsertOffset { get; init; } = -1;
+            public string? InsertText { get; init; }
             public string Reason { get; init; } = "";
         }
 
@@ -302,10 +387,10 @@ namespace WinFormsDesigner.Engine
                 return new StubResult { Ok = false, Reason = "handler name is not a valid identifier: " + handler };
             }
             var root = CSharpSyntaxTree.ParseText(codeText).GetRoot();
-            // require the form class BY NAME — never fall back to "the first class", which could insert the
-            // stub into a nested/helper class and corrupt the file.
-            var cls = root.DescendantNodes().OfType<ClassDeclarationSyntax>()
-                .FirstOrDefault(c => c.Identifier.Text == formClassName);
+            // require the form class BY ITS FULL IDENTITY — never "the first class", nor the first SIMPLE-name match,
+            // either of which inserts the stub into a nested/helper/same-named-other-namespace class and corrupts the
+            // file (the wiring would then reference a method the form doesn't have).
+            var cls = CodeBehindFormClass(root, formClassName);
             if (cls == null)
             {
                 return new StubResult { Ok = false, Reason = "form class '" + formClassName + "' not found in code-behind" };
@@ -338,21 +423,46 @@ namespace WinFormsDesigner.Engine
             {
                 return new StubResult { Ok = false, Reason = "generated stub did not parse" };
             }
-            return new StubResult { Ok = true, NewText = edited };
+            return new StubResult { Ok = true, NewText = edited, InsertOffset = lineStart, InsertText = method };
         }
 
         // ---- shared syntax helpers (own copies — DesignerPropertyEditor stays untouched, safe-save) ----
 
-        private static MethodDeclarationSyntax? FindInitializeComponent(string code)
-        {
-            var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-            {
-                var m = cls.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(x => x.Identifier.Text == "InitializeComponent");
-                if (m != null) return m;
-            }
-            return null;
-        }
+        /// <summary>
+        /// The form's declarations in the paired CODE-BEHIND (.cs), identified by the FULL identity the designer side
+        /// resolved (LoadedGraph.ClassQualifiedName — namespace + enclosing type chain + generic arity). Empty when the
+        /// file declares no such class (→ the caller fails closed). A code-behind may legitimately split the form
+        /// across partials in one file, so members are gathered across all of them and an insert goes to the first
+        /// (VS does the same).
+        ///
+        /// This used to match `c.Identifier.Text == formClassName`, first hit — a SIMPLE name. That is not an identity:
+        /// a .cs holding `namespace Other { class Form1 }` ahead of the real `namespace Product.Ui { partial class Form1 }`
+        /// made the events dropdown offer Other.Form1's methods, made HasMethod validate against Other.Form1, and wrote
+        /// new stubs INTO Other.Form1 — while the wiring `this.button1.Click += this.button1_Click` went into
+        /// Product.Ui.Form1, which has no such method. Both edits parse, the save reports success, and the project no
+        /// longer compiles. The designer FILE's class rule lives in FormClassResolver; a code-behind normally
+        /// declares no InitializeComponent, so it needs this separate — but equally strict — rule.
+        ///
+        /// The comparison is ALWAYS the full identity, with no simple-name fallback for a dotless name: a form in the
+        /// GLOBAL namespace has no dot in its identity, and falling back there would re-open the very hole above for
+        /// a nested `class Helper { class Form1 { … } }` decoy ("Helper+Form1" is correctly not "Form1").
+        /// </summary>
+        private static IReadOnlyList<ClassDeclarationSyntax> CodeBehindFormParts(SyntaxNode root, string formClassName) =>
+            root.DescendantNodes().OfType<ClassDeclarationSyntax>()
+                .Where(c => FormClassResolver.QualifiedName(c) == formClassName)
+                .ToList();
+
+        /// <summary>The single code-behind declaration to INSERT into: the first partial of the form. Null when the
+        /// file declares no matching class.</summary>
+        private static ClassDeclarationSyntax? CodeBehindFormClass(SyntaxNode root, string formClassName) =>
+            CodeBehindFormParts(root, formClassName).FirstOrDefault();
+
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        private static MethodDeclarationSyntax? FindInitializeComponent(string code) =>
+            FormClassResolver.InitMethod(CSharpSyntaxTree.ParseText(code).GetRoot());
 
         private static string NormalizeStmt(string s) => new string(s.Where(c => !char.IsWhiteSpace(c)).ToArray());
 

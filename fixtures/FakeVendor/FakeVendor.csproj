@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- M2 (ADR 0001) — an MIT, in-repo net48 control library that MIMICS the DevExpress design-time patterns the
+       interpreter must handle, so the differential comparator can validate vendor-like construction WITHOUT a real
+       vendor install (which is legally uncommittable). Deliberately exercises: an Appearance sub-object (property
+       chain assignment onto a vendor value), an ISupportInitialize control whose EndInit finalizes layout (real
+       Begin/EndInit replay), and a component whose setters observe design-time state. NOT a substitute for real-vendor
+       certification (that needs the maintainer's DevExpress environment) — it is the reproducible CI corpus. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>FakeVendor</AssemblyName>
+    <RootNamespace>FakeVendor</RootNamespace>
+  </PropertyGroup>
+
+</Project>

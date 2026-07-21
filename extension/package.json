@@ -3,8 +3,8 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "0.12.0",
-  "preview": true,
+  "version": "1.0.0",
+  "preview": false,
   "license": "MIT",
   "author": {
     "name": "SkivHisink",
@@ -37,6 +37,7 @@
     "forms",
     ".net",
     "dotnet",
+    "net10",
     "net9",
     "net framework",
     "net48",
@@ -62,6 +63,9 @@
     "untrustedWorkspaces": {
       "supported": false,
       "description": "%untrusted.description%"
+    },
+    "virtualWorkspaces": {
+      "supported": false
     }
   },
   "contributes": {
@@ -126,6 +130,10 @@
       {
         "command": "winformsDesigner.editImageListImages",
         "title": "%command.editImageListImages.title%"
+      },
+      {
+        "command": "winformsDesigner.releaseAssembly",
+        "title": "%command.releaseAssembly.title%"
       }
     ],
     "keybindings": [
@@ -187,6 +195,15 @@
           "scope": "resource",
           "markdownDescription": "%config.assemblyPath.description%"
         },
+        "winformsDesigner.net48.probeDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "markdownDescription": "%config.net48.probeDirectories.description%"
+        },
         "winformsDesigner.language": {
           "type": "string",
           "default": "en",
@@ -226,14 +243,19 @@
   "scripts": {
     "build": "node ./build.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "e2e": "node dist/e2e.cjs",
     "webview-e2e": "node dist/webview-e2e.cjs",
+    "extension-host-e2e": "node ../scripts/run-extension-host-tests.mjs",
     "l10n:parity": "node ../scripts/ci-l10n-parity.mjs",
-    "bundle-engine": "dotnet publish ../engine -c Release -o engine",
+    "release:preflight": "node ../scripts/release-preflight.mjs",
+    "perf:baseline": "node dist/performance-baseline.cjs",
+    "bundle-engine": "dotnet publish ../engine -c Release -f net10.0-windows -r win-x64 --self-contained false -o engine",
     "bundle-engine-net48": "dotnet publish ../engine-net48 -c Release -o engine-net48",
     "copy-license": "node -e \"require('fs').copyFileSync('../LICENSE','LICENSE')\"",
     "copy-changelog": "node -e \"require('fs').copyFileSync('../CHANGELOG.md','CHANGELOG.md')\"",
-    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run bundle-engine-net48 && npm run copy-license && npm run copy-changelog"
+    "copy-notices": "node -e \"require('fs').copyFileSync('../THIRD-PARTY-NOTICES.md','THIRD-PARTY-NOTICES.md')\"",
+    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run bundle-engine-net48 && npm run copy-license && npm run copy-changelog && npm run copy-notices"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.45",
@@ -241,9 +263,11 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@types/vscode": "^1.84.0",
-    "esbuild": "^0.23.0",
+    "@types/vscode": "1.84.0",
+    "@vscode/test-electron": "3.0.0",
+    "esbuild": "^0.25.0",
     "jsdom": "^29.1.1",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.10"
   }
 }

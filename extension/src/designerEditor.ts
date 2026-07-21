@@ -7,9 +7,12 @@ import {
   LayoutControl,
   ToolStripItemBounds,
   ComponentDesc,
+  VendorSmartTag,
   renderWithLayout,
   renderCompiledWithLayout,
+  renderInterpretedWithLayout,
   describeCompiledComponent,
+  describeInterpretedComponent,
   setCompiledPropertyLive,
   resetCompiledPropertyLive,
   setCompiledCollectionLive,
@@ -23,6 +26,7 @@ import {
   addCompiledControl,
   selectCompiledTabAt,
   hitTestCompiledTab,
+  hitTestInterpretedTab,
   CompiledEdit,
   RenderLayout,
   ColumnItem,
@@ -52,6 +56,7 @@ import {
   setImageResource,
   serializeImageList,
   deserializeImageList,
+  setCompiledImageListLive,
   discardCompiledLive,
   setImageList,
   generateEventHandler,
@@ -74,58 +79,82 @@ import {
   addCompiledTab,
   removeTabPage,
   removeCompiledTab,
+  listCompiledVendorSmartTags,
 } from './engineClient';
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
-import { findNearestCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
+import { findNearestCsproj, findOwningCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
 import { t, tn, injectL10nScript } from './i18n';
 import { categorizeUnrepresentable } from './renderDiagnostics';
+
+/** One entry of the vendor's declared Tasks menu as the CANVAS sees it: the vendor's label, plus the verb this
+* designer runs for it (null → shown disabled, because we have no source-first equivalent). See vendorTagsFor. */
+interface VendorTagView {
+  label: string;
+  methodName: string;
+  verb: 'addTab' | 'deleteTab' | 'showProperties' | null;
+  closesPanel: boolean;
+}
 import { isLocalizableDesigner } from './localizable';
-import { chooseFormNoticeKind } from './formNotice';
+import { chooseFormNoticeKind, FormNoticeKind } from './formNotice';
 import { binaryResxCount } from './binaryResx';
 import { isByteLocalEdit } from './byteLocal';
 import { refuseWhileRenderFailed } from './renderGate';
 import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
 
-export type EngineKind = 'net9' | 'net48';
+export type EngineKind = 'modern' | 'net48';
 type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
 type AssemblyOverride = (file: string) => string | undefined;
+/** 1.0.0 — give the user's build output back: release every handle the net48 engine holds on `assemblyPath`'s
+* output dir (it unloads the child AppDomain that loaded it). True = a domain was actually unloaded. Registered
+* at activation, because extension.ts — not the hub — owns the engine handles, and this must NEVER start an
+* engine just to release: one that isn't running holds nothing. See engineClient.releaseCompiledAssembly. */
+type ReleaseNet48Output = (assemblyPath: string) => Promise<boolean>;
 /** Persist a form's control-source override (the per-form `controlSources` map) — the write side of
- *  AssemblyOverride, used by the T1.3 cross-runtime switch to remember the net48 compiled preview. */
+* AssemblyOverride, used by the T1.3 cross-runtime switch to remember the net48 compiled preview. */
 type SetAssemblyOverride = (file: string, dll: string) => Promise<void>;
 
 /** A .NET (Core/5+) build always emits `<name>.deps.json` (apps also `.runtimeconfig.json`) beside the
- *  assembly; a .NET Framework build emits neither. That sidecar's presence cleanly says which engine can load
- *  the control assembly: none → net48 (Framework/DevExpress compiled preview), else → net9. No assembly → net9. */
+* assembly; a .NET Framework build emits neither. That sidecar's presence cleanly says which engine can load
+* the control assembly: none → net48 (Framework/DevExpress compiled preview), else → modern. No assembly → modern. */
 function detectEngineKind(assemblyPath: string | undefined): EngineKind {
-  if (!assemblyPath) return 'net9';
+  if (!assemblyPath) return 'modern';
   const base = assemblyPath.replace(/\.(dll|exe)$/i, '');
   try {
-    if (fs.existsSync(base + '.deps.json') || fs.existsSync(base + '.runtimeconfig.json')) return 'net9';
+    if (fs.existsSync(base + '.deps.json') || fs.existsSync(base + '.runtimeconfig.json')) return 'modern';
   } catch { /* fall through to Framework */ }
   return 'net48';
 }
 
-/** Canvas messages the net48 compiled preview doesn't support (kept for future ops that can't be mirrored on the
- *  live compiled instance). Currently EMPTY: every edit — property grid, drag/resize, add, remove, z-order, and
- *  now cut/paste — is mirrored (net9 splices the text; net48 mutates the live instance for the picture). 'save'
- *  just flushes the committed .Designer.cs text. */
-const NET48_READONLY_BLOCKED = new Set<string>([]);
 /**
- * 0.10.0 trust-floor — every webview message that MUTATES the form (persists the .Designer.cs, and/or
- * writes the .resx / the code-behind stub directly). On a [Localizable(true)] form the extension is a
- * read-only preview: each of these is refused up front (before any live-picture mutation or file
- * write), because an edit would either splice a direct `this.x.Prop = …` into the .Designer.cs while
- * the real value lives in the .resx (a silent divergence VS drops on its next save) or write the
- * .resx / code-behind of a form the banner promised not to touch. commit() is the airtight data-loss
- * backstop for the .Designer.cs (the single funnel every persisted text edit flows through); this set
- * additionally covers the direct-file-write ops (importImage/clearImage → .resx, createHandler → .cs)
- * and gives an honest up-front refusal. Spans BOTH message handlers: the canvas (onMessage) and the
- * Properties panel (WinFormsDesignerProvider.resolveWebviewView). Read-only messages (pick, select,
- * copy, tabClick navigation, every list* collection read, navigate/list handler reads, viewCode,
- * learnMore, showProperties, chooseItems, ready, save) are deliberately absent so inspection still
- * works. Keep in sync with the mutating branches of BOTH handlers.
- */
+* 1.0.0 — the refcount key for a .NET Framework build output: its normalized output DIRECTORY.
+*
+* The engine keys its child AppDomain — and therefore every file handle it pins — on the output DIRECTORY, not on
+* the assembly file: one domain serves every form built into the same bin dir, so releasing on behalf of one form
+* releases them all (see DomainManager.ReleaseBinDir). The host must refcount at exactly that granularity.
+* Refcounting per assembly FILE would look right and be wrong: two designers whose forms live in different dlls of
+* one bin dir (an app + its control library) share ONE domain, so closing either would yank it out from under the
+* other — the "released while still in use" bug, which costs the survivor a full domain + assembly reload.
+*/
+function net48OutputKey(assemblyPath: string): string {
+  return normalize(path.dirname(assemblyPath));
+}
+
+/**
+* 0.10.0 trust-floor — every webview message that MUTATES the form (persists the .Designer.cs, and/or
+* writes the .resx / the code-behind stub directly). On a [Localizable(true)] form the extension is a
+* read-only preview: each of these is refused up front (before any live-picture mutation or file
+* write), because an edit would either splice a direct `this.x.Prop = …` into the .Designer.cs while
+* the real value lives in the .resx (a silent divergence VS drops on its next save) or write the
+* .resx / code-behind of a form the banner promised not to touch. commit() is the airtight data-loss
+* backstop for the .Designer.cs (the single funnel every persisted text edit flows through); this set
+* additionally covers the direct-file-write ops (importImage/clearImage → .resx, createHandler → .cs)
+* and gives an honest up-front refusal. Spans BOTH message handlers: the canvas (onMessage) and the
+* Properties panel (WinFormsDesignerProvider.resolveWebviewView). Read-only messages (pick, select,
+* copy, tabClick navigation, every list* collection read, navigate/list handler reads, viewCode,
+* learnMore, showProperties, chooseItems, ready, save) are deliberately absent so inspection still
+* works. Keep in sync with the mutating branches of BOTH handlers.
+*/
 const LOCALIZABLE_BLOCKED = new Set<string>([
   // canvas (designer.js → onMessage)
   'manipulate', 'manipulateGroup', 'edit', 'alignControls', 'centerInForm', 'resizeControls',
@@ -138,29 +167,29 @@ const LOCALIZABLE_BLOCKED = new Set<string>([
   'addControl', 'addComponent', 'deleteSelected',
 ]);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
- *  diffs these against the current toolbox membership to add/remove/hide items. */
+* diffs these against the current toolbox membership to add/remove/hide items. */
 type ChooseRow = { fqn: string; name: string; namespace?: string; assemblyName?: string; fromProject?: boolean; checked: boolean };
 
 /** Sentinel value of the events dropdown's "(new handler…)" option — must match the webviews. */
 const NEW_HANDLER = 'new';
 
 /** The "clear the reference" option in a component-reference dropdown (AcceptButton/CancelButton/ContextMenuStrip…).
- *  A fixed English token emitted by BOTH engines (DesignerDescribe.ReferenceNone / CompiledDescriber.ReferenceNone);
- *  the host maps a pick of it to `null`. Never a real field name (field names are valid C# identifiers). */
+* A fixed English token emitted by BOTH engines (DesignerDescribe.ReferenceNone / CompiledDescriber.ReferenceNone);
+* the host maps a pick of it to `null`. Never a real field name (field names are valid C# identifiers). */
 const REFERENCE_NONE = '(none)';
 
 /** The synthetic "the ROOT form itself" reference option (DesignerDescribe.ReferenceThis / CompiledDescriber.ReferenceThis).
- *  The host maps a pick of it to a bare `this` splice (net9) / the ReferenceThis token (net48 resolves it to the live root).
- *  Like "(none)" it is a parenthesised token that can never be a real field name. */
+* The host maps a pick of it to a bare `this` splice (net9) / the ReferenceThis token (net48 resolves it to the live root).
+* Like "(none)" it is a parenthesised token that can never be a real field name. */
 const REFERENCE_THIS = '(this)';
 
 /**
- * Map a file the user opened to the .Designer.cs the engine should read — the "open Form1.cs → see the
- * designer" mapping (the .Designer.cs is the generated partner, like in Visual Studio).
- *   Foo.cs            → Foo.Designer.cs  (only when that sibling exists)
- *   Foo.Designer.cs   → itself           (graceful: reopened the generated file directly)
- *   Foo.cs (no sibling)→ null
- */
+* Map a file the user opened to the .Designer.cs the engine should read — the "open Form1.cs → see the
+* designer" mapping (the .Designer.cs is the generated partner, like in Visual Studio).
+* Foo.cs → Foo.Designer.cs (only when that sibling exists)
+* Foo.Designer.cs → itself (graceful: reopened the generated file directly)
+* Foo.cs (no sibling)→ null
+*/
 export function resolveDesignerFile(opened: string): string | null {
   if (/\.Designer\.cs$/i.test(opened)) {
     return fs.existsSync(opened) ? opened : null;
@@ -179,11 +208,11 @@ export function hasDesignerSibling(file: string): boolean {
 }
 
 /**
- * The file the "Open Designer" action should open the custom editor on.
- *   Foo.cs (+ sibling)  → Foo.cs
- *   Foo.Designer.cs     → Foo.cs if it exists, else Foo.Designer.cs itself
- *   Foo.cs (no sibling) → null
- */
+* The file the "Open Designer" action should open the custom editor on.
+* Foo.cs (+ sibling) → Foo.cs
+* Foo.Designer.cs → Foo.cs if it exists, else Foo.Designer.cs itself
+* Foo.cs (no sibling) → null
+*/
 export function resolveOpenTarget(file: string): string | null {
   if (/\.Designer\.cs$/i.test(file)) {
     const partner = file.slice(0, -'.Designer.cs'.length) + '.cs';
@@ -202,11 +231,11 @@ export function canOpenDesigner(file: string): boolean {
 }
 
 /**
- * Coordinates the ACTIVE canvas designer (custom editor) with the two shared, dockable VS Code WebviewViews
- * (Toolbox + Properties). There is one pair of side views but possibly several open designer editors; the
- * views always mirror the focused one. Sessions push grid/toolbox state through here (gated to the active
- * session); the view providers route user actions back to `activeSession`. Singleton.
- */
+* Coordinates the ACTIVE canvas designer (custom editor) with the two shared, dockable VS Code WebviewViews
+* (Toolbox + Properties). There is one pair of side views but possibly several open designer editors; the
+* views always mirror the focused one. Sessions push grid/toolbox state through here (gated to the active
+* session); the view providers route user actions back to `activeSession`. Singleton.
+*/
 export class DesignerHub {
   private static _instance: DesignerHub | undefined;
   static get instance(): DesignerHub { return (this._instance ??= new DesignerHub()); }
@@ -221,24 +250,24 @@ export class DesignerHub {
 
   private memento: vscode.Memento | undefined;
   /** The designer clipboard (Cut/Copy → Paste), shared across all open designer editors like VS. Each entry is
-   *  an OPAQUE engine blob (from copyControl) handed back to pasteControl; `label` is a human display name. */
+   * an OPAQUE engine blob (from copyControl) handed back to pasteControl; `label` is a human display name. */
   clipboard: { clips: string[]; label: string } | null = null;
 
   /** Items the user ADDED via "Choose Items" (each tagged with `category` = the toolbox tab it landed in).
-   *  Merged into the toolbox palette and persisted, so a chosen library control survives reloads. */
+   * Merged into the toolbox palette and persisted, so a chosen library control survives reloads. */
   chosenItems: ToolboxItemInfo[] = [];
   /** Framework palette items the user UNCHECKED in "Choose Items" — filtered out of the toolbox. */
   private hidden = new Set<string>();
 
   /** The color/font palette (KnownColors + installed fonts + unit suffixes). Engine-wide static, so it's
-   *  fetched once by the first session and reused by all — cached here, re-pushed to the panel on refresh. */
+   * fetched once by the first session and reused by all — cached here, re-pushed to the panel on refresh. */
   private palette: DesignerPaletteInfo | undefined;
   /** In-flight fetch, memoized so concurrent first-renders (two sessions, or refreshToolbox+fullRender racing)
-   *  issue exactly ONE GetDesignerPalette RPC instead of duplicating the round-trip. */
+   * issue exactly ONE GetDesignerPalette RPC instead of duplicating the round-trip. */
   private paletteFetch: Promise<DesignerPaletteInfo> | undefined;
   get hasPalette(): boolean { return this.palette !== undefined; }
   /** Fetch the palette once (engine-wide static, machine-global) and cache it. Idempotent; a failed fetch
-   *  clears the latch so a later call retries. */
+   * clears the latch so a later call retries. */
   async ensurePalette(fetch: () => Promise<DesignerPaletteInfo>): Promise<void> {
     if (this.palette) return;
     if (!this.paletteFetch) this.paletteFetch = fetch();
@@ -281,7 +310,7 @@ export class DesignerHub {
   /** When a session closes: if it owned the panel, blank it (another focus will re-populate). */
   clearIfActive(s: DesignerSession): void { if (this.active === s) this.setActive(null); }
   /** Re-fire the active-changed signal so the status bar re-reads the active session (e.g. after a render
-   *  determines the engine kind / compiled-preview badge). */
+   * determines the engine kind / compiled-preview badge). */
   refreshStatus(): void { this._onActive.fire(); }
 
   toPanel(msg: unknown): void { void this.panel?.postMessage(msg); }
@@ -289,7 +318,7 @@ export class DesignerHub {
   pushPanel(s: DesignerSession, msg: unknown): void { if (this.active === s) this.toPanel(msg); }
 
   /** Called by the panel provider when its WebviewView resolves — remember the webview + its extensionUri so a
-   *  live language switch can re-emit the panel HTML with the new locale's injected catalog. */
+   * live language switch can re-emit the panel HTML with the new locale's injected catalog. */
   attachPanel(webview: vscode.Webview, extensionUri: vscode.Uri): void {
     this.panel = webview;
     this.panelExtensionUri = extensionUri;
@@ -297,26 +326,106 @@ export class DesignerHub {
   registerSession(s: DesignerSession): void { this.openSessions.add(s); }
   unregisterSession(s: DesignerSession): void { this.openSessions.delete(s); }
   /** Live language switch (`winformsDesigner.language` changed): re-emit the panel + every open designer canvas so
-   *  their injected catalog + host-built HTML pick up the new locale immediately. Each reloaded webview re-sends
-   *  `ready`, which rehydrates it (panel → refreshViews, canvas → fullRender). The manifest "chrome" (command
-   *  palette, settings page) still needs a window reload — that's what the accompanying toast offers. */
+   * their injected catalog + host-built HTML pick up the new locale immediately. Each reloaded webview re-sends
+   * `ready`, which rehydrates it (panel → refreshViews, canvas → fullRender). The manifest "chrome" (command
+   * palette, settings page) still needs a window reload — that's what the accompanying toast offers. */
   rebuildOpenWebviews(): void {
     if (this.panel && this.panelExtensionUri) this.panel.html = panelHtml(this.panel, this.panelExtensionUri);
     for (const s of [...this.openSessions]) s.rebuildHtml();
+  }
+
+  /** Re-render sessions whose out-of-process engine exited. A null delay means the crash-loop guard paused
+   * automatic restarts; those sessions remain safely read-only until the next explicit render/reload. */
+  handleEngineCrash(kind: EngineKind, delayMs: number | null): void {
+    for (const session of [...this.openSessions]) session.handleEngineCrash(kind, delayMs);
+  }
+
+  /** 1.0.0 — wire the "hand the build output back" doer (call once at activation; extension.ts owns the engines).
+   * Unset until then, which is safe: no engine can be running before activation, so nothing is pinned. */
+  private releaseNet48: ReleaseNet48Output | undefined;
+  setNet48Release(release: ReleaseNet48Output): void { this.releaseNet48 = release; }
+
+  /**
+   * 1.0.0 — the .NET Framework build outputs the currently-open designers render from, deduplicated by output
+   * DIRECTORY (see net48OutputKey — the granularity the engine pins at). Drives the release-for-rebuild command:
+   * one release per distinct dir is all it takes to free every one of them.
+   */
+  net48OutputsInUse(): string[] {
+    const byDir = new Map<string, string>();
+    for (const s of this.openSessions) {
+      const asm = s.isCompiledPreview ? s.controlAssembly : undefined;
+      if (asm) byDir.set(net48OutputKey(asm), asm);
+    }
+    return [...byDir.values()];
+  }
+
+  /**
+   * 1.0.0 — a net48 session closed: give its build output back, but ONLY if no other open designer still renders
+   * from that same output dir. Two designers on forms from one project is the NORMAL case, and releasing under a
+   * live one would unload the very domain it draws from, costing it a full domain + assembly reload on its next
+   * render — precisely the regression this refcount exists to prevent.
+   *
+   * Callers pass their own assembly AFTER unregistering themselves (see DesignerSession.dispose), so the scan below
+   * counts only the sessions that are genuinely still open.
+   */
+  releaseNet48OutputIfUnused(asm: string): void {
+    const key = net48OutputKey(asm);
+    for (const s of this.openSessions) {
+    if (s.isCompiledPreview && s.controlAssembly && net48OutputKey(s.controlAssembly) === key) return; // still in use
+    }
+    // Fire-and-forget: the caller (dispose) is synchronous and this is an async RPC. The registered doer already
+    // swallows + logs its own failures; this catch is the contract guard that keeps a rejection from ever becoming
+    // an unhandled rejection during editor teardown. A release that fails costs only the handles staying held
+    // until the next release / engine exit — never correctness.
+    void this.releaseNet48?.(asm).catch(() => { /* never let a failed release escape a dispose */ });
   }
 }
 
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 
 /** 0.11.0 write-safety — process-global monotonic suffix for atomic-write temp files. Module scope (not per
- *  session) so two designer sessions in one host can't collide; combined with `process.pid` at the use site it
- *  is also unique across VS Code windows sharing a sibling .resx. */
+* session) so two designer sessions in one host can't collide; combined with `process.pid` at the use site it
+* is also unique across VS Code windows sharing a sibling .resx. */
 let atomicWriteSeq = 0;
 
 /** True when `e` is a VS Code "file not found" filesystem error (a delete of an already-absent file). Used so a
- *  resx-undo delete treats "already gone" as success but lets a real lock/permission failure propagate. */
+* resx-undo delete treats "already gone" as success but lets a real lock/permission failure propagate. */
 function isFileNotFound(e: unknown): boolean {
   return e instanceof vscode.FileSystemError && e.code === 'FileNotFound';
+}
+
+/**
+* Write `bytes` to `uri` ATOMICALLY: stage to a sibling temp file, then rename over the target. On a local
+* filesystem the rename is atomic, so a crash / disk-full / power-cut mid-write can never leave the target
+* TRUNCATED — the failure mode where a save destroys the very file it was persisting.
+*
+* 0.11.0 introduced this for the sibling .resx (which holds large binary blobs); 1.0 uses it for the .Designer.cs
+* too. Guarding the resource file but writing the FORM ITSELF with a plain writeFile had it backwards: a half-written
+* .resx costs an image, a half-written .Designer.cs costs the form.
+*
+* The temp lives in the SAME directory as the target so the rename stays on one volume; it is cleaned up if either
+* step fails. The temp name is unique across sessions AND processes (module-global counter + pid), so two windows
+* writing the same file can't stage onto each other's temp.
+*
+* A SYMLINK target is written THROUGH with a direct write (which follows the link), never temp+renamed — a rename
+* would replace the link entry with a regular file and destroy the link, leaving the real target stale (VS Code's
+* own disk provider declines atomic writes for symlinks for the same reason).
+*/
+async function atomicWrite(uri: vscode.Uri, bytes: Uint8Array): Promise<void> {
+    let isSymlink = false;
+    try { isSymlink = ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.SymbolicLink) !== 0; }
+    catch { /* not found / unreadable → treat as a normal new file (the atomic temp+rename path) */ }
+    if (isSymlink) { await vscode.workspace.fs.writeFile(uri, bytes); return; }
+    const tmp = uri.with({ path: `${uri.path}.wfd-${process.pid}-${atomicWriteSeq++}.tmp` });
+  try {
+      await vscode.workspace.fs.writeFile(tmp, bytes);
+      await vscode.workspace.fs.rename(tmp, uri, { overwrite: true });
+  } catch (e) {
+    // clean up a partially-staged temp on EITHER a failed write or a failed rename (an interrupted stage would
+    // otherwise leak a `.wfd-…tmp` sibling).
+      try { await vscode.workspace.fs.delete(tmp); } catch { /* best effort */ }
+    throw e;
+  }
 }
 
 /** Read a file's bytes, stripping a leading UTF-8 BOM and remembering it (so a save can re-add it). */
@@ -327,12 +436,12 @@ async function readDesignerBytesUri(uri: vscode.Uri): Promise<{ text: string; ha
 }
 
 /**
- * The editable payload of the designer custom editor: the `.Designer.cs` text, held IN MEMORY (never as an
- * open VS Code TextDocument). This is the key to issue #2 — applying designer edits to a `TextDocument` for
- * the generated file surfaces it as a dirty editor tab; owning the text here means the VISIBLE form tab
- * (Foo.cs) is the dirty/undoable thing and `.Designer.cs` is only written on save, like Visual Studio.
- * One document ⇄ one DesignerSession (supportsMultipleEditorsPerDocument is false).
- */
+* The editable payload of the designer custom editor: the `.Designer.cs` text, held IN MEMORY (never as an
+* open VS Code TextDocument). This is the key to issue #2 — applying designer edits to a `TextDocument` for
+* the generated file surfaces it as a dirty editor tab; owning the text here means the VISIBLE form tab
+* (Foo.cs) is the dirty/undoable thing and `.Designer.cs` is only written on save, like Visual Studio.
+* One document ⇄ one DesignerSession (supportsMultipleEditorsPerDocument is false).
+*/
 export class WinFormsDesignDocument implements vscode.CustomDocument {
   /** Live designer text the engine renders/edits (BOM-less, matching VS Code's getText() semantics). */
   designerText: string;
@@ -347,6 +456,17 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
   private readonly _onDispose = new vscode.EventEmitter<void>();
   readonly onDidDispose = this._onDispose.event;
 
+  /** Did the .Designer.cs actually exist when we took our baseline? A file that WAS there and is gone now was
+   * deleted by someone else — an external change the save must refuse, not silently recreate. Only a file that was
+   * never there is a free first write. */
+  private savedExisted: boolean;
+
+  /** True when the opening read FAILED for a reason other than "not there" (locked, permissions, provider error):
+   * we hold NO trustworthy baseline — not its text, not its BOM, not even whether it exists. Every write must
+   * refuse until a successful read establishes one, otherwise an unreadable EXISTING file is indistinguishable
+   * from an absent one and the deletion/conflict guards are simply bypassed. */
+  private _baselineUnknown: boolean;
+
   constructor(
     readonly uri: vscode.Uri,
     readonly designerFile: string | null,
@@ -354,13 +474,25 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     /** The real on-disk text. Differs from initialText only for a recovered (dirty) hot-exit backup. */
     savedText: string,
     hadBom: boolean,
+    savedExisted = false,
+    baselineUnknown = false,
   ) {
     this.designerText = initialText;
     this.savedDesignerText = savedText;
     this.hadBom = hadBom;
+    this.savedExisted = savedExisted;
+    this._baselineUnknown = baselineUnknown;
   }
 
   get isDirty(): boolean { return this.designerText !== this.savedDesignerText; }
+
+  /** No trustworthy on-disk baseline (the opening read failed for something other than "not there"). Read-only. */
+  get baselineUnknown(): boolean { return this._baselineUnknown; }
+  /** Latch the read-only state when a read FAILS after opening (deleted / locked / provider error): from that moment
+   * we no longer know what our buffer relates to. Only a successful read (adoptDiskBaseline) may clear it. */
+  markBaselineUnknown(): void { this._baselineUnknown = true; }
+  /** The BOM of the baseline we hold — so a clean BOM-only external change can be adopted rather than refused later. */
+  get bom(): boolean { return this.hadBom; }
 
   private bytesOf(text: string): Uint8Array {
     const body = Buffer.from(text, 'utf8');
@@ -370,6 +502,8 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
   /** Adopt the on-disk text as the new clean baseline (revert / external change while clean). */
   adoptDiskBaseline(text: string, hadBom: boolean): void {
     this.designerText = text; this.savedDesignerText = text; this.hadBom = hadBom; this.rev++;
+  this.savedExisted = true; // we just read it off disk …
+  this._baselineUnknown = false; // … so the baseline is trustworthy again
   }
 
   /** Persist to the .Designer.cs on disk (called by VS Code's save), preserving the original BOM. */
@@ -386,19 +520,67 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // must revert the file (or hand-resolve the recovered content). A CLEAN localizable form is never dirty
     // (isDirty === false → this is a no-op), so this never spuriously fails an ordinary save.
     if (this.isDirty && isLocalizableDesigner(snapshot)) throw new Error(t('status.localizableSaveRefused'));
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(this.designerFile), this.bytesOf(snapshot));
+    // Never clobber a change someone else made since our on-disk baseline. `savedDesignerText` is what WE last
+    // saw on disk; if the real file no longer matches it, an external writer (git checkout, Visual Studio, a
+    // generator) got there first and blindly writing `snapshot` would silently destroy their revision — exactly
+    // the "drops data on save" failure this designer is supposed to be fail-closed against. reloadFromDiskIfClean
+    // only adopts an external change while the buffer is CLEAN; a dirty buffer (or an event the watcher never
+    // delivered) leaves the baseline stale, and this is the backstop for both. Throwing keeps the document dirty
+    // and surfaces the reason, mirroring the localizable refusal above — the user resolves it by reverting (which
+    // adopts the disk text) or by saving the file elsewhere. The sibling .resx write path is already
+    // conflict-guarded; this closes the same gap on the primary artifact.
+    // No trustworthy baseline (the opening read failed for something other than "not there") → we cannot tell an
+    // external change from our own, so there is nothing to compare against and writing would be a blind overwrite.
+    if (this.baselineUnknown) throw new Error(t('status.designerDiskConflict'));
+    let onDisk: { text: string; hadBom: boolean } | null = null;
+    try {
+      onDisk = await readDesignerBytesUri(vscode.Uri.file(this.designerFile));
+    } catch (e) {
+      // Only a genuine "not there" is benign, and only if it was NEVER there: a file that existed when we took our
+      // baseline and is gone now was deleted by someone else — an external change, not permission to recreate it.
+      // Any other read failure (locked, permissions, transient) must surface rather than become a blind write.
+      if (!isFileNotFound(e)) throw e;
+      if (this.savedExisted) throw new Error(t('status.designerDiskConflict'));
+    }
+    // Compare the BOM too: readDesignerBytesUri strips it, so a rewrite that only added/removed the BOM has identical
+    // text and would otherwise slip through — and bytesOf would then write OUR old byte form back over it.
+    if (onDisk !== null && (onDisk.text !== this.savedDesignerText || onDisk.hadBom !== this.hadBom)) {
+      throw new Error(t('status.designerDiskConflict'));
+    }
+    // Atomic (temp+rename): an interrupted write must never truncate the user's form. The read→compare→write window
+    // above is inherent — VS Code's FS API has no compare-and-swap — but nothing awaits between the comparison and
+    // this call, so it is as small as the platform allows.
+    await atomicWrite(vscode.Uri.file(this.designerFile), this.bytesOf(snapshot));
     this.savedDesignerText = snapshot;
+    this.savedExisted = true;
     this.session?.notifySaved();
   }
   async saveAs(dest: vscode.Uri): Promise<void> {
     // 0.10.0 trust-floor — same recovered-dirty-buffer guard as save(): don't copy a divergent localizable
     // buffer to a new file. A clean localizable form (isDirty === false) still saves-as a faithful copy.
     if (this.isDirty && isLocalizableDesigner(this.designerText)) throw new Error(t('status.localizableSaveRefused'));
+    // Without a trustworthy baseline we don't know what this buffer is relative to — don't copy it anywhere.
+    if (this._baselineUnknown) throw new Error(t('status.designerDiskConflict'));
     // Save As on a designer writes the GENERATED partner, not generated code into a hand-edited .cs.
+    const remapped = !/\.Designer\.cs$/i.test(dest.fsPath) && /\.cs$/i.test(dest.fsPath);
     const target = /\.Designer\.cs$/i.test(dest.fsPath) ? dest
-      : /\.cs$/i.test(dest.fsPath) ? vscode.Uri.file(dest.fsPath.slice(0, -'.cs'.length) + '.Designer.cs')
+      : remapped ? vscode.Uri.file(dest.fsPath.slice(0, -'.cs'.length) + '.Designer.cs')
         : dest;
-    await vscode.workspace.fs.writeFile(target, this.bytesOf(this.designerText));
+    // VS Code's overwrite prompt covered the file the USER picked (NewForm.cs). When we remap to its generated
+    // partner we write a path they were never asked about — so if that sidecar already exists it belongs to another
+    // form, and clobbering it would be a silent data loss the dialog implied nothing about. Create it
+    // CONDITIONALLY: a stat-then-write would just move the clobber into the gap between the two calls, whereas
+    // createFile(overwrite:false, ignoreIfExists:false) is the platform's own create-if-absent — applyEdit returns
+    // false when the file already exists, which is exactly our refusal. (ignoreIfExists:true would be wrong: it
+    // turns a conflict into a successful-looking no-op.) A user who really means to replace a known .Designer.cs
+    // can pick that exact file, and VS Code's own overwrite prompt then covers it.
+    if (remapped) {
+      const create = new vscode.WorkspaceEdit();
+      create.createFile(target, { overwrite: false, ignoreIfExists: false, contents: this.bytesOf(this.designerText) });
+      if (!await vscode.workspace.applyEdit(create)) throw new Error(t('status.designerDiskConflict'));
+      return;
+    }
+    await atomicWrite(target, this.bytesOf(this.designerText));
   }
   async revert(): Promise<void> {
     if (!this.designerFile) return;
@@ -420,13 +602,13 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
 }
 
 /**
- * The unified VS-style designer: a CustomEditorProvider on *.cs that renders the form on a canvas. Its custom
- * document owns the sibling .Designer.cs text IN MEMORY (WinFormsDesignDocument), so designer edits never
- * surface the generated file as a dirty tab — the visible Foo.cs form tab is the dirty/undoable thing, written
- * to .Designer.cs only on save (issue #2). Toolbox/Properties live in a separate dockable WebviewView
- * (DesignerPanelViewProvider), wired to the active designer via DesignerHub. priority "option" keeps the C#
- * text editor the default; this opens via "Open Designer" / auto-open / "Reopen Editor With…".
- */
+* The unified VS-style designer: a CustomEditorProvider on *.cs that renders the form on a canvas. Its custom
+* document owns the sibling .Designer.cs text IN MEMORY (WinFormsDesignDocument), so designer edits never
+* surface the generated file as a dirty tab — the visible Foo.cs form tab is the dirty/undoable thing, written
+* to .Designer.cs only on save (issue #2). Toolbox/Properties live in a separate dockable WebviewView
+* (DesignerPanelViewProvider), wired to the active designer via DesignerHub. priority "option" keeps the C#
+* text editor the default; this opens via "Open Designer" / auto-open / "Reopen Editor With…".
+*/
 export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<WinFormsDesignDocument> {
   public static readonly viewType = 'winformsDesigner.designer';
 
@@ -451,8 +633,20 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     const designerFile = resolveDesignerFile(uri.fsPath);
     let diskText = '';
     let hadBom = false;
+    let diskExisted = false; // whether our baseline came from a real file — save()'s conflict guard needs to tell
+    let baselineUnknown = false; // "deleted under us" apart from "never existed"
     if (designerFile) {
-      try { const r = await readDesignerBytesUri(vscode.Uri.file(designerFile)); diskText = r.text; hadBom = r.hadBom; } catch { /* missing → empty (placeholder) */ }
+      try {
+        const r = await readDesignerBytesUri(vscode.Uri.file(designerFile));
+        diskText = r.text; hadBom = r.hadBom; diskExisted = true;
+      } catch (e) {
+        // ONLY a genuine "not there" is a placeholder-and-carry-on. Any other failure (locked, permissions,
+        // provider error) means the file may well exist with content we cannot see — treating that as "absent"
+        // would hand save() a fake empty baseline and defeat its deletion/conflict guards outright. Open
+        // the designer anyway (a read-only preview is useful), but mark the baseline untrustworthy so no write
+        // proceeds until a successful read replaces it.
+        if (!isFileNotFound(e)) baselineUnknown = true;
+      }
     }
     // designerText = recovered hot-exit backup if present (else disk); savedDesignerText = the REAL on-disk
     // text — so a recovered backup that differs from disk is correctly DIRTY, not silently "saved".
@@ -460,7 +654,7 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     if (openContext.backupId) {
       try { const r = await readDesignerBytesUri(vscode.Uri.parse(openContext.backupId)); text = r.text; if (!designerFile) hadBom = r.hadBom; } catch { /* fall back to disk */ }
     }
-    return new WinFormsDesignDocument(uri, designerFile, text, diskText, hadBom);
+    return new WinFormsDesignDocument(uri, designerFile, text, diskText, hadBom, diskExisted, baselineUnknown);
   }
 
   resolveCustomEditor(
@@ -481,10 +675,10 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
 }
 
 /**
- * The single dockable WinForms Designer WebviewView: hosts BOTH the Properties grid and the Toolbox palette
- * as full-size panes, switched by a tab strip at the bottom of the view. One movable panel (instead of two
- * stacked views that split the area). Mirrors the active designer and routes user actions back to it.
- */
+* The single dockable WinForms Designer WebviewView: hosts BOTH the Properties grid and the Toolbox palette
+* as full-size panes, switched by a tab strip at the bottom of the view. One movable panel (instead of two
+* stacked views that split the area). Mirrors the active designer and routes user actions back to it.
+*/
 export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'winformsDesigner.panel';
   constructor(private readonly extensionUri: vscode.Uri) {}
@@ -553,13 +747,17 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
 }
 
 /**
- * 0.11.0 write-safety — a sibling-.resx disk write bundled INTO a designer edit's undo/redo transaction.
- * `before` is the resx content prior to the write (null when this edit created the .resx); `after` is what
- * was written. Undo restores `before` (deleting a file this edit created); redo re-applies `after`. Both
- * directions are conflict-guarded (a concurrent external change to the .resx is left alone, never clobbered),
- * so a resx write and its code-behind assignment land — and revert — as one atomic unit.
- */
-interface ResxTx { uri: vscode.Uri; before: string | null; after: string; }
+* 0.11.0 write-safety — a sibling-.resx disk write bundled INTO a designer edit's undo/redo transaction.
+* `before` is the resx content prior to the write (null when this edit created the .resx); `after` is what
+* was written. Undo restores `before` (deleting a file this edit created); redo re-applies `after`. Both
+* directions are conflict-guarded (a concurrent external change to the .resx is left alone, never clobbered),
+* so a resx write and its code-behind assignment land — and revert — as one atomic unit.
+*/
+interface ResxTx { uri: vscode.Uri; before: string | null; after: string; bom: boolean; }
+
+/** A .resx read: its text with any leading UTF-8 BOM stripped, plus whether that BOM was there — so every write
+* back can restore it byte-for-byte instead of silently rewriting the whole file's encoding signature. */
+interface ResxRead { text: string; hadBom: boolean; }
 
 /** Manages one open designer editor: render, selection, property edits, and live-update. */
 class DesignerSession {
@@ -569,8 +767,10 @@ class DesignerSession {
   // The strip item currently shown in the Properties panel (item→Properties), or null when a control is selected. Set by
   // the `selectItem` gesture, cleared on a control `pick`. A delayed item refresh (loadItemProps after a reset/wire/edit)
   // checks this before pushing `itemProps`, so a stale refresh for item A can't overwrite a newer selection of item B
-  // (canvas dispatch isn't serialized — codex review).
+  // (canvas dispatch isn't serialized.
   private currentSelItem: { ownerId: string; itemId: string } | null = null;
+  /** Bumped by every pick(); captured by loadProps so a load whose awaits outlive its selection publishes nothing. */
+  private selectionGen = 0;
   private renderSeq = 0;
   private controls: LayoutControl[] = [];
   // 0.10.0 trust-floor S5 — false = the last render FAILED (or nothing has rendered yet). A hard load/render failure
@@ -578,31 +778,64 @@ class DesignerSession {
   // can't splice against a graph the designer couldn't load. Set true only at fullRender's clean success exit; set
   // false in every failure branch. Stored (not derived from source — a parseable form can still fail to render).
   private renderOk = false;
+  // 1.0.0 — the .NET Framework compiled preview shows the last BUILD, never the live source, and cannot prove the
+  // build matches `.Designer.cs` (the user can hand-edit and not rebuild). After eight review rounds the divergence
+  // LOCK that tried to infer that from instance/build identity was descoped: a lock that
+  // can misclassify is less trustworthy than an honest disclosure. net48 forms stay editable; source safety comes from
+  // the byte-local firewall in commit(), not from any fidelity inference. Instead composeFormNotice shows an
+  // UNCONDITIONAL "this is your last build; rebuild is authoritative" banner on every net48 render. The wire fields
+  // liveInstanceId / liveBuildId remain for diagnostics + the release/rebuild e2e, but grant no editing authority.
+  /** Monotonic id per reloadFromDiskIfClean run; a read that resumes after a newer one started is discarded. */
+  private reloadEpoch = 0;
   private toolStripItems: ToolStripItemBounds[] = []; // per-item geometry from the last render (on-canvas "Type Here")
   private rootClient: { w: number; h: number } | null = null;
   private rootFrame: { w: number; h: number } | null = null;
   /** Which engine renders THIS form — detected per render from the resolved control assembly's runtime
-   *  (net48 = .NET Framework/DevExpress compiled preview). Drives engine routing + edit gating + the badge. */
-  private engineKind: EngineKind = 'net9';
+   * (net48 = .NET Framework/DevExpress compiled preview). Drives engine routing + edit gating + the badge. */
+  private engineKind: EngineKind = 'modern';
+  /** Integer DPI capture scale for the picture, from the webview's devicePixelRatio (1 = logical, 2 = 4K@200%…). The
+   * engine renders the PNG at this factor so text/metrics are crisp instead of the frame being upscaled on a high-DPI
+   * display. Clamped to [1,2]: ×2/×0.5 is exactly reversible, which the net48 CACHED compiled instance requires. */
+  private renderScale = 1;
   private debounce?: ReturnType<typeof setTimeout>;
   private disposed = false;
   private gotReady = false;
+  /** Signature of the last #formNotice payload actually posted — so composeFormNotice skips a re-post identical to
+   * the one already on screen (the notice was recomposed on both the early render post and the
+   * trailing postDirty). Reset on webview 'ready' so a reloaded webview always re-receives the current notice. */
+  private lastNoticeSig: string | undefined;
+  /** Last .NET Framework "compiled preview" disclosure written to the output channel: the disclosure is log-only now
+   * (not a banner). Deduped so a render/edit storm doesn't spam the channel; cleared when the render is no longer build-based. */
+  private lastNet48NoticeLog?: string;
+  /** Last `dirty` value actually posted — postDirty() now fires at the mutation point AND from trailing callers, so
+   * dedupe the badge IPC. Reset on 'ready' so a reloaded webview re-receives its dirty state. */
+  private lastDirtyPosted: boolean | undefined;
+  /** The mode of the last net48 render: 'interpreted' (live source via the IR interpreter — no
+   * "last build" disclosure, it IS the source), 'compiledFallback' (a form the interpreter can't cover → the compiled
+   * last build WITH the disclosure + reason), or 'compiled'. Drives composeFormNotice. Ignored on the modern engine. */
+  private net48RenderMode = 'compiled';
+  private net48FallbackReason = '';
+  // transient interpreted tab view-state: tab-host field id → selected page field id. Re-supplied
+  // to every interpreted render (the interpreted graph is uncached), so a tab-click's selection survives later renders. A
+  // stale entry (host/page removed) is a no-op via the engine's narrow adapter.
+  private net48SelectedTabs = new Map<string, string>();
+  private tabViewState(): string[] { return Array.from(this.net48SelectedTabs, ([h, p]) => `${h}=${p}`); }
   /** Auto-populated toolbox palette — fetched once, then mirrored to the Toolbox view. */
   private toolboxItems: ToolboxItemInfo[] | undefined;
   /** One-shot latch: we prompt "select a control source" at most once per form (until it renders clean or the
-   *  user picks one), so a form with unresolved custom controls isn't nagging on every re-render. */
+   * user picks one), so a form with unresolved custom controls isn't nagging on every re-render. */
   private promptedForSource = false;
   /** Control assembly auto-resolved for a .NET Framework/DevExpress project when NO explicit source is set —
-   *  set by the last render's routing (undefined for a .NET project, whose output the net9 engine finds itself).
-   *  `asm()` returns it as the effective source so the net48 render AND its live edit ops all target the same
-   *  compiled assembly, and only a net9 form (autoAsm undefined) keeps engine-side auto-discovery. */
+   * set by the last render's routing (undefined for a .NET project, whose output the net9 engine finds itself).
+   * `asm()` returns it as the effective source so the net48 render AND its live edit ops all target the same
+   * compiled assembly, and only a net9 form (autoAsm undefined) keeps engine-side auto-discovery. */
   private autoAsm: string | undefined;
   /** The big "Choose Toolbox Items" window (a separate editor-area webview panel), if open. */
   private chooseItemsPanel: vscode.WebviewPanel | undefined;
   /** Assemblies the user added via the Choose-Items "Browse…" button (accumulated across clicks). */
   private browsedDlls: string[] = [];
   /** (project, assembly) pairs we've already offered a <Reference> for — ask at most once each per session,
-   *  whatever the user answered, so adding several controls from one library doesn't nag repeatedly. */
+   * whatever the user answered, so adding several controls from one library doesn't nag repeatedly. */
   private readonly offeredReferences = new Set<string>();
   /** The toolbox tab the open Choose-Items window targets (checked items land here); undefined = none. */
   private chooseItemsTab: string | undefined;
@@ -681,6 +914,38 @@ class DesignerSession {
     for (const d of this.disposables.splice(0)) {
       try { d.dispose(); } catch { /* ignore */ }
     }
+    // 1.0.0 — hand the user's build output back. The net48 preview loads their dlls IN PLACE and PINS them
+    // (ShadowCopyFiles must stay off or delay-signed vendor assemblies fail to load), so while this session lived
+    // the user's own `dotnet build` failed with MSB3027 "The file is locked by: WinFormsDesigner.Engine.Net48".
+    // Nothing ever released them implicitly — closing the form is the moment we can.
+  //
+    // Refcounted by the hub, and deliberately AFTER unregisterSession above so this session no longer counts:
+    // another designer may still render from the same bin dir, and releasing under it would force it into a full
+    // domain reload. The release itself is fire-and-forget (dispose is sync, the release is an async RPC) and its
+    // errors are caught in the hub — a failed release must never throw out of dispose.
+    if (this.engineKind === 'net48') {
+      const asm = this.asm();
+      if (asm) DesignerHub.instance.releaseNet48OutputIfUnused(asm);
+    }
+  }
+
+  /** Mark the current canvas stale as soon as its engine dies, then perform one bounded automatic re-render.
+   * fullRender's generation check absorbs races with the rejected in-flight RPC and any newer user render. */
+  handleEngineCrash(kind: EngineKind, delayMs: number | null): void {
+    if (this.disposed || this.engineKind !== kind) return;
+    this.renderOk = false; // a render failed → read-only until the next successful render (S5)
+    if (delayMs == null) {
+          this.post({
+        type: 'error',
+        message: t('host.engineCrashLoop'),
+        renderFailure: true,
+      });
+      return;
+    }
+    this.post({ type: 'loading', message: t('host.loading.restarting', { ms: delayMs }) });
+    setTimeout(() => {
+      if (!this.disposed && this.engineKind === kind) void this.fullRender();
+    }, delayMs);
   }
 
   private asm(): string | undefined {
@@ -692,7 +957,10 @@ class DesignerSession {
   /** The .Designer.cs this session renders (the key the control-source override is stored under). */
   get designerFilePath(): string | null { return this.designerFile; }
 
-  /** True when this form is rendered by the net48 engine — a read-only compiled preview. */
+  /** True when this form is rendered by the net48 engine — the picture is a real compiled instance of the last build
+   * rather than an interpretation of the text. NOT a read-only state: net48 forms are editable (net9 splices the
+   * source, net48 mirrors supported edits onto the live instance). The only read-only states are `localizable` and a
+   * failed render (`renderOk` false); net48 additionally shows an unconditional "last build" disclosure banner. */
   get isCompiledPreview(): boolean { return this.engineKind === 'net48'; }
 
   /**
@@ -706,16 +974,29 @@ class DesignerSession {
   private get localizable(): boolean { return isLocalizableDesigner(this.doc.designerText); }
 
   /** The control assembly currently in effect: explicit override, else the auto-resolved framework assembly
-   *  (net48/DevExpress) from the last render, else undefined (a net9 form → engine auto-discovery). */
+   * (net48/DevExpress) from the last render, else undefined (a net9 form → engine auto-discovery). */
   get controlAssembly(): string | undefined { return this.asm(); }
 
   /** Re-render after the user changed the control source (Select Control Assembly): drop the cached toolbox so
-   *  Project Controls re-discover against the NEW assembly, then a full render (loads the new controls). */
-  async reloadControlSource(): Promise<void> {
+   * Project Controls re-discover against the NEW assembly, then a full render (loads the new controls). */
+  async reloadControlSource(priorNet48Output?: string): Promise<void> {
+    // The prior net48 output MUST be captured by the CALLER, before it mutates the control-source
+    // override; capturing it here would read the NEW override that the caller already set (this.asm() returns the new
+    // value), so the old output would never be released and its project would stay locked until the engine exits.
     this.toolboxItems = undefined;
     this.promptedForSource = true; // an explicit choice was made — don't nag about this form again
-    await this.fullRender();
+    await this.fullRender(); // re-routes: this.engineKind / this.asm() may now be different
     this.refreshViews();
+    // Release the prior output if nothing (including this form's NEW route) still uses it — refcount-aware, so a
+    // sibling designer still on that project keeps it. The scan runs AFTER fullRender, so it sees the new route.
+    if (priorNet48Output && net48OutputKey(priorNet48Output) !== net48OutputKey(this.asm() ?? ''))
+      DesignerHub.instance.releaseNet48OutputIfUnused(priorNet48Output);
+  }
+
+  /** The net48 output this form currently pins (its resolved control assembly), or undefined off the net48 route.
+   * Callers capture this BEFORE changing the control source, then pass it to reloadControlSource. */
+  get pinnedNet48Output(): string | undefined {
+    return this.engineKind === 'net48' ? this.asm() : undefined;
   }
 
   /** Post to THIS editor's canvas webview (render/layout/patch/select/manip/status/dirty/error/loading). */
@@ -724,35 +1005,35 @@ class DesignerSession {
   }
 
   /** Layout goes to the canvas (hit-test/overlay + on-canvas strip-item geometry) AND the Properties view (tree
-   *  selector). The Properties tree has no strip geometry to draw, so only the canvas gets `toolStripItems`. */
+   * selector). The Properties tree has no strip geometry to draw, so only the canvas gets `toolStripItems`. */
   private postLayout(controls: LayoutControl[], toolStripItems: ToolStripItemBounds[] = []): void {
     this.post({ type: 'layout', controls, toolStripItems });
     DesignerHub.instance.pushPanel(this, { type: 'layout', controls });
   }
   /** Selection goes to the canvas (overlay) AND the Properties view (tree highlight). `token` is echoed to the canvas
-   *  ONLY when this select is the reply to a canvas-origin `pick` (see pick): it lets the canvas correlate the echo to
-   *  the exact pick it issued, so it can suppress just that one echo when an add-editor dropped its selection. All the
-   *  host-authoritative pushSelect callers (fullRender/refreshProperties/duplicate/partial) omit it → the canvas always
-   *  applies those. The Properties view never needs it. */
+   * ONLY when this select is the reply to a canvas-origin `pick` (see pick): it lets the canvas correlate the echo to
+   * the exact pick it issued, so it can suppress just that one echo when an add-editor dropped its selection. All the
+   * host-authoritative pushSelect callers (fullRender/refreshProperties/duplicate/partial) omit it → the canvas always
+   * applies those. The Properties view never needs it. */
   private pushSelect(id: string, token?: number): void {
     this.post({ type: 'select', id, token });
     DesignerHub.instance.pushPanel(this, { type: 'select', id });
   }
 
   /** Populate `toolboxItems` once. net9: framework + project controls in one enumeration. net48: framework controls
-   *  from the net9 enumerator (same FQNs → droppable on a net48 form) MERGED with the project/vendor (DevExpress)
-   *  controls from the net48 engine — the ones the net9 ALC can't load (DevExpress-add). Best-effort: a framework
-   *  failure leaves it undefined (retry later); a project-enumeration failure degrades to framework-only. */
+   * from the net9 enumerator (same FQNs → droppable on a net48 form) MERGED with the project/vendor (DevExpress)
+   * controls from the net48 engine — the ones the net9 ALC can't load (DevExpress-add). Best-effort: a framework
+   * failure leaves it undefined (retry later); a project-enumeration failure degrades to framework-only. */
   private async loadToolboxItems(): Promise<void> {
     if (this.toolboxItems || !this.designerFile) return;
     // Capture the kind: the pre-render refreshViews (ctor setActive) runs while engineKind is still the default
-    // 'net9', but the first fullRender flips it to 'net48' for a compiled form. A load started under one kind must
+    // 'modern', but the first fullRender flips it to 'net48' for a compiled form. A load started under one kind must
     // NOT assign after the kind flipped — else a stale framework-only net9 result would poison the net48 cache and
     // the project/vendor controls would never appear (fullRender also clears the cache on the transition).
     const kind = this.engineKind;
     if (kind === 'net48') {
       let framework: ToolboxItemInfo[];
-      try { framework = await listToolboxItems(await this.ensureEngine('net9'), this.designerFile, undefined); }
+      try { framework = await listToolboxItems(await this.ensureEngine('modern'), this.designerFile, undefined); }
       catch { return; } // leave undefined so a later refresh retries
       let project: ToolboxItemInfo[] = [];
       const asm = this.asm();
@@ -763,7 +1044,7 @@ class DesignerSession {
       this.toolboxItems = [...framework, ...project];
     } else {
       let items: ToolboxItemInfo[];
-      try { items = await listToolboxItems(await this.ensureEngine('net9'), this.designerFile, this.asm()); } catch { return; }
+      try { items = await listToolboxItems(await this.ensureEngine('modern'), this.designerFile, this.asm()); } catch { return; }
       if (this.disposed || this.engineKind !== kind || this.toolboxItems) return;
       this.toolboxItems = items;
     }
@@ -778,8 +1059,8 @@ class DesignerSession {
   }
 
   /** Fetch the color/font palette once (engine-wide static, cached on the hub) and push it to the panel so
-   *  the Color dropdown + Font editor have their swatches / font families / unit suffixes. Best-effort:
-   *  a fetch failure just leaves those editors on their text-input fallback. */
+   * the Color dropdown + Font editor have their swatches / font families / unit suffixes. Best-effort:
+   * a fetch failure just leaves those editors on their text-input fallback. */
   private async refreshPalette(): Promise<void> {
     if (this.disposed || !this.designerFile) return;
     const hub = DesignerHub.instance;
@@ -800,7 +1081,7 @@ class DesignerSession {
   refreshViews(): void { void this.refreshToolbox(); this.refreshProperties(); this.pushClipboardState(); }
 
   /** Re-emit this canvas's HTML with the current locale's injected catalog (live language switch). Reloading the
-   *  webview makes it re-send `ready`, which triggers a full re-render / rehydrate through the normal path. */
+   * webview makes it re-send `ready`, which triggers a full re-render / rehydrate through the normal path. */
   rebuildHtml(): void {
     if (this.disposed) return;
     this.gotReady = false;
@@ -826,15 +1107,44 @@ class DesignerSession {
    */
   private async reloadFromDiskIfClean(): Promise<void> {
     if (this.disposed || !this.designerFile) return;
+    // Serialize overlapping watcher deliveries: two debounced reloads can be in flight, and an OLDER read resuming
+    // after a newer one already adopted would re-adopt superseded text and re-render it. Newest wins.
+    const epoch = ++this.reloadEpoch;
     let onDisk: { text: string; hadBom: boolean };
-    try { onDisk = await readDesignerBytesUri(vscode.Uri.file(this.designerFile)); } catch { return; }
-    if (onDisk.text === this.doc.designerText) return; // our own save, or a no-op change
-    if (this.doc.isDirty) {
-      this.post({ type: 'status', message: t('status.diskChanged') });
+    try {
+      onDisk = await readDesignerBytesUri(vscode.Uri.file(this.designerFile));
+    } catch {
+      // The file was DELETED, locked, or the provider failed — after we had a baseline. Swallowing this left the old
+      // canvas on screen, still editable, against a source that no longer exists: the .resx paths would even
+      // keep writing. Latch the same read-only state an unreadable file gets at open; a later successful read clears
+      // it. renderOk is dropped too so commit()'s backstop refuses regardless of which gate a caller passed.
+      if (epoch !== this.reloadEpoch || this.disposed) return;
+      this.doc.markBaselineUnknown();
+      this.renderOk = false;
+      this.post({ type: 'status', message: t('status.designerDiskConflict') });
       return;
     }
+    if (epoch !== this.reloadEpoch || this.disposed) return; // a newer reload superseded this read
+    // Decide what actually changed BEFORE touching the document: adopting first would make the text comparison
+    // trivially true and skip the re-render, leaving the canvas showing the OLD source while the buffer holds the
+    // new one — an edit would then be spliced into text the user never saw.
+    const textChanged = onDisk.text !== this.doc.designerText;
+    if (this.doc.isDirty) {
+      if (textChanged) this.post({ type: 'status', message: t('status.diskChanged') });
+    return; // keep the user's unsaved edits; save()'s guard catches the conflict
+    }
+    // Clean buffer. This read SUCCEEDED, so a baseline is knowable again — adopt it even when only the BOM moved, or
+    // when nothing moved but our baseline was untrustworthy: otherwise a document whose opening read failed stays
+    // permanently unsavable (only a manual Revert would clear it), and a clean BOM-only external change would cause
+    // a later save refusal the user can't explain.
+    const bomChanged = onDisk.hadBom !== this.doc.bom;
+    if (!textChanged && !bomChanged && !this.doc.baselineUnknown) return; // our own save, or a genuine no-op
+    // Adopting new source makes the canvas stale the instant it lands, but fullRender only re-asserts renderOk at its
+    // END — so without dropping it here the old visual model stays actionable for the whole render, and a click/drag
+    // aimed at it would splice into the freshly adopted text. Lock first, adopt, then render.
+    if (textChanged) this.renderOk = false;
     this.doc.adoptDiskBaseline(onDisk.text, onDisk.hadBom);
-    await this.fullRender();
+  if (textChanged) await this.fullRender(); // the canvas must never keep showing superseded source
   }
 
   /**
@@ -844,7 +1154,7 @@ class DesignerSession {
    */
   // Returns TRUE when the edit was applied (or was a no-op) and the caller may run its success follow-up; FALSE when a
   // fail-closed gate (byte-local / render-failed / localizable) REFUSED it — the caller must then skip its success
-  // status + live-preview mutation so a refused edit never shows as applied (codex: commit() was void, callers diverged).
+  // status + live-preview mutation so a refused edit never shows as applied was void, callers diverged).
   //
   // 0.11.0 write-safety — an optional `resx` transaction ties a sibling-.resx disk write to THIS undoable edit: the
   // caller writes the new .resx to disk atomically BEFORE calling commit(); we then thread the resx before/after into
@@ -856,7 +1166,7 @@ class DesignerSession {
     // No-op edit → nothing to persist. But if a resx transaction is attached whose bytes actually CHANGED (a
     // re-import of a new image into a property whose `resources.GetObject("key")` assignment is byte-identical —
     // designer text unchanged, base64 payload different), we must still fire an undo entry so Ctrl+Z reverts the
-    // resource (codex: the no-op short-circuit dropped the resx-only undo). Fall through in that case.
+    // resource. Fall through in that case.
     const resxChanged = !!resx && resx.before !== resx.after;
     if (after === before && !resxChanged) return true;
     // 0.10.0 trust-floor S4 — byte-local firewall. Every persisted edit is a targeted net9 splice of `before`, which
@@ -879,6 +1189,15 @@ class DesignerSession {
       this.post({ type: 'status', message: t('status.renderFailedReadonly') });
       return false;
     }
+    // No trustworthy on-disk baseline (the opening read failed for something other than "not there"). A recovered
+    // hot-exit backup still renders, so renderOk above says nothing about it — without this the buffer would be
+    // freely editable against a file we have never successfully read, and the save-time guard would only object at
+    // the very end. Refuse here so the read-only state is real, not just a save-time surprise.
+    if (this.doc.baselineUnknown) {
+      this.output.appendLine('[designer] edit refused — no trustworthy on-disk baseline (' + label + ')');
+      this.post({ type: 'status', message: t('status.designerDiskConflict') });
+      return false;
+    }
     // 0.10.0 trust-floor — airtight data-loss backstop. Every persisted edit funnels through here; on a
     // localizable form a forward edit would diverge from the .resx (VS drops it on its next save), so
     // refuse to persist even if a mutating message slipped past the LOCALIZABLE_BLOCKED dispatch gate.
@@ -891,19 +1210,25 @@ class DesignerSession {
     }
     this.doc.rev++;
     this.doc.designerText = after;
+    // 1.0.0 — reflect the new dirty state in the net48 "last build" banner IMMEDIATELY, at
+    // the mutation point, before the caller's awaited loadProps / render. Those can stall or reject (a nonvisual
+    // Modifiers edit hydrates via loadProps, whose rejection is caught without reaching the trailing postDirty), which
+    // would otherwise leave the banner showing the stale clean wording over a now-dirty source. Idempotent — the notice
+    // is deduped, so the caller's later postDirty is a no-op when nothing changed.
+    this.postDirty();
     this.fireEdit({
       document: this.doc,
       label,
       // Do the resx disk op FIRST (it can fail — a locked/permission-denied file): if it throws, the in-memory
-      // designerText is left untouched and the undo/redo promise rejects, so the two halves never split (codex:
+      // designerText is left untouched and the undo/redo promise rejects, so the two halves never split (
       // mutating text before a fallible resx op leaves the code reverted while the resource didn't move).
       undo: async () => {
-        if (resx) await this.revertResx(resx.uri, resx.before, resx.after);
+        if (resx) await this.revertResx(resx.uri, resx.before, resx.after, resx.bom);
         this.doc.rev++; this.doc.designerText = before;
         await this.rerenderFromDoc();
       },
       redo: async () => {
-        if (resx) await this.reapplyResx(resx.uri, resx.before, resx.after);
+        if (resx) await this.reapplyResx(resx.uri, resx.before, resx.after, resx.bom);
         this.doc.rev++; this.doc.designerText = after;
         await this.rerenderFromDoc();
       },
@@ -914,6 +1239,15 @@ class DesignerSession {
   /** Re-render the canvas from the current in-memory text (used by undo/redo and revert). */
   async rerenderFromDoc(): Promise<void> {
     if (this.disposed) return;
+    // 1.0.0 — undo/redo/revert have ALL reassigned designerText by the time they call this
+    // (the commit undo/redo closures and revert→adoptDiskBaseline), so sync the net48 banner's clean/dirty wording NOW,
+    // before the stallable net48 discard RPC and fullRender below. Otherwise an undo-to-clean or redo-to-dirty leaves
+    // the previous wording until those awaits resolve — and a stuck discard/render never updates it at all.
+    this.postDirty();
+    // invalidate any in-flight render BEFORE the stallable net48 discard await below, so a render
+    // that started before this undo/redo/revert can't complete during the wait and install the now-undone picture
+    // The trailing fullRender bumps the sequence again; both leave an earlier render's captured seq stale.
+    this.renderSeq++;
     // 0.11.0 net48 undo reconcile — a text-level revert (undo/redo/revert) makes the cached compiled instance STALE:
     // net48 renders the live compiled INSTANCE (not the text), and that instance still carries the reverted edit's
     // live mutation, so reusing it would keep showing the undone change. Drop it so the next render re-instantiates
@@ -924,6 +1258,9 @@ class DesignerSession {
         try { await discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, asm); }
         catch { /* best effort — a failed discard just leaves the (pre-existing) staleness, never corrupts */ }
       }
+    // The discard makes the next render re-instantiate from the compiled baseline, so an undone/reverted live edit
+    // no longer lingers in the preview. (There is no divergence lock to update — it was descoped; net48 shows the
+    // last build and says so, editable throughout.)
     }
     await this.fullRender();
   }
@@ -962,6 +1299,26 @@ class DesignerSession {
   }
 
   /**
+   * The stale-render counterpart of {@link refuseLocalizableMutation}, for a direct-file-write op that reaches
+   * persistence WITHOUT going through commit()'s backstop. commit() refuses while `renderOk` is false, but
+   * createHandler writes the code-behind stub via applyEdit FIRST and only then commits the wiring — so on a
+   * failed-render form the refusal used to arrive after the stub had already landed, leaving an orphan handler
+   * in the user's .cs. Callers that write a file themselves must gate up front.
+   */
+  private refuseStaleRenderMutation(): boolean {
+    if (this.renderOk) return false;
+    this.post({ type: 'status', message: t('status.renderFailedReadonly') });
+    return true;
+  }
+
+  /** The unknown-baseline counterpart, for the direct-file-write ops that never reach commit()'s backstop. */
+  private refuseUnknownBaselineMutation(): boolean {
+    if (!this.doc.baselineUnknown) return false;
+    this.post({ type: 'status', message: t('status.designerDiskConflict') });
+    return true;
+  }
+
+  /**
    * 0.10.0 trust-floor S5 — read-only gate while the last render FAILED (or nothing has rendered yet). A hard
    * load/render failure leaves a STALE preview on the canvas; refuse every mutating gesture so an edit can't
    * splice against a graph the designer couldn't load. Reuses LOCALIZABLE_BLOCKED (the identical mutation surface);
@@ -980,12 +1337,9 @@ class DesignerSession {
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
     axis?: 'h' | 'v'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; token?: number; reopenToken?: number;
+    dpr?: number;
   }): Promise<void> {
     try {
-      if (this.engineKind === 'net48' && NET48_READONLY_BLOCKED.has(m.type)) {
-        this.post({ type: 'status', message: t('status.net48Unsupported') });
-        return;
-      }
       // 0.10.0 trust-floor: a localizable form is a read-only preview — refuse every mutating gesture
       // up front (before any live-picture mutation or text splice) so an edit can't diverge from the
       // .resx. commit() backstops persistence; this gate keeps the UX honest and the picture stable.
@@ -995,11 +1349,24 @@ class DesignerSession {
       if (this.refuseStaleRenderEdit(m.type)) return;
       if (m.type === 'ready') {
         this.gotReady = true;
+        // The webview reports its devicePixelRatio so the engine can render the PNG at the display's resolution (crisp on
+        // 4K) instead of a blurry upscale. Clamp to an integer in [1,2] — 2 covers the common 4K@200% and keeps the net48
+        // cached-instance up/down scaling exactly reversible. A dpr change (window dragged to another monitor) re-posts ready.
+        if (typeof m.dpr === 'number' && isFinite(m.dpr)) this.renderScale = Math.max(1, Math.min(2, Math.round(m.dpr)));
+        // A fresh/reloaded webview cleared its DOM. Drop the notice cache so fullRender re-sends it, and post the dirty
+        // badge SYNCHRONOUSLY now — before the awaited fullRender, which posts dirty only after loadProps and may return
+        // early (unbuilt output / engine or render failure) or stall in hydration. Without this, a recovered/pre-existing
+        // dirty document would show a clean badge on reload until a render eventually succeeds. A
+        // badge-only post (not postDirty) avoids recomposing the net48 notice with the pre-render engineKind; a following
+        // successful fullRender then suppresses its identical trailing dirty via lastDirtyPosted.
+        this.lastNoticeSig = undefined;
+        this.lastDirtyPosted = this.doc.isDirty;
+    this.post({ type: 'dirty', dirty: this.doc.isDirty });
         this.output.appendLine('[designer] webview ready: ' + this.designerFile);
         await this.fullRender();
       } else if (m.type === 'pick' && m.id) {
         // thread the canvas-origin pick's correlation token so the echoed `select` can be matched to THIS exact pick
-        // (the canvas suppresses only the echo of a pick whose selection an add-editor deliberately dropped — codex review).
+        // (the canvas suppresses only the echo of a pick whose selection an add-editor deliberately dropped.
         await this.pick(m.id, m.token);
       } else if (m.type === 'manipulate' && m.id && m.mode) {
         await this.applyManipulate(m.id, m.mode, m.x ?? 0, m.y ?? 0, m.width ?? 0, m.height ?? 0);
@@ -1078,11 +1445,16 @@ class DesignerSession {
   }
 
   /** Select a component (from a canvas click or the Properties tree): move the overlay + load its grid. `token` is the
-   *  canvas-origin pick's correlation id (undefined for a Properties-tree pick) — echoed back on `select` so the canvas
-   *  can match the reply to its exact pick. */
+   * canvas-origin pick's correlation id (undefined for a Properties-tree pick) — echoed back on `select` so the canvas
+   * can match the reply to its exact pick. */
   async pick(id: string, token?: number): Promise<void> {
     if (this.disposed) return;
     this.currentId = id;
+    // Any load still in flight for the PREVIOUS pick is now stale: its awaits can resolve after this one's and would
+    // otherwise publish the old control's grid/tasks over the new selection. Bumping the generation here (before the
+    // awaits below) lets loadProps drop such a load. Ids alone can't do this — select A, B, A again would let the
+    // first A's late reply pass an id check.
+    this.selectionGen++;
     this.currentSelItem = null; // a control selection supersedes any item→Properties selection (drops the item-refresh guard)
     this.pushSelect(id, token);
     await this.loadProps(id);
@@ -1125,7 +1497,7 @@ class DesignerSession {
   }
 
   /** Fetch the Choose-Items rows (framework + project + browsed .dlls) → the dialog, with the target tab and
-   *  which of its items are currently in the toolbox (so the checkboxes start in the right state). */
+   * which of its items are currently in the toolbox (so the checkboxes start in the right state). */
   private async pushCandidates(panel: vscode.WebviewPanel, autoCheck?: string[]): Promise<void> {
     const hub = DesignerHub.instance;
     const tab = this.chooseItemsTab ?? null;
@@ -1243,14 +1615,14 @@ class DesignerSession {
   }
 
   /** Full re-render: PNG + layout → canvas + views, keep/repair selection, refresh the property panel.
-   *  `skipReselect` suppresses the trailing pushSelect(currentId) AND the trailing loadProps(currentId): used after an
-   *  on-canvas strip-item op (rename/add/delete) or an item→Properties edit so the canvas keeps its item highlight and
-   *  the panel keeps showing the ITEM instead of snapping to the stale container control — matching the net48 live path
-   *  (show48 posts no select). Callers that need props reloaded after a skipReselect render do it themselves
-   *  (applyToolStripItems → loadProps(strip); applyItemEdit → loadItemProps(item)). Review wf_108a7dbe. */
+   * `skipReselect` suppresses the trailing pushSelect(currentId) AND the trailing loadProps(currentId): used after an
+   * on-canvas strip-item op (rename/add/delete) or an item→Properties edit so the canvas keeps its item highlight and
+   * the panel keeps showing the ITEM instead of snapping to the stale container control — matching the net48 live path
+   * (show48 posts no select). Callers that need props reloaded after a skipReselect render do it themselves
+   * (applyToolStripItems → loadProps(strip); applyItemEdit → loadItemProps(item)). */
   // Returns true iff it posted a FRESH render→layout→tray (the canvas has a current forest). Any early exit — no file /
   // disposed, framework-unbuilt, engine-start failure, a superseded sequence, a render error — returns false so the
-  // on-canvas ADD auto-reopen (applyStripAdd → stripAddDone) doesn't draw a stale forest (codex confirm #1). Other
+  // on-canvas ADD auto-reopen (applyStripAdd → stripAddDone) doesn't draw a stale forest. Other
   // callers ignore the return.
   private async fullRender(skipReselect = false): Promise<boolean> {
     if (!this.designerFile || this.disposed) return false;
@@ -1305,18 +1677,36 @@ class DesignerSession {
     const text = await this.currentText();
     let result: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
-      result = this.engineKind === 'net48'
-        ? await this.withTimeout(
-            renderCompiledWithLayout(eng, this.designerFile, asm as string),
-            20000, 'engine render timed out — it may be stuck (first-run)')
-        : await this.withTimeout(
-            renderWithLayout(eng, this.designerFile, asm, text),
+      if (this.engineKind === 'net48') {
+        // Render the LIVE .Designer.cs source through the IR interpreter (VS model — instantiate
+        // the base type, replay the parsed statements onto it). Forms the interpreter can't fully cover fall back to
+        // the compiled last build WITH a named reason. `renderMode` drives the banner below (interpreted = no
+        // disclosure, it IS your source; compiledFallback = the "last build" disclosure). The compiled describe/live-
+        // edit RPCs are unchanged — for an interpreted, unedited form they read the same build, so selection/props line
+        // up; unifying edits onto the interpreted picture is a later step.
+        const ir = await this.withTimeout(
+          renderInterpretedWithLayout(eng, this.designerFile, asm as string, text ?? '', undefined, undefined, 0, 0, this.tabViewState(), this.renderScale),
+          20000, 'engine render timed out — it may be stuck (first-run)');
+        result = ir;
+      } else {
+        result = await this.withTimeout(
+            renderWithLayout(eng, this.designerFile, asm, text, this.renderScale),
             20000, 'engine render timed out — it may be stuck (first-run / MSBuild)');
+      }
     } catch (err) {
       if (seq === this.renderSeq && !this.disposed) this.fail(err);
       return false;
     }
     if (seq !== this.renderSeq || this.disposed) return false;
+    // Persist the net48 render mode ONLY after the sequence gate — mirroring how all other shared state below is
+    // mutated post-gate. Assigning it earlier (inside the try) let a SUPERSEDED interpreted render resolve last,
+    // overwrite this.net48RenderMode with its stale mode, then bail at the gate without recomposing the banner —
+    // leaving the mode field out of sync with the on-screen picture.
+    if (this.engineKind === 'net48') {
+      const ir = result as typeof result & { renderMode: string; fallbackReason: string };
+      this.net48RenderMode = ir.renderMode;
+      this.net48FallbackReason = ir.fallbackReason;
+    }
     this.output.appendLine(`[designer] render #${seq} ok: ${result.png.length}B, ${result.controls.length} controls`);
 
     this.controls = result.controls;
@@ -1326,12 +1716,21 @@ class DesignerSession {
     this.post({ type: 'render', png: result.png.toString('base64'), width: result.width, height: result.height, gen: seq });
     this.postLayout(result.controls, this.toolStripItems);
     this.post({ type: 'tray', items: result.tray }); // component tray (canvas strip)
+    // 1.0.0 — post the persistent notice SYNCHRONOUSLY here, right after the render/layout/
+    // tray posts and BEFORE the awaited loadProps below. Composing it only after loadProps let a clean net48 first
+    // open (or a modern→net48 excursion) present an editable, build-based canvas with NO "last build" disclosure if
+    // loadProps stalled or rejected — the exact silent state the descope exists to prevent. Everything the banner
+    // needs (engineKind, localizable, and the modern inheritedBase/binaryResx flags on `result`) is available now, and
+    // we are already past the sequence gate above, so this is the freshest render.
+    this.composeFormNotice(result);
     // 0.10.0 S5 — the canvas now faithfully reflects this render → edits allowed. Set HERE (right after the render/
     // layout/tray posts, BEFORE the awaited loadProps) so a loadProps rejection can't leave a visibly-rendered form
     // read-only (false-refuse). GUARDED by the generation check so a SUPERSEDED render (whose newer sibling may have
-    // already fail()'d → renderOk=false) can never resurrect true — codex: an old fullRender resuming past its await
-    // must not overwrite a newer failure. (This runs synchronously right after the :1256 seq gate — no interleave.)
-    if (seq === this.renderSeq && !this.disposed) this.renderOk = true;
+    // already fail()'d → renderOk=false) can never resurrect true — an old fullRender resuming past its await
+    // must not overwrite a newer failure.
+    if (seq === this.renderSeq && !this.disposed) {
+    this.renderOk = true; // the canvas faithfully reflects this render → edits allowed (net48 disclosure aside)
+    }
     // Keep the selection across a full re-render only if it still exists — as a visual control OR a tray component
     // (a ContextMenuStrip, Timer, …); otherwise fall back to the root form. Consulting the tray too matters after
     // editing a tray component's collection (e.g. a ContextMenuStrip's Items commits via this net9 fullRender):
@@ -1346,6 +1745,12 @@ class DesignerSession {
     }
     await this.postDirty();
     this.pushClipboardState();
+    // 1.0.0 — re-check the generation before the notice posts below. The awaits above (loadProps does real engine
+    // RPCs) let a NEWER render finish first and install the correct banner/lock; this older call resuming afterwards
+    // would then overwrite or hide it with its own stale view. The authoritative gates already sit on the newer
+    // state, so this was UI dishonesty rather than an edit bypass — but a banner that says the wrong thing about
+    // read-only-ness is exactly what 1.0 cannot ship.
+    if (seq !== this.renderSeq || this.disposed) return true;
     this.maybePromptForControlSource(result.unrepresentable, asm);
     // T2.2: surface WHAT the (partial) render skipped — controls whose ctor threw, unresolved types, unsupported
     // constructs — as a dismissible canvas banner. The engine already renders resiliently and records each dropped
@@ -1353,31 +1758,66 @@ class DesignerSession {
     // Empty items → the webview hides any stale banner (this render is clean). net48's compiled render is all-or-
     // nothing, so this is effectively net9 partial-render diagnostics; net48 per-control skip reasons are a follow-up.
     this.post({ type: 'renderDiag', items: categorizeUnrepresentable(result.unrepresentable) });
-    // 0.10.0 trust-floor: a persistent (non-dismissible) banner for a form the preview can't render/edit faithfully.
-    // Distinct from the dismissible #diag banner above so a partial-render notice can't hide the read-only lock (and
-    // vice-versa). THREE producers now (S1 localizable read-only lock, S2 inherited/unresolved-base, S3 binary/
-    // ImageStream resx resources) — all net9-only (net48 renders the real compiled type, so both flags read false
-    // there; gate defensively regardless). chooseFormNoticeKind picks the DOMINANT icon-kind; we compose the message
-    // text from EVERY true condition in precedence order so a single-slot banner never HIDES a disclosure (codex R#12).
-    const inheritedNet9 = this.engineKind === 'net9' && result.inheritedBase === true;
-    const binaryResx = this.engineKind === 'net9' && result.unrenderableResxCount > 0;
-    const noticeKind = chooseFormNoticeKind(this.localizable, inheritedNet9, binaryResx);
-    if (noticeKind === null) {
-      this.post({ type: 'formNotice', kind: null }); // clean render → hide
-    } else {
-      const parts: string[] = [];
-      if (this.localizable) parts.push(t('designer.notice.localizable'));
-      if (binaryResx) parts.push(t('designer.notice.binaryResx', { n: result.unrenderableResxCount }));
-      if (inheritedNet9) parts.push(t('designer.notice.inheritedBase', { base: result.baseTypeName }));
-      // 🔒 when the read-only lock is in play (edits blocked = primary state), else ⚠️ (incomplete/data-loss risk).
-      this.post({ type: 'formNotice', kind: noticeKind, icon: this.localizable ? '🔒' : '⚠️', text: parts.join(' ') });
-    }
+  // composeFormNotice(result) was already posted synchronously right after the render/layout/tray posts above, so a
+  // stalled loadProps can never leave the canvas without its persistent notice.
     return true; // a fresh render→layout→tray was posted → the canvas forest is current
   }
 
+  /**
+   * 0.10.0 / 1.0.0 — post the single-slot persistent #formNotice. The one place that composes the banner, so every
+   * render path stays consistent. A clean modern render posts `kind:null` (hides the banner).
+   *
+   * Visible banner producers:
+   * - localizable read-only lock (S1) — 🔒;
+   * - binary/ImageStream resx (S3) and inherited/unresolved base (S2) — ⚠️ disclosures on an editable modern form
+   * (its targeted splices preserve what the preview couldn't draw); modern-engine only.
+   *
+   * The .NET Framework compiled-preview disclosure (net48 renders the last BUILD, never the live source, and cannot
+   * prove they match) is NOT a banner — it goes to the output channel, so the fact stays on record without occupying
+   * the canvas. It is not a lock either: net48 stays editable and the source is protected by the byte-local firewall.
+   */
+  private composeFormNotice(res: { inheritedBase?: boolean; unrenderableResxCount?: number; baseTypeName?: string }): void {
+    if (this.disposed) return;
+    const inheritedModern = this.engineKind === 'modern' && res.inheritedBase === true;
+    const binaryResx = this.engineKind === 'modern' && (res.unrenderableResxCount ?? 0) > 0;
+    // The .NET Framework compiled-preview canvas is BUILD-based (the last build, not the live source) when it did not
+    // interpret; that fact goes to the OUTPUT CHANNEL, not a banner (it was previously an always-visible strip). An
+    // interpreted net48 render IS the live source (VS model), like the modern engine, so there is nothing to disclose.
+    const net48Preview = this.engineKind === 'net48' && this.net48RenderMode !== 'interpreted';
+    if (net48Preview) {
+      // Log-only, deduped so a render/edit storm doesn't spam the channel.
+      const note = this.doc.isDirty ? t('designer.notice.compiledPreviewDirty') : t('designer.notice.compiledPreview');
+      if (note !== this.lastNet48NoticeLog) { this.output.appendLine(note); this.lastNet48NoticeLog = note; }
+    } else {
+      this.lastNet48NoticeLog = undefined;
+    }
+    // The visible banner covers only the modern-engine disclosures (⚠️ binaryResx / inheritedBase) and the localizable
+    // read-only lock (🔒). net48Preview is deliberately NOT passed — it no longer drives a banner (see above).
+    const kind = chooseFormNoticeKind(this.localizable, inheritedModern, binaryResx);
+    let payload: { type: 'formNotice'; kind: FormNoticeKind; icon?: string; text?: string };
+    if (kind === null) {
+    payload = { type: 'formNotice', kind: null }; // clean render → hide
+    } else {
+      const parts: string[] = [];
+      if (this.localizable) parts.push(t('designer.notice.localizable'));
+      if (binaryResx) parts.push(t('designer.notice.binaryResx', { n: res.unrenderableResxCount ?? 0 }));
+      if (inheritedModern) parts.push(t('designer.notice.inheritedBase', { base: res.baseTypeName ?? '' }));
+      const icon = this.localizable ? '🔒' : '⚠️';
+      payload = { type: 'formNotice', kind, icon, text: parts.join(' ') };
+    }
+    // Skip a re-post byte-identical to the one already on screen: the notice is composed on the
+    // early render post AND recomposed on the trailing postDirty, and #6 now also syncs it at every mutation point, so
+    // most calls are no-ops. Deduping keeps that free of redundant webview IPC without suppressing any real change (a
+    // clean→dirty/kind change alters the signature). Reset on 'ready' so a reloaded webview still gets a fresh notice.
+    const sig = JSON.stringify(payload);
+    if (sig === this.lastNoticeSig) return;
+    this.lastNoticeSig = sig;
+    this.post(payload);
+  }
+
   /** If the form references controls the engine couldn't resolve (no assembly holds their type) AND no control
-   *  source is set yet, prompt the user ONCE to point the designer at the project/assembly that provides them —
-   *  the "you must specify a project to use your controls" guidance. Silent when a source is already chosen. */
+   * source is set yet, prompt the user ONCE to point the designer at the project/assembly that provides them —
+   * the "you must specify a project to use your controls" guidance. Silent when a source is already chosen. */
   private maybePromptForControlSource(unrepresentable: string[] | undefined, asm: string | undefined): void {
     if (this.promptedForSource || asm) return; // already chose a source (or was told) → don't nag
     const unresolved = (unrepresentable ?? [])
@@ -1387,7 +1827,7 @@ class DesignerSession {
     // T1.3 cross-runtime fallback: a multi-target (net48;net9) project whose vendor controls the net9 engine
     // can't load → offer the net48 compiled preview (which instantiates the REAL controls) instead of the
     // generic "select a control source" prompt. Only when we auto-routed to net9 (asm undefined, checked above).
-    if (this.engineKind === 'net9' && this.maybeOfferFrameworkPreview(unresolved)) return;
+    if (this.engineKind === 'modern' && this.maybeOfferFrameworkPreview(unresolved)) return;
     const uniq = [...new Set(unresolved)];
     const shown = uniq.slice(0, 3).join(', ') + (uniq.length > 3 ? ', …' : '');
     this.promptControlSource(t('host.unresolved', { names: shown }));
@@ -1401,7 +1841,7 @@ class DesignerSession {
    */
   private maybeOfferFrameworkPreview(unresolved: string[]): boolean {
     if (!this.designerFile) return false;
-    const csproj = findNearestCsproj(path.dirname(this.designerFile));
+    const csproj = findOwningCsproj(path.dirname(this.designerFile), this.wsRoot());
     if (!csproj) return false;
     let text = '';
     try { text = fs.readFileSync(csproj, 'utf8'); } catch { return false; }
@@ -1420,14 +1860,14 @@ class DesignerSession {
   }
 
   /** The .NET Framework target isn't built (only the net9 output exists) — neither engine can render the vendor
-   *  controls until it is. Tell the user to build it, or point at a control source manually. */
+   * controls until it is. Tell the user to build it, or point at a control source manually. */
   private frameworkUnbuiltNotice(names: string): void {
     void vscode.window.showWarningMessage(t('host.crossRuntime.unbuilt', { names }), t('host.unresolved.button'))
       .then((pick) => { if (pick) void vscode.commands.executeCommand('winformsDesigner.selectControlAssembly'); });
   }
 
   /** Persist the net48 build output as this form's control source (survives reload → routes to the compiled
-   *  preview) and re-render on the net48 engine. VS-parity one-click of the Select-Control-Assembly flow. */
+   * preview) and re-render on the net48 engine. VS-parity one-click of the Select-Control-Assembly flow. */
   private async switchToFrameworkPreview(net48Out: string, names: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     // The net48 output can be cleaned/rebuilt away between showing the offer and this click — getControlSource
@@ -1435,13 +1875,14 @@ class DesignerSession {
     // with no feedback (unlike selectControlAssembly, which re-checks existence). Guard + tell the user instead.
     if (!fs.existsSync(net48Out)) { this.frameworkUnbuiltNotice(names); return; }
     this.output.appendLine(`[designer] cross-runtime: switching to net48 compiled preview → ${net48Out}`);
+    const priorNet48Output = this.pinnedNet48Output; // usually undefined here (switching FROM modern), captured for symmetry
     await this.setAssemblyOverride(this.designerFile, net48Out);
-    await this.reloadControlSource(); // drops the cached toolbox + full-renders; routing now sees the net48 asm
+  await this.reloadControlSource(priorNet48Output); // drops the cached toolbox + full-renders; routing now sees the net48 asm
     if (!this.disposed) DesignerHub.instance.refreshStatus(); // parity with selectControlAssembly's status refresh
   }
 
   /** Show the one-shot "point the designer at a control source" prompt — latched (`promptedForSource`) so a
-   *  form asks at most once per session. Clicking the action opens the Select-Control-Assembly picker. */
+   * form asks at most once per session. Clicking the action opens the Select-Control-Assembly picker. */
   private promptControlSource(message: string): void {
     if (this.promptedForSource) return;
     this.promptedForSource = true;
@@ -1456,9 +1897,18 @@ class DesignerSession {
    * if it's a single-target Framework project not built yet we flag it (`frameworkUnbuilt`) so the caller
    * prompts instead of rendering garbage. Anything else stays net9 with engine-side auto-discovery (unchanged).
    */
+  /** The workspace folder holding this form — the bounded root for the shared-project importer search. */
+  private wsRoot(): string | undefined {
+    if (!this.designerFile) return undefined;
+    return vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.designerFile))?.uri.fsPath;
+  }
+
   private resolveRouting(explicitAsm: string | undefined): { kind: EngineKind; asm: string | undefined; frameworkUnbuilt: boolean } {
     if (explicitAsm) return { kind: detectEngineKind(explicitAsm), asm: explicitAsm, frameworkUnbuilt: false };
-    const csproj = this.designerFile ? findNearestCsproj(path.dirname(this.designerFile)) : null;
+    // findOwningCsproj, not findNearestCsproj: a form living in a SHARED PROJECT (.shproj/.projitems) has no .csproj
+    // above it, so the walk returned null and everything below — the net48 routing AND every "pick an assembly"
+    // offer — was skipped. The form then went to the .NET 9 renderer with no assembly and came back empty.
+    const csproj = this.designerFile ? findOwningCsproj(path.dirname(this.designerFile), this.wsRoot()) : null;
     if (csproj) {
       // A discovered Framework output (no .deps.json sidecar) is definitive — a net4x assembly can only load
       // on the net48 host. A .NET (Core) output has the sidecar, so detectEngineKind returns net9 and we fall
@@ -1475,67 +1925,151 @@ class DesignerSession {
         }
       }
     }
-    return { kind: 'net9', asm: undefined, frameworkUnbuilt: false };
+    return { kind: 'modern', asm: undefined, frameworkUnbuilt: false };
   }
 
   /** Describe the selected component → push its grid to the Properties view + its manipulability to the canvas. */
   private async loadProps(id: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
+    // Snapshot the selection generation: if a newer pick() lands while the describe is in flight, this load's replies
+    // are stale and must publish nothing — otherwise the late reply repaints the PREVIOUS control's grid and tasks over
+    // the current selection. Callers that refresh a non-selected id (e.g. a strip host after an item edit) are
+    // unaffected: without an intervening pick the generation doesn't move.
+    const gen = this.selectionGen;
+    // Also bind the SOURCE revision, not just the selection: a describe reads the live source buffer, so a newer edit
+    // (commit / undo / reload bumps doc.rev) makes an in-flight describe's values stale even for the SAME selection.
+    // doc.rev is used (NOT renderSeq) so a transient VIEW-STATE render — e.g. a tab-header click's skipReselect
+    // fullRender — never over-rejects a describe whose source is still current. Captured right BEFORE the source is
+    // sampled, with no await between, so rev + text are one consistent snapshot: currentText() is async, so a capture
+    // AFTER its await could bind a newer rev (an edit committed while suspended) to the older text and accept a stale describe.
+    let srcRev = this.doc.rev;
     if (this.engineKind === 'net48') { // compiled preview: describe the LIVE instance, not the net9 graph
       const asm48 = this.asm();
       let comp: ComponentDesc | null = null;
+      let vendorTags: VendorTagView[] = [];
       if (asm48) {
         // pass the UNSAVED buffer so the net48 source-metadata pass (bold / wired-handler) reflects an unsaved reset /
         // wiring on a CONTROL too (parity with the item path — the same pre-existing disk-staleness, closed here).
-        try { comp = await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm48, id, undefined, undefined, await this.currentText()); }
-        catch { comp = null; }
+        // …and the vendor's own declared Tasks menu (DevExpress "Add Tab Page"…), if this control's compiled type
+        // ships one — net48 only, since reading it needs the real type the net9 engine can't load. Fetched CONCURRENTLY
+        // with the describe on purpose: a second sequential await would widen the window in which a newer selection's
+        // `tasks` post can be overtaken by this older one. Both are best-effort — a failure degrades to no vendor menu.
+        srcRev = this.doc.rev; // bind the SOURCE revision (bumps on edit/undo/load, not a view render) BEFORE the sync text sample
+        const text = await this.currentText();
+      const eng48 = await this.ensureEngine('net48');
+        // when the net48 CANVAS is interpreted (live source), describe the SAME interpreted
+        // instance so the panel matches the canvas on an unsaved edit; a null (unknown/inherited/non-interpreted) leaves
+        // the panel UNAVAILABLE — it must NEVER fall back to compiled values under an interpreted canvas. Only a
+        // compiled/fallback canvas describes the cached compiled instance.
+        const interpreted = this.net48RenderMode === 'interpreted';
+        const describeP = interpreted
+          ? describeInterpretedComponent(eng48, this.designerFile, asm48, text ?? '', id).catch(() => null)
+          : describeCompiledComponent(eng48, this.designerFile, asm48, id, undefined, undefined, text).catch(() => null);
+        const [c, v] = await Promise.all([describeP, this.vendorTagsFor(id)]);
+        comp = c;
+        vendorTags = v;
       }
-      if (this.disposed) return;
+      if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return; // a newer pick OR SOURCE edit superseded this load
       DesignerHub.instance.pushPanel(this, { type: 'props', id, component: comp });
-      this.post({ type: 'tasks', id, component: comp }); // canvas smart-tag flyout data
-      const manip = this.manipFor(id, comp); // single drag/resize is live (net9 splices Location/Size, net48 mutates)
+      this.post({ type: 'tasks', id, component: comp, vendorTags }); // canvas smart-tag flyout data
+      // A null describe under an INTERPRETED canvas means the selection is unavailable (unknown/inherited) — disable
+      // move/resize too, else the canvas would offer manipulation of a component the panel can't describe.
+      const manip = (comp === null && this.net48RenderMode === 'interpreted')
+        ? { move: false, resize: false }
+      : this.manipFor(id, comp); // single drag/resize is live (net9 splices Location/Size, net48 mutates)
       this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
       return;
     }
     const eng = await this.ensureEngine();
-    const component = await describeComponent(eng, this.designerFile, id, this.asm(), await this.currentText());
-    if (this.disposed) return;
+    srcRev = this.doc.rev; // bind the SOURCE revision BEFORE the sync text sample — see the net48 path above
+    const text9 = await this.currentText();
+    const component = await describeComponent(eng, this.designerFile, id, this.asm(), text9);
+    if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return; // a newer pick OR SOURCE edit superseded this load
     DesignerHub.instance.pushPanel(this, { type: 'props', id, component });
-    this.post({ type: 'tasks', id, component }); // canvas smart-tag flyout data
+    // No vendor tags on net9: reading them needs the real compiled vendor type, which this engine can't load (a form
+    // that uses vendor controls doesn't render here at all). Sent explicitly so the canvas clears a stale net48 menu.
+    this.post({ type: 'tasks', id, component, vendorTags: [] }); // canvas smart-tag flyout data
     const manip = this.manipFor(id, component);
     this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
   }
 
+  /**
+   * The vendor's DECLARED Tasks menu for one control (DevExpress "XtraTabControl Tasks"), each entry tagged with
+   * the verb THIS designer runs for it — or null when we have none, which the canvas shows disabled.
+   *
+   * The labels are the vendor's, verbatim; the actions are ours. We deliberately never invoke the vendor's own action:
+   * it mutates the live component graph through a design host and nothing would carry that into .Designer.cs, so the
+   * edit would silently vanish on the next rebuild — and its "Tab Pages" verb opens a modal dialog that would hang the
+   * engine. Each verb below is an existing source-first path (text splice → commit → live re-render), the same one the
+   * canvas context menu uses, so the vendor menu adds a faithful presentation, not a second way to mutate code.
+   */
+  private static readonly VENDOR_VERBS: Readonly<Record<string, 'addTab' | 'deleteTab' | 'showProperties'>> = {
+    AddTabPage: 'addTab',
+    RemoveTabPage: 'deleteTab',
+  TabPages: 'showProperties', // the vendor opens a modal collection dialog; we open the same collection in the grid
+    };
+
+  private async vendorTagsFor(id: string): Promise<VendorTagView[]> {
+    const asm = this.asm();
+    if (!asm || !this.designerFile) return [];
+    let tags: VendorSmartTag[] = [];
+    try {
+      tags = await listCompiledVendorSmartTags(await this.ensureEngine('net48'), this.designerFile, asm, id);
+    } catch { return []; } // a vendor-less control / engine hiccup → no vendor section, flyout unchanged
+    return tags.map((t) => ({
+      label: t.displayName,
+      methodName: t.methodName,
+      verb: DesignerSession.VENDOR_VERBS[t.methodName] ?? null,
+      closesPanel: t.closesPanel,
+    }));
+  }
+
   /** Describe a ToolStripItem (a Component, resolved by field id) into the Properties panel via a DEDICATED `itemProps`
-   *  message — NOT `loadProps`. This is the item→Properties channel: it deliberately does NOT set `this.currentId`, nor
-   *  post `select` / `tasks` / `manip`, so the control selection (and everything it drives — manipFor, smart-tag, the
-   *  generic Delete/Cut/z-order target) stays on the last control. net9 resolves the item by Site.Name and renders an
-   *  editable grid. net48 describes the compiled item too (Slice 1b) and edits it live (Slice 2), so it is editable
-   *  whenever the item resolved; when the assembly isn't built yet describe returns null → the panel shows the
-   *  compiled-preview placeholder (editable=false is moot for a null component — the grid isn't rendered). */
+   * message — NOT `loadProps`. This is the item→Properties channel: it deliberately does NOT set `this.currentId`, nor
+   * post `select` / `tasks` / `manip`, so the control selection (and everything it drives — manipFor, smart-tag, the
+   * generic Delete/Cut/z-order target) stays on the last control. net9 resolves the item by Site.Name and renders an
+   * editable grid. net48 describes the compiled item too and edits it live, so it is editable
+   * whenever the item resolved; when the assembly isn't built yet describe returns null → the panel shows the
+   * compiled-preview placeholder (editable=false is moot for a null component — the grid isn't rendered). */
   private async loadItemProps(ownerId: string, itemId: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     let component: ComponentDesc | null = null;
+    // Bind the SOURCE revision (parity with loadProps): a newer edit (doc.rev, NOT renderSeq — a view-state render
+    // must not over-reject) supersedes an in-flight item describe whose source is now stale, even when the SAME item
+    // stays selected. Captured right BEFORE the source is sampled (no await between) so rev + text are one snapshot.
+    let srcRev = this.doc.rev;
     if (this.engineKind === 'net48') {
       const asm48 = this.asm();
       if (asm48) {
         // pass the UNSAVED buffer so the net48 source-metadata pass (bold / wired-handler) reflects an item's just-wired
-        // event or just-reset property immediately — not the stale on-disk file (codex review).
-        try { component = await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm48, itemId, undefined, undefined, await this.currentText()); }
+        // event or just-reset property immediately — not the stale on-disk file. When the canvas is
+        // interpreted, describe the item off the interpreted instance so it matches the interpreted canvas.
+        try {
+          srcRev = this.doc.rev; // bind the SOURCE revision BEFORE the sync text sample (atomic rev/text snapshot)
+          const text48 = await this.currentText();
+          const eng48i = await this.ensureEngine('net48');
+          component = this.net48RenderMode === 'interpreted'
+            ? await describeInterpretedComponent(eng48i, this.designerFile, asm48, text48 ?? '', itemId)
+            : await describeCompiledComponent(eng48i, this.designerFile, asm48, itemId, undefined, undefined, text48);
+        }
         catch { component = null; }
       }
     } else {
       const eng = await this.ensureEngine();
-      try { component = await describeComponent(eng, this.designerFile, itemId, this.asm(), await this.currentText()); }
+      try {
+        srcRev = this.doc.rev; // bind the SOURCE revision BEFORE the sync text sample (atomic rev/text snapshot)
+        const t9 = await this.currentText();
+        component = await describeComponent(eng, this.designerFile, itemId, this.asm(), t9);
+      }
       catch { component = null; }
     }
-    if (this.disposed) return;
+    if (this.disposed || srcRev !== this.doc.rev) return; // a newer SOURCE edit superseded this item load
     // Drop a STALE refresh: if the current item selection moved to a different item (or to a control) while this describe
     // was in flight, pushing itemProps now would silently revert the panel to the old item behind a newer selection
-    // (canvas dispatch isn't serialized — codex review). The fresh selectItem sets currentSelItem to THIS item first, so
+    // (canvas dispatch isn't serialized. The fresh selectItem sets currentSelItem to THIS item first, so
     // it always passes; only a delayed reset/wire/edit refresh for a superseded item is dropped.
     if (!this.currentSelItem || this.currentSelItem.ownerId !== ownerId || this.currentSelItem.itemId !== itemId) return;
-    // Both engines edit a resolved item now (Slice 2 widened the net48 live-edit primitive to a non-Control
+    // Both engines edit a resolved item now (the net48 live-edit primitive was widened to a non-Control
     // component). A net48 describe miss (assembly not built) → null → placeholder; editable is moot there.
     const editable = component != null;
     DesignerHub.instance.pushPanel(this, { type: 'itemProps', id: itemId, ownerId, component, editable });
@@ -1633,7 +2167,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     if (!this.commit(before, text, `Move ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`moved ${applied} controls by (${Math.round(dx)}, ${Math.round(dy)}) (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits));
+    if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: tn('status.moved', applied) });
   }
@@ -1658,8 +2192,8 @@ class DesignerSession {
     const parentId = primary.parentId ?? 'this';
     let cx: number, cy: number, cw: number, ch: number;
     if ((parentId === 'this' || parentId === '') && this.rootFrame && this.rootClient) {
-      const ox = (this.rootFrame.w - this.rootClient.w) / 2;            // symmetric side borders
-      const oy = (this.rootFrame.h - this.rootClient.h) - ox;          // caption = total vertical chrome − bottom border
+      const ox = (this.rootFrame.w - this.rootClient.w) / 2; // symmetric side borders
+      const oy = (this.rootFrame.h - this.rootClient.h) - ox; // caption = total vertical chrome − bottom border
       cx = ox; cy = oy; cw = this.rootClient.w; ch = this.rootClient.h;
     } else {
       const cont = this.controls.find((c) => c.id === parentId);
@@ -1709,7 +2243,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     if (!this.commit(before, text, `Align ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`aligned ${applied} controls (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
+    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: tn('status.aligned', applied) });
   }
@@ -1740,7 +2274,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     if (!this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`resized ${applied} controls (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits));
+    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: tn('status.resized', applied) });
   }
@@ -1768,7 +2302,7 @@ class DesignerSession {
     if (!this.commit(before, text, `Remove ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = 'this';
     this.output.appendLine(`removed ${applied} controls (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, removed));
+    if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, removed), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: tn('status.removed', applied) });
   }
@@ -1796,7 +2330,7 @@ class DesignerSession {
     // especially the refEdit `describeFor` round-trip below): a reference pick is validated against the candidate list
     // the engine describes NOW, then spliced VERBATIM — if the user edited the .Designer.cs text (e.g. deleted the target
     // field) DURING that describe, a snapshot taken AFTERWARDS would miss the change and commit a dangling `this.<field>`
-    // (non-compiling save). Capturing here makes the rev-check below catch any edit during describe/convert/splice (codex review, High).
+    // (non-compiling save). Capturing here makes the rev-check below catch any edit during describe/convert/splice.
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
 
@@ -1806,11 +2340,11 @@ class DesignerSession {
     // normal InitializeComponent property edit. It has no visual effect, so we commit + refresh the grid without a
     // re-render. Safe on every form (even ones the whole-file serializer refuses — it never regenerates). Routed
     // through the net9 engine: SetModifier is pure Roslyn text surgery (it never LOADS the form), so it works for a
-    // net48/DevExpress buffer too — only the net9 engine hosts it. (Modifiers is currently surfaced on net9 forms;
-    // net48 describe-injection is a follow-up.) Gated on the engine's designTime flag (NOT the name) so a real control
+    // net48/DevExpress buffer too — only the modern engine hosts the source splice, while both describe paths surface
+    // the pseudo-property. Gated on the engine's designTime flag (NOT the name) so a real control
     // property that happens to be named "Modifiers" stays on the normal setProperty path.
     if (designTime && prop === 'Modifiers') {
-      const modEng = await this.ensureEngine('net9');
+      const modEng = await this.ensureEngine('modern');
       const mr = await setModifier(modEng, this.designerFile, id, raw, before);
       if (!mr.safe || mr.text === null) {
         this.post({ type: 'status', message: t('status.editRejected', { reason: mr.reason || 'unsafe' }) });
@@ -1840,7 +2374,7 @@ class DesignerSession {
       // sentinel, the exact root token, or an EXACT listed sibling field. This rejects a forged refEdit on a
       // non-reference property, an arbitrary-expression RHS (`okButton.Text.Trim()` — never a candidate), a
       // whitespace/garbage "clear", and a wrong/incompatible field — none of which the normal <select> can produce
-      // (codex review, High). The normal control-grid path always sends the exact sentinel or an engine-emitted field
+      //. The normal control-grid path always sends the exact sentinel or an engine-emitted field
       // name (incl. the "(this)" token when the engine offered it), so it is unaffected.
       const isClear = raw === REFERENCE_NONE;
       const isRoot = raw === REFERENCE_THIS;
@@ -1919,7 +2453,7 @@ class DesignerSession {
   }
 
   /** Grid edit of a ToolStripItem property (item→Properties). Mirrors editFromGrid's error/restore handling but
-   *  refreshes via the item channel (loadItemProps) so a failure re-renders the item grid, not the control's. */
+   * refreshes via the item channel (loadItemProps) so a failure re-renders the item grid, not the control's. */
   async editItemFromGrid(ownerId: string, itemId: string, prop: string, propType: string, isEnum: boolean, value: string): Promise<void> {
     try {
       await this.applyItemEdit(ownerId, itemId, prop, propType, isEnum, value);
@@ -1930,12 +2464,12 @@ class DesignerSession {
   }
 
   /** Apply ONE property edit to a ToolStripItem field. The engine splice (setProperty) is field-agnostic — it rewrites
-   *  `this.<itemField>.<prop> = <expr>` exactly like a control — so the commit path is the proven grid-edit one. The
-   *  differences from applyEdit: (1) no Dock/Anchor conjugate reset (items have neither); (2) the re-render uses
-   *  fullRender(skipReselect) so the canvas keeps the item highlight and the panel is NOT snapped back to the control;
-   *  (3) the grid refresh goes through loadItemProps (the itemProps channel bypasses the control-props gate). net48
-   *  can't re-interpret its compiled assembly, so it mutates the LIVE item in place (liveEdit48 → the widened
-   *  TryApply) for the picture; the committed text is what persists on save either way (Slice 2). */
+   * `this.<itemField>.<prop> = <expr>` exactly like a control — so the commit path is the proven grid-edit one. The
+   * differences from applyEdit: (1) no Dock/Anchor conjugate reset (items have neither); (2) the re-render uses
+   * fullRender(skipReselect) so the canvas keeps the item highlight and the panel is NOT snapped back to the control;
+   * (3) the grid refresh goes through loadItemProps (the itemProps channel bypasses the control-props gate). net48
+   * can't re-interpret its compiled assembly, so it mutates the LIVE item in place (liveEdit48 → the widened
+   * TryApply) for the picture; the committed text is what persists on save either way. */
   private async applyItemEdit(ownerId: string, itemId: string, prop: string, propType: string, isEnum: boolean, raw: string): Promise<void> {
     if (!this.designerFile) return;
 
@@ -1987,7 +2521,7 @@ class DesignerSession {
     // liveEdit48 → setCompiledPropertyLive resolves the item via the widened TryApply, and live48/show48 posts
     // render+layout+tray but no control select, so the item highlight survives there too.
     if (this.engineKind === 'net48') {
-      await this.liveEdit48(itemId, prop, raw);
+    await this.liveEdit48(itemId, prop, raw); // liveEdit48 always skipReselects (keeps the on-canvas item highlight)
     } else {
       await this.fullRender(true);
     }
@@ -1996,52 +2530,67 @@ class DesignerSession {
   }
 
   /** net48 compiled preview: after the text edit is committed, mutate the live instance so the picture updates
-   *  immediately (the net9 interpreter path can't render this DevExpress/Framework control). Best-effort — an
-   *  unconvertible/read-only value leaves the picture on the built value with a note; the committed text still
-   *  renders after a rebuild. */
+   * immediately (the net9 interpreter path can't render this DevExpress/Framework control). Best-effort — an
+   * unconvertible/read-only value leaves the picture on the built value with a note; the committed text still
+   * renders after a rebuild. */
   private async liveEdit48(id: string, prop: string, raw: string): Promise<void> {
     const asm = this.asm();
     if (!asm || !this.designerFile) return;
-    await this.live48((eng) => setCompiledPropertyLive(eng, this.designerFile!, asm, id, prop, raw));
+    // a property edit IS a committed source-backed edit, so opt into interpreted re-render: under
+    // an interpreted canvas re-interpret the committed source (fullRender) instead of mutating the compiled instance.
+    // ALWAYS skipReselect: this matches the earlier net48 `show48`, which posted NO host control selection — so the
+    // webview keeps its current selection and the trailing loadProps(id)/loadItemProps restores the grid. Posting a fresh
+    // control select instead breaks a visibility-changing edit (Visible=false leaves the control out of the layout →
+    // selection snaps to the form → the hidden control's grid is dropped and can't be set back) and clears an item/nested
+    // highlight — both are visibility contracts (CONTROL-visibility + ITEM-highlight).
+    await this.live48((eng) => setCompiledPropertyLive(eng, this.designerFile!, asm, id, prop, raw), true, { skipReselect: true });
   }
 
   /** net48 compiled preview for a typed "…" collection edit: after the text edit is committed, reconstruct the
-   *  collection (string Items / ListView.Columns / DataGridView.Columns) on the live instance so the canvas updates
-   *  immediately (T1.1b) instead of showing the built collection until a rebuild. Best-effort — a bound/unsupported
-   *  collection leaves the picture on the built value with a note (show48's previewPartial); the committed text still
-   *  renders after a rebuild. */
+   * collection (string Items / ListView.Columns / DataGridView.Columns) on the live instance so the canvas updates
+   * immediately (T1.1b) instead of showing the built collection until a rebuild. Best-effort — a bound/unsupported
+   * collection leaves the picture on the built value with a note (show48's previewPartial); the committed text still
+   * renders after a rebuild. */
   private async liveCollection48(id: string, prop: string, itemType: string, items: LiveCollItem[]): Promise<void> {
     const asm = this.asm();
     if (!asm || !this.designerFile) return;
-    await this.live48((eng) => setCompiledCollectionLive(eng, this.designerFile!, asm, id, prop, itemType, items));
+    await this.live48((eng) => setCompiledCollectionLive(eng, this.designerFile!, asm, id, prop, itemType, items), true, { skipReselect: true });
   }
 
   /** net48 compiled preview for a generic string[] "…" edit (TextBox/RichTextBox.Lines): after the net9 text commit,
-   *  set the string[] on the live instance so the canvas updates immediately (mirror of liveCollection48). Best-effort
-   *  — a non-string[]/read-only property leaves the picture on the built value with a note; the committed text still
-   *  renders after a rebuild. */
+   * set the string[] on the live instance so the canvas updates immediately (mirror of liveCollection48). Best-effort
+   * — a non-string[]/read-only property leaves the picture on the built value with a note; the committed text still
+   * renders after a rebuild. */
   private async liveStringArray48(id: string, prop: string, items: string[]): Promise<void> {
     const asm = this.asm();
     if (!asm || !this.designerFile) return;
-    await this.live48((eng) => setCompiledStringArrayLive(eng, this.designerFile!, asm, id, prop, items));
+    await this.live48((eng) => setCompiledStringArrayLive(eng, this.designerFile!, asm, id, prop, items), true, { skipReselect: true });
   }
 
   /** net48 compiled preview for the hierarchical TreeView.Nodes edit: after the net9 text commit, reconstruct the
-   *  node forest on the live instance so the canvas updates immediately (the TreeView analogue of liveCollection48).
-   *  Best-effort — a non-TreeNodeCollection Nodes (a DevExpress TreeList) leaves the picture on the built tree with a
-   *  note (show48's previewPartial); the committed text still renders after a rebuild. */
+   * node forest on the live instance so the canvas updates immediately (the TreeView analogue of liveCollection48).
+   * Best-effort — a non-TreeNodeCollection Nodes (a DevExpress TreeList) leaves the picture on the built tree with a
+   * note (show48's previewPartial); the committed text still renders after a rebuild. */
   private async liveTreeNodes48(id: string, prop: string, nodes: TreeNodeItem[]): Promise<void> {
     const asm = this.asm();
     if (!asm || !this.designerFile) return;
-    await this.live48((eng) => setCompiledTreeNodesLive(eng, this.designerFile!, asm, id, prop, nodes));
+    await this.live48((eng) => setCompiledTreeNodesLive(eng, this.designerFile!, asm, id, prop, nodes), true, { skipReselect: true });
   }
 
   /** Push a net48 live-op's render result to the canvas (shared by property edit / drag / remove / z-order). Returns
-   *  true iff it posted a fresh render→layout→tray whose forest REFLECTS the edit: false if superseded/disposed (nothing
-   *  posted) OR the live op reported `applied === false` (posted, but the picture is the stale built strip — the ADD
-   *  auto-reopen must not draw from it). A plain render (applied undefined) counts as fresh. */
-  private show48(res: RenderLayout, seq: number): boolean {
+   * true iff it posted a fresh render→layout→tray whose forest REFLECTS the edit: false if superseded/disposed (nothing
+   * posted) OR the live op reported `applied === false` (posted, but the picture is the stale built strip — the ADD
+   * auto-reopen must not draw from it). A plain render (applied undefined) counts as fresh. */
+  private show48(res: RenderLayout, seq: number, notifyOnNotApplied = true): boolean {
+    // Only the freshest, non-disposed render paints. There is no fidelity state to update (the divergence lock was
+    // descoped); net48 editing is always allowed, and the persistent "last build" disclosure is
+    // posted by composeFormNotice below, unconditionally per net48 route.
     if (seq !== this.renderSeq || this.disposed) return false;
+    // Every show48 render is a COMPILED live-instance (build-based) render — live edits/drags/removes route through
+    // live48→show48 and never re-interpret the source. So the render mode reverts to 'compiled' here: after a form
+    // rendered 'interpreted', a subsequent live op flips the canvas back to the build, and composeFormNotice must
+    // re-show the "last build" disclosure. Leaving the stale 'interpreted' flag hid it.
+    this.net48RenderMode = 'compiled';
     this.controls = res.controls;
     this.toolStripItems = res.toolStripItems ?? [];
     this.rootClient = { w: res.clientWidth, h: res.clientHeight };
@@ -2049,21 +2598,39 @@ class DesignerSession {
     this.post({ type: 'render', png: res.png.toString('base64'), width: res.width, height: res.height, gen: seq });
     this.postLayout(res.controls, this.toolStripItems);
     this.post({ type: 'tray', items: res.tray });
-    if (res.applied === false) {
-      this.post({ type: 'status', message: t('status.previewPartial', { diag: res.diagnostics || 'some edits not applied live' }) });
+    this.composeFormNotice(res); // net48 "last build" disclosure (+ any modern-engine notices)
+    if (res.applied === false && notifyOnNotApplied) {
+      // Honest diagnostic — the source committed but the live instance didn't reflect it (an unconvertible value, or a
+      // component the preview won't mutate, or a reconcile miss). NOT a false "done"; the edit is in the source and
+      // appears after a rebuild. Navigation ops pass notifyOnNotApplied=false (their applied:false is an ordinary no-op).
+      this.post({ type: 'status', message: t('status.previewPartial', { diag: res.diagnostics || t('designer.notice.liveNotReflected') }) });
     }
     return res.applied !== false;
   }
 
   /** Run a net48 live-op (already text-committed by net9) with the session's net48 engine and render its result.
-   *  Returns show48's freshness result (false on bail / a swallowed engine error). */
-  private async live48(op: (eng: EngineHandle) => Promise<RenderLayout>): Promise<boolean> {
+   * Returns show48's freshness result (false on bail / a swallowed engine error).
+   *
+   * WRITE PARITY for interpreted forms is OPT-IN per call site, NOT a blanket "if interpreted →
+   * fullRender" guard (an independent review proved that too broad: it breaks tab navigation, ToolStrip item
+   * selection, and mid-batch paste). A caller passes `interp` ONLY when it is a committed SOURCE-backed edit whose net9
+   * counterpart is a full render — then, under an interpreted canvas, the compiled mutation is skipped and the committed
+   * source is re-interpreted (fullRender), so the canvas stays interpreted instead of flipping to the build. Callers
+   * that do NOT opt in (tab navigation = transient view state; ToolStrip items = need skipReselect; paste/duplicate =
+   * per-control loop that ends in its own fullRender) keep the compiled live-mirror path — the honest earlier behavior,
+   * never a NEW break. `interp.skipReselect` threads through to fullRender for callers that must preserve a non-control
+   * selection. */
+  private async live48(op: (eng: EngineHandle) => Promise<RenderLayout>, notifyOnNotApplied = true, interp?: { skipReselect?: boolean }): Promise<boolean> {
     if (!this.designerFile || !this.asm()) return false;
+    if (interp && this.net48RenderMode === 'interpreted') return this.fullRender(interp.skipReselect ?? false);
     const seq = ++this.renderSeq;
     try {
       const res = await op(await this.ensureEngine('net48'));
-      return this.show48(res, seq);
+      return this.show48(res, seq, notifyOnNotApplied);
     } catch (err) {
+      // The live op threw (RPC error, timeout, a dead engine) after its text edit committed. The source is safe (the
+      // net9 splice already landed); the picture just didn't update, which the persistent net48 disclosure already
+      // covers. Surface the error as a status, do NOT block further editing.
       this.post({ type: 'status', message: errMsg(err) });
       return false;
     }
@@ -2075,8 +2642,16 @@ class DesignerSession {
     const asm = this.asm();
     if (this.engineKind === 'net48') {
       if (!asm) return null;
-      // mirror the net9 branch below (pass the unsaved buffer) so source-metadata reflects the dirty edit on net48 too.
-      try { return await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm, id, undefined, undefined, await this.currentText()); }
+      // mirror the net9 branch below (pass the unsaved buffer) so source-metadata reflects the dirty edit on net48 too;
+      // route to the interpreted describe when the canvas is interpreted so reference-write revalidation validates against
+      // the SAME identity model the canvas + panel use.
+      try {
+        const textR = await this.currentText();
+        const eng48r = await this.ensureEngine('net48');
+        return this.net48RenderMode === 'interpreted'
+          ? await describeInterpretedComponent(eng48r, this.designerFile, asm, textR ?? '', id)
+          : await describeCompiledComponent(eng48r, this.designerFile, asm, id, undefined, undefined, textR);
+      }
       catch { return null; }
     }
     return describeComponent(await this.ensureEngine(), this.designerFile, id, asm, await this.currentText());
@@ -2090,61 +2665,50 @@ class DesignerSession {
     return vscode.Uri.file(base + '.resx');
   }
 
-  /** Read a text file's UTF-8 content (BOM stripped), or null when it can't be read (missing/locked/etc). Used on
-   *  the import FORWARD path, where any read failure fails closed (null ≠ snapshot → the conflict guard refuses). */
-  private async readTextIfExists(uri: vscode.Uri): Promise<string | null> {
-    try {
-      return this.stripBom(await vscode.workspace.fs.readFile(uri));
-    } catch { return null; } // ENOENT → no .resx yet (the engine creates one); any error → fail-closed on the forward path
-  }
-
-  /** Read a text file, returning null ONLY for a genuine "file not found" and RETHROWING every other error. The
-   *  undo/redo resx preconditions use this (not readTextIfExists): a lock/permission read must reject the closure
-   *  so commit's undo/redo leaves the designer text unmoved, rather than being mistaken for "content changed →
-   *  skip revert" while the text still rewinds — that would recreate the split state (codex fix-verify). */
-  private async readTextStrict(uri: vscode.Uri): Promise<string | null> {
-    try {
-      return this.stripBom(await vscode.workspace.fs.readFile(uri));
-    } catch (e) {
-      if (isFileNotFound(e)) return null;
-      throw e;
-    }
-  }
-
-  private stripBom(b: Uint8Array): string {
-    let s = Buffer.from(b).toString('utf8');
-    if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1); // strip a leading BOM so the XML parser is happy
-    return s;
-  }
-
   /**
-   * 0.11.0 write-safety — write `bytes` to `uri` ATOMICALLY: stage to a sibling temp file, then rename over the
-   * target. On a local filesystem the rename is atomic, so a crash / disk-full mid-write can never leave the .resx
-   * truncated or half-written (a real risk once it holds a large binary ImageListStreamer blob). The temp lives in
-   * the SAME directory as the target so the rename stays on one volume; it is cleaned up if the rename fails. The
-   * temp name is unique across sessions AND processes — a module-global counter plus the pid — so two windows
-   * importing into the same sibling .resx can never stage onto each other's temp file (codex: a per-session counter
-   * both restart at 0 → `Foo.resx.wfd0.tmp` collision → one session renames the other's staged bytes over the target).
+   * Read a .resx: its text (BOM stripped, but reported), or null ONLY for a genuine "file not found" — every other
+   * read failure is RETHROWN.
    *
-   * A SYMLINK target is written THROUGH with a direct write (which follows the link), never temp+renamed — a rename
-   * would replace the link entry with a regular file and destroy the link, leaving the real target stale (codex
-   * fix-verify; VS Code's own disk provider declines atomic writes for symlinks for the same reason).
+   * The distinction is the whole point. The forward path used to swallow EVERY error into null (its comment even
+   * claimed that was fail-closed), so `null` meant both "there is definitely no .resx" and "there is one and I could
+   * not look at it". An unreadable-but-writable .resx (permissions, a remote/virtual provider, a transient failure)
+   * therefore: read as absent → the engine synthesized a fresh file → the second read failed to null too, so the
+   * "did it change on disk?" guard compared null to null and PASSED → binaryResxCount(null) is 0, so the
+   * binary-resource drop guard was disabled → the atomic rename replaced the user's real resource file with the
+   * synthesized one. Rethrowing surfaces it as an import failure instead.
+   *
+   * Undo/redo use this too: a lock/permission read must reject the closure so commit's undo/redo leaves the designer
+   * text unmoved, rather than being mistaken for "content changed → skip revert" while the text still rewinds — that
+   * would recreate the split state.
    */
-  private async atomicWriteFile(uri: vscode.Uri, bytes: Uint8Array): Promise<void> {
-    let isSymlink = false;
-    try { isSymlink = ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.SymbolicLink) !== 0; }
-    catch { /* not found / unreadable → treat as a normal new file (the atomic temp+rename path) */ }
-    if (isSymlink) { await vscode.workspace.fs.writeFile(uri, bytes); return; }
-    const tmp = uri.with({ path: `${uri.path}.wfd-${process.pid}-${atomicWriteSeq++}.tmp` });
+  private async readResx(uri: vscode.Uri): Promise<ResxRead | null> {
     try {
-      await vscode.workspace.fs.writeFile(tmp, bytes);
-      await vscode.workspace.fs.rename(tmp, uri, { overwrite: true });
+      return this.stripBom(await vscode.workspace.fs.readFile(uri));
     } catch (e) {
-      // clean up a partially-staged temp on EITHER a failed write or a failed rename (codex fix-verify: the temp
-      // write was outside the cleanup scope, so an interrupted stage leaked a `.wfd-…tmp` sibling).
-      try { await vscode.workspace.fs.delete(tmp); } catch { /* best effort */ }
+      if (isFileNotFound(e)) return null; // no .resx yet — the engine creates one from a skeleton
       throw e;
     }
+  }
+
+  private stripBom(b: Uint8Array): ResxRead {
+    let s = Buffer.from(b).toString('utf8');
+    const hadBom = s.charCodeAt(0) === 0xFEFF;
+    if (hadBom) s = s.slice(1); // strip a leading BOM so the XML parser is happy
+    return { text: s, hadBom };
+  }
+
+  /** Re-attach the BOM the .resx came with. VS writes .resx files WITH a UTF-8 BOM, and the engine round-trips the
+   * stripped text — so writing back plain UTF-8 quietly dropped the BOM, turning an image import into a whole-file
+   * diff in the user's history (and a "changed" file for anything comparing bytes). A .resx we CREATE has no BOM;
+   * we preserve what was there rather than invent one. */
+  private resxBytesOf(text: string, hadBom: boolean): Buffer {
+    const body = Buffer.from(text, 'utf8');
+    return hadBom ? Buffer.concat([UTF8_BOM, body]) : body;
+  }
+
+  /** 0.11.0 write-safety — the .resx write. See {@link atomicWrite}, which the .Designer.cs save shares. */
+  private atomicWriteFile(uri: vscode.Uri, bytes: Uint8Array): Promise<void> {
+    return atomicWrite(uri, bytes);
   }
 
   /**
@@ -2156,14 +2720,16 @@ class DesignerSession {
    * in-memory designer text unmoved — the two halves never split. (TOCTOU note: the read→write window is inherent to
    * the VS Code FS API, which offers no compare-and-swap; the equality guard keeps it as small as the forward path's.)
    */
-  private async revertResx(uri: vscode.Uri, beforeText: string | null, afterText: string): Promise<void> {
-    const current = await this.readTextStrict(uri); // throws on lock/permission → undo rejects (no split), not "skip"
-    if (current !== afterText) { this.output.appendLine('[designer] resx undo skipped: .resx changed on disk since the edit'); return; }
+  private async revertResx(uri: vscode.Uri, beforeText: string | null, afterText: string, bom: boolean): Promise<void> {
+    const current = await this.readResx(uri); // throws on lock/permission → undo rejects (no split), not "skip"
+    // The BOM is part of "still exactly what this edit wrote" — the forward guard already treats a BOM-only external
+    // rewrite as a conflict, and comparing text alone here would let undo restore our old signature over it.
+    if (current?.text !== afterText || current.hadBom !== bom) { this.output.appendLine('[designer] resx undo skipped: .resx changed on disk since the edit'); return; }
     if (beforeText === null) {
       try { await vscode.workspace.fs.delete(uri); }
       catch (e) { if (!isFileNotFound(e)) throw e; } // already gone = done; a lock/permission failure must reject the undo
     } else {
-      await this.atomicWriteFile(uri, Buffer.from(beforeText, 'utf8'));
+    await this.atomicWriteFile(uri, this.resxBytesOf(beforeText, bom)); // restore its ORIGINAL BOM, not just its text
     }
   }
 
@@ -2171,13 +2737,17 @@ class DesignerSession {
    * 0.11.0 write-safety — redo half of a resx transaction: re-apply the written .resx atomically. CONFLICT-GUARDED
    * symmetrically to revertResx — only re-applies when the file on disk is still the pre-import state this redo
    * transitions FROM (`beforeText`, restored by the matching undo); if an external change landed in between it is
-   * left alone (codex: an unguarded redo clobbered a concurrent .resx edit). A skipped redo re-render still reflects
+   * left alone. A skipped redo re-render still reflects
    * the (unchanged) designer text; the resource simply stays as the external editor left it.
    */
-  private async reapplyResx(uri: vscode.Uri, beforeText: string | null, afterText: string): Promise<void> {
-    const current = await this.readTextStrict(uri); // throws on lock/permission → redo rejects (no split), not "skip"
-    if (current !== beforeText) { this.output.appendLine('[designer] resx redo skipped: .resx changed on disk since undo'); return; }
-    await this.atomicWriteFile(uri, Buffer.from(afterText, 'utf8'));
+  private async reapplyResx(uri: vscode.Uri, beforeText: string | null, afterText: string, bom: boolean): Promise<void> {
+    const current = await this.readResx(uri); // throws on lock/permission → redo rejects (no split), not "skip"
+    // Same BOM condition as revertResx: redo must transition FROM exactly the state its undo restored, signature
+    // included, or an external BOM-only rewrite gets silently overwritten.
+    if ((current?.text ?? null) !== beforeText || (current !== null && current.hadBom !== bom)) {
+      this.output.appendLine('[designer] resx redo skipped: .resx changed on disk since undo'); return;
+    }
+    await this.atomicWriteFile(uri, this.resxBytesOf(afterText, bom));
   }
 
   /**
@@ -2192,6 +2762,7 @@ class DesignerSession {
   async importImageFromGrid(id: string, prop: string, propType: string): Promise<void> {
     if (!this.designerFile) return;
     if (this.refuseLocalizableMutation()) return; // writes the .resx before commit() — guard the irreversible write
+    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     const isIcon = propType === 'System.Drawing.Icon';
     const picked = await vscode.window.showOpenDialog({
       canSelectMany: false, openLabel: 'Import',
@@ -2205,7 +2776,9 @@ class DesignerSession {
       const imageBase64 = Buffer.from(bytes).toString('base64');
       const eng = await this.ensureEngine();
       const resxUri = this.resxUri();
-      const resxText = await this.readTextIfExists(resxUri);
+      const resxRead = await this.readResx(resxUri);
+      const resxText = resxRead?.text ?? null;
+      const resxBom = resxRead?.hadBom ?? false; // preserve the file's own BOM; a .resx we create gets none
       const before = this.doc.designerText;
       const revBefore = this.doc.rev;
 
@@ -2224,17 +2797,24 @@ class DesignerSession {
       // 0.10.0 trust-floor TOCTOU close: the form could have turned localizable DURING the file picker /
       // engine round-trip above (the entry guard ran before them). Re-check FRESH immediately before the
       // irreversible .resx write, so a form that became read-only mid-operation can't have its .resx changed.
+      // The render can equally have FAILED, or the baseline gone unknown, across that same (user-length!) window:
+      // commit() would then refuse and revertResx would roll the file back, so this was never a lost write — but
+      // refusing here means the user's .resx is never written-then-unwritten at all.
       if (this.refuseLocalizableMutation()) { await this.loadProps(id); return; }
+      if (this.refuseUnknownBaselineMutation()) { await this.loadProps(id); return; }
+      if (this.refuseStaleRenderMutation()) { await this.loadProps(id); return; }
       // 0.10.0 S3 fail-closed regenerate guard — two checks at the write boundary (the engine transformed the
       // `resxText` SNAPSHOT read before the file-picker/engine round-trip):
       // (1) CONCURRENCY: re-read the .resx FRESH; if it changed on disk since the snapshot (VS, git, another
-      //     extension), the engine's output is STALE and writing it would clobber that change → refuse (the .resx
-      //     analogue of the doc-rev check). This also makes the write atomic w.r.t. binary-node identity/bytes, not
-      //     just count (codex R: a same-count byte-change/rename must not be overwritten).
+      // extension), the engine's output is STALE and writing it would clobber that change → refuse (the .resx
+      // analogue of the doc-rev check). This also makes the write atomic w.r.t. binary-node identity/bytes, not
+      // just count.
       // (2) UPSERT REGRESSION: with the snapshot matching disk, verify the engine's output didn't DROP a binary
-      //     resource (count-based → robust to attribute quoting/order/malformed XML). A no-op on the normal path.
-      const freshResx = await this.readTextIfExists(resxUri);
-      if (freshResx !== resxText) {
+      // resource (count-based → robust to attribute quoting/order/malformed XML). A no-op on the normal path.
+      // The BOM counts as content here (as it does for the .Designer.cs save guard): an external rewrite that only
+      // changed the encoding signature still means our snapshot is stale, and we'd write the old signature back.
+      const freshResx = await this.readResx(resxUri);
+      if ((freshResx?.text ?? null) !== resxText || (freshResx?.hadBom ?? false) !== resxBom) {
         this.output.appendLine('import refused: the .resx changed on disk during the import (stale engine output would clobber it)');
         this.post({ type: 'status', message: t('status.docChangedImport') });
         await this.loadProps(id);
@@ -2252,10 +2832,10 @@ class DesignerSession {
       // into commit() so Ctrl+Z reverts the resource too (deleting a .resx this import created, or restoring its
       // prior bytes) rather than leaving a permanent orphan. If a fail-closed gate refuses the designer edit AFTER
       // the resx hit disk, roll the resx back so neither half lands (never a resx entry with no assignment).
-      await this.atomicWriteFile(resxUri, Buffer.from(res.resxText, 'utf8'));
-      const resxTx: ResxTx = { uri: resxUri, before: resxText, after: res.resxText };
+      await this.atomicWriteFile(resxUri, this.resxBytesOf(res.resxText, resxBom));
+      const resxTx: ResxTx = { uri: resxUri, before: resxText, after: res.resxText, bom: resxBom };
       if (!this.commit(before, res.designerText, `Import ${id}.${prop} image`, resxTx)) {
-        await this.revertResx(resxUri, resxText, res.resxText);
+        await this.revertResx(resxUri, resxText, res.resxText, resxBom);
         await this.loadProps(id);
         return;
       }
@@ -2272,10 +2852,11 @@ class DesignerSession {
   }
 
   /** Clear an image property ("(none)"): delete its assignment via the safe-save-gated ResetProperty. The .resx
-   *  entry is left as a harmless orphan (mirrors VS, which also doesn't prune unused resources on clear). */
+   * entry is left as a harmless orphan (mirrors VS, which also doesn't prune unused resources on clear). */
   async clearImageFromGrid(id: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
     if (this.refuseLocalizableMutation()) return; // read-only lock: no source mutation on a localizable form (this path resets the .cs assignment; it does NOT write the .resx, so no binary-resx regenerate risk)
+    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     try {
       const eng = await this.ensureEngine();
       const before = this.doc.designerText;
@@ -2300,18 +2881,19 @@ class DesignerSession {
    * 0.11.0 ImageList editor — edit the SELECTED ImageList's images (add / remove), then serialize the full set into
    * the ImageStream binary resource (net48, the one op needing the .NET Framework runtime) and rewrite the designer
    * (net9 SetImageList: ImageStream assignment + SetKeyName, in-code Images.Add removed), persisting BOTH texts
-   * atomically + undoably (reuses the Slice-1 write-safety machinery + the S3 conflict/binary-drop guards). Reads the
+   * atomically + undoably (reuses the write-safety machinery + the S3 conflict/binary-drop guards). Reads the
    * CURRENT images by deserializing the existing .resx ImageStream blob (net48) and pairing them by index with the
    * keys parsed from the designer. Works for ANY project — the bundled net48 engine owns the binary (de)serialization.
    */
   async editImageListImages(): Promise<void> {
     if (!this.designerFile) return;
-    if (this.refuseLocalizableMutation()) return;         // writes the .resx (irreversible pre-commit) — guard up front
+    if (this.refuseLocalizableMutation()) return; // writes the .resx (irreversible pre-commit) — guard up front
+    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     if (!this.renderOk) { this.post({ type: 'status', message: t('status.renderFailedReadonly') }); return; }
     const id = this.currentId;
     if (!id || id === 'this') { this.post({ type: 'status', message: t('status.selectImageListFirst') }); return; }
     try {
-      const eng9 = await this.ensureEngine('net9');
+      const eng9 = await this.ensureEngine('modern');
       const asm = this.asm();
       // confirm the current selection really is an ImageList (else the SetKeyName/ImageStream rewrite is meaningless).
       const desc = this.engineKind === 'net48' && asm
@@ -2321,7 +2903,9 @@ class DesignerSession {
 
       // read the CURRENT images: deserialize the existing .resx ImageStream blob (net48), pair with designer keys.
       const resxUri = this.resxUri();
-      const resxText = await this.readTextIfExists(resxUri);
+      const resxRead = await this.readResx(resxUri);
+      const resxText = resxRead?.text ?? null;
+      const resxBom = resxRead?.hadBom ?? false; // preserve the file's own BOM; a .resx we create gets none
       const blob = extractResxBinaryValue(resxText, id + '.ImageStream');
       const eng48 = await this.ensureEngine('net48');
       let images: { dataBase64: string; key: string }[] = [];
@@ -2340,7 +2924,13 @@ class DesignerSession {
       // whose bytes this editor doesn't materialize — starting from an empty set would silently drop them on save.
       // Refuse instead. A fresh/empty ImageList (no blob, no in-code Add) correctly proceeds so the user can add.
       const hasInCodeImages = new RegExp('\\bthis\\.' + escapeRegex(id) + '\\.Images\\.Add\\(').test(this.doc.designerText);
-      if (images.length === 0 && (blob !== null || hasInCodeImages)) {
+      // The `blob !== null` arm trusts a name-keyed scan, and binaryResx.ts documents why that scan can MISS a node
+      // (odd quoting/spacing, char-refs). A miss reads as "no images" — the very state that lets the save through —
+      // so ALSO refuse whenever the .resx demonstrably holds binary resources yet we resolved no blob for this id:
+      // ambiguity must fail closed, not default to "replace everything". (The count comes from the mimetype scanner,
+      // which is robust to all of the above.)
+      const unresolvedBinary = blob === null && binaryResxCount(resxText) > 0;
+      if (images.length === 0 && (blob !== null || hasInCodeImages || unresolvedBinary)) {
         this.post({ type: 'status', message: t('status.imageListUnreadable', { id }) });
         return;
       }
@@ -2360,18 +2950,25 @@ class DesignerSession {
       if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
       // TOCTOU close + S3 fail-closed guards, identical to importImageFromGrid (the .resx write is irreversible).
       if (this.refuseLocalizableMutation()) return;
-      const freshResx = await this.readTextIfExists(resxUri);
-      if (freshResx !== resxText) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
+      if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
+      if (this.refuseStaleRenderMutation()) return; // a render that failed across the images dialog → no file write
+      const freshResx = await this.readResx(resxUri);
+      if ((freshResx?.text ?? null) !== resxText || (freshResx?.hadBom ?? false) !== resxBom) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
       const droppedN = binaryResxCount(resxText) - binaryResxCount(set.resxText);
       if (droppedN > 0) { this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: droppedN }) }); return; }
 
-      // atomic + undoable write (Slice 1): .resx to disk (temp+rename), designer as one undoable transaction.
-      await this.atomicWriteFile(resxUri, Buffer.from(set.resxText, 'utf8'));
-      const resxTx: ResxTx = { uri: resxUri, before: resxText, after: set.resxText };
-      if (!this.commit(before, set.designerText, `Edit ${id} images`, resxTx)) { await this.revertResx(resxUri, resxText, set.resxText); return; }
+      // atomic + undoable write: .resx to disk (temp+rename), designer as one undoable transaction.
+      await this.atomicWriteFile(resxUri, this.resxBytesOf(set.resxText, resxBom));
+      const resxTx: ResxTx = { uri: resxUri, before: resxText, after: set.resxText, bom: resxBom };
+      if (!this.commit(before, set.designerText, `Edit ${id} images`, resxTx)) { await this.revertResx(resxUri, resxText, set.resxText, resxBom); return; }
       this.output.appendLine(`edited ImageList ${id} → ${ser.count} image(s) (.resx written, designer unsaved)`);
       this.post({ type: 'status', message: t('status.imageListSaved', { id, n: ser.count }) });
-      await this.fullRender();
+      if (this.engineKind === 'net48' && asm) {
+        await this.live48((engine) => setCompiledImageListLive(
+          engine, this.designerFile!, asm, id, ser.base64, ser.keys), true, { skipReselect: true });
+      } else {
+        await this.fullRender();
+      }
       await this.loadProps(id);
       await this.postDirty();
     } catch (err) {
@@ -2380,7 +2977,7 @@ class DesignerSession {
   }
 
   /** Native add/remove manage loop for the ImageList editor. Returns the new image set, or null if the user made no
-   *  change / cancelled. Reorder + key-rename are follow-ups; add + remove cover the core (and are undoable as one edit). */
+   * change / cancelled. Reorder + key-rename are follow-ups; add + remove cover the core (and are undoable as one edit). */
   private async manageImagesUi(id: string, images: { dataBase64: string; key: string }[]): Promise<{ dataBase64: string; key: string }[] | null> {
     const cur = images.slice();
     let changed = false;
@@ -2425,9 +3022,9 @@ class DesignerSession {
   }
 
   /** Per-property Reset (VS grid right-click → "Reset"): delete the property's source assignment via the
-   *  safe-save-gated, no-op-safe ResetProperty (a pure net9 text splice, engine-agnostic), then refresh the picture.
-   *  net9 re-renders the interpreted graph from the edited text; net48 renders the COMPILED assembly (stale after a
-   *  text-only edit), so it resets the LIVE instance (pd.ResetValue) for an immediate, matching picture. */
+   * safe-save-gated, no-op-safe ResetProperty (a pure net9 text splice, engine-agnostic), then refresh the picture.
+   * net9 re-renders the interpreted graph from the edited text; net48 renders the COMPILED assembly (stale after a
+   * text-only edit), so it resets the LIVE instance (pd.ResetValue) for an immediate, matching picture. */
   async resetFromGrid(id: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
     try {
@@ -2455,11 +3052,11 @@ class DesignerSession {
   }
 
   /** Reset a ToolStrip item property to its default — the item-aware sibling of resetFromGrid (routed here when the
-   *  grid message carries an `ownerId`, i.e. item→Properties is shown). The text splice (resetProperty) is field-agnostic
-   *  so it targets the item field directly; the picture-refresh mirrors applyItemEdit: net9 fullRender(skipReselect) to
-   *  keep the item highlight (not patchOrRerender, which reselects the control), net48 liveReset48 (the SAME live-reset
-   *  primitive controls use — TryReset already resolves a ToolStripItem via ResolveLiveEditTarget). Refreshes the item
-   *  grid via the itemProps channel (loadItemProps), never the control props (loadProps). */
+   * grid message carries an `ownerId`, i.e. item→Properties is shown). The text splice (resetProperty) is field-agnostic
+   * so it targets the item field directly; the picture-refresh mirrors applyItemEdit: net9 fullRender(skipReselect) to
+   * keep the item highlight (not patchOrRerender, which reselects the control), net48 liveReset48 (the SAME live-reset
+   * primitive controls use — TryReset already resolves a ToolStripItem via ResolveLiveEditTarget). Refreshes the item
+   * grid via the itemProps channel (loadItemProps), never the control props (loadProps). */
   async resetItemFromGrid(ownerId: string, itemId: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
     try {
@@ -2487,17 +3084,17 @@ class DesignerSession {
   }
 
   /** net48 compiled preview after a Reset commit: reset the property on the LIVE instance (pd.ResetValue) so the
-   *  picture matches the now-default value. Re-rendering the compiled assembly would show the stale built value
-   *  (the bug clearImageFromGrid's fullRender exhibits); the committed text is what persists after a rebuild.
-   *  Best-effort — a non-resettable prop leaves the picture unchanged with a note. */
+   * picture matches the now-default value. Re-rendering the compiled assembly would show the stale built value
+   * (the bug clearImageFromGrid's fullRender exhibits); the committed text is what persists after a rebuild.
+   * Best-effort — a non-resettable prop leaves the picture unchanged with a note. */
   private async liveReset48(id: string, prop: string): Promise<void> {
     const asm = this.asm();
     if (!asm || !this.designerFile) return;
-    await this.live48((eng) => resetCompiledPropertyLive(eng, this.designerFile!, asm, id, prop));
+    await this.live48((eng) => resetCompiledPropertyLive(eng, this.designerFile!, asm, id, prop), true, { skipReselect: true });
   }
 
   /** Grid edit of a TableLayoutPanel child's Column/Row — routed here (not applyEdit) because the cell lives in
-   *  the 3-arg Controls.Add, not a property assignment. Mirrors editFromGrid's error/restore handling. */
+   * the 3-arg Controls.Add, not a property assignment. Mirrors editFromGrid's error/restore handling. */
   async tableCellFromGrid(id: string, cell: string, value: string): Promise<void> {
     try {
       await this.applyTableCell(id, cell, value);
@@ -2544,15 +3141,15 @@ class DesignerSession {
   }
 
   /** Read side of the string-collection editor: send the "…"-opened collection's current items to the webview.
-   *  Parses the unsaved buffer (so it reflects pending edits). PURE-TEXT Roslyn parse → routed to the net9 engine
-   *  even for a net48 form (the compiled engine can't parse literal Add/AddRange; the text is framework-agnostic). */
+   * Parses the unsaved buffer (so it reflects pending edits). PURE-TEXT Roslyn parse → routed to the net9 engine
+   * even for a net48 form (the compiled engine can't parse literal Add/AddRange; the text is framework-agnostic). */
   async sendCollectionItems(id: string, prop: string): Promise<void> {
     if (!this.designerFile) {
       this.post({ type: 'collectionItems', id, prop, ok: false, items: [], reason: 'not available' });
       return;
     }
     try {
-      const eng = await this.ensureEngine('net9');
+      const eng = await this.ensureEngine('modern');
       const res = await listCollectionItems(eng, this.designerFile, id, prop, this.doc.designerText);
       this.post({ type: 'collectionItems', id, prop, ok: res.ok, items: res.items ?? [], reason: res.reason });
     } catch (err) {
@@ -2561,7 +3158,7 @@ class DesignerSession {
   }
 
   /** Write side of the string-collection editor (VS "String Collection Editor"): rewrite the owner's Add/AddRange
-   *  calls to exactly `items`. Mirrors tableCellFromGrid's error/restore + single-undo commit. */
+   * calls to exactly `items`. Mirrors tableCellFromGrid's error/restore + single-undo commit. */
   async collectionFromGrid(id: string, prop: string, items: string[]): Promise<void> {
     try {
       await this.applyCollection(id, prop, items);
@@ -2574,7 +3171,7 @@ class DesignerSession {
   private async applyCollection(id: string, prop: string, items: string[]): Promise<void> {
     if (!this.designerFile) return;
     // PURE-TEXT splice — route to net9 even on a net48 form (the compiled engine can't splice; the text is truth).
-    const eng = await this.ensureEngine('net9');
+    const eng = await this.ensureEngine('modern');
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
 
@@ -2606,14 +3203,14 @@ class DesignerSession {
   }
 
   /** Read side of the generic string[] editor (TextBox/RichTextBox.Lines): send the "…"-opened property's current
-   *  items to the webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
+   * items to the webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
   async sendStringArray(id: string, prop: string): Promise<void> {
     if (!this.designerFile) {
       this.post({ type: 'stringArrayItems', id, prop, ok: false, items: [], reason: 'not available' });
       return;
     }
     try {
-      const eng = await this.ensureEngine('net9');
+      const eng = await this.ensureEngine('modern');
       const res = await listStringArray(eng, this.designerFile, id, prop, this.doc.designerText);
       this.post({ type: 'stringArrayItems', id, prop, ok: res.ok, items: res.items ?? [], reason: res.reason });
     } catch (err) {
@@ -2622,7 +3219,7 @@ class DesignerSession {
   }
 
   /** Write side of the generic string[] editor: rewrite the property to the single assignment
-   *  `owner.prop = new string[] { … }`. Mirrors collectionFromGrid's error/restore + single-undo commit. */
+   * `owner.prop = new string[] { … }`. Mirrors collectionFromGrid's error/restore + single-undo commit. */
   async stringArrayFromGrid(id: string, prop: string, items: string[]): Promise<void> {
     try {
       await this.applyStringArray(id, prop, items);
@@ -2635,7 +3232,7 @@ class DesignerSession {
   private async applyStringArray(id: string, prop: string, items: string[]): Promise<void> {
     if (!this.designerFile) return;
     // PURE-TEXT splice — route to net9 even on a net48 form (the compiled engine can't splice; the text is truth).
-    const eng = await this.ensureEngine('net9');
+    const eng = await this.ensureEngine('modern');
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
 
@@ -2667,14 +3264,14 @@ class DesignerSession {
   }
 
   /** Read side of the typed ListView.Columns editor: send the "…"-opened collection's current columns to the
-   *  webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
+   * webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
   async sendColumnItems(id: string): Promise<void> {
     if (!this.designerFile) {
       this.post({ type: 'columnItems', id, ok: false, columns: [], reason: 'not available' });
       return;
     }
     try {
-      const eng = await this.ensureEngine('net9');
+      const eng = await this.ensureEngine('modern');
       const res = await listColumns(eng, this.designerFile, id, this.doc.designerText);
       this.post({ type: 'columnItems', id, ok: res.ok, columns: res.columns ?? [], reason: res.reason });
     } catch (err) {
@@ -2683,7 +3280,7 @@ class DesignerSession {
   }
 
   /** Write side of the typed ListView.Columns editor (VS "Collection Editor"). Mirrors collectionFromGrid's
-   *  error/restore + single-undo commit. */
+   * error/restore + single-undo commit. */
   async columnsFromGrid(id: string, columns: ColumnItem[]): Promise<void> {
     try {
       await this.applyColumns(id, columns);
@@ -2695,7 +3292,7 @@ class DesignerSession {
 
   private async applyColumns(id: string, columns: ColumnItem[]): Promise<void> {
     if (!this.designerFile) return;
-    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const eng = await this.ensureEngine('modern'); // PURE-TEXT splice — modern engine even on a net48 form
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
 
@@ -2733,7 +3330,7 @@ class DesignerSession {
       return;
     }
     try {
-      const eng = await this.ensureEngine('net9');
+      const eng = await this.ensureEngine('modern');
       const res = await listTreeNodes(eng, this.designerFile, id, this.doc.designerText);
       this.post({ type: 'treeNodeItems', id, ok: res.ok, nodes: res.nodes ?? [], reason: res.reason });
     } catch (err) {
@@ -2753,7 +3350,7 @@ class DesignerSession {
 
   private async applyTreeNodes(id: string, nodes: TreeNodeItem[]): Promise<void> {
     if (!this.designerFile) return;
-    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const eng = await this.ensureEngine('modern'); // PURE-TEXT splice — modern engine even on a net48 form
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
 
@@ -2784,6 +3381,13 @@ class DesignerSession {
     await this.postDirty();
   }
 
+  /** The document revision the item forest last handed to the PANEL was read at, per strip id. The panel edits a
+   * copy of that forest and submits it later, so the read and the write straddle an arbitrary amount of time; the
+   * submitted forest is only meaningful against the revision it was read from. Without this, a canvas edit / undo
+   * landing in between made the panel's stale forest splice cleanly over the newer text — silently dropping an item
+   * the panel never saw (or resurrecting one it still did). The canvas paths pass their own revAtRead. */
+  private stripReadRev = new Map<string, number>();
+
   /** Read side of the ToolStrip/MenuStrip item editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
   async sendToolStripItems(id: string): Promise<void> {
     if (!this.designerFile) {
@@ -2791,10 +3395,14 @@ class DesignerSession {
       return;
     }
     try {
-      const eng = await this.ensureEngine('net9');
+      const eng = await this.ensureEngine('modern');
+      const revAtRead = this.doc.rev; // against the very text handed to the reader on the next line
       const res = await listToolStripItems(eng, this.designerFile, id, this.doc.designerText);
+      if (res.ok) this.stripReadRev.set(id, revAtRead);
+      else this.stripReadRev.delete(id);
       this.post({ type: 'toolStripItems', id, ok: res.ok, items: res.items ?? [], reason: res.reason });
     } catch (err) {
+      this.stripReadRev.delete(id);
       this.post({ type: 'toolStripItems', id, ok: false, items: [], reason: errMsg(err) });
     }
   }
@@ -2802,7 +3410,8 @@ class DesignerSession {
   /** Write side of the ToolStrip/MenuStrip item editor (reorder / add / remove). Mirrors treeNodesFromGrid's error/restore. */
   async toolStripFromGrid(id: string, items: ToolStripItemModel[]): Promise<void> {
     try {
-      await this.applyToolStripItems(id, items);
+      // Gate on the revision the panel's forest was READ at, not on "now" — see stripReadRev.
+      await this.applyToolStripItems(id, items, false, this.stripReadRev.get(id));
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
       try { await this.loadProps(id); } catch { /* best effort */ }
@@ -2810,13 +3419,19 @@ class DesignerSession {
   }
 
   /** Returns true iff the edit committed + rendered; false on any rejection (unsafe splice / doc changed / no file).
-   *  The on-canvas ADD path uses this to correlate a flyout auto-reopen with the operation's ACTUAL outcome (see
-   *  applyStripAdd → stripAddDone) — a rejected add must NOT arm a stale reopen. Other callers ignore the return. */
-  private async applyToolStripItems(id: string, items: ToolStripItemModel[], fromCanvasItemOp = false): Promise<boolean> {
+   * The on-canvas ADD path uses this to correlate a flyout auto-reopen with the operation's ACTUAL outcome (see
+   * applyStripAdd → stripAddDone) — a rejected add must NOT arm a stale reopen. Other callers ignore the return. */
+  private async applyToolStripItems(id: string, items: ToolStripItemModel[], fromCanvasItemOp = false, revAtRead?: number): Promise<boolean> {
     if (!this.designerFile) return false;
-    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const eng = await this.ensureEngine('modern'); // PURE-TEXT splice — modern engine even on a net48 form
     const before = this.doc.designerText;
-    const revBefore = this.doc.rev;
+    // `revAtRead` is the caller's revision from BEFORE it read the item forest it is handing us. The on-canvas ops
+    // list the forest first, so snapshotting here would leave that round-trip unguarded: an undo/redo or a
+    // concurrent commit landing during the list makes `items` describe text that no longer exists, and
+    // setToolStripItems reconciles by field id — so e.g. an item the undo removed gets resurrected. Same rule
+    // applyEdit already follows ("snapshot the buffer + revision BEFORE any await that could straddle a concurrent
+    // external edit"). Panel-driven callers pass nothing and keep the old entry-time snapshot.
+    const revBefore = revAtRead ?? this.doc.rev;
 
     const res = await setToolStripItems(eng, this.designerFile, id, items, before);
     if (!res.safe || res.text === null) {
@@ -2831,11 +3446,16 @@ class DesignerSession {
     }
 
     if (!this.commit(before, res.text, `Edit ${id}.Items`)) return false; // refused → no fresh render reached the canvas
+    // A PANEL-originated edit submits the whole forest, so once it commits, the panel's copy matches the document
+    // again — re-baseline its read revision or the user's next edit from the same open editor would be refused as
+    // stale. A CANVAS op (fromCanvasItemOp) deliberately does NOT: it must leave the panel's baseline behind so the
+    // panel's now-stale forest is caught rather than spliced over this edit.
+    if (!fromCanvasItemOp) this.stripReadRev.set(id, this.doc.rev);
     this.output.appendLine(`edit ${id}.Items (toolstrip add/remove/rename/reorder, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Items' }) });
     // `rendered` = did a FRESH render→layout→tray reflecting this edit reach the canvas? net9 fullRender is true unless it
     // early-exits; net48 liveToolStrip48 is false on a previewPartial (source committed but the live picture is stale). The
-    // ADD auto-reopen keys on this so it never re-opens a flyout drawn from a stale forest (codex confirm #1).
+    // ADD auto-reopen keys on this so it never re-opens a flyout drawn from a stale forest.
     let rendered: boolean;
     if (this.engineKind === 'net48') {
       rendered = await this.liveToolStrip48(id, res.text); // net48 live path posts no select → item highlight already survives
@@ -2845,7 +3465,7 @@ class DesignerSession {
     // The panel refresh + dirty flag are POST-render side-effects: the edit already committed AND (if `rendered`) posted a
     // fresh forest. A failure here (e.g. the engine dies during the props RPC) must NOT propagate to applyStripAdd's catch
     // and flip the ADD completion to false — that would suppress a legitimate flyout reopen even though the fresh forest is
-    // already on the canvas (codex confirm LOW, fail-closed). Best-effort: log, keep the render result authoritative.
+    // already on the canvas. Best-effort: log, keep the render result authoritative.
     try {
       await this.loadProps(id);
       await this.postDirty();
@@ -2856,21 +3476,36 @@ class DesignerSession {
   }
 
   /** net48 compiled preview after a ToolStrip/MenuStrip item edit: reconcile the strip's items (add/remove/rename/
-   *  reorder) on the live instance so the canvas updates immediately (the ToolStrip analogue of liveTreeNodes48).
-   *  Re-renders the compiled assembly would show the stale built strip; this mutates the live Items instead. The items
-   *  are re-read from the just-committed source so new "Type Here" items carry their minted field ids — the live
-   *  reconcile keys on the field id, so it needs the resolved forest, not the raw popup input (which sends empty ids
-   *  for adds). Best-effort — a non-ToolStrip owner or an unresolvable new item type leaves the picture on the built
-   *  strip with a note (show48's previewPartial); the committed text still renders after a rebuild.
-   *  Returns true iff a fresh render reflecting the edit reached the canvas (false on any bail / previewPartial), so the
-   *  ADD auto-reopen keys on a CURRENT forest, not the stale built strip (codex confirm #1). */
+   * reorder) on the live instance so the canvas updates immediately (the ToolStrip analogue of liveTreeNodes48).
+   * Re-renders the compiled assembly would show the stale built strip; this mutates the live Items instead. The items
+   * are re-read from the just-committed source so new "Type Here" items carry their minted field ids — the live
+   * reconcile keys on the field id, so it needs the resolved forest, not the raw popup input (which sends empty ids
+   * for adds). Best-effort — a non-ToolStrip owner or an unresolvable new item type leaves the picture on the built
+   * strip with a note (show48's previewPartial); the committed text still renders after a rebuild.
+   * Returns true iff a fresh render reflecting the edit reached the canvas (false on any bail / previewPartial), so the
+   * ADD auto-reopen keys on a CURRENT forest, not the stale built strip. */
   private async liveToolStrip48(id: string, committedText: string): Promise<boolean> {
     const asm = this.asm();
     if (!asm || !this.designerFile) return false;
+    // under an INTERPRETED canvas the strip's structural edit is already committed to source, so
+    // re-interpret the committed buffer (fullRender) rather than resolving field ids + reconciling the compiled instance
+    // (which would flip the canvas to the build; the pre-live listToolStripItems could also bail before live48 ever ran)
+    // skipReselect keeps the on-canvas item highlight; the returned boolean lets the ADD auto-reopen key on the
+    // fresh interpreted forest.
+    if (this.net48RenderMode === 'interpreted') {
+      const rendered = await this.fullRender(true);
+      // Arm the ADD auto-reopen ONLY if the render STAYED interpreted — its fresh forest then actually holds the new
+      // item. If the add cost the form its coverage (a fallback to the compiled build), the new item is in the source
+      // but NOT in the compiled forest, so a reopen would draw a stale strip; return false to clear the arm — the "last
+      // build" disclosure already explains why the picture didn't change.
+      return rendered && this.net48RenderMode === 'interpreted';
+    }
     // Re-read the committed buffer (net9 pure-text parse) to resolve every field id, then reconcile the live instance.
-    const resolved = await listToolStripItems(await this.ensureEngine('net9'), this.designerFile, id, committedText);
+    const resolved = await listToolStripItems(await this.ensureEngine('modern'), this.designerFile, id, committedText);
     if (!resolved.ok) {
-      this.post({ type: 'status', message: t('status.previewPartial', { diag: resolved.reason || 'menu items edited in source; rebuild to update the live preview' }) });
+      // Source committed but the pre-live reconcile didn't resolve → the picture still shows the last build. The
+      // persistent net48 disclosure banner already says so; add a transient detail line with the engine's reason.
+      this.post({ type: 'status', message: t('status.previewPartial', { diag: resolved.reason || t('designer.notice.stripItemsAwaitingRebuild') }) });
       return false; // source committed but no fresh live render → the canvas forest is STALE (missing the new item)
     }
     return await this.live48((eng) => setCompiledToolStripItemsLive(eng, this.designerFile!, asm, id, resolved.items));
@@ -2893,18 +3528,19 @@ class DesignerSession {
   private async applyStripAdd(hostId: string, itemType: string, text: string, parentItemId?: string, reopenToken?: number): Promise<void> {
     // The canvas may arm a flyout auto-reopen for a ROOT "Type Here" add; it consumes that arm ONLY on the matching
     // stripAddDone (token-correlated with the add's real outcome), NEVER on the ambient `tray` message — a rejected or
-    // superseded add must not resurrect a stale flyout, and overlapping adds must not consume each other's arm (codex).
+    // superseded add must not resurrect a stale flyout, and overlapping adds must not consume each other's arm.
     // Post exactly one stripAddDone per token: ok=false on every rejection path, ok=<render result> on the commit path.
     const done = (ok: boolean): void => { if (reopenToken != null) this.post({ type: 'stripAddDone', token: reopenToken, ok }); };
     if (this.disposed || !this.designerFile) { done(false); return; }
     // Wrap every awaited step so an ENGINE/RPC EXCEPTION (ensureEngine / listToolStripItems / applyToolStripItems throwing,
     // not a graceful rejection) still emits a stripAddDone — else the canvas's armed reopen would leak forever and a later
-    // unrelated render could resurrect it (codex confirm: an exceptional path must not skip the completion signal). done()
+    // unrelated render could resurrect it. done()
     // is idempotent from the canvas's side (a duplicate token is a no-op once the arm is consumed), so a throw AFTER an
     // explicit done() can't double-fire in practice (a throw only happens at an await, before that path's done()).
     try {
-      const eng = await this.ensureEngine('net9'); // read + splice are pure-text → net9 even on a net48 form
-      const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
+    const eng = await this.ensureEngine('modern'); // read + splice are pure-text → modern engine even on a net48 form
+    const revAtRead = this.doc.rev; // captured against the very text we hand the reader (after engine acquisition)
+    const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
       if (!cur.ok) {
         this.post({ type: 'status', message: t('status.editRejected', { reason: cur.reason || 'items not editable' }) });
         done(false);
@@ -2928,10 +3564,10 @@ class DesignerSession {
       // applyToolStripItems returns true ONLY when it committed AND posted a fresh render→layout→tray (both engines) BEFORE
       // resolving, so by stripAddDone the canvas has the fresh forest → the reopen draws the new item. A net48 previewPartial
       // (no fresh render) or any rejection returns false → ok:false → clear the arm, no stale-forest reopen.
-      done(await this.applyToolStripItems(hostId, forest, true));
+      done(await this.applyToolStripItems(hostId, forest, true, revAtRead));
     } catch (e) {
       done(false); // an engine/RPC error must not leave a permanently-armed reopen
-      throw e;      // preserve the existing onMessage error handling
+    throw e; // preserve the existing onMessage error handling
     }
   }
 
@@ -2957,7 +3593,8 @@ class DesignerSession {
     if (this.disposed || !this.designerFile) return;
     const newText = text.trim();
     if (newText === '') return; // empty caption = keep the old text (the engine rejects a blank Text literal anyway)
-    const eng = await this.ensureEngine('net9'); // read + splice are pure-text → net9 even on a net48 form
+    const eng = await this.ensureEngine('modern'); // read + splice are pure-text → modern engine even on a net48 form
+    const revAtRead = this.doc.rev; // captured against the very text we hand the reader (after engine acquisition)
     const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
     if (!cur.ok) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: cur.reason || 'items not editable' }) });
@@ -2967,7 +3604,7 @@ class DesignerSession {
     const target = findToolStripItem(forest, itemId);
     if (!target || target.text === newText) return; // item gone, or nothing changed → no commit
     target.text = newText;
-    await this.applyToolStripItems(hostId, forest, true);
+    await this.applyToolStripItems(hostId, forest, true, revAtRead);
   }
 
   /**
@@ -2981,7 +3618,8 @@ class DesignerSession {
    */
   private async applyStripRetype(hostId: string, itemId: string, newType: string, text: string): Promise<void> {
     if (this.disposed || !this.designerFile) return;
-    const eng = await this.ensureEngine('net9'); // read + splice are pure-text → net9 even on a net48 form
+    const eng = await this.ensureEngine('modern'); // read + splice are pure-text → modern engine even on a net48 form
+    const revAtRead = this.doc.rev; // captured against the very text we hand the reader (after engine acquisition)
     const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
     if (!cur.ok) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: cur.reason || 'items not editable' }) });
@@ -2991,7 +3629,7 @@ class DesignerSession {
     // TOP-LEVEL only: retype is advertised for top-level items (the canvas hides the picker for nested ones). Use a
     // top-level `forest.find` — NOT the recursive findToolStripItem — so a crafted message can't re-mint a NESTED item
     // (data-destructive: it drops the field + type-specific state). An overflow item is still a root in the parsed
-    // forest (overflow is a runtime placement, not a source structure) → it stays supported (codex review).
+    // forest (overflow is a runtime placement, not a source structure) → it stays supported.
     const target = forest.find((it) => it.id === itemId) ?? null;
     if (!target || target.itemType === newType) return; // item gone / not top-level / same type → no commit
     if (target.children && target.children.length) {
@@ -2999,12 +3637,12 @@ class DesignerSession {
       return;
     }
     const isSep = /Separator$/.test(newType);
-    target.id = '';        // empty id → the engine treats it as a NEW item (mints a fresh field of the new type)
+    target.id = ''; // empty id → the engine treats it as a NEW item (mints a fresh field of the new type)
     target.name = '';
     target.itemType = newType;
-    target.text = isSep ? '' : text; // carry the caption VERBATIM (no trim) — the retype contract is "carry Text" (codex review)
+    target.text = isSep ? '' : text; // carry the caption VERBATIM (no trim) — the retype contract is "carry Text"
     this.currentSelItem = null; // the shown item is being re-minted (new id) → drop the item-refresh guard
-    await this.applyToolStripItems(hostId, forest, true);
+    await this.applyToolStripItems(hostId, forest, true, revAtRead);
     // A retype is a REMOVE+re-mint: the old itemId is gone, so — exactly like applyStripDelete — the Properties panel would
     // linger on the now-removed item if item→Properties was showing it and a DIFFERENT control is the selection (currentId
     // ≠ strip, so applyToolStripItems' loadProps(hostId) was dropped by the panel props gate). Restore the selected control's
@@ -3021,7 +3659,8 @@ class DesignerSession {
    */
   private async applyStripDelete(hostId: string, itemId: string): Promise<void> {
     if (this.disposed || !this.designerFile) return;
-    const eng = await this.ensureEngine('net9'); // read + splice are pure-text → net9 even on a net48 form
+    const eng = await this.ensureEngine('modern'); // read + splice are pure-text → modern engine even on a net48 form
+    const revAtRead = this.doc.rev; // captured against the very text we hand the reader (after engine acquisition)
     const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
     if (!cur.ok) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: cur.reason || 'items not editable' }) });
@@ -3030,10 +3669,10 @@ class DesignerSession {
     if (!findToolStripItem(cur.items, itemId)) return; // id not present (vanished / already gone) → silent no-op
     const pruned = removeToolStripItem(cur.items, itemId); // omit the node (+subtree) from the freshly-parsed forest
     this.currentSelItem = null; // the shown item is being removed → drop the item-refresh guard
-    await this.applyToolStripItems(hostId, pruned, true);
+    await this.applyToolStripItems(hostId, pruned, true, revAtRead);
     // The deleted item may have been shown in the Properties panel (item→Properties). applyToolStripItems reloaded the
     // STRIP's props only; if a DIFFERENT control was the selection (currentId ≠ strip), its props were never re-pushed,
-    // so the panel would linger on the now-deleted item (review wf_df05090e-a67). Restore the selected control's props —
+    // so the panel would linger on the now-deleted item. Restore the selected control's props —
     // the panel's `props` handler then exits item mode and shows the control. (Skip when currentId IS the strip:
     // applyToolStripItems already reloaded it via loadProps(hostId).)
     if (this.currentId !== hostId) await this.loadProps(this.currentId);
@@ -3046,7 +3685,7 @@ class DesignerSession {
       return;
     }
     try {
-      const eng = await this.ensureEngine('net9');
+      const eng = await this.ensureEngine('modern');
       const res = await listGridColumns(eng, this.designerFile, id, this.doc.designerText);
       this.post({ type: 'gridColumnItems', id, ok: res.ok, columns: res.columns ?? [], reason: res.reason });
     } catch (err) {
@@ -3066,7 +3705,7 @@ class DesignerSession {
 
   private async applyGridColumns(id: string, columns: GridColumnItem[]): Promise<void> {
     if (!this.designerFile) return;
-    const eng = await this.ensureEngine('net9'); // PURE-TEXT splice — net9 even on a net48 form
+    const eng = await this.ensureEngine('modern'); // PURE-TEXT splice — modern engine even on a net48 form
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
 
@@ -3129,8 +3768,11 @@ class DesignerSession {
     if (!this.commit(before, text, `Set ${id} (${edits.length} properties)`)) return;
     this.output.appendLine(`set ${id} ${edits.map((e) => e.prop).join('+')} (${edits.length} edits, unsaved)`);
     if (this.engineKind === 'net48') {
+      // a multi-property control edit (e.g. an N/W/NW/NE/SW resize = Location+Size) is a committed
+      // source-backed edit; opt into interpreted re-render. skipReselect (like liveEdit48) so the trailing loadProps(id)
+      // keeps the grid and a visibility-changing property can't strand the selection.
       await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!,
-        edits.map((ed) => ({ componentId: id, propName: ed.prop, rawValue: ed.value }))));
+        edits.map((ed) => ({ componentId: id, propName: ed.prop, rawValue: ed.value }))), true, { skipReselect: true });
     } else {
       await this.patchOrRerender(id, edits[edits.length - 1].prop);
     }
@@ -3165,9 +3807,9 @@ class DesignerSession {
   }
 
   /** Refresh the property/event grid after an event-wiring commit — via the ITEM channel (loadItemProps) when the grid
-   *  is showing a ToolStrip item (ownerId set), else the CONTROL channel (loadProps). Mirrors resetItemFromGrid: the item
-   *  channel keeps item→Properties mode + the canvas highlight; loadProps(itemId) would be dropped by the panel's props
-   *  gate (itemId !== currentId, the strip) and silently exit item mode. */
+   * is showing a ToolStrip item (ownerId set), else the CONTROL channel (loadProps). Mirrors resetItemFromGrid: the item
+   * channel keeps item→Properties mode + the canvas highlight; loadProps(itemId) would be dropped by the panel's props
+   * gate (itemId !== currentId, the strip) and silently exit item mode. */
   private async refreshAfterWiring(id: string, ownerId?: string): Promise<void> {
     if (ownerId) await this.loadItemProps(ownerId, id);
     else await this.loadProps(id);
@@ -3179,6 +3821,11 @@ class DesignerSession {
     // "(new handler)" path — refuse here so a read-only localizable form can't gain a code-behind stub +
     // event-wiring splice. Navigating to an EXISTING handler stays allowed (navigateToHandler's open branch).
     if (this.refuseLocalizableMutation()) return;
+    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
+    // Same reasoning for the render gate: navigateHandler is not a LOCALIZABLE_BLOCKED message, so nothing stopped
+    // this path on a failed-render form — the .cs stub was written and only the wiring was refused by commit(),
+    // leaving an orphan handler behind. Navigating to an EXISTING handler is unaffected (that branch never gets here).
+    if (this.refuseStaleRenderMutation()) return;
     const codePath = this.codeFile();
     if (!codePath) { this.post({ type: 'status', message: t('status.noCodeBehindHandler') }); return; }
     const eng = await this.ensureEngine();
@@ -3205,12 +3852,51 @@ class DesignerSession {
     // above (the entry guard ran before it). Re-check FRESH before writing the code-behind stub so a form
     // that became read-only mid-operation can't gain a stub + wiring.
     if (this.refuseLocalizableMutation()) return;
+    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
+    // Same for the render gate: a concurrent fullRender can FAIL during the engine round-trip above without moving
+    // doc.rev (a control-source reload, a webview reinit), so the rev check misses it. Without this fresh look the
+    // stub still lands and only commit() refuses the wiring — recreating the orphan handler the entry guard exists
+    // to prevent.
+    if (this.refuseStaleRenderMutation()) return;
     // Apply the code-behind .cs stub FIRST (a real text edit the user reads/writes); only then commit the
     // in-memory .Designer.cs wiring — so we never wire an event to a handler stub that failed to write.
     if (gen.codeText != null) {
+      // Apply the stub as a ONE-POINT INSERT, never a whole-document replace. The replace was built from the
+      // `codeBefore` snapshot and spanned the entire file, so any edit that landed during the awaited applyEdit — a
+      // formatter, a source generator, the user typing — was silently erased: applyEdit carries no version
+      // precondition, and the version check above only covers the moment before the write. An insert touches
+      // one offset, so everything else in the user's .cs survives regardless.
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(codeDoc.uri, new vscode.Range(codeDoc.positionAt(0), codeDoc.positionAt(codeBefore.length)), gen.codeText);
+      if (gen.codeInsertText != null && gen.codeInsertOffset >= 0) {
+        edit.insert(codeDoc.uri, codeDoc.positionAt(gen.codeInsertOffset), gen.codeInsertText);
+      } else {
+        // No minimal form offered (shouldn't happen — the engine always emits one for a stub); refuse rather than
+        // fall back to overwriting the file wholesale.
+        this.post({ type: 'status', message: t('status.couldNotWriteStub') });
+        return;
+      }
       if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: t('status.couldNotWriteStub') }); return; }
+      // VERIFY the write landed where it was aimed. `gen.codeText` is exactly what the engine says the file becomes
+      // once this insert is applied to `codeBefore`, so any mismatch means something else changed the document across
+      // the awaited applyEdit — and our offset, computed against the snapshot, may have addressed a completely
+      // different place (inside a method body, a string, past EOF). The insert can't be taken back safely, but the
+      // WIRING must not be committed on top of it: that is what would turn a visibly misplaced method into a
+      // .Designer.cs that references a handler the form doesn't semantically have. Detect and refuse, loudly.
+      if (codeDoc.getText() !== gen.codeText) {
+        this.output.appendLine('[designer] handler wiring refused: the code-behind changed while the stub was being written');
+        this.post({ type: 'status', message: t('status.docChanged') });
+        return;
+      }
+      // The gates above were fresh immediately before this write, but applyEdit is itself awaited: a concurrent render
+      // can FAIL (or the form turn localizable, or the baseline go unknown) WHILE the stub is landing. Re-check, so the
+      // WIRING is refused with the real reason rather than by commit()'s generic backstop.
+  //
+      // The stub itself stays — an unused empty method the user can Ctrl+Z. Taking it back would mean a read-then-
+      // replace of the whole .cs, and applyEdit carries no version precondition, so a concurrent edit landing in that
+      // gap would be erased by the rollback. Leaving a dead method is the smaller harm; refusing to roll back
+      // IS the fail-closed side here. (This is only defensible because the forward write above is a one-point insert —
+      // while it was a whole-document replace, the "harmless orphan" claim was simply false.)
+      if (this.refuseLocalizableMutation() || this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation()) return;
       if (this.doc.rev !== designerRev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     }
     // if the designer wiring is refused by a fail-closed gate, don't claim success or navigate (the code-behind stub
@@ -3269,7 +3955,11 @@ class DesignerSession {
     if (!this.designerFile || this.disposed) return;
     const eng = await this.ensureEngine();
     const codePath = this.codeFile();
-    const codeText = codePath ? (await vscode.workspace.openTextDocument(codePath)).getText() : null;
+    // Keep the DOCUMENT, not just its text: the engine validates the handler against this snapshot, so the wiring is
+    // only sound if the code-behind still says the same thing when we commit.
+    const codeDoc = codePath ? await vscode.workspace.openTextDocument(codePath) : null;
+    const codeText = codeDoc ? codeDoc.getText() : null;
+    const codeVer = codeDoc ? codeDoc.version : -1;
 
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -3280,7 +3970,11 @@ class DesignerSession {
       await this.refreshAfterWiring(id, ownerId);
       return;
     }
-    if (this.doc.rev !== rev) {
+    // The .Designer.cs revision was always checked here; the CODE-BEHIND was not checked at all. The engine had just
+    // confirmed the handler exists in the snapshot above — but if it was renamed or deleted during the round-trip,
+    // this committed `Click += new EventHandler(this.button1_Click)` against a method that no longer exists, and said
+    // it wired successfully. createHandler guarded its own write and this sibling path stayed fail-open.
+    if (this.doc.rev !== rev || (codeDoc !== null && codeDoc.version !== codeVer)) {
       this.post({ type: 'status', message: t('status.docChanged') });
       await this.refreshAfterWiring(id, ownerId);
       return;
@@ -3330,7 +4024,7 @@ class DesignerSession {
     if (!this.commit(before, res.newText, `Add ${controlType}`)) return;
     this.currentId = res.name;
     this.output.appendLine(`added ${controlType} → ${res.name} (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', controlType, res.name, locX, locY));
+    if (this.engineKind === 'net48') await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', controlType, res.name, locX, locY), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: t('status.added', { name: res.name }) });
     // A control from the chosen control-source assembly won't compile until the project references it — offer to add
@@ -3385,9 +4079,9 @@ class DesignerSession {
   }
 
   /** Insert a `<Reference Include="name"><HintPath>…dll</HintPath></Reference>` into the .csproj as an
-   *  undoable edit (a HintPath relative to the project, like VS's "Add Reference → Browse"). Saves the file
-   *  only when it wasn't already dirty — so the reference takes effect without flushing the user's unrelated
-   *  in-progress .csproj edits to disk. */
+   * undoable edit (a HintPath relative to the project, like VS's "Add Reference → Browse"). Saves the file
+   * only when it wasn't already dirty — so the reference takes effect without flushing the user's unrelated
+   * in-progress .csproj edits to disk. */
   private async addProjectReference(csproj: string, includeName: string, dll: string): Promise<void> {
     let doc: vscode.TextDocument;
     try { doc = await vscode.workspace.openTextDocument(csproj); }
@@ -3412,7 +4106,7 @@ class DesignerSession {
   }
 
   /** Toolbox add for a non-visual component (Timer/ToolTip/dialog…) — a bare `new T()` that lands in the tray.
-   *  No parent/position (unlike a control); mirrors applyAddControl's commit/rerender. */
+   * No parent/position (unlike a control); mirrors applyAddControl's commit/rerender. */
   async addComponentFromToolbox(componentType: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const eng = await this.ensureEngine();
@@ -3439,7 +4133,7 @@ class DesignerSession {
     if (!this.commit(before, res.newText, `Remove ${id}`)) return;
     this.currentId = 'this';
     this.output.appendLine(`removed ${id} (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, [id]));
+    if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, [id]), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: t('status.removedComponent', { id }) });
   }
@@ -3475,7 +4169,7 @@ class DesignerSession {
   }
 
   /** Cut = copy to the clipboard, then delete (one undoable removal). Copy never edits the document, so the
-   *  resulting undo entry is just the removal. Controls the engine refuses to copy are not deleted either. */
+   * resulting undo entry is just the removal. Controls the engine refuses to copy are not deleted either. */
   private async applyCut(ids: string[]): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const cutable = ids.filter((id) => id && id !== 'this');
@@ -3522,12 +4216,19 @@ class DesignerSession {
     this.output.appendLine(`pasted ${applied} control(s) into ${parent} (unsaved)`);
     let net48Stale = false;
     if (this.engineKind === 'net48') {
+      if (this.net48RenderMode === 'interpreted') {
+        // interpreted canvas: the whole paste is committed to source, so re-interpret ONCE. The per-control
+        // compiled adds would flip the canvas to the build mid-batch (show48 sets mode='compiled') and can't reach a
+        // source-only parent, leaving a partial/wrong mirror.
+        await this.fullRender();
+      } else if (live48Adds.length && !this.asm()) {
       // If the control assembly went away mid-session the live picture can't be updated — the text/undo state is
-      // still truthful (net48's text-is-truth contract), so say so instead of a plain "unsaved" that implies the
-      // preview reflects the paste.
-      if (live48Adds.length && !this.asm()) net48Stale = true;
-      else for (const a of live48Adds) {
+        // still truthful (net48's text-is-truth contract), so say so instead of a plain "unsaved".
+        net48Stale = true;
+      } else {
+        for (const a of live48Adds) {
         await this.live48((e) => addCompiledControl(e, this.designerFile!, this.asm()!, parent, a.typeName, a.name, a.x >= 0 ? a.x : undefined, a.y >= 0 ? a.y : undefined));
+        }
       }
     } else {
       await this.fullRender();
@@ -3579,8 +4280,13 @@ class DesignerSession {
     this.output.appendLine(`duplicated ${applied} control(s) (unsaved)`);
     let net48Stale = false;
     if (this.engineKind === 'net48') {
-      if (live48Adds.length && !this.asm()) net48Stale = true;
-      else {
+      if (this.net48RenderMode === 'interpreted') {
+        // interpreted: re-interpret the committed batch ONCE; fullRender re-selects currentId (= the last
+        // clone), so a repeated Ctrl+D still cascades. Skips the mid-batch-flipping per-control compiled adds.
+        await this.fullRender();
+      } else if (live48Adds.length && !this.asm()) {
+        net48Stale = true;
+      } else {
         for (const a of live48Adds) {
           await this.live48((e) => addCompiledControl(e, this.designerFile!, this.asm()!, a.parent, a.typeName, a.name, a.x >= 0 ? a.x : undefined, a.y >= 0 ? a.y : undefined));
         }
@@ -3621,7 +4327,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, text, toFront ? 'Bring to Front' : 'Send to Back')) return;
     this.output.appendLine(`${toFront ? 'brought to front' : 'sent to back'} ${applied} control(s) (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => setCompiledZOrder(e, this.designerFile!, this.asm()!, targets, toFront));
+    if (this.engineKind === 'net48') await this.live48((e) => setCompiledZOrder(e, this.designerFile!, this.asm()!, targets, toFront), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: toFront ? t('status.broughtFront') : t('status.sentBack') });
   }
@@ -3636,7 +4342,20 @@ class DesignerSession {
     if (this.disposed || this.engineKind !== 'net48') return; // net9 tab-switching is a future parity item
     const asm = this.asm();
     if (!asm) return;
-    await this.live48((e) => selectCompiledTabAt(e, this.designerFile!, asm, hostId, Math.round(x), Math.round(y)));
+    if (this.net48RenderMode === 'interpreted') {
+      // under an interpreted canvas, tab navigation is TRANSIENT VIEW STATE (not a source edit):
+      // resolve the clicked page on the interpreted geometry, record it, and re-render interpreted with that page
+      // selected — the canvas stays interpreted (no compiled mutation, no flip to the build). Off a header → no-op.
+    let hit;
+      try { hit = await hitTestInterpretedTab(await this.ensureEngine('net48'), this.designerFile!, asm, (await this.currentText()) ?? '', hostId, Math.round(x), Math.round(y), this.tabViewState()); }
+    catch { return; }
+      if (hit.pageId) { this.net48SelectedTabs.set(hostId, hit.pageId); await this.fullRender(true); }
+      return;
+    }
+    // notifyOnNotApplied=false — this is NAVIGATION, not an edit: it persists no source, and its ordinary
+    // `applied===false` (the point wasn't on another tab's header — the active tab or the page body) is a plain no-op,
+    // so it must not post a "changes aren't reflected" status.
+    await this.live48((e) => selectCompiledTabAt(e, this.designerFile!, asm, hostId, Math.round(x), Math.round(y)), false);
   }
 
   /**
@@ -3649,7 +4368,13 @@ class DesignerSession {
     const asm = this.asm();
     if (!asm) return;
     let hit;
-    try { hit = await hitTestCompiledTab(await this.ensureEngine('net48'), this.designerFile!, asm, hostId, Math.round(x), Math.round(y)); }
+    // hit-test against the geometry the user actually sees: interpreted when the canvas is interpreted
+    // (else the compiled build's tab-header rects, which can differ after a live move.
+    try {
+      hit = this.net48RenderMode === 'interpreted'
+        ? await hitTestInterpretedTab(await this.ensureEngine('net48'), this.designerFile!, asm, (await this.currentText()) ?? '', hostId, Math.round(x), Math.round(y), this.tabViewState())
+        : await hitTestCompiledTab(await this.ensureEngine('net48'), this.designerFile!, asm, hostId, Math.round(x), Math.round(y));
+    }
     catch { return; }
     if (!hit || !hit.pageId) return; // not on a tab header (or the page has no .Designer.cs field)
     const next = await vscode.window.showInputBox({
@@ -3657,9 +4382,9 @@ class DesignerSession {
       value: hit.text,
       validateInput: (v) => (v.trim() === '' ? 'Enter a tab caption' : undefined),
     });
-    if (next === undefined) return;         // cancelled
+    if (next === undefined) return; // cancelled
     const val = next.trim();
-    if (val === hit.text) return;           // unchanged
+    if (val === hit.text) return; // unchanged
     await this.applyEdit(hit.pageId, 'Text', 'System.String', false, val);
   }
 
@@ -3683,7 +4408,10 @@ class DesignerSession {
     if (!this.commit(before, res.newText, `Add tab ${res.name}`)) return;
     this.currentId = res.name;
     this.output.appendLine(`added tab ${res.name} to ${hostId} (unsaved)`);
-    await this.live48((e) => addCompiledTab(e, this.designerFile!, asm, hostId, pageType, res.name));
+    // Adding a tab is a committed source-backed edit: opt into interpreted re-render (like delete-tab) so an interpreted
+    // net48 canvas re-interprets the new source rather than mutating the compiled instance and flipping to the last build.
+    // A compiled-fallback canvas keeps the live addCompiledTab path.
+    await this.live48((e) => addCompiledTab(e, this.designerFile!, asm, hostId, pageType, res.name), true, {});
     this.post({ type: 'status', message: `added tab ${res.name} — unsaved` });
   }
 
@@ -3703,8 +4431,8 @@ class DesignerSession {
       { modal: true },
       'Delete Tab',
     );
-    if (pick !== 'Delete Tab') return;               // cancelled
-    const eng = await this.ensureEngine();           // net9 for the text edit
+    if (pick !== 'Delete Tab') return; // cancelled
+    const eng = await this.ensureEngine(); // net9 for the text edit
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     const res = await removeTabPage(eng, this.designerFile!, hostId, pageId, before);
@@ -3713,19 +4441,33 @@ class DesignerSession {
     if (!this.commit(before, res.newText, `Delete tab ${pageId}`)) return;
     if (this.currentId === pageId) this.currentId = hostId;
     this.output.appendLine(`deleted tab ${pageId} from ${hostId} (unsaved)`);
-    await this.live48((e) => removeCompiledTab(e, this.designerFile!, asm, hostId, pageId));
+    // A deleted tab is a committed source-backed edit: opt into interpreted re-render (like a multi-property edit) so an
+    // interpreted net48 canvas re-interprets the new source (the page is gone) instead of running the compiled-instance
+    // mutation and flipping the picture to the last build. A compiled-fallback canvas keeps the live removeCompiledTab path.
+    await this.live48((e) => removeCompiledTab(e, this.designerFile!, asm, hostId, pageId), true, {});
     this.post({ type: 'status', message: `deleted tab ${pageId} — unsaved` });
   }
 
   /** "Learn More Online": open the selected control type's .NET API docs; a third-party type (DevExpress, …) routes to
-   *  a web search instead of a 404'ing /dotnet/api page; an unknown type falls back to the WinForms hub. */
+   * a web search instead of a 404'ing /dotnet/api page; an unknown type falls back to the WinForms hub. */
   private async openLearnMore(typeName?: string): Promise<void> {
     await vscode.env.openExternal(vscode.Uri.parse(learnMoreUrl(typeName)));
   }
 
   private postDirty(): void {
     if (!this.designerFile || this.disposed) return;
+    // Dedupe the dirty badge: postDirty() is now called at the mutation point (commit/undo/redo/revert) AND by trailing
+    // callers, so most invocations carry an unchanged value. Post only on a real change; the DOM
+    // badge is otherwise re-set identically. Reset on 'ready' so a reloaded webview still gets its current state.
+    if (this.doc.isDirty !== this.lastDirtyPosted) {
+      this.lastDirtyPosted = this.doc.isDirty;
     this.post({ type: 'dirty', dirty: this.doc.isDirty });
+    }
+    // Keep the net48 "last build" disclosure's clean/dirty wording in step with the document even for changes that do
+    // NOT re-render — a nonvisual Modifiers edit, a successful Save, undo/redo. Only net48:
+    // composeFormNotice({}) carries no modern render result, so calling it on a modern form would wipe a real S2/S3
+    // (inheritedBase / binaryResx) banner.
+    if (this.engineKind === 'net48') this.composeFormNotice({});
   }
 
   private async patchOrRerender(id: string, prop: string): Promise<void> {
@@ -3735,7 +4477,9 @@ class DesignerSession {
     const text = await this.currentText();
     const seq = ++this.renderSeq;
 
-    const patchPossible = id !== 'this' && prop !== 'Checked' && prop !== 'CheckState';
+    // A dirty-region patch is a 1x single-control PNG at logical coords; under a >1 DPI capture the frame is scaled, so a
+    // 1x patch would land wrong-sized and blurry. Force the full (scaled) frame instead when rendering at high DPI.
+    const patchPossible = id !== 'this' && prop !== 'Checked' && prop !== 'CheckState' && this.renderScale === 1;
     if (patchPossible) {
       let layout: Awaited<ReturnType<typeof describeLayout>>;
       try {
@@ -3754,9 +4498,20 @@ class DesignerSession {
 
       const hasChildren = layout.controls.some((c) => c.parentId === id);
       if (geometryUnchanged && !hasChildren) {
-        const patch = await renderControl(eng, this.designerFile, id, asm, text);
+        // 1.0.0 fail-closed — the dirty-region capture paints the real control (DrawToBitmap runs a custom control's
+        // own paint code), so it can THROW where describeLayout succeeded. Unguarded, that exception unwound to the
+        // caller's generic catch, which posted a status and left `renderOk` TRUE: the source held the committed edit
+        // while the canvas kept the pre-edit pixels and the form stayed writable — a silent mis-render. A
+        // per-control paint throw doesn't kill the engine either, so the crash handler is no backstop. Fall through
+        // to the full-frame path instead; its own catch drops renderOk if that fails too.
+        let patch: Awaited<ReturnType<typeof renderControl>> | undefined;
+        try {
+          patch = await renderControl(eng, this.designerFile, id, asm, text);
+        } catch {
+        patch = undefined; // fall through to the full-frame render below
+        }
         if (seq !== this.renderSeq || this.disposed) return;
-        if (patch.found) {
+        if (patch?.found) {
           this.post({
             type: 'patch', png: patch.png.toString('base64'),
             x: patch.x, y: patch.y, width: patch.width, height: patch.height, gen: seq,
@@ -3768,7 +4523,7 @@ class DesignerSession {
 
     let frame: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
-      frame = await renderWithLayout(eng, this.designerFile, asm, text);
+      frame = await renderWithLayout(eng, this.designerFile, asm, text, this.renderScale);
     } catch (err) {
       // S5: the full re-render of the current source FAILED → the form isn't renderable right now → read-only
       // (fail-closed; self-recovers when a later render — e.g. after Undo restores a renderable buffer — succeeds).
@@ -3798,7 +4553,7 @@ function parsePair(s?: string | null): [number, number] | null {
 }
 
 /** Depth-first search for a ToolStrip/MenuStrip item node by its field id, across the whole forest (incl. submenus).
- *  Used by the on-canvas rename to locate the target in the freshly-parsed forest. Empty id never matches. */
+* Used by the on-canvas rename to locate the target in the freshly-parsed forest. Empty id never matches. */
 function findToolStripItem(forest: ToolStripItemModel[], id: string): ToolStripItemModel | null {
   if (!id) return null;
   for (const it of forest) {
@@ -3810,9 +4565,9 @@ function findToolStripItem(forest: ToolStripItemModel[], id: string): ToolStripI
 }
 
 /** Return a new forest with the node whose field id is `id` (and its whole subtree) omitted, at any depth. Non-matching
- *  branches are rebuilt recursively so a submenu can lose one child without disturbing its siblings. Empty id ⇒ the
- *  forest is returned unchanged (never matches). Used by the on-canvas DELETE: the engine derives removedIds from the
- *  omission. */
+* branches are rebuilt recursively so a submenu can lose one child without disturbing its siblings. Empty id ⇒ the
+* forest is returned unchanged (never matches). Used by the on-canvas DELETE: the engine derives removedIds from the
+* omission. */
 function removeToolStripItem(forest: ToolStripItemModel[], id: string): ToolStripItemModel[] {
   if (!id) return forest;
   const out: ToolStripItemModel[] = [];
@@ -3845,11 +4600,15 @@ function escapeRegex(s: string): string {
 }
 
 /** 0.11.0 ImageList editor — pull the whitespace-stripped base64 <value> of a binary resx <data> node by name
- *  (e.g. "imageList1.ImageStream"), or null if absent. The payload is base64 (no XML-special chars), so a focused
- *  regex is safe and avoids an XML dependency; whitespace inside <value> is stripped to a clean base64 blob. */
+* (e.g. "imageList1.ImageStream"), or null if absent. The payload is base64 (no XML-special chars), so a focused
+* regex is safe and avoids an XML dependency; whitespace inside <value> is stripped to a clean base64 blob. */
 function extractResxBinaryValue(resxText: string | null, key: string): string | null {
   if (!resxText) return null;
-  const dataRe = new RegExp('<data\\b[^>]*\\bname="' + escapeRegex(key) + '"[^>]*>([\\s\\S]*?)</data>', 'i');
+  // Tolerate single quotes and whitespace around '=' exactly like the binaryResx scanner does: a `.resx` written by
+  // hand or round-tripped through a third-party tool can spell the attribute `name='x.ImageStream'` or
+  // `name = "x.ImageStream"`. Missing the node here is not a read miss — editImageListImages' data-loss guard keys
+  // on this value, so a miss looked like "this ImageList has no images" and the save replaced the real set.
+  const dataRe = new RegExp('<data\\b[^>]*\\bname\\s*=\\s*["\']' + escapeRegex(key) + '["\'][^>]*>([\\s\\S]*?)</data>', 'i');
   const dm = dataRe.exec(resxText);
   if (!dm) return null;
   const vm = /<value>([\s\S]*?)<\/value>/i.exec(dm[1]);
@@ -3859,8 +4618,8 @@ function extractResxBinaryValue(resxText: string | null, key: string): string | 
 }
 
 /** 0.11.0 ImageList editor — parse the index→key map for an ImageList from the designer text: primarily the
- *  `this.<comp>.Images.SetKeyName(i, "key")` calls (the serialized form), falling back to `this.<comp>.Images.Add("key", …)`
- *  order (the in-code form). Keys are C#-unescaped. Used to pair the (keyless) deserialized image bytes back to keys. */
+* `this.<comp>.Images.SetKeyName(i, "key")` calls (the serialized form), falling back to `this.<comp>.Images.Add("key", …)`
+* order (the in-code form). Keys are C#-unescaped. Used to pair the (keyless) deserialized image bytes back to keys. */
 function parseImageListKeys(designer: string, comp: string): string[] {
   const keys: string[] = [];
   const c = escapeRegex(comp);
@@ -3917,10 +4676,10 @@ function cspMeta(webview: vscode.Webview, nonce: string): string {
 }
 
 /**
- * The big "Choose Toolbox Items" window (a separate editor-area webview panel): VS-style tabs (.NET / COM /
- * WPF), a Name/Namespace/Assembly table, a filter, a details strip, and OK/Cancel/Reset. The real DLL
- * scan/cache/load is a later increment; the host seeds the .NET tab with the already-discovered controls.
- */
+* The big "Choose Toolbox Items" window (a separate editor-area webview panel): VS-style tabs (.NET / COM /
+* WPF), a Name/Namespace/Assembly table, a filter, a details strip, and OK/Cancel/Reset. The real DLL
+* scan/cache/load is a later increment; the host seeds the .NET tab with the already-discovered controls.
+*/
 function chooseItemsHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = randomBytes(16).toString('hex');
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'chooseItems.js'));
@@ -3981,9 +4740,9 @@ ${injectL10nScript(nonce)}
 }
 
 /**
- * The canvas designer webview: a canvas-backed preview (so a dirty-region patch can be composited in place)
- * with an absolute selection overlay + a zoom toolbar. The Toolbox/Properties are separate WebviewViews.
- */
+* The canvas designer webview: a canvas-backed preview (so a dirty-region patch can be composited in place)
+* with an absolute selection overlay + a zoom toolbar. The Toolbox/Properties are separate WebviewViews.
+*/
 function designerHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = randomBytes(16).toString('hex');
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'designer.js'));
@@ -4016,11 +4775,14 @@ ${cspMeta(webview, nonce)}
   #diag.warn { background: var(--vscode-inputValidation-warningBackground, #352a05); color: var(--vscode-inputValidation-warningForeground, inherit); border-bottom-color: var(--vscode-inputValidation-warningBorder, #b89500); }
   #diag.err { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); color: var(--vscode-inputValidation-errorForeground, inherit); border-bottom-color: var(--vscode-inputValidation-errorBorder, #be1100); }
   /* 0.10.0 trust-floor — persistent (non-dismissible) read-only / fidelity notice strip. Distinct from #diag. */
-  #formNotice { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 12px;
+  #formNotice { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; font-size: 12px;
     background: var(--vscode-inputValidation-infoBackground, #063b49); color: var(--vscode-inputValidation-infoForeground, inherit);
     border-bottom: 1px solid var(--vscode-inputValidation-infoBorder, #1c78c0); }
   #formNoticeIcon { flex: 0 0 auto; }
-  #formNoticeMsg { flex: 1; }
+  /* Cap the always-on disclosure at two lines so a long notice can't eat the canvas on a narrow or high-DPI pane; the
+     full text stays reachable via the element's title (hover) tooltip, set alongside its text in designer.js. */
+  #formNoticeMsg { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    line-clamp: 2; overflow: hidden; }
   #diagHead { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
   #diagIcon { flex: 0 0 auto; }
   #diagToggle { cursor: pointer; text-decoration: underline; color: var(--vscode-textLink-foreground, #4ea1ff); }
@@ -4072,7 +4834,7 @@ ${cspMeta(webview, nonce)}
     background: rgba(78,161,255,.09); color: rgba(150,195,255,.95); font-size: 9px; line-height: 1; display: flex;
     align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; padding: 0 2px; }
   .typehereslot:hover { background: rgba(78,161,255,.18); }
-  /* on-canvas selected strip item (Slice D): a solid highlight box over the clicked top-level ToolStrip/MenuStrip item
+  /* on-canvas selected strip item: a solid highlight box over the clicked top-level ToolStrip/MenuStrip item
      marking the Delete / F2-rename target. Sits above the container/hover outlines but below the inline editor; never
      intercepts pointer events so a second click / double-click still reaches the item. */
   .stripitemsel { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 5; border: 1px solid rgba(78,161,255,.95);
@@ -4163,6 +4925,14 @@ ${cspMeta(webview, nonce)}
   .taskfly select, .taskfly input.tfText { flex: 1; min-width: 0; font: inherit; padding: 1px 3px; border-radius: 2px;
     background: var(--vscode-input-background, #3c3c3c); color: var(--vscode-input-foreground, #ccc); border: 1px solid var(--vscode-input-border, #555); }
   .taskfly .tfNote { padding: 4px 10px; color: var(--vscode-descriptionForeground); font-style: italic; }
+     /* vendor-declared verbs (DevExpress "Add Tab Page"…): command rows, above the property rows. A verb we have no
+     source-first equivalent for stays visible but inert — the menu is the vendor's, the actions are ours. */
+  .taskfly .tfVerb { display: block; padding: 4px 10px; cursor: pointer; color: var(--vscode-menu-foreground, #ccc); }
+  .taskfly .tfVerb:hover { background: var(--vscode-menu-selectionBackground, #04395e); color: #fff; }
+  .taskfly .tfVerb.tfDisabled { color: var(--vscode-disabledForeground, #888); cursor: default; }
+  .taskfly .tfVerb.tfDisabled:hover { background: none; color: var(--vscode-disabledForeground, #888); }
+  .taskfly .tfVerbs { padding: 3px 0; }
+  .taskfly .tfVerbs + .tfProps { border-top: 1px solid var(--vscode-menu-separatorBackground, #454545); padding-top: 3px; }
   .taskfly .tfLinks { border-top: 1px solid var(--vscode-menu-separatorBackground, #454545); padding: 3px 0; margin-top: 3px; }
   .taskfly .tfLink { display: block; padding: 4px 10px; cursor: pointer; color: var(--vscode-textLink-foreground, #4ea1ff); }
   .taskfly .tfLink:hover { background: var(--vscode-menu-selectionBackground, #04395e); color: #fff; }
@@ -4212,9 +4982,9 @@ ${injectL10nScript(nonce)}
 }
 
 /**
- * The single dockable designer panel: a Properties pane (component selector + Properties/Events grid) and a
- * Toolbox pane (click-to-add palette), each full-size, switched by a tab strip at the BOTTOM of the view.
- */
+* The single dockable designer panel: a Properties pane (component selector + Properties/Events grid) and a
+* Toolbox pane (click-to-add palette), each full-size, switched by a tab strip at the BOTTOM of the view.
+*/
 function panelHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = randomBytes(16).toString('hex');
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'panel.js'));

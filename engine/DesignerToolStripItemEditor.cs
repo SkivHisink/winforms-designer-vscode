@@ -86,7 +86,7 @@ namespace WinFormsDesigner.Engine
             if (!IsValidIdentifier(ownerId)) return Bad("invalid owner id: " + ownerId);
             var root = CSharpSyntaxTree.ParseText(sourceText).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return Bad("InitializeComponent not found");
             var fields = GatherFieldNames(cls);
             if (!fields.Contains(ownerId)) return Bad("unknown owner " + ownerId);
@@ -274,7 +274,7 @@ namespace WinFormsDesigner.Engine
             if (!IsValidIdentifier(ownerId)) return Failed("invalid owner id: " + ownerId);
             var root = CSharpSyntaxTree.ParseText(sourceText).GetRoot();
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return Failed("InitializeComponent not found");
             var fields = GatherFieldNames(cls);
             if (!fields.Contains(ownerId)) return Failed("unknown owner " + ownerId);
@@ -385,7 +385,7 @@ namespace WinFormsDesigner.Engine
             // re-parse the post-removal text so the add/grow phases see the survivor tree.
             var root1 = CSharpSyntaxTree.ParseText(src0).GetRoot();
             var cls1 = FindClassWithIC(root1);
-            var init1 = cls1?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init1 = FormClassResolver.InitMethodOf(cls1);
             if (cls1 == null || init1?.Body == null) return Failed("re-parse after removal lost InitializeComponent");
             var fields1 = GatherFieldNames(cls1);
 
@@ -446,7 +446,7 @@ namespace WinFormsDesigner.Engine
                     // would produce non-compiling source. The UI never offers a nested add on a non-dropdown item (a
                     // submenu flyout opens only for an item that already has children), but a direct RPC/CLI caller can
                     // send parentItemId pointing at one — reject it HERE so offer ⇔ accept holds engine-side, not just in
-                    // the host (codex review). A new receiver's type comes from newItems; an existing one from ctorTypes.
+                    // the host. A new receiver's type comes from newItems; an existing one from ctorTypes.
                     string rt = ctorTypes.TryGetValue(recv, out var rtt) ? rtt
                         : ShortName(newItems.FirstOrDefault(n => n.Id == recv)?.Fqn ?? "");
                     if (!DropDownItemTypes.Contains(rt))
@@ -471,7 +471,7 @@ namespace WinFormsDesigner.Engine
             // `this.<id>` element with sibling indentation and a cloned comma+newline separator. Re-parse first.
             var root2 = CSharpSyntaxTree.ParseText(srcWithItems).GetRoot();
             var cls2 = FindClassWithIC(root2);
-            var init2 = cls2?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init2 = FormClassResolver.InitMethodOf(cls2);
             if (cls2 == null || init2?.Body == null) return Failed("re-parse lost InitializeComponent");
             var newInit = init2;
             foreach (var recv in grow)
@@ -519,7 +519,7 @@ namespace WinFormsDesigner.Engine
             // (5b) Phase 2b (RENAME): rewrite each renamed survivor's `.Text = "…"` string literal in place. Its
             // statement is untouched by the removal/add/grow phases, so it is still present in `newInit`. A single
             // ReplaceNodes swaps only the literal token (surrounding trivia preserved). Refuse if the item has no simple
-            // string-literal Text assignment to rewrite (adding a Text property is not supported in this slice).
+            // string-literal Text assignment to rewrite (adding a Text property is not supported here).
             if (renames.Count > 0)
             {
                 var litRepl = new Dictionary<LiteralExpressionSyntax, string>();
@@ -634,7 +634,7 @@ namespace WinFormsDesigner.Engine
             init.Body!.DescendantNodes().OfType<VariableDeclaratorSyntax>().Select(v => v.Identifier.Text);
 
         /// <summary>Copy the desired forest, validating existing ids and minting a unique field name for every NEW
-        /// item (empty Id). A new item must be a whitelisted type and (for this slice) a LEAF — a submenu under a
+        /// item (empty Id). A new item must be a whitelisted type and (for now) a LEAF — a submenu under a
         /// brand-new item is refused. Every minted name is added to <paramref name="used"/> so two new siblings never
         /// collide, and to <paramref name="seen"/> alongside existing ids.</summary>
         private static bool ResolveNewIds(IReadOnlyList<ToolStripItemModel> items, HashSet<string> currentSet,
@@ -965,22 +965,15 @@ namespace WinFormsDesigner.Engine
             };
         }
 
-        private static ClassDeclarationSyntax? FindClassWithIC(SyntaxNode root)
-        {
-            foreach (var cls in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-                if (cls.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.Text == "InitializeComponent"))
-                    return cls;
-            return null;
-        }
+        // THE form's InitializeComponent, via the one shared rule (see FormClassResolver). This used to be a private
+        // copy taking the first class in the file declaring the method BY NAME; every editor had its own. They agreed
+        // only by luck, and a disagreement splices one class's body into another's. Null (no single designer class)
+        // is what every caller already turns into a refusal.
+        private static ClassDeclarationSyntax? FindClassWithIC(SyntaxNode root) =>
+            FormClassResolver.FormClass(root);
 
-        private static HashSet<string> GatherFieldNames(ClassDeclarationSyntax cls)
-        {
-            var set = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
-                foreach (var v in f.Declaration.Variables)
-                    set.Add(v.Identifier.Text);
-            return set;
-        }
+        // The form's component fields across ALL its partials (shared rule) — see DesignerControlEditor.GatherFieldNames.
+        private static HashSet<string> GatherFieldNames(ClassDeclarationSyntax cls) => FormClassResolver.FieldNamesOf(cls);
 
         private static List<string> FieldDeclNames(SyntaxNode root)
         {
@@ -996,7 +989,7 @@ namespace WinFormsDesigner.Engine
         private static List<StatementSyntax> InitStatementNodes(SyntaxNode root)
         {
             var cls = FindClassWithIC(root);
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             return init?.Body != null ? init.Body.Statements.ToList() : new List<StatementSyntax>();
         }
 

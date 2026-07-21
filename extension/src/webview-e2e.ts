@@ -202,7 +202,7 @@ test('formNotice (0.10.0): persistent read-only strip shows on a kind, hides on 
   eq(h.el('formNoticeIcon').textContent, '⚠', 'custom icon applied');
   eq(h.el('formNoticeMsg').textContent, 'Inherited base — preview incomplete.', 'notice text updated');
 
-  // codex fix-verify: a later notice with NO icon must RESET to the default lock glyph, not leak the prior ⚠
+  // A later notice with NO icon must RESET to the default lock glyph, not leak the prior ⚠
   h.send({ type: 'formNotice', kind: 'localizable', text: 'Localizable form — read-only preview.' });
   eq(h.el('formNoticeIcon').textContent, '🔒', 'icon resets to the lock default when a notice supplies none (no leak)');
 
@@ -241,7 +241,7 @@ test('formNotice (0.10.0 S3): binary-resx notice shows ⚠️ + count, and a COM
   ok(/2 binary\/ImageStream/.test(h.el('formNoticeMsg').textContent || ''), 'the resource count is shown');
 
   // composed (localizable + binaryResx): the host keeps the 🔒 lock glyph and appends the binaryResx clause, so the
-  // data-loss disclosure is never hidden by the read-only lock (codex R#12 generalized to S3).
+  // data-loss disclosure is never hidden by the read-only lock.
   h.send({ type: 'formNotice', kind: 'localizable', icon: '🔒', text: 'Localizable form — read-only preview. This form has 1 binary/ImageStream resource(s) the .NET preview can’t render.' });
   eq(h.el('formNoticeIcon').textContent, '🔒', 'the composed lock+binaryResx notice keeps the lock glyph');
   ok(/binary\/ImageStream/.test(h.el('formNoticeMsg').textContent || ''), 'the binaryResx disclosure is composed into the lock message (not hidden)');
@@ -390,7 +390,7 @@ test('lock controls (T1.2): the menu locks every control, then a locked control 
   h.destroy();
 });
 
-test('strip slots (on-canvas Type Here, Slice A): a layout with toolStripItems draws one .typehereslot per strip at the slot rect (zoom=1)', () => {
+test('strip slots (on-canvas Type Here): a layout with toolStripItems draws one .typehereslot per strip at the slot rect (zoom=1)', () => {
   const h = loadDesigner();
   h.send({ type: 'render', png: '', width: 300, height: 100, gen: 0 }); // set hasRendered so overlays draw
   const strip = mkCtrl({ id: 'menuStrip1', type: 'System.Windows.Forms.MenuStrip', x: 8, y: 8, width: 284, height: 24, isStripHost: true });
@@ -430,7 +430,7 @@ function setupStripSlot(h: Harness, ownerType: string): any {
   return Array.prototype.filter.call(h.document.querySelectorAll('.typehereslot'), (s: any) => s.style.display !== 'none')[0];
 }
 
-test('on-canvas Type Here (Slice B ADD): clicking the slot opens the inline editor; Enter posts a stripAdd with the chosen type + typed text', () => {
+test('on-canvas Type Here: clicking the slot opens the inline editor; Enter posts a stripAdd with the chosen type + typed text', () => {
   const h = loadDesigner();
   const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip');
   ok(!!slot, 'the Type-Here slot is drawn and visible');
@@ -452,7 +452,7 @@ test('on-canvas Type Here (Slice B ADD): clicking the slot opens the inline edit
   h.destroy();
 });
 
-test('on-canvas Type Here (Slice B ADD): the type <select> is owner-appropriate and a Separator commits with no text', () => {
+test('on-canvas Type Here: the type <select> is owner-appropriate and a Separator commits with no text', () => {
   const h = loadDesigner();
   const slot = setupStripSlot(h, 'System.Windows.Forms.ToolStrip');
   h.click(slot);
@@ -473,7 +473,7 @@ test('on-canvas Type Here (Slice B ADD): the type <select> is owner-appropriate 
   h.destroy();
 });
 
-test('on-canvas Type Here (Slice B ADD): Escape cancels, and an empty caption commits nothing', () => {
+test('on-canvas Type Here: Escape cancels, and an empty caption commits nothing', () => {
   const h = loadDesigner();
   const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip');
   // Escape dismisses without posting
@@ -491,7 +491,7 @@ test('on-canvas Type Here (Slice B ADD): Escape cancels, and an empty caption co
   h.destroy();
 });
 
-test('on-canvas Type Here (Slice B ADD): a late manip/select push does NOT dismiss the open editor (typed text survives); a layout does (review wf_ca42c504 fix)', () => {
+test('on-canvas Type Here: a late manip/select push does NOT dismiss the open editor (typed text survives); a layout does', () => {
   const h = loadDesigner();
   const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip');
   h.send({ type: 'select', id: 'strip1' }); // the strip is the current selection, as right after clicking its body
@@ -509,7 +509,7 @@ test('on-canvas Type Here (Slice B ADD): a late manip/select push does NOT dismi
   h.destroy();
 });
 
-test('on-canvas Type Here (Slice B ADD): a StatusStrip owner defaults to ToolStripStatusLabel, and a click-away dismisses the editor', () => {
+test('on-canvas Type Here: a StatusStrip owner defaults to ToolStripStatusLabel, and a click-away dismisses the editor', () => {
   const h = loadDesigner();
   const slot = setupStripSlot(h, 'System.Windows.Forms.StatusStrip');
   h.click(slot);
@@ -530,7 +530,7 @@ function setupStripItems(h: Harness, ownerType: string, items: any[]): void {
   h.resetPosted();
 }
 
-test('on-canvas item rename (Slice C): double-clicking a top-level item opens the inline editor prefilled with its caption; Enter posts stripRename', () => {
+test('on-canvas item rename: double-clicking a top-level item opens the inline editor prefilled with its caption; Enter posts stripRename', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: '&File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -552,7 +552,7 @@ test('on-canvas item rename (Slice C): double-clicking a top-level item opens th
   h.destroy();
 });
 
-test('on-canvas item rename (Slice C): double-clicking a Separator does not open the editor (a separator has no Text)', () => {
+test('on-canvas item rename: double-clicking a Separator does not open the editor (a separator has no Text)', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
     { ownerId: 'strip1', itemId: 'sep1', itemType: 'System.Windows.Forms.ToolStripSeparator', text: '', x: 14, y: 10, width: 6, height: 20, isTypeHere: false },
@@ -564,7 +564,7 @@ test('on-canvas item rename (Slice C): double-clicking a Separator does not open
   h.destroy();
 });
 
-test('on-canvas item rename (Slice C): Escape cancels, and a blank caption commits nothing', () => {
+test('on-canvas item rename: Escape cancels, and a blank caption commits nothing', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -585,7 +585,7 @@ test('on-canvas item rename (Slice C): Escape cancels, and a blank caption commi
   h.destroy();
 });
 
-test('on-canvas item rename (Slice C): a late manip push keeps the rename editor open (edited text survives); a layout dismisses it', () => {
+test('on-canvas item rename: a late manip push keeps the rename editor open (edited text survives); a layout dismisses it', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -603,7 +603,7 @@ test('on-canvas item rename (Slice C): a late manip push keeps the rename editor
   h.destroy();
 });
 
-test('on-canvas item rename (Slice C): opening the editor and pressing Enter WITHOUT editing posts nothing (no silent source mutation on a no-op confirm — review wf_df230de7)', () => {
+test('on-canvas item rename: opening the editor and pressing Enter WITHOUT editing posts nothing (no silent source mutation on a no-op confirm)', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
     { ownerId: 'strip1', itemId: 'padItem', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save ', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
@@ -691,7 +691,7 @@ test('on-canvas retype: changing the type to Separator posts stripRetype with em
   h.destroy();
 });
 
-test('on-canvas item select (Slice D): a single click on a top-level item highlights it (a .stripitemsel box at its rect) without selecting the container strip', () => {
+test('on-canvas item select: a single click on a top-level item highlights it (a .stripitemsel box at its rect) without selecting the container strip', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -706,7 +706,7 @@ test('on-canvas item select (Slice D): a single click on a top-level item highli
   h.destroy();
 });
 
-test('on-canvas item delete (Slice D): Delete on a selected item posts stripDelete {hostId,itemId}; a separator is deletable too', () => {
+test('on-canvas item delete: Delete on a selected item posts stripDelete {hostId,itemId}; a separator is deletable too', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
     { ownerId: 'strip1', itemId: 'saveButton', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
@@ -727,7 +727,7 @@ test('on-canvas item delete (Slice D): Delete on a selected item posts stripDele
   h.destroy();
 });
 
-test('on-canvas item rename (Slice D): F2 on a selected item opens the inline editor prefilled; F2 on a separator does nothing', () => {
+test('on-canvas item rename: F2 on a selected item opens the inline editor prefilled; F2 on a separator does nothing', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: '&File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -747,7 +747,7 @@ test('on-canvas item rename (Slice D): F2 on a selected item opens the inline ed
   h.destroy();
 });
 
-test('on-canvas item menu (Slice D): right-clicking an item selects it and shows Rename + Delete Item; Delete Item posts stripDelete', () => {
+test('on-canvas item menu: right-clicking an item selects it and shows Rename + Delete Item; Delete Item posts stripDelete', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -766,7 +766,7 @@ test('on-canvas item menu (Slice D): right-clicking an item selects it and shows
   h.destroy();
 });
 
-test('on-canvas item select (Slice D): selecting a control clears the item highlight (and Delete then targets the control, not the item)', () => {
+test('on-canvas item select: selecting a control clears the item highlight (and Delete then targets the control, not the item)', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -782,7 +782,7 @@ test('on-canvas item select (Slice D): selecting a control clears the item highl
   h.destroy();
 });
 
-test('on-canvas item select (Slice D): an item that vanishes from a fresh layout drops the highlight (and Delete becomes a no-op)', () => {
+test('on-canvas item select: an item that vanishes from a fresh layout drops the highlight (and Delete becomes a no-op)', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
     { ownerId: 'strip1', itemId: 'saveButton', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Save', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
@@ -798,7 +798,7 @@ test('on-canvas item select (Slice D): an item that vanishes from a fresh layout
   h.destroy();
 });
 
-test('on-canvas item select (Slice D): an anonymous item (empty itemId) is NOT selectable — click/right-click fall through to the container strip (review wf_108a7dbe)', () => {
+test('on-canvas item select: an anonymous item (empty itemId) is NOT selectable — click/right-click fall through to the container strip', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.StatusStrip', [
     // an item with no designer field (e.g. statusStrip1.Items.Add("Ready")) — real, painted, but has no resolvable id
@@ -818,7 +818,7 @@ test('on-canvas item select (Slice D): an anonymous item (empty itemId) is NOT s
   h.destroy();
 });
 
-test('on-canvas item rename (Slice D): a bare re-render layout (item still present, no trailing select) KEEPS the item highlighted — the host suppresses reselect for item ops (review wf_108a7dbe)', () => {
+test('on-canvas item rename: a bare re-render layout (item still present, no trailing select) KEEPS the item highlighted — the host suppresses reselect for item ops', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
     { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false },
@@ -1009,7 +1009,7 @@ test('on-canvas overflow: the overflow chevron rect is NOT treated as a renamabl
   h.destroy();
 });
 
-test('on-canvas overflow retype (codex review): F2 on an OVERFLOW row (a chevron child, still a top-level item) opens the rename editor WITH a type <select>', () => {
+test('on-canvas overflow retype: F2 on an OVERFLOW row (a chevron child, still a top-level item) opens the rename editor WITH a type <select>', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
     { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripOverflowButton', text: '', x: 60, y: 10, width: 16, height: 20, isTypeHere: false, overflow: true, children: [
@@ -1026,7 +1026,7 @@ test('on-canvas overflow retype (codex review): F2 on an OVERFLOW row (a chevron
   h.destroy();
 });
 
-test('on-canvas retype (codex review): a type-only change carries the caption VERBATIM (no trim — data-loss guard)', () => {
+test('on-canvas retype: a type-only change carries the caption VERBATIM (no trim — data-loss guard)', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
     { ownerId: 'strip1', itemId: 'padBtn', itemType: 'System.Windows.Forms.ToolStripButton', text: '  Save  ', x: 14, y: 10, width: 50, height: 20, isTypeHere: false },
@@ -1041,7 +1041,7 @@ test('on-canvas retype (codex review): a type-only change carries the caption VE
   h.destroy();
 });
 
-test('auto-reopen (overflow deeper — codex review): a nested add inside an overflowed item’s submenu arms an "overflow" reopen with a path; the flyout re-opens to the deep level', () => {
+test('auto-reopen (overflow deeper): a nested add inside an overflowed item’s submenu arms an "overflow" reopen with a path; the flyout re-opens to the deep level', () => {
   const h = loadDesigner();
   const chevron = (kids: any[]): any => ({ ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripOverflowButton', text: '', x: 60, y: 10, width: 16, height: 20, isTypeHere: false, overflow: true, children: kids });
   setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
@@ -1284,7 +1284,7 @@ test('on-canvas nested ADD: a DEEPER submenu level’s add-slot is keyed by that
   h.destroy();
 });
 
-test('on-canvas nested ADD: opening the add-editor drops the parent selection so a later Delete cannot delete the PARENT menu (review wf_192f24c8)', () => {
+test('on-canvas nested ADD: opening the add-editor drops the parent selection so a later Delete cannot delete the PARENT menu', () => {
   const h = loadDesigner();
   setupNestedMenu(h); // clicking Edit selected editMenu (selectedItem) AND opened its flyout
   ok((h.document.querySelector('.stripitemsel') as any)?.style.display !== 'none', 'the parent (editMenu) is selected + highlighted while the flyout is open');
@@ -1472,7 +1472,7 @@ test('off-tree ContextMenuStrip (tray): the flyout anchors at the VISIBLE surfac
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): the flyout anchor divides the stage→wrap offset by zoom — at 2× the box moves by the SCALED surface offset, not raw display px (codex — zoom transform coverage)', () => {
+test('off-tree ContextMenuStrip (tray): the flyout anchor divides the stage→wrap offset by zoom — at 2× the box moves by the SCALED surface offset, not raw display px', () => {
   const h = loadDesigner();
   setupTrayStrip(h, [ctxTray()]);
   h.click(h.el('zoomIn')); h.click(h.el('zoomIn')); h.click(h.el('zoomIn')); h.click(h.el('zoomIn')); // 1 → 1.1 → 1.25 → 1.5 → 2
@@ -1489,7 +1489,7 @@ test('off-tree ContextMenuStrip (tray): the flyout anchor divides the stage→wr
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): opening the ROOT add-editor disarms Delete so the strip echo (while the editor is open) cannot remove the whole ContextMenuStrip (review wf_6b3ffa70 + codex token correlation)', () => {
+test('off-tree ContextMenuStrip (tray): opening the ROOT add-editor disarms Delete so the strip echo (while the editor is open) cannot remove the whole ContextMenuStrip', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]); // selects contextMenuStrip1 as the CONTROL AND opens the flyout; posts pick(strip, token)
@@ -1511,7 +1511,7 @@ test('off-tree ContextMenuStrip (tray): opening the ROOT add-editor disarms Dele
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): the strip echo arriving AFTER the add-editor is dismissed still cannot re-arm Delete — matched by token, not editor lifetime (codex P1 — late echo)', () => {
+test('off-tree ContextMenuStrip (tray): the strip echo arriving AFTER the add-editor is dismissed still cannot re-arm Delete — matched by token, not editor lifetime', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]);
@@ -1530,7 +1530,7 @@ test('off-tree ContextMenuStrip (tray): the strip echo arriving AFTER the add-ed
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): a DIFFERENT control’s (token-less) select applies while the editor is open, and a later delayed strip echo does NOT overwrite it (codex P2 + "B then delayed A")', () => {
+test('off-tree ContextMenuStrip (tray): a DIFFERENT control’s (token-less) select applies while the editor is open, and a later delayed strip echo does NOT overwrite it', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]); // pick(strip, tok)
@@ -1548,7 +1548,7 @@ test('off-tree ContextMenuStrip (tray): a DIFFERENT control’s (token-less) sel
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): a `layout` (net48 live edit / skipReselect render — no trailing select) between the add-editor and the delayed strip echo does NOT disarm the token suppression (codex — layout-disarm)', () => {
+test('off-tree ContextMenuStrip (tray): a `layout` (net48 live edit / skipReselect render — no trailing select) between the add-editor and the delayed strip echo does NOT disarm the token suppression', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]);
@@ -1566,7 +1566,7 @@ test('off-tree ContextMenuStrip (tray): a `layout` (net48 live edit / skipResele
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): when the strip echo already arrived BEFORE the add-editor opened, a later genuine re-select of the SAME strip is NOT swallowed (codex — same-owner leak)', () => {
+test('off-tree ContextMenuStrip (tray): when the strip echo already arrived BEFORE the add-editor opened, a later genuine re-select of the SAME strip is NOT swallowed', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]); // pick(strip, tok)
@@ -1583,7 +1583,7 @@ test('off-tree ContextMenuStrip (tray): when the strip echo already arrived BEFO
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): opening a SECOND strip’s add-editor before the FIRST strip’s echo returns keeps BOTH arms — the first strip’s delayed echo cannot re-arm its Delete (codex — multi-editor / cross-strip race)', () => {
+test('off-tree ContextMenuStrip (tray): opening a SECOND strip’s add-editor before the FIRST strip’s echo returns keeps BOTH arms — the first strip’s delayed echo cannot re-arm its Delete', () => {
   const h = loadDesigner();
   const stripA = ctxTray(); stripA.id = 'ctxA'; stripA.name = 'ctxA'; stripA.items.forEach((it: any) => (it.ownerId = 'ctxA'));
   const stripB = ctxTray(); stripB.id = 'ctxB'; stripB.name = 'ctxB'; stripB.items.forEach((it: any) => (it.ownerId = 'ctxB'));
@@ -1608,7 +1608,7 @@ test('off-tree ContextMenuStrip (tray): opening a SECOND strip’s add-editor be
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): cancel+reopen the SAME strip’s add-editor before its first echo returns — the first delayed echo still cannot re-arm Delete (codex — re-entrant editor)', () => {
+test('off-tree ContextMenuStrip (tray): cancel+reopen the SAME strip’s add-editor before its first echo returns — the first delayed echo still cannot re-arm Delete', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]); // pick(strip, tok1)
@@ -1629,7 +1629,7 @@ test('off-tree ContextMenuStrip (tray): cancel+reopen the SAME strip’s add-edi
   h.destroy();
 });
 
-test('on-canvas MenuStrip: a SUPPRESSED strip echo is a true no-op — it does NOT clear a strip-item highlight the user selected meanwhile (codex — suppressed select side-effects)', () => {
+test('on-canvas MenuStrip: a SUPPRESSED strip echo is a true no-op — it does NOT clear a strip-item highlight the user selected meanwhile', () => {
   const h = loadDesigner();
   const slot = setupStripSlot(h, 'System.Windows.Forms.MenuStrip'); // strip1 + existingItem + a trailing Type-Here slot
   h.mouse('click', { offsetX: 200, offsetY: 15 }, h.el('surface')); // pick the strip control (empty area) → pick(strip1, tok)
@@ -1649,7 +1649,7 @@ test('on-canvas MenuStrip: a SUPPRESSED strip echo is a true no-op — it does N
   h.destroy();
 });
 
-test('off-tree ContextMenuStrip (tray): a hand-authored anonymous item (no field id, no children) renders INERT — not a live-looking dead click (review wf_6b3ffa70)', () => {
+test('off-tree ContextMenuStrip (tray): a hand-authored anonymous item (no field id, no children) renders INERT — not a live-looking dead click', () => {
   const h = loadDesigner();
   const strip = ctxTray();
   strip.items.push({ ownerId: 'contextMenuStrip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Ad-hoc', children: [] }); // Items.Add("Ad-hoc")
@@ -1665,7 +1665,7 @@ test('off-tree ContextMenuStrip (tray): a hand-authored anonymous item (no field
   const cutRow = rows.find((r) => r.textContent.indexOf('Cut') >= 0);
   ok((cutRow.className as string).indexOf('inert') < 0, 'a field-backed sibling (Cut) stays interactive');
   // selecting a sibling triggers updateSubmenuSelClasses (an in-place className rebuild) — it must PRESERVE the inert
-  // predicate, else the dead anonymous row regains hover/cursor and looks clickable again (codex review P3).
+  // predicate, else the dead anonymous row regains hover/cursor and looks clickable again.
   h.click(cutRow);
   ok((anon.className as string).indexOf('inert') >= 0, 'the anonymous row STAYS inert after a sibling selection (className rebuild preserves inert)');
   h.destroy();
@@ -1799,7 +1799,7 @@ test('auto-reopen (deeper-than-root): a DEEPER-level add arms a re-open with a s
   h.destroy();
 });
 
-test('auto-reopen (codex #1): a REJECTED add (stripAddDone ok:false) clears the arm — no later render can resurrect the flyout', () => {
+test('auto-reopen: a REJECTED add (stripAddDone ok:false) clears the arm — no later render can resurrect the flyout', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]);
@@ -1820,7 +1820,7 @@ test('auto-reopen (codex #1): a REJECTED add (stripAddDone ok:false) clears the 
   h.destroy();
 });
 
-test('auto-reopen (codex #2): overlapping adds — a stripAddDone for a SUPERSEDED add does not re-open; only the newest token does', () => {
+test('auto-reopen: overlapping adds — a stripAddDone for a SUPERSEDED add does not re-open; only the newest token does', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray()]);
   h.click(chips[0]);
@@ -1853,7 +1853,7 @@ test('auto-reopen (codex #2): overlapping adds — a stripAddDone for a SUPERSED
   h.destroy();
 });
 
-test('auto-reopen (codex #2 lifecycle): each page load seeds a DISTINCT token epoch, so an in-flight completion cannot match a NEW page (after a webview rebuild) and reopen the wrong flyout', () => {
+test('auto-reopen: each page load seeds a DISTINCT token epoch, so an in-flight completion cannot match a NEW page (after a webview rebuild) and reopen the wrong flyout', () => {
   // Reproduces the cross-rebuild collision: a 0-based reopenSeq would restart at the same value on every HTML reload,
   // so an old page's token N could match a rebuilt page's arm N. Seeding from a random per-load base makes two page
   // loads mint tokens from different epochs (collision ~1e-9). Two fresh harnesses = two page loads.
@@ -1886,6 +1886,150 @@ test('tab-host context menu: Add Tab / Delete Tab labels come from the i18n cata
   h.mouse('contextmenu', { clientX: 40, clientY: 15, button: 2 }, h.el('surfaceWrap'));
   ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.addTab'), 'the Add-Tab item is keyed by designer.menu.addTab (localizable — was a hardcoded "Add Tab")');
   ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.deleteTabNamed'), 'the Delete-Tab item is keyed by designer.menu.deleteTabNamed with the active page name (was a hardcoded literal)');
+  h.destroy();
+});
+
+// ---- vendor smart-tag menu (DevExpress "XtraTabControl Tasks") ------------------------------------------
+// The menu is READ from the vendor's own metadata by the net48 engine; the verbs are run by THIS designer's
+// source-first paths. These pin the two halves of that contract: the vendor's labels/order survive to the canvas
+// verbatim, and a verb we can't honour is inert rather than a no-op that looks like it worked.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function vtag(over: Record<string, any> = {}): any {
+  return { label: 'Add Tab Page', methodName: 'AddTabPage', verb: 'addTab', closesPanel: false, ...over };
+}
+function tabComp(): any {
+  return { id: 'tab1', name: 'tab1', type: 'DevExpress.XtraTab.XtraTabControl', parent: 'this', isRoot: false, properties: [], events: [] };
+}
+/** Select a vendor tab host carrying `tags`, then open its smart-tag flyout. Returns the flyout element. */
+function openVendorTasks(h: Harness, tags: any[], extraControls: any[] = []): any {
+  const host = mkCtrl({ id: 'tab1', name: 'tab1', type: 'DevExpress.XtraTab.XtraTabControl', isTabHost: true, width: 300, height: 200 });
+  h.send({ type: 'layout', controls: [host, ...extraControls] });
+  h.send({ type: 'select', id: 'tab1' });
+  h.send({ type: 'tasks', id: 'tab1', component: tabComp(), vendorTags: tags });
+  h.resetPosted();
+  h.click(h.document.querySelector('.smarttag'));
+  return h.document.querySelector('.taskfly');
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+test('vendor smart tag: the vendor’s own labels + order reach the flyout verbatim', () => {
+  const h = loadDesigner();
+  const fly = openVendorTasks(h, [
+    vtag(),
+    vtag({ label: 'Remove Tab Page', methodName: 'RemoveTabPage', verb: 'deleteTab' }),
+    vtag({ label: 'Undock from parent container', methodName: 'UndockFromParentContainer', verb: null, closesPanel: true }),
+  ]);
+  ok(!!fly, 'a vendor control with tags but no common properties still opens a flyout');
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const rows = (Array.from(fly.querySelectorAll('.tfVerb')) as any[]).map((r) => r.textContent);
+  eq(rows, ['Add Tab Page', 'Remove Tab Page', 'Undock from parent container'], 'vendor rows keep the host order and the vendor wording');
+  h.destroy();
+});
+
+test('vendor smart tag: a verb this designer cannot express is inert, not a silent no-op', () => {
+  const h = loadDesigner();
+  const fly = openVendorTasks(h, [vtag({ label: 'Custom Header Buttons', methodName: 'CustomHeaderButtons', verb: null, closesPanel: true })]);
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const row = fly.querySelector('.tfVerb') as any;
+  ok(row.className.indexOf('tfDisabled') >= 0, 'an unmapped vendor verb renders disabled');
+  ok(!!row.title, 'it carries a tooltip explaining why');
+  h.click(row);
+  eq(h.posted, [], 'clicking it posts nothing at all');
+  h.destroy();
+});
+
+test('vendor smart tag: "Add Tab Page" runs our own source-first addTab', () => {
+  const h = loadDesigner();
+  const fly = openVendorTasks(h, [vtag()]);
+  h.click(fly.querySelector('.tfVerb'));
+  eq(h.posted, [{ type: 'addTab', hostId: 'tab1' }], 'the vendor label drives the designer’s existing addTab path');
+  h.destroy();
+});
+
+test('vendor smart tag: "Remove Tab Page" is inert with no page, and targets the active page when there is one', () => {
+  // no page under the host → nothing to remove → disabled (same rule the canvas context menu uses)
+  const h1 = loadDesigner();
+  const f1 = openVendorTasks(h1, [vtag({ label: 'Remove Tab Page', methodName: 'RemoveTabPage', verb: 'deleteTab' })]);
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const r1 = f1.querySelector('.tfVerb') as any;
+  ok(r1.className.indexOf('tfDisabled') >= 0, 'Remove Tab Page is disabled when the host has no page');
+  h1.click(r1);
+  eq(h1.posted, [], 'and posts nothing');
+  h1.destroy();
+
+  const h2 = loadDesigner();
+  const page = mkCtrl({ id: 'page1', name: 'page1', type: 'DevExpress.XtraTab.XtraTabPage', parentId: 'tab1' });
+  const f2 = openVendorTasks(h2, [vtag({ label: 'Remove Tab Page', methodName: 'RemoveTabPage', verb: 'deleteTab' })], [page]);
+  h2.click(f2.querySelector('.tfVerb'));
+  eq(h2.posted, [{ type: 'deleteTab', hostId: 'tab1', pageId: 'page1' }], 'it removes the active page');
+  h2.destroy();
+});
+
+test('vendor smart tag: a declared name is NOT authority — a tab verb on a non-tab control stays inert', () => {
+  // The engine matches the vendor attribute by short NAME, so any assembly could declare "RemoveTabPage" on anything,
+  // and we deliberately don't run the vendor's own SmartTagFilter. Enablement must therefore rest on OUR facts
+  // (engine isTabHost), never on the declared verb name — otherwise a rogue label reaches a .Designer.cs deletion.
+  const h = loadDesigner();
+  const panel = mkCtrl({ id: 'panel1', name: 'panel1', type: 'Acme.FancyPanel', isTabHost: false, width: 300, height: 200 });
+  const child = mkCtrl({ id: 'label1', name: 'label1', parentId: 'panel1' });
+  h.send({ type: 'layout', controls: [panel, child] });
+  h.send({ type: 'select', id: 'panel1' });
+  h.send({
+    type: 'tasks', id: 'panel1',
+    component: { id: 'panel1', name: 'panel1', type: 'Acme.FancyPanel', parent: 'this', isRoot: false, properties: [], events: [] },
+    vendorTags: [vtag({ label: 'Remove Tab Page', methodName: 'RemoveTabPage', verb: 'deleteTab' }), vtag()],
+  });
+  h.resetPosted();
+  h.click(h.document.querySelector('.smarttag'));
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const rows = Array.from(h.document.querySelectorAll('.tfVerb')) as any[];
+  ok(rows.every((r) => r.className.indexOf('tfDisabled') >= 0), 'tab verbs are inert on a control the engine does not call a tab host');
+  rows.forEach((r) => h.click(r));
+  eq(h.posted, [], 'and clicking them writes nothing');
+  h.destroy();
+});
+
+test('vendor smart tag: two visible children = the engine cannot say which page is active → Remove Tab Page refuses', () => {
+  // The layout normally emits only the ACTIVE page (hidden pages are filtered off the visible surface), so one child
+  // IS the active page. If two ever surface, the active page is genuinely unknown — and this verb deletes source, so
+  // it must fail closed instead of guessing the first child.
+  const h = loadDesigner();
+  const p1 = mkCtrl({ id: 'page1', name: 'page1', type: 'DevExpress.XtraTab.XtraTabPage', parentId: 'tab1' });
+  const p2 = mkCtrl({ id: 'page2', name: 'page2', type: 'DevExpress.XtraTab.XtraTabPage', parentId: 'tab1' });
+  const fly = openVendorTasks(h, [vtag({ label: 'Remove Tab Page', methodName: 'RemoveTabPage', verb: 'deleteTab' })], [p1, p2]);
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const row = fly.querySelector('.tfVerb') as any;
+  ok(row.className.indexOf('tfDisabled') >= 0, 'ambiguous active page → the verb is inert');
+  h.click(row);
+  eq(h.posted, [], 'no deleteTab is posted for a guessed page');
+  h.destroy();
+});
+
+test('vendor smart tag: moving the selection closes the open vendor flyout — a verb can never fire at the wrong control', () => {
+  // vendorRow captures its target at RENDER time, so a flyout left open across a selection change would post a verb
+  // for the PREVIOUS control. renderSelection -> renderSmartTag must retract it (flyoutOwner !== current).
+  const h = loadDesigner();
+  const other = mkCtrl({ id: 'button1', name: 'button1' });
+  const fly = openVendorTasks(h, [vtag()], [other]);
+  ok(!!fly && !!h.document.querySelector('.taskfly'), 'the vendor flyout is open for tab1');
+
+  h.send({ type: 'select', id: 'button1' });   // user clicks a different control while the flyout is up
+  ok(!h.document.querySelector('.taskfly'), 'the flyout is gone the moment the selection moves off its owner');
+  eq(only(h.posted, 'addTab'), [], 'and no verb was fired');
+  h.destroy();
+});
+
+test('vendor smart tag: the glyph appears for vendor tags alone, and net9’s empty list takes it away again', () => {
+  // The glyph used to need a curated common PROPERTY; a vendor control can have tags and none. Assert on the glyph's
+  // visibility (a hidden glyph is unclickable for a user, but querySelector+click would still reach it in jsdom).
+  const h = loadDesigner();
+  openVendorTasks(h, [vtag()]);
+  ok(h.document.querySelector('.smarttag').style.display !== 'none', 'vendor tags alone raise the smart tag');
+
+  // net9 can't load vendor types, so the host sends vendorTags: [] — which must also retract a stale vendor menu.
+  h.send({ type: 'tasks', id: 'tab1', component: tabComp(), vendorTags: [] });
+  eq(h.document.querySelector('.smarttag').style.display, 'none', 'no vendor tags and no common properties → no smart tag');
+  ok(!h.document.querySelector('.taskfly'), 'and the open vendor flyout is closed');
   h.destroy();
 });
 
@@ -2247,7 +2391,7 @@ test('panel tree editor: "…" lists nodes, the popup renders the recursive fore
   h.destroy();
 });
 
-test('panel toolstrip editor: "…" lists items, the popup renders the recursive menu, ↑ reorders a sibling group + OK posts setToolStripItems (review wf_55284a72-7f3 F5-proxy)', () => {
+test('panel toolstrip editor: "…" lists items, the popup renders the recursive menu, ↑ reorders a sibling group + OK posts setToolStripItems (F5-proxy)', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'ms',
@@ -2300,7 +2444,7 @@ test('panel toolstrip editor: "…" lists items, the popup renders the recursive
   h.destroy();
 });
 
-test('panel toolstrip editor: "+ Add item" ("Type Here") appends an empty-id item, typing sets its Text, OK posts it (Slice 2 ADD)', () => {
+test('panel toolstrip editor: "+ Add item" ("Type Here") appends an empty-id item, typing sets its Text, OK posts it', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'ms',
@@ -2327,7 +2471,7 @@ test('panel toolstrip editor: "+ Add item" ("Type Here") appends an empty-id ite
     items: [{ id: 'fileToolStripMenuItem', text: 'File', name: 'fileToolStripMenuItem', itemType: 'ToolStripMenuItem', children: [] }],
   });
   // "+ Add item" appends a NEW row whose Text is an editable input (the NEW item's carries the "Type Here" placeholder;
-  // since Slice 4 existing items are renameable and so ALSO expose an input — the new one is picked by its placeholder).
+  // existing items are renameable and so ALSO expose an input — the new one is picked by its placeholder).
   const addBtn = (Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === '+ Add item');
   ok(!!addBtn, 'the "+ Add item" button is present');
   h.click(addBtn);
@@ -2346,7 +2490,7 @@ test('panel toolstrip editor: "+ Add item" ("Type Here") appends an empty-id ite
   h.destroy();
 });
 
-test('panel toolstrip editor: the ✕ button deletes an EXISTING item (and its subtree) — OK posts a forest that omits it (Slice 3 REMOVE F5-proxy)', () => {
+test('panel toolstrip editor: the ✕ button deletes an EXISTING item (and its subtree) — OK posts a forest that omits it', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'ms',
@@ -2380,7 +2524,7 @@ test('panel toolstrip editor: the ✕ button deletes an EXISTING item (and its s
   });
   const rows = (): any[] => Array.from(h.document.querySelectorAll('.treeNodeRow')) as any[];
   eq(rows().length, 4, 'popup rendered File + Open + Save + Edit');
-  // every item (existing too) now offers a ✕ delete affordance; before Slice 3 only NEW items did.
+  // every item (existing too) now offers a ✕ delete affordance; previously only NEW items did.
   const delBtn = rows()[3].querySelector('button[title="Delete item (and any sub-items)"]');
   ok(!!delBtn, 'an EXISTING item exposes the ✕ delete button');
   h.click(delBtn);
@@ -2393,7 +2537,7 @@ test('panel toolstrip editor: the ✕ button deletes an EXISTING item (and its s
   h.destroy();
 });
 
-test('panel toolstrip editor: editing an EXISTING item’s Text input RENAMES it — OK posts the forest with the new caption on the same id (Slice 4 RENAME F5-proxy)', () => {
+test('panel toolstrip editor: editing an EXISTING item’s Text input RENAMES it — OK posts the forest with the new caption on the same id', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'ms',
@@ -2446,7 +2590,7 @@ test('panel toolstrip editor: editing an EXISTING item’s Text input RENAMES it
   h.destroy();
 });
 
-test('panel toolstrip editor: a NEW item exposes a context-aware TYPE picker — a MenuStrip offers menu types, choosing Separator drops the Text input, OK posts the chosen type (Slice 5 item-type picker F5-proxy)', () => {
+test('panel toolstrip editor: a NEW item exposes a context-aware TYPE picker — a MenuStrip offers menu types, choosing Separator drops the Text input, OK posts the chosen type', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'ms',
@@ -2491,7 +2635,7 @@ test('panel toolstrip editor: a NEW item exposes a context-aware TYPE picker —
   h.destroy();
 });
 
-test('panel toolstrip editor: the TYPE picker is context-sensitive — a ToolStrip (toolbar) defaults a new item to Button, not Menu Item (Slice 5)', () => {
+test('panel toolstrip editor: the TYPE picker is context-sensitive — a ToolStrip (toolbar) defaults a new item to Button, not Menu Item', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'ts',
@@ -2527,7 +2671,7 @@ test('panel toolstrip editor: the TYPE picker is context-sensitive — a ToolStr
   h.destroy();
 });
 
-// ---- item → Properties (Slice 1e): clicking a top-level ToolStrip item loads ITS properties into the panel via a
+// ---- item → Properties: clicking a top-level ToolStrip item loads ITS properties into the panel via a
 // dedicated selectItem→itemProps channel that never touches the control selection (currentId / manip / smart-tag). ----
 
 test('item→Properties: a single click on a top-level item posts selectItem {hostId,itemId} (loads item props) and no control pick', () => {
@@ -2555,7 +2699,7 @@ test('item→Properties: right-clicking a top-level item also posts selectItem (
   h.destroy();
 });
 
-test('item→Properties: an anonymous item (empty id) posts NO selectItem — the click falls through to the strip (review wf_108a7dbe)', () => {
+test('item→Properties: an anonymous item (empty id) posts NO selectItem — the click falls through to the strip', () => {
   const h = loadDesigner();
   setupStripItems(h, 'System.Windows.Forms.StatusStrip', [
     { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripStatusLabel', text: 'Ready', x: 14, y: 10, width: 40, height: 20, isTypeHere: false },
@@ -2640,7 +2784,7 @@ test('item→Properties: selecting a control after an item clears item mode — 
   h.destroy();
 });
 
-test('item→Properties: after an item is deleted, a bare props(control) for the retained selection exits item mode (review wf_df05090e-a67 — the host restores the control)', () => {
+test('item→Properties: after an item is deleted, a bare props(control) for the retained selection exits item mode (the host restores the control)', () => {
   const h = loadPanel();
   // a control was the selection (panel currentId = button1); the user then clicked an item → item grid shown
   h.send({ type: 'select', id: 'button1' });

@@ -8,16 +8,16 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 | Path | What it is |
 |------|------------|
-| [`engine/`](engine/) | The primary C# rendering/editing engine (`net9.0-windows`). Parses `.Designer.cs` with Roslyn, safely interprets it, hosts the controls in WinForms, renders with `DrawToBitmap`, and applies edits. Talks JSON-RPC over a named pipe. |
-| [`engine-net48/`](engine-net48/) | The experimental **.NET Framework 4.8** engine (`net48`) for `net4x` / DevExpress forms the net9 engine can't load. Instantiates the *compiled* control types from the project's build output and renders them; the extension routes a form here when its control assembly targets .NET Framework. Same JSON-RPC surface. |
+| [`engine/`](engine/) | The primary C# rendering/editing engine (`net10.0-windows`). Parses `.Designer.cs` with Roslyn, safely interprets it, hosts the controls in WinForms, renders with `DrawToBitmap`, and applies edits. It supports modern `.NET 8` / `.NET 9` / `.NET 10` WinForms projects and talks JSON-RPC over a named pipe. |
+| [`engine-net48/`](engine-net48/) | The experimental **.NET Framework 4.8** x64 engine (`net48`) for `net4x` / DevExpress forms the modern engine can't load. Instantiates the *compiled* control types from the project's build output and renders them; the extension routes a form here when its control assembly targets .NET Framework. Same JSON-RPC surface. |
 | [`extension/`](extension/) | The VS Code extension (TypeScript). Custom editor, dockable panel, two-engine routing/lifecycle, and the JSON-RPC client to the engines. |
 | `extension/media/` | Webview UI scripts (plain JS): `designer.js` (canvas), `panel.js` (properties + toolbox + outline). |
 | `engine/samples/`, `samples/` | Sample `.Designer.cs` forms used as fixtures and for the F5 dev loop. |
 
 ## Prerequisites
 
-- **Windows** (WinForms is Windows-only).
-- **[.NET 9 SDK](https://dotnet.microsoft.com/download)** — the repo pins it via [`global.json`](global.json).
+- **Windows x64** (WinForms is Windows-only; the stable VSIX targets `win32-x64`).
+- **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** — the repo pins it via [`global.json`](global.json).
 - **.NET Framework 4.8 targeting pack** — only needed to build the experimental `engine-net48/` engine (ships with the Visual Studio Build Tools; the runtime itself is part of Windows).
 - **Node.js 20+** and npm.
 - **VS Code** `^1.84`.
@@ -27,7 +27,7 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 ```bash
 # Engine (C#)
 dotnet build engine -c Release
-#   → engine/bin/Release/net9.0-windows/WinFormsDesigner.Engine.dll
+#   → engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.exe/.dll
 
 # .NET Framework 4.8 engine (experimental — net4x / DevExpress forms)
 dotnet build engine-net48 -c Release
@@ -43,10 +43,21 @@ npm run build         # esbuild → dist/extension.js + dist/e2e.cjs
 ## Test
 
 ```bash
-# Headless end-to-end (drives the engine like the extension does, no GUI).
-# Build the engine in Release first — e2e launches that DLL.
+# Fast unit layers (run from the repository root / extension folder respectively).
+dotnet test tests/Engine.UnitTests -c Release
 cd extension
+npm test
+
+# Headless end-to-end (drives the engine like the extension does, no GUI).
+# Build both engines in Release first — release-mode e2e requires the net48 cross-runtime legs too.
+$env:WFD_REQUIRE_NET48 = "1"   # PowerShell
 npm run e2e
+npm run webview-e2e
+npm run l10n:parity
+npm run build
+npm run perf:baseline
+npm run extension-host-e2e -- --version=1.84.0
+npm run extension-host-e2e -- --version=stable
 
 # Webview scripts have no type checker — at minimum syntax-check them:
 node --check media/designer.js
@@ -56,11 +67,11 @@ node --check media/panel.js
 The engine also has a CLI for poking at it directly on a sample form:
 
 ```bash
-dotnet engine/bin/Release/net9.0-windows/WinFormsDesigner.Engine.dll --render engine/samples/SampleForm.Designer.cs
+dotnet engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll --render engine/samples/SampleForm.Designer.cs
 # other verbs: --describe --layout --render-layout --set-prop --convert --resolve --save --selftest --pipe
 ```
 
-> 📋 For the testing strategy and the **unit-test roadmap**, see [docs/TESTING.md](docs/TESTING.md).
+> 📋 For the complete testing strategy and tier boundaries, see [docs/TESTING.md](docs/TESTING.md).
 
 ## The F5 dev loop (interactive)
 
@@ -99,8 +110,8 @@ The engine executes interpreted code from `.Designer.cs` when building a preview
 
 Before opening a PR, please make sure you've:
 
-1. Built the engine (`dotnet build engine -c Release`) — **0 warnings, 0 errors**.
-2. Run `npm run typecheck`, `npm run build`, and `npm run e2e` — all green.
+1. Built both engines and run `dotnet test tests/Engine.UnitTests -c Release` — **0 warnings, 0 errors, all green**.
+2. Run `npm test`, `npm run typecheck`, `npm run build`, `npm run perf:baseline`, and `npm run e2e` — all green.
 3. `node --check`-ed any changed webview script, and **manually verified UI changes via F5**.
 4. Kept the change set **minimal and focused** (one logical change per PR).
 5. Not weakened any security gate (or, if you touched one, included tests + a review note).
@@ -113,21 +124,21 @@ Then open the PR and fill in the template. Link the issue it closes, describe th
 
 Continuous integration runs on every push/PR ([`ci.yml`](.github/workflows/ci.yml)); releases are automated by [`release.yml`](.github/workflows/release.yml):
 
-1. Bump `version` in [`extension/package.json`](extension/package.json) and add a section to [`CHANGELOG.md`](CHANGELOG.md).
+1. Bump the version in [`extension/package.json`](extension/package.json) and `package-lock.json`, then add the matching section to [`CHANGELOG.md`](CHANGELOG.md). Run `npm run release:preflight`.
 2. Commit, then tag and push:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v1.0.0
+   git push origin v1.0.0
    ```
-3. The workflow builds, runs the e2e gate, packages a self-contained VSIX (engine bundled via `vscode:prepublish`), attaches it to a new **GitHub Release**, and — if the secrets below are configured — publishes to the marketplaces.
+3. The workflow builds both engines, runs the strict net48 and VS Code Extension Host gates, packages a `win32-x64` VSIX with a framework-dependent .NET 10 x64 apphost, attaches that exact artifact to a new **GitHub Release**, and publishes the same VSIX to the marketplaces.
 
-**Optional repository secrets** (*Settings → Secrets and variables → Actions*):
+**Repository secrets** (*Settings → Secrets and variables → Actions*):
 
 | Secret | Purpose |
 |--------|---------|
-| `VSCE_PAT` | Publish to the **VS Code Marketplace** (`vsce publish`). Requires a verified publisher matching `publisher` in `package.json`. |
-| `OVSX_PAT` | Publish to **[Open VSX](https://open-vsx.org/)** (`ovsx publish`). |
+| `VSCE_PAT` | **Required for a tagged stable release.** Publishes to the **VS Code Marketplace** (`vsce publish`). Requires a verified publisher matching `publisher` in `package.json`. |
+| `OVSX_PAT` | Optional. Publishes to **[Open VSX](https://open-vsx.org/)** (`ovsx publish`). |
 
-If a secret is absent, that publish step is skipped — the GitHub Release with the attached VSIX is still created. `GITHUB_TOKEN` is provided automatically.
+If `VSCE_PAT` is absent, a tagged stable release fails instead of silently producing a GitHub-only release. If `OVSX_PAT` is absent, only the Open VSX step is skipped. `GITHUB_TOKEN` is provided automatically.
 
 Thank you! 💙

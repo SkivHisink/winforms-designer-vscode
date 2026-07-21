@@ -33,4 +33,21 @@ await esbuild.build({
   external: ['jsdom'],
 });
 
+// Real VS Code Extension Host smoke suite. @vscode/test-electron loads this module inside the tested VS Code
+// version, so `vscode` must stay external and be provided by that host.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/extension-host-suite.ts'],
+  outfile: 'dist/extension-host-suite.cjs',
+  external: ['vscode'],
+});
+
+// Repeatable cold-start + warm-render guardrail. Kept as a small bundled client so CI measures the same JSON-RPC
+// path as the extension without involving VS Code, jsdom, or a package-manager test runner.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/performance-baseline.ts'],
+  outfile: 'dist/performance-baseline.cjs',
+});
+
 console.log('build ok');

@@ -1,0 +1,209 @@
+{
+ "summary": "Современный движок (engine/, net10.0-windows, ~18.2k LOC) — это интерпретирующий рендерер: Roslyn-парс живого буфера .Designer.cs → единственный дизайнер-класс через shared FormClassResolver → DesignSurface.BeginLoad(Form/UserControl) → пошаговая интерпретация InitializeComponent (statement-диспетчер + трёхуровневый security-allowlist в Eval) → реальное WinForms-дерево → root.DrawToBitmap→PNG + post-capture harvest геометрии (layout/tray/strip-items). Все правки — pure-text byte-минимальные Roslyn-сплайсы с per-op «only-X-changed» multiset-гейтами; whole-file save идёт через TypeCodeDomSerializer + нормализацию + MissingOriginalStatements fail-closed гейт. КЛЮЧЕВОЙ ВЫВОД ДЛЯ ПЛАНА: ~40% движка (вся семья сплайс-редакторов, ~7k LOC) — чистая Roslyn-текстологика, портируемая на net48/netstandard2.0 as-is (Roslyn 5.6.0 и StreamJsonRpc 2.25.29 УЖЕ работают в net48-проекте репо); ядро интерпретатора (~1.1k LOC в DesignerRenderer: Interpret/HandleAssignment/HandleInvocation/Eval/allowlists) портируемо на ~95% — DesignSurface/IDesignerHost/TypeDescriptor/TypeCodeDomSerializer/GDI+/ResX существуют в net48 (System.Design/System.Windows.Forms); единственный жёстко net10-only кусок — collectible ALC (ControlLoadContext, 57 LOC + ~4 call-site) → замена на AppDomain/LoadFrom по прецеденту engine-net48 DomainManager. Прецедент shared-source уже расширен: Engine.Net48.csproj компайл-линкует НЕ только FormClassResolver.cs, но и DesignerModifiers.cs, с комментарием «interpret/edit reuse later» на Roslyn-референсе — путь к общей интерпретаторной библиотеке заложен архитектурно.",
+ "keyFacts": [
+  "ENTRY (engine/Program.cs, 1932 LOC): ~20 CLI-режимов (--selftest/--roundtrip/--save/--set-prop/--describe/--layout/--render-layout/--set-*/--list-*/--add/--toolbox/--palette/--resolve/--pipe) + класс EngineApi с ~49 JSON-RPC методами по named pipe (StreamJsonRpc 2.25.29, HeaderDelimited, Newtonsoft JsonMessageFormatter + CamelCase contract resolver — НЕ System.Text.Json на проводе). Вся WinForms-работа маршалится на единственный STA-поток (StaDispatcher, Program.cs:1892); pure-text редакторы идут МИМО STA прямо на RPC-потоке. MSBuild-резолв прогревается off-STA (Prewarm fire-and-forget, allowEval:false на STA).",
+  "ПАРСИНГ/ИДЕНТИЧНОСТЬ: CSharpSyntaxTree.ParseText (Microsoft.CodeAnalysis.CSharp 5.6.0) → FormClassResolver.FormClass/InitMethod (engine/FormClassResolver.cs, 145 LOC) — правило UNIQUENESS (ровно один класс с параметрless InitializeComponent, иначе fail-closed); PartialsOf/FieldNamesOf по namespace-qualified имени; компайл-линкован в net48 (Engine.Net48.csproj:28-29 линкует ещё и DesignerModifiers.cs) — «divergence unrepresentable».",
+  "LOADGRAPH (DesignerRenderer.cs:1645-1770): sourceText-параметр = живой НЕсохранённый буфер (путь нужен только для резолва проекта/resx); резолв сборки: явный override (fail-loud если нет файла) → ProjectResolver.ResolveOutputAssembly (кэш; на STA allowEval:false); user-сборка + sibling non-shared DLL грузятся в collectible ALC (ControlLoadContext); DetectRootType (:1842) — fail-closed union синтаксиса (base-list + sibling .cs + alias-резолв) и рефлексии компилированного типа → InheritedBase-баннер; DesignSurface.BeginLoad(rootType) → IDesignerHost; ResxResolver.TryLoadForDesigner + UnrenderableResourceCount (size-independent metadata-скан).",
+  "ИНТЕРПРЕТАТОР (DesignerRenderer.Interpret :2068-2203): statement-диспетчер по телу InitializeComponent: (1) TreeNode-подсистема (TryApplyTreeNodeStatement :2224 — локалы TreeNode + allowlist TreeNodeSettableProps); (2) event-wiring +=/-= → верботим-захват в eventWirings (representable, ре-эмит сериализатором) через IsEventWiring-проверку реального события; (3) HandleAssignment (:2356): `this.f = new T()` → ТОЛЬКО параметрless ctor (исключение: `new T(this.components)`) → host.CreateComponent(t, name); property-chain walk через TypeDescriptor; component-ref RHS (this.X = this.Y / this) перехватывается ДО Eval; explicitMembers-набор для exact-echo нормализации; (4) HandleInvocation (:2472): Suspend/Resume/PerformLayout=no-op, ISupportInitialize Begin/EndInit=no-op+верботим-захват (0.12.0 R1), Controls.Add (вкл. 3-arg TLP-cell и SplitContainer.Panel1-walk), collection .Add/.AddRange (элементы = именованные компоненты ИЛИ inline Eval), IExtenderProvider.Set*; (5) всё остальное → unrepresentable[] (счётчики total/ok → RoundTripSafe).",
+  "EVAL + ALLOWLISTS (:2657-2995) — трёхуровневая security-модель, RCE-on-open доказан и закрыт: AllowedConstructionTypes (:2940) — ровно 11 value-типов (Point/PointF/Size/SizeF/Rectangle/RectangleF/Padding/Font/FontFamily/ColumnStyle/RowStyle), НИКАКИХ user/corelib ctor; AllowedStaticInvocations (:2907) — только Color.FromArgb/FromName/FromKnownColor; AllowedStaticReadTypes (:2969) — Color/SystemColors/структуры/Cursors. Плюс: литералы (+Convert.ChangeType к targetType), unary-minus (THROW на неподдержанном → честный unrepresentable), enum-парс, bitwise-or флаги, cast (pure conversion), resources.GetObject/GetString → ResxResolver, массивы EvalArray (:2841, элементы ТОЛЬКО string+примитивы). ЛОК-СТЕП КОНТРАКТ: write-allowlist DesignerValueConverter.SupportedTypeNames ⊆ читаемое Eval'ом, иначе RoundTripSafe ломается после записи.",
+  "ТИПОРЕЗОЛВ (:3025): userAsms (ALC) → Type.GetType → ProbeAssemblies (WinForms/Drawing.Primitives/Drawing.Common/corelib). ControlLoadContext (57 LOC) — AssemblyLoadContext isCollectible + AssemblyDependencyResolver (deps.json), shared-имена (System.*, mscorlib…) делегируются Default ALC ради единой type identity. ЭТО ЕДИНСТВЕННЫЙ ЖЁСТКО CORE-ONLY ФАЙЛ движка.",
+  "РЕНДЕР: CaptureRootPng (:103) = root.DrawToBitmap → PNG (GDI+, Format32bppArgb). DIRTY-REGION РЕАЛЬНО ЕСТЬ: RenderControl (:119) рендерит ОДИН контрол (~0.3-1ms против ~100ms full-frame) + placement через ComputeWindowOffset (:160, единый transform с hit-test; погрешность 1-3px для вложенных инсетов). RenderWithLayout (:216) = PNG+layout за ОДИН LoadGraph; контракт порядка: BuildLayoutControls ДО DrawToBitmap (field-identity), BuildToolStripItems ПОСЛЕ (PerformLayout не портит byte-identical PNG) — закреплено e2e byte-equality. Layout-harvest: BuildLayoutControls (off-tree skip, hidden-tab skip через рефлексивный FindTabProp — DevExpress AmbiguousMatch-фикс), BuildTray (off-tree ContextMenuStrip + Items-forest), BuildToolStripItems (per-item Bounds + Type-Here слот + overflow-chevron + рекурсивные bounds-less Children).",
+  "EDIT-ПУТИ (ВСЕ pure-text Roslyn, без STA/graph-load, кроме событий): (1) DesignerPropertyEditor.EditProperty (399 LOC) — Replace last-RHS-span / Insert-after-anchor; IsSingleExpression анти-инъекция; OnlyTargetChanged §6.5 multiset-гейт; ResetProperty — whole-line delete c отказом при любой non-whitespace trivia в спане; (2) геометрия = тот же property-сплайс (Location/Size) + DesignerTableCellEditor (3-arg Add cell swap) + DesignerTableStyleEditor; (3) коллекции: DesignerCollectionEditor (string Items), DesignerStringArrayEditor (Lines→Text runtime-effective target, data-loss-guard), DesignerListColumnEditor/DesignerGridColumnEditor (реконсиляция field+ctor+props+AddRange), DesignerTreeNodeEditor (drop+regenerate локалов post-order), DesignerToolStripItemEditor (1040 LOC, forest-diff: mint/remove/rename/reorder, отказ от reparent/inline/shared, OnlyItemsChanged); (4) структура: DesignerControlEditor (1919 LOC) Add/Remove/RemoveTabPage/Copy/Paste/MoveZOrder/Reparent/AddComponent/AddTabPage + гейты OnlyControlAdded/Removed/Reordered/Reparented/TabSubtreeRemoved; (5) события: DesignerEventEditor (graph-load ТОЛЬКО для сигнатуры делегата; сигнатурная совместимость по AssemblyQualifiedName; CSharpType() отказывает на не-спеллуемых типах); (6) resx: DesignerImageEditor (base64→resx+GetObject-присваивание, GDI-декод-валидация, pixel-bomb bound), DesignerImageListEditor (ImageStream-блоб ИЗ net48-сериализатора + SetKeyName); (7) Modifiers: DesignerModifiers.SetModifier — byte-local ключевое слово доступа поля, безопасно на ЛЮБОЙ форме.",
+  "SAVE-ПУТЬ: SerializeFromFile → DesignerSerializer (436 LOC): TypeCodeDomSerializer через DesignerSerializationManager (+VsNameCreationService для VS-именования локалов) → InjectEventWirings + InjectSupportInit (верботим, runtime-корректные позиции) → Normalize (exact-echo по explicitMembers ИЛИ default-drop) → CSharpCodeProvider.GenerateCode; catch на BinaryFormatter-исключение .NET9 (ToolStrip-ресурсы) → graceful read-only. SaveSplice → DesignerSaveSplicer.MissingOriginalStatements (fail-closed statement-diff) → Splice. SaveSafety.Classify → категории safe/localizable/binaryResx/unresolvedType/lostStatements/unrepresentable (capability preflight 0.12.0).",
+  "DESCRIBE: DesignerDescribe (725 LOC) — TypeDescriptor.GetProperties по живому графу → PropertyInfo DTO (invariant-string Value, StandardValues, IsCollection/CollectionItemType-сентинелы, SourceExplicit из explicitMembers); editable-гейт живёт в ВЕБВЬЮ (panel.js COMPLEX-set), не в движке. DesignerValueConverter (477 LOC) — двунаправленный: ToExpression (TypeConverter→InstanceDescriptor→CodeDom, allowlist SupportedTypeNames из 7 типов, Font-substitution guard) и FromExpression (bounded evaluator, зеркало Eval-allowlist'ов).",
+  "ПОРТИРУЕМОСТЬ — ДОКАЗАННЫЙ ПРЕЦЕДЕНТ: Engine.Net48.csproj УЖЕ (а) компайл-линкует engine/FormClassResolver.cs И engine/DesignerModifiers.cs, (б) референсит Microsoft.CodeAnalysis.CSharp 5.6.0 с комментарием «netstandard2.0 → net48 OK. Roslyn parse … interpret/edit reuse later», (в) референсит тот же StreamJsonRpc 2.25.29. Т.е. обе NuGet-зависимости современного движка ПОДТВЕРЖДЁННО работают на net48 в этом репо.",
+  "КЛАССИФИКАЦИЯ ПОРТИРУЕМОСТИ: (A) чистая Roslyn-текстологика, portable as-is (только синтакс-шимы): FormClassResolver, DesignerModifiers, DesignerPropertyEditor, DesignerSaveSplicer, SaveSafety, DesignerCollectionEditor, DesignerStringArrayEditor, DesignerListColumnEditor, DesignerGridColumnEditor, DesignerTreeNodeEditor, DesignerToolStripItemEditor, DesignerTableCellEditor, DesignerTableStyleEditor, DesignerEventEditor, DesignerImageListEditor, DesignerImageEditor(≈95%) ≈ 6.9-7.4k LOC ≈ 40% движка. (B) runtime-bound, но ВСЕ API есть на net48 (System.Design/System.Windows.Forms/System.Drawing/CodeDom): интерпретаторное ядро DesignerRenderer (~1.1k LOC — портируемо ~95%), DesignerSerializer, DesignerDescribe, DesignerValueConverter, DesignerPalette, DesignerResx (ResXResourceReader/ResXDataNode есть на net48; BinaryFormatter-отказ НАМЕРЕННО не полагается на .NET9-removal — «keeps the guard correct if the engine is ever retargeted»), Program.cs (StaDispatcher/NamedPipe/StreamJsonRpc), ProjectResolver (subprocess-логика). (C) жёстко net10-only: ControlLoadContext.cs (57 LOC) + call-sites в LoadGraph/EnumerateProjectControls/ScanAssemblyCandidates/RenderCustomControl (~150 LOC суммарно) — замена AppDomain/Assembly.LoadFrom (прецедент: engine-net48/DomainManager).",
+  "БОНУС net48-порта: BinaryFormatter СУЩЕСТВУЕТ на net48 → SerializeFromFile-ограничение .NET9 (ToolStrip/ImageList-ресурсы «binary serialized resources» → read-only) на net48 ИСЧЕЗАЕТ — whole-file save для ToolStrip-форм становится возможным; System.Design на net48 — это ОРИГИНАЛЬНЫЙ зрелый VS-дизайнер-стек.",
+  "ПЛАНЫ: docs/plans/vs-parity-completion-plan.md (прагматичный дельта-план, Tiers T0-T4, реконсиляция codex+workflow; канвас уже зрелый, «интерактива нет» — миф; T3 engine-authoritative manip — триггерно по дрейфу) и docs/plans/winforms-designer-plan.md (1011 строк, аспирационный 24-36-мес; §0.3.1 рендер-контракт engine-exported snap-primitives; §0.3.4 риск R34 vendor-SDK designers; §0.3.6 cross-runtime HARD GATE; §3 обоснование собственного DesignSurface-хоста, отказ от Microsoft DesignToolsServer). docs/maps/: property-editor-pipeline.md и oncanvas-toolstrip-pipeline.md — свежие durable-карты с file:line якорями (спот-чекнуты, частично дрейфуют: Eval switch теперь :2657, allowlists :2907-2984)."
+ ],
+ "portBlockers": [
+  "AssemblyLoadContext + AssemblyDependencyResolver (engine/ControlLoadContext.cs — весь файл; call-sites: DesignerRenderer.cs LoadGraph ~:1705 (user asm + sibling DLLs), EnumerateProjectControls ~:1340, ScanAssemblyCandidates ~:1402, RenderCustomControl ~:1780) — Core-only API, на net48 отсутствует. Замена: AppDomain-изоляция (прецедент engine-net48/DomainManager) или in-place Assembly.LoadFrom без unload; deps.json-резолв (AssemblyDependencyResolver) на net48 не нужен/заменяется probing paths.",
+  "C#-фичи, требующие attribute-полифиллов на net48/netstandard2.0 (компилируются LangVersion=latest, рантайм не нужен): init-аксессоры во ВСЕХ DTO (RenderResult, LayoutControl, EditResult, PropertyEditResult, RoundTripResult и т.д.) → System.Runtime.CompilerServices.IsExternalInit; required-члены (DesignerRenderer.LoadedGraph :1603-1637, ProjectResolver.CacheEntry :40-48) → RequiredMemberAttribute+CompilerFeatureRequiredAttribute; index-from-end `[^1]` (DesignerRenderer.cs :2272,:2345,:2432,:2495,:2550; DesignerSaveSplicer.cs:86) → System.Index-полифилл или механическая замена на [Count-1]. Всё решается одним Shims.cs или PolySharp; жизнеспособность доказана — net48-проект уже компилирует shared-файлы с LangVersion latest.",
+  "Мелкие BCL-API, отсутствующие на net48 (точечные шимы): StringSplitOptions.TrimEntries + Split(char, options) (DesignerValueConverter.cs:422, ProjectResolver.cs:353); Dictionary.GetValueOrDefault (ProjectResolver.cs:173,191,203,208); ProcessStartInfo.ArgumentList (ProjectResolver.cs:244-258); Process.Kill(entireProcessTree:true) (ProjectResolver.cs:274); OperatingSystem.IsWindows (ProjectResolver.cs:393); ArgumentNullException.ThrowIfNull (VsNameCreationService.cs:47).",
+  "System.Text.Json — ровно 2 call-site (DesignerControlEditor.cs:1150 Serialize, :1209 Deserialize — clipboard-блоб copy/paste). Вариант: пакет System.Text.Json (netstandard2.0-совместим) или свап на Newtonsoft (уже транзитивно есть через StreamJsonRpc).",
+  "Семантические (не компиляционные) дельты, требующие ре-верификации на net48: (1) BinaryFormatter существует → catch-ветка SerializeFromFile (DesignerRenderer.cs:588-613) меняет смысл — ToolStrip-сериализация ЗАРАБОТАЕТ (capability-выигрыш, но SaveSafety.BinaryResx-категория и ResxResolver-гарды нужно перепроверить; ResxResolver уже mimetype-authoritative и от рантайма не зависит); (2) DesignSurface/ControlDesigner net48 (System.Design) vs Core (System.Windows.Forms.Design) — shadowing Visible/Enabled, DPI, DefaultValue-набор → контракты byte-identical PNG и post-capture harvest перепиновать; (3) ProjectResolver.HostMajor=Environment.Version.Major на net48 = 4 → ScoreLoadable корректно отвергнет все modern-TFM (нужный эффект для net48-хоста), но логику выбора TFM надо инвертировать под net48-хост.",
+  "Внешняя env-зависимость (не код): `dotnet msbuild -getProperty` требует SDK 8+ (SDK 6 его не знает — задокументированный инцидент); субпроцессный подход рантайм-агностичен, но net48-хост должен по-прежнему звать modern dotnet CLI или MSBuild.exe c другим парсингом.",
+  "НЕ-блокеры (проверено): Microsoft.CodeAnalysis.CSharp 5.6.0 — netstandard2.0, уже в Engine.Net48.csproj; StreamJsonRpc 2.25.29 + Newtonsoft — уже в net48-проекте; DesignSurface/IDesignerHost/TypeCodeDomSerializer/DesignerSerializationManager/INameCreationService — есть в net48 System.Design; ResXResourceReader/ResXDataNode — есть в net48 System.Windows.Forms; CSharpCodeProvider/CodeDom — встроен в net48; GDI+ DrawToBitmap/Bitmap/ImageFormat — есть; NamedPipeServerStream — есть; record struct / switch-expressions / pattern-matching / target-typed new — чисто синтаксис, компилируются на старых TFM."
+ ],
+ "risks": [
+  "Дерево НЕ закоммичено (git status: массовые M по engine/, engine-net48/, extension/) — все file:line якоря сняты с рабочей копии 2026-07-19 и уедут после коммита стека 0.8-0.12; при использовании карты спот-чекать 2-3 якоря.",
+  "Тезис «Roslyn 5.6.0 работает на net48» доказан в репо только для PARSE-уровня (RootTypeResolver net48); интерпретатор использует тот же SyntaxFactory/SyntaxTree API (тоже netstandard2.0), но полный interpret-on-net48 никогда не прогонялся — первый спайк порта должен это закрепить.",
+  "Security-инвариант: три Eval-allowlist'а (Construction/StaticInvocation/StaticRead) + IsSingleExpression + per-op гейты — это ЕДИНАЯ модель безопасности «hostile .Designer.cs не исполняет код»; при порте/шаринге ядра любые два экземпляра интерпретатора обязаны шарить эти списки как один исходник (иначе повторяется история FormClassResolver: «agreement, not any local rule, was the safety property»).",
+  "Лок-степ write-allowlist ↔ интерпретатор: SupportedTypeNames (конвертер) и AllowedStaticReadTypes/AllowedConstructionTypes (Eval) должны меняться только парой — рассинхрон ломает RoundTripSafe ПОСЛЕ успешной записи (задокументировано в обеих durable-картах).",
+  "Поведенческие контракты, которые легко потерять при порте: (a) BuildLayoutControls ДО DrawToBitmap, BuildToolStripItems/BuildTray ПОСЛЕ (byte-identical PNG e2e-контракт); (b) Suspend/Resume/PerformLayout = no-op в interpret → item.Bounds валидны только после форс-PerformLayout; (c) ComputeWindowOffset — единый transform hit-test и dirty-region патча; (d) exact-echo нормализация зависит от explicitMembers, собираемого interpret'ом — сериализатор и интерпретатор неразделимы.",
+  "net48 System.Design DesignSurface — зрелый, но ДРУГОЙ стек: возможны отличия DefaultValueAttribute-наборов и ShouldSerialize → exact-echo нормализация может давать другой DroppedDefaults; кросс-рантайм HARD GATE из аспирационного плана §0.3.6 (не «нормализовать молча») применим и к порту ядра.",
+  "DesignerDescribe editable-решение живёт в вебвью (panel.js COMPLEX/editable()), а не в движке — при унификации движков паритет грида зависит от TS-слоя, не только от портированного C#."
+ ],
+ "files": [
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/Program.cs",
+   "loc": 1932,
+   "role": "Вход: ~20 CLI-режимов + EngineApi (~49 RPC, named pipe, StreamJsonRpc+Newtonsoft camelCase) + StaDispatcher (единый STA-поток); DTO SavePreview/EditPreview/ImageEditPreview/EngineCapabilities"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerRenderer.cs",
+   "loc": 3061,
+   "role": "ЯДРО: LoadGraph (Roslyn-парс буфера→ALC→DesignSurface.BeginLoad→Interpret), statement-интерпретатор (Interpret :2068, HandleAssignment :2356, HandleInvocation :2472), Eval :2657 + 3 allowlist'а (:2907/:2940/:2969), TreeNode-подсистема, DetectRootType fail-closed, CaptureRootPng/RenderControl(dirty-region)/RenderWithLayout, BuildLayoutControls/BuildTray/BuildToolStripItems harvest, ReadWithEncoding, фасады всех редакторов"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/ControlLoadContext.cs",
+   "loc": 57,
+   "role": "Collectible AssemblyLoadContext + AssemblyDependencyResolver; shared-имена→Default ALC. ЕДИНСТВЕННЫЙ жёстко net10-only файл"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/FormClassResolver.cs",
+   "loc": 145,
+   "role": "SHARED (компайл-линк в net48): правило уникальности дизайнер-класса/InitializeComponent, PartialsOf, QualifiedName"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerModifiers.cs",
+   "loc": 215,
+   "role": "SHARED (компайл-линк в net48): Modifiers/GenerateMember псевдо-свойства, byte-local сплайс ключевого слова поля, DesignerFormClass"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerResx.cs",
+   "loc": 213,
+   "role": "ResxResolver: guarded чтение sibling .resx (allowlist SafeTypes, mimetype-отказ BinaryFormatter/SOAP, FileRef-отказ, DoS/pixel-bomb bounds) + UnrenderableResourceCount"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerValueConverter.cs",
+   "loc": 477,
+   "role": "invariant-string ↔ C#-выражение: ToExpression (TypeConverter→InstanceDescriptor→CodeDom, allowlist 7 типов) + FromExpression (bounded evaluator, зеркало Eval)"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerSerializer.cs",
+   "loc": 436,
+   "role": "Whole-file round-trip: TypeCodeDomSerializer + DesignerSerializationManager, InjectEventWirings/InjectSupportInit (верботим), Normalize (exact-echo/default-drop), CSharpCodeProvider"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerSaveSplicer.cs",
+   "loc": 302,
+   "role": "Сплайс нормализованного InitializeComponent в существующий файл + MissingOriginalStatements fail-closed statement-diff гейт"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/SaveSafety.cs",
+   "loc": 74,
+   "role": "Классификация read-only причин: safe/localizable/binaryResx/unresolvedType/lostStatements/unrepresentable (capability preflight)"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerPropertyEditor.cs",
+   "loc": 399,
+   "role": "Targeted property-сплайс (Replace RHS-span / Insert-after-anchor) + IsSingleExpression анти-инъекция + OnlyTargetChanged §6.5 гейт + ResetProperty (trivia-safe whole-line delete)"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerDescribe.cs",
+   "loc": 725,
+   "role": "TypeDescriptor-describe живого графа → PropertyInfo/EventInfo/ComponentInfo DTO (invariant values, StandardValues, IsCollection-сентинелы, SourceExplicit)"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerLayout.cs",
+   "loc": 157,
+   "role": "DTO: LayoutControl, ToolStripItemBounds (+Children/Overflow/IsTypeHere), TrayComponent (+Items/IsStrip), LayoutResult, RenderLayoutResult"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerControlEditor.cs",
+   "loc": 1919,
+   "role": "Структурные pure-text правки: Add/Remove control, RemoveTabPage (subtree), Copy/Paste (System.Text.Json блоб!), MoveZOrder, Reparent, AddComponent/AddTabPage, toolbox-discovery (рефлексия WinForms + ALC-скан проекта), per-op гейты"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerEventEditor.cs",
+   "loc": 509,
+   "role": "Event wiring/unwiring/стаб-генерация; FindCompatibleHandlers по полной сигнатуре; OnlyWiringAdded/Changed гейты"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerToolStripItemEditor.cs",
+   "loc": 1040,
+   "role": "ToolStrip/MenuStrip Items forest-diff редактор (mint/remove/rename/reorder, отказы reparent/inline/shared) + OnlyItemsChanged"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerTreeNodeEditor.cs",
+   "loc": 933,
+   "role": "TreeView.Nodes: парс локалов + drop-and-regenerate post-order + OnlyTreeNodesChanged"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerListColumnEditor.cs",
+   "loc": 745,
+   "role": "ListView.Columns typed-реконсиляция (поля+ctor+props+AddRange)"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerGridColumnEditor.cs",
+   "loc": 722,
+   "role": "DataGridView.Columns typed-реконсиляция"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerCollectionEditor.cs",
+   "loc": 352,
+   "role": "String-коллекции (ComboBox/ListBox Items) Add/AddRange rewrite"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerStringArrayEditor.cs",
+   "loc": 222,
+   "role": "string[] (Lines) — runtime-effective target Lines↔Text, data-loss guard; делегирует в property-сплайс"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerTableCellEditor.cs",
+   "loc": 182,
+   "role": "TableLayoutPanel cell: swap col/row аргументов 3-arg Controls.Add"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerTableStyleEditor.cs",
+   "loc": 273,
+   "role": "TableLayoutPanel Column/RowStyle read+edit"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerImageEditor.cs",
+   "loc": 444,
+   "role": "Image/Icon import: base64→.resx upsert + resources.GetObject-присваивание; GDI-декод валидация + bounds"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerImageListEditor.cs",
+   "loc": 307,
+   "role": "ImageList: ImageStream-блоб (из net48-сериализатора) в .resx + SetKeyName rewrite"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/DesignerPalette.cs",
+   "loc": 133,
+   "role": "KnownColor/шрифты/юниты для грида (GDI-рефлексия)"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/VsNameCreationService.cs",
+   "loc": 108,
+   "role": "INameCreationService для VS-именования сериализаторных локалов (treeNode1)"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/ProjectResolver.cs",
+   "loc": 444,
+   "role": "Резолв output-сборки: dotnet msbuild -getProperty субпроцесс (кэш по mtime, negative-TTL, MSBUILDNODEREUSE=0) → freshest-bin fallback; ChooseTfm/ScoreLoadable по host-major"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine/Engine.csproj",
+   "loc": 29,
+   "role": "net10.0-windows, UseWindowsForms, LangVersion latest; ЕДИНСТВЕННЫЕ пакеты: Microsoft.CodeAnalysis.CSharp 5.6.0 + StreamJsonRpc 2.25.29"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/engine-net48/Engine.Net48.csproj",
+   "loc": 38,
+   "role": "ПРЕЦЕДЕНТ ПОРТА: net48, компайл-линк FormClassResolver.cs+DesignerModifiers.cs, ТЕ ЖЕ Roslyn 5.6.0 (комментарий «netstandard2.0→net48 OK; interpret/edit reuse later») и StreamJsonRpc 2.25.29"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/docs/maps/property-editor-pipeline.md",
+   "loc": 132,
+   "role": "Durable-карта: describe→grid→convert→splice→re-render, лок-степ allowlist'ов; якоря частично дрейфуют"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/docs/maps/oncanvas-toolstrip-pipeline.md",
+   "loc": 408,
+   "role": "Durable-карта: канвас↔движок для strip-items, контракты byte-identity/post-capture harvest, история слайсов A-D+nested+off-tree+overflow"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/docs/plans/vs-parity-completion-plan.md",
+   "loc": 114,
+   "role": "Прагматичный дельта-план (Tiers T0-T4, codex+workflow реконсиляция): T1.1 net48 collection-паритет через net9 pure-text парсер, T2.1 round-trip (частично закрыт 0.12.0), T3.1 engine-authoritative manip триггерно"
+  },
+  {
+   "path": "D:/Data/Code/CSharpWinformExtension/docs/plans/winforms-designer-plan.md",
+   "loc": 1011,
+   "role": "Аспирационный 24-36-мес план v3: рендер-контракт engine-exported snap-primitives (§0.3.1), vendor-SDK риск R34 (§0.3.4), cross-runtime HARD GATE (§0.3.6), матрица движков {net8/9,net48}×{x64,x86}, отказ от Microsoft DesignToolsServer (§3)"
+  }
+ ]
+}

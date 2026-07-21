@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.Design;
+using System.ComponentModel.Design.Serialization;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -99,8 +100,24 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>Capture the whole root control to a PNG (S1/S4 fast-path) — shared by full-frame render
         /// (<see cref="RenderDetailed"/>) and the combined render+layout (<see cref="RenderWithLayout"/>).</summary>
-        private static byte[] CaptureRootPng(Control root, int w, int h)
+        private static byte[] CaptureRootPng(Control root, int w, int h, int scale = 1)
         {
+            if (scale > 1)
+            {
+                // High-DPI capture: scale the control tree UP by an integer factor so text and metrics are drawn at the
+                // higher resolution (crisp) — a plain DrawToBitmap into a bigger bitmap would only upscale (blurry). Scale
+                // mutates the tree, so restore it in finally; an integer factor keeps the up/down scaling exactly reversible.
+                root.Scale(new SizeF(scale, scale));
+                try
+                {
+                    using var big = new Bitmap(w * scale, h * scale, PixelFormat.Format32bppArgb);
+                    root.DrawToBitmap(big, new Rectangle(0, 0, w * scale, h * scale));
+                    using var msb = new MemoryStream();
+                    big.Save(msb, ImageFormat.Png);
+                    return msb.ToArray();
+                }
+                finally { root.Scale(new SizeF(1f / scale, 1f / scale)); }
+            }
             using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             root.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
             using var ms = new MemoryStream();
@@ -212,7 +229,7 @@ namespace WinFormsDesigner.Engine
         /// and rebuilt the graph (the dominant cost on large forms); folding them halves that work. The
         /// returned Png/Width/Height and Controls are byte/field-identical to the two separate calls.
         /// </summary>
-        public static RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null)
+        public static RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null, int renderScale = 1)
         {
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
             var root = (Control)g.Host.RootComponent;
@@ -229,7 +246,7 @@ namespace WinFormsDesigner.Engine
             // and capturing afterwards keeps the PNG byte-identical to a standalone RenderDetailed. The e2e
             // byte/field-equality leg pins both halves of that contract.
             var controls = BuildLayoutControls(g, root, w, h);
-            var png = CaptureRootPng(root, w, h);
+            var png = CaptureRootPng(root, w, h, renderScale);
             // Harvest item geometry AFTER the PNG capture: BuildToolStripItems forces a per-strip PerformLayout, and
             // doing it post-capture keeps the PNG byte-identical (DrawToBitmap already laid the strip out for free).
             var toolStripItems = BuildToolStripItems(g, root);
@@ -317,7 +334,7 @@ namespace WinFormsDesigner.Engine
                     Dock = isRoot ? "None" : ctrl.Dock.ToString(),
                     // Only a strip PARENTED into the tree gets on-canvas item geometry (BuildToolStripItems skips
                     // parentless off-tree strips like a ContextMenuStrip), so keep the flag in lockstep — a future
-                    // click-to-add slice must not route into item mode for a strip with no slot.
+                    // click-to-add path must not route into item mode for a strip with no slot.
                     IsStripHost = ctrl is ToolStrip && (isRoot || ctrl.Parent != null),
                 });
             }
@@ -1069,14 +1086,20 @@ namespace WinFormsDesigner.Engine
 
             if (existing != null)
             {
-                bool needsStub = codeText != null && !DesignerEventEditor.HasMethod(codeText, g.ClassName, existing);
+                bool needsStub = codeText != null && !DesignerEventEditor.HasMethod(codeText, g.ClassQualifiedName, existing);
                 if (!needsStub)
                     return new EventGenResult { Safe = true, AlreadyWired = true, HandlerName = existing };
-                var s0 = MakeStub(codeText!, g.ClassName, existing, invoke);
+                var s0 = MakeStub(codeText!, g.ClassQualifiedName, existing, invoke);
                 return new EventGenResult
                 {
-                    Safe = s0.Ok, Reason = s0.Reason, AlreadyWired = true, HandlerName = existing,
-                    CodeText = s0.NewText, StubCreated = s0.Ok,
+                    Safe = s0.Ok,
+                    Reason = s0.Reason,
+                    AlreadyWired = true,
+                    HandlerName = existing,
+                    CodeText = s0.NewText,
+                    CodeInsertOffset = s0.InsertOffset,
+                    CodeInsertText = s0.InsertText,
+                    StubCreated = s0.Ok,
                 };
             }
 
@@ -1090,7 +1113,11 @@ namespace WinFormsDesigner.Engine
                 return new EventGenResult { Safe = false, HandlerName = handler, Reason = "no code-behind (.cs) to place the handler" };
 
             string designerSrc = designerSourceText ?? File.ReadAllText(designerFilePath);
-            string delegateFqn = CSharpType(del);
+            // The delegate's own name goes into `+= new <delegateFqn>(this.h)`. CSharpType returns null for a type it
+            // can't spell (a delegate nested in a generic outer, …) — splicing that null would emit `new (this.h)`.
+            string? delegateFqn = CSharpType(del);
+            if (delegateFqn == null)
+                return new EventGenResult { Safe = false, HandlerName = handler, Reason = "the event's delegate type can't be written faithfully in C# here: " + (del.FullName ?? del.Name) };
             var wire = DesignerEventEditor.WireEvent(designerSrc, idKey, eventName, delegateFqn, handler);
             if (wire.Mode == EditMode.Failed)
                 return new EventGenResult { Safe = false, Reason = wire.Reason, HandlerName = handler };
@@ -1101,20 +1128,30 @@ namespace WinFormsDesigner.Engine
                 return new EventGenResult { Safe = false, HandlerName = handler, Reason = !parseOk ? "wired text has syntax errors" : "wiring changed more than the target event" };
 
             string? newCode = null;
+            int insertAt = -1;
+            string? insertText = null;
             bool stubCreated = false;
-            if (!DesignerEventEditor.HasMethod(codeText, g.ClassName, handler))
+            if (!DesignerEventEditor.HasMethod(codeText, g.ClassQualifiedName, handler))
             {
-                var stub = MakeStub(codeText, g.ClassName, handler, invoke);
+                var stub = MakeStub(codeText, g.ClassQualifiedName, handler, invoke);
                 if (!stub.Ok)
                     return new EventGenResult { Safe = false, HandlerName = handler, Reason = "stub: " + stub.Reason };
                 newCode = stub.NewText;
+                insertAt = stub.InsertOffset;
+                insertText = stub.InsertText;
                 stubCreated = true;
             }
 
             return new EventGenResult
             {
-                Safe = true, HandlerName = handler, AlreadyWired = false,
-                DesignerText = wire.NewText, CodeText = newCode, StubCreated = stubCreated,
+                Safe = true,
+                HandlerName = handler,
+                AlreadyWired = false,
+                DesignerText = wire.NewText,
+                CodeText = newCode,
+                CodeInsertOffset = insertAt,
+                CodeInsertText = insertText,
+                StubCreated = stubCreated,
             };
         }
 
@@ -1141,12 +1178,20 @@ namespace WinFormsDesigner.Engine
                 if (!ed.IsBrowsable) continue;
                 var invoke = ed.EventType?.GetMethod("Invoke");
                 if (invoke == null) continue;
-                var pnames = invoke.GetParameters().Select(p => p.ParameterType.Name).ToList();
+                // FULL names: a candidate whose parameter is WRITTEN qualified must match the real namespace too.
+                // Simple names let a user's own `Custom.EventArgs` pass as `System.EventArgs`, so the dropdown offered
+                // a handler that is not compatible with EventHandler — wiring it stopped the project compiling.
+                var pnames = invoke.GetParameters().Select(p => p.ParameterType.FullName ?? p.ParameterType.Name).ToList();
                 bool isVoid = invoke.ReturnType == typeof(void);
-                string sig = (isVoid ? "v:" : "r:") + string.Join(",", pnames);
+                string retName = invoke.ReturnType.FullName ?? invoke.ReturnType.Name;
+                // Cache key on the ASSEMBLY-QUALIFIED name: two referenced assemblies can define the same
+                // Namespace.EventArgs, and keying on FullName alone would reuse the first event's candidate list for
+                // the second — a different type, same key.
+                string sig = (isVoid ? "v:" : "r:") + string.Join(",",
+                    invoke.GetParameters().Select(p => p.ParameterType.AssemblyQualifiedName ?? p.ParameterType.FullName ?? p.ParameterType.Name));
                 if (!bySig.TryGetValue(sig, out var cands))
                 {
-                    cands = DesignerEventEditor.FindCompatibleHandlers(codeText, g.ClassName, pnames, isVoid);
+                    cands = DesignerEventEditor.FindCompatibleHandlers(codeText, g.ClassQualifiedName, pnames, retName);
                     bySig[sig] = cands;
                 }
                 if (cands.Count > 0) list.Add(new EventCandidates { Event = ed.Name, Handlers = cands });
@@ -1178,13 +1223,33 @@ namespace WinFormsDesigner.Engine
 
             if (handler == null && !wired)
                 return new EventWiringResult { Safe = false, Reason = "event is not wired" };
-            // wiring to a method that doesn't exist in the code-behind would not compile — refuse it.
-            if (handler != null && codeText != null && !DesignerEventEditor.HasMethod(codeText, g.ClassName, handler))
-                return new EventWiringResult { Safe = false, Reason = "handler method not found in code-behind: " + handler };
+            // Wiring to a method that doesn't exist would not compile — but neither does wiring to one whose SIGNATURE
+            // isn't the delegate's. This checked existence by NAME only, so `void WrongClick(string text)` could be
+            // wired to Click and the build broke. The dropdown already filters by signature; this is the write
+            // path, which the panel can reach with any value, so it must apply the SAME rule rather than trust it.
+            if (handler != null && codeText != null)
+            {
+                var invoke = del.GetMethod("Invoke");
+                if (invoke == null)
+                    return new EventWiringResult { Safe = false, Reason = "event delegate has no Invoke: " + eventName };
+                var pnames = invoke.GetParameters().Select(p => p.ParameterType.FullName ?? p.ParameterType.Name).ToList();
+                var compatible = DesignerEventEditor.FindCompatibleHandlers(
+                    codeText, g.ClassQualifiedName, pnames, invoke.ReturnType.FullName ?? invoke.ReturnType.Name);
+                if (!compatible.Contains(handler, StringComparer.Ordinal))
+                    return new EventWiringResult
+                    {
+                        Safe = false,
+                        Reason = DesignerEventEditor.HasMethod(codeText, g.ClassQualifiedName, handler)
+                            ? "handler '" + handler + "' does not match the event's signature"
+                            : "handler method not found in code-behind: " + handler,
+                    };
+            }
 
             int delta = handler == null ? -1 : (wired ? 0 : 1);
             string src = designerSourceText ?? File.ReadAllText(designerFilePath);
-            string delegateFqn = CSharpType(del);
+            string? delegateFqn = CSharpType(del);
+            if (delegateFqn == null)
+                return new EventWiringResult { Safe = false, Reason = "the event's delegate type can't be written faithfully in C# here: " + (del.FullName ?? del.Name) };
             var edit = DesignerEventEditor.SetEventWiring(src, idKey, eventName, handler, delegateFqn);
             if (edit.Mode == EditMode.Failed)
                 return new EventWiringResult { Safe = false, Reason = edit.Reason };
@@ -1461,15 +1526,32 @@ namespace WinFormsDesigner.Engine
                 string n = string.IsNullOrEmpty(p.Name) ? ("arg" + p.Position) : p.Name!;
                 string baseN = n;
                 for (int k = 1; !used.Add(n); k++) n = baseN + "_" + k;
-                parms.Add((CSharpType(p.ParameterType), n));
+                string? pt = CSharpType(p.ParameterType);
+                if (pt == null)
+                    return new DesignerEventEditor.StubResult
+                    {
+                        Ok = false,
+                        Reason = "the event's parameter type can't be written faithfully in C# here: "
+                                 + (p.ParameterType.FullName ?? p.ParameterType.Name),
+                    };
+                parms.Add((pt, n));
             }
-            return DesignerEventEditor.GenerateHandlerStub(code, formClass, handler, CSharpType(invoke.ReturnType), parms);
+            string? rt = CSharpType(invoke.ReturnType);
+            if (rt == null)
+                return new DesignerEventEditor.StubResult
+                {
+                    Ok = false,
+                    Reason = "the event's return type can't be written faithfully in C# here: "
+                             + (invoke.ReturnType.FullName ?? invoke.ReturnType.Name),
+                };
+            return DesignerEventEditor.GenerateHandlerStub(code, formClass, handler, rt, parms);
         }
 
         /// <summary>C# name for a type, valid in a method signature without extra using directives: keyword for
         /// common built-ins, '.' for nested types (FullName uses '+'), and reconstructed Name&lt;Args&gt; for
-        /// generics (FullName carries a grave-accent arity marker that isn't valid C#).</summary>
-        private static string CSharpType(Type t)
+        /// generics (FullName carries a grave-accent arity marker that isn't valid C#). NULL when the type can't be
+        /// spelled faithfully — the caller must refuse rather than emit a stub that looks right and doesn't compile.</summary>
+        private static string? CSharpType(Type t)
         {
             if (t == typeof(void)) return "void";
             if (t == typeof(object)) return "object";
@@ -1479,21 +1561,47 @@ namespace WinFormsDesigner.Engine
             if (t == typeof(long)) return "long";
             if (t == typeof(double)) return "double";
             if (t == typeof(float)) return "float";
-            if (t.IsArray) return CSharpType(t.GetElementType()!) + "[]";
+            if (t.IsByRef || t.IsPointer || t.IsGenericParameter) return null; // can't be spelled faithfully here
+            if (t.IsArray)
+            {
+                string? el = CSharpType(t.GetElementType()!);
+                if (el == null) return null;
+                // RANK matters: every array was spelled "[]", so a MULTIDIMENSIONAL `int[,]` parameter became `int[]`.
+                // That parses, so the parse-only guard passed, the wiring was written, and the build failed on a
+                // signature that isn't the delegate's. int[,] → "[,]", int[,,] → "[,,]"; jagged int[][] falls
+                // out of the recursion (its element is itself an array).
+                int rank = t.GetArrayRank();
+                return el + "[" + new string(',', rank - 1) + "]";
+            }
             if (t.IsGenericType)
             {
-                string baseName = t.GetGenericTypeDefinition().FullName ?? t.Name;
-                int tick = baseName.IndexOf('`');
-                if (tick >= 0) baseName = baseName.Substring(0, tick);
-                baseName = baseName.Replace('+', '.');
-                return baseName + "<" + string.Join(", ", t.GetGenericArguments().Select(CSharpType)) + ">";
+                string def = t.GetGenericTypeDefinition().FullName ?? t.Name;
+                int lastPlus = def.LastIndexOf('+');
+                // A type nested inside a GENERIC OUTER can't be spelled from FullName: GetGenericArguments() flattens
+                // the whole chain's arguments into one list, and truncating at the FIRST backtick drops every nested
+                // segment — `Vendor.Outer`1+ChangedArgs`1` came out as `Vendor.Outer<int, string>`, a different (or
+                // nonexistent) type that still PARSED, so the wiring was written and the project didn't compile
+                // Refuse those. Only an outer with arity is a problem: `Ns.Outer+Inner`1` (non-generic outer)
+                // is perfectly spellable as `Ns.Outer.Inner<int>`, so look for a backtick at or before the last '+'
+                // rather than anywhere — refusing on any '+' at all made a legitimate shape unusable.
+                if (lastPlus >= 0 && def.LastIndexOf('`', lastPlus) >= 0) return null;
+                int tick = def.IndexOf('`', lastPlus + 1);
+                if (tick >= 0) def = def.Substring(0, tick);
+                // '+' → '.': reflection's nested-type separator is not C#. Easy to forget here because the ACCEPTED
+                // path only started carrying a '+' once the guard above was narrowed to "outer with arity" — before
+                // that, any '+' was refused, so the missing Replace was invisible. Without it, a generic nested in a
+                // plain outer emitted `Vendor.Outer+ChangedArgs<int>` into the user's .cs with Ok=true: not valid C#.
+                def = def.Replace('+', '.');
+                var args = t.GetGenericArguments().Select(CSharpType).ToList();
+                if (args.Any(a => a == null)) return null;
+                return def + "<" + string.Join(", ", args) + ">";
             }
             return (t.FullName ?? t.Name).Replace('+', '.');
         }
 
         /// <summary>
         /// Read a source file preserving its on-disk encoding/BOM so a save can write it back
-        /// byte-faithfully (codex finding: default WriteAllText strips a UTF-8 BOM that real
+        /// byte-faithfully (default WriteAllText strips a UTF-8 BOM that real
         /// VS designer files carry → whole-file churn). Handles UTF-8 ±BOM and UTF-16 LE/BE.
         /// </summary>
         /// <summary>Read a file's text with BOM/encoding detection (UTF-8/UTF-16 LE/BE), returning the encoding so a
@@ -1532,6 +1640,12 @@ namespace WinFormsDesigner.Engine
             /// ImageStream/FileRef/non-allowlisted). Drives the honest banner; net48 path reports 0.</summary>
             public int UnrenderableResxCount { get; init; }
             public required string ClassName { get; init; }
+            /// <summary>The form's NAMESPACE-QUALIFIED name ("Product.Ui.Form1") — the identity used to find the same
+            /// class in the paired code-behind. The simple name is not an identity: a .cs file may legally declare
+            /// another class of that name in a different namespace, and matching by simple name offered/validated/
+            /// wrote handlers in THAT class while the wiring went into this one — a non-compiling project reported as
+            /// a successful save.</summary>
+            public required string ClassQualifiedName { get; init; }
             public required List<Assembly> UserAsms { get; init; }
             public int Total { get; init; }
             public int Representable { get; init; }
@@ -1574,7 +1688,15 @@ namespace WinFormsDesigner.Engine
             }
             var tree = CSharpSyntaxTree.ParseText(code);
             var rootNode = tree.GetRoot();
-            var cls = rootNode.DescendantNodes().OfType<ClassDeclarationSyntax>().First();
+            // THE designer class — never just the first class in the file. Taking First() rendered whatever type
+            // happened to be declared first (a helper/second class ahead of the form), reported it save-safe with no
+            // banner, and let the splicer inject generated code into it; it also disagreed with the property editor
+            // and save splicer, which both keyed off InitializeComponent. One shared rule now, and if the file
+            // declares no designer class we fail closed rather than render an arbitrary one.
+            var cls = DesignerModifiers.DesignerFormClass(rootNode, designerFilePath)
+                ?? throw new InvalidOperationException(
+                    "no single designer class in " + Path.GetFileName(designerFilePath)
+                    + " — expected exactly one class declaring InitializeComponent");
 
             // resolve the control assembly: explicit override, else auto-discover the project build.
             // An explicit override that doesn't exist is a misconfiguration (typo, not-yet-built, wrong
@@ -1655,6 +1777,7 @@ namespace WinFormsDesigner.Engine
                     // unparseable .resx that TryLoadForDesigner refused still yields a truthful "incomplete" signal.
                     UnrenderableResxCount = ResxResolver.UnrenderableResourceCount(designerFilePath),
                     ClassName = cls.Identifier.Text,
+                    ClassQualifiedName = FormClassResolver.QualifiedName(cls),
                     UserAsms = userAsms,
                     Total = total,
                     Representable = ok,
@@ -1765,7 +1888,7 @@ namespace WinFormsDesigner.Engine
                         bool synInherited = syn is { InheritedBase: true };
                         // FAIL-CLOSED UNION: flag if EITHER the compiled base OR the current source base is non-framework.
                         // Reflection ALONE false-resolves against a STALE build (source added inheritance but wasn't
-                        // rebuilt) while the source-interpreted render already drops the base's controls (codex R#3). When
+                        // rebuilt) while the source-interpreted render already drops the base's controls. When
                         // reflection resolves but the source flags, prefer the source's base name (the reflected base is
                         // the stale framework root; the source names the real new base).
                         bool inherited = !reflResolved || synInherited;
@@ -1784,7 +1907,7 @@ namespace WinFormsDesigner.Engine
         }
 
         // Build the derived type's reflection FQN (namespace(s) + nested-type '+' chain, WITH CLR generic arity `n so a
-        // generic type isn't confused with a same-named nongeneric in a dependency — codex R#7) and resolve it against
+        // generic type isn't confused with a same-named nongeneric in a dependency) and resolve it against
         // the loaded user assemblies. Mirrors engine-net48/RootTypeResolver but walks every ancestor.
         private static Type? ResolveCompiledRoot(ClassDeclarationSyntax cls, IReadOnlyList<Assembly> userAsms)
         {
@@ -1799,7 +1922,7 @@ namespace WinFormsDesigner.Engine
 
         // The two framework roots the interpreter can target with NOTHING dropped. Identity fast-path, else the type
         // must live in the REAL System.Windows.Forms assembly (a different-ALC WinForms is fine — same assembly name),
-        // so a vendor type that merely REUSES the System.Windows.Forms.Form name via extern alias is rejected (codex R#6).
+        // so a vendor type that merely REUSES the System.Windows.Forms.Form name via extern alias is rejected.
         private static bool IsFrameworkRoot(Type? t)
         {
             if (t == null) return false;
@@ -1823,7 +1946,7 @@ namespace WinFormsDesigner.Engine
 
         // EXACT-match classifier over the PARSED base-type node (not a ToString() substring, so comments/whitespace are
         // trivia and a vendor base like XtraForm never coincidentally matches). Resolves a SAME-FILE `using X = Type;`
-        // alias first so `: U` (alias of a framework root) classifies correctly and picks the right surface (codex R#8).
+        // alias first so `: U` (alias of a framework root) classifies correctly and picks the right surface.
         // null = "no base clause here" so the caller can chain to the sibling; a non-framework base → flagged inherited.
         private static RootTypeInfo? ClassifyFromBaseList(BaseListSyntax? baseList, SyntaxNode fileRoot)
         {
@@ -1845,11 +1968,11 @@ namespace WinFormsDesigner.Engine
                 {
                     var sRoot = CSharpSyntaxTree.ParseText(File.ReadAllText(sibling)).GetRoot();
                     // Match the sibling class by FULLY-QUALIFIED name (namespace + nested chain), not just its short
-                    // name, so an unrelated same-short-name type in another namespace can't classify this one (codex R#4).
-                    string want = QualifiedSyntaxName(cls);
+                    // name, so an unrelated same-short-name type in another namespace can't classify this one.
+                    string want = FormClassResolver.QualifiedName(cls);
                     foreach (var c in sRoot.DescendantNodes().OfType<ClassDeclarationSyntax>())
                     {
-                        if (c.BaseList == null || QualifiedSyntaxName(c) != want) continue;
+                        if (c.BaseList == null || FormClassResolver.QualifiedName(c) != want) continue;
                         var r = ClassifyFromBaseList(c.BaseList, sRoot);
                         if (r != null) return r;
                     }
@@ -1891,19 +2014,6 @@ namespace WinFormsDesigner.Engine
             return arity > 0 ? c.Identifier.Text + "`" + arity : c.Identifier.Text;
         }
 
-        // Dotted namespace + nested-type '+' path + class name (generic arity IGNORED — partial decls of the same
-        // class match across the .Designer.cs and the sibling .cs). Used to match the sibling's class unambiguously.
-        private static string QualifiedSyntaxName(ClassDeclarationSyntax c)
-        {
-            string name = c.Identifier.Text;
-            foreach (var anc in c.Ancestors())
-            {
-                if (anc is ClassDeclarationSyntax outer) name = outer.Identifier.Text + "+" + name;
-                else if (anc is BaseNamespaceDeclarationSyntax ns) name = ns.Name.ToString() + "." + name;
-            }
-            return name;
-        }
-
         // Foo.Designer.cs → Foo.cs (the main partial holding the base clause). Null when not a .Designer.cs name.
         private static string? SiblingMainFile(string designerFilePath)
         {
@@ -1926,8 +2036,7 @@ namespace WinFormsDesigner.Engine
         private static Dictionary<string, Dictionary<string, string>> ExtractEventWirings(ClassDeclarationSyntax cls)
         {
             var map = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
-            var init = cls.Members.OfType<MethodDeclarationSyntax>()
-                .FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            var init = FormClassResolver.InitMethodOf(cls);
             if (init?.Body == null) return map;
 
             foreach (var stmt in init.Body.Statements)
@@ -2007,17 +2116,25 @@ namespace WinFormsDesigner.Engine
             // `new ToolTip(this.components)` be recognized (extenders) without opening general ctor-args.
             var containerNames = new HashSet<string>(StringComparer.Ordinal);
 
+            // Across ALL of the form's partials, not just the one declaring InitializeComponent: a form may split its
+            // component fields into a separate `partial class Foo { … }` in the same file, and scanning only `cls`
+            // then left every `this.okButton…` statement unresolvable — a false read-only refusal on a valid file.
+            var formParts = DesignerModifiers.PartialsOf(cls);
             var fieldNames = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
+            foreach (var part in formParts)
             {
-                foreach (var v in f.Declaration.Variables)
+                foreach (var f in part.Members.OfType<FieldDeclarationSyntax>())
                 {
-                    fieldNames.Add(v.Identifier.Text);
+                    foreach (var v in f.Declaration.Variables)
+                    {
+                        fieldNames.Add(v.Identifier.Text);
+                    }
                 }
             }
 
-            var init = cls.Members.OfType<MethodDeclarationSyntax>()
-                .FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            // The form's InitializeComponent via the shared (class, method) rule — the class was resolved by the same
+            // file, so the method the interpreter replays is provably the one the splicer rewrites.
+            var init = FormClassResolver.InitMethodOf(cls);
             if (init?.Body == null)
             {
                 unrep.Add("InitializeComponent not found");
@@ -2584,11 +2701,25 @@ namespace WinFormsDesigner.Engine
 
                 case PrefixUnaryExpressionSyntax u when u.IsKind(SyntaxKind.UnaryMinusExpression):
                     {
+                        // Negate in the operand's OWN type (Eval already coerced the inner literal to targetType).
+                        // The old int/double/long-only ladder returned every OTHER numeric literal UNNEGATED and
+                        // without complaint: `numericUpDown1.Minimum = -100` (decimal) rendered and described as
+                        // 100, and `new SizeF(-6F, -13F)` lost both signs — a wrong value shown as fact. Anything we
+                        // cannot negate now THROWS, so it surfaces as `unrepresentable` (banner + read-only) rather
+                        // than a plausible wrong number.
                         object? inner = Eval(u.Operand, targetType, userAsms);
-                        if (inner is int i) return -i;
-                        if (inner is double d) return -d;
-                        if (inner is long l) return -l;
-                        return inner;
+                        return inner switch
+                        {
+                            int i => -i,
+                            long l => -l,
+                            double d => -d,
+                            float f => -f,
+                            decimal m => -m,
+                            short s => (short)-s,
+                            sbyte sb => (sbyte)-sb,
+                            _ => throw new InvalidOperationException(
+                                "cannot negate literal of type " + (inner?.GetType().FullName ?? "null")),
+                        };
                     }
 
                 case ObjectCreationExpressionSyntax oc:
@@ -2792,94 +2923,16 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>
-        /// Exact, member-level allowlist for the static-invocation eval path. Only the pure,
-        /// side-effect-free Color factory methods the value-converter emits (and that real designer
-        /// files contain) may be invoked — never "any static method in an allowed assembly", which
-        /// would still expose side-effecting calls like System.Windows.Forms.MessageBox.Show or
-        /// System.Drawing.Image.FromFile. Anything not listed becomes unrepresentable (graceful),
-        /// which is exactly the pre-change behavior for invocations (no regression).
-        /// </summary>
-        private static readonly HashSet<string> AllowedStaticInvocations = new(StringComparer.Ordinal)
-        {
-            "System.Drawing.Color.FromArgb",
-            "System.Drawing.Color.FromName",
-            "System.Drawing.Color.FromKnownColor",
-        };
+        /// The three interpreter security allowlists moved to the shared DesignerAllowlists so the
+        /// net10 interpreter, the net48 live-source parser, and the net48 executor gate against ONE set. These thin
+        /// forwarders keep the existing Eval call sites (and the pinned SecurityAndResolverTests) working unchanged;
+        /// the authoritative sets + their full rationale now live in DesignerAllowlists.cs.
+        internal static bool IsFactoryInvocationAllowed(Type t, string methodName) =>
+            DesignerAllowlists.IsFactoryInvocationAllowed(t, methodName);
 
-        private static bool IsFactoryInvocationAllowed(Type t, string methodName) =>
-            t.FullName != null && AllowedStaticInvocations.Contains(t.FullName + "." + methodName);
+        internal static bool IsConstructionAllowed(Type t) => DesignerAllowlists.IsConstructionAllowed(t);
 
-        /// <summary>
-        /// Exact, type-name allowlist for the ObjectCreation eval path: the framework types the designer
-        /// legitimately CONSTRUCTS as inline property values (Point/Size/Rectangle/Padding + their F-variants,
-        /// and Font/FontFamily). This is the ONLY thing that may be constructed on open — nothing else.
-        ///
-        /// History: this was a namespace check (System.Drawing*/System.Windows.Forms* allowed wholesale) plus a
-        /// branch that allowed ANY type from a user/project ALC assembly. Both were unsafe:
-        ///   • the namespace check was safe only while System.Drawing.Common stayed OUT of ResolveType's probe;
-        ///     once it's in (needed for Font), in-namespace file-reading constructors become reachable —
-        ///     new System.Drawing.Bitmap(path)/Icon(path)/Imaging.Metafile(path), and the pre-existing in-probe
-        ///     new System.Windows.Forms.Cursor(path);
-        ///   • the userAsms branch let a hostile .Designer.cs run an ARBITRARY constructor of any type in the
-        ///     project's build output (or any planted/3rd-party sibling DLL auto-loaded from bin/) merely on
-        ///     preview-open, e.g. `this.x.Tag = new Evil.Detonator();` (verified RCE-on-open). It was never
-        ///     needed for legitimate controls: control instantiation goes through HandleAssignment ->
-        ///     host.CreateComponent (parameterless, no initializer), never this gate. The Eval ObjectCreation
-        ///     path is only ever reached for inline PROPERTY VALUES, so dropping user-type construction here
-        ///     just makes a custom value-type initializer gracefully unrepresentable instead of executing.
-        /// A type-name allowlist is, like the old namespace check, robust to assembly re-partitioning (it
-        /// matches FullName, not Assembly — the reason the original moved off an assembly list for Padding), but
-        /// admits ONLY known side-effect-free value initializers, so no file-reading/BCL/user constructor runs
-        /// from a hand-crafted .Designer.cs. Anything not listed becomes gracefully unrepresentable.
-        /// </summary>
-        private static readonly HashSet<string> AllowedConstructionTypes = new(StringComparer.Ordinal)
-        {
-            "System.Drawing.Point",
-            "System.Drawing.PointF",
-            "System.Drawing.Size",
-            "System.Drawing.SizeF",
-            "System.Drawing.Rectangle",
-            "System.Drawing.RectangleF",
-            "System.Windows.Forms.Padding",
-            "System.Drawing.Font",
-            "System.Drawing.FontFamily",
-            // TableLayoutPanel column/row sizing — pure value initializers (SizeType enum + float), side-effect
-            // free like Padding. Constructed inline in ColumnStyles/RowStyles.Add(new ColumnStyle/RowStyle(...)).
-            "System.Windows.Forms.ColumnStyle",
-            "System.Windows.Forms.RowStyle",
-        };
-
-        private static bool IsConstructionAllowed(Type t) =>
-            t.FullName != null && AllowedConstructionTypes.Contains(t.FullName);
-
-        /// <summary>
-        /// Declaring types whose public static property/field reads are allowed in Eval's MemberAccess path.
-        /// Only pure, side-effect-free framework value sources the designer/value-converter actually emit:
-        /// named/system colors (Color.Red, SystemColors.Control) and the value structs' static members
-        /// (Size.Empty, Point.Empty, …). Enum member reads are handled separately (Enum.Parse, always pure)
-        /// and don't go through here. Excludes SystemFonts/SystemIcons/Brushes/Pens (newly reachable via
-        /// Drawing.Common), corelib getters (Environment.MachineName), and user-DLL statics, whose getters
-        /// could allocate handles or run side effects on open.
-        /// </summary>
-        private static readonly HashSet<string> AllowedStaticReadTypes = new(StringComparer.Ordinal)
-        {
-            "System.Drawing.Color",
-            "System.Drawing.SystemColors",
-            "System.Drawing.Point",
-            "System.Drawing.PointF",
-            "System.Drawing.Size",
-            "System.Drawing.SizeF",
-            "System.Drawing.Rectangle",
-            "System.Drawing.RectangleF",
-            "System.Windows.Forms.Padding",
-            // Cursors is a class of pure, side-effect-free static Cursor-valued properties (Cursors.Hand,
-            // Cursors.Default, …) — exact parity with SystemColors. The value-converter emits
-            // System.Windows.Forms.Cursors.Hand for an edited Cursor property; this lets the re-render read it back.
-            "System.Windows.Forms.Cursors",
-        };
-
-        private static bool IsStaticReadAllowed(Type t) =>
-            t.FullName != null && AllowedStaticReadTypes.Contains(t.FullName);
+        internal static bool IsStaticReadAllowed(Type t) => DesignerAllowlists.IsStaticReadAllowed(t);
 
         private static object? CoerceArg(object? v, Type target)
         {

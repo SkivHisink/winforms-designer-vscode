@@ -17,8 +17,9 @@ namespace WinFormsDesigner.Engine
         /// compiled engine renders it, but net9 can't whole-file round-trip it.</summary>
         UnresolvedType,
         /// <summary>Renders fully (RoundTripSafe) yet re-serialization drops or alters an original statement
-        /// (e.g. TabPages.AddRange canonicalized, a Hidden component-ref, TreeNode local-variable naming). The
-        /// safe-save gate refuses rather than silently lose it (fail-closed).</summary>
+        /// (e.g. TabPages.AddRange canonicalized, a Hidden component-ref, anchored bounds recomputed on load, or a
+        /// hand-simplified spelling VS never emits such as a short Color.FromArgb(255, 224, 192)). The safe-save
+        /// gate refuses rather than silently lose it (fail-closed).</summary>
         LostStatements,
         /// <summary>Some other interpret failure (unrecognized hand-edit / unsupported construct).</summary>
         Unrepresentable,

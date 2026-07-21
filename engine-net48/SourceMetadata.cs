@@ -5,6 +5,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using WinFormsDesigner.Engine;
 
 namespace WinFormsDesigner.Engine.Net48
 {
@@ -42,12 +43,54 @@ namespace WinFormsDesigner.Engine.Net48
                 if (desc.Events != null)
                     foreach (var e in desc.Events)
                         if (e != null && handlers.TryGetValue(e.Name, out var h)) e.Handler = h;
+                InjectDesignTimeProperties(desc, code);
             }
             catch { /* best effort — leave the live-describe defaults */ }
         }
 
         /// <summary>Headless test hook (pure text, no assembly): the explicit props + event→handler wirings parsed
         /// for <paramref name="id"/> in <paramref name="designerFilePath"/>. Used by the <c>--parse-meta</c> CLI.</summary>
+        private static void InjectDesignTimeProperties(ComponentDesc desc, string code)
+        {
+            if (desc.IsRoot || desc.IsToolStripItem || string.IsNullOrEmpty(desc.Id) || desc.Properties == null) return;
+            bool hasRealModifiers = desc.Properties.Any(p => p != null && p.Name == "Modifiers");
+            bool hasRealGenerateMember = desc.Properties.Any(p => p != null && p.Name == "GenerateMember");
+            var fields = DesignerModifiers.ParseFieldModifiers(code);
+            bool hasField = fields.TryGetValue(desc.Id, out var field);
+
+            if (!hasRealGenerateMember)
+            {
+                desc.Properties.Add(new PropertyDesc
+                {
+                    Name = "GenerateMember",
+                    Type = "System.Boolean",
+                    Value = hasField ? "true" : "false",
+                    ReadOnly = true,
+                    Category = "Design",
+                    Description = "Whether the designer generates a member (field) for this component. Read-only preview.",
+                    StandardValues = new List<string> { "true", "false" },
+                    StandardValuesExclusive = true,
+                    DesignTime = true,
+                });
+            }
+            if (!hasRealModifiers)
+            {
+                desc.Properties.Add(new PropertyDesc
+                {
+                    Name = "Modifiers",
+                    Type = "System.String",
+                    Value = hasField ? field.Display : "Private",
+                    ReadOnly = !hasField || !field.Editable,
+                    Category = "Design",
+                    Description = "Indicates the visibility level of the object's generated member (field).",
+                    StandardValues = DesignerModifiers.DisplayNames,
+                    StandardValuesExclusive = true,
+                    DesignTime = true,
+                });
+            }
+            desc.Properties.Sort((a, b) => string.CompareOrdinal(a?.Name, b?.Name));
+        }
+
         public static (List<string> explicitProps, List<KeyValuePair<string, string>> handlers) Dump(string designerFilePath, string id)
         {
             var (props, handlers) = Parse(File.ReadAllText(designerFilePath), id);
@@ -64,19 +107,18 @@ namespace WinFormsDesigner.Engine.Net48
             var handlers = new Dictionary<string, string>(StringComparer.Ordinal);
 
             var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-            // Parse the SAME class the live describe instantiates: RootTypeResolver picks the FIRST class in the
-            // file unconditionally, so we must too — otherwise Apply would decorate the first class's live grid with
-            // facts scavenged from a different sibling class. (Real .Designer.cs files hold one partial class.)
-            var cls = root.DescendantNodes().OfType<ClassDeclarationSyntax>().FirstOrDefault();
-            var init = cls?.Members.OfType<MethodDeclarationSyntax>().FirstOrDefault(m => m.Identifier.Text == "InitializeComponent");
+            // Parse the SAME class the live describe instantiates — guaranteed, not merely intended: both go through
+            // the one shared resolver (RootTypeResolver.Resolve does too). This used to mirror that resolver's
+            // "first class in the file" rule by hand, so a helper class ahead of the form decorated the wrong grid.
+            var cls = FormClassResolver.FormClass(root);
+            var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return (props, handlers);
 
             // field names, so a `this.<field> = new …` field CONSTRUCTION isn't mistaken for a root property set (a
-            // one-segment `this.<X> =` is either a real root prop or a child-field construction — the latter is a field).
-            var fields = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var f in cls.Members.OfType<FieldDeclarationSyntax>())
-                foreach (var v in f.Declaration.Variables)
-                    fields.Add(v.Identifier.Text);
+            // one-segment `this.<X> =` is either a real root prop or a child-field construction — the latter is a
+            // field). Across ALL the form's partials — a form may split its fields into a separate partial, and
+            // scanning only the IC-bearing one then mis-reads every field construction as a root property set.
+            var fields = FormClassResolver.FieldNamesOf(cls);
 
             foreach (var stmt in init.Body.Statements)
             {
