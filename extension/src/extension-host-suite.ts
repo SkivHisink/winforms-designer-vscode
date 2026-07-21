@@ -8,7 +8,11 @@ export async function run(): Promise<void> {
 
   const extension = vscode.extensions.all.find((candidate) => candidate.id.toLowerCase() === extensionId);
   assert.ok(extension, `extension ${extensionId} was not loaded by the Extension Host`);
-  assert.strictEqual(extension.packageJSON.version, '1.0.0');
+  // Version-agnostic: assert a real semver rather than a hardcoded literal (which failed the whole release on every
+  // version bump — 1.0.0 → 1.0.1). The diagnostics cross-check below ties the reported version to THIS manifest value,
+  // which is a stronger check than a fixed string ever was.
+  const version = extension.packageJSON.version as string;
+  assert.match(version, /^\d+\.\d+\.\d+$/, `manifest version is not semver: ${version}`);
   assert.strictEqual(extension.packageJSON.preview, false);
   assert.strictEqual(extension.packageJSON.capabilities?.untrustedWorkspaces?.supported, false);
   assert.strictEqual(extension.packageJSON.capabilities?.virtualWorkspaces?.supported, false);
@@ -24,6 +28,9 @@ export async function run(): Promise<void> {
     'winformsDesigner.exportDiagnostics',
     'winformsDesigner.selectControlAssembly',
     'winformsDesigner.editImageListImages',
+    'winformsDesigner.releaseAssembly',
+    'winformsDesigner.stopEngines',
+    'winformsDesigner.restartEngines',
   ]) {
     assert.ok(commands.has(command), `command ${command} was not registered`);
   }
@@ -39,7 +46,7 @@ export async function run(): Promise<void> {
   assert.match(text, /- Platform: win32 /);
   assert.match(text, /- Engine: winforms-engine ok \/ \.NET 10\./,
     `the .NET 10 engine did not start successfully:\n${text}`);
-  assert.match(text, /- Extension: 1\.0\.0/);
+  assert.ok(text.includes(`- Extension: ${version}`), `diagnostics should report the manifest version ${version}:\n${text}`);
   assert.match(text, /- Extension Host memory: \d+ MiB RSS/);
   assert.match(text, /- Engine ping: \d+(?:\.\d+)? ms/);
   assert.match(text, /- Engine PID: \d+/);

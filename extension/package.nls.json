@@ -15,5 +15,7 @@
   "config.net48.probeDirectories.description": "Additional directories the **.NET Framework (net48)** engine searches when a control's assembly cannot be found — for a 3rd-party control SDK installed outside your project's build output and not registered in the GAC. Most projects need nothing here: the project's own output directory is always searched.\n\n- Use absolute paths (a leading `~` expands to your home directory). Directories that do not exist are ignored.\n- Applies to the net48 engine only, and takes effect after **Reload Window** (the engine reads them when it starts).\n- **Assemblies found here are loaded and their control constructors / `OnPaint` run when a designer is previewed**, so this is honored only in a trusted workspace.",
   "config.language.description": "Language of the WinForms Designer user interface — the designer surface, property grid, toolbox, dialogs and messages. This is chosen **here**, in the extension settings; it does **not** follow the VS Code display language automatically. Default: **English**.\n\n- Changing this takes full effect after **Reload Window** (you'll be prompted).\n- Note: the VS Code **command palette** titles (e.g. *WinForms: Open Designer*) and this settings page itself follow VS Code's own *Display Language*, not this setting — a platform limitation.",
   "command.editImageListImages.title": "WinForms: Edit ImageList Images…",
-  "command.releaseAssembly.title": "WinForms: Release .NET Framework Assembly (for Rebuild)"
+  "command.releaseAssembly.title": "WinForms: Release .NET Framework Assembly (for Rebuild)",
+  "command.stopEngines.title": "WinForms: Stop the Designer Preview Engine",
+  "command.restartEngines.title": "WinForms: Restart the Designer Preview Engine"
 }

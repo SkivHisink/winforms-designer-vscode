@@ -15,5 +15,7 @@
   "config.net48.probeDirectories.description": "**.NET Framework (net48)** 引擎在找不到控件程序集时额外搜索的目录 — 适用于安装在项目生成输出之外、且未注册到 GAC 的第三方控件 SDK。大多数项目无需在此设置任何内容：项目自身的输出目录始终会被搜索。\n\n- 请使用绝对路径(前导 `~` 会展开为你的主目录)。不存在的目录将被忽略。\n- 仅适用于 net48 引擎，并在 **Reload Window** 后生效(引擎在启动时读取它们)。\n- **在此处找到的程序集会被加载，预览设计器时会运行其控件构造函数 / `OnPaint`**，因此仅在受信任的工作区中生效。",
   "config.language.description": "WinForms 设计器用户界面的语言 — 包括设计器界面、属性网格、工具箱、对话框和消息。此项在**此处**(即扩展设置中)选择；它**不会**自动跟随 VS Code 的显示语言。默认值：**English**。\n\n- 更改此项需在 **Reload Window** 后完全生效(届时会提示你)。\n- 注意：VS Code **命令面板**中的标题(例如 *WinForms: Open Designer*)以及此设置页面本身会跟随 VS Code 自身的 *Display Language*，而非此设置 — 这是平台限制。",
   "command.editImageListImages.title": "WinForms: 编辑 ImageList 图像…",
-  "command.releaseAssembly.title": "WinForms: 释放 .NET Framework 程序集（以便重新生成）"
+  "command.releaseAssembly.title": "WinForms: 释放 .NET Framework 程序集（以便重新生成）",
+  "command.stopEngines.title": "WinForms: 停止设计器预览引擎",
+  "command.restartEngines.title": "WinForms: 重启设计器预览引擎"
 }

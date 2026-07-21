@@ -8,6 +8,24 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-07-21
+
+**Patch — manage the preview engine's lifecycle from the UI.** The rendering engine process starts on the first render
+and stays resident until the window closes (closing a designer tab does not stop it). Two new commands let you stop it
+when you're done, or restart it when it goes stale.
+
+- **New command: *WinForms: Stop the Designer Preview Engine*.** Shuts down the modern and/or .NET Framework engine on
+  demand — for when you're done with the designer and don't want the engine `exe` lingering — and it restarts
+  automatically the next time you open or render a designer. Stopping the net48 engine also frees any build output it
+  was holding open.
+- **New command: *WinForms: Restart the Designer Preview Engine*.** Stops the resident engine and immediately reloads
+  the active designer so a fresh engine comes straight back — a one-click "give me a clean engine" for when the preview
+  has gone stale or wedged (a bare *Stop* only restarts on the next render). Restarting the .NET Framework engine also
+  drops and reloads the compiled build it was holding. With no designer open it simply stops the engine, which then
+  starts fresh on your next open/render.
+
+Both commands are in the Command Palette and localized in all 7 UI languages.
+
 ## [1.0.1] — 2026-07-21
 
 **Patch — the .NET Framework preview no longer blocks your own build.** While a net48 designer tab was open, the

@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "preview": false,
   "license": "MIT",
   "author": {
@@ -134,6 +134,14 @@
       {
         "command": "winformsDesigner.releaseAssembly",
         "title": "%command.releaseAssembly.title%"
+      },
+      {
+        "command": "winformsDesigner.stopEngines",
+        "title": "%command.stopEngines.title%"
+      },
+      {
+        "command": "winformsDesigner.restartEngines",
+        "title": "%command.restartEngines.title%"
       }
     ],
     "keybindings": [

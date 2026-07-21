@@ -314,6 +314,16 @@ export const en: Catalog = {
   // 1.0.0 — thrown when a net48 render is requested while a prior preview process is still being torn
   // down and hasn't confirmed exit; starting a replacement beside it would re-pin the dll. Reload the window to clear.
   'host.net48.recycleBlocked': 'The .NET Framework preview engine is still shutting down. Reload the window if the designer doesn’t recover on its own.',
+  // 1.0.1 — the "Stop the Designer Preview Engine" command: the modern / .NET Framework engine processes stay resident
+  // for the whole window session (a closed designer tab does not stop them), so this lets the user shut them down when
+  // they're done with the extension. net48 also frees any build output it was holding open. They restart automatically
+  // on the next open/render.
+  'host.notify.stopEngines.done': 'Designer preview engine stopped — it restarts automatically the next time you open or render a designer.',
+  'host.notify.stopEngines.none': 'No designer preview engine is running.',
+  // 1.0.2 — the "Restart the Designer Preview Engine" command: stop the resident engine and reload the active designer
+  // so a fresh one comes straight back. `pending` covers "stopped, but no designer open to reload — starts on next render".
+  'host.notify.restartEngines.done': 'Designer preview engine restarted — the active designer has been reloaded.',
+  'host.notify.restartEngines.pending': 'Designer preview engine stopped — it starts fresh the next time you open or render a designer.',
 
   // ---------- host: control-source status bar (extension.ts) ----------
   'host.statusbar.controls': '$(package) Controls: {name}',

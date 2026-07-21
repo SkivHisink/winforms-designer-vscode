@@ -196,6 +196,20 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('winformsDesigner.releaseAssembly', () => releaseFrameworkAssemblies()),
   );
 
+  // 1.0.1 "Stop the Designer Preview Engine": an explicit off switch for the resident engine process(es). They start
+  // lazily and otherwise live until the window closes; this lets the user shut them down when they're done. Always in
+  // the palette (no `when`) — it's needed precisely when no designer is focused. See stopPreviewEngines.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.stopEngines', () => stopPreviewEngines()),
+  );
+
+  // 1.0.2 "Restart the Designer Preview Engine": one-click clean engine — stop the resident process(es) and reload the
+  // active designer so a fresh engine comes straight back (a bare Stop only restarts on the next render). For a wedged
+  // or stale engine. Always in the palette. See restartPreviewEngines.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.restartEngines', () => restartPreviewEngines()),
+  );
+
   // Status bar: show which assembly is providing controls for the focused form; click → change it.
   controlStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
   controlStatus.command = 'winformsDesigner.selectControlAssembly';
@@ -802,6 +816,76 @@ async function doRecycleNet48(handle: EngineHandle | undefined): Promise<boolean
   // Lingering (a wedged native thread) — escalate to an unconditional kill and wait a little longer.
   try { proc.kill('SIGKILL'); } catch { /* ignore */ }
   return Promise.race([exited, deadline(2000)]); // if this resolves false, net48Blocked stays true until the exit lands
+}
+
+/**
+ * 1.0.1 "Stop the Designer Preview Engine": shut down every resident engine process on demand. The modern and net48
+ * engines start lazily on the first render and then stay alive for the whole window session — closing a designer tab
+ * does NOT stop them — so a user who is done with the extension is left with an idle engine exe running. This is the
+ * explicit off switch.
+ *
+ * Deliberately does NOT set shuttingDown: the engine is meant to come back on the next open/render (getEngine restarts
+ * it). net48 goes through the careful recycle (kill + confirmed-exit wait) which ALSO frees any build output it had
+ * pinned and clears the restart-block flag on the confirmed exit; the modern engine is disposed and awaited with the
+ * same SIGKILL escalation. A child still mid-startup (a rare race) is left to getEngine's own ownership — the
+ * steady-state resident engines are what the user sees and wants gone.
+ */
+async function stopEnginesCore(): Promise<number> {
+  const live = (h: EngineHandle | undefined): boolean =>
+    !!h && h.process.exitCode == null && h.process.signalCode == null;
+  const net48 = engines.get('net48');
+  const modern = [...engines.entries()].filter(([k, h]) => k !== 'net48' && live(h)).map(([, h]) => h);
+  const running = (live(net48) ? 1 : 0) + modern.length;
+  if (running === 0) return 0;
+  // net48 first: recycle also releases the pinned dll and clears net48Blocked once the exit is confirmed.
+  if (live(net48)) await recycleNet48Engine(net48);
+  const deadline = (ms: number) => new Promise<boolean>((r) => setTimeout(() => r(false), ms));
+  for (const h of modern) {
+    const proc = h.process;
+    // Drop from the maps BEFORE disposing so a concurrent getEngine sees it gone and starts fresh rather than handing
+    // back a dying handle (mirrors doRecycleNet48's remove-first ordering).
+    engines.forEach((v, k) => { if (v === h) { engines.delete(k); engineStarts.delete(k); } });
+    if (proc.exitCode != null || proc.signalCode != null) continue;
+    const exited = new Promise<boolean>((resolve) => proc.once('exit', () => resolve(true)));
+    try { h.dispose(); } catch { /* already dead */ }
+    if (await Promise.race([exited, deadline(3000)])) continue;
+    try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+    await Promise.race([exited, deadline(2000)]);
+  }
+  return running;
+}
+
+async function stopPreviewEngines(): Promise<void> {
+  if (await stopEnginesCore() === 0) {
+    void vscode.window.showInformationMessage(t('host.notify.stopEngines.none'));
+    return;
+  }
+  output.appendLine('[stop] preview engine(s) stopped on request');
+  void vscode.window.showInformationMessage(t('host.notify.stopEngines.done'));
+}
+
+/**
+ * 1.0.2 "Restart the Designer Preview Engine": stop every resident engine, then bring a fresh one straight back by
+ * re-rendering the active designer (a stopped engine otherwise only restarts on the next render, so a bare Stop is not
+ * a restart). This is the one-click "give me a clean engine" affordance for a wedged or stale engine; net48 also drops
+ * the pinned build output and reloads it. With no designer open there is nothing to render against, so it just reports
+ * the stop and the engine starts fresh on the next open/render.
+ */
+async function restartPreviewEngines(): Promise<void> {
+  const stopped = await stopEnginesCore();
+  const session = DesignerHub.instance.activeSession;
+  if (session) {
+    // rerenderFromDoc → the render pipeline → getEngine → a brand-new engine process; net48 may fail-closed if the
+    // recycle above could not confirm the old exit (net48Blocked), in which case the next render recovers.
+    try { await session.rerenderFromDoc(); } catch { /* the next render will start the engine */ }
+    output.appendLine('[restart] preview engine restarted + active designer reloaded');
+    void vscode.window.showInformationMessage(t('host.notify.restartEngines.done'));
+  } else if (stopped > 0) {
+    output.appendLine('[restart] preview engine(s) stopped; will start fresh on the next render');
+    void vscode.window.showInformationMessage(t('host.notify.restartEngines.pending'));
+  } else {
+    void vscode.window.showInformationMessage(t('host.notify.stopEngines.none'));
+  }
 }
 
 export function getAssemblyOverride(file: string): string | undefined {
