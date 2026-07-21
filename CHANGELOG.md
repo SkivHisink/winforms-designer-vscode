@@ -8,6 +8,21 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-07-21
+
+**Patch — the .NET Framework preview no longer blocks your own build.** While a net48 designer tab was open, the
+experimental compiled preview held the project's build output (`.dll`) open, so the user's own build in Visual Studio
+or `dotnet build` failed with `MSB3026`/`MSB3027` ("The file is locked by: WinFormsDesigner.Engine.Net48") until the
+designer was closed or the *Release .NET Framework Assembly (for Rebuild)* command was run by hand.
+
+- **The lock is now released automatically when VS Code loses focus.** Switch to Visual Studio to build and the
+  preview lets go of the output on its own; switch back and the active preview re-renders to show the build you just
+  produced. The lock now only exists while the designer window is actually in the foreground, so the common
+  alt-tab-to-Visual-Studio-and-Build flow just works without touching the release command. The manual command remains
+  for the case where you rebuild without leaving VS Code. This uses the same bounded release + engine-recycle path the
+  command does (delay-signed vendor assembly loading is unchanged — the preview still loads in place, it just doesn't
+  keep the handle while you're away).
+
 ## [1.0.0] — 2026-07-21
 
 **1.0 — out of preview.** The core designer loop is stable, and this release makes the project's central promise

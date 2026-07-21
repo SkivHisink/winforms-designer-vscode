@@ -203,6 +203,37 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(DesignerHub.instance.onDidChangeActive(() => updateControlStatus()));
   updateControlStatus();
 
+  // 1.0.0 — auto-release the net48 build-output lock when VS Code loses OS focus (the user has almost certainly
+  // switched to Visual Studio to build), and re-render the active preview when focus returns so it shows the fresh
+  // build. Makes the "designer pins my dll" lock invisible for the common alt-tab-to-VS-and-Build flow, without the
+  // user ever running the release command. A small debounce swallows momentary focus blips (no needless domain
+  // reload); the release/re-render are chained so a refocus never recreates a domain the in-flight unload is tearing
+  // down. See autoReleaseNet48OnBlur.
+  let blurReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingBlurRelease: Promise<boolean> | undefined;
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((st) => {
+      if (!st.focused) {
+        if (blurReleaseTimer || pendingBlurRelease) return; // already scheduled / released for this away-stint
+        blurReleaseTimer = setTimeout(() => {
+          blurReleaseTimer = undefined;
+          pendingBlurRelease = autoReleaseNet48OnBlur();
+        }, 500);
+      } else {
+        if (blurReleaseTimer) { clearTimeout(blurReleaseTimer); blurReleaseTimer = undefined; } // quick alt-tab: never really left
+        const p = pendingBlurRelease;
+        pendingBlurRelease = undefined;
+        if (p) void p.then((released) => {
+          if (!released) return;
+          // The active preview's domain was unloaded while away; its picture may predate the user's rebuild. Re-render
+          // it (only the active net48 preview — a no-op for anything else) so they see what they just built.
+          const s = DesignerHub.instance.activeSession;
+          if (s?.isCompiledPreview) void s.rerenderFromDoc();
+        });
+      }
+    }),
+  );
+
   // Auto-open the designer when a form .cs becomes the active editor (VS-style: open Form1.cs → designer).
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((e) => { updateContext(e); autoOpenIfDesigner(e); }),
@@ -620,6 +651,50 @@ async function releaseNet48Output(assemblyPath: string): Promise<boolean> {
     output.appendLine(`[engine:net48] release ${assemblyPath} failed: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
+}
+
+/**
+ * 1.0.0 — auto-release the net48 build-output lock the moment VS Code loses OS focus, so the user can switch to
+ * Visual Studio and rebuild WITHOUT first running the release command. The net48 preview pins the user's dlls in
+ * place (ShadowCopyFiles must stay OFF for delay-signed vendor graphs like DevExpress), which fails their own build
+ * with MSB3027 for the lifetime of an open designer. Releasing on window blur means the lock only ever exists while
+ * the designer window is actually in the foreground — which matches the mental model and covers the overwhelmingly
+ * common "alt-tab to VS and Build" flow. Silent (log only, no popups) since it fires on every focus change.
+ *
+ * Gated to cost nothing normally: only acts when a net48 engine is live AND an open designer is currently a compiled
+ * preview (something is genuinely pinned by an open tab). Reuses the same engine-side ReleaseAllCompiledAssemblies +
+ * bounded-RPC + recycle-on-stuck-unload the manual command does, so the release is as robust. Returns true if handles
+ * were freed (so the caller can re-render the active preview on refocus to pick up the just-built output).
+ */
+async function autoReleaseNet48OnBlur(): Promise<boolean> {
+  const eng = engines.get('net48');
+  // Same "process is really alive" facts releaseNet48Output checks; never start an engine just to release.
+  if (!eng || shuttingDown || eng.process.exitCode != null || eng.process.signalCode != null) return false;
+  // Nothing an OPEN designer pins ⇒ nothing to do. (A source-switched leak that no session names is left to the
+  // manual command, exactly as today — auto-release deliberately stays cheap and only fires for open previews.)
+  if (DesignerHub.instance.net48OutputsInUse().length === 0) return false;
+  let result;
+  try {
+    // Bound the RPC like the command: a wedged STA dispatcher must not hang the release with the dll still pinned.
+    result = await Promise.race([
+      releaseAllCompiledAssemblies(eng),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('release RPC timed out')), 5000)),
+    ]);
+  } catch (err) {
+    output.appendLine('[release:blur] engine did not answer in time; recycling: ' + String(err));
+    await recycleNet48Engine(eng); // frees the handles the OS way
+    return true;
+  }
+  if (result.failed > 0) {
+    output.appendLine(`[release:blur] ${result.failed}/${result.attempted} domains would not unload; recycling engine`);
+    await recycleNet48Engine(eng);
+    return true;
+  }
+  if (result.released > 0) {
+    output.appendLine(`[release:blur] released ${result.released} .NET Framework build output(s) on focus loss — you can rebuild in Visual Studio now`);
+    return true;
+  }
+  return false;
 }
 
 /**
