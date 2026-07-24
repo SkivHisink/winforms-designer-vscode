@@ -46,7 +46,7 @@ namespace WinFormsDesigner.Engine
         private const int MaxBlobChars = 96 * 1024 * 1024; // base64 of a big-but-bounded ImageStream
 
         public static ImageListEditResult SetImages(string designerSrc, string componentId, string? resxText,
-            string imageStreamBase64, string[]? keys)
+            string imageStreamBase64, string[]? keys, string[]? oldKeys = null, int[]? oldIndexForNew = null)
         {
             if (!DesignerControlEditor.IsValidIdentifier(componentId))
                 return Fail("invalid component id: " + componentId);
@@ -59,6 +59,23 @@ namespace WinFormsDesigner.Engine
             foreach (var k in keys)
                 if (k != null && k.Any(char.IsControl))
                     return Fail("an image key contains a control character");
+            if ((oldKeys == null) != (oldIndexForNew == null))
+                return Fail("image reconciliation metadata is incomplete");
+            if (oldKeys != null && oldIndexForNew != null)
+            {
+                if (oldKeys.Length > MaxImages || oldIndexForNew.Length != keys.Length)
+                    return Fail("image reconciliation metadata has the wrong size");
+                if (oldKeys.Any(k => k != null && k.Any(char.IsControl)))
+                    return Fail("an old image key contains a control character");
+                var seenOld = new HashSet<int>();
+                foreach (int oldIndex in oldIndexForNew)
+                {
+                    if (oldIndex < -1 || oldIndex >= oldKeys.Length)
+                        return Fail("image reconciliation metadata has an invalid old index");
+                    if (oldIndex >= 0 && !seenOld.Add(oldIndex))
+                        return Fail("image reconciliation metadata maps one old image more than once");
+                }
+            }
 
             // TRUST BOUNDARY (codex): the blob is meant to be produced ONLY by the net48 serializer (which builds a
             // real ImageList and self-round-trips before returning), and the host only ever passes THAT output here.
@@ -109,10 +126,125 @@ namespace WinFormsDesigner.Engine
             if (!OnlyImageListStatementsChanged(designerSrc, withKeys, componentId, varName))
                 return Fail("edit changed more than the ImageList's images");
 
+            // 4. When the UI reordered images or renamed keys, keep controls attached to this ImageList pointing at
+            // the SAME logical image. Literal ImageIndex values are remapped by original image identity; literal
+            // ImageKey values follow a key rename (or clear when that image was removed). This second edit is an exact
+            // Roslyn-node replacement over only `this.<owner>.*ImageIndex/*ImageKey` assignments whose owner references
+            // this ImageList, then parse-checked. Unsupported/ambiguous expressions are left byte-identical.
+            if (oldKeys != null && oldIndexForNew != null)
+            {
+                string? reconciled = ReconcileImageReferences(withKeys, componentId, oldKeys, keys, oldIndexForNew,
+                    out string reconcileReason);
+                if (reconciled == null) return Fail(reconcileReason);
+                withKeys = reconciled;
+                if (CSharpSyntaxTree.ParseText(withKeys).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
+                    return Fail("image-reference reconciliation produced invalid C#");
+            }
+
             return new ImageListEditResult { Ok = true, DesignerText = withKeys, ResxText = newResx, ResxKey = key };
         }
 
         private static ImageListEditResult Fail(string reason) => new ImageListEditResult { Ok = false, Reason = reason };
+
+        private static string? ReconcileImageReferences(string src, string imageListId, string[] oldKeys,
+            string[] newKeys, int[] oldIndexForNew, out string reason)
+        {
+            reason = "";
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var init = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
+                .FirstOrDefault(m => m.Identifier.Text == "InitializeComponent" && m.Body != null);
+            if (init?.Body == null) return src;
+
+            var owners = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var st in init.Body.Statements.OfType<ExpressionStatementSyntax>())
+            {
+                if (st.Expression is not AssignmentExpressionSyntax assignment) continue;
+                var left = Flatten(assignment.Left);
+                if (left.Count != 3 || left[0] != "this" || !left[2].EndsWith("ImageList", StringComparison.Ordinal))
+                    continue;
+                if (ChainIsComponent(assignment.Right, imageListId)) owners.Add(left[1]);
+            }
+            if (owners.Count == 0) return src;
+
+            var newIndexForOld = Enumerable.Repeat(-1, oldKeys.Length).ToArray();
+            for (int newIndex = 0; newIndex < oldIndexForNew.Length; newIndex++)
+            {
+                int oldIndex = oldIndexForNew[newIndex];
+                if (oldIndex >= 0) newIndexForOld[oldIndex] = newIndex;
+            }
+
+            // One key can technically appear more than once. Reconcile only when all occurrences have one outcome;
+            // if a referenced duplicate would split into different new keys, refuse instead of guessing.
+            var keyOutcomes = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            for (int oldIndex = 0; oldIndex < oldKeys.Length; oldIndex++)
+            {
+                string oldKey = oldKeys[oldIndex] ?? "";
+                if (oldKey.Length == 0) continue;
+                int newIndex = newIndexForOld[oldIndex];
+                string outcome = newIndex >= 0 && newIndex < newKeys.Length ? (newKeys[newIndex] ?? "") : "";
+                if (!keyOutcomes.TryGetValue(oldKey, out var set))
+                    keyOutcomes[oldKey] = set = new HashSet<string>(StringComparer.Ordinal);
+                set.Add(outcome);
+            }
+
+            var replacements = new Dictionary<AssignmentExpressionSyntax, ExpressionSyntax>();
+            foreach (var assignment in init.Body.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+            {
+                var left = Flatten(assignment.Left);
+                if (left.Count != 3 || left[0] != "this" || !owners.Contains(left[1])) continue;
+                string property = left[2];
+                if (property.EndsWith("ImageIndex", StringComparison.Ordinal))
+                {
+                    if (!TryIntegerLiteral(assignment.Right, out int oldIndex) || oldIndex < 0 || oldIndex >= newIndexForOld.Length)
+                        continue;
+                    int next = newIndexForOld[oldIndex]; // removed image -> -1 (WinForms "none")
+                    if (next != oldIndex)
+                        replacements[assignment] = SyntaxFactory.LiteralExpression(
+                            SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal(next));
+                }
+                else if (property.EndsWith("ImageKey", StringComparison.Ordinal)
+                    && assignment.Right is LiteralExpressionSyntax literal
+                    && literal.IsKind(SyntaxKind.StringLiteralExpression))
+                {
+                    string oldKey = literal.Token.ValueText;
+                    if (!keyOutcomes.TryGetValue(oldKey, out var outcomes)) continue;
+                    if (outcomes.Count != 1)
+                    {
+                        reason = "an ImageKey reference is ambiguous because the old key was duplicated: " + oldKey;
+                        return null;
+                    }
+                    string next = outcomes.First();
+                    if (!string.Equals(next, oldKey, StringComparison.Ordinal))
+                        replacements[assignment] = SyntaxFactory.LiteralExpression(
+                            SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(next));
+                }
+            }
+            if (replacements.Count == 0) return src;
+            var changed = root.ReplaceNodes(replacements.Keys,
+                (original, _) => original.WithRight(replacements[original].WithTriviaFrom(original.Right)));
+            return changed.ToFullString();
+        }
+
+        private static bool TryIntegerLiteral(ExpressionSyntax expression, out int value)
+        {
+            value = 0;
+            if (expression is LiteralExpressionSyntax literal
+                && literal.IsKind(SyntaxKind.NumericLiteralExpression)
+                && literal.Token.Value is int number)
+            {
+                value = number;
+                return true;
+            }
+            if (expression is PrefixUnaryExpressionSyntax unary
+                && unary.IsKind(SyntaxKind.UnaryMinusExpression)
+                && unary.Operand is LiteralExpressionSyntax operand
+                && operand.Token.Value is int positive)
+            {
+                value = -positive;
+                return true;
+            }
+            return false;
+        }
 
         /// <summary>Remove every <c>this.&lt;comp&gt;.Images.Add(...)</c> / <c>.SetKeyName(...)</c> / <c>.Clear()</c>
         /// statement from InitializeComponent, whole-line (leading indent through the trailing newline), right-to-left

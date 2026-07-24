@@ -859,6 +859,40 @@ namespace WinFormsDesigner.Engine.Net48
             catch { return Array.Empty<ToolboxItemInfo>(); }
         }
 
+        /// <summary>Choose Toolbox Items scan for a .NET Framework/project/GAC assembly. Unlike the live compiled
+        /// palette enumeration, this uses a dedicated short-lived AppDomain and unloads it before returning, so merely
+        /// opening the dialog never pins a project output or browsed vendor library.</summary>
+        public ToolboxScanResult ScanToolboxAssembly(string assemblyPath, string[]? probeDirs = null)
+        {
+            string simpleName = string.IsNullOrWhiteSpace(assemblyPath) ? "" : Path.GetFileNameWithoutExtension(assemblyPath);
+            if (string.IsNullOrWhiteSpace(assemblyPath) || !File.Exists(assemblyPath))
+                return new ToolboxScanResult { AssemblyName = simpleName, Error = "file not found" };
+            AppDomain? domain = null;
+            try
+            {
+                var setup = new AppDomainSetup
+                {
+                    ApplicationBase = AppDomain.CurrentDomain.BaseDirectory,
+                };
+                domain = AppDomain.CreateDomain("WfdToolboxScan-" + Guid.NewGuid().ToString("N"), null, setup);
+                var scanner = (ToolboxAssemblyScanner)domain.CreateInstanceAndUnwrap(
+                    typeof(ToolboxAssemblyScanner).Assembly.FullName,
+                    typeof(ToolboxAssemblyScanner).FullName);
+                return scanner.Scan(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            }
+            catch (Exception ex)
+            {
+                return new ToolboxScanResult { AssemblyName = simpleName, Error = ex.GetBaseException().Message };
+            }
+            finally
+            {
+                if (domain != null)
+                {
+                    try { AppDomain.Unload(domain); } catch { /* process exit/release remains the ultimate cleanup */ }
+                }
+            }
+        }
+
         /// <summary>Apply one property edit to the live compiled instance + re-render (live preview for a
         /// designer-originated edit). The persisted text write is the host's job (net9 splice); this returns the
         /// fresh picture + layout, with Applied=false + a reason when the value couldn't be applied live.</summary>

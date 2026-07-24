@@ -71,6 +71,7 @@ import {
   DesignerPaletteInfo,
   listToolboxCandidates,
   scanToolboxAssembly,
+  ToolboxCandidate,
   removeControl,
   copyControl,
   pasteControl,
@@ -84,7 +85,8 @@ import {
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
 import { findNearestCsproj, findOwningCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
 import { t, tn, injectL10nScript } from './i18n';
-import { categorizeUnrepresentable } from './renderDiagnostics';
+import { categorizeUnrepresentable, RenderDiagItem } from './renderDiagnostics';
+import { discoverProbeAssemblies, discoverRegisteredAssemblies, uniqueAssemblyPaths } from './toolboxDiscovery';
 
 /** One entry of the vendor's declared Tasks menu as the CANVAS sees it: the vendor's label, plus the verb this
 * designer runs for it (null → shown disabled, because we have no source-first equivalent). See vendorTagsFor. */
@@ -168,7 +170,45 @@ const LOCALIZABLE_BLOCKED = new Set<string>([
 ]);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
 * diffs these against the current toolbox membership to add/remove/hide items. */
-type ChooseRow = { fqn: string; name: string; namespace?: string; assemblyName?: string; fromProject?: boolean; checked: boolean };
+type ChooseRow = {
+  fqn: string; name: string; namespace?: string; assemblyName?: string;
+  assemblyPath?: string; fromProject?: boolean; checked: boolean;
+};
+
+/** Per-form canvas state persisted in workspaceState. It is deliberately view-only metadata: no generated source
+ * or .resx file is touched when the user locks controls or changes the zoom. */
+interface DesignerCanvasState {
+  zoom?: number;
+  lockedIds?: string[];
+}
+
+/** Per-form state of the shared Properties / Outline / Toolbox view. Custom toolbox tabs are intentionally NOT
+ * stored here: they are user-wide customization and live in globalState (ToolboxUiState below). */
+interface DesignerPanelState {
+  activeTab?: 'props' | 'outline' | 'toolbox';
+  toolboxCollapsed?: Record<string, boolean>;
+  outlineCollapsed?: string[];
+}
+
+/** User-wide toolbox chrome. Chosen items themselves remain in DesignerHub.chosenItems; this stores the custom
+ * category order plus presentation preferences so a reload reconstructs the same toolbox. */
+interface ToolboxUiState {
+  customTabs: Array<{ name: string; items: string[] }>;
+  listView: boolean;
+  sortAlpha: boolean;
+  showAll: boolean;
+}
+
+interface DesignerViewState {
+  canvas?: DesignerCanvasState;
+  panel?: DesignerPanelState;
+}
+
+interface ToolboxScanCacheEntry {
+  stamp: string;
+  items: ToolboxCandidate[];
+  error?: string;
+}
 
 /** Sentinel value of the events dropdown's "(new handler…)" option — must match the webviews. */
 const NEW_HANDLER = 'new';
@@ -182,6 +222,73 @@ const REFERENCE_NONE = '(none)';
 * The host maps a pick of it to a bare `this` splice (net9) / the ReferenceThis token (net48 resolves it to the live root).
 * Like "(none)" it is a parenthesised token that can never be a real field name. */
 const REFERENCE_THIS = '(this)';
+
+function stringList(value: unknown, maxItems = 512): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const text = item.trim();
+    if (!text || text.length > 512 || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+function boolMap(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, boolean> = {};
+  for (const [key, flag] of Object.entries(value as Record<string, unknown>).slice(0, 128)) {
+    if (key && key.length <= 256 && flag === true) out[key] = true;
+  }
+  return out;
+}
+
+function sanitizeDesignerViewState(value: unknown): DesignerViewState {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const hasCanvas = !!raw.canvas && typeof raw.canvas === 'object';
+  const hasPanel = !!raw.panel && typeof raw.panel === 'object';
+  const canvasRaw = hasCanvas ? raw.canvas as Record<string, unknown> : {};
+  const panelRaw = hasPanel ? raw.panel as Record<string, unknown> : {};
+  const zoom = typeof canvasRaw.zoom === 'number' && Number.isFinite(canvasRaw.zoom)
+    ? Math.max(0.1, Math.min(8, canvasRaw.zoom)) : undefined;
+  const activeTab = panelRaw.activeTab === 'outline' || panelRaw.activeTab === 'toolbox'
+    ? panelRaw.activeTab : 'props';
+  return {
+    canvas: hasCanvas ? { zoom, lockedIds: stringList(canvasRaw.lockedIds) } : undefined,
+    panel: hasPanel ? {
+      activeTab,
+      toolboxCollapsed: Object.prototype.hasOwnProperty.call(panelRaw, 'toolboxCollapsed')
+        ? boolMap(panelRaw.toolboxCollapsed) : undefined,
+      outlineCollapsed: stringList(panelRaw.outlineCollapsed),
+    } : undefined,
+  };
+}
+
+function sanitizeToolboxUi(value: unknown): ToolboxUiState {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const customTabs: Array<{ name: string; items: string[] }> = [];
+  const seen = new Set<string>();
+  if (Array.isArray(raw.customTabs)) {
+    for (const entry of raw.customTabs.slice(0, 64)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const rec = entry as Record<string, unknown>;
+      const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+      if (!name || name.length > 128 || seen.has(name)) continue;
+      seen.add(name);
+      customTabs.push({ name, items: stringList(rec.items, 512) });
+    }
+  }
+  return {
+    customTabs,
+    listView: raw.listView !== false,
+    sortAlpha: raw.sortAlpha === true,
+    showAll: raw.showAll === true,
+  };
+}
 
 /**
 * Map a file the user opened to the .Designer.cs the engine should read — the "open Form1.cs → see the
@@ -249,6 +356,7 @@ export class DesignerHub {
   private readonly openSessions = new Set<DesignerSession>();
 
   private memento: vscode.Memento | undefined;
+  private workspaceMemento: vscode.Memento | undefined;
   /** The designer clipboard (Cut/Copy → Paste), shared across all open designer editors like VS. Each entry is
    * an OPAQUE engine blob (from copyControl) handed back to pasteControl; `label` is a human display name. */
   clipboard: { clips: string[]; label: string } | null = null;
@@ -258,6 +366,12 @@ export class DesignerHub {
   chosenItems: ToolboxItemInfo[] = [];
   /** Framework palette items the user UNCHECKED in "Choose Items" — filtered out of the toolbox. */
   private hidden = new Set<string>();
+  /** Global toolbox category/order preferences. Category collapse is per form and lives in DesignerViewState. */
+  toolboxUi: ToolboxUiState = { customTabs: [], listView: true, sortAlpha: false, showAll: false };
+  /** Explicit Browse… assemblies and their reflection results survive reloads. Cache entries are invalidated by the
+   * exact file size+mtime stamp, so rebuilding a control library never serves stale types. */
+  browsedToolboxAssemblies: string[] = [];
+  private toolboxScanCache: Record<string, ToolboxScanCacheEntry> = {};
 
   /** The color/font palette (KnownColors + installed fonts + unit suffixes). Engine-wide static, so it's
    * fetched once by the first session and reused by all — cached here, re-pushed to the panel on refresh. */
@@ -280,11 +394,18 @@ export class DesignerHub {
   isHidden(fqn: string): boolean { return this.hidden.has(fqn); }
   get hiddenFqns(): string[] { return [...this.hidden]; }
 
-  /** Wire up persistence (call once at activation). */
-  initState(memento: vscode.Memento): void {
+  /** Wire up persistence (call once at activation). Toolbox customization is global like Visual Studio's toolbox;
+   * the view state itself is workspace-local and keyed by the form's normalized .Designer.cs path. */
+  initState(memento: vscode.Memento, workspaceMemento?: vscode.Memento): void {
     this.memento = memento;
+    this.workspaceMemento = workspaceMemento;
     this.chosenItems = memento.get<ToolboxItemInfo[]>('chosenToolboxItems', []);
     this.hidden = new Set(memento.get<string[]>('hiddenToolboxFqns', []));
+    this.toolboxUi = sanitizeToolboxUi(memento.get<unknown>('toolboxUiState'));
+    this.browsedToolboxAssemblies = uniqueAssemblyPaths(
+      memento.get<string[]>('browsedToolboxAssemblies', []));
+    const storedCache = memento.get<Record<string, ToolboxScanCacheEntry>>('toolboxScanCache', {});
+    this.toolboxScanCache = storedCache && typeof storedCache === 'object' ? storedCache : {};
   }
   /** Replace the toolbox customization (added + hidden), persist it, and re-push the merged toolbox. */
   setToolboxCustomization(chosen: ToolboxItemInfo[], hidden: string[]): void {
@@ -293,6 +414,76 @@ export class DesignerHub {
     void this.memento?.update('chosenToolboxItems', chosen);
     void this.memento?.update('hiddenToolboxFqns', [...this.hidden]);
     void this.active?.refreshToolbox();
+  }
+
+  /** Persist the user-wide custom toolbox tabs and presentation preferences reported by panel.js. */
+  setToolboxUi(state: unknown): void {
+    this.toolboxUi = sanitizeToolboxUi(state);
+    void this.memento?.update('toolboxUiState', this.toolboxUi);
+  }
+
+  addBrowsedToolboxAssembly(file: string): void {
+    this.browsedToolboxAssemblies = uniqueAssemblyPaths([...this.browsedToolboxAssemblies, file]);
+    void this.memento?.update('browsedToolboxAssemblies', this.browsedToolboxAssemblies);
+  }
+
+  private assemblyStamp(file: string, probeDirectories: readonly string[] = []): string | undefined {
+    try {
+      const stat = fs.statSync(file);
+      const probes = probeDirectories
+        .map((dir) => {
+          try {
+            const full = path.resolve(dir);
+            const dirStat = fs.statSync(full);
+            return `${normalize(full)}:${dirStat.mtimeMs}`;
+          } catch { return ''; }
+        })
+        .filter(Boolean)
+        .sort();
+      return `${stat.size}:${stat.mtimeMs}|${probes.join('|')}`;
+    } catch { return undefined; }
+  }
+
+  cachedToolboxScan(file: string, probeDirectories: readonly string[] = []): ToolboxScanCacheEntry | undefined {
+    const key = normalize(file);
+    const entry = this.toolboxScanCache[key];
+    const stamp = this.assemblyStamp(file, probeDirectories);
+    return entry && stamp && entry.stamp === stamp ? entry : undefined;
+  }
+
+  storeToolboxScan(file: string, items: ToolboxCandidate[], error?: string, probeDirectories: readonly string[] = []): void {
+    const stamp = this.assemblyStamp(file, probeDirectories);
+    if (!stamp) return;
+    const key = normalize(file);
+    this.toolboxScanCache[key] = { stamp, items: items.slice(0, 2048), error };
+    const keys = Object.keys(this.toolboxScanCache);
+    for (let i = 0; i < keys.length - 256; i++) delete this.toolboxScanCache[keys[i]];
+    void this.memento?.update('toolboxScanCache', this.toolboxScanCache);
+  }
+
+  /** The form-specific view state. Invalid/old entries degrade to an empty state instead of reaching the webview. */
+  formViewState(file: string): DesignerViewState {
+    const all = this.workspaceMemento?.get<Record<string, DesignerViewState>>('designerViewStates', {}) ?? {};
+    return sanitizeDesignerViewState(all[normalize(file)]);
+  }
+
+  updateFormViewState(file: string, patch: Partial<DesignerViewState>): void {
+    if (!this.workspaceMemento) return;
+    const key = normalize(file);
+    const all = { ...(this.workspaceMemento.get<Record<string, DesignerViewState>>('designerViewStates', {}) ?? {}) };
+    const before = sanitizeDesignerViewState(all[key]);
+    all[key] = sanitizeDesignerViewState({
+      canvas: patch.canvas ?? before.canvas,
+      panel: patch.panel ?? before.panel,
+    });
+    // Bound stale state: keep the most recently written 256 form entries. JS object insertion order is stable, so
+    // delete+reinsert moves this form to the tail before pruning the oldest keys.
+    const current = all[key];
+    delete all[key];
+    all[key] = current;
+    const keys = Object.keys(all);
+    for (let i = 0; i < keys.length - 256; i++) delete all[keys[i]];
+    void this.workspaceMemento.update('designerViewStates', all);
   }
 
   get activeSession(): DesignerSession | null { return this.active; }
@@ -344,6 +535,22 @@ export class DesignerHub {
    * Unset until then, which is safe: no engine can be running before activation, so nothing is pinned. */
   private releaseNet48: ReleaseNet48Output | undefined;
   setNet48Release(release: ReleaseNet48Output): void { this.releaseNet48 = release; }
+
+  private net48TaskDepth = 0;
+  get net48TaskActive(): boolean { return this.net48TaskDepth > 0; }
+  beginNet48Task(name: string): void {
+    this.net48TaskDepth++;
+    if (this.net48TaskDepth !== 1) return;
+    for (const session of [...this.openSessions]) {
+      if (session.isCompiledPreview) session.beginBuildTask(name);
+    }
+  }
+  async endNet48Task(): Promise<void> {
+    if (this.net48TaskDepth > 0) this.net48TaskDepth--;
+    if (this.net48TaskDepth !== 0) return;
+    const sessions = [...this.openSessions].filter((session) => session.isCompiledPreview);
+    await Promise.allSettled(sessions.map((session) => session.finishBuildTask()));
+  }
 
   /**
    * 1.0.0 — the .NET Framework build outputs the currently-open designers render from, deduplicated by output
@@ -693,6 +900,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
       items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; nodes?: TreeNodeItem[];
       toolStripItems?: ToolStripItemModel[];
+      state?: unknown; toolboxUi?: unknown;
     }) => {
       const s = DesignerHub.instance.activeSession;
       try {
@@ -702,6 +910,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         if (s?.refuseLocalizableEdit(m?.type)) return;
         if (s?.refuseStaleRenderEdit(m?.type)) return; // 0.10.0 S5 — read-only while the last render failed (stale graph)
         if (m?.type === 'ready') { s?.refreshViews(); }
+        else if (m?.type === 'panelViewStateChanged') { s?.updatePanelViewState(m.state, m.toolboxUi); }
         else if (m?.type === 'pick' && m.id) { await s?.pick(m.id); }
         else if (m?.type === 'edit' && m.id && m.prop && m.propType !== undefined) {
           // an `ownerId` marks this as a ToolStripItem edit (the grid is showing item→Properties) → route to the
@@ -778,6 +987,14 @@ class DesignerSession {
   // can't splice against a graph the designer couldn't load. Set true only at fullRender's clean success exit; set
   // false in every failure branch. Stored (not derived from source — a parseable form can still fail to render).
   private renderOk = false;
+  /** Last degraded-render report, retained host-side so Copy Diagnostics never trusts webview-supplied text. */
+  private lastRenderDiagnostic?: {
+    kind: 'partial' | 'failure';
+    message: string;
+    target: string;
+    cause: string;
+    items: RenderDiagItem[];
+  };
   // 1.0.0 — the .NET Framework compiled preview shows the last BUILD, never the live source, and cannot prove the
   // build matches `.Designer.cs` (the user can hand-edit and not rebuild). After eight review rounds the divergence
   // LOCK that tried to infer that from instance/build identity was descoped: a lock that
@@ -832,8 +1049,6 @@ class DesignerSession {
   private autoAsm: string | undefined;
   /** The big "Choose Toolbox Items" window (a separate editor-area webview panel), if open. */
   private chooseItemsPanel: vscode.WebviewPanel | undefined;
-  /** Assemblies the user added via the Choose-Items "Browse…" button (accumulated across clicks). */
-  private browsedDlls: string[] = [];
   /** (project, assembly) pairs we've already offered a <Reference> for — ask at most once each per session,
    * whatever the user answered, so adding several controls from one library doesn't nag repeatedly. */
   private readonly offeredReferences = new Set<string>();
@@ -935,17 +1150,29 @@ class DesignerSession {
     if (this.disposed || this.engineKind !== kind) return;
     this.renderOk = false; // a render failed → read-only until the next successful render (S5)
     if (delayMs == null) {
-          this.post({
-        type: 'error',
-        message: t('host.engineCrashLoop'),
-        renderFailure: true,
-      });
+      this.postRenderFailure(t('host.engineCrashLoop'), this.currentId || 'this', t('host.engineCrashLoop'));
       return;
     }
     this.post({ type: 'loading', message: t('host.loading.restarting', { ms: delayMs }) });
     setTimeout(() => {
       if (!this.disposed && this.engineKind === kind) void this.fullRender();
     }, delayMs);
+  }
+
+  beginBuildTask(name: string): void {
+    if (this.disposed || this.engineKind !== 'net48') return;
+    ++this.renderSeq; // supersede any in-flight render before its result can recreate/pin the released AppDomain
+    this.renderOk = false;
+    this.postRenderFailure(
+      t('host.buildTask.running', { name }),
+      this.currentId || 'this',
+      t('host.buildTask.cause'),
+    );
+  }
+
+  async finishBuildTask(): Promise<void> {
+    if (this.disposed || this.engineKind !== 'net48') return;
+    await this.fullRender();
   }
 
   private asm(): string | undefined {
@@ -1078,7 +1305,44 @@ class DesignerSession {
       DesignerHub.instance.pushPanel(this, { type: 'clear' }); // not rendered yet → blank until fullRender
     }
   }
-  refreshViews(): void { void this.refreshToolbox(); this.refreshProperties(); this.pushClipboardState(); }
+  private pushPersistedViewState(): void {
+    if (!this.designerFile) return;
+    const state = DesignerHub.instance.formViewState(this.designerFile);
+    this.post({ type: 'canvasViewState', state: state.canvas ?? {} });
+    DesignerHub.instance.pushPanel(this, {
+      type: 'panelViewState',
+      state: state.panel ?? {},
+      toolboxUi: DesignerHub.instance.toolboxUi,
+    });
+  }
+
+  updateCanvasViewState(value: unknown): void {
+    if (!this.designerFile || this.disposed) return;
+    const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const current = DesignerHub.instance.formViewState(this.designerFile);
+    DesignerHub.instance.updateFormViewState(this.designerFile, {
+      canvas: sanitizeDesignerViewState({ canvas: raw }).canvas,
+      panel: current.panel,
+    });
+  }
+
+  updatePanelViewState(value: unknown, toolboxUi: unknown): void {
+    if (!this.designerFile || this.disposed) return;
+    const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const current = DesignerHub.instance.formViewState(this.designerFile);
+    DesignerHub.instance.updateFormViewState(this.designerFile, {
+      canvas: current.canvas,
+      panel: sanitizeDesignerViewState({ panel: raw }).panel,
+    });
+    DesignerHub.instance.setToolboxUi(toolboxUi);
+  }
+
+  refreshViews(): void {
+    this.pushPersistedViewState();
+    void this.refreshToolbox();
+    this.refreshProperties();
+    this.pushClipboardState();
+  }
 
   /** Re-emit this canvas's HTML with the current locale's injected catalog (live language switch). Reloading the
    * webview makes it re-send `ready`, which triggers a full re-render / rehydrate through the normal path. */
@@ -1337,7 +1601,7 @@ class DesignerSession {
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
     axis?: 'h' | 'v'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; token?: number; reopenToken?: number;
-    dpr?: number;
+    dpr?: number; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy';
   }): Promise<void> {
     try {
       // 0.10.0 trust-floor: a localizable form is a read-only preview — refuse every mutating gesture
@@ -1362,8 +1626,13 @@ class DesignerSession {
         this.lastNoticeSig = undefined;
         this.lastDirtyPosted = this.doc.isDirty;
     this.post({ type: 'dirty', dirty: this.doc.isDirty });
+        this.pushPersistedViewState();
         this.output.appendLine('[designer] webview ready: ' + this.designerFile);
         await this.fullRender();
+      } else if (m.type === 'canvasViewStateChanged') {
+        this.updateCanvasViewState(m.state);
+      } else if (m.type === 'diagnosticAction' && m.action) {
+        await this.handleDiagnosticAction(m.action);
       } else if (m.type === 'pick' && m.id) {
         // thread the canvas-origin pick's correlation token so the echoed `select` can be matched to THIS exact pick
         // (the canvas suppresses only the echo of a pick whose selection an add-editor deliberately dropped.
@@ -1472,8 +1741,8 @@ class DesignerSession {
 
   /**
    * Open (or reveal) the big "Choose Toolbox Items" window — a separate editor-area webview panel with the
-   * VS-style tabs / table / filter. The actual DLL scan-cache-load is a later increment; for now the .NET tab
-   * lists the controls the toolbox already discovered, so the window shape is real and reviewable.
+   * VS-style tabs / table / filter. The .NET tab merges engine/project controls with configured probe directories,
+   * previously browsed assemblies and registered third-party assemblies through the bounded persistent scan cache.
    */
   openChooseItems(tab?: string): void {
     if (this.disposed) return;
@@ -1496,6 +1765,87 @@ class DesignerSession {
     panel.onDidDispose(() => { if (this.chooseItemsPanel === panel) this.chooseItemsPanel = undefined; });
   }
 
+  private toolboxProbeDirectories(): string[] {
+    const raw = vscode.workspace.getConfiguration('winformsDesigner').get<string[]>('net48.probeDirectories', []);
+    const base = this.wsRoot() ?? (this.designerFile ? path.dirname(this.designerFile) : process.cwd());
+    return [...new Set((Array.isArray(raw) ? raw : [])
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => {
+        let resolved = value.trim();
+        const home = process.env.USERPROFILE;
+        if (home && (resolved === '~' || resolved.startsWith('~/') || resolved.startsWith('~\\')))
+          resolved = path.join(home, resolved.slice(1));
+        return path.isAbsolute(resolved) ? path.normalize(resolved) : path.resolve(base, resolved);
+      })
+      .filter((value) => fs.existsSync(value)))];
+  }
+
+  /** Project output + configured probe directories + explicitly browsed libraries + machine GAC registrations.
+   * The actual reflection results are cached by path/size/mtime in DesignerHub, so reopening the dialog normally
+   * performs only bounded directory enumeration and no engine round-trips. */
+  private toolboxAssemblyPaths(): string[] {
+    const hub = DesignerHub.instance;
+    const probes = this.toolboxProbeDirectories();
+    return uniqueAssemblyPaths([
+      this.asm(),
+      ...hub.browsedToolboxAssemblies,
+      ...discoverProbeAssemblies(probes),
+      ...discoverRegisteredAssemblies(),
+    ]);
+  }
+
+  private async scanCandidateAssembly(file: string): Promise<ToolboxScanCacheEntry> {
+    const hub = DesignerHub.instance;
+    const probes = this.toolboxProbeDirectories();
+    const cached = hub.cachedToolboxScan(file, probes);
+    if (cached) return cached;
+    const gac = /[\\/]Microsoft\.NET[\\/]assembly[\\/]/i.test(file);
+    const currentFrameworkOutput = this.engineKind === 'net48'
+      && !!this.asm() && normalize(this.asm()!) === normalize(file);
+    let items: ToolboxCandidate[] = [];
+    let error: string | undefined;
+
+    const scanWith = async (kind: EngineKind): Promise<void> => {
+      const result = await scanToolboxAssembly(await this.ensureEngine(kind), file, probes);
+      items = (result.items ?? []).map((item) => ({
+        ...item,
+        fromProject: true,
+        assemblyPath: item.assemblyPath || file,
+        directory: item.directory || path.dirname(file),
+      }));
+      error = result.error ?? undefined;
+    };
+
+    try {
+      if (gac || currentFrameworkOutput) {
+        await scanWith('net48');
+      } else {
+        await scanWith('modern');
+        // A .NET Framework library cannot load in the modern ALC. The net48 scanner runs in a disposable AppDomain,
+        // so fallback reflection is compatible without leaving this library pinned.
+        if (!items.length) {
+          try { await scanWith('net48'); } catch { /* keep the modern reason */ }
+        }
+      }
+    } catch (err) {
+      error = errMsg(err);
+    }
+    const entry = { items, error, stamp: '' };
+    hub.storeToolboxScan(file, items, error, probes);
+    return hub.cachedToolboxScan(file, probes) ?? entry;
+  }
+
+  private async discoveredCandidates(): Promise<ToolboxCandidate[]> {
+    const files = this.toolboxAssemblyPaths();
+    const out: ToolboxCandidate[] = [];
+    // Four concurrent reflection domains keep a large registered/probe set responsive without flooding the engine.
+    for (let i = 0; i < files.length; i += 4) {
+      const batch = await Promise.all(files.slice(i, i + 4).map((file) => this.scanCandidateAssembly(file)));
+      for (const result of batch) out.push(...result.items);
+    }
+    return out;
+  }
+
   /** Fetch the Choose-Items rows (framework + project + browsed .dlls) → the dialog, with the target tab and
    * which of its items are currently in the toolbox (so the checkboxes start in the right state). */
   private async pushCandidates(panel: vscode.WebviewPanel, autoCheck?: string[]): Promise<void> {
@@ -1512,9 +1862,22 @@ class DesignerSession {
     const check = autoCheck ?? [];
     if (this.disposed || !this.designerFile) { void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox(), check }); return; }
     try {
-      const eng = await this.ensureEngine();
+      const eng = await this.ensureEngine('modern');
       await this.loadToolboxItems(); // baseline "already in toolbox" set (incl. net48 project controls)
-      const items = await listToolboxCandidates(eng, this.designerFile, this.asm(), this.browsedDlls.length ? this.browsedDlls : undefined);
+      const base = await listToolboxCandidates(
+        eng,
+        this.designerFile,
+        this.engineKind === 'modern' ? this.asm() : undefined,
+      );
+      const discovered = await this.discoveredCandidates();
+      const seen = new Set<string>();
+      const items = [...base, ...discovered].filter((item) => {
+        const fqn = item.namespace ? item.namespace + '.' + item.name : item.name;
+        const key = fqn + '|' + item.assemblyName;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       void panel.webview.postMessage({ type: 'items', items, tab, chosen: inToolbox(), check });
     } catch (err) {
       void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox(), check });
@@ -1541,7 +1904,13 @@ class DesignerSession {
       const inToolbox = (isFramework && !hidden.has(r.fqn)) || inChosen;
       if (r.checked && !inToolbox) {
         if (isFramework) hidden.delete(r.fqn);
-        else chosen.push({ name: r.name, fqn: r.fqn, category: cat, fromProject: !!r.fromProject });
+        else chosen.push({
+          name: r.name,
+          fqn: r.fqn,
+          category: cat,
+          fromProject: !!r.fromProject,
+          assemblyPath: r.assemblyPath,
+        });
       } else if (!r.checked && inToolbox) {
         if (isFramework) hidden.add(r.fqn);
         else chosen = chosen.filter((c) => c.fqn !== r.fqn);
@@ -1567,7 +1936,6 @@ class DesignerSession {
       filters: { Assemblies: ['dll'] },
     });
     if (!picked || !picked.length) { await this.pushCandidates(panel); return; } // cancel → just clear "loading"
-    const eng = await this.ensureEngine();
     const notes: string[] = [];
     const scannedFqns: string[] = []; // fqns from the just-browsed assemblies → auto-checked in the dialog
     let added = 0;
@@ -1575,11 +1943,11 @@ class DesignerSession {
     for (const u of picked) {
       const base = path.basename(u.fsPath);
       try {
-        const res = await scanToolboxAssembly(eng, u.fsPath);
+        const res = await this.scanCandidateAssembly(u.fsPath);
         if (res.items.length) {
           added += res.items.length; okCount++;
           for (const c of res.items) scannedFqns.push(c.namespace ? c.namespace + '.' + c.name : c.name);
-          if (!this.browsedDlls.includes(u.fsPath)) this.browsedDlls.push(u.fsPath);
+          DesignerHub.instance.addBrowsedToolboxAssembly(u.fsPath);
         } else {
           notes.push(`${base}: ${res.error || t('status.browseNoToolbox')}`);
         }
@@ -1596,13 +1964,61 @@ class DesignerSession {
     void panel.webview.postMessage({ type: 'browseResult', message: parts.join(' — ') || t('status.browseNoComponents') });
   }
 
+  private postRenderDiagnostics(items: RenderDiagItem[]): void {
+    if (items.length) {
+      this.lastRenderDiagnostic = {
+        kind: 'partial',
+        message: t('designer.diag.partialCause'),
+        target: items[0].target,
+        cause: items.map((item) => item.detail || item.text).join('; '),
+        items,
+      };
+    } else {
+      this.lastRenderDiagnostic = undefined;
+    }
+    this.post({ type: 'renderDiag', items });
+  }
+
+  private postRenderFailure(message: string, target = 'this', cause = message): void {
+    this.renderOk = false;
+    this.lastRenderDiagnostic = { kind: 'failure', message, target, cause, items: [] };
+    // renderFailure:true distinguishes a real render failure (canvas is stale → persistent last-good banner)
+    // from a failed user action (canvas intact → footer status only).
+    this.post({ type: 'error', message, renderFailure: true, target, cause });
+  }
+
+  private async handleDiagnosticAction(action: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy'): Promise<void> {
+    if (action === 'retry') {
+      await this.fullRender();
+      return;
+    }
+    if (action === 'rebuild') {
+      await vscode.commands.executeCommand('winformsDesigner.runBuildTask');
+      return;
+    }
+    if (action === 'chooseAssembly') {
+      await vscode.commands.executeCommand('winformsDesigner.selectControlAssembly');
+      return;
+    }
+    const diag = this.lastRenderDiagnostic;
+    const lines = [
+      'WinForms Designer diagnostics',
+      `Form: ${this.designerFile ?? this.documentUri.fsPath}`,
+      `Engine: ${this.engineKind}${this.engineKind === 'net48' ? ` (${this.net48RenderMode})` : ''}`,
+      `Target: ${diag?.target ?? this.currentId ?? 'this'}`,
+      `Cause: ${diag?.cause || diag?.message || t('designer.diag.noDetails')}`,
+    ];
+    for (const item of diag?.items ?? []) {
+      lines.push('', `[${item.category}] ${item.target}`, `Statement: ${item.text}`);
+      if (item.detail) lines.push(`Detail: ${item.detail}`);
+    }
+    await vscode.env.clipboard.writeText(lines.join('\n'));
+    this.post({ type: 'status', message: t('status.diagnosticsCopied') });
+  }
+
   private fail(err: unknown): void {
-    this.renderOk = false; // S5: a hard render failure → read-only until a render succeeds again
     const msg = errMsg(err);
-    // renderFailure:true distinguishes a real render failure (canvas is stale → the webview shows the persistent
-    // "last successful preview" banner) from a failed user action routed through the generic onMessage catch
-    // (canvas intact → the webview shows an unobtrusive footer status instead).
-    this.post({ type: 'error', message: msg, renderFailure: true });
+    this.postRenderFailure(msg, this.currentId || 'this', msg);
     this.output.appendLine('designer render failed: ' + msg);
     void vscode.window.showErrorMessage(t('host.error', { msg }));
   }
@@ -1649,13 +2065,21 @@ class DesignerSession {
       DesignerHub.instance.refreshStatus();
     }
 
+    if (this.engineKind === 'net48' && DesignerHub.instance.net48TaskActive) {
+      this.postRenderFailure(
+        t('host.buildTask.running', { name: t('host.buildTask.generic') }),
+        this.currentId || 'this',
+        t('host.buildTask.cause'),
+      );
+      return false;
+    }
+
     // A .NET Framework project with nothing built can't be rendered by either engine (net9 can't load a net4x
     // assembly; net48 needs the compiled output). Don't draw a misleading empty form — tell the user and offer
     // to point the designer at a built control source.
     if (route.frameworkUnbuilt) {
       this.output.appendLine(`[designer] render #${seq}: .NET Framework project not built — prompting for control source`);
-      this.renderOk = false; // S5: an unbuilt framework project can't render → read-only (this path doesn't call fail())
-      this.post({ type: 'error', message: t('host.frameworkUnbuilt'), renderFailure: true });
+      this.postRenderFailure(t('host.frameworkUnbuilt'), 'this', t('host.frameworkUnbuilt'));
       this.promptControlSource(t('host.frameworkUnbuilt'));
       return false;
     }
@@ -1755,9 +2179,18 @@ class DesignerSession {
     // T2.2: surface WHAT the (partial) render skipped — controls whose ctor threw, unresolved types, unsupported
     // constructs — as a dismissible canvas banner. The engine already renders resiliently and records each dropped
     // statement + reason in `unrepresentable`; categorize it host-side (pure) and hand the canvas a compact set.
-    // Empty items → the webview hides any stale banner (this render is clean). net48's compiled render is all-or-
-    // nothing, so this is effectively net9 partial-render diagnostics; net48 per-control skip reasons are a follow-up.
-    this.post({ type: 'renderDiag', items: categorizeUnrepresentable(result.unrepresentable) });
+    // Empty items hide any stale banner. A net48 interpreter fallback is also a degraded render: the canvas is usable
+    // but build-based, so expose its named reason through the same target/cause/actions surface as modern partials.
+    const diagnostics = categorizeUnrepresentable(result.unrepresentable);
+    if (this.engineKind === 'net48' && this.net48RenderMode === 'compiledFallback') {
+      diagnostics.unshift({
+        category: 'unsupported',
+        target: 'this',
+        text: t('designer.diag.compiledFallback'),
+        detail: this.net48FallbackReason || t('designer.diag.noDetails'),
+      });
+    }
+    this.postRenderDiagnostics(diagnostics);
   // composeFormNotice(result) was already posted synchronously right after the render/layout/tray posts above, so a
   // stalled loadProps can never leave the canvas without its persistent notice.
     return true; // a fresh render→layout→tray was posted → the canvas forest is current
@@ -2908,13 +3341,17 @@ class DesignerSession {
       const resxBom = resxRead?.hadBom ?? false; // preserve the file's own BOM; a .resx we create gets none
       const blob = extractResxBinaryValue(resxText, id + '.ImageStream');
       const eng48 = await this.ensureEngine('net48');
-      let images: { dataBase64: string; key: string }[] = [];
+      let images: Array<{ dataBase64: string; key: string; originalIndex: number | null }> = [];
       let width = 16, height = 16, colorDepth = 'Depth32Bit', transparentColor = 'Transparent';
       if (blob) {
         const read = await deserializeImageList(eng48, blob);
         if (read.ok) {
           const keys = parseImageListKeys(this.doc.designerText, id);
-          images = read.images.map((im, i) => ({ dataBase64: im.dataBase64, key: keys[i] ?? '' }));
+          images = read.images.map((im, i) => ({
+            dataBase64: im.dataBase64,
+            key: keys[i] ?? '',
+            originalIndex: i,
+          }));
           width = read.width || 16; height = read.height || 16;
           colorDepth = read.colorDepth || colorDepth; transparentColor = read.transparentColor || transparentColor;
         }
@@ -2937,6 +3374,8 @@ class DesignerSession {
 
       const edited = await this.manageImagesUi(id, images);
       if (!edited) return; // cancelled or unchanged
+      const oldKeys = images.map((image) => image.key);
+      const oldIndexForNew = edited.map((image) => image.originalIndex ?? -1);
 
       // serialize the full set (net48) → VS-format ImageStream blob (+ validated round-trip count).
       const ser = await serializeImageList(eng48, { images: edited, width, height, colorDepth, transparentColor });
@@ -2945,7 +3384,8 @@ class DesignerSession {
       // rewrite the designer + embed the blob (net9) — returns both new texts.
       const before = this.doc.designerText;
       const revBefore = this.doc.rev;
-      const set = await setImageList(eng9, this.designerFile, id, ser.base64, ser.keys, resxText, before);
+      const set = await setImageList(
+        eng9, this.designerFile, id, ser.base64, ser.keys, resxText, before, oldKeys, oldIndexForNew);
       if (!set.safe || set.designerText === null || set.resxText === null) { this.post({ type: 'status', message: t('status.importRejected', { reason: set.reason || 'unsafe' }) }); return; }
       if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
       // TOCTOU close + S3 fail-closed guards, identical to importImageFromGrid (the .resx write is irreversible).
@@ -2976,9 +3416,13 @@ class DesignerSession {
     }
   }
 
-  /** Native add/remove manage loop for the ImageList editor. Returns the new image set, or null if the user made no
-   * change / cancelled. Reorder + key-rename are follow-ups; add + remove cover the core (and are undoable as one edit). */
-  private async manageImagesUi(id: string, images: { dataBase64: string; key: string }[]): Promise<{ dataBase64: string; key: string }[] | null> {
+  /** Native ImageList manage loop. Every add/remove/reorder/key rename stays in memory until Done, then the caller
+   * serializes resources + reconciles references + commits one .Designer.cs/.resx undo transaction. originalIndex
+   * follows an image through moves/renames so ImageIndex/ImageKey users can keep their logical target. */
+  private async manageImagesUi(
+    id: string,
+    images: Array<{ dataBase64: string; key: string; originalIndex: number | null }>,
+  ): Promise<Array<{ dataBase64: string; key: string; originalIndex: number | null }> | null> {
     const cur = images.slice();
     let changed = false;
     for (; ;) {
@@ -2986,6 +3430,11 @@ class DesignerSession {
         { label: '$(add) ' + t('imageList.add'), action: 'add' },
       ];
       if (cur.length) menu.push({ label: '$(trash) ' + t('imageList.remove'), action: 'remove' });
+      if (cur.length) menu.push({ label: '$(edit) ' + t('imageList.rename'), action: 'rename' });
+      if (cur.length > 1) {
+        menu.push({ label: '$(arrow-up) ' + t('imageList.moveUp'), action: 'up' });
+        menu.push({ label: '$(arrow-down) ' + t('imageList.moveDown'), action: 'down' });
+      }
       menu.push({ label: '$(check) ' + t('imageList.done'), action: 'done' });
       const pick = await vscode.window.showQuickPick(menu, {
         title: t('imageList.title', { id }),
@@ -3002,7 +3451,7 @@ class DesignerSession {
             const bytes = await vscode.workspace.fs.readFile(f);
             if (bytes.byteLength > 16 * 1024 * 1024) continue; // per-image bound (engine also enforces)
             const key = uniqueImageKey(path.basename(f.fsPath).replace(/\.[^.]+$/, ''), cur);
-            cur.push({ dataBase64: Buffer.from(bytes).toString('base64'), key });
+            cur.push({ dataBase64: Buffer.from(bytes).toString('base64'), key, originalIndex: null });
             changed = true;
           } catch { /* skip an unreadable file */ }
         }
@@ -3014,6 +3463,45 @@ class DesignerSession {
         if (rmPicks && rmPicks.length) {
           const rm = new Set(rmPicks.map((r) => r.idx));
           for (let i = cur.length - 1; i >= 0; i--) if (rm.has(i)) cur.splice(i, 1);
+          changed = true;
+        }
+      } else if (pick.action === 'rename') {
+        const target = await vscode.window.showQuickPick(
+          cur.map((im, i) => ({ label: im.key || `#${i}`, description: `#${i}`, idx: i })),
+          { title: t('imageList.rename') },
+        );
+        if (!target) continue;
+        const next = await vscode.window.showInputBox({
+          title: t('imageList.renameTitle', { index: target.idx }),
+          value: cur[target.idx].key,
+          prompt: t('imageList.renamePrompt'),
+          validateInput: (value) => {
+            const key = value.trim();
+            if (!key) return t('imageList.keyRequired');
+            if (key.length > 256) return t('imageList.keyTooLong');
+            if (cur.some((image, index) => index !== target.idx && image.key === key))
+              return t('imageList.keyDuplicate');
+            return null;
+          },
+        });
+        if (next !== undefined) {
+          const key = next.trim();
+          if (key && key !== cur[target.idx].key) {
+            cur[target.idx] = { ...cur[target.idx], key };
+            changed = true;
+          }
+        }
+      } else if (pick.action === 'up' || pick.action === 'down') {
+        const delta = pick.action === 'up' ? -1 : 1;
+        const movable = cur
+          .map((im, i) => ({ label: im.key || `#${i}`, description: `#${i}`, idx: i }))
+          .filter((item) => item.idx + delta >= 0 && item.idx + delta < cur.length);
+        const target = await vscode.window.showQuickPick(movable, {
+          title: pick.action === 'up' ? t('imageList.moveUp') : t('imageList.moveDown'),
+        });
+        if (target) {
+          const other = target.idx + delta;
+          [cur[target.idx], cur[other]] = [cur[other], cur[target.idx]];
           changed = true;
         }
       }
@@ -4011,12 +4499,17 @@ class DesignerSession {
       }
     }
     const asm = this.asm();
+    const toolboxItem = [...(this.toolboxItems ?? []), ...DesignerHub.instance.chosenItems]
+      .find((item) => item.fqn === controlType || item.name === controlType);
+    const sourceAssembly = toolboxItem?.assemblyPath && fs.existsSync(toolboxItem.assemblyPath)
+      ? toolboxItem.assemblyPath : undefined;
     // The Roslyn text splice runs on net9. For a net48 form net9 can't load the vendor (DevExpress/net4x)
     // assembly, so instead of an asm-based enumeration we hand it the FQNs the net48 engine enumerated —
     // the pure-text splice emits `new <Fqn>()` and the net48 engine live-instantiates the control below.
-    const addAsm = this.engineKind === 'net48' ? undefined : asm;
+    const addAsm = this.engineKind === 'net48' ? undefined : (sourceAssembly ?? asm);
     const projectFqns = this.engineKind === 'net48'
-      ? (this.toolboxItems ?? []).filter((it) => it.fromProject).map((it) => it.fqn)
+      ? [...(this.toolboxItems ?? []), ...DesignerHub.instance.chosenItems]
+        .filter((it) => it.fromProject).map((it) => it.fqn)
       : undefined;
     const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm, projectFqns);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return; }
@@ -4029,7 +4522,8 @@ class DesignerSession {
     this.post({ type: 'status', message: t('status.added', { name: res.name }) });
     // A control from the chosen control-source assembly won't compile until the project references it — offer to add
     // one. net48-only skip: its project controls live in the form's OWN compiled assembly, so no <Reference> is needed.
-    if (this.engineKind !== 'net48') await this.maybeOfferProjectReference(controlType, asm);
+    if (this.engineKind !== 'net48' || (sourceAssembly && normalize(sourceAssembly) !== normalize(asm ?? '')))
+      await this.maybeOfferProjectReference(controlType, sourceAssembly ?? asm);
   }
 
   /**
@@ -4527,8 +5021,10 @@ class DesignerSession {
     } catch (err) {
       // S5: the full re-render of the current source FAILED → the form isn't renderable right now → read-only
       // (fail-closed; self-recovers when a later render — e.g. after Undo restores a renderable buffer — succeeds).
-      if (seq === this.renderSeq && !this.disposed) this.renderOk = false;
-      this.post({ type: 'status', message: t('status.renderFailed', { error: errMsg(err) }) });
+      if (seq === this.renderSeq && !this.disposed) {
+        const message = t('status.renderFailed', { error: errMsg(err) });
+        this.postRenderFailure(message, this.currentId || 'this', errMsg(err));
+      }
       return;
     }
     if (seq !== this.renderSeq || this.disposed) return;
@@ -4541,7 +5037,7 @@ class DesignerSession {
     this.pushSelect(this.currentId);
     // keep the partial-render banner in lockstep with this whole-frame re-render (a value edit rarely changes which
     // constructs are unrepresentable, but if it does — e.g. fixing/breaking a control — refresh rather than go stale).
-    this.post({ type: 'renderDiag', items: categorizeUnrepresentable(frame.unrepresentable) });
+    this.postRenderDiagnostics(categorizeUnrepresentable(frame.unrepresentable));
   }
 }
 
@@ -4677,8 +5173,8 @@ function cspMeta(webview: vscode.Webview, nonce: string): string {
 
 /**
 * The big "Choose Toolbox Items" window (a separate editor-area webview panel): VS-style tabs (.NET / COM /
-* WPF), a Name/Namespace/Assembly table, a filter, a details strip, and OK/Cancel/Reset. The real DLL
-* scan/cache/load is a later increment; the host seeds the .NET tab with the already-discovered controls.
+* WPF), a Name/Namespace/Assembly table, a filter, a details strip, and OK/Cancel/Reset. Its .NET rows come from the
+* complete cached discovery pipeline; COM/WPF remain explicit non-.NET tabs rather than pretending to be supported.
 */
 function chooseItemsHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = randomBytes(16).toString('hex');
@@ -4791,8 +5287,12 @@ ${cspMeta(webview, nonce)}
   #diagDismiss:hover { opacity: 1; }
   #diagList { margin: 0; padding: 0 8px 6px 8px; list-style: none; }
   #diagList li { padding: 2px 0 2px 18px; text-indent: -18px; white-space: pre-wrap; word-break: break-word; }
+  #diagList li .diagTarget { display: inline-block; margin-right: 8px; padding: 0 4px; text-indent: 0;
+    border: 1px solid currentColor; border-radius: 2px; opacity: .9; font-family: var(--vscode-editor-font-family, monospace); }
   #diagList li .diagCat { margin-right: 6px; opacity: .9; font-weight: 600; }
   #diagList li .diagDetail { opacity: .8; }
+  #diagActions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 7px 8px; }
+  #diagActions button { padding: 2px 7px; }
   #surfaceWrap { position: relative; box-shadow: 0 4px 24px rgba(0,0,0,.5); }
   #surface { display: block; image-rendering: pixelated; }
   #sel { position: absolute; border: 1px solid #4ea1ff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; display: none; }
@@ -4939,7 +5439,16 @@ ${cspMeta(webview, nonce)}
 </style></head>
 <body>
   <div id="formNotice" style="display:none"><span id="formNoticeIcon">🔒</span><span id="formNoticeMsg"></span></div>
-  <div id="diag" style="display:none"><div id="diagHead"><span id="diagIcon">⚠</span><span id="diagMsg"></span><span id="diagToggle"></span><span id="diagSpacer"></span><button id="diagDismiss" title="${t('designer.diag.dismiss')}">×</button></div><ul id="diagList" style="display:none"></ul></div>
+  <div id="diag" style="display:none">
+    <div id="diagHead"><span id="diagIcon">⚠</span><span id="diagMsg"></span><span id="diagToggle"></span><span id="diagSpacer"></span><button id="diagDismiss" title="${t('designer.diag.dismiss')}">×</button></div>
+    <ul id="diagList" style="display:none"></ul>
+    <div id="diagActions">
+      <button id="diagRetry">${t('designer.diag.retry')}</button>
+      <button id="diagRebuild">${t('designer.diag.rebuild')}</button>
+      <button id="diagChooseAssembly">${t('designer.diag.chooseAssembly')}</button>
+      <button id="diagCopy">${t('designer.diag.copy')}</button>
+    </div>
+  </div>
   <div id="stage"><div id="overlay">${t('designer.overlay.loading')}<noscript>${t('designer.overlay.noscript')}</noscript></div><div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="sel"></div></div></div>
   <div id="tray" style="display:none"></div>
   <div id="status"></div>

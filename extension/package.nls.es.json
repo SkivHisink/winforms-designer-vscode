@@ -16,6 +16,8 @@
   "config.language.description": "Idioma de la interfaz de usuario del diseñador de WinForms — la superficie de diseño, la cuadrícula de propiedades, el cuadro de herramientas, los cuadros de diálogo y los mensajes. Se elige **aquí**, en la configuración de la extensión; **no** sigue automáticamente el idioma de visualización de VS Code. Predeterminado: **English**.\n\n- Cambiar esto surte pleno efecto tras **Volver a cargar la ventana** (se le pedirá que lo haga).\n- Nota: los títulos de la **paleta de comandos** de VS Code (p. ej. *WinForms: Abrir el diseñador*) y esta propia página de configuración siguen el *Idioma de visualización* propio de VS Code, no esta configuración — una limitación de la plataforma.",
   "command.editImageListImages.title": "WinForms: Editar imágenes de ImageList…",
   "command.releaseAssembly.title": "WinForms: Liberar el ensamblado de .NET Framework (para recompilar)",
+  "command.runBuildTask.title": "WinForms: Ejecutar tarea de compilación (liberar antes la vista previa)",
+  "command.runTestTask.title": "WinForms: Ejecutar tarea de pruebas (liberar antes la vista previa)",
   "command.stopEngines.title": "WinForms: Detener el motor de vista previa del diseñador",
   "command.restartEngines.title": "WinForms: Reiniciar el motor de vista previa del diseñador"
 }

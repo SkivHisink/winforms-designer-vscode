@@ -7,6 +7,7 @@ import { WinFormsDesignerProvider, DesignerPanelViewProvider, DesignerHub, hasDe
 import { resolveFrameworkOutput } from './csprojRef';
 import { setLocale, t } from './i18n';
 import { EngineRecoveryPolicy } from './engineRecovery';
+import { isBuildOrTestTask, taskCoordinationKey } from './taskCoordination';
 
 // Two engine processes, started lazily and keyed by kind: 'modern' (the default WinForms/Roslyn engine) and
 // 'net48' (the .NET Framework compiled-render engine for DevExpress/Framework projects). A form routes to one
@@ -26,6 +27,8 @@ interface EngineHealth {
   lastExit?: string;
 }
 const engineHealth = new Map<EngineKind, EngineHealth>();
+const coordinatedTasks = new Map<vscode.TaskExecution, Promise<boolean>>();
+const preReleasedTaskKeys = new Map<string, number>();
 let shuttingDown = false;
 let output: vscode.OutputChannel;
 
@@ -108,7 +111,7 @@ export function activate(context: vscode.ExtensionContext): void {
   setLocale();
 
   // Persist the user's "Choose Items" toolbox additions across sessions (global, like VS toolbox customization).
-  DesignerHub.instance.initState(context.globalState);
+  DesignerHub.instance.initState(context.globalState, context.workspaceState);
 
   // 1.0.0 — teach the hub how to hand a .NET Framework build output back, so the LAST designer using one releases
   // it on close (the engine holds the user's dlls open until then; see releaseNet48Output). The engines live here,
@@ -196,6 +199,14 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('winformsDesigner.releaseAssembly', () => releaseFrameworkAssemblies()),
   );
 
+  // Coordinated Build/Test commands provide a hard pre-start barrier: choose the existing VS Code task first, await
+  // the net48 AppDomain release, then execute it. Ctrl+Shift+B is routed here while a designer is active; tasks started
+  // elsewhere still use the earliest onDidStartTask best-effort hook registered below.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.runBuildTask', () => runCoordinatedTask('build')),
+    vscode.commands.registerCommand('winformsDesigner.runTestTask', () => runCoordinatedTask('test')),
+  );
+
   // 1.0.1 "Stop the Designer Preview Engine": an explicit off switch for the resident engine process(es). They start
   // lazily and otherwise live until the window closes; this lets the user shut them down when they're done. Always in
   // the palette (no `when`) — it's needed precisely when no designer is focused. See stopPreviewEngines.
@@ -245,6 +256,45 @@ export function activate(context: vscode.ExtensionContext): void {
           if (s?.isCompiledPreview) void s.rerenderFromDoc();
         });
       }
+    }),
+  );
+
+  // 1.1.0 — VS Code build/test coordination. onDidStartTask catches tasks launched by any extension/UI and immediately
+  // makes every net48 canvas view-only while unloading its compiled domains. The contributed Build/Test commands add a
+  // hard pre-start barrier; this lifecycle fallback cannot delay a task started by an unrelated command.
+  // When the task ends, wait for that release barrier, invalidate the stale fallback by virtue of the unload, and
+  // re-render every open net48 form from the new output. Manual Release/Stop/Restart remain recovery controls.
+  context.subscriptions.push(
+    vscode.tasks.onDidStartTask((event) => {
+      const task = event.execution.task;
+      if (!isBuildOrTestTask({
+        groupId: task.group?.id,
+        name: task.name,
+        definitionType: typeof task.definition?.type === 'string' ? task.definition.type : undefined,
+      })) return;
+      if (DesignerHub.instance.net48OutputsInUse().length === 0) return;
+      const key = taskCoordinationKey({
+        groupId: task.group?.id,
+        name: task.name,
+        definitionType: typeof task.definition?.type === 'string' ? task.definition.type : undefined,
+        source: task.source,
+      });
+      const preReleased = preReleasedTaskKeys.get(key) ?? 0;
+      if (preReleased > 0) {
+        if (preReleased === 1) preReleasedTaskKeys.delete(key);
+        else preReleasedTaskKeys.set(key, preReleased - 1);
+        coordinatedTasks.set(event.execution, Promise.resolve(true));
+        return;
+      }
+      DesignerHub.instance.beginNet48Task(task.name);
+      const release = releaseNet48ForTask(task.name);
+      coordinatedTasks.set(event.execution, release);
+    }),
+    vscode.tasks.onDidEndTask((event) => {
+      const release = coordinatedTasks.get(event.execution);
+      if (!release) return;
+      coordinatedTasks.delete(event.execution);
+      void release.finally(() => DesignerHub.instance.endNet48Task());
     }),
   );
 
@@ -709,6 +759,85 @@ async function autoReleaseNet48OnBlur(): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+/** Build/test-task release path. It shares the same bounded unload/recycle guarantees as the manual command but is
+ * silent UI-wise: the canvas itself explains that its last-good frame is view-only while the task owns the output. */
+async function releaseNet48ForTask(taskName: string): Promise<boolean> {
+  const eng = engines.get('net48');
+  if (!eng || shuttingDown || eng.process.exitCode != null || eng.process.signalCode != null) return false;
+  try {
+    const result = await Promise.race([
+      releaseAllCompiledAssemblies(eng),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('release RPC timed out')), 5000)),
+    ]);
+    if (result.failed > 0) {
+      output.appendLine(`[release:task] ${taskName}: ${result.failed}/${result.attempted} domains would not unload; recycling engine`);
+      return recycleNet48Engine(eng);
+    }
+    output.appendLine(`[release:task] ${taskName}: released ${result.released} net48 output(s) for the task`);
+    return true;
+  } catch (err) {
+    output.appendLine(`[release:task] ${taskName}: release failed/timed out; recycling engine: ${String(err)}`);
+    return recycleNet48Engine(eng);
+  }
+}
+
+async function runCoordinatedTask(group: 'build' | 'test'): Promise<void> {
+  const tasks = (await vscode.tasks.fetchTasks()).filter((task) => {
+    const id = task.group?.id?.toLowerCase();
+    if (id === group) return true;
+    // Some C# extensions omit Task.group. Keep the fallback narrow to the requested group.
+    const name = task.name.toLowerCase();
+    return group === 'build' ? /\b(build|rebuild)\b/.test(name) : /\btest\b/.test(name);
+  });
+  if (!tasks.length) {
+    void vscode.window.showInformationMessage(t('host.task.none', { group }));
+    return;
+  }
+  let task = tasks[0];
+  if (tasks.length > 1) {
+    const pick = await vscode.window.showQuickPick(
+      tasks.map((candidate) => ({
+        label: candidate.name,
+        description: candidate.source,
+        detail: candidate.scope === vscode.TaskScope.Global ? t('host.task.scope.global')
+          : candidate.scope === vscode.TaskScope.Workspace ? t('host.task.scope.workspace') : '',
+        task: candidate,
+      })),
+      { title: group === 'build' ? t('host.task.pickBuild') : t('host.task.pickTest') },
+    );
+    if (!pick) return;
+    task = pick.task;
+  }
+
+  const hasNet48 = DesignerHub.instance.net48OutputsInUse().length > 0;
+  const key = taskCoordinationKey({
+    groupId: task.group?.id,
+    name: task.name,
+    definitionType: typeof task.definition?.type === 'string' ? task.definition.type : undefined,
+    source: task.source,
+  });
+  if (hasNet48) {
+    DesignerHub.instance.beginNet48Task(task.name);
+    await releaseNet48ForTask(task.name); // hard barrier: executeTask is not called until every domain is free/recycled
+    preReleasedTaskKeys.set(key, (preReleasedTaskKeys.get(key) ?? 0) + 1);
+  }
+  try {
+    await vscode.tasks.executeTask(task);
+  } catch (err) {
+    if (hasNet48) {
+      const pending = preReleasedTaskKeys.get(key) ?? 0;
+      // If the lifecycle event consumed the reservation, it owns the matching endTask transition. Otherwise execute
+      // failed before start and this command must unwind the view-only task depth itself.
+      if (pending > 0) {
+        if (pending === 1) preReleasedTaskKeys.delete(key);
+        else preReleasedTaskKeys.set(key, pending - 1);
+        await DesignerHub.instance.endNet48Task();
+      }
+    }
+    void vscode.window.showErrorMessage(t('host.task.startFailed', { error: String(err) }));
+  }
 }
 
 /**

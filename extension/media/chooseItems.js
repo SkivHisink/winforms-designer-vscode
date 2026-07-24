@@ -106,7 +106,10 @@
     // send EVERY shown row + its checkbox state so the host can diff against the current toolbox (add/remove/hide)
     var rows = items.map(function (it) {
       var f = fqnOf(it);
-      return { fqn: f, name: it.name, namespace: it.namespace, assemblyName: it.assemblyName, fromProject: it.fromProject, checked: !!selected[f] };
+      return {
+        fqn: f, name: it.name, namespace: it.namespace, assemblyName: it.assemblyName,
+        assemblyPath: it.assemblyPath, fromProject: it.fromProject, checked: !!selected[f]
+      };
     });
     vscode.postMessage({ type: 'applyChooseItems', tab: targetTab, rows: rows });
   });

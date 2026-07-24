@@ -18,14 +18,20 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageReference Include="xunit" Version="2.9.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <!-- The Roslyn front-end parses source; same version the net48 engine uses. netstandard2.0 -> net48 OK. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\fixtures\FakeVendor\FakeVendor.csproj" />
+    <Compile Include="..\..\engine-net48\Dtos.cs" Link="ToolboxScan\Dtos.cs" />
+    <Compile Include="..\..\engine-net48\ToolboxAssemblyScanner.cs" Link="ToolboxScan\ToolboxAssemblyScanner.cs" />
   </ItemGroup>
 
   <!-- The SAME shared sources the engines compile-link — proving they build and behave identically on net48. -->

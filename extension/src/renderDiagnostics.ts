@@ -21,6 +21,8 @@ export type DiagCategory = 'missingType' | 'initError' | 'unsupported';
 export interface RenderDiagItem {
   /** Coarse bucket used for the banner's grouping + icon. */
   category: DiagCategory;
+  /** Best-effort affected designer target, normally `this.<field>`; `statement` when no field can be isolated. */
+  target: string;
   /** The offending construct (the C# statement / reason), trimmed and stripped of the trailing "[Ex: ...]" jacket. */
   text: string;
   /** Human detail: the unresolved type name, or the exception message. Empty when there is nothing to add. */
@@ -74,18 +76,28 @@ export function categorizeUnrepresentable(unrepresentable: readonly string[] | u
       else { category = 'unsupported'; detail = ''; }
     }
 
-    const key = itemKey({ category, text, detail });
+    const target = affectedTarget(text);
+    const key = itemKey({ category, target, text, detail });
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ category, text, detail });
+    out.push({ category, target, text, detail });
   }
   return out;
+}
+
+/** Resolve the control/component named by an InitializeComponent statement without pretending that every raw
+ * diagnostic has one. Structural/reflection messages fall back to the statement itself and remain visible in text. */
+function affectedTarget(text: string): string {
+  const field = /\bthis\.([A-Za-z_][A-Za-z0-9_]*)\b/.exec(text);
+  if (field) return `this.${field[1]}`;
+  if (/\bInitializeComponent\b/.test(text)) return 'InitializeComponent';
+  return 'statement';
 }
 
 /** Collision-free per-item key: JSON-encodes the three fields so field boundaries are unambiguous (a plain
  *  space-joined key would let "a b"+"c" collide with "a"+"b c") — no control chars, plain ASCII. */
 function itemKey(i: RenderDiagItem): string {
-  return JSON.stringify([i.category, i.text, i.detail]);
+  return JSON.stringify([i.category, i.target, i.text, i.detail]);
 }
 
 /**

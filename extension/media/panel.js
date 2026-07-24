@@ -47,7 +47,10 @@
   var mainTabProps = document.getElementById('mainTabProps');
   var mainTabToolbox = document.getElementById('mainTabToolbox');
   var mainTabOutline = document.getElementById('mainTabOutline');
-  function showMainTab(which) {
+  var activeMainTab = 'props';
+  function showMainTab(which, persist) {
+    activeMainTab = (which === 'outline' || which === 'toolbox') ? which : 'props';
+    which = activeMainTab;
     propsPane.style.display = which === 'props' ? '' : 'none';
     outlinePane.style.display = which === 'outline' ? '' : 'none';
     toolboxPane.style.display = which === 'toolbox' ? '' : 'none';
@@ -55,6 +58,7 @@
     mainTabOutline.className = which === 'outline' ? 'active' : '';
     mainTabToolbox.className = which === 'toolbox' ? 'active' : '';
     if (which === 'outline') renderOutline();
+    if (persist !== false) savePanelViewState();
   }
   mainTabProps.addEventListener('click', function () { showMainTab('props'); });
   mainTabOutline.addEventListener('click', function () { showMainTab('outline'); });
@@ -78,7 +82,8 @@
   // shown as visible "coming soon" sections, mirroring VS's category list (Codex Q2 = increment B).
   var DEFERRED_TABS = ['WPF Interoperability'];
 
-  // Persisted toolbox UI state (survives reloads via vscode.setState). customTabs: [{name, items:[fqn]}].
+  // Persisted toolbox UI state. vscode.setState is a fast in-webview fallback; every change is also reported to
+  // the extension host, which stores custom tabs globally and category expansion per form across editor/window reloads.
   var tbState = loadTbState();
   function loadTbState() {
     var s = (vscode.getState && vscode.getState()) || {};
@@ -94,8 +99,31 @@
     return st;
   }
   function saveTbState() {
-    if (!vscode.setState || !vscode.getState) return;
-    var s = vscode.getState() || {}; s.toolbox = tbState; vscode.setState(s);
+    if (vscode.setState && vscode.getState) {
+      var s = vscode.getState() || {}; s.toolbox = tbState; vscode.setState(s);
+    }
+    savePanelViewState();
+  }
+  function collapsedIds(map) {
+    var out = [];
+    for (var key in map) if (Object.prototype.hasOwnProperty.call(map, key) && map[key]) out.push(key);
+    return out;
+  }
+  function savePanelViewState() {
+    vscode.postMessage({
+      type: 'panelViewStateChanged',
+      state: {
+        activeTab: activeMainTab,
+        toolboxCollapsed: tbState.collapsed || {},
+        outlineCollapsed: collapsedIds(outlineCollapsed || {})
+      },
+      toolboxUi: {
+        customTabs: tbState.customTabs || [],
+        listView: tbState.listView !== false,
+        sortAlpha: !!tbState.sortAlpha,
+        showAll: !!tbState.showAll
+      }
+    });
   }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'; }); }
   function findCustom(name) { for (var i = 0; i < tbState.customTabs.length; i++) { if (tbState.customTabs[i].name === name) return tbState.customTabs[i]; } return null; }
@@ -519,7 +547,12 @@
       var tw = document.createElement('span'); tw.className = 'tw';
       if (children.length) {
         tw.textContent = (outlineCollapsed[c.id] ? '▸ ' : '▾ ');
-        tw.addEventListener('click', function (ev) { ev.stopPropagation(); outlineCollapsed[c.id] = !outlineCollapsed[c.id]; renderOutline(); });
+        tw.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          outlineCollapsed[c.id] = !outlineCollapsed[c.id];
+          savePanelViewState();
+          renderOutline();
+        });
       } else { tw.textContent = '   '; }
       node.appendChild(tw);
       var label = document.createElement('span');
@@ -1887,7 +1920,20 @@
 
   window.addEventListener('message', function (e) {
     var m = e.data;
-    if (m.type === 'toolbox') {
+    if (m.type === 'panelViewState') {
+      var ps = m.state || {};
+      var ui = m.toolboxUi || {};
+      if (ps.toolboxCollapsed && typeof ps.toolboxCollapsed === 'object') tbState.collapsed = ps.toolboxCollapsed;
+      if (Array.isArray(ui.customTabs)) tbState.customTabs = ui.customTabs;
+      if (typeof ui.listView === 'boolean') tbState.listView = ui.listView;
+      if (typeof ui.sortAlpha === 'boolean') tbState.sortAlpha = ui.sortAlpha;
+      if (typeof ui.showAll === 'boolean') tbState.showAll = ui.showAll;
+      outlineCollapsed = {};
+      (ps.outlineCollapsed || []).forEach(function (id) { if (typeof id === 'string' && id) outlineCollapsed[id] = true; });
+      showMainTab(ps.activeTab || 'props', false);
+      renderToolbox();
+      renderOutline();
+    } else if (m.type === 'toolbox') {
       toolboxItems = m.items || []; renderToolbox();
     } else if (m.type === 'palette') {
       applyPalette(m.palette);
@@ -1987,6 +2033,6 @@
   // Deterministic initial state: show ONLY the Properties pane. The panes are position:absolute/inset:0 and
   // stack on top of each other; without this explicit call the first paint could show more than one pane's
   // text overlapping until the user clicked a tab. (Bug fix: "каша" on init.)
-  showMainTab('props');
+  showMainTab('props', false);
   vscode.postMessage({ type: 'ready' });
 })();

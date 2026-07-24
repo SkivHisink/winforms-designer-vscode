@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
+import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
@@ -228,12 +228,16 @@ function verifyCsprojHelpers(repo: string): void {
     if (items.length !== 3) throw new Error('T2.2 categorize: expected 3 items (blank ignored, dup collapsed), got ' + items.length + ' → ' + JSON.stringify(items));
     const missing = items.find((i) => i.category === 'missingType');
     if (!missing || missing.detail !== 'decimal') throw new Error('T2.2 categorize: unresolved-type-in-jacket must be missingType detail=decimal, got ' + JSON.stringify(missing));
+    if (missing.target !== 'this.numericUpDown1') throw new Error('1.1.0 categorize: missing-type statement must name its affected control target, got ' + JSON.stringify(missing));
     // the statement legitimately contains '[' (new int[]); assert only the trailing "[…Exception: …]" jacket is gone
     if (/InvalidOperationException|unresolved type/.test(missing!.text)) throw new Error('T2.2 categorize: missingType text must be stripped of the exception jacket, got: ' + missing!.text);
     const init = items.find((i) => i.category === 'initError');
     if (!init || init.detail !== 'license check failed') throw new Error('T2.2 categorize: exception-without-unresolved-type must be initError detail=message, got ' + JSON.stringify(init));
     const unsupported = items.find((i) => i.category === 'unsupported');
     if (!unsupported || unsupported.detail !== '' || !/BeginInit/.test(unsupported.text)) throw new Error('T2.2 categorize: bare refused statement must be unsupported (no detail), got ' + JSON.stringify(unsupported));
+    if (unsupported.target !== 'this.button1') throw new Error('1.1.0 categorize: refused BeginInit statement must name its affected target, got ' + JSON.stringify(unsupported));
+    const structural = categorizeUnrepresentable(['InitializeComponent not found']);
+    if (structural[0]?.target !== 'InitializeComponent') throw new Error('1.1.0 categorize: structural failure must identify InitializeComponent, got ' + JSON.stringify(structural));
     if (categorizeUnrepresentable([]).length !== 0 || categorizeUnrepresentable(undefined).length !== 0) throw new Error('T2.2 categorize: empty/undefined must yield []');
     // signature: order-independent + stable, and sensitive to the actual set (drives the dismiss latch)
     const sigA = diagnosticsSignature(items);
@@ -969,6 +973,22 @@ async function main(): Promise<void> {
       }
       if (gaugeItem.fqn !== 'CustomControls.GaugeControl') throw new Error('GaugeControl fqn wrong: ' + gaugeItem.fqn);
       if (!tbProj.some((t) => t.name === 'Button' && !t.fromProject)) throw new Error('framework controls must still be present alongside project controls');
+      // 1.1 Choose Items: browsing a library finds a previously-missing project control without instantiating it,
+      // returns the exact source assembly for AddControl/<Reference>, then releases the collectible scan context.
+      const scanDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-choose-items-'));
+      const scannedDll = path.join(scanDir, 'CustomControls.dll');
+      try {
+        fs.copyFileSync(customDll, scannedDll);
+        const scan = await scanToolboxAssembly(engine, scannedDll, [path.dirname(customDll)]);
+        const scannedGauge = scan.items.find((item) => item.namespace === 'CustomControls' && item.name === 'GaugeControl');
+        if (!scannedGauge || path.resolve(scannedGauge.assemblyPath || '') !== path.resolve(scannedDll)) {
+          throw new Error('Choose Items scan did not discover GaugeControl with its exact assembly path: ' + JSON.stringify(scan));
+        }
+        fs.unlinkSync(scannedDll); // collectible scan ALC must not pin a browsed/project output
+        if (fs.existsSync(scannedDll)) throw new Error('Choose Items scan kept the browsed assembly pinned');
+      } finally {
+        try { fs.rmSync(scanDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
       // a project control adds via its fqn (validated against the enumerated set), framework path unaffected
       const addGauge = await addControl(engine, customForm, 'this', 'CustomControls.GaugeControl', fs.readFileSync(customForm, 'utf8'), undefined, undefined, customDll);
       if (!addGauge.safe || addGauge.newText === null) throw new Error('AddControl(GaugeControl) rejected: ' + addGauge.reason);
@@ -985,7 +1005,7 @@ async function main(): Promise<void> {
       let threw = false;
       try { await serializeDesigner(engine, customForm, customDll + '.nonexistent'); } catch { threw = true; }
       if (!threw) throw new Error('a non-existent explicit asm path should be rejected, not silently auto-resolved');
-      console.log(`e2e: explicit-asm override verified — serialize safe with override (unsafe auto), cpuGauge.Value=85 (null auto), render differs (${autoPng.length}→${explicitPng.length} bytes), missing-path rejected`);
+      console.log(`e2e: explicit-asm + Choose Items verified — serialize safe with override (unsafe auto), browse scan finds GaugeControl with exact assembly path and releases the DLL, cpuGauge.Value=85 (null auto), render differs (${autoPng.length}→${explicitPng.length} bytes), missing-path rejected`);
     } else {
       console.log('e2e: explicit-asm override SKIPPED — build samples/CustomControls (Release) to exercise it');
     }
@@ -1660,6 +1680,22 @@ async function main(): Promise<void> {
             if (built.status !== 0 && process.env.WFD_REQUIRE_NET48 === '1') throw new Error('FakeVendor fixture failed to build: ' + ((built.stderr || built.stdout || '').trim().split('\n').slice(-3).join(' | ')));
           }
           if (fs.existsSync(fakeVendorDll)) {
+            // 1.1 Choose Items: exercise the real net48 RPC scanner as well as its compile-linked unit seam.
+            // The short-lived AppDomain must return the exact browsed path and release the DLL immediately.
+            const scanDir48 = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-choose-items-net48-'));
+            const scannedDll48 = path.join(scanDir48, 'FakeVendor.dll');
+            try {
+              fs.copyFileSync(fakeVendorDll, scannedDll48);
+              const scan48 = await scanToolboxAssembly(n48, scannedDll48, [path.dirname(fakeVendorDll)]);
+              const scannedFancy = scan48.items.find((item) => item.namespace === 'FakeVendor' && item.name === 'FancyButton');
+              if (!scannedFancy || path.resolve(scannedFancy.assemblyPath || '') !== path.resolve(scannedDll48)) {
+                throw new Error('net48 Choose Items scan did not discover FancyButton with its exact assembly path: ' + JSON.stringify(scan48));
+              }
+              fs.unlinkSync(scannedDll48);
+              if (fs.existsSync(scannedDll48)) throw new Error('net48 Choose Items scan kept the browsed assembly pinned');
+            } finally {
+              try { fs.rmSync(scanDir48, { recursive: true, force: true }); } catch { /* ignore */ }
+            }
             const fvSrc = fs.readFileSync(fakeVendorSrc, 'utf8');
             const fvType = 'FakeVendor.FakeVendorForm';
             const fvI = await renderInterpretedWithLayout(n48, fakeVendorSrc, fakeVendorDll, fvSrc, fvType);

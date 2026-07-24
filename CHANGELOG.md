@@ -4,9 +4,51 @@ All notable changes to **WinForms Designer for VS Code** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-From **1.0** the core designer loop is stable and follows semantic versioning; the .NET Framework 4.8 compiled preview (for `net4x` / DevExpress) remains **experimental**.
+From **1.0** the core designer loop is stable and follows semantic versioning; the .NET Framework 4.8 engine
+(for `net4x` / DevExpress) remains **experimental**.
 
 ## [Unreleased]
+
+## [1.1.0] — 2026-07-24
+
+**Daily workflow and project integration.** This release closes the first post-1.0 workflow milestone: designer
+workspace state survives a reopen, Choose Toolbox Items can find controls outside the already-built project, the
+ImageList editor safely reorganizes existing images, net48 build/test tasks no longer require a manual release step,
+and a degraded render provides an actionable recovery path instead of only reporting that it failed.
+
+### Added
+
+- **Complete Choose Toolbox Items discovery.** The modern and net48 engines scan project outputs, configured probe
+  directories, explicitly browsed DLLs, and registered .NET assemblies without instantiating candidate controls.
+  Modern scans use a collectible `AssemblyLoadContext`; net48 scans use a short-lived `AppDomain`. Both return the
+  exact source assembly path used by Add Control and the optional `<Reference>` flow, cache bounded scan results, and
+  release browsed files before the scan RPC completes. Chosen items and custom toolbox tabs persist across reloads.
+- **Per-form workspace persistence.** Zoom, **Lock Controls**, the active designer tab, collapsed toolbox categories,
+  outline state, custom tabs, and chosen toolbox items are restored when a form or VS Code is reopened. The bounded
+  workspace state lives in VS Code storage and never touches `.Designer.cs` or `.resx`.
+- **Complete ImageList organization.** Existing images can be reordered and their keys renamed in addition to
+  add/remove. Every attached literal `ImageIndex` / `ImageKey` is reconciled by image identity; removed images clear
+  their assignment, duplicate-key ambiguity fails closed, and the `.Designer.cs` + `.resx` update remains one atomic,
+  conflict-checked undo transaction with immediate modern/net48 preview refresh.
+- **Coordinated build and test commands.** **WinForms: Run Build Task** and **Run Test Task** release net48 compiled
+  instances before the task, make the designer temporarily view-only, invalidate stale fallback state, and re-render
+  every affected form after completion. `Ctrl+Shift+B` uses the hard-barrier build path while a designer is active;
+  ordinary VS Code build/test lifecycle events receive the same best-effort release/re-render coordination. Manual
+  Stop, Restart, and Release commands remain available for recovery.
+- **Actionable degraded-render diagnostics.** Diagnostics identify the affected control or statement and show the
+  cause. A failed refresh keeps the last known-good canvas visible but view-only, with direct **Retry**, **Rebuild**,
+  **Choose Control Assembly**, and **Copy Diagnostics** actions. A net48 compiled fallback is reported explicitly
+  with its reason instead of appearing to be a fully live-source render.
+
+### Fixed
+
+- A collectible modern toolbox scan called `Unload()` but returned before collection completed, so Windows could
+  still reject a rebuild or replacement of the browsed DLL. Assembly/type references are now isolated in a no-inline
+  scan frame and the collectible context is finalized before the RPC returns. The net48 scanner similarly avoids
+  shadow-copy APIs that could fail or keep the scan path pinned.
+- Build/test task lifecycle events are correlated by a stable task key rather than JavaScript object identity, so a
+  task reported through different VS Code event objects cannot double-release or leave the designer permanently
+  view-only.
 
 ## [1.0.2] — 2026-07-21
 
@@ -1016,7 +1058,10 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.2...v1.1.0
+[1.0.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.12.0...v1.0.0
 [0.12.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v0.10.0...v0.11.0

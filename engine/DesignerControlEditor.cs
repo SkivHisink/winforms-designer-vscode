@@ -97,6 +97,7 @@ namespace WinFormsDesigner.Engine
         public string Version { get; init; } = "";
         public string Directory { get; init; } = "";
         public bool FromProject { get; init; }
+        public string AssemblyPath { get; init; } = "";
     }
 
     /// <summary>The outcome of scanning ONE assembly for the Choose-Items dialog (the Browse… path): the
@@ -395,8 +396,13 @@ namespace WinFormsDesigner.Engine
         public static ToolboxCandidate MakeCandidate(Type t, bool fromProject)
         {
             var an = t.Assembly.GetName();
+            string location = "";
             string dir = "";
-            try { dir = string.IsNullOrEmpty(t.Assembly.Location) ? "" : (System.IO.Path.GetDirectoryName(t.Assembly.Location) ?? ""); }
+            try
+            {
+                location = t.Assembly.Location ?? "";
+                dir = string.IsNullOrEmpty(location) ? "" : (System.IO.Path.GetDirectoryName(location) ?? "");
+            }
             catch { /* dynamic / no location */ }
             return new ToolboxCandidate
             {
@@ -406,6 +412,7 @@ namespace WinFormsDesigner.Engine
                 Version = an.Version?.ToString() ?? "",
                 Directory = dir,
                 FromProject = fromProject,
+                AssemblyPath = location,
             };
         }
 

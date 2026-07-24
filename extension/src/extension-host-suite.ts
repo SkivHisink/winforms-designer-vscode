@@ -29,6 +29,8 @@ export async function run(): Promise<void> {
     'winformsDesigner.selectControlAssembly',
     'winformsDesigner.editImageListImages',
     'winformsDesigner.releaseAssembly',
+    'winformsDesigner.runBuildTask',
+    'winformsDesigner.runTestTask',
     'winformsDesigner.stopEngines',
     'winformsDesigner.restartEngines',
   ]) {

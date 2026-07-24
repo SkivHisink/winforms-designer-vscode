@@ -16,6 +16,8 @@
   "config.language.description": "Sprache der Benutzeroberfläche des WinForms-Designers — die Designeroberfläche, das Eigenschaftenraster, die Toolbox, Dialogfelder und Meldungen. Diese wird **hier**, in den Erweiterungseinstellungen, gewählt; sie folgt **nicht** automatisch der Anzeigesprache von VS Code. Standard: **Englisch**.\n\n- Eine Änderung wird nach **Fenster neu laden** vollständig wirksam (Sie werden dazu aufgefordert).\n- Hinweis: Die Titel der VS Code-**Befehlspalette** (z. B. *WinForms: Designer öffnen*) und diese Einstellungsseite selbst folgen der eigenen *Anzeigesprache* von VS Code, nicht dieser Einstellung — eine Plattformeinschränkung.",
   "command.editImageListImages.title": "WinForms: ImageList-Bilder bearbeiten…",
   "command.releaseAssembly.title": "WinForms: .NET Framework-Assembly freigeben (für einen Rebuild)",
+  "command.runBuildTask.title": "WinForms: Build-Task ausführen (Vorschau zuerst freigeben)",
+  "command.runTestTask.title": "WinForms: Test-Task ausführen (Vorschau zuerst freigeben)",
   "command.stopEngines.title": "WinForms: Designer-Vorschau-Engine stoppen",
   "command.restartEngines.title": "WinForms: Designer-Vorschau-Engine neu starten"
 }

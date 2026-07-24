@@ -55,6 +55,10 @@
   var diagToggleEl = document.getElementById('diagToggle');
   var diagListEl = document.getElementById('diagList');
   var diagDismissEl = document.getElementById('diagDismiss');
+  var diagRetryEl = document.getElementById('diagRetry');
+  var diagRebuildEl = document.getElementById('diagRebuild');
+  var diagChooseAssemblyEl = document.getElementById('diagChooseAssembly');
+  var diagCopyEl = document.getElementById('diagCopy');
   var diagSig = '';             // signature of what's currently shown
   var diagDismissedSig = null;  // signature the user dismissed (stay hidden while the next set matches it)
   var diagExpanded = false;
@@ -63,7 +67,7 @@
   function diagSignature(mode, msg, items) {
     // JSON-encode fields so field boundaries are unambiguous — a space/'|'/'\n'-joined key would let two different
     // problem sets collide ("a b"+"c" == "a"+"b c") and wrongly keep a banner dismissed for a DIFFERENT set.
-    var parts = items.map(function (i) { return JSON.stringify([i.category, i.text, i.detail]); });
+    var parts = items.map(function (i) { return JSON.stringify([i.category, i.target, i.text, i.detail]); });
     parts.sort();
     return JSON.stringify([mode, msg, parts]);
   }
@@ -74,6 +78,10 @@
     for (var i = 0; i < n; i++) {
       var it = items[i];
       var li = document.createElement('li');
+      var target = document.createElement('span'); target.className = 'diagTarget';
+      target.title = it.target || 'statement';
+      target.textContent = T('designer.diag.target', { target: it.target || 'statement' });
+      li.appendChild(target);
       var cat = document.createElement('span'); cat.className = 'diagCat';
       cat.textContent = T(CAT_LABEL[it.category] || CAT_LABEL.unsupported);
       li.appendChild(cat);
@@ -105,6 +113,11 @@
     diagToggleEl.textContent = T(diagExpanded ? 'designer.diag.hide' : 'designer.diag.details');
   });
   if (diagDismissEl) diagDismissEl.addEventListener('click', function () { diagDismissedSig = diagSig; hideDiag(); });
+  function postDiagAction(action) { vscode.postMessage({ type: 'diagnosticAction', action: action }); }
+  if (diagRetryEl) diagRetryEl.addEventListener('click', function () { postDiagAction('retry'); });
+  if (diagRebuildEl) diagRebuildEl.addEventListener('click', function () { postDiagAction('rebuild'); });
+  if (diagChooseAssemblyEl) diagChooseAssemblyEl.addEventListener('click', function () { postDiagAction('chooseAssembly'); });
+  if (diagCopyEl) diagCopyEl.addEventListener('click', function () { postDiagAction('copy'); });
 
   var controls = [];      // innermost-first (engine order)
   var current = null;     // primary selection id (drives the Properties panel + resize handles)
@@ -134,11 +147,21 @@
   var NUDGE_GRID = 8;      // Ctrl+Arrow step (VS default designer grid); plain Arrow = 1px
   var NUDGE_COMMIT_MS = 250; // idle after the last arrow key before the accumulated nudge is committed
   var suppressClick = false; // swallow the click that ENDS a drag/band so it doesn't re-select
-  // ---- Lock Controls (VS): a locked control can't be moved/resized/nudged by mouse. SESSION-ONLY — webview state,
-  // no engine / no .resx persistence yet (resets on reload); the "Lock Controls" menu toggles ALL controls, as VS does.
+  // ---- Lock Controls (VS): a locked control can't be moved/resized/nudged by mouse. The state is view metadata:
+  // reported to the extension host and persisted per form in workspaceState, never written into .Designer.cs/.resx.
   var lockedIds = {};      // { id: true } for locked controls
   function isLocked(id) { return !!lockedIds[id]; }
   function selectionHasLocked() { var s = selectableIds(); for (var i = 0; i < s.length; i++) { if (isLocked(s[i])) return true; } return false; }
+  var canvasStateTimer = null;
+  function queueCanvasState() {
+    if (canvasStateTimer) clearTimeout(canvasStateTimer);
+    canvasStateTimer = setTimeout(function () {
+      canvasStateTimer = null;
+      var ids = [];
+      for (var id in lockedIds) if (Object.prototype.hasOwnProperty.call(lockedIds, id) && lockedIds[id]) ids.push(id);
+      vscode.postMessage({ type: 'canvasViewStateChanged', state: { zoom: zoom, lockedIds: ids } });
+    }, 120);
+  }
   var HANDLE_DIRS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
   var handles = {};
   HANDLE_DIRS.forEach(function (dir) {
@@ -869,7 +892,12 @@
     renderSelection();
     renderRuler();
   }
-  function setZoom(z) { closeSlotEditor(); closeSubmenu(); zoom = clampZoom(z); try { var s = (vscode.getState && vscode.getState()) || {}; s.zoom = zoom; if (vscode.setState) vscode.setState(s); } catch (_e) {} applyZoomStyles(); }
+  function setZoom(z) {
+    closeSlotEditor(); closeSubmenu(); zoom = clampZoom(z);
+    try { var s = (vscode.getState && vscode.getState()) || {}; s.zoom = zoom; if (vscode.setState) vscode.setState(s); } catch (_e) {}
+    queueCanvasState();
+    applyZoomStyles();
+  }
   function stepZoom(dir) {
     var idx = 0, best = Infinity;
     for (var i = 0; i < ZOOM_STEPS.length; i++) { var d = Math.abs(ZOOM_STEPS[i] - zoom); if (d < best) { best = d; idx = i; } }
@@ -1733,11 +1761,12 @@
     if (!ids.length || drag) return;
     vscode.postMessage({ type: 'duplicate', ids: ids });
   }
-  // ---- Lock Controls (VS "Lock Controls"): flip the locked state of every control on the form (session-only). Locked
-  // controls drop their grab handles + a lock glyph appears, and mouse move/resize/nudge is blocked. No engine/persist. ----
+  // ---- Lock Controls (VS "Lock Controls"): flip the locked state of every control on the form. Locked controls drop
+  // their grab handles + a lock glyph appears, and mouse move/resize/nudge is blocked. Host persistence is view-only. ----
   function toggleLockAll(ids, lock) {
     for (var i = 0; i < ids.length; i++) { if (lock) lockedIds[ids[i]] = true; else delete lockedIds[ids[i]]; }
     if (lock) canvas.style.cursor = 'default'; // the menu overlay swallows mousemove — drop a stale 'move' cursor now
+    queueCanvasState();
     renderSelection();
   }
   document.addEventListener('keydown', function (e) {
@@ -1875,8 +1904,8 @@
     menu.push({ label: T('designer.menu.sendToBack'), disabled: !canZ, act: function () { zorder(false); } });
     menu.push({ sep: 1 });
     menu.push({ label: T('designer.menu.alignToGrid'), disabled: true });   // no snap-to-grid → disabled, as in VS
-    // Lock Controls (VS): toggles ALL controls on the form. Session-only (webview state; no .resx persistence yet) —
-    // checked when every control is already locked. Disabled on an empty form (nothing to lock).
+    // Lock Controls (VS): toggles ALL controls on the form. Per-form view state (outside source/.resx), checked when
+    // every control is already locked. Disabled on an empty form (nothing to lock).
     var lockable = [];
     for (var lci = 0; lci < controls.length; lci++) { var lc = controls[lci]; if (!lc.isRoot && lc.id !== 'this') lockable.push(lc.id); }
     var allLocked = lockable.length > 0;
@@ -1986,7 +2015,13 @@
 
   window.addEventListener('message', function (e) {
     var m = e.data;
-    if (m.type === 'render') {
+    if (m.type === 'canvasViewState') {
+      var vs = m.state || {};
+      if (typeof vs.zoom === 'number' && isFinite(vs.zoom)) zoom = clampZoom(vs.zoom);
+      lockedIds = {};
+      (vs.lockedIds || []).forEach(function (id) { if (typeof id === 'string' && id) lockedIds[id] = true; });
+      applyZoomStyles();
+    } else if (m.type === 'render') {
       hasRendered = true; hideOverlay();
       drawPng(m.png, 0, 0, m.width, m.height, true, m.gen);
     } else if (m.type === 'layout') {
@@ -2091,8 +2126,16 @@
       // frameworkUnbuilt paths) means the shown preview is stale → persistent "last successful preview" err banner
       // that the next clean render clears. A failed user ACTION (edit/move/paste RPC error) is NOT a render failure —
       // the canvas is intact — so surface it as the unobtrusive footer status, not a scary stale-preview banner.
-      else if (m.renderFailure) showDiag('err', T('designer.diag.stalePreview', { message: m.message }), []);
-      else setStatus(T('designer.status.error', { message: m.message }));
+      if (m.renderFailure) {
+        var failureItem = {
+          category: 'initError',
+          target: m.target || 'this',
+          text: m.cause || m.message || '',
+          detail: m.cause && m.cause !== m.message ? (m.message || '') : '',
+        };
+        showDiag('err', T('designer.diag.stalePreview', { message: m.message }), [failureItem]);
+      }
+      else if (hasRendered) setStatus(T('designer.status.error', { message: m.message }));
     }
   });
 

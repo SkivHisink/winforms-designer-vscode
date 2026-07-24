@@ -1161,6 +1161,9 @@ export interface ToolboxItemInfo {
   fqn: string;
   category: string;
   fromProject: boolean;
+  /** Source assembly for a user-chosen project/vendor control. Persisted with Choose Items so Add/Reference can use
+   * the same library after a window reload. Framework palette entries normally omit it. */
+  assemblyPath?: string;
   /** 16×16 toolbox bitmap (the control's own [ToolboxBitmap]) as a base64 PNG, or null/absent when none was
    * found. Display-only; the palette renders it as a data: image, falling back to a generic glyph when absent. */
   iconPng?: string | null;
@@ -1190,6 +1193,8 @@ export interface ToolboxCandidate {
   version: string;
   directory: string;
   fromProject: boolean;
+  /** Exact assembly reflected for this row (empty for dynamic assemblies). */
+  assemblyPath?: string;
 }
 
 /** The "Choose Toolbox Items" rows: framework Controls+Components + the project assembly's types + any browsed
@@ -1209,8 +1214,11 @@ export interface ToolboxScanResult {
   error: string | null;
 }
 
-export function scanToolboxAssembly(engine: EngineHandle, assemblyPath: string): Promise<ToolboxScanResult> {
-  return engine.connection.sendRequest<ToolboxScanResult>('ScanToolboxAssembly', assemblyPath);
+export function scanToolboxAssembly(
+  engine: EngineHandle, assemblyPath: string, probeDirectories?: string[],
+): Promise<ToolboxScanResult> {
+  return engine.connection.sendRequest<ToolboxScanResult>(
+    'ScanToolboxAssembly', assemblyPath, probeDirectories ?? null);
 }
 
 /** Result of RemoveControl: the new .Designer.cs text with the control removed, or null when rejected. */
@@ -1689,9 +1697,12 @@ export function setImageList(
   keys: string[],
   resxText: string | null,
   sourceText: string | null,
+  oldKeys?: string[],
+  oldIndexForNew?: number[],
 ): Promise<ImageEditPreview> {
   return engine.connection.sendRequest<ImageEditPreview>(
     'SetImageList', designerFilePath, componentId, imageStreamBase64, keys, resxText, sourceText,
+    oldKeys ?? null, oldIndexForNew ?? null,
   );
 }
 

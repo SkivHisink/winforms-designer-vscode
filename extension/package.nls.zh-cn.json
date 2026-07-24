@@ -16,6 +16,8 @@
   "config.language.description": "WinForms 设计器用户界面的语言 — 包括设计器界面、属性网格、工具箱、对话框和消息。此项在**此处**(即扩展设置中)选择；它**不会**自动跟随 VS Code 的显示语言。默认值：**English**。\n\n- 更改此项需在 **Reload Window** 后完全生效(届时会提示你)。\n- 注意：VS Code **命令面板**中的标题(例如 *WinForms: Open Designer*)以及此设置页面本身会跟随 VS Code 自身的 *Display Language*，而非此设置 — 这是平台限制。",
   "command.editImageListImages.title": "WinForms: 编辑 ImageList 图像…",
   "command.releaseAssembly.title": "WinForms: 释放 .NET Framework 程序集（以便重新生成）",
+  "command.runBuildTask.title": "WinForms: 运行生成任务（先释放预览）",
+  "command.runTestTask.title": "WinForms: 运行测试任务（先释放预览）",
   "command.stopEngines.title": "WinForms: 停止设计器预览引擎",
   "command.restartEngines.title": "WinForms: 重启设计器预览引擎"
 }

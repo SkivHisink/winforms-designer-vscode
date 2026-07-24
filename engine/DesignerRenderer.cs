@@ -8,6 +8,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.CodeAnalysis;
@@ -792,10 +793,12 @@ namespace WinFormsDesigner.Engine
         /// sibling .resx + rewrite the ImageList's init to the canonical ImageStream + SetKeyName form. Returns both new
         /// texts; the host persists them atomically + undoably.</summary>
         public static ImageListEditResult ApplySetImageList(string designerFilePath, string componentId,
-            string imageStreamBase64, string[] keys, string? resxText, string? sourceText = null)
+            string imageStreamBase64, string[] keys, string? resxText, string? sourceText = null,
+            string[]? oldKeys = null, int[]? oldIndexForNew = null)
         {
             string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
-            return DesignerImageListEditor.SetImages(src, componentId, resxText, imageStreamBase64, keys);
+            return DesignerImageListEditor.SetImages(src, componentId, resxText, imageStreamBase64, keys,
+                oldKeys, oldIndexForNew);
         }
 
         /// <summary>Safe-save-gated TableLayoutPanel column/row size-style edit: rewrite the Nth ColumnStyle/RowStyle ctor args to
@@ -1411,53 +1414,89 @@ namespace WinFormsDesigner.Engine
         /// collectible ALC (shared assemblies deferred to Default so Control/IComponent identity matches), then
         /// unload. Cached per (path, mtime). Captures a human-readable reason when nothing usable is found (so
         /// the dialog can tell the user) — never throws. NO instantiation: GetTypes()/attributes only.</summary>
-        public static ToolboxScanResult ScanAssemblyCandidates(string asmPath, bool fromProject)
+        public static ToolboxScanResult ScanAssemblyCandidates(string asmPath, bool fromProject, IReadOnlyList<string>? probeDirectories = null)
         {
             string simpleName = string.IsNullOrEmpty(asmPath) ? "" : Path.GetFileNameWithoutExtension(asmPath);
             if (string.IsNullOrEmpty(asmPath) || !File.Exists(asmPath))
                 return new ToolboxScanResult { AssemblyName = simpleName, Error = "file not found" };
             string full = Path.GetFullPath(asmPath);
             long mtime; try { mtime = File.GetLastWriteTimeUtc(full).Ticks; } catch { mtime = 0; }
+            string probeKey = string.Join("|", (probeDirectories ?? Array.Empty<string>())
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Select(p => { try { return Path.GetFullPath(p); } catch { return ""; } })
+                .Where(p => p.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
+            string cacheKey = full + "\0" + probeKey;
             lock (_projCtlLock)
             {
-                if (_candidateCache.TryGetValue(full, out var c) && c.mtime == mtime) return c.result;
-                ToolboxScanResult result;
-                ControlLoadContext? alc = null;
-                try
-                {
-                    alc = new ControlLoadContext(full);
-                    var asm = alc.LoadFromAssemblyPath(full);
-                    string asmName = asm.GetName().Name ?? simpleName;
-                    Type[] types; string? loadWarn = null;
-                    try { types = asm.GetTypes(); }
-                    catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; loadWarn = "some types could not be loaded (missing dependencies)"; }
-                    var items = new List<ToolboxCandidate>();
-                    foreach (var t in types)
-                    {
-                        if (t == null) continue;
-                        try { if (DesignerControlEditor.IsToolboxDialogEligible(t)) items.Add(DesignerControlEditor.MakeCandidate(t, fromProject)); }
-                        catch { /* a type that throws on reflection is simply skipped */ }
-                    }
-                    items = items.GroupBy(i => i.Namespace + "." + i.Name, StringComparer.Ordinal).Select(g => g.First())
-                                 .OrderBy(i => i.Name, StringComparer.Ordinal).ToList();
-                    result = new ToolboxScanResult
-                    {
-                        AssemblyName = asmName,
-                        Items = items,
-                        Error = items.Count == 0 ? (loadWarn ?? "no toolbox-eligible controls or components") : null,
-                    };
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"[engine] candidate enumeration failed for {full}: {ex.GetType().Name}: {ex.Message}");
-                    string why = ex is BadImageFormatException ? "not a .NET assembly (or wrong architecture)"
-                        : ex is FileLoadException ? "could not load (it may target .NET Framework or have missing dependencies)"
-                        : $"{ex.GetType().Name}: {ex.Message}";
-                    result = new ToolboxScanResult { AssemblyName = simpleName, Error = why };
-                }
-                finally { alc?.Unload(); }
-                _candidateCache[full] = (mtime, result);
+                if (_candidateCache.TryGetValue(cacheKey, out var c) && c.mtime == mtime) return c.result;
+                var result = ScanAssemblyCandidatesCore(full, simpleName, fromProject, probeDirectories, out var unloadReference);
+                // AssemblyLoadContext.Unload() only starts unloading. Run collection after the no-inline helper
+                // returns so no Assembly/Type locals remain JIT-live; this makes Browse scans release their DLLs
+                // before the RPC completes (important when users rebuild/replace a chosen library immediately).
+                WaitForCollectibleUnload(unloadReference);
+                _candidateCache[cacheKey] = (mtime, result);
                 return result;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static ToolboxScanResult ScanAssemblyCandidatesCore(
+            string full, string simpleName, bool fromProject, IReadOnlyList<string>? probeDirectories,
+            out WeakReference? unloadReference)
+        {
+            ControlLoadContext? alc = null;
+            unloadReference = null;
+            try
+            {
+                alc = new ControlLoadContext(full, probeDirectories);
+                var asm = alc.LoadFromAssemblyPath(full);
+                string asmName = asm.GetName().Name ?? simpleName;
+                Type[] types; string? loadWarn = null;
+                try { types = asm.GetTypes(); }
+                catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; loadWarn = "some types could not be loaded (missing dependencies)"; }
+                var items = new List<ToolboxCandidate>();
+                foreach (var t in types)
+                {
+                    if (t == null) continue;
+                    try { if (DesignerControlEditor.IsToolboxDialogEligible(t)) items.Add(DesignerControlEditor.MakeCandidate(t, fromProject)); }
+                    catch { /* a type that throws on reflection is simply skipped */ }
+                }
+                items = items.GroupBy(i => i.Namespace + "." + i.Name, StringComparer.Ordinal).Select(g => g.First())
+                             .OrderBy(i => i.Name, StringComparer.Ordinal).ToList();
+                return new ToolboxScanResult
+                {
+                    AssemblyName = asmName,
+                    Items = items,
+                    Error = items.Count == 0 ? (loadWarn ?? "no toolbox-eligible controls or components") : null,
+                };
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[engine] candidate enumeration failed for {full}: {ex.GetType().Name}: {ex.Message}");
+                string why = ex is BadImageFormatException ? "not a .NET assembly (or wrong architecture)"
+                    : ex is FileLoadException ? "could not load (it may target .NET Framework or have missing dependencies)"
+                    : $"{ex.GetType().Name}: {ex.Message}";
+                return new ToolboxScanResult { AssemblyName = simpleName, Error = why };
+            }
+            finally
+            {
+                if (alc != null)
+                {
+                    unloadReference = new WeakReference(alc, trackResurrection: true);
+                    alc.Unload();
+                }
+            }
+        }
+
+        private static void WaitForCollectibleUnload(WeakReference? unloadReference)
+        {
+            for (int attempt = 0; unloadReference?.IsAlive == true && attempt < 10; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
             }
         }
 

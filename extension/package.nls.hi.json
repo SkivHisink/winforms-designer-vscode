@@ -16,6 +16,8 @@
   "config.language.description": "WinForms डिज़ाइनर यूज़र इंटरफ़ेस की भाषा — डिज़ाइनर सतह, प्रॉपर्टी ग्रिड, टूलबॉक्स, डायलॉग और संदेश। इसे **यहां**, एक्सटेंशन सेटिंग्स में चुना जाता है; यह अपने-आप VS Code की डिस्प्ले भाषा का अनुसरण **नहीं** करता। डिफ़ॉल्ट: **English**।\n\n- इसे बदलने का पूरा प्रभाव **Reload Window** के बाद लागू होता है (आपसे इसके लिए पूछा जाएगा)।\n- ध्यान दें: VS Code के **command palette** के शीर्षक (जैसे *WinForms: डिज़ाइनर खोलें*) और यह सेटिंग्स पेज स्वयं इस सेटिंग के बजाय VS Code की अपनी *Display Language* का अनुसरण करते हैं — यह एक प्लेटफ़ॉर्म सीमा है।",
   "command.editImageListImages.title": "WinForms: ImageList छवियाँ संपादित करें…",
   "command.releaseAssembly.title": "WinForms: .NET Framework असेंबली रिलीज़ करें (रीबिल्ड के लिए)",
+  "command.runBuildTask.title": "WinForms: बिल्ड कार्य चलाएँ (पहले प्रीव्यू रिलीज़ करें)",
+  "command.runTestTask.title": "WinForms: टेस्ट कार्य चलाएँ (पहले प्रीव्यू रिलीज़ करें)",
   "command.stopEngines.title": "WinForms: डिज़ाइनर प्रीव्यू इंजन रोकें",
   "command.restartEngines.title": "WinForms: डिज़ाइनर प्रीव्यू इंजन पुनः प्रारंभ करें"
 }

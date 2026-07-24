@@ -54,6 +54,29 @@ namespace WinFormsDesigner.Engine.Net48
         public bool IsComponent { get; set; }
     }
 
+    /// <summary>Choose Toolbox Items row. Kept separate from the add-palette DTO because the dialog also needs
+    /// assembly identity/version/directory. Serializable so an ephemeral scan AppDomain can be unloaded immediately
+    /// after reflection without leaving the user's assembly pinned.</summary>
+    [Serializable]
+    public sealed class ToolboxCandidate
+    {
+        public string Name { get; set; } = "";
+        public string Namespace { get; set; } = "";
+        public string AssemblyName { get; set; } = "";
+        public string Version { get; set; } = "";
+        public string Directory { get; set; } = "";
+        public bool FromProject { get; set; }
+        public string AssemblyPath { get; set; } = "";
+    }
+
+    [Serializable]
+    public sealed class ToolboxScanResult
+    {
+        public string AssemblyName { get; set; } = "";
+        public ToolboxCandidate[] Items { get; set; } = Array.Empty<ToolboxCandidate>();
+        public string? Error { get; set; }
+    }
+
     /// <summary>One entry of a vendor control's DECLARED smart-tag menu (the DevExpress "XtraTabControl Tasks"
     /// panel), read off the compiled type's attributes — see VendorSmartTags for why this is metadata-only and the
     /// vendor's action is never invoked. Display + identity only: the host decides which verbs it can honour with its

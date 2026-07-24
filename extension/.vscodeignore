@@ -3,6 +3,7 @@
 
 .vscode/**
 .vscode-test/**
+.codex-tmp/**
 .dotnet-home/**
 .dotnet-temp/**
 .npm-cache*/**

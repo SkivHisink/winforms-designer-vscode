@@ -13,14 +13,15 @@ The editable visual version lives in
 
 ## 1.0.0 — Stable foundation
 
-**Status: current strengthened baseline**
+**Status: shipped baseline, maintained by 1.0.x patches**
 
 - Stable modern .NET designer for `net8.0-windows`, `net9.0-windows`, and `net10.0-windows`.
-- Experimental compiled .NET Framework 4.8 / DevExpress preview with source-first, byte-local edits.
-- Capability preflight that names why a form can't be whole-file regenerated (binary-resource, unresolved base,
-  unrepresentable statement); those forms stay editable via targeted byte-local splices, while a `Localizable = true`
-  form is read-only outright. The experimental .NET Framework preview is build-based and discloses that a rebuild is
-  authoritative.
+- Live-source .NET Framework 4.8 / DevExpress interpretation with a disclosed compiled fallback and source-first,
+  byte-local edits.
+- Capability preflight that names why a form can't be faithfully replayed or whole-file regenerated (binary-resource,
+  unresolved base, unrepresentable statement); those forms stay editable via targeted byte-local splices, while a
+  `Localizable = true` form is read-only outright. A net48 form that exceeds the safe interpreter falls back to its
+  last build with a named reason instead of silently showing a partial live-source picture.
 - Atomic/conflict-checked writes, round-trip golden fixtures, and real Extension Host smoke coverage.
 - Fast C# and TypeScript unit layers pin save-safety, interpreter allowlists, identifier/value conversion,
   TFM selection, extension expression helpers, and bounded engine recovery.
@@ -37,11 +38,32 @@ The editable visual version lives in
 **Exit criterion:** every supported edit either preserves the source outside its declared span or is refused
 with a concrete reason.
 
-## 1.1.0 — Absorbed into 1.0.0
+## 1.1.0 — Daily workflow and project integration
 
-The hardening work originally planned for 1.1.0 now ships in the strengthened 1.0.0 baseline above. There is
-no separate compatibility step: existing 1.0 projects and settings remain compatible, common safe forms are
-refused less often, cross-runtime preview parity is tighter, and failures are faster to localize.
+**Status: implemented — release candidate verified locally**
+
+The first post-1.0 minor removes the manual recovery steps that interrupted an otherwise stable design session.
+It deliberately finishes existing product seams before the larger data-binding and general-editor work in 1.2–1.3.
+
+- The **.NET** side of **Choose Toolbox Items** discovers controls from project outputs, configured probe
+  directories, explicitly browsed assemblies, and installed / registered .NET assemblies; it caches scan results and
+  persists custom toolbox tabs and chosen items across reloads.
+- Per-form designer view state is persisted outside project source files: **Lock Controls**, zoom, active design tab, and
+  toolbox / outline expansion survive closing the editor and reloading VS Code without touching `.Designer.cs` or
+  `.resx`.
+- The **ImageList** workflow supports image reordering and key renaming, stable `ImageIndex` / `ImageKey`
+  reconciliation, one undoable resource transaction, and immediate modern/net48 preview parity.
+- The net48 preview coordinates with VS Code build and test tasks: release pinned outputs before a build, invalidate
+  stale compiled fallbacks, and re-render after the task, while keeping the manual Stop / Restart / Release commands
+  as recovery controls.
+- Degraded renders are actionable on both engines: they identify the affected control or statement, preserve the last
+  known-good canvas as view-only after a failed render, and offer direct Retry, Rebuild, Choose Control Assembly, and
+  Copy Diagnostics actions.
+
+**Exit criterion — met:** a user can reopen a real project, recover the same designer workspace, discover a missing
+control, reorganize an ImageList, and run a net48 build from VS Code without a manual release step; any degraded
+preview names the affected target, cause, and recovery action, and all persisted changes remain conflict-checked,
+undoable, and covered on both engines.
 
 ## 1.2.0 — Data-bound forms
 

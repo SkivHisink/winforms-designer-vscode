@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 
@@ -17,11 +20,17 @@ namespace WinFormsDesigner.Engine
     public sealed class ControlLoadContext : AssemblyLoadContext
     {
         private readonly AssemblyDependencyResolver _resolver;
+        private readonly string[] _probeDirectories;
 
-        public ControlLoadContext(string mainAssemblyPath)
+        public ControlLoadContext(string mainAssemblyPath, IEnumerable<string>? probeDirectories = null)
             : base(name: "winforms-controls", isCollectible: true)
         {
             _resolver = new AssemblyDependencyResolver(mainAssemblyPath);
+            _probeDirectories = (probeDirectories ?? Array.Empty<string>())
+                .Where(dir => !string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
 
         protected override Assembly? Load(AssemblyName assemblyName)
@@ -31,7 +40,16 @@ namespace WinFormsDesigner.Engine
                 return null; // defer to Default ALC -> single shared identity
             }
             string? path = _resolver.ResolveAssemblyToPath(assemblyName);
-            return path != null ? LoadFromAssemblyPath(path) : null;
+            if (path != null) return LoadFromAssemblyPath(path);
+            string? simple = assemblyName.Name;
+            if (string.IsNullOrWhiteSpace(simple) || !string.Equals(Path.GetFileName(simple), simple, StringComparison.Ordinal))
+                return null;
+            foreach (var dir in _probeDirectories)
+            {
+                string candidate = Path.Combine(dir, simple + ".dll");
+                if (File.Exists(candidate)) return LoadFromAssemblyPath(candidate);
+            }
+            return null;
         }
 
         protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)

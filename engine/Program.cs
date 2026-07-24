@@ -1631,10 +1631,11 @@ namespace WinFormsDesigner.Engine
         /// into the sibling .resx and rewrite the ImageList's init (ImageStream assignment + SetKeyName, removing any
         /// in-code Images.Add). Returns both new texts; the host persists them atomically + undoably.</summary>
         public ImageEditPreview SetImageList(string designerFilePath, string componentId, string imageStreamBase64,
-            string[] keys, string? resxText = null, string? sourceText = null)
+            string[] keys, string? resxText = null, string? sourceText = null,
+            string[]? oldKeys = null, int[]? oldIndexForNew = null)
         {
             var r = DesignerRenderer.ApplySetImageList(designerFilePath, componentId, imageStreamBase64 ?? "",
-                keys ?? Array.Empty<string>(), resxText, NullIfBlank(sourceText));
+                keys ?? Array.Empty<string>(), resxText, NullIfBlank(sourceText), oldKeys, oldIndexForNew);
             return new ImageEditPreview
             {
                 Safe = r.Ok,
@@ -1860,8 +1861,8 @@ namespace WinFormsDesigner.Engine
         /// <summary>Scan ONE browsed .dll for toolbox-eligible types (the Choose-Items "Browse…" path), returning
         /// the found rows plus a human-readable reason when nothing usable was found (so the dialog gives feedback
         /// instead of silently doing nothing). Pure reflection in a collectible ALC; never instantiates.</summary>
-        public ToolboxScanResult ScanToolboxAssembly(string assemblyPath) =>
-            DesignerRenderer.ScanAssemblyCandidates(assemblyPath, false);
+        public ToolboxScanResult ScanToolboxAssembly(string assemblyPath, string[]? probeDirectories = null) =>
+            DesignerRenderer.ScanAssemblyCandidates(assemblyPath, false, probeDirectories);
 
         /// <summary>Remove a leaf control (field decl + its InitializeComponent statements) as a text edit.
         /// PURE TEXT — no graph load/STA. Refuses a container with children / externally-referenced control.</summary>

@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "preview": false,
   "license": "MIT",
   "author": {
@@ -136,6 +136,14 @@
         "title": "%command.releaseAssembly.title%"
       },
       {
+        "command": "winformsDesigner.runBuildTask",
+        "title": "%command.runBuildTask.title%"
+      },
+      {
+        "command": "winformsDesigner.runTestTask",
+        "title": "%command.runTestTask.title%"
+      },
+      {
         "command": "winformsDesigner.stopEngines",
         "title": "%command.stopEngines.title%"
       },
@@ -148,6 +156,12 @@
       {
         "command": "winformsDesigner.showProperties",
         "key": "f4",
+        "when": "activeCustomEditorId == winformsDesigner.designer"
+      },
+      {
+        "command": "winformsDesigner.runBuildTask",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
         "when": "activeCustomEditorId == winformsDesigner.designer"
       }
     ],

@@ -16,6 +16,8 @@
   "config.language.description": "Langue de l'interface utilisateur du concepteur WinForms — la surface de conception, la grille de propriétés, la boîte à outils, les boîtes de dialogue et les messages. Elle se choisit **ici**, dans les paramètres de l'extension ; elle ne suit **pas** automatiquement la langue d'affichage de VS Code. Par défaut : **English**.\n\n- Sa modification prend pleinement effet après **Recharger la fenêtre** (vous y serez invité).\n- Remarque : les intitulés de la **palette de commandes** de VS Code (p. ex. *WinForms : Ouvrir le concepteur*) et cette page de paramètres elle-même suivent la *langue d'affichage* propre à VS Code, et non ce paramètre — une limitation de la plateforme.",
   "command.editImageListImages.title": "WinForms : Modifier les images ImageList…",
   "command.releaseAssembly.title": "WinForms : Libérer l'assembly .NET Framework (pour la regénération)",
+  "command.runBuildTask.title": "WinForms : Exécuter la tâche de build (libérer d’abord l’aperçu)",
+  "command.runTestTask.title": "WinForms : Exécuter la tâche de test (libérer d’abord l’aperçu)",
   "command.stopEngines.title": "WinForms : Arrêter le moteur d'aperçu du concepteur",
   "command.restartEngines.title": "WinForms : Redémarrer le moteur d'aperçu du concepteur"
 }

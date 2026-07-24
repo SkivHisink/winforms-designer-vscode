@@ -154,13 +154,14 @@ test('nudge: ignored while typing in an input (arrow keys belong to the field)',
 
 test('diag banner (T2.2): warn shows, toggle expands, dismiss latches, changed set re-shows, clean render resets', () => {
   const h = loadDesigner();
-  const setA = [{ category: 'missingType', text: 'this.foo = new Bar();', detail: 'Bar' }];
-  const setB = [{ category: 'initError', text: 'this.baz.Init();', detail: 'boom' }];
+  const setA = [{ category: 'missingType', target: 'this.foo', text: 'this.foo = new Bar();', detail: 'Bar' }];
+  const setB = [{ category: 'initError', target: 'this.baz', text: 'this.baz.Init();', detail: 'boom' }];
 
   h.send({ type: 'renderDiag', items: setA });
   ok(h.el('diag').style.display !== 'none', 'banner visible on a partial render');
   eq(h.el('diag').className, 'warn', 'warn styling');
   ok(h.el('diagList').children.length >= 1, 'categorized list rendered');
+  ok(/this\.foo/.test(h.el('diagList').textContent || ''), 'affected target is visible next to the statement/cause');
 
   // details toggle
   h.click(h.el('diagToggle'));
@@ -181,6 +182,24 @@ test('diag banner (T2.2): warn shows, toggle expands, dismiss latches, changed s
   eq(h.el('diag').style.display, 'none', 'clean render hides the banner');
   h.send({ type: 'renderDiag', items: setA });
   ok(h.el('diag').style.display !== 'none', 'the once-dismissed set shows again after a clean render reset the latch');
+  h.destroy();
+});
+
+test('diag actions (1.1.0): Retry/Rebuild/Choose Assembly/Copy post explicit recovery actions', () => {
+  const h = loadDesigner();
+  h.send({
+    type: 'renderDiag',
+    items: [{ category: 'missingType', target: 'this.vendorGrid', text: 'this.vendorGrid = new Vendor.Grid();', detail: 'Vendor.Grid' }],
+  });
+  h.resetPosted();
+
+  h.click(h.el('diagRetry'));
+  h.click(h.el('diagRebuild'));
+  h.click(h.el('diagChooseAssembly'));
+  h.click(h.el('diagCopy'));
+
+  const actions = only(h.posted, 'diagnosticAction').map((m) => m.action);
+  eq(actions.join(','), 'retry,rebuild,chooseAssembly,copy', 'all recovery actions are wired in display order');
   h.destroy();
 });
 
@@ -266,6 +285,7 @@ test('error (T2.2): overlay before first render, err-banner on a real render fai
   h.send({ type: 'error', message: 'render died', renderFailure: true });
   eq(h.el('diag').className, 'err', 'renderFailure → err banner');
   ok(h.el('diag').style.display !== 'none', 'err banner visible');
+  eq(h.el('diagList').querySelector('.diagTarget')?.title, 'this', 'hard failure names the affected target');
 
   // (3) a failed user ACTION (no renderFailure) → unobtrusive footer status, NOT the scary stale-preview banner
   h.send({ type: 'renderDiag', items: [] }); // clear the err banner first
@@ -287,6 +307,18 @@ test('zoom: zoomIn raises the label and persists the zoom to webview state', () 
   // clicking the % label resets to 100%
   h.click(h.el('zoomLabel'));
   eq(h.el('zoomLabel').textContent, '100%', 'label click resets to 100%');
+  h.destroy();
+});
+
+test('per-form canvas state (1.1.0): host-restored zoom and Lock Controls survive a webview reopen', () => {
+  const h = loadDesigner();
+  setupSelected(h, mkCtrl());
+  h.send({ type: 'canvasViewState', state: { zoom: 1.5, lockedIds: ['button1'] } });
+  eq(h.el('zoomLabel').textContent, '150%', 'restored zoom is applied to the reopened canvas');
+
+  h.key('keydown', { key: 'ArrowRight' });
+  flushNudge(h);
+  eq(only(h.posted, 'manipulate').length, 0, 'restored lock blocks a nudge before any new user setting change');
   h.destroy();
 });
 
@@ -2061,6 +2093,31 @@ function hasSet(h: Harness, name: string): boolean {
 test('smoke: panel loads and posts ready', () => {
   const h = loadPanel();
   ok(only(h.posted, 'ready').length === 1, 'panel posted exactly one ready on load');
+  h.destroy();
+});
+
+test('per-form panel/toolbox state (1.1.0): active tab, collapsed categories and custom tabs restore from host state', () => {
+  const h = loadPanel();
+  h.send({
+    type: 'toolbox',
+    items: [{ name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' }],
+  });
+  h.send({
+    type: 'panelViewState',
+    state: { activeTab: 'toolbox', toolboxCollapsed: { 'Common Controls': true }, outlineCollapsed: ['panel1'] },
+    toolboxUi: {
+      customTabs: [{ name: 'Favorites', items: ['System.Windows.Forms.Button'] }],
+      listView: true,
+      sortAlpha: false,
+      showAll: false,
+    },
+  });
+
+  ok(h.el('toolboxPane').style.display !== 'none', 'the reopened panel restores Toolbox as its active main tab');
+  const heads = Array.from(h.el('tbList').querySelectorAll('.tbCat')) as any[];
+  ok(heads.some((head) => head.classList.contains('custom') && /Favorites/.test(head.textContent)), 'the custom toolbox tab is restored');
+  const common = heads.find((head) => /Common Controls|panel\.cat\.commonControls/.test(head.textContent));
+  ok(!!common && /^▸/.test(common.textContent), 'the per-form Common Controls category restores collapsed');
   h.destroy();
 });
 
