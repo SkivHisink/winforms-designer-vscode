@@ -40,6 +40,20 @@ function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFiles:
   }
 }
 
+/** Compare a path the engine reported against one this suite built. The engine normalizes through .NET's
+* Path.GetFullPath, which EXPANDS 8.3 short names ("C:\Users\RUNNER~1\..." -> "C:\Users\runneradmin\...") —
+* node's path.resolve does not, and os.tmpdir() is the short form on CI runners. Resolve both through the
+* filesystem (and fold case on Windows) so the comparison is about the file, not the spelling. */
+function samePath(a: string, b: string): boolean {
+  const real = (p: string): string => {
+    let r: string;
+    try { r = fs.realpathSync.native(p); } catch { r = path.resolve(p); }
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  };
+  if (!a || !b) return false;
+  return real(a) === real(b);
+}
+
 const isPng = (b: Buffer): boolean =>
   b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
 
@@ -92,7 +106,7 @@ function verifyCsprojHelpers(repo: string): void {
 
   // findNearestCsproj: walks up from engine/samples to engine/Engine.csproj, bounded by the repo root.
   const found = findNearestCsproj(path.join(repo, 'engine', 'samples'), repo);
-  if (!found || path.normalize(found).toLowerCase() !== path.normalize(engineCsproj).toLowerCase()) throw new Error('csprojRef: findNearestCsproj did not locate engine/Engine.csproj, got ' + found);
+  if (!found || !samePath(found, engineCsproj)) throw new Error('csprojRef: findNearestCsproj did not locate engine/Engine.csproj, got ' + found);
 
   // addReferenceToCsproj: inserts a well-formed ItemGroup before the single </Project>, and the result then
   // reports the assembly as referenced (round-trip). Original content and the closing tag are preserved.
@@ -178,11 +192,11 @@ function verifyCsprojHelpers(repo: string): void {
       fs.utimesSync(net9Dll, baseSec + 10, baseSec + 10);
 
       const fwOnly = resolveFrameworkOnlyOutput(csproj);
-      if (!fwOnly || path.normalize(fwOnly).toLowerCase() !== path.normalize(net48Dll).toLowerCase()) {
+      if (!fwOnly || !samePath(fwOnly, net48Dll)) {
         throw new Error('csprojRef: resolveFrameworkOnlyOutput must pick the net48 (no-sidecar) output, got ' + fwOnly);
       }
       const freshest = resolveFrameworkOutput(csproj);
-      if (!freshest || path.normalize(freshest).toLowerCase() !== path.normalize(net9Dll).toLowerCase()) {
+      if (!freshest || !samePath(freshest, net9Dll)) {
         throw new Error('csprojRef: resolveFrameworkOutput must stay freshest-overall (net9), got ' + freshest);
       }
 
@@ -981,7 +995,7 @@ async function main(): Promise<void> {
         fs.copyFileSync(customDll, scannedDll);
         const scan = await scanToolboxAssembly(engine, scannedDll, [path.dirname(customDll)]);
         const scannedGauge = scan.items.find((item) => item.namespace === 'CustomControls' && item.name === 'GaugeControl');
-        if (!scannedGauge || path.resolve(scannedGauge.assemblyPath || '') !== path.resolve(scannedDll)) {
+        if (!scannedGauge || !samePath(scannedGauge.assemblyPath || '', scannedDll)) {
           throw new Error('Choose Items scan did not discover GaugeControl with its exact assembly path: ' + JSON.stringify(scan));
         }
         fs.unlinkSync(scannedDll); // collectible scan ALC must not pin a browsed/project output
@@ -1688,7 +1702,7 @@ async function main(): Promise<void> {
               fs.copyFileSync(fakeVendorDll, scannedDll48);
               const scan48 = await scanToolboxAssembly(n48, scannedDll48, [path.dirname(fakeVendorDll)]);
               const scannedFancy = scan48.items.find((item) => item.namespace === 'FakeVendor' && item.name === 'FancyButton');
-              if (!scannedFancy || path.resolve(scannedFancy.assemblyPath || '') !== path.resolve(scannedDll48)) {
+              if (!scannedFancy || !samePath(scannedFancy.assemblyPath || '', scannedDll48)) {
                 throw new Error('net48 Choose Items scan did not discover FancyButton with its exact assembly path: ' + JSON.stringify(scan48));
               }
               fs.unlinkSync(scannedDll48);
@@ -5050,7 +5064,7 @@ namespace Product.CustomForms
       }
       const resolved = await resolveAssembly(engine, complexFixture);
       if (!resolved) throw new Error('ResolveAssembly returned null for the multi-target/custom-output fixture');
-      if (path.normalize(resolved).toLowerCase() !== path.normalize(complexDll).toLowerCase()) {
+      if (!samePath(resolved, complexDll)) {
         throw new Error(`ResolveAssembly: expected ${complexDll}, got ${resolved}`);
       }
       console.log(`e2e: MSBuild resolver verified — multi-target/custom-output fixture → ${resolved} (bin-search alone could not)`);
