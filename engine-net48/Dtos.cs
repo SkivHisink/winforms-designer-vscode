@@ -190,6 +190,10 @@ namespace WinFormsDesigner.Engine.Net48
         public bool ReadOnly { get; set; }
         /// <summary>DataGridView column Visible (default true). Unused for the other collections.</summary>
         public bool Visible { get; set; } = true;
+        public string DataPropertyName { get; set; } = "";
+        public string Format { get; set; } = "";
+        public string Alignment { get; set; } = "NotSet";
+        public string NullValue { get; set; } = "";
     }
 
     /// <summary>One TreeView node for the live tree reconstruction (net48 live node picture — the TreeView analogue of
@@ -280,6 +284,10 @@ namespace WinFormsDesigner.Engine.Net48
         /// ContextMenuStrip). StandardValues are the compatible sibling field names + a leading "(none)"; the host
         /// translates a pick to `this.&lt;name&gt;` / `null`. Parity with net9's PropertyInfo.ReferenceValues.</summary>
         public bool ReferenceValues { get; set; }
+        /// <summary>True for the source-backed DataSource workflow (none/component/typeof(Type)).</summary>
+        public bool IsDataSource { get; set; }
+        public string? ExtenderProvider { get; set; }
+        public string? ExtenderProperty { get; set; }
         /// <summary>True for a source-backed design-time pseudo-property (Modifiers / GenerateMember).</summary>
         public bool DesignTime { get; set; }
     }
@@ -317,6 +325,7 @@ namespace WinFormsDesigner.Engine.Net48
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
         public string Type { get; set; } = "";
+        public string? IconPng { get; set; }
         /// <summary>For an OFF-TREE ToolStrip surfaced in the tray (a ContextMenuStrip), its top-level Items as a
         /// BOUNDS-LESS forest (id/text/type + recursive Children) so the canvas can open a synthetic flyout from the
         /// tray chip. Mirrors WinFormsDesigner.Engine.TrayComponent.Items. Empty for a non-strip component.</summary>

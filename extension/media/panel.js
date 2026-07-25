@@ -654,6 +654,13 @@
       vscode.postMessage({ type: 'setTableCell', id: id, cell: prop.name, value: value });
       return;
     }
+    if (prop.extenderProvider && prop.extenderProperty) {
+      vscode.postMessage({
+        type: 'setExtender', id: id, providerId: prop.extenderProvider,
+        extenderProperty: prop.extenderProperty, propType: prop.type, value: value
+      });
+      return;
+    }
     var msg = { type: 'edit', id: id, prop: prop.name, propType: prop.type, isEnum: prop.isEnum, value: value };
     // a design-time pseudo-property (Modifiers): route to the field-declaration splice, not setProperty. Tag on the
     // engine's designTime flag, not the name, so a real control property named "Modifiers" stays on the normal path.
@@ -1055,6 +1062,7 @@
   // (bound/complex) collection comes back ok:false → the popup shows a read-only note so items can't be dropped. ----
   var COLUMN_ITEM_TYPE = 'System.Windows.Forms.ColumnHeader';
   var GRIDCOLUMN_ITEM_TYPE = 'System.Windows.Forms.DataGridViewColumn';
+  var BINDING_ITEM_TYPE = 'System.Windows.Forms.Binding';
   var TREENODE_ITEM_TYPE = 'System.Windows.Forms.TreeNode';
   var TOOLSTRIP_ITEM_TYPE = 'System.Windows.Forms.ToolStripItem';
   // Item types the "Type Here" picker offers for a NEW item, curated by the owner strip's kind (VS shows a
@@ -1071,6 +1079,8 @@
   var pendingCollection = null; // { id, prop, anchor } awaiting the host's collectionItems reply
   var pendingColumns = null;    // { id, anchor } awaiting the host's columnItems reply
   var pendingGridColumns = null; // { id, anchor } awaiting the host's gridColumnItems reply
+  var pendingBindings = null;   // { id, anchor } awaiting the host's bindingItems reply
+  var pendingDataSource = null; // { id, anchor } awaiting the host's dataSourceInfo reply
   var pendingTreeNodes = null;  // { id, anchor } awaiting the host's treeNodeItems reply
   var pendingToolStrip = null;  // { id, anchor, ownerType } awaiting the host's toolStripItems reply
   var pendingStringArray = null; // { id, prop, anchor } awaiting the host's stringArrayItems reply
@@ -1262,7 +1272,8 @@
       }
       var rows = (columns || []).map(function (col) {
         return { id: col.id || '', headerText: col.headerText || '', width: (typeof col.width === 'number' ? col.width : 100),
-          readOnly: !!col.readOnly, visible: col.visible !== false };
+          readOnly: !!col.readOnly, visible: col.visible !== false, dataPropertyName: col.dataPropertyName || '',
+          format: col.format || '', alignment: col.alignment || 'NotSet', nullValue: col.nullValue || '' };
       });
       var original = JSON.stringify(rows);
 
@@ -1293,13 +1304,32 @@
           var roLbl = document.createElement('label'); roLbl.className = 'colChkLbl'; roLbl.appendChild(ro); roLbl.appendChild(document.createTextNode('RO'));
           var visLbl = document.createElement('label'); visLbl.className = 'colChkLbl'; visLbl.appendChild(vis); visLbl.appendChild(document.createTextNode('Vis'));
           r.appendChild(up); r.appendChild(down); r.appendChild(txt); r.appendChild(w); r.appendChild(roLbl); r.appendChild(visLbl); r.appendChild(del);
-          list.appendChild(r);
+          var style = document.createElement('div'); style.className = 'columnsRow gridStyleRow';
+          var dataProp = document.createElement('input'); dataProp.type = 'text'; dataProp.className = 'colText';
+          dataProp.value = row.dataPropertyName; dataProp.placeholder = 'DataPropertyName';
+          dataProp.addEventListener('input', function () { row.dataPropertyName = dataProp.value; });
+          var fmt = document.createElement('input'); fmt.type = 'text'; fmt.className = 'gridFmt'; fmt.value = row.format; fmt.placeholder = 'Format (N2)';
+          fmt.addEventListener('input', function () { row.format = fmt.value; });
+          var align = document.createElement('select'); align.className = 'colAlign'; align.title = 'Cell alignment';
+          ['NotSet', 'TopLeft', 'TopCenter', 'TopRight', 'MiddleLeft', 'MiddleCenter', 'MiddleRight', 'BottomLeft', 'BottomCenter', 'BottomRight'].forEach(function (a) {
+            var opt = document.createElement('option'); opt.value = a; opt.textContent = a; if (a === row.alignment) opt.selected = true; align.appendChild(opt);
+          });
+          align.addEventListener('change', function () { row.alignment = align.value; });
+          var nullValue = document.createElement('input'); nullValue.type = 'text'; nullValue.className = 'gridNull';
+          nullValue.value = row.nullValue; nullValue.placeholder = 'Null text';
+          nullValue.addEventListener('input', function () { row.nullValue = nullValue.value; });
+          style.appendChild(dataProp); style.appendChild(fmt); style.appendChild(align); style.appendChild(nullValue);
+          var card = document.createElement('div'); card.className = 'gridColumnCard'; card.appendChild(r); card.appendChild(style);
+          list.appendChild(card);
         });
       }
       render();
 
       var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'columnsAdd'; addBtn.textContent = '+ Add column';
-      addBtn.addEventListener('click', function () { rows.push({ id: '', headerText: '', width: 100, readOnly: false, visible: true }); render(); });
+      addBtn.addEventListener('click', function () {
+        rows.push({ id: '', headerText: '', width: 100, readOnly: false, visible: true, dataPropertyName: '', format: '', alignment: 'NotSet', nullValue: '' });
+        render();
+      });
       pop.appendChild(addBtn);
 
       var bar = document.createElement('div'); bar.className = 'collectionBar';
@@ -1310,7 +1340,8 @@
         if (JSON.stringify(rows) === original) return; // unchanged → no edit
         var cols = rows.map(function (row) {
           return { id: row.id || '', headerText: row.headerText || '', width: (typeof row.width === 'number' && !isNaN(row.width)) ? row.width : 100,
-            readOnly: !!row.readOnly, visible: row.visible !== false };
+            readOnly: !!row.readOnly, visible: row.visible !== false, dataPropertyName: row.dataPropertyName || '',
+            format: row.format || '', alignment: row.alignment || 'NotSet', nullValue: row.nullValue || '' };
         });
         vscode.postMessage({ type: 'setGridColumns', id: id, gridColumns: cols });
       }
@@ -1318,6 +1349,178 @@
       cancel.addEventListener('click', function () { closePopup(); });
       bar.appendChild(okBtn); bar.appendChild(cancel);
       pop.appendChild(bar);
+    });
+  }
+
+  // WinForms Control.DataBindings editor. It works against canonical Binding constructor statements in the
+  // unsaved .Designer.cs; custom expressions come back ok:false and remain read-only.
+  function bindingsEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Bindings)';
+    lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = 'вЂ¦';
+    btn.title = 'Edit data bindingsвЂ¦';
+    btn.addEventListener('click', function () {
+      pendingBindings = { id: c.id, anchor: btn };
+      vscode.postMessage({ type: 'listBindings', id: c.id });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  function openBindingsPopup(anchor, id, ok, bindings, sources, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop'); pop.classList.add('bindingsPop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Data Bindings'; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'These bindings canвЂ™t be edited here (' + (reason || 'unsupported binding expression') + ').';
+        pop.appendChild(note);
+        return;
+      }
+      var sourceRows = sources || [];
+      var rows = (bindings || []).map(function (b) {
+        return {
+          propertyName: b.propertyName || '', dataSourceId: b.dataSourceId || '',
+          dataMember: b.dataMember || '', formattingEnabled: !!b.formattingEnabled,
+          updateMode: b.updateMode || 'OnValidation', formatString: b.formatString || ''
+        };
+      });
+      var original = JSON.stringify(rows);
+      var list = document.createElement('div'); list.className = 'bindingList'; pop.appendChild(list);
+
+      function sourceSelect(row) {
+        var sel = document.createElement('select'); sel.className = 'bindingSource'; sel.title = 'Data source';
+        sourceRows.forEach(function (src) {
+          var opt = document.createElement('option'); opt.value = src.id; opt.textContent = src.id + ' (' + shortType(src.typeName || '') + ')';
+          if (src.id === row.dataSourceId) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        if (!row.dataSourceId && sourceRows.length) row.dataSourceId = sourceRows[0].id;
+        sel.value = row.dataSourceId;
+        sel.addEventListener('change', function () { row.dataSourceId = sel.value; });
+        return sel;
+      }
+
+      function render() {
+        list.textContent = '';
+        if (!rows.length) {
+          var empty = document.createElement('div'); empty.className = 'columnsEmpty'; empty.textContent = '(no bindings)';
+          list.appendChild(empty);
+        }
+        rows.forEach(function (row, i) {
+          var card = document.createElement('div'); card.className = 'bindingRow';
+          var top = document.createElement('div'); top.className = 'bindingLine';
+          var prop = document.createElement('input'); prop.type = 'text'; prop.value = row.propertyName; prop.placeholder = 'Property (Text)';
+          prop.title = 'Target control property'; prop.addEventListener('input', function () { row.propertyName = prop.value; });
+          var src = sourceSelect(row);
+          var del = document.createElement('button'); del.type = 'button'; del.className = 'colMini colDel'; del.textContent = 'вњ•'; del.title = 'Remove binding';
+          del.addEventListener('click', function () { rows.splice(i, 1); render(); });
+          top.appendChild(prop); top.appendChild(src); top.appendChild(del); card.appendChild(top);
+
+          var detail = document.createElement('div'); detail.className = 'bindingLine';
+          var member = document.createElement('input'); member.type = 'text'; member.value = row.dataMember; member.placeholder = 'Data member';
+          member.addEventListener('input', function () { row.dataMember = member.value; });
+          var mode = document.createElement('select'); mode.title = 'Data source update mode';
+          ['OnValidation', 'OnPropertyChanged', 'Never'].forEach(function (m) {
+            var opt = document.createElement('option'); opt.value = m; opt.textContent = m; if (m === row.updateMode) opt.selected = true; mode.appendChild(opt);
+          });
+          mode.addEventListener('change', function () { row.updateMode = mode.value; });
+          detail.appendChild(member); detail.appendChild(mode); card.appendChild(detail);
+
+          var fmtLine = document.createElement('div'); fmtLine.className = 'bindingLine';
+          var fmtEnabled = document.createElement('input'); fmtEnabled.type = 'checkbox'; fmtEnabled.checked = row.formattingEnabled;
+          fmtEnabled.addEventListener('change', function () { row.formattingEnabled = fmtEnabled.checked; fmt.disabled = !fmtEnabled.checked; });
+          var fmtLabel = document.createElement('label'); fmtLabel.className = 'bindingCheck'; fmtLabel.appendChild(fmtEnabled);
+          fmtLabel.appendChild(document.createTextNode('Formatting'));
+          var fmt = document.createElement('input'); fmt.type = 'text'; fmt.value = row.formatString; fmt.placeholder = 'Format (N2)';
+          fmt.disabled = !row.formattingEnabled;
+          fmt.addEventListener('input', function () { row.formatString = fmt.value; });
+          fmtLine.appendChild(fmtLabel); fmtLine.appendChild(fmt); card.appendChild(fmtLine);
+          list.appendChild(card);
+        });
+      }
+      render();
+
+      var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'columnsAdd'; addBtn.textContent = '+ Add binding';
+      addBtn.disabled = sourceRows.length === 0;
+      addBtn.title = sourceRows.length ? '' : 'Add a BindingSource or data component to the form first';
+      addBtn.addEventListener('click', function () {
+        rows.push({ propertyName: 'Text', dataSourceId: sourceRows[0].id, dataMember: '', formattingEnabled: true, updateMode: 'OnValidation', formatString: '' });
+        render();
+      });
+      pop.appendChild(addBtn);
+
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      function commit() {
+        closePopup();
+        if (JSON.stringify(rows) === original) return;
+        vscode.postMessage({ type: 'setBindings', id: id, bindings: rows });
+      }
+      okBtn.addEventListener('click', commit);
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel); pop.appendChild(bar);
+    });
+  }
+
+  function dataSourceEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel';
+    lbl.textContent = p.value ? String(p.value) : '(DataSource)';
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = 'вЂ¦';
+    btn.title = 'Choose data sourceвЂ¦';
+    btn.addEventListener('click', function () {
+      pendingDataSource = { id: c.id, anchor: btn };
+      vscode.postMessage({ type: 'getDataSource', id: c.id });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  function openDataSourcePopup(anchor, id, ok, kind, value, components, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop'); pop.classList.add('dataSourcePop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Data Source'; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'This DataSource canвЂ™t be edited here (' + (reason || 'unsupported expression') + ').';
+        pop.appendChild(note); return;
+      }
+      var body = document.createElement('div'); body.className = 'dataSourceBody';
+      var kindSel = document.createElement('select');
+      [['none', '(none)'], ['component', 'Component'], ['type', 'Object type']].forEach(function (pair) {
+        var opt = document.createElement('option'); opt.value = pair[0]; opt.textContent = pair[1]; if (pair[0] === kind) opt.selected = true; kindSel.appendChild(opt);
+      });
+      var componentSel = document.createElement('select');
+      (components || []).forEach(function (src) {
+        var opt = document.createElement('option'); opt.value = src.id; opt.textContent = src.id + ' (' + shortType(src.typeName || '') + ')';
+        if (kind === 'component' && src.id === value) opt.selected = true; componentSel.appendChild(opt);
+      });
+      var typeInput = document.createElement('input'); typeInput.type = 'text'; typeInput.placeholder = 'Namespace.Customer';
+      typeInput.value = kind === 'type' ? (value || '') : '';
+      function update() {
+        componentSel.style.display = kindSel.value === 'component' ? '' : 'none';
+        typeInput.style.display = kindSel.value === 'type' ? '' : 'none';
+      }
+      kindSel.addEventListener('change', update); update();
+      body.appendChild(kindSel); body.appendChild(componentSel); body.appendChild(typeInput); pop.appendChild(body);
+
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      okBtn.addEventListener('click', function () {
+        var nextKind = kindSel.value;
+        var nextValue = nextKind === 'component' ? componentSel.value : (nextKind === 'type' ? typeInput.value.trim() : '');
+        closePopup();
+        if (nextKind === kind && nextValue === (value || '')) return;
+        vscode.postMessage({ type: 'setDataSource', id: id, kind: nextKind, value: nextValue });
+      });
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel); pop.appendChild(bar);
     });
   }
 
@@ -1657,7 +1860,10 @@
     var itemActive = !!currentItemId;
     var itemRO = itemActive && !currentItemEditable;
     var valTd = document.createElement('td');
-    if (p.isImage && !itemActive) {
+    if (p.isDataSource && !itemActive) {
+      valTd.className = 'val';
+      valTd.appendChild(dataSourceEditor(c, p));
+    } else if (p.isImage && !itemActive) {
       // Image/Icon properties (resx-backed): preview swatch + Import…/(none) — no text field (value isn't a literal)
       valTd.className = 'val';
       valTd.appendChild(imageEditor(c, p));
@@ -1669,6 +1875,7 @@
       valTd.appendChild(
         p.collectionItemType === COLUMN_ITEM_TYPE ? columnsEditor(c, p)
         : p.collectionItemType === GRIDCOLUMN_ITEM_TYPE ? gridColumnsEditor(c, p)
+        : p.collectionItemType === BINDING_ITEM_TYPE ? bindingsEditor(c, p)
         : p.collectionItemType === TREENODE_ITEM_TYPE ? treeNodesEditor(c, p)
         : p.collectionItemType === TOOLSTRIP_ITEM_TYPE ? toolStripEditor(c, p)
         : p.collectionItemType === STRINGARRAY_ITEM_TYPE ? stringArrayEditor(c, p)
@@ -2002,6 +2209,22 @@
         var gcAnchor = pendingGridColumns.anchor;
         pendingGridColumns = null;
         if (gcAnchor && gcAnchor.isConnected) openGridColumnsPopup(gcAnchor, m.id, !!m.ok, m.columns || [], m.reason);
+      }
+    } else if (m.type === 'bindingItems') {
+      if (pendingBindings && pendingBindings.id === m.id) {
+        var bindingAnchor = pendingBindings.anchor;
+        pendingBindings = null;
+        if (bindingAnchor && bindingAnchor.isConnected) {
+          openBindingsPopup(bindingAnchor, m.id, !!m.ok, m.bindings || [], m.sources || [], m.reason);
+        }
+      }
+    } else if (m.type === 'dataSourceInfo') {
+      if (pendingDataSource && pendingDataSource.id === m.id) {
+        var dsAnchor = pendingDataSource.anchor;
+        pendingDataSource = null;
+        if (dsAnchor && dsAnchor.isConnected) {
+          openDataSourcePopup(dsAnchor, m.id, !!m.ok, m.kind || 'none', m.value || '', m.components || [], m.reason);
+        }
       }
     } else if (m.type === 'treeNodeItems') {
       // reply to a TreeView.Nodes "…" click — open the recursive tree editor anchored to the requesting button

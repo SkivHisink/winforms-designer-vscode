@@ -24,6 +24,13 @@ It complements the dev/test commands in
 - **Extension unit tests** — `npm test` runs Vitest over C# expression conversion helpers and the bounded,
   per-engine crash-recovery policy.
 - **E2E harness** — [`extension/src/e2e.ts`](../extension/src/e2e.ts) (`npm run e2e`) spins up the modern and net48 engines and runs the full cross-runtime pipeline. Release CI sets `WFD_REQUIRE_NET48=1`, so missing net48 coverage is a failure rather than a skip. The multi-target fixture is also compiled separately for `net8.0-windows`, `net9.0-windows`, and `net10.0-windows`, preventing the advertised modern-project range from drifting unnoticed.
+- **Data-bound release corpus** — `DataBoundForm.Designer.cs` plus focused engine tests cover canonical
+  `DataBindings`, supported `DataSource` choices, bound DataGridView column styles, common extender providers,
+  component-tray rename, and dependency-aware cross-form copy/paste. The named-pipe E2E proves those operations
+  together against an actual rendered form, including fail-closed unavailable-dependency reporting.
+- **Live-webview E2E** — `npm run webview-e2e` drives the real designer and property-panel scripts. Its 1.2 cases
+  cover the `DataBindings` and `DataSource` popups, extender message routing, tray icons, and inline tray rename in
+  addition to the existing selection, menu, toolbar, and collection workflows.
 - **Extension Host smoke** — the extension is built and executed in both the declared minimum VS Code 1.84 and current Stable; it must activate, start the .NET 10 engine, and export latency, memory, capability, PID, and lifecycle diagnostics.
 - **Performance baseline** — `npm run perf:baseline` checks startup, warm median, and warm p95 in CI and release jobs. Thresholds can be overridden with `WFD_PERF_STARTUP_MS`, `WFD_PERF_WARM_MEDIAN_MS`, and `WFD_PERF_WARM_P95_MS`.
 - **Engine self-test** — the `--selftest <designerFile>` CLI verb does a smoke check on a designer file.
@@ -66,6 +73,7 @@ The engine uses `[assembly: InternalsVisibleTo("Engine.UnitTests")]`; allowlists
 | `IsValidIdentifier` | Accepts valid C# identifiers; rejects injection (`"x; System.Diagnostics.Process.Start(...)"`), keywords, empty, leading digits, and look-alike unicode. |
 | `DesignerValueConverter.ToExpression` | Round-trips `Point`, `Size`, `Color` (named / `FromArgb` / `SystemColors`), `Font` (plain / bold / bold+italic), `Padding`, `Rectangle`; returns `null` on invalid input, an uninstalled font family, and blank. |
 | `AddControl(src, …)` / `RemoveControl(src, …)` | `.Safe` true for a leaf control on the form; false for root, a container-with-children, or an unknown type/parent. `add` then `remove` returns the **original bytes**. |
+| Binding / grid / extender / clipboard source editors | Canonical reads and byte-local writes round-trip; custom expressions, unmanaged statements, bad enum/provider values, missing or type-mismatched dependencies, and crafted clipboard references fail closed without returning edited text. |
 | Interpreter allowlists (via crafted source or `internal`) | `new FileStream/Bitmap/Cursor(path)`, `MessageBox.Show(...)`, `Image.FromFile(...)`, `Environment.MachineName` → unrepresentable / not executed (no file created). Allowed: `Color.FromArgb(...)`, `new Point(...)`, `SystemColors.Control`. |
 
 **Conventions:** Arrange-Act-Assert; one behavior per test; name `Method_Scenario_Expected`; use the `sourceText`/`src` overloads (inline `.Designer.cs` strings, no temp files); keep tests STA-free and render-free.
@@ -114,7 +122,9 @@ Optional coverage: `coverlet` for C#, `vitest --coverage` for TS — report only
 - **P0 — complete:** safe-save gates, `IsValidIdentifier`, `DesignerValueConverter.ToExpression`, and add/remove safety; C# tests required in CI/release.
 - **P1 — complete:** allowlists, TFM regex/selection, Vitest for `valueExpr.ts` and recovery policy; TS tests required in CI/release.
 - **P2 — broaden + decouple:** factor pure config/path logic out of `vscode`-coupled code; widen TS coverage; add coverage reporting.
-- **P3 — golden fixtures:** snapshot/golden tests for fragile constructs (DataGridView, BindingSource, etc.) — overlaps the e2e fixtures.
+- **P3 — complete for the 1.2 surface:** golden and rendered fixtures cover fragile DataGridView, BindingSource,
+  extender, cross-form dependency, TreeView, ImageList, layout, and net48 interpretation shapes. Add new fixtures
+  whenever a newly supported source construct would otherwise be represented only by a narrow unit test.
 
 ## Non-goals for the unit layer
 

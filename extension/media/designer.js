@@ -827,7 +827,11 @@
     tray.forEach(function (t) {
       var chip = document.createElement('div');
       chip.className = 'trayItem' + (t.id === current ? ' sel' : '');
-      chip.textContent = t.name + ' : ' + shortType(t.type);
+      if (t.iconPng) {
+        var icon = document.createElement('img'); icon.className = 'trayIcon'; icon.alt = ''; icon.draggable = false;
+        icon.src = 'data:image/png;base64,' + t.iconPng; chip.appendChild(icon);
+      }
+      var text = document.createElement('span'); text.textContent = t.name + ' : ' + shortType(t.type); chip.appendChild(text);
       chip.title = t.id + ' : ' + t.type;
       chip.addEventListener('click', function () {
         // a tray component has no visual bounds → clear the canvas selection box, drive the Properties panel
@@ -839,8 +843,33 @@
         // non-strip chip (Timer/ImageList/…) has no items → openTrayStripFlyout closes any open flyout instead.
         openTrayStripFlyout(t);
       });
+      chip.addEventListener('dblclick', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        beginTrayRename(chip, t);
+      });
       trayEl.appendChild(chip);
     });
+  }
+  function beginTrayRename(chip, item) {
+    var input = document.createElement('input'); input.type = 'text'; input.className = 'trayRename';
+    input.value = item.name || item.id; input.spellcheck = false;
+    chip.textContent = ''; chip.appendChild(input);
+    var finished = false;
+    function finish(commit) {
+      if (finished) return;
+      finished = true;
+      var next = input.value.trim();
+      if (commit && next && next !== item.id) vscode.postMessage({ type: 'trayRename', id: item.id, newName: next });
+      else renderTray();
+    }
+    input.addEventListener('click', function (ev) { ev.stopPropagation(); });
+    input.addEventListener('dblclick', function (ev) { ev.stopPropagation(); });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', function () { finish(true); });
+    setTimeout(function () { input.focus(); input.select(); }, 0);
   }
   function setStatus(s) { statusEl.textContent = s || ''; }
   function shortType(t) { var i = t.lastIndexOf('.'); return i < 0 ? t : t.slice(i + 1); }

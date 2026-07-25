@@ -284,6 +284,7 @@ export interface TrayComponent {
   id: string; // edit id (Site.Name) for DescribeComponent/SetProperty
   name: string;
   type: string;
+  iconPng?: string | null;
   // For an off-tree ToolStrip surfaced in the tray (a ContextMenuStrip): its top-level Items forest (id/text/type +
   // recursive children, no bounds) → the canvas opens a synthetic flyout from the tray chip so the strip's items are
   // reachable (Properties / rename / delete / add). Absent/empty for a non-strip component.
@@ -549,6 +550,10 @@ export interface LiveCollItem {
   align?: string;
   readOnly?: boolean;
   visible?: boolean;
+  dataPropertyName?: string;
+  format?: string;
+  alignment?: string;
+  nullValue?: string;
 }
 
 /** Reconstruct a typed collection (Items / ListView.Columns / DataGridView.Columns) on the net48 live instance from
@@ -834,6 +839,11 @@ export interface PropertyDesc {
    * `standardValues` are the compatible sibling field names + a leading "(none)"; the panel tags the edit with
    * `refEdit` so the host writes `this.<name>` / `null` (net9 splice, net48 live resolve) instead of a literal. */
   referenceValues?: boolean;
+  /** True for BindingSource/ListControl/DataGridView.DataSource; opens a closed source-backed editor. */
+  isDataSource?: boolean;
+  /** Extender-provider field id and SetX/GetX suffix for a source-backed extender pseudo-property. */
+  extenderProvider?: string | null;
+  extenderProperty?: string | null;
   /** True for a design-time PSEUDO-property (Modifiers / GenerateMember) — a source artifact, not a live component
    * property. The panel tags its edit `designTime` so the host routes to the field-declaration splice (setModifier),
    * not setProperty. Routing on this flag (not the name) keeps a real property named "Modifiers" on the normal path. */
@@ -1243,6 +1253,18 @@ export function removeControl(
   return engine.connection.sendRequest<ControlRemoveResult>('RemoveControl', designerFilePath, controlId, ...tail);
 }
 
+/** Rename a component field and its canonical this.field references (tray rename). */
+export function renameComponent(
+  engine: EngineHandle,
+  designerFilePath: string,
+  oldId: string,
+  newId: string,
+  sourceText?: string,
+): Promise<ControlAddResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlAddResult>('RenameComponent', designerFilePath, oldId, newId, ...tail);
+}
+
 /**
 * Remove a whole tab page (the page + its entire subtree) from a tab host (pure net9 text edit): deletes the
 * subtree's fields/statements and detaches the page from the host's tab collection (whole Controls.Add/TabPages.Add,
@@ -1292,6 +1314,7 @@ export interface ControlPasteResult {
   typeName: string;
   x: number;
   y: number;
+  missingDependencies: string[];
 }
 
 /**
@@ -1596,14 +1619,18 @@ export function setToolStripItems(
 }
 
 /** One DataGridView column (typed grid-column editor). `id` is the field id; an empty id marks a NEW column (the
-* engine generates one + a DataGridViewTextBoxColumn). Only these managed properties round-trip — a bound/cast/
-* unmanaged column makes the whole collection read-only. */
+* engine generates one + a DataGridViewTextBoxColumn). Only these display/binding/style properties round-trip —
+* a cast/initializer or unmanaged property makes the whole collection read-only. */
 export interface GridColumnItem {
   id: string;
   headerText: string;
   width: number;
   readOnly: boolean;
   visible: boolean;
+  dataPropertyName?: string;
+  format?: string;
+  alignment?: string;
+  nullValue?: string;
 }
 
 /** Result of ListGridColumns: the DataGridView's ordered columns and whether the collection is editable. */
@@ -1636,6 +1663,99 @@ export function setGridColumns(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetGridColumns', designerFilePath, ownerId, columns, ...tail);
+}
+
+/** One canonical WinForms ControlBindingsCollection entry. */
+export interface BindingItem {
+  propertyName: string;
+  dataSourceId: string;
+  dataMember: string;
+  formattingEnabled: boolean;
+  updateMode: 'Never' | 'OnPropertyChanged' | 'OnValidation';
+  formatString: string;
+}
+
+/** A component field that may be selected as a binding source. */
+export interface BindingSourceItem {
+  id: string;
+  typeName: string;
+}
+
+/** Result of ListBindings. `ok=false` keeps custom/non-literal binding code read-only. */
+export interface BindingItems {
+  ok: boolean;
+  bindings: BindingItem[];
+  sources: BindingSourceItem[];
+  reason: string;
+}
+
+/** Read one control's DataBindings from the current unsaved designer buffer. */
+export function listBindings(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  sourceText?: string,
+): Promise<BindingItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<BindingItems>('ListBindings', designerFilePath, ownerId, ...tail);
+}
+
+/** Replace only one control's canonical DataBindings statements. */
+export function setBindings(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  bindings: BindingItem[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetBindings', designerFilePath, ownerId, bindings, ...tail);
+}
+
+/** The closed DataSource workflow for BindingSource/ListControl/DataGridView. */
+export interface DataSourceInfo {
+  ok: boolean;
+  kind: 'none' | 'component' | 'type';
+  value: string;
+  components: BindingSourceItem[];
+  reason: string;
+}
+
+export function getDataSource(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  sourceText?: string,
+): Promise<DataSourceInfo> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<DataSourceInfo>('GetDataSource', designerFilePath, ownerId, ...tail);
+}
+
+export function setDataSource(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  kind: 'none' | 'component' | 'type',
+  value: string,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>('SetDataSource', designerFilePath, ownerId, kind, value, ...tail);
+}
+
+export function setExtender(
+  engine: EngineHandle,
+  designerFilePath: string,
+  providerId: string,
+  targetId: string,
+  propertyName: string,
+  propertyType: string,
+  rawValue: string,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>(
+    'SetExtender', designerFilePath, providerId, targetId, propertyName, propertyType, rawValue, ...tail);
 }
 
 /** Reset a property to its default by deleting its assignment(s) (VS "Reset"; the engine side of Dock↔Anchor

@@ -611,6 +611,12 @@ namespace WinFormsDesigner.Engine.Net48
             {
                 var col = new DataGridViewTextBoxColumn { HeaderText = it.Text ?? "", ReadOnly = it.ReadOnly, Visible = it.Visible };
                 if (!string.IsNullOrEmpty(it.Id)) col.Name = it.Id; // DataGridView.Columns is keyed by Name
+                col.DataPropertyName = it.DataPropertyName ?? "";
+                col.DefaultCellStyle.Format = it.Format ?? "";
+                col.DefaultCellStyle.NullValue = it.NullValue ?? "";
+                if (!string.IsNullOrEmpty(it.Alignment)
+                    && Enum.TryParse(it.Alignment, out DataGridViewContentAlignment alignment))
+                    col.DefaultCellStyle.Alignment = alignment;
                 // Width below MinimumWidth throws; a bad width shouldn't nuke the whole rebuild → soft-set.
                 if (it.Width > 0) { try { col.Width = it.Width; } catch { /* keep the type default */ } }
                 cols.Add(col);
@@ -2141,6 +2147,7 @@ namespace WinFormsDesigner.Engine.Net48
                     Id = kv.Value,
                     Name = kv.Value,
                     Type = kv.Key.GetType().FullName ?? kv.Key.GetType().Name,
+                    IconPng = ToolboxIconPng(kv.Key.GetType()),
                     // An OFF-TREE ToolStrip (a ContextMenuStrip) carries its top-level Items so the canvas opens a
                     // synthetic flyout from its tray chip; a non-strip component leaves this empty.
                     Items = kv.Key is ToolStrip strip ? BuildStripItemForest(strip, kv.Value, live) : new List<ToolStripItemBounds>(),

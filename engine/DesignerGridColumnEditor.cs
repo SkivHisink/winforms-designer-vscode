@@ -23,11 +23,19 @@ namespace WinFormsDesigner.Engine
         public int Width { get; set; } = 100;
         public bool ReadOnly { get; set; }
         public bool Visible { get; set; } = true;
+        /// <summary>Bound field/member name; empty means an unbound column.</summary>
+        public string DataPropertyName { get; set; } = "";
+        /// <summary>DefaultCellStyle.Format (for example "N2" or "d").</summary>
+        public string Format { get; set; } = "";
+        /// <summary>DataGridViewContentAlignment member name; "NotSet" keeps the inherited style.</summary>
+        public string Alignment { get; set; } = "NotSet";
+        /// <summary>DefaultCellStyle.NullValue when represented as a string literal; empty keeps the framework default.</summary>
+        public string NullValue { get; set; } = "";
     }
 
     /// <summary>Read side of the DataGridView.Columns editor. <see cref="Ok"/> is false when a column isn't a plain
     /// named column field with a canonical <c>Name</c> (== field id) and only the managed properties set (e.g. an
-    /// inline/cast/initializer construction, a data-bound column with DataPropertyName, or any unmanaged property).</summary>
+    /// inline/cast/initializer construction or any property outside the declared binding/style surface).</summary>
     public sealed class GridColumnItemsResult
     {
         public bool Ok { get; init; }
@@ -47,15 +55,23 @@ namespace WinFormsDesigner.Engine
     /// </code>
     /// Notes vs ListView: the AddRange ARRAY type is the base <c>DataGridViewColumn</c> while each column's
     /// CONSTRUCTION type is the concrete column type (preserved on edit; new columns get a TextBoxColumn); the
-    /// managed properties are HeaderText/Width/ReadOnly/Visible plus a canonical <c>Name</c> (kept in sync with the
-    /// field id). The <c>ISupportInitialize</c> BeginInit/EndInit statements aren't column-related, so they're left
-    /// byte-identical. Values are emitted through Roslyn literal/keyword syntax — nothing is interpolated.
+    /// managed properties are HeaderText/Width/ReadOnly/Visible, DataPropertyName, selected DefaultCellStyle values,
+    /// plus a canonical <c>Name</c> (kept in sync with the field id). The <c>ISupportInitialize</c> BeginInit/EndInit
+    /// statements aren't column-related, so they're left byte-identical. Values are emitted through Roslyn
+    /// literal/keyword syntax — nothing is interpolated.
     /// </summary>
     public static class DesignerGridColumnEditor
     {
         private const int DefaultWidth = 100;
         private const string DefaultColumnType = "System.Windows.Forms.DataGridViewTextBoxColumn";
         private const string ArrayElementType = "System.Windows.Forms.DataGridViewColumn";
+        private static readonly HashSet<string> Alignments = new(StringComparer.Ordinal)
+        {
+            "NotSet",
+            "TopLeft", "TopCenter", "TopRight",
+            "MiddleLeft", "MiddleCenter", "MiddleRight",
+            "BottomLeft", "BottomCenter", "BottomRight",
+        };
 
         // ---- read ----
 
@@ -120,7 +136,20 @@ namespace WinFormsDesigner.Engine
                     typeOf[id] = DefaultColumnType;
                 }
                 finalIds.Add(id);
-                normalized.Add(new GridColumnItem { Id = id, HeaderText = d.HeaderText ?? "", Width = d.Width, ReadOnly = d.ReadOnly, Visible = d.Visible });
+                string alignment = string.IsNullOrEmpty(d.Alignment) ? "NotSet" : d.Alignment;
+                if (!Alignments.Contains(alignment)) return Failed("unsupported cell alignment: " + alignment);
+                normalized.Add(new GridColumnItem
+                {
+                    Id = id,
+                    HeaderText = d.HeaderText ?? "",
+                    Width = d.Width,
+                    ReadOnly = d.ReadOnly,
+                    Visible = d.Visible,
+                    DataPropertyName = d.DataPropertyName ?? "",
+                    Format = d.Format ?? "",
+                    Alignment = alignment,
+                    NullValue = d.NullValue ?? "",
+                });
             }
 
             // refuse removing a column referenced outside its own block (shared field / captured elsewhere).
@@ -290,6 +319,7 @@ namespace WinFormsDesigner.Engine
             col = new GridColumnItem();
             reason = "";
             string header = "";
+            string dataPropertyName = "", format = "", alignment = "NotSet", nullValue = "";
             int width = DefaultWidth;
             bool readOnly = false, visible = true;
             bool nameSeen = false, constructed = false;
@@ -326,8 +356,32 @@ namespace WinFormsDesigner.Engine
                         case "Visible":
                             if (!TryBoolLiteral(asn.Right, out var vv)) { reason = "column " + id + ".Visible is not a bool literal"; return false; }
                             visible = vv; break;
+                        case "DataPropertyName":
+                            if (!TryStringLiteral(asn.Right, out var dpv)) { reason = "column " + id + ".DataPropertyName is not a literal"; return false; }
+                            dataPropertyName = dpv!; break;
                         default:
                             reason = "column " + id + " has unsupported property " + lhs[1]; return false;
+                    }
+                    continue;
+                }
+                if (lhs.Count == 3 && lhs[0] == id && lhs[1] == "DefaultCellStyle")
+                {
+                    switch (lhs[2])
+                    {
+                        case "Format":
+                            if (!TryStringLiteral(asn.Right, out var fv)) { reason = "column " + id + ".DefaultCellStyle.Format is not a literal"; return false; }
+                            format = fv!; break;
+                        case "NullValue":
+                            if (asn.Right.IsKind(SyntaxKind.NullLiteralExpression)) nullValue = "";
+                            else if (TryStringLiteral(asn.Right, out var nvv)) nullValue = nvv!;
+                            else { reason = "column " + id + ".DefaultCellStyle.NullValue is not a string literal"; return false; }
+                            break;
+                        case "Alignment":
+                            if (!TryEnumMember(asn.Right, "DataGridViewContentAlignment", Alignments, out var av))
+                            { reason = "column " + id + ".DefaultCellStyle.Alignment is not supported"; return false; }
+                            alignment = av!; break;
+                        default:
+                            reason = "column " + id + " has unsupported cell-style property " + lhs[2]; return false;
                     }
                     continue;
                 }
@@ -337,7 +391,18 @@ namespace WinFormsDesigner.Engine
             // a column referenced in the collection but never `new`-constructed is malformed source; refuse rather
             // than synthesize a TextBoxColumn construction that could mismatch the field's declared type.
             if (!constructed) { reason = "column " + id + " has no construction"; return false; }
-            col = new GridColumnItem { Id = id, HeaderText = header, Width = width, ReadOnly = readOnly, Visible = visible };
+            col = new GridColumnItem
+            {
+                Id = id,
+                HeaderText = header,
+                Width = width,
+                ReadOnly = readOnly,
+                Visible = visible,
+                DataPropertyName = dataPropertyName,
+                Format = format,
+                Alignment = alignment,
+                NullValue = nullValue,
+            };
             return true;
         }
 
@@ -372,6 +437,14 @@ namespace WinFormsDesigner.Engine
                     list.Add(Stmt($"this.{c.Id}.ReadOnly = true;", indent, nl));
                 if (!c.Visible)
                     list.Add(Stmt($"this.{c.Id}.Visible = false;", indent, nl));
+                if (c.DataPropertyName.Length > 0)
+                    list.Add(Stmt($"this.{c.Id}.DataPropertyName = {SyntaxFactory.Literal(c.DataPropertyName)};", indent, nl));
+                if (c.Format.Length > 0)
+                    list.Add(Stmt($"this.{c.Id}.DefaultCellStyle.Format = {SyntaxFactory.Literal(c.Format)};", indent, nl));
+                if (c.Alignment != "NotSet")
+                    list.Add(Stmt($"this.{c.Id}.DefaultCellStyle.Alignment = System.Windows.Forms.DataGridViewContentAlignment.{c.Alignment};", indent, nl));
+                if (c.NullValue.Length > 0)
+                    list.Add(Stmt($"this.{c.Id}.DefaultCellStyle.NullValue = {SyntaxFactory.Literal(c.NullValue)};", indent, nl));
             }
             return list;
         }
@@ -462,6 +535,17 @@ namespace WinFormsDesigner.Engine
                     "Width" => TryIntLiteral(asn.Right, out _),
                     "ReadOnly" => TryBoolLiteral(asn.Right, out _),
                     "Visible" => TryBoolLiteral(asn.Right, out _),
+                    "DataPropertyName" => TryStringLiteral(asn.Right, out _),
+                    _ => false,
+                };
+            }
+            if (lhs.Count == 3 && columnIds.Contains(lhs[0]) && lhs[1] == "DefaultCellStyle")
+            {
+                return lhs[2] switch
+                {
+                    "Format" => TryStringLiteral(asn.Right, out _),
+                    "NullValue" => asn.Right.IsKind(SyntaxKind.NullLiteralExpression) || TryStringLiteral(asn.Right, out _),
+                    "Alignment" => TryEnumMember(asn.Right, "DataGridViewContentAlignment", Alignments, out _),
                     _ => false,
                 };
             }
@@ -525,6 +609,18 @@ namespace WinFormsDesigner.Engine
                 if (lit.IsKind(SyntaxKind.FalseLiteralExpression)) { value = false; return true; }
             }
             value = false; return false;
+        }
+
+        private static bool TryEnumMember(ExpressionSyntax expr, string enumType, HashSet<string> allowed, out string? member)
+        {
+            member = null;
+            if (expr is not MemberAccessExpressionSyntax ma) return false;
+            string typeName = ma.Expression.ToString().Replace("global::", "", StringComparison.Ordinal);
+            string candidate = ma.Name.Identifier.ValueText;
+            if (typeName != enumType && !typeName.EndsWith("." + enumType, StringComparison.Ordinal)) return false;
+            if (!allowed.Contains(candidate)) return false;
+            member = candidate;
+            return true;
         }
 
         private static string? ColumnType(MethodDeclarationSyntax init, string id)

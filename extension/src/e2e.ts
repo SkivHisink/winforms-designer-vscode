@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
+import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
@@ -3256,8 +3256,8 @@ async function main(): Promise<void> {
       // EDIT — the fixture carries VS `// nameColumn` separators; the edit must still pass (separators tolerated),
       // and HeaderText/Width/ReadOnly must round-trip
       const ge1 = await setGridColumns(engine, gridColForm, 'dataGridView1', [
-        { id: 'nameColumn', headerText: 'Full Name', width: 150, readOnly: false, visible: true },
-        { id: 'valueColumn', headerText: 'Value', width: 100, readOnly: true, visible: true },
+        { id: 'nameColumn', headerText: 'Full Name', width: 150, readOnly: false, visible: true, dataPropertyName: 'Name', format: '', alignment: 'NotSet', nullValue: '' },
+        { id: 'valueColumn', headerText: 'Value', width: 100, readOnly: true, visible: true, dataPropertyName: 'Amount', format: 'N2', alignment: 'MiddleRight', nullValue: '(none)' },
       ], disk);
       if (!ge1.safe || ge1.text === null) throw new Error('gridcolumns: edit rejected (VS separators must be tolerated): ' + ge1.reason);
       const gr1 = await listGridColumns(engine, gridColForm, 'dataGridView1', ge1.text);
@@ -3265,6 +3265,8 @@ async function main(): Promise<void> {
         throw new Error('gridcolumns: edit did not round-trip, got ' + JSON.stringify(gr1.columns));
       if (!/this\.valueColumn\.ReadOnly = true;/.test(ge1.text)) throw new Error('gridcolumns: ReadOnly=true must emit an assignment');
       if (!/this\.nameColumn\.Name = "nameColumn";/.test(ge1.text)) throw new Error('gridcolumns: Name must always be emitted (kept in sync with the field id)');
+      if (gr1.columns[0].dataPropertyName !== 'Name' || gr1.columns[1].format !== 'N2' || gr1.columns[1].alignment !== 'MiddleRight' || gr1.columns[1].nullValue !== '(none)')
+        throw new Error('gridcolumns: binding/cell-style values did not round-trip: ' + JSON.stringify(gr1.columns));
 
       // REORDER
       const ge2 = await setGridColumns(engine, gridColForm, 'dataGridView1', [
@@ -3295,9 +3297,10 @@ async function main(): Promise<void> {
       if (!ge5.safe || ge5.text === null) throw new Error('gridcolumns: clear rejected: ' + ge5.reason);
       if (/Columns\.AddRange/.test(ge5.text)) throw new Error('gridcolumns: clear must remove the AddRange');
 
-      // SAFETY — a data-bound column (DataPropertyName) or a Name that isn't the field id → read-only
+      // DataPropertyName is a managed 1.2 property; a Name that isn't the field id still makes the row read-only.
       const bound = disk.replace('this.nameColumn.Name = "nameColumn";', 'this.nameColumn.Name = "nameColumn";\n            this.nameColumn.DataPropertyName = "Name";');
-      if ((await listGridColumns(engine, gridColForm, 'dataGridView1', bound)).ok) throw new Error('gridcolumns: a data-bound column (DataPropertyName) must be read-only');
+      const boundRead = await listGridColumns(engine, gridColForm, 'dataGridView1', bound);
+      if (!boundRead.ok || boundRead.columns[0].dataPropertyName !== 'Name') throw new Error('gridcolumns: DataPropertyName must be editable in 1.2');
       const renamed = disk.replace('this.nameColumn.Name = "nameColumn";', 'this.nameColumn.Name = "different";');
       if ((await listGridColumns(engine, gridColForm, 'dataGridView1', renamed)).ok) throw new Error('gridcolumns: a column whose Name != field id must be read-only');
 
@@ -3373,7 +3376,7 @@ async function main(): Promise<void> {
       if ((await setGridColumns(engine, gridColForm, 'dataGridView1', [{ id: 'nameColumn', headerText: 'Name', width: 100, readOnly: false, visible: true }], multiVar)).safe)
         throw new Error('gridcolumns: removing a column that shares a field declaration must be refused');
 
-      console.log('e2e: typed collection editor (DataGridView.Columns) verified — Columns flagged DataGridViewColumn; list [nameColumn,valueColumn]; edit (header/width/ReadOnly round-trip, Name kept); reorder; remove (field+refs gone); add (new DataGridViewTextBoxColumn decl); clear; VS `// <name>` separators tolerated; DataPropertyName/renamed → ok:false; real dev-note refused; unknown id refused');
+      console.log('e2e: typed collection editor (DataGridView.Columns) verified — Columns flagged DataGridViewColumn; list [nameColumn,valueColumn]; edit (header/width/ReadOnly/DataPropertyName/cell-style round-trip, Name kept); reorder; remove (field+refs gone); add (new DataGridViewTextBoxColumn decl); clear; VS `// <name>` separators tolerated; mismatched Name → ok:false; real dev-note refused; unknown id refused');
     } else {
       console.log('e2e: DataGridView collection editor SKIPPED — engine/samples/GridForm.Designer.cs missing');
     }
@@ -4323,6 +4326,64 @@ namespace Product.CustomForms
     // resources. Such a form must still RENDER (it loads fine) and its full normalize-save must DEGRADE
     // to read-only (safe=false) — NOT throw out of the RPC (a throw would crash PreviewSave/
     // SerializeDesigner on any menu form). Pins the SerializeFromFile try/catch fallback.
+    // ---- v1.2 data-bound form workflow ----
+    const dataBoundForm = path.join(repo, 'engine', 'samples', 'DataBoundForm.Designer.cs');
+    if (fs.existsSync(dataBoundForm)) {
+      const dbDisk = fs.readFileSync(dataBoundForm, 'utf8');
+      const dbRender = await renderWithLayout(engine, dataBoundForm, undefined, dbDisk);
+      if (!isPng(dbRender.png)) throw new Error('v1.2 data-bound fixture did not render');
+
+      const textDesc = await describeComponent(engine, dataBoundForm, 'nameTextBox', undefined, dbDisk);
+      const dataBindingsProp = textDesc?.properties.find((p) => p.name === 'DataBindings');
+      if (!dataBindingsProp?.isCollection || dataBindingsProp.collectionItemType !== 'System.Windows.Forms.Binding')
+        throw new Error('v1.2 DataBindings must be surfaced as the Binding editor: ' + JSON.stringify(dataBindingsProp));
+      const tooltipProp = textDesc?.properties.find((p) => p.extenderProvider === 'toolTip1' && p.extenderProperty === 'ToolTip');
+      if (!tooltipProp || tooltipProp.value !== 'Customer name')
+        throw new Error('v1.2 ToolTip extender property was not surfaced on nameTextBox');
+
+      const bindingRead = await listBindings(engine, dataBoundForm, 'nameTextBox', dbDisk);
+      if (!bindingRead.ok || bindingRead.bindings.length !== 1 || bindingRead.bindings[0].dataSourceId !== 'customerBindingSource')
+        throw new Error('v1.2 binding read failed: ' + JSON.stringify(bindingRead));
+      const bindingEdit = await setBindings(engine, dataBoundForm, 'nameTextBox', [{
+        propertyName: 'Text', dataSourceId: 'customerBindingSource', dataMember: 'DisplayName',
+        formattingEnabled: true, updateMode: 'OnPropertyChanged', formatString: '',
+      }], dbDisk);
+      if (!bindingEdit.safe || !bindingEdit.text?.includes('"DisplayName"'))
+        throw new Error('v1.2 binding edit rejected: ' + bindingEdit.reason);
+
+      const sourceDesc = await describeComponent(engine, dataBoundForm, 'customerBindingSource', undefined, dbDisk);
+      if (!sourceDesc?.properties.find((p) => p.name === 'DataSource')?.isDataSource)
+        throw new Error('v1.2 BindingSource.DataSource must use the first-class editor');
+      const sourceRead = await getDataSource(engine, dataBoundForm, 'customerBindingSource', dbDisk);
+      if (!sourceRead.ok || sourceRead.kind !== 'none') throw new Error('v1.2 initial DataSource should be none');
+      const sourceEdit = await setDataSource(engine, dataBoundForm, 'customerBindingSource', 'type', 'WinFormsDesigner.Samples.Customer', dbDisk);
+      if (!sourceEdit.safe || !sourceEdit.text?.includes('typeof(WinFormsDesigner.Samples.Customer)'))
+        throw new Error('v1.2 DataSource typeof edit rejected: ' + sourceEdit.reason);
+
+      const gridRead = await listGridColumns(engine, dataBoundForm, 'customerGrid', dbDisk);
+      if (!gridRead.ok || gridRead.columns[0].dataPropertyName !== 'Name'
+          || gridRead.columns[1].format !== 'N2' || gridRead.columns[1].alignment !== 'MiddleRight')
+        throw new Error('v1.2 bound grid columns/cell style did not round-trip: ' + JSON.stringify(gridRead));
+
+      const extenderEdit = await setExtender(engine, dataBoundForm, 'toolTip1', 'nameTextBox',
+        'ToolTip', 'System.String', 'Edited help', dbDisk);
+      if (!extenderEdit.safe || !extenderEdit.text?.includes('"Edited help"'))
+        throw new Error('v1.2 extender edit rejected: ' + extenderEdit.reason);
+
+      const trayToolTip = dbRender.tray.find((x) => x.id === 'toolTip1');
+      const trayBindingSource = dbRender.tray.find((x) => x.id === 'customerBindingSource');
+      if (!trayToolTip || !trayBindingSource) throw new Error('v1.2 data components missing from tray');
+      if (!trayToolTip.iconPng && !trayBindingSource.iconPng)
+        throw new Error('v1.2 tray components did not expose any ToolboxBitmap icon');
+      const renamedTray = await renameComponent(engine, dataBoundForm, 'toolTip1', 'customerToolTip', dbDisk);
+      if (!renamedTray.safe || !renamedTray.newText?.includes('customerToolTip.SetToolTip'))
+        throw new Error('v1.2 tray rename rejected: ' + renamedTray.reason);
+
+      console.log('e2e: v1.2 data-bound workflow verified — DataBindings/DataSource editors, bound grid cell styles, extender property, tray icons and tray rename');
+    } else {
+      console.log('e2e: v1.2 data-bound workflow SKIPPED — DataBoundForm.Designer.cs missing');
+    }
+
     const menuForm = path.join(repo, 'engine', 'samples', 'MenuStripForm.Designer.cs');
     if (fs.existsSync(menuForm)) {
       const menuPng = await renderDesigner(engine, menuForm);
@@ -4819,6 +4880,42 @@ namespace Product.CustomForms
       if (!litPaste.safe || litPaste.newText === null) throw new Error('paste of a literal-bearing clip rejected: ' + litPaste.reason);
       if (litPaste.newText.indexOf('"see this.x now"') < 0 || litPaste.newText.indexOf('see this.button1 now') >= 0) throw new Error('AST rename corrupted a string literal containing "this.<id>"');
       // net48-preview hint: a clip with no representable integer Location yields (-1,-1) → net48 AddControl leaves the default position
+      // v1.2 cross-form clipboard: a data-bound control carries typed BindingSource + ToolTip dependencies. The
+      // target must expose the same fields/types; otherwise paste returns every unavailable dependency explicitly.
+      if (fs.existsSync(dataBoundForm)) {
+        const dbSource = fs.readFileSync(dataBoundForm, 'utf8');
+        const boundCopy = await copyControl(engine, dataBoundForm, 'nameTextBox', dbSource);
+        if (!boundCopy.safe || !boundCopy.clip) throw new Error('v1.2 cross-form copy rejected: ' + boundCopy.reason);
+        const target = `namespace T { partial class TargetForm {
+          private System.Windows.Forms.Panel panel1;
+          private System.Windows.Forms.BindingSource customerBindingSource;
+          private System.Windows.Forms.ToolTip toolTip1;
+          private void InitializeComponent() {
+            this.panel1 = new System.Windows.Forms.Panel();
+            this.customerBindingSource = new System.Windows.Forms.BindingSource();
+            this.toolTip1 = new System.Windows.Forms.ToolTip();
+            this.panel1.Name = "panel1";
+            this.Controls.Add(this.panel1);
+          }
+        } }`;
+        const boundPaste = await pasteControl(engine, dataBoundForm, boundCopy.clip, 'panel1', target);
+        if (!boundPaste.safe || !boundPaste.newText?.includes('this.customerBindingSource, "Name"')
+            || !boundPaste.newText.includes('this.toolTip1.SetToolTip('))
+          throw new Error('v1.2 cross-form paste did not preserve the binding dependency: ' + boundPaste.reason);
+        const missingTarget = target
+          .replace('private System.Windows.Forms.BindingSource customerBindingSource;', '')
+          .replace('this.customerBindingSource = new System.Windows.Forms.BindingSource();', '');
+        const missingPaste = await pasteControl(engine, dataBoundForm, boundCopy.clip, 'panel1', missingTarget);
+        if (missingPaste.safe || missingPaste.missingDependencies?.[0] !== 'customerBindingSource (System.Windows.Forms.BindingSource)')
+          throw new Error('v1.2 cross-form paste must report the missing BindingSource: ' + JSON.stringify(missingPaste));
+        const missingProvider = target
+          .replace('private System.Windows.Forms.ToolTip toolTip1;', '')
+          .replace('this.toolTip1 = new System.Windows.Forms.ToolTip();', '');
+        const missingProviderPaste = await pasteControl(engine, dataBoundForm, boundCopy.clip, 'panel1', missingProvider);
+        if (missingProviderPaste.safe
+            || !missingProviderPaste.missingDependencies?.includes('toolTip1 (System.Windows.Forms.ToolTip)'))
+          throw new Error('v1.2 cross-form paste must report the missing ToolTip: ' + JSON.stringify(missingProviderPaste));
+      }
       if (litPaste.typeName !== 'System.Windows.Forms.Button') throw new Error('PasteControl did not surface the clone type for a Location-less clip: ' + litPaste.typeName);
       if (litPaste.x !== -1 || litPaste.y !== -1) throw new Error(`PasteControl should report (-1,-1) for a clip without an integer Location: (${litPaste.x},${litPaste.y})`);
       console.log(`e2e: copy/paste verified — clone (${ps.name}) renames+offsets & renders (+1); original survives; refuse root/container/bad-clip; paste into a container parents; net48 live-add hints (type=${ps.typeName}, loc ${ps.x},${ps.y}; Location-less clip → -1,-1); SECURITY: reject Fqn-injection, non-designer call, sibling-ref; AST rename preserves string literals; disk untouched`);

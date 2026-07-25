@@ -40,7 +40,7 @@ with a concrete reason.
 
 ## 1.1.0 — Daily workflow and project integration
 
-**Status: implemented — release candidate verified locally**
+**Status: shipped in `v1.1.0`**
 
 The first post-1.0 minor removes the manual recovery steps that interrupted an otherwise stable design session.
 It deliberately finishes existing product seams before the larger data-binding and general-editor work in 1.2–1.3.
@@ -67,13 +67,24 @@ undoable, and covered on both engines.
 
 ## 1.2.0 — Data-bound forms
 
-- Add first-class `BindingSource`, `DataSource`, and `DataBindings` workflows.
-- Extend the DataGridView experience with cell-style, format-string, and binding-related editors.
-- Improve component-tray lifecycle operations, icons, references, and common extender-provider workflows.
-- Add safe cross-form copy/paste with reference validation and explicit handling of unavailable dependencies.
+**Status: implemented — release candidate verified locally**
 
-**Exit criterion:** a typical data-bound line-of-business form can be built and maintained without dropping
-to generated code for routine binding work.
+- `BindingSource`, `DataSource`, and `DataBindings` are first-class source editors: bindings expose their target
+  property, component source, data member, formatting flag, update mode, and format string; supported data sources
+  can be cleared, pointed at a compatible component, or set to `typeof(T)`.
+- The DataGridView column editor round-trips `DataPropertyName`, format strings, alignment, and literal null display
+  values together with the existing column metadata.
+- The component tray carries framework icons and inline field rename; compatible component references remain
+  selectable, while common `ToolTip`, `ErrorProvider`, and `HelpProvider` extender properties are editable directly
+  on their target controls.
+- Cross-form copy/paste carries exact typed dependencies for bindings and common extender providers, validates them
+  against the target form, and explicitly lists every unavailable or type-mismatched dependency without changing
+  source.
+
+**Exit criterion — met:** the checked-in `DataBoundForm` release fixture is rendered and maintained through the
+designer's binding, data-source, bound-column, extender, tray, and dependency-aware clipboard paths without manual
+generated-code edits. Focused unit tests, the cross-runtime named-pipe E2E, and live-webview tests cover those paths;
+unsupported expressions continue to fail closed.
 
 ## 1.3.0 — General editor framework
 

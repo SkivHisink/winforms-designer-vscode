@@ -1391,6 +1391,32 @@ function ctxTray(withSub = false): any {
   };
 }
 
+test('component tray (1.2): framework icon renders and double-click rename posts trayRename', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [{
+    id: 'timer1',
+    name: 'timer1',
+    type: 'System.Windows.Forms.Timer',
+    iconPng: 'AA==',
+    isStrip: false,
+    items: [],
+  }]);
+  const icon = chips[0].querySelector('img.trayIcon');
+  ok(!!icon, 'a tray icon is rendered when the engine supplies iconPng');
+  eq(icon.getAttribute('src'), 'data:image/png;base64,AA==', 'the icon uses the supplied PNG payload');
+
+  h.mouse('dblclick', {}, chips[0]);
+  const input = h.el('tray').querySelector('input.trayRename');
+  ok(!!input, 'double-click opens the inline tray rename editor');
+  input.value = 'refreshTimer';
+  h.key('keydown', { key: 'Enter' }, input);
+  input.dispatchEvent(new h.window.Event('blur'));
+  const rename = only(h.posted, 'trayRename');
+  eq(rename.length, 1, 'Enter followed by blur posts exactly one trayRename');
+  eq([rename[0].id, rename[0].newName], ['timer1', 'refreshTimer'], 'rename carries the old field id and new identifier');
+  h.destroy();
+});
+
 test('off-tree ContextMenuStrip (tray): clicking its chip opens a synthetic flyout of its top-level items; the pick→select echo does NOT close it; a row click posts selectItem with the strip host + item id', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray(), { id: 'timer1', name: 'timer1', type: 'System.Windows.Forms.Timer' }]);
@@ -2249,6 +2275,141 @@ test('panel collection editor: the "…" button posts listCollection', () => {
   const lc = only(h.posted, 'listCollection');
   eq(lc.length, 1, 'listCollection posted');
   eq([lc[0].id, lc[0].prop], ['lb', 'Items'], 'targets the control + property');
+  h.destroy();
+});
+
+test('panel DataBindings editor (1.2): lists canonical bindings and posts the edited binding model', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'nameTextBox',
+    name: 'nameTextBox',
+    type: 'System.Windows.Forms.TextBox',
+    properties: [
+      prop('DataBindings', {
+        type: 'System.Windows.Forms.ControlBindingsCollection',
+        value: '(Bindings)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.Binding',
+        category: 'Data',
+      }),
+    ],
+    events: [],
+  });
+  const btn = findPropRow(h, 'DataBindings').querySelector('button.collectionBtn');
+  ok(!!btn, 'DataBindings renders the dedicated "…" editor');
+  h.click(btn);
+  eq(only(h.posted, 'listBindings').map((m) => m.id), ['nameTextBox'], 'the editor requests bindings for the selected control');
+
+  h.resetPosted();
+  h.send({
+    type: 'bindingItems',
+    id: 'nameTextBox',
+    ok: true,
+    reason: '',
+    bindings: [{
+      propertyName: 'Text',
+      dataSourceId: 'customerBindingSource',
+      dataMember: 'Name',
+      formattingEnabled: true,
+      updateMode: 'OnPropertyChanged',
+      formatString: '',
+    }],
+    sources: [{ id: 'customerBindingSource', typeName: 'System.Windows.Forms.BindingSource' }],
+  });
+  const popup = h.document.querySelector('.bindingsPop');
+  ok(!!popup, 'the host reply opens the dedicated bindings popup');
+  const textInputs = popup.querySelectorAll('.bindingRow input[type="text"]');
+  eq(textInputs.length, 3, 'target property, data member and format editors are rendered');
+  textInputs[2].value = 'N2';
+  textInputs[2].dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  h.click(popup.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setBindings');
+  eq(set.length, 1, 'OK posts setBindings');
+  eq(
+    [set[0].id, set[0].bindings[0].propertyName, set[0].bindings[0].dataSourceId, set[0].bindings[0].formatString],
+    ['nameTextBox', 'Text', 'customerBindingSource', 'N2'],
+    'the complete edited binding model is preserved',
+  );
+  h.destroy();
+});
+
+test('panel DataSource editor (1.2): switches from component to object type and posts setDataSource', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'customerBindingSource',
+    name: 'customerBindingSource',
+    type: 'System.Windows.Forms.BindingSource',
+    properties: [
+      prop('DataSource', {
+        type: 'System.Object',
+        value: 'otherBindingSource',
+        isDataSource: true,
+        sourceExplicit: true,
+        isDefault: false,
+        category: 'Data',
+      }),
+    ],
+    events: [],
+  });
+  const btn = findPropRow(h, 'DataSource').querySelector('button.collectionBtn');
+  ok(!!btn, 'DataSource renders the dedicated chooser');
+  h.click(btn);
+  eq(only(h.posted, 'getDataSource').map((m) => m.id), ['customerBindingSource'], 'the chooser requests the current source model');
+
+  h.resetPosted();
+  h.send({
+    type: 'dataSourceInfo',
+    id: 'customerBindingSource',
+    ok: true,
+    reason: '',
+    kind: 'component',
+    value: 'otherBindingSource',
+    components: [{ id: 'otherBindingSource', typeName: 'System.Windows.Forms.BindingSource' }],
+  });
+  const popup = h.document.querySelector('.dataSourcePop');
+  ok(!!popup, 'the host reply opens the DataSource popup');
+  const selects = popup.querySelectorAll('.dataSourceBody select');
+  const typeInput = popup.querySelector('.dataSourceBody input');
+  selects[0].value = 'type';
+  selects[0].dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  typeInput.value = 'Demo.Customer';
+  h.click(popup.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setDataSource');
+  eq(set.length, 1, 'OK posts setDataSource');
+  eq([set[0].id, set[0].kind, set[0].value], ['customerBindingSource', 'type', 'Demo.Customer'], 'the object-type choice is carried exactly');
+  h.destroy();
+});
+
+test('panel common extender editor (1.2): an extender pseudo-property posts setExtender with provider metadata', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'nameTextBox',
+    name: 'nameTextBox',
+    type: 'System.Windows.Forms.TextBox',
+    properties: [
+      prop('ToolTip on toolTip1', {
+        type: 'System.String',
+        value: 'Customer name',
+        extenderProvider: 'toolTip1',
+        extenderProperty: 'ToolTip',
+        sourceExplicit: true,
+        isDefault: false,
+        category: 'Extenders',
+      }),
+    ],
+    events: [],
+  });
+  const input = findPropRow(h, 'ToolTip on toolTip1').querySelector('input');
+  ok(!!input, 'the injected extender property is editable like a scalar');
+  input.value = 'Account name';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const set = only(h.posted, 'setExtender');
+  eq(set.length, 1, 'one setExtender message is posted');
+  eq(
+    [set[0].id, set[0].providerId, set[0].extenderProperty, set[0].propType, set[0].value],
+    ['nameTextBox', 'toolTip1', 'ToolTip', 'System.String', 'Account name'],
+    'the target, provider, property, type and value are all retained',
+  );
   h.destroy();
 });
 

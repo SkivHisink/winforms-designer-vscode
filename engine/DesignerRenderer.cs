@@ -557,6 +557,7 @@ namespace WinFormsDesigner.Engine
                     Id = id,
                     Name = id,
                     Type = comp.GetType().FullName ?? comp.GetType().Name,
+                    IconPng = DesignerControlEditor.ToolboxIconPng(comp.GetType()),
                     // An OFF-TREE ToolStrip (a ContextMenuStrip) carries its top-level Items so the canvas can open a
                     // synthetic flyout from its tray chip; a non-strip component leaves this empty.
                     Items = comp is ToolStrip strip ? BuildStripItemForest(strip, id) : new(),
@@ -1018,8 +1019,8 @@ namespace WinFormsDesigner.Engine
             };
         }
 
-        /// <summary>Read a DataGridView's current columns (field id + HeaderText/Width/ReadOnly/Visible) for the
-        /// typed grid-column editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
+        /// <summary>Read a DataGridView's current columns (identity, display, binding, and supported cell-style
+        /// fields) for the typed grid-column editor. Pure text parse of InitializeComponent — no graph load / STA.</summary>
         public static GridColumnItemsResult ListGridColumnItems(string designerFilePath, string ownerId, string? sourceText = null)
         {
             string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
@@ -1052,6 +1053,104 @@ namespace WinFormsDesigner.Engine
                 Minimal = minimal,
                 NewText = safe ? edit.NewText : null,
                 Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target columns"),
+            };
+        }
+
+        /// <summary>Read a control's canonical <c>DataBindings.Add(new Binding(...))</c> statements and the
+        /// component fields that are valid source choices. Pure text parse; no graph load or user-code execution.</summary>
+        public static BindingItemsResult ListBindingItems(string designerFilePath, string ownerId, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerBindingEditor.ListBindings(src, ownerId);
+        }
+
+        /// <summary>Replace only one control's canonical DataBindings statements, with a parse and minimal-diff gate.</summary>
+        public static PropertyEditResult ApplyBindingsEdit(string designerFilePath, string ownerId,
+            IReadOnlyList<BindingItem> bindings, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            var edit = DesignerBindingEditor.SetBindings(src, ownerId, bindings);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics()
+                .Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerBindingEditor.OnlyBindingsChanged(src, edit.NewText, ownerId);
+            bool safe = parseOk && minimal;
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk
+                    ? "edited text has syntax errors"
+                    : "edit changed more than the target DataBindings"),
+            };
+        }
+
+        /// <summary>Read a BindingSource/ListControl/DataGridView DataSource assignment and safe choices.</summary>
+        public static DataSourceResult GetDataSourceInfo(string designerFilePath, string ownerId, string? sourceText = null)
+        {
+            string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            return DesignerBindingEditor.GetDataSource(src, ownerId);
+        }
+
+        /// <summary>Set DataSource through the closed null/component/typeof(Type) workflow.</summary>
+        public static PropertyEditResult ApplyDataSourceEdit(string designerFilePath, string ownerId,
+            string kind, string value, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+            var edit = DesignerBindingEditor.SetDataSource(src, ownerId, kind, value);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics()
+                .Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerPropertyEditor.OnlyTargetChanged(src, edit.NewText, ownerId, "DataSource", edit.Mode);
+            bool safe = parseOk && minimal;
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than DataSource"),
+            };
+        }
+
+        /// <summary>Set a common framework extender value through provider.SetX(target, value).</summary>
+        public static PropertyEditResult ApplyExtenderEdit(string designerFilePath, string providerId,
+            string targetId, string propertyName, string propertyType, string rawValue, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+            var edit = DesignerExtenderEditor.SetValue(src, providerId, targetId, propertyName, propertyType, rawValue);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics()
+                .Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerExtenderEditor.OnlyExtenderChanged(
+                src, edit.NewText, providerId, targetId, propertyName, edit.Mode);
+            bool safe = parseOk && minimal;
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the extender value"),
             };
         }
 
@@ -1509,6 +1608,13 @@ namespace WinFormsDesigner.Engine
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             return DesignerControlEditor.RemoveControl(src, controlId);
+        }
+
+        /// <summary>Rename a component field and its this.field references. Pure text; primarily used by tray chips.</summary>
+        public static ControlAddResult RenameComponent(string designerFilePath, string oldId, string newId, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            return DesignerComponentRename.Rename(src, oldId, newId);
         }
 
         /// <summary>Remove a whole tab page (the page + its entire subtree) from a tab host as a MINIMAL text edit —

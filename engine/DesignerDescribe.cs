@@ -69,6 +69,12 @@ namespace WinFormsDesigner.Engine
         /// design container to list them, which a plain runtime instance lacks). The grid renders the dropdown; the
         /// host translates a pick to `this.&lt;name&gt;` / `null` on write (net9 splice, net48 live resolve).</summary>
         public bool ReferenceValues { get; init; }
+        /// <summary>True for the first-class DataSource workflow on BindingSource/ListControl/DataGridView.</summary>
+        public bool IsDataSource { get; init; }
+        /// <summary>Provider field id for an extender pseudo-property, or null for a normal property.</summary>
+        public string? ExtenderProvider { get; init; }
+        /// <summary>The SetX/GetX method suffix for an extender pseudo-property.</summary>
+        public string? ExtenderProperty { get; init; }
         /// <summary>True for a design-time PSEUDO-property (Modifiers / GenerateMember) that is NOT a live component
         /// property — it's a source artifact (a field's access keyword / whether a field exists). The host routes its
         /// edit to the dedicated field-declaration splice, NOT setProperty; distinguishing on this flag (not the name)
@@ -278,6 +284,69 @@ namespace WinFormsDesigner.Engine
             return list;
         }
 
+        private static readonly Dictionary<string, string[]> CommonExtenderProperties = new(StringComparer.Ordinal)
+        {
+            ["System.Windows.Forms.ToolTip"] = new[] { "ToolTip" },
+            ["System.Windows.Forms.ErrorProvider"] = new[] { "Error", "IconAlignment", "IconPadding" },
+            ["System.Windows.Forms.HelpProvider"] = new[] { "HelpString", "HelpKeyword", "HelpNavigator", "ShowHelp" },
+        };
+
+        /// <summary>Surface common framework extender-provider values as editable source-backed pseudo-properties.</summary>
+        private static void InjectExtenderProperties(List<PropertyInfo> list, IComponent target, IReadOnlyList<IComponent> siblings)
+        {
+            foreach (var provider in siblings)
+            {
+                string providerType = provider.GetType().FullName ?? "";
+                if (!CommonExtenderProperties.TryGetValue(providerType, out var propertyNames)
+                    || provider is not IExtenderProvider extender)
+                    continue;
+                bool canExtend;
+                try { canExtend = extender.CanExtend(target); } catch { continue; }
+                if (!canExtend) continue;
+                string providerId = provider.Site?.Name ?? "";
+                if (providerId.Length == 0) continue;
+
+                foreach (string propertyName in propertyNames)
+                {
+                    try
+                    {
+                        var getter = provider.GetType().GetMethods()
+                            .FirstOrDefault(m => m.Name == "Get" + propertyName && m.GetParameters().Length == 1
+                                && m.GetParameters()[0].ParameterType.IsInstanceOfType(target));
+                        var setter = provider.GetType().GetMethods()
+                            .FirstOrDefault(m => m.Name == "Set" + propertyName && m.GetParameters().Length == 2
+                                && m.GetParameters()[0].ParameterType.IsInstanceOfType(target));
+                        if (getter == null || setter == null) continue;
+                        var valueType = setter.GetParameters()[1].ParameterType;
+                        object? raw = getter.Invoke(provider, new object[] { target });
+                        string? value = raw == null ? null : valueType.IsEnum
+                            ? Enum.GetName(valueType, raw)
+                            : Convert.ToString(raw, System.Globalization.CultureInfo.InvariantCulture);
+                        string displayName = propertyName + " on " + providerId;
+                        list.RemoveAll(x => x.Name == displayName);
+                        var standards = valueType.IsEnum ? Enum.GetNames(valueType).ToList()
+                            : valueType == typeof(bool) ? new List<string> { "False", "True" }
+                            : null;
+                        list.Add(new PropertyInfo
+                        {
+                            Name = displayName,
+                            Type = valueType.FullName ?? valueType.Name,
+                            Value = value,
+                            ReadOnly = false,
+                            IsEnum = valueType.IsEnum,
+                            Category = "Extenders",
+                            Description = propertyName + " value supplied by " + providerId + ".",
+                            StandardValues = standards,
+                            StandardValuesExclusive = standards != null,
+                            ExtenderProvider = providerId,
+                            ExtenderProperty = propertyName,
+                        });
+                    }
+                    catch { /* one failing provider value must not abort the grid */ }
+                }
+            }
+        }
+
         private static string? ParentName(IComponent c, IComponent root, string rootName)
         {
             if (ReferenceEquals(c, root)) return null;
@@ -299,6 +368,8 @@ namespace WinFormsDesigner.Engine
             foreach (PropertyDescriptor pd in TypeDescriptor.GetProperties(c))
             {
                 bool isTableCell = parentIsTlp && (pd.Name == "Column" || pd.Name == "Row");
+                bool isDataSource = pd.Name == "DataSource"
+                    && (c is BindingSource || c is ListControl || c is DataGridView);
                 // string-item collections (ComboBox/ListBox/CheckedListBox.Items) are surfaced for the collection
                 // editor even though Items is [Browsable(false)] + Hidden serialization — the grid needs them.
                 bool isStringCollection = IsStringCollectionProperty(pd);
@@ -342,6 +413,7 @@ namespace WinFormsDesigner.Engine
                 // RUSSIAN_CHARSET, common in Cyrillic/CJK forms) would silently drop the charset on save. Show
                 // such a Font read-only so the value can't be lost; plain fonts (charset 1) stay editable.
                 bool readOnly = pd.IsReadOnly || unhandledCollection; // an unhandled collection has no edit path → read-only
+                if (isDataSource) readOnly = false;
                 if (raw is System.Drawing.Font font && (font.GdiCharSet != 1 || font.GdiVerticalFont))
                 {
                     readOnly = true;
@@ -407,8 +479,10 @@ namespace WinFormsDesigner.Engine
                     IsCollection = isCollection,
                     CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : typedCollectionItem),
                     ReferenceValues = referenceValues,
+                    IsDataSource = isDataSource,
                 });
             }
+            InjectExtenderProperties(list, c, siblings);
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return list;
         }
@@ -661,6 +735,7 @@ namespace WinFormsDesigner.Engine
             ["System.Windows.Forms.ListView+ColumnHeaderCollection"] = "System.Windows.Forms.ColumnHeader",
             ["System.Windows.Forms.DataGridViewColumnCollection"] = "System.Windows.Forms.DataGridViewColumn",
             ["System.Windows.Forms.TreeNodeCollection"] = "System.Windows.Forms.TreeNode",
+            ["System.Windows.Forms.ControlBindingsCollection"] = "System.Windows.Forms.Binding",
             // MenuStrip/ToolStrip/StatusStrip.Items and ToolStripMenuItem/ToolStripDropDownButton.DropDownItems are
             // all ToolStripItemCollection — one entry surfaces the "…" ToolStrip item editor on every strip and submenu.
             ["System.Windows.Forms.ToolStripItemCollection"] = "System.Windows.Forms.ToolStripItem",

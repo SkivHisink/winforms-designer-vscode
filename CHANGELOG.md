@@ -9,6 +9,42 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-07-24
+
+**Data-bound forms.** This release closes the routine line-of-business binding workflow: controls, binding
+components, grid columns, common extender providers, and cross-form clipboard dependencies can now be maintained
+through the designer without hand-editing generated binding code.
+
+### Added
+
+- **First-class `DataBindings` editing.** The property grid reads and writes canonical
+  `Control.DataBindings.Add(new Binding(...))` statements through a dedicated editor for the target property,
+  component data source, data member, formatting flag, `DataSourceUpdateMode`, and format string. Custom or
+  non-literal binding expressions remain read-only with a concrete reason.
+- **First-class `DataSource` choices.** Supported `BindingSource` and control data-source properties can be cleared,
+  assigned to a compatible form component, or assigned to `typeof(T)` through a closed, validated source-first
+  workflow.
+- **Bound `DataGridView` columns.** The existing column collection editor now round-trips `DataPropertyName`,
+  `DefaultCellStyle.Format`, `DefaultCellStyle.Alignment`, and a literal `DefaultCellStyle.NullValue` alongside
+  header, width, visibility, and read-only state.
+- **Richer component tray.** Non-visual components carry framework toolbox icons, support inline field rename from
+  the tray, retain component-reference dropdowns, and surface the common `ToolTip`, `ErrorProvider`, and
+  `HelpProvider` extender properties in the selected control's property grid.
+- **Dependency-aware cross-form copy/paste.** A copied control carries the exact field names and types referenced by
+  its canonical bindings and common extender assignments. Paste succeeds only when the target form exposes matching
+  dependencies; otherwise it reports every unavailable or mismatched dependency and leaves the target unchanged.
+
+### Safety and verification
+
+- Binding, data-source, grid-style, extender, tray-rename, and clipboard edits use targeted Roslyn splices with
+  reverse/minimal-diff gates. Unsupported expressions, provider types, enum members, comments that would be lost,
+  and crafted clipboard references fail closed.
+- Added a complete `DataBoundForm.Designer.cs` fixture plus focused engine unit coverage for bindings, bound grid
+  columns, tray-component rename, common extenders, and cross-form dependency validation.
+- The named-pipe engine E2E exercises the complete data-bound form workflow; the live-webview suite covers the
+  `DataBindings` and `DataSource` popups, extender routing, tray icons, and inline tray rename on the real panel and
+  designer scripts.
+
 ## [1.1.0] — 2026-07-24
 
 **Daily workflow and project integration.** This release closes the first post-1.0 workflow milestone: designer
@@ -1058,7 +1094,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.0...v1.0.1
