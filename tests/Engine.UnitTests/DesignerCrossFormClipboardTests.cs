@@ -68,13 +68,22 @@ public sealed class DesignerCrossFormClipboardTests
         Assert.Contains($"this.panel1.Controls.Add(this.{paste.Name});", paste.NewText);
     }
 
+    /// <summary>Drop whole lines from a fixture whatever the file's line endings are. A raw string literal keeps
+    /// the source file's terminators, so on a fresh CRLF checkout (what CI does) a `\n`-anchored Replace silently
+    /// no-ops and the "dependency missing" fixture still declares the dependency.</summary>
+    private static string WithoutLines(string source, params string[] lines)
+    {
+        foreach (string line in lines) source = source.Replace(line + "\r\n", "").Replace(line + "\n", "");
+        return source;
+    }
+
     [Fact]
     public void ReportsUnavailableDependencyByNameAndTypeWithoutChangingTarget()
     {
         var copy = DesignerControlEditor.CopyControl(Source, "nameTextBox");
-        string missingTarget = CompatibleTarget
-            .Replace("private System.Windows.Forms.BindingSource customerBindingSource;\n", "")
-            .Replace("this.customerBindingSource = new System.Windows.Forms.BindingSource();\n", "");
+        string missingTarget = WithoutLines(CompatibleTarget,
+            "private System.Windows.Forms.BindingSource customerBindingSource;",
+            "this.customerBindingSource = new System.Windows.Forms.BindingSource();");
 
         var paste = DesignerControlEditor.PasteControl(missingTarget, copy.Clip!, "panel1");
 
@@ -89,9 +98,9 @@ public sealed class DesignerCrossFormClipboardTests
     public void ReportsUnavailableExtenderProviderDependency()
     {
         var copy = DesignerControlEditor.CopyControl(Source, "nameTextBox");
-        string missingProvider = CompatibleTarget
-            .Replace("private System.Windows.Forms.ToolTip toolTip1;\n", "")
-            .Replace("this.toolTip1 = new System.Windows.Forms.ToolTip();\n", "");
+        string missingProvider = WithoutLines(CompatibleTarget,
+            "private System.Windows.Forms.ToolTip toolTip1;",
+            "this.toolTip1 = new System.Windows.Forms.ToolTip();");
 
         var paste = DesignerControlEditor.PasteControl(missingProvider, copy.Clip!, "panel1");
 
