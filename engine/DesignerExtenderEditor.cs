@@ -68,6 +68,14 @@ namespace WinFormsDesigner.Engine
             if (targets.Count == 1)
             {
                 var old = targets[0];
+                // The call SHAPE matching is not enough to overwrite it: IsTargetCall only pins the provider, method
+                // name, target and arity, so a hand-written value expression (a helper call, a field, a concatenation)
+                // matched too and was replaced by a literal — silent source loss. Only a value this editor could have
+                // emitted itself may be regenerated.
+                if (!IsTargetCall(old, providerId, targetId, propertyName, out var existing)
+                    || existing == null || existing.Value.Count != 2
+                    || !IsRepresentableValue(spec, existing.Value[1].Expression))
+                    return Failed("the existing " + propertyName + " value is a custom expression — edit it in code");
                 string indent = LineIndent(old);
                 var replacement = SyntaxFactory.ParseStatement(statementCode)
                     .WithLeadingTrivia(SyntaxFactory.Whitespace(indent))
@@ -103,6 +111,16 @@ namespace WinFormsDesigner.Engine
             int expected = mode == EditMode.Insert ? oTargets.Count + 1 : oTargets.Count;
             if (eTargets.Count != expected || eTargets.Count != 1 || eTargets.Any(HasMeaningfulTrivia)) return false;
             if (!IsTargetCall(eTargets[0], providerId, targetId, propertyName, out var args) || args == null || args.Value.Count != 2)
+                return false;
+            // Defence in depth for the same hole SetValue closes: if the ORIGINAL carried a custom value expression,
+            // this scrub-and-compare gate would happily accept an edit that erased it. Property names are unique
+            // across the spec table, so the property alone identifies how its value is written.
+            var gateSpec = Specs.FirstOrDefault(x => x.Property == propertyName);
+            if (gateSpec == null) return false;
+            if (oTargets.Count == 1
+                && (!IsTargetCall(oTargets[0], providerId, targetId, propertyName, out var oldArgs)
+                    || oldArgs == null || oldArgs.Value.Count != 2
+                    || !IsRepresentableValue(gateSpec, oldArgs.Value[1].Expression)))
                 return false;
 
             var oNon = oInit.Body.Statements.Where(st => !IsTargetCall(st, providerId, targetId, propertyName, out _))
@@ -142,6 +160,32 @@ namespace WinFormsDesigner.Engine
                 return true;
             }
             return false;
+        }
+
+        /// <summary>True when the expression is one this editor could itself have emitted FOR THIS PROPERTY. The
+        /// distinction matters: an enum-valued property is written as a bare dotted member, while every other
+        /// supported type is written as a literal — so a dotted name where a LITERAL belongs (`Resources.Tip`, a
+        /// const, a field) is the user's own code, not a value we produced, and overwriting it would silently change
+        /// behaviour. The minimal-diff gate cannot protect it either: it scrubs every matching call from BOTH files
+        /// before comparing, so a replaced value is invisible to it.</summary>
+        private static bool IsRepresentableValue(Spec spec, ExpressionSyntax expression)
+        {
+            if (spec.EnumType != null)
+            {
+                // Pin the value to THIS enum, not merely to "some dotted name". Shape alone accepted an unrelated
+                // constant (`UiDefaults.ValidationAlignment`) as editor-owned and overwrote it, while rejecting the
+                // `global::`-qualified form of the very member this editor emits.
+                if (expression is not (MemberAccessExpressionSyntax or IdentifierNameSyntax))
+                    return false;
+                string text = expression.ToString().Replace(" ", "").Replace("global::", "");
+                if (!text.StartsWith(spec.EnumType + ".", StringComparison.Ordinal))
+                    return false;
+                string member = text.Substring(spec.EnumType.Length + 1);
+                return member.Length > 0 && IsIdentifier(member);
+            }
+            return expression is LiteralExpressionSyntax
+                || (expression is PrefixUnaryExpressionSyntax u && u.IsKind(SyntaxKind.UnaryMinusExpression)
+                    && u.Operand is LiteralExpressionSyntax);
         }
 
         private static bool IsTargetCall(StatementSyntax statement, string providerId, string targetId,
@@ -198,9 +242,14 @@ namespace WinFormsDesigner.Engine
             return names;
         }
 
+        /// <summary>True when the statement carries any comment or directive we would destroy by regenerating it.
+        /// The scan must reach INSIDE the statement, not just its edges: a hand-written note between the provider's
+        /// <c>SetX(target, value)</c> arguments hangs off an inner token, and an edge-only check dropped it silently.</summary>
         private static bool HasMeaningfulTrivia(StatementSyntax statement) =>
-            statement.GetLeadingTrivia().Concat(statement.GetTrailingTrivia()).Any(t =>
-                !t.IsKind(SyntaxKind.WhitespaceTrivia) && !t.IsKind(SyntaxKind.EndOfLineTrivia));
+            statement.DescendantTrivia(descendIntoTrivia: true)
+                .Concat(statement.GetLeadingTrivia())
+                .Concat(statement.GetTrailingTrivia())
+                .Any(t => !t.IsKind(SyntaxKind.WhitespaceTrivia) && !t.IsKind(SyntaxKind.EndOfLineTrivia));
 
         private static string LineIndent(SyntaxNode node)
         {

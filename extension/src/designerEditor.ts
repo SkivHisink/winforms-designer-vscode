@@ -4777,8 +4777,37 @@ class DesignerSession {
     this.post({ type: 'status', message: t('status.addedTray', { name: res.name }) });
   }
 
+  /** The base name of the code-behind partial when it references `id`, else null. The engine only ever sees the
+   * .Designer.cs buffer, so a component the user's own code calls (`timer1.Start()`, `errorProvider1.SetError(…)`)
+   * would keep compiling in the designer and break at the next build — long after we reported success. A whole-word
+   * scan is deliberately conservative: a mention in a comment also blocks the rename, which fails closed. */
+  private async codeBehindReference(id: string): Promise<string | null> {
+    const codePath = this.codeFile();
+    if (!codePath || !id) return null;
+    let text: string;
+    try { text = (await vscode.workspace.openTextDocument(codePath)).getText(); }
+    catch { return null; }
+    // C# identifiers may be non-ASCII (the engine validates with SyntaxFacts.IsValidIdentifier), and JS `\b` is
+    // ASCII-only — a Unicode field name would have matched nothing and let the rename through, failing OPEN. Use
+    // Unicode-aware boundaries, and escape the id so it can never be read as a pattern.
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // The boundary class mirrors what C# allows in an identifier PART — letters, digits, underscore/connectors,
+    // combining marks and format characters — so `timer` is not "found" inside a longer identifier that merely
+    // continues with a combining mark. (Verbatim `@name` and \uXXXX-escaped identifiers are still matched only in
+    // their plain spelling; that direction fails closed for the escape form only, which no designer emits.)
+    const part = '\\p{L}\\p{N}_\\p{M}\\p{Pc}\\p{Cf}';
+    const word = new RegExp(`(?<![${part}])${escaped}(?![${part}])`, 'u');
+    return word.test(text) ? path.basename(codePath) : null;
+  }
+
   private async applyTrayRename(oldId: string, newId: string): Promise<void> {
     if (!this.designerFile || this.disposed || oldId === 'this') return;
+    const referencedIn = await this.codeBehindReference(oldId);
+    if (referencedIn) {
+      this.post({ type: 'status', message: t('status.trayRenameCodeBehind', { old: oldId, file: referencedIn }) });
+      await this.fullRender();
+      return;
+    }
     const eng = await this.ensureEngine('modern');
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -4793,11 +4822,28 @@ class DesignerSession {
       await this.fullRender();
       return;
     }
+    // Re-check the code-behind immediately before committing. doc.rev only tracks the .Designer.cs custom document,
+    // so a reference typed into the sibling partial while the engine RPC was in flight would otherwise be missed —
+    // and this rename cannot rewrite it.
+    const referencedNow = await this.codeBehindReference(oldId);
+    if (referencedNow) {
+      this.post({ type: 'status', message: t('status.trayRenameCodeBehind', { old: oldId, file: referencedNow }) });
+      await this.fullRender();
+      return;
+    }
+    if (this.doc.rev !== rev) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.fullRender();
+      return;
+    }
     if (!this.commit(before, res.newText, `Rename ${oldId} to ${res.name}`)) return;
-    this.currentId = res.name;
+    // Only follow the rename with the selection if the user is still ON it. A selection-only pick does not bump
+    // doc.rev, so the revision check above cannot see it: without this guard a rename that lands after the user
+    // clicked another control snaps the selection back and re-arms Delete on a target they no longer chose.
+    if (this.currentId === oldId) this.currentId = res.name;
     this.output.appendLine(`renamed tray component ${oldId} -> ${res.name} (unsaved)`);
     await this.fullRender();
-    this.post({ type: 'status', message: `${oldId} renamed to ${res.name}` });
+    this.post({ type: 'status', message: t('status.trayRenamed', { old: oldId, new: res.name }) });
   }
 
   private async applyRemoveControl(id: string): Promise<void> {

@@ -826,6 +826,7 @@
     trayEl.style.display = '';
     tray.forEach(function (t) {
       var chip = document.createElement('div');
+      chip._trayId = t.id;                       // lets updateTraySelClasses() re-highlight without a rebuild
       chip.className = 'trayItem' + (t.id === current ? ' sel' : '');
       if (t.iconPng) {
         var icon = document.createElement('img'); icon.className = 'trayIcon'; icon.alt = ''; icon.draggable = false;
@@ -837,7 +838,7 @@
         // a tray component has no visual bounds → clear the canvas selection box, drive the Properties panel
         selectedItem = null;
         selection = [t.id]; current = t.id; canMove = false; canResize = false;
-        renderSelection(); renderTray(); postPick(t.id);
+        renderSelection(); updateTraySelClasses(); postPick(t.id);
         // an off-tree strip (a ContextMenuStrip) also opens its synthetic items flyout — the on-canvas reach into its
         // Items (Properties / rename / delete / add), the tray-chip counterpart of a menu-bar item's dropdown. A
         // non-strip chip (Timer/ImageList/…) has no items → openTrayStripFlyout closes any open flyout instead.
@@ -849,6 +850,19 @@
       });
       trayEl.appendChild(chip);
     });
+  }
+  // update the .sel highlight on the EXISTING chips WITHOUT rebuilding them, for the same Chromium reason spelled out
+  // on updateSubmenuSelClasses: dblclick fires only when both clicks land on the SAME element, so a select-click that
+  // recreates the chip makes dblclick-to-rename a dead gesture. A rebuild (renderTray) stays for structural changes —
+  // when the tray's contents actually change. This also keeps an open inline rename input alive across a late
+  // selection echo from the host.
+  function updateTraySelClasses() {
+    if (!trayEl) return;
+    for (var i = 0; i < trayEl.children.length; i++) {
+      var chip = trayEl.children[i];
+      if (!chip._trayId) continue;
+      chip.className = 'trayItem' + (chip._trayId === current ? ' sel' : '');
+    }
   }
   function beginTrayRename(chip, item) {
     var input = document.createElement('input'); input.type = 'text'; input.className = 'trayRename';
@@ -2025,7 +2039,7 @@
     var t = tray[idx]; if (!t) return;
     selectedItem = null;
     selection = [t.id]; current = t.id; canMove = false; canResize = false;
-    renderSelection(); renderTray(); postPick(t.id);
+    renderSelection(); updateTraySelClasses(); postPick(t.id);
     renderCtx(e.clientX, e.clientY);
   });
   document.addEventListener('mousedown', function (e) { if (ctxEl && ctxEl.classList.contains('open') && !ctxEl.contains(e.target)) closeCtx(); }, true);
@@ -2102,7 +2116,7 @@
         if (selection.indexOf(m.id) < 0) selection = [m.id];
         if (m.id !== current) { canMove = false; canResize = false; }
         current = m.id;
-        renderSelection(); renderTray();
+        renderSelection(); updateTraySelClasses();
       }
     } else if (m.type === 'manip') {
       if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; renderSelection(); }

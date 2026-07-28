@@ -4374,6 +4374,17 @@ namespace Product.CustomForms
       if (!sourceEdit.safe || !sourceEdit.text?.includes('typeof(WinFormsDesigner.Samples.Customer)'))
         throw new Error('v1.2 DataSource typeof edit rejected: ' + sourceEdit.reason);
 
+      // The "assign a compatible form component" choice — the third DataSource kind, and the one the fixture's grid
+      // already uses. It shipped in 1.2 with no coverage on either side, so nothing would have caught a regression.
+      const gridSourceRead = await getDataSource(engine, dataBoundForm, 'customerGrid', dbDisk);
+      if (!gridSourceRead.ok || gridSourceRead.kind !== 'component' || gridSourceRead.value !== 'customerBindingSource')
+        throw new Error('v1.2 component DataSource did not round-trip: ' + JSON.stringify(gridSourceRead));
+      if (!gridSourceRead.components.some((c) => c.id === 'customerBindingSource'))
+        throw new Error('v1.2 component DataSource must offer the form\'s BindingSource as a choice');
+      const gridSourceCleared = await setDataSource(engine, dataBoundForm, 'customerGrid', 'none', '', dbDisk);
+      if (!gridSourceCleared.safe || !gridSourceCleared.text?.includes('this.customerGrid.DataSource = null;'))
+        throw new Error('v1.2 clearing a component DataSource rejected: ' + gridSourceCleared.reason);
+
       const gridRead = await listGridColumns(engine, dataBoundForm, 'customerGrid', dbDisk);
       if (!gridRead.ok || gridRead.columns[0].dataPropertyName !== 'Name'
           || gridRead.columns[1].format !== 'N2' || gridRead.columns[1].alignment !== 'MiddleRight')
@@ -4395,7 +4406,9 @@ namespace Product.CustomForms
 
       console.log('e2e: v1.2 data-bound workflow verified — DataBindings/DataSource editors, bound grid cell styles, extender property, tray icons and tray rename');
     } else {
-      console.log('e2e: v1.2 data-bound workflow SKIPPED — DataBoundForm.Designer.cs missing');
+      // The fixture is checked in, so "missing" means the corpus was damaged, not that the leg is optional. A silent
+      // skip here would report the release's flagship workflow as green without having exercised any of it.
+      throw new Error('v1.2 data-bound workflow cannot run — engine/samples/DataBoundForm.Designer.cs is missing');
     }
 
     const menuForm = path.join(repo, 'engine', 'samples', 'MenuStripForm.Designer.cs');

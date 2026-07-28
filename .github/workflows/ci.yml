@@ -112,6 +112,13 @@ jobs:
           node --check media/designer.js
           node --check media/panel.js
 
+      # Text-integrity gate: a file that round-tripped through CP1251/Latin-1 still parses, so `node --check` and the
+      # class-selecting webview tests stay green while the UI renders garbage where a typographic glyph belongs
+      # (v1.2.0 shipped seven such literals into the data-binding property grid).
+      - name: Mojibake scan
+        working-directory: extension
+        run: npm run mojibake:scan
+
       - name: Localization parity
         working-directory: extension
         run: npm run l10n:parity -- --strict

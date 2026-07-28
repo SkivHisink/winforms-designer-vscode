@@ -175,7 +175,19 @@ namespace WinFormsDesigner.Engine
                 normalized.Add(item);
             }
 
+            // The owner's bindings are rebuilt as ONE block at the first binding's position. That is only faithful
+            // while nothing of the owner's own sits between them: with `Add(Text…); this.x.Tag = "manual";
+            // Add(Tag…);` the block would hoist the Tag binding above the manual assignment and flip which one wins.
+            // The minimal-diff gate cannot see it either — it strips every binding call from both files before
+            // comparing, so binding-to-non-binding interleaving is exactly what it is blind to.
             var oldStatements = init.Body.Statements.ToList();
+            int firstBinding = oldStatements.FindIndex(st => TryBindingCall(st, ownerId, out _));
+            int lastBinding = oldStatements.FindLastIndex(st => TryBindingCall(st, ownerId, out _));
+            if (firstBinding >= 0)
+                for (int i = firstBinding + 1; i < lastBinding; i++)
+                    if (!TryBindingCall(oldStatements[i], ownerId, out _) && MentionsOwner(oldStatements[i], ownerId))
+                        return FailedEdit("a statement for " + ownerId + " sits between its DataBindings — reordering them could change behaviour");
+
             int anchor = -1;
             var kept = new List<StatementSyntax>();
             foreach (var st in oldStatements)
@@ -566,9 +578,25 @@ namespace WinFormsDesigner.Engine
             return names;
         }
 
+        /// <summary>True when the statement touches <paramref name="ownerId"/> at all — used to decide whether
+        /// rebuilding that owner's bindings as one block could reorder them against its own initialization.
+        /// Matching ANY identifier of that name, not just <c>this.owner</c>: the binding parser itself accepts an
+        /// unqualified owner (<see cref="Flatten"/> skips <c>this</c>), so a `this.`-only test would let exactly the
+        /// unqualified form of the interleaved statement slip past the guard.</summary>
+        private static bool MentionsOwner(StatementSyntax statement, string ownerId) =>
+            statement.DescendantNodes().OfType<IdentifierNameSyntax>()
+                .Any(n => n.Identifier.ValueText == ownerId);
+
+        /// <summary>True when the statement carries any comment or directive we would destroy by regenerating it.
+        /// The scan must reach INSIDE the statement, not just its edges: a canonical binding is often wrapped across
+        /// lines, so a note between the <c>new Binding(...)</c> arguments hangs off an inner token. Checking only
+        /// leading/trailing trivia let such a comment be silently dropped — the same descend-into-trivia scan the
+        /// DataSource path already uses (see <see cref="GetDataSource"/>'s right-hand-side check).</summary>
         private static bool HasMeaningfulTrivia(StatementSyntax statement) =>
-            statement.GetLeadingTrivia().Concat(statement.GetTrailingTrivia()).Any(t =>
-                !t.IsKind(SyntaxKind.WhitespaceTrivia) && !t.IsKind(SyntaxKind.EndOfLineTrivia));
+            statement.DescendantTrivia(descendIntoTrivia: true)
+                .Concat(statement.GetLeadingTrivia())
+                .Concat(statement.GetTrailingTrivia())
+                .Any(t => !t.IsKind(SyntaxKind.WhitespaceTrivia) && !t.IsKind(SyntaxKind.EndOfLineTrivia));
 
         private static string BodyIndent(MethodDeclarationSyntax init)
         {

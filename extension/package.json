@@ -270,6 +270,7 @@
     "webview-e2e": "node dist/webview-e2e.cjs",
     "extension-host-e2e": "node ../scripts/run-extension-host-tests.mjs",
     "l10n:parity": "node ../scripts/ci-l10n-parity.mjs",
+    "mojibake:scan": "node ../scripts/ci-mojibake-scan.mjs",
     "release:preflight": "node ../scripts/release-preflight.mjs",
     "perf:baseline": "node dist/performance-baseline.cjs",
     "bundle-engine": "dotnet publish ../engine -c Release -f net10.0-windows -r win-x64 --self-contained false -o engine",

@@ -372,8 +372,13 @@ namespace WinFormsDesigner.Engine
                             if (!TryStringLiteral(asn.Right, out var fv)) { reason = "column " + id + ".DefaultCellStyle.Format is not a literal"; return false; }
                             format = fv!; break;
                         case "NullValue":
-                            if (asn.Right.IsKind(SyntaxKind.NullLiteralExpression)) nullValue = "";
-                            else if (TryStringLiteral(asn.Right, out var nvv)) nullValue = nvv!;
+                            // An EXPLICIT `= null` is not the same as "no NullValue set": the model carries the value
+                            // as a string and the writer emits the assignment only for a non-empty one, so folding
+                            // null into "" made an unrelated edit (HeaderText, Format) delete the user's statement.
+                            // The closed string model cannot express it, so fail closed instead of dropping it.
+                            if (asn.Right.IsKind(SyntaxKind.NullLiteralExpression))
+                            { reason = "column " + id + ".DefaultCellStyle.NullValue is explicitly null — edit it in code"; return false; }
+                            if (TryStringLiteral(asn.Right, out var nvv)) nullValue = nvv!;
                             else { reason = "column " + id + ".DefaultCellStyle.NullValue is not a string literal"; return false; }
                             break;
                         case "Alignment":

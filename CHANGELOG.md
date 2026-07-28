@@ -34,16 +34,43 @@ through the designer without hand-editing generated binding code.
   its canonical bindings and common extender assignments. Paste succeeds only when the target form exposes matching
   dependencies; otherwise it reports every unavailable or mismatched dependency and leaves the target unchanged.
 
+### Fixed
+
+- **Viewing a diff no longer opens the designer.** Comparing a form (Source Control, *Compare With…*, file history)
+  activates a text editor for one side of the comparison, and auto-open treated that as "the user landed on a form"
+  — replacing the diff being read with a form preview. Either side of a diff, and any non-file document, is now left
+  alone; reviewing a change is not a request to edit it. The explicit **Open Designer** action is unaffected, and
+  merely looking at a diff no longer counts as the file's one automatic open.
+
 ### Safety and verification
 
 - Binding, data-source, grid-style, extender, tray-rename, and clipboard edits use targeted Roslyn splices with
   reverse/minimal-diff gates. Unsupported expressions, provider types, enum members, comments that would be lost,
   and crafted clipboard references fail closed.
+- The loss guards look INSIDE a statement, not only at its edges, so a comment between the arguments of a
+  `new Binding(…)` or a `SetToolTip(…)` call blocks the edit instead of being regenerated away. An extender call
+  whose current value is a hand-written expression, a grid column with an explicit `DefaultCellStyle.NullValue = null`,
+  and an owner whose own initialization sits between two of its `DataBindings.Add` calls are all refused with a
+  concrete reason rather than rewritten.
+- Component-tray rename refuses when the designer file refers to the field without a `this.` qualifier, or when the
+  form's code-behind partial references it — neither is rewritten by a source-only rename, and both would otherwise
+  produce a file that no longer compiles while the designer reported success.
 - Added a complete `DataBoundForm.Designer.cs` fixture plus focused engine unit coverage for bindings, bound grid
   columns, tray-component rename, common extenders, and cross-form dependency validation.
-- The named-pipe engine E2E exercises the complete data-bound form workflow; the live-webview suite covers the
-  `DataBindings` and `DataSource` popups, extender routing, tray icons, and inline tray rename on the real panel and
-  designer scripts.
+- The named-pipe engine E2E exercises the complete data-bound form workflow (and now fails, rather than skipping, if
+  that fixture is missing); the live-webview suite covers the `DataBindings` and `DataSource` popups, extender
+  routing, tray icons, and inline tray rename on the real panel and designer scripts.
+- A `mojibake:scan` gate fails the build when a tracked text file carries a double-encoded typographic or
+  multi-letter sequence — the CP1251/Latin-1 round trip that produced those literals. Such a file still parses, so no
+  other gate could see it. A corrupted single accented letter is deliberately out of scope: at that length valid
+  locale text is indistinguishable from the corruption, and the gate must never fail a correct file.
+
+### Known limitation
+
+- The preview does not evaluate data bindings (neither does the Visual Studio designer). A
+  `Control.DataBindings.Add(new Binding(…))` statement is therefore reported as a skipped construct in the render
+  note, and on the .NET Framework engine it drops that form to the disclosed last-build preview. Editing bindings is
+  unaffected — it is source-first and exact on both engines.
 
 ## [1.1.0] — 2026-07-24
 

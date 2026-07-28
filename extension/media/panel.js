@@ -1359,8 +1359,8 @@
     var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Bindings)';
     lbl.title = p.type;
     wrap.appendChild(lbl);
-    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = 'вЂ¦';
-    btn.title = 'Edit data bindingsвЂ¦';
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = 'Edit data bindings…';
     btn.addEventListener('click', function () {
       pendingBindings = { id: c.id, anchor: btn };
       vscode.postMessage({ type: 'listBindings', id: c.id });
@@ -1375,7 +1375,7 @@
       var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Data Bindings'; pop.appendChild(title);
       if (!ok) {
         var note = document.createElement('div'); note.className = 'collectionNote';
-        note.textContent = 'These bindings canвЂ™t be edited here (' + (reason || 'unsupported binding expression') + ').';
+        note.textContent = 'These bindings can’t be edited here (' + (reason || 'unsupported binding expression') + ').';
         pop.appendChild(note);
         return;
       }
@@ -1415,7 +1415,7 @@
           var prop = document.createElement('input'); prop.type = 'text'; prop.value = row.propertyName; prop.placeholder = 'Property (Text)';
           prop.title = 'Target control property'; prop.addEventListener('input', function () { row.propertyName = prop.value; });
           var src = sourceSelect(row);
-          var del = document.createElement('button'); del.type = 'button'; del.className = 'colMini colDel'; del.textContent = 'вњ•'; del.title = 'Remove binding';
+          var del = document.createElement('button'); del.type = 'button'; del.className = 'colMini colDel'; del.textContent = '✕'; del.title = 'Remove binding';
           del.addEventListener('click', function () { rows.splice(i, 1); render(); });
           top.appendChild(prop); top.appendChild(src); top.appendChild(del); card.appendChild(top);
 
@@ -1471,8 +1471,8 @@
     var lbl = document.createElement('span'); lbl.className = 'collectionLabel';
     lbl.textContent = p.value ? String(p.value) : '(DataSource)';
     wrap.appendChild(lbl);
-    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = 'вЂ¦';
-    btn.title = 'Choose data sourceвЂ¦';
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = 'Choose data source…';
     btn.addEventListener('click', function () {
       pendingDataSource = { id: c.id, anchor: btn };
       vscode.postMessage({ type: 'getDataSource', id: c.id });
@@ -1487,12 +1487,17 @@
       var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'Data Source'; pop.appendChild(title);
       if (!ok) {
         var note = document.createElement('div'); note.className = 'collectionNote';
-        note.textContent = 'This DataSource canвЂ™t be edited here (' + (reason || 'unsupported expression') + ').';
+        note.textContent = 'This DataSource can’t be edited here (' + (reason || 'unsupported expression') + ').';
         pop.appendChild(note); return;
       }
       var body = document.createElement('div'); body.className = 'dataSourceBody';
       var kindSel = document.createElement('select');
+      // "Component" needs something to point AT. Offering it with an empty list let OK post an empty value, which the
+      // engine could only refuse — a dead end with no way forward from inside the dialog. Keep the option when the
+      // current value already IS a component so an existing choice still shows.
+      var hasComponents = (components || []).length > 0;
       [['none', '(none)'], ['component', 'Component'], ['type', 'Object type']].forEach(function (pair) {
+        if (pair[0] === 'component' && !hasComponents && kind !== 'component') return;
         var opt = document.createElement('option'); opt.value = pair[0]; opt.textContent = pair[1]; if (pair[0] === kind) opt.selected = true; kindSel.appendChild(opt);
       });
       var componentSel = document.createElement('select');
@@ -1516,6 +1521,7 @@
         var nextKind = kindSel.value;
         var nextValue = nextKind === 'component' ? componentSel.value : (nextKind === 'type' ? typeInput.value.trim() : '');
         closePopup();
+        if (nextKind === 'component' && !nextValue) return;   // nothing to point at — never post an edit that must fail
         if (nextKind === kind && nextValue === (value || '')) return;
         vscode.postMessage({ type: 'setDataSource', id: id, kind: nextKind, value: nextValue });
       });

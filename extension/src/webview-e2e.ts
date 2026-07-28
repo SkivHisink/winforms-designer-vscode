@@ -1417,6 +1417,36 @@ test('component tray (1.2): framework icon renders and double-click rename posts
   h.destroy();
 });
 
+// The test above dispatches a bare `dblclick`, which cannot see the bug the real browser hits: Chromium fires dblclick
+// only when BOTH clicks land on the same element, and the chip's own click handler used to rebuild the whole tray
+// (renderTray -> innerHTML = ''), replacing that element between the two clicks. Drive the real sequence instead.
+test('component tray (1.2): the real click-click-dblclick sequence still opens the rename editor — selection is a class update, not a tray rebuild', () => {
+  const h = loadDesigner();
+  const chips = setupTrayStrip(h, [{
+    id: 'timer1',
+    name: 'timer1',
+    type: 'System.Windows.Forms.Timer',
+    iconPng: 'AA==',
+    isStrip: false,
+    items: [],
+  }]);
+  const chip = chips[0];
+
+  h.mouse('click', {}, chip);
+  h.mouse('click', {}, chip);
+  ok(h.el('tray').children[0] === chip, 'the clicked chip is still the same live node after two selection clicks');
+  ok(chip.className.indexOf('sel') >= 0, 'selection highlights the chip in place');
+
+  h.mouse('dblclick', {}, chip);
+  const input = h.el('tray').querySelector('input.trayRename');
+  ok(!!input, 'double-click after a real click sequence opens the inline rename editor');
+
+  // A late host selection echo must not wipe the editor the user is typing into either.
+  h.send({ type: 'select', id: 'timer1' });
+  ok(h.el('tray').querySelector('input.trayRename') === input, 'a late select echo leaves the open rename editor alive');
+  h.destroy();
+});
+
 test('off-tree ContextMenuStrip (tray): clicking its chip opens a synthetic flyout of its top-level items; the pick→select echo does NOT close it; a row click posts selectItem with the strip host + item id', () => {
   const h = loadDesigner();
   const chips = setupTrayStrip(h, [ctxTray(), { id: 'timer1', name: 'timer1', type: 'System.Windows.Forms.Timer' }]);
@@ -2297,6 +2327,10 @@ test('panel DataBindings editor (1.2): lists canonical bindings and posts the ed
   });
   const btn = findPropRow(h, 'DataBindings').querySelector('button.collectionBtn');
   ok(!!btn, 'DataBindings renders the dedicated "…" editor');
+  // Assert on the GLYPH, not just the element: selecting by CSS class alone let v1.2.0 ship a CP1251 round trip that
+  // turned this button's ellipsis into three garbage characters. `npm run mojibake:scan` is the general gate; this
+  // pins the one glyph the user sees first.
+  eq(btn.textContent, '…', 'the bindings editor button carries a real ellipsis, not a double-encoded one');
   h.click(btn);
   eq(only(h.posted, 'listBindings').map((m) => m.id), ['nameTextBox'], 'the editor requests bindings for the selected control');
 
@@ -2377,6 +2411,42 @@ test('panel DataSource editor (1.2): switches from component to object type and 
   const set = only(h.posted, 'setDataSource');
   eq(set.length, 1, 'OK posts setDataSource');
   eq([set[0].id, set[0].kind, set[0].value], ['customerBindingSource', 'type', 'Demo.Customer'], 'the object-type choice is carried exactly');
+  h.destroy();
+});
+
+test('panel DataSource chooser (1.2): with no compatible component on the form, "Component" is not offered — it used to post an empty value the engine could only refuse', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'customerBindingSource',
+    name: 'customerBindingSource',
+    type: 'System.Windows.Forms.BindingSource',
+    properties: [
+      prop('DataSource', {
+        type: 'System.Object',
+        value: '',
+        isDataSource: true,
+        sourceExplicit: true,
+        isDefault: false,
+        category: 'Data',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'DataSource').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({
+    type: 'dataSourceInfo',
+    id: 'customerBindingSource',
+    ok: true,
+    reason: '',
+    kind: 'none',
+    value: '',
+    components: [],            // the only BindingSource on the form is the selected component itself
+  });
+  const popup = h.document.querySelector('.dataSourcePop');
+  ok(!!popup, 'the chooser still opens');
+  const kinds = Array.from(popup.querySelectorAll('.dataSourceBody select')[0].options).map((o) => (o as { value: string }).value);
+  eq(kinds, ['none', 'type'], 'only the choices that can produce a valid edit are offered');
   h.destroy();
 });
 

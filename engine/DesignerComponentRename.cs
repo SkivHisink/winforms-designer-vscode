@@ -32,6 +32,8 @@ namespace WinFormsDesigner.Engine
                 return Failed("unknown component id: " + oldId);
             if (fields.Contains(newId))
                 return Failed("a field named " + newId + " already exists");
+            if (HasUnqualifiedReference(form, oldId))
+                return Failed("cannot rename " + oldId + ": the designer file references it without a this. qualifier");
 
             string identity = FormClassResolver.QualifiedName(form);
             var renamed = new RenameRewriter(identity, oldId, newId).Visit(root);
@@ -44,6 +46,88 @@ namespace WinFormsDesigner.Engine
             return minimal
                 ? new ControlAddResult { Safe = true, Name = newId, NewText = newText }
                 : Failed(parseOk ? "rename changed more than the selected component field" : "renamed text has syntax errors");
+        }
+
+        /// <summary>True when the form refers to <paramref name="id"/> anywhere other than as <c>this.id</c> — the
+        /// only shape <see cref="RenameRewriter"/> rewrites. A designer file whose <c>this.</c> qualifiers were
+        /// stripped (exactly what <c>dotnet format</c> / IDE0003 "remove this qualification" does, and it does not
+        /// skip designer files) still renders and still lists the component in the tray, so the rename looks
+        /// available; carrying it out would move the declarator and leave every bare <c>id</c> use dangling. The
+        /// minimality gate cannot catch that, because it proves reversibility with the SAME rewriter and therefore
+        /// shares the blind spot exactly. So refuse up front instead of shipping a file that will not compile.</summary>
+        private static bool HasUnqualifiedReference(ClassDeclarationSyntax form, string id)
+        {
+            string identity = FormClassResolver.QualifiedName(form);
+            return FormClassResolver.PartialsOf(form)
+                .SelectMany(part => part.DescendantNodes().OfType<IdentifierNameSyntax>())
+                .Where(name => name.Identifier.ValueText == id)
+                // Only references that belong to the FORM itself. A nested helper class has its own scope — its
+                // members can't denote the form's instance field, and the rewriter (InForm) skips them too, so
+                // counting them here would refuse a perfectly good rename.
+                .Where(name => name.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault() is { } cls
+                    && FormClassResolver.QualifiedName(cls) == identity)
+                .Where(name => name.Parent is not MemberAccessExpressionSyntax member
+                    || member.Expression is not ThisExpressionSyntax
+                    || member.Name != name)
+                .Any(name => !ShadowedByLocal(name, id));
+        }
+
+        /// <summary>True when a parameter or local of the same name is in scope AT this bare identifier, so the
+        /// identifier is that local rather than the field and the rewriter is right to leave it alone. Scope is walked
+        /// the way C# defines it — outwards through the ENCLOSING scopes only. A member-wide search would be wrong in
+        /// the direction that matters: a local declared in a sibling or nested block does not shadow anything here, so
+        /// treating it as a shadow would wave through exactly the half-rename this guard exists to stop.</summary>
+        private static bool ShadowedByLocal(SyntaxNode reference, string id)
+        {
+            for (var scope = reference.Parent; scope != null; scope = scope.Parent)
+            {
+                if (DeclaresInScope(scope, reference, id))
+                    return true;
+                if (scope is BaseMethodDeclarationSyntax method)
+                    return method.ParameterList.Parameters.Any(p => p.Identifier.ValueText == id);
+                if (scope is AccessorDeclarationSyntax or MemberDeclarationSyntax)
+                    return false;
+            }
+            return false;
+        }
+
+        /// <summary>Locals introduced BY this scope node itself (not by anything nested inside it).</summary>
+        private static bool DeclaresInScope(SyntaxNode scope, SyntaxNode reference, string id)
+        {
+            switch (scope)
+            {
+                // The iteration variable is scoped to the EMBEDDED STATEMENT only — a reference in the collection
+                // expression (`foreach (var x in Pick(x))`) is still the outer name, i.e. the field.
+                case ForEachStatementSyntax f when f.Identifier.ValueText == id
+                    && f.Statement.Span.Contains(reference.Span):
+                    return true;
+                // The catch VARIABLE is declared on the clause, while the reference lives in the clause's block — so
+                // the declaration is a child of an enclosing scope, never an ancestor of the reference.
+                case CatchClauseSyntax cc when cc.Declaration?.Identifier.ValueText == id:
+                    return true;
+                case SimpleLambdaExpressionSyntax l when l.Parameter.Identifier.ValueText == id:
+                    return true;
+                case ParenthesizedLambdaExpressionSyntax pl when pl.ParameterList.Parameters.Any(p => p.Identifier.ValueText == id):
+                    return true;
+                // A `for` / `using (…)` variable lives ONLY for that statement. It is reached here as an ANCESTOR of
+                // the reference, which is exactly the case where it really is in scope; treating it as a declaration
+                // of the enclosing block instead would suppress the refusal for a bare reference AFTER the loop,
+                // where the name is the field again — the half-rename this guard exists to stop.
+                case ForStatementSyntax fs when fs.Declaration?.Variables.Any(v => v.Identifier.ValueText == id) == true:
+                    return true;
+                case UsingStatementSyntax us when us.Declaration?.Variables.Any(v => v.Identifier.ValueText == id) == true:
+                    return true;
+            }
+            // Block-scoped declarations belonging directly to this scope (`var x = …;`, `using var x = …;`).
+            foreach (var child in scope.ChildNodes())
+            {
+                if (child is LocalDeclarationStatementSyntax local
+                    && local.Declaration.Variables.Any(v => v.Identifier.ValueText == id))
+                    return true;
+                if (child is SingleVariableDesignationSyntax d && d.Identifier.ValueText == id)
+                    return true;
+            }
+            return false;
         }
 
         public static bool OnlyComponentRenamed(string original, string edited, string oldId, string newId)
@@ -120,8 +204,12 @@ namespace WinFormsDesigner.Engine
 
             private bool InForm(SyntaxNode node)
             {
-                var cls = node.AncestorsAndSelf().OfType<ClassDeclarationSyntax>().FirstOrDefault();
-                return cls != null && FormClassResolver.QualifiedName(cls) == _formIdentity;
+                // The NEAREST enclosing type must BE the form. Looking only for the nearest enclosing *class* let a
+                // nested struct or record fall through to the form's own identity, so an unrelated `toolTip1` member
+                // inside one was renamed too — and the reverse rewriter repeated the overreach, which made the
+                // unrelated mutation look reversible to the minimality gate.
+                var type = node.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().FirstOrDefault();
+                return type is ClassDeclarationSyntax cls && FormClassResolver.QualifiedName(cls) == _formIdentity;
             }
 
             private SyntaxToken RenamedToken(SyntaxToken token) =>

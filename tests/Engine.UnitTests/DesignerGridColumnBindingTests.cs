@@ -81,4 +81,26 @@ public sealed class DesignerGridColumnBindingTests
         ]);
         Assert.Equal(EditMode.Failed, edit.Mode);
     }
+
+    /// <summary>An explicit `NullValue = null` is a deliberate value the string-based column model cannot express:
+    /// folding it into "" made the writer omit the assignment, so editing an UNRELATED property (HeaderText, Format)
+    /// silently deleted the user's statement. Fail closed on both the read and the write side instead.</summary>
+    [Fact]
+    public void RefusesAColumnWhoseNullValueIsExplicitlyNull()
+    {
+        string explicitNull = Source.Replace(
+            """this.amountColumn.DefaultCellStyle.NullValue = "(none)";""",
+            "this.amountColumn.DefaultCellStyle.NullValue = null;");
+
+        var listed = DesignerGridColumnEditor.ListColumns(explicitNull, "grid");
+        Assert.False(listed.Ok);
+        Assert.Contains("explicitly null", listed.Reason);
+
+        var edit = DesignerGridColumnEditor.SetColumns(explicitNull, "grid",
+        [
+            new GridColumnItem { Id = "amountColumn", HeaderText = "Amount due" },
+        ]);
+        Assert.Equal(EditMode.Failed, edit.Mode);
+        Assert.Contains("explicitly null", edit.Reason);
+    }
 }
