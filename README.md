@@ -10,7 +10,7 @@ Render, click-select, edit and lay out `.Designer.cs` forms — live — without
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code Engine](https://img.shields.io/badge/VS%20Code-%5E1.84-007ACC?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![Version 1.1](https://img.shields.io/badge/version-1.1-brightgreen.svg)](#-support-matrix)
+[![Version 1.2](https://img.shields.io/badge/version-1.2-brightgreen.svg)](#-support-matrix)
 
 </div>
 
@@ -50,15 +50,16 @@ The rendering is real: a headless .NET host actually instantiates your controls 
 - **.NET Framework & DevExpress support** — `net4x` forms render on a bundled **.NET Framework 4.8** engine that interprets your **live source** (the Visual Studio model) onto the compiled controls (so DevExpress `XtraUserControl` & co. look pixel-accurate); the extension auto-routes each form to the right engine, and the property grid, drag/resize/align, add/remove, z-order, cut/paste, tab-page add/rename/delete, dropping the project's own vendor controls from the toolbox, and the collection editors apply live on the interpreted picture. A construct the interpreter can't yet reproduce falls back to a disclosed compiled render of the last build.
 - **Visual Studio–style workflow** — opening `Form.cs` opens the designer; *View Code* switches back to text.
 - **Property grid** — primitives, enums, and complex types (`Point`, `Size`, `Color`, `Font`, `Padding`, `Rectangle`, `Cursor`), composite expansion (`Size → Width/Height`), and standard-value dropdowns. VS-style **Color** (tabbed palette), **Font** (expandable name/size/style), **flags-enum**, **Anchor/Dock**, **Cursor**, and **image** editors. **Component-reference** properties (`AcceptButton` / `CancelButton`, `ContextMenuStrip`, `ContainerControl`, …) become a **dropdown** of the compatible sibling components — plus `(this)` for the form itself — and an `ImageList`-backed **`ImageIndex` / `ImageKey`** picks its image from a dropdown of the list's indices / keys. Non-default values are **bold**, a **description pane** explains the selected property, and a right-click **Reset** restores the default.
+- **Data-bound forms** — edit canonical `DataBindings` entries (target property, `BindingSource`, data member, formatting, update mode, and format string) and choose a supported `DataSource` as `(none)`, another component, or `typeof(T)`. Bound `DataGridView` columns expose `DataPropertyName`, format, alignment, and literal null-display values in the column editor. Editing is source-first and exact on both engines; the *preview* does not evaluate bindings (neither does Visual Studio's), so a `DataBindings.Add(…)` statement is reported as a skipped construct in the render note — and on the .NET Framework engine it means the form previews from your last build until that changes.
 - **Collection editors** — the `…` button opens a Visual Studio–style **Collection Editor** for string collections (`ComboBox` / `ListBox` / `CheckedListBox.Items`), string-array properties (`TextBox.Lines`), `ListView.Columns`, `DataGridView.Columns`, and a recursive `TreeView.Nodes` tree editor (with per-node **images, check state, tooltip, and fore/back colors & font**) — on both engines. A panel **"Type Here"** editor also **reorders / adds / removes / renames** `MenuStrip` / `ToolStrip` items (with a context-appropriate item-type picker).
 - **On-canvas menu & toolbar editing** — edit `MenuStrip` / `ToolStrip` items **directly on the strip**, Visual Studio–style: click the trailing **"Type Here"** slot to **add** (with a type picker), **double-click / F2** to **rename**, click to **select** and **Delete** — down through **nested submenus**, an **off-tree `ContextMenuStrip`** (from its tray chip), and the **overflow** area. Selecting an item opens **its own property grid** (with an **Events** tab), kept separate from the control selection. On **both** engines.
 - **Images & `.resx`** — images stored in a form's sibling `.resx` are rendered in the preview; **import** or **clear** `Image` / `BackgroundImage` / `Icon`, and add, remove, reorder, or rename the keys of **ImageList** images. ImageList changes reconcile attached `ImageIndex` / `ImageKey` assignments in one undoable `.Designer.cs` + `.resx` transaction.
 - **Layout panels** — edit `TableLayoutPanel` cells and column/row styles, `SplitContainer` splitter distance, and `FlowLayoutPanel` order, with anchor tethers drawn on the canvas.
 - **Toolbox** — auto-populated from `System.Windows.Forms` (~39 controls in VS categories, with their native icons) plus controls discovered from project outputs, configured probe directories, browsed libraries, and registered .NET assemblies. **Choose Toolbox Items** scans libraries without instantiating controls, remembers chosen items and custom tabs across reloads, and uses the exact source assembly when adding a control or project reference.
 - **Control sources** — pick which project (`.csproj`) or assembly (`.dll`) supplies your custom / 3rd-party controls; dropping a control from an unreferenced assembly offers to add the project reference.
-- **Direct manipulation** — select, move, resize (8 handles), keyboard nudge (arrow keys), multi-select (Ctrl/Shift + rubber-band), group move/delete, reparent, z-order, copy/paste, **duplicate** (`Ctrl+D`), **lock controls**, align + distribute + make-same-size, tab-order editor, snaplines, on-canvas **smart-tags**, and a VS-style right-click menu.
+- **Direct manipulation** — select, move, resize (8 handles), keyboard nudge (arrow keys), multi-select (Ctrl/Shift + rubber-band), group move/delete, reparent, z-order, copy/paste, **duplicate** (`Ctrl+D`), **lock controls**, align + distribute + make-same-size, tab-order editor, snaplines, on-canvas **smart-tags**, and a VS-style right-click menu. Cross-form paste validates every typed binding/extender dependency first and names any unavailable dependency without changing source.
 - **Events** — describe, wire / unwire / rewire handlers, generate a handler stub, and navigate to the handler body in the `.cs` partner.
-- **Component tray** & **document outline** (ARIA-accessible) for non-visual components and the control hierarchy.
+- **Component tray** & **document outline** (ARIA-accessible) for non-visual components and the control hierarchy. Tray components show framework icons, support inline field rename, retain compatible component-reference dropdowns, and expose common `ToolTip`, `ErrorProvider`, and `HelpProvider` extender properties on their target controls.
 - **Session continuity** — zoom, Lock Controls, the active designer tab, toolbox category state, outline state, custom toolbox tabs, and chosen items survive closing and reopening a form without modifying project files.
 - **Localized UI (7 languages)** — the designer surface, dialogs and messages follow the `winformsDesigner.language` setting: English, Русский, 简体中文, Français, Deutsch, Español, हिन्दी.
 - **Safe save** — edits are applied as targeted text splices guarded by representability and statement-diff gates; everything outside the changed span is preserved exactly (encoding/BOM included).
@@ -181,6 +182,7 @@ Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SEC
 | Select · property grid (Color / Font / flags / Anchor-Dock / Cursor / image editors) | ✅ | ✅ |
 | Move · resize · nudge · align · z-order · copy / paste · duplicate · lock | ✅ | ✅ live-rebuilt |
 | Collection & "Type Here" editors · on-canvas menu / toolbar editing | ✅ | ✅ |
+| DataBindings · DataSource · bound DataGridView column styles · common extenders | ✅ edits; binding statements skipped in the preview | ✅ source-first edits; a bound form previews from the last build |
 | `.resx` images · ImageList editor · `ImageIndex` / `ImageKey` | ✅ | ✅ (binary via net48) |
 | Component tray · document outline · events · Modifiers | ✅ | ✅ |
 | Safe byte-surgical save | ✅ | ✅ (via modern Roslyn splice) |
@@ -194,16 +196,18 @@ The **.NET Framework engine** renders your **live `.Designer.cs` source** throug
 
 ### Not yet
 
-`DesignerActionList` / vendor smart-tag action lists, advanced `.resx` (non-image resources, the full `ApplyResources` per-culture localization workflow), generic `IList<T>` collection editors, and RTL. These are **read-only-safe today** and tracked for post-1.0.
+Arbitrary vendor-specific property editors / modal `UITypeEditor` operations, advanced `.resx` (non-image
+resources and the full `ApplyResources` per-culture localization workflow), generic `IList<T>` collection editors,
+and RTL. These are **read-only-safe today** and tracked in the later roadmap milestones.
 
 **`net4x` build coordination.** The preview renders a *real compiled instance* of your form and therefore loads your assemblies in place (shadow-copying would break delay-signed vendor controls). Use **WinForms: Run Build Task** / **Run Test Task** — `Ctrl+Shift+B` is routed through the coordinated build command while the designer is active — to release the output before the task, invalidate the compiled fallback, and re-render afterward. Build/test tasks launched elsewhere also trigger best-effort lifecycle coordination; **Release .NET Framework Assembly (for Rebuild)** remains available as a manual recovery control. The modern .NET engine interprets your source and does not pin the project output.
 
-See the **[release roadmap](ROADMAP.md)** for the shipped 1.0 baseline, the concrete 1.1 daily-workflow and
-project-integration milestone, the later 1.x milestones through enterprise localization in 1.5.0, and the
-extensible design-time host planned for 2.0.0.
+See the **[release roadmap](ROADMAP.md)** for the shipped 1.0 baseline, the 1.1 daily-workflow and
+project-integration milestone, the verified 1.2 data-bound form workflow, the later 1.x milestones through
+enterprise localization in 1.5.0, and the extensible design-time host planned for 2.0.0.
 
-The safety core has fast C# and TypeScript unit coverage; the webview UI is validated headless (513 checks
-across 133 tests), startup/render latency is guarded by a repeatable performance baseline, and activation,
+The safety core has fast C# and TypeScript unit coverage; the webview UI is validated headless (532 checks
+across 137 tests), startup/render latency is guarded by a repeatable performance baseline, and activation,
 engine startup, capabilities, and lifecycle diagnostics are smoke-tested in the real VS Code Extension Host on
 VS Code 1.84 and current Stable. Found a rough edge? Please [file an issue](https://github.com/SkivHisink/winforms-designer-vscode/issues).
 

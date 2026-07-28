@@ -457,6 +457,8 @@ export const en: Catalog = {
   'status.referenced': 'referenced {name} in {file}',
   'status.referencedReview': ' — review & save it',
   'status.addedTray': 'added {name} to the tray — unsaved',
+  'status.trayRenamed': '{old} renamed to {new} — unsaved',
+  'status.trayRenameCodeBehind': 'cannot rename {old}: {file} references it — rename it there first',
   'status.nothingCopied': 'nothing copied (root / container with children / referenced elsewhere)',
   'status.copied': { one: 'copied {n} control', other: 'copied {n} controls' },
   'status.copiedSkipped': ' ({n} skipped)',

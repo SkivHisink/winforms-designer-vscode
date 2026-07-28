@@ -358,6 +358,8 @@
   "status.referenced": "已在 {file} 中引用 {name}",
   "status.referencedReview": " — 请检查并保存",
   "status.addedTray": "已将 {name} 添加到托盘 — 未保存",
+  "status.trayRenamed": "已将 {old} 重命名为 {new} — 未保存",
+  "status.trayRenameCodeBehind": "无法重命名 {old}：{file} 引用了它 — 请先在那里重命名",
   "status.nothingCopied": "未复制任何内容(根 / 含子级的容器 / 在其他位置被引用)",
   "status.copied": {
     "other": "已复制 {n} 个控件"

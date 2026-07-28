@@ -1705,11 +1705,43 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
-        /// <summary>Read a DataGridView's columns (typed grid-column editor) — field id + HeaderText/Width/ReadOnly/Visible.
-        /// <see cref="GridColumnItemsResult.Ok"/> is false for a bound/cast/initializer/unmanaged column, so the webview
-        /// keeps the collection read-only.</summary>
+        /// <summary>Read a DataGridView's columns (typed grid-column editor), including supported binding and
+        /// DefaultCellStyle fields. <see cref="GridColumnItemsResult.Ok"/> is false for a cast/initializer or a
+        /// property outside that closed surface, so the webview keeps the collection read-only.</summary>
         public GridColumnItemsResult ListGridColumns(string designerFilePath, string ownerId, string? sourceText = null)
             => DesignerRenderer.ListGridColumnItems(designerFilePath, ownerId, NullIfBlank(sourceText));
+
+        /// <summary>Read one control's canonical WinForms DataBindings and available component data sources.</summary>
+        public BindingItemsResult ListBindings(string designerFilePath, string ownerId, string? sourceText = null)
+            => DesignerRenderer.ListBindingItems(designerFilePath, ownerId, NullIfBlank(sourceText));
+
+        /// <summary>Read the closed DataSource workflow (none/component/type) for a supported component.</summary>
+        public DataSourceResult GetDataSource(string designerFilePath, string ownerId, string? sourceText = null)
+            => DesignerRenderer.GetDataSourceInfo(designerFilePath, ownerId, NullIfBlank(sourceText));
+
+        /// <summary>Set DataSource to null, a listed component, or typeof(Type).</summary>
+        public EditPreview SetDataSource(string designerFilePath, string ownerId, string kind, string value, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyDataSourceEdit(designerFilePath, ownerId, kind ?? "", value ?? "", NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Set a common framework extender provider value.</summary>
+        public EditPreview SetExtender(string designerFilePath, string providerId, string targetId,
+            string propertyName, string propertyType, string rawValue, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyExtenderEdit(designerFilePath, providerId, targetId,
+                propertyName, propertyType, rawValue, NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Replace only one control's canonical DataBindings statements.</summary>
+        public EditPreview SetBindings(string designerFilePath, string ownerId, BindingItem[] bindings, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyBindingsEdit(designerFilePath, ownerId,
+                bindings ?? Array.Empty<BindingItem>(), NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
 
         /// <summary>Set a DataGridView's columns (VS "Collection Editor"): reconcile field declarations, per-column
         /// construction/property statements and Columns.AddRange to exactly <paramref name="columns"/>. Values are
@@ -1868,6 +1900,10 @@ namespace WinFormsDesigner.Engine
         /// PURE TEXT — no graph load/STA. Refuses a container with children / externally-referenced control.</summary>
         public ControlRemoveResult RemoveControl(string designerFilePath, string controlId, string? sourceText = null) =>
             DesignerRenderer.RemoveControl(designerFilePath, controlId, sourceText);
+
+        /// <summary>Rename a component field and its canonical this.field references.</summary>
+        public ControlAddResult RenameComponent(string designerFilePath, string oldId, string newId, string? sourceText = null) =>
+            DesignerRenderer.RenameComponent(designerFilePath, oldId, newId, sourceText);
 
         /// <summary>Remove a whole tab page (page + its entire subtree) from a tab host as a text edit; detaches the
         /// page from the host's tab collection (whole Controls.Add/TabPages.Add, or a trimmed TabPages.AddRange

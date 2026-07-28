@@ -80,6 +80,8 @@ namespace WinFormsDesigner.Engine
         public string Id { get; init; } = "";
         public string Name { get; init; } = "";
         public string Type { get; init; } = "";
+        /// <summary>The component type's 16x16 ToolboxBitmap icon as a base64 PNG, when available.</summary>
+        public string? IconPng { get; init; }
         /// <summary>For an OFF-TREE ToolStrip surfaced in the tray (a ContextMenuStrip / ToolStripDropDown, which is a
         /// sited field but never painted on the surface), its top-level Items as a BOUNDS-LESS forest (id/text/type +
         /// recursive <see cref="ToolStripItemBounds.Children"/>) — the canvas opens a SYNTHETIC flyout from the tray

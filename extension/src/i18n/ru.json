@@ -382,6 +382,8 @@
   "status.referenced": "добавлена ссылка на {name} в {file}",
   "status.referencedReview": " — проверьте и сохраните",
   "status.addedTray": "добавлен {name} в область компонентов — не сохранено",
+  "status.trayRenamed": "{old} переименован в {new} — не сохранено",
+  "status.trayRenameCodeBehind": "нельзя переименовать {old}: на него ссылается {file} — сначала переименуйте там",
   "status.nothingCopied": "нечего копировать (корень / контейнер с дочерними элементами / используется в другом месте)",
   "status.copied": {
     "one": "скопирован {n} элемент",

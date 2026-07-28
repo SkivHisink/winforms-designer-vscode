@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.Design.Serialization;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace WinFormsDesigner.Engine.Net48
@@ -59,6 +60,8 @@ namespace WinFormsDesigner.Engine.Net48
             foreach (PropertyDescriptor pd in TypeDescriptor.GetProperties(c))
             {
                 bool isTableCell = parentIsTlp && (pd.Name == "Column" || pd.Name == "Row");
+                bool isDataSource = pd.Name == "DataSource"
+                    && (c is BindingSource || c is ListControl || c is DataGridView);
                 // string-item collections (ComboBox/ListBox/CheckedListBox.Items) + typed collections (ListView.Columns,
                 // DataGridView.Columns) are surfaced for the VS "…" collection editor even though they're [Browsable(false)]
                 // / Hidden-serialization — the read/write routes to the net9 pure-text engine. Matched by exact
@@ -92,6 +95,7 @@ namespace WinFormsDesigner.Engine.Net48
 
                 // A Font carrying a non-default charset would lose it through the invariant string form — show read-only.
                 bool readOnly = pd.IsReadOnly || unhandledCollection; // an unhandled collection has no edit path → read-only
+                if (isDataSource) readOnly = false;
                 if (raw is System.Drawing.Font font && (font.GdiCharSet != 1 || font.GdiVerticalFont))
                 {
                     readOnly = true;
@@ -154,10 +158,74 @@ namespace WinFormsDesigner.Engine.Net48
                     IsCollection = isCollection,
                     CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : typedCollectionItem),
                     ReferenceValues = referenceValues,
+                    IsDataSource = isDataSource,
                 });
             }
+            InjectExtenderProperties(list, c, siblings);
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return list;
+        }
+
+        private static readonly Dictionary<string, string[]> CommonExtenderProperties = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            { "System.Windows.Forms.ToolTip", new[] { "ToolTip" } },
+            { "System.Windows.Forms.ErrorProvider", new[] { "Error", "IconAlignment", "IconPadding" } },
+            { "System.Windows.Forms.HelpProvider", new[] { "HelpString", "HelpKeyword", "HelpNavigator", "ShowHelp" } },
+        };
+
+        private static void InjectExtenderProperties(List<PropertyDesc> list, IComponent target,
+            IReadOnlyList<KeyValuePair<string, IComponent>> siblings)
+        {
+            foreach (var pair in siblings)
+            {
+                var provider = pair.Value;
+                string providerType = provider.GetType().FullName ?? "";
+                if (!CommonExtenderProperties.TryGetValue(providerType, out var propertyNames)
+                    || !(provider is IExtenderProvider extender))
+                    continue;
+                bool canExtend;
+                try { canExtend = extender.CanExtend(target); } catch { continue; }
+                if (!canExtend || string.IsNullOrEmpty(pair.Key)) continue;
+
+                foreach (string propertyName in propertyNames)
+                {
+                    try
+                    {
+                        var getter = provider.GetType().GetMethods()
+                            .FirstOrDefault(m => m.Name == "Get" + propertyName && m.GetParameters().Length == 1
+                                && m.GetParameters()[0].ParameterType.IsInstanceOfType(target));
+                        var setter = provider.GetType().GetMethods()
+                            .FirstOrDefault(m => m.Name == "Set" + propertyName && m.GetParameters().Length == 2
+                                && m.GetParameters()[0].ParameterType.IsInstanceOfType(target));
+                        if (getter == null || setter == null) continue;
+                        var valueType = setter.GetParameters()[1].ParameterType;
+                        object? raw = getter.Invoke(provider, new object[] { target });
+                        string? value = raw == null ? null : valueType.IsEnum
+                            ? Enum.GetName(valueType, raw)
+                            : Convert.ToString(raw, System.Globalization.CultureInfo.InvariantCulture);
+                        string displayName = propertyName + " on " + pair.Key;
+                        list.RemoveAll(x => x.Name == displayName);
+                        var standards = valueType.IsEnum ? Enum.GetNames(valueType).ToList()
+                            : valueType == typeof(bool) ? new List<string> { "False", "True" }
+                            : null;
+                        list.Add(new PropertyDesc
+                        {
+                            Name = displayName,
+                            Type = valueType.FullName ?? valueType.Name,
+                            Value = value,
+                            ReadOnly = false,
+                            IsEnum = valueType.IsEnum,
+                            Category = "Extenders",
+                            Description = propertyName + " value supplied by " + pair.Key + ".",
+                            StandardValues = standards,
+                            StandardValuesExclusive = standards != null,
+                            ExtenderProvider = pair.Key,
+                            ExtenderProperty = propertyName,
+                        });
+                    }
+                    catch { }
+                }
+            }
         }
 
         // ---- collection detection (parity with net9 DesignerDescribe): match the property TYPE by exact FullName so
@@ -173,6 +241,7 @@ namespace WinFormsDesigner.Engine.Net48
             { "System.Windows.Forms.ListView+ColumnHeaderCollection", "System.Windows.Forms.ColumnHeader" },
             { "System.Windows.Forms.DataGridViewColumnCollection", "System.Windows.Forms.DataGridViewColumn" },
             { "System.Windows.Forms.TreeNodeCollection", "System.Windows.Forms.TreeNode" },
+            { "System.Windows.Forms.ControlBindingsCollection", "System.Windows.Forms.Binding" },
             // MenuStrip/ToolStrip.Items + ToolStripMenuItem.DropDownItems (all ToolStripItemCollection) — parity with net9.
             { "System.Windows.Forms.ToolStripItemCollection", "System.Windows.Forms.ToolStripItem" },
         };

@@ -374,6 +374,8 @@
   "status.referenced": "se hizo referencia a {name} en {file}",
   "status.referencedReview": " — revíselo y guárdelo",
   "status.addedTray": "se agregó {name} a la bandeja — sin guardar",
+  "status.trayRenamed": "se renombró {old} a {new} — sin guardar",
+  "status.trayRenameCodeBehind": "no se puede renombrar {old}: {file} lo referencia — renómbrelo allí primero",
   "status.nothingCopied": "no se copió nada (raíz / contenedor con hijos / referenciado en otro lugar)",
   "status.copied": {
     "one": "se copió {n} control",
