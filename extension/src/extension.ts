@@ -8,6 +8,7 @@ import { resolveFrameworkOutput } from './csprojRef';
 import { setLocale, t } from './i18n';
 import { EngineRecoveryPolicy } from './engineRecovery';
 import { isBuildOrTestTask, taskCoordinationKey } from './taskCoordination';
+import { shouldSuppressAutoOpen } from './autoOpen';
 
 // Two engine processes, started lazily and keyed by kind: 'modern' (the default WinForms/Roslyn engine) and
 // 'net48' (the .NET Framework compiled-render engine for DevExpress/Framework projects). A form routes to one
@@ -449,8 +450,33 @@ function updateContext(editor: vscode.TextEditor | undefined): void {
   void vscode.commands.executeCommand('setContext', 'winformsDesigner.canOpen', canOpen);
 }
 
+/**
+ * Every URI shown by an ACTIVE comparison tab. Diffs only: `TabInputTextMerge` is not in the declared API floor
+ * (@types/vscode 1.84, matching `engines.vscode`), so the 3-way merge editor is not enumerated here. Its base and
+ * both input panes are still covered — they carry `git:` / `conflictResolution:` schemes, which the predicate
+ * rejects outright — leaving only its `file:`-backed RESULT pane unguarded.
+ */
+function activeComparisonUris(): string[] {
+  const uris: string[] = [];
+  for (const group of vscode.window.tabGroups.all) {
+    const input = group.activeTab?.input;
+    if (input instanceof vscode.TabInputTextDiff) {
+      uris.push(input.original.toString(), input.modified.toString());
+    }
+  }
+  return uris;
+}
+
 function autoOpenIfDesigner(editor: vscode.TextEditor | undefined): void {
   if (!editor) return;
+  // Reviewing a change is not a request to edit it: never take over a diff (either side) or a virtual document.
+  // Checked BEFORE the once-per-file bookkeeping below, so merely looking at a diff leaves no trace that would
+  // change how the file behaves when it is later opened for real.
+  if (shouldSuppressAutoOpen({
+    scheme: editor.document.uri.scheme,
+    uri: editor.document.uri.toString(),
+    comparisonUris: activeComparisonUris(),
+  })) return;
   const file = editor.document.uri.fsPath;
   if (!hasDesignerSibling(file)) return;
   const cfg = vscode.workspace.getConfiguration('winformsDesigner', editor.document.uri);

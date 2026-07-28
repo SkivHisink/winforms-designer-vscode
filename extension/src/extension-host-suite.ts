@@ -1,4 +1,6 @@
 import * as assert from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 const extensionId = 'skivhisink.winforms-designer-vscode';
@@ -56,6 +58,33 @@ export async function run(): Promise<void> {
   assert.match(text, /## Engine lifecycle/);
   assert.match(text, /- modern: running \(pid \d+\); starts=1; lastStartup=\d+ ms; recentCrashes=0; lastExit=n\/a/);
   assert.match(text, /- net48: stopped; starts=0; lastStartup=n\/a; recentCrashes=0; lastExit=n\/a/);
+
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+  // Opening a DIFF of a form must NOT be hijacked by the designer's auto-open. This has to run in a real Extension
+  // Host: the fix depends on VS Code's tab model already reporting the diff tab when onDidChangeActiveTextEditor
+  // fires for the modified side, which no headless tier can observe.
+  const repoRoot = path.resolve(__dirname, '..', '..');
+  const formCs = vscode.Uri.file(path.join(repoRoot, 'engine', 'samples', 'EventForm.cs'));
+  const designerCs = vscode.Uri.file(path.join(repoRoot, 'engine', 'samples', 'EventForm.Designer.cs'));
+  assert.ok(fs.existsSync(formCs.fsPath), `fixture missing: ${formCs.fsPath}`);
+  assert.ok(fs.existsSync(designerCs.fsPath), `fixture missing: ${designerCs.fsPath}`);
+  assert.strictEqual(
+    vscode.workspace.getConfiguration('winformsDesigner', formCs).get('autoOpenDesigner', true), true,
+    'this check is only meaningful while auto-open is enabled');
+
+  await vscode.commands.executeCommand('vscode.diff', designerCs, formCs, 'EventForm diff');
+  // Let any auto-open reaction run: it is fired from an event handler and would replace the tab asynchronously.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  const tab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+  assert.ok(tab, 'the diff did not open a tab');
+  assert.ok(
+    tab.input instanceof vscode.TabInputTextDiff,
+    `viewing a diff must stay a diff, but the active tab became ${tab.input?.constructor?.name}`);
+  assert.strictEqual(
+    (tab.input as vscode.TabInputTextDiff).modified.toString(), formCs.toString(),
+    'the diff should still be showing the form .cs as its modified side');
 
   await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
 }

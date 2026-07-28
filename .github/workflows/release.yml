@@ -108,6 +108,11 @@ jobs:
         working-directory: extension
         run: npm run perf:baseline
 
+      # Text-integrity gate — see the same step in ci.yml.
+      - name: Mojibake scan
+        working-directory: extension
+        run: npm run mojibake:scan
+
       - name: Localization parity
         working-directory: extension
         run: npm run l10n:parity -- --strict

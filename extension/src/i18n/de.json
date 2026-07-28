@@ -366,6 +366,8 @@
   "status.referenced": "{name} in {file} referenziert",
   "status.referencedReview": " — prüfen und speichern",
   "status.addedTray": "{name} zum Bereich hinzugefügt — nicht gespeichert",
+  "status.trayRenamed": "{old} in {new} umbenannt — nicht gespeichert",
+  "status.trayRenameCodeBehind": "{old} kann nicht umbenannt werden: {file} verweist darauf — benennen Sie es zuerst dort um",
   "status.nothingCopied": "nichts kopiert (Root / Container mit untergeordneten Elementen / anderweitig referenziert)",
   "status.copied": {
     "one": "{n} Steuerelement kopiert",

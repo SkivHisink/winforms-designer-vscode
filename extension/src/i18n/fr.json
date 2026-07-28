@@ -374,6 +374,8 @@
   "status.referenced": "{name} référencé dans {file}",
   "status.referencedReview": " — vérifiez-le et enregistrez",
   "status.addedTray": "{name} ajouté au bac — non enregistré",
+  "status.trayRenamed": "{old} renommé en {new} — non enregistré",
+  "status.trayRenameCodeBehind": "impossible de renommer {old} : {file} y fait référence — renommez-le d'abord là-bas",
   "status.nothingCopied": "rien de copié (racine / conteneur avec enfants / référencé ailleurs)",
   "status.copied": {
     "one": "{n} contrôle copié",

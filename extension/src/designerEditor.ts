@@ -52,6 +52,12 @@ import {
   setColumns,
   listGridColumns,
   setGridColumns,
+  BindingItem,
+  listBindings,
+  setBindings,
+  getDataSource,
+  setDataSource,
+  setExtender,
   resetProperty,
   setImageResource,
   serializeImageList,
@@ -73,6 +79,7 @@ import {
   scanToolboxAssembly,
   ToolboxCandidate,
   removeControl,
+  renameComponent,
   copyControl,
   pasteControl,
   moveZOrder,
@@ -162,10 +169,10 @@ const LOCALIZABLE_BLOCKED = new Set<string>([
   'manipulate', 'manipulateGroup', 'edit', 'alignControls', 'centerInForm', 'resizeControls',
   'dropControl', 'removeControl', 'removeControls', 'cut', 'cutControls', 'paste', 'duplicate',
   'bringToFront', 'bringToFrontGroup', 'sendToBack', 'sendToBackGroup', 'tabRename',
-  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'addTab', 'deleteTab',
+  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'addTab', 'deleteTab',
   // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
   'importImage', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
-  'setColumns', 'setGridColumns', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
+  'setColumns', 'setGridColumns', 'setBindings', 'setDataSource', 'setExtender', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
   'addControl', 'addComponent', 'deleteSelected',
 ]);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
@@ -896,9 +903,10 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     DesignerHub.instance.attachPanel(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage(async (m: {
       type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string; ownerId?: string;
-      refEdit?: boolean; designTime?: boolean;
+      providerId?: string; extenderProperty?: string;
+      refEdit?: boolean; designTime?: boolean; kind?: 'none' | 'component' | 'type';
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
-      items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; nodes?: TreeNodeItem[];
+      items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; bindings?: BindingItem[]; nodes?: TreeNodeItem[];
       toolStripItems?: ToolStripItemModel[];
       state?: unknown; toolboxUi?: unknown;
     }) => {
@@ -935,6 +943,13 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'setColumns' && m.id && Array.isArray(m.columns)) { await s?.columnsFromGrid(m.id, m.columns as ColumnItem[]); }
         else if (m?.type === 'listGridColumns' && m.id) { await s?.sendGridColumnItems(m.id); }
         else if (m?.type === 'setGridColumns' && m.id && Array.isArray(m.gridColumns)) { await s?.gridColumnsFromGrid(m.id, m.gridColumns as GridColumnItem[]); }
+        else if (m?.type === 'listBindings' && m.id) { await s?.sendBindingItems(m.id); }
+        else if (m?.type === 'setBindings' && m.id && Array.isArray(m.bindings)) { await s?.bindingsFromGrid(m.id, m.bindings as BindingItem[]); }
+        else if (m?.type === 'getDataSource' && m.id) { await s?.sendDataSourceInfo(m.id); }
+        else if (m?.type === 'setDataSource' && m.id && m.kind) { await s?.dataSourceFromGrid(m.id, m.kind, m.value ?? ''); }
+        else if (m?.type === 'setExtender' && m.id && m.providerId && m.extenderProperty && m.propType) {
+          await s?.extenderFromGrid(m.providerId, m.id, m.extenderProperty, m.propType, m.value ?? '');
+        }
         else if (m?.type === 'listTreeNodes' && m.id) { await s?.sendTreeNodes(m.id); }
         else if (m?.type === 'setTreeNodes' && m.id && Array.isArray(m.nodes)) { await s?.treeNodesFromGrid(m.id, m.nodes as TreeNodeItem[]); }
         else if (m?.type === 'listToolStripItems' && m.id) { await s?.sendToolStripItems(m.id); }
@@ -1601,7 +1616,7 @@ class DesignerSession {
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
     axis?: 'h' | 'v'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; token?: number; reopenToken?: number;
-    dpr?: number; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy';
+    dpr?: number; newName?: string; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy';
   }): Promise<void> {
     try {
       // 0.10.0 trust-floor: a localizable form is a read-only preview — refuse every mutating gesture
@@ -1693,6 +1708,8 @@ class DesignerSession {
         await this.applyStripRetype(m.hostId, m.itemId, m.itemType, typeof m.text === 'string' ? m.text : '');
       } else if (m.type === 'stripDelete' && m.hostId && m.itemId) {
         await this.applyStripDelete(m.hostId, m.itemId);
+      } else if (m.type === 'trayRename' && m.id && m.newName) {
+        await this.applyTrayRename(m.id, m.newName);
       } else if (m.type === 'selectItem' && m.hostId && m.itemId) {
         // a top-level strip item was clicked on the canvas → describe THAT item into the Properties panel via a
         // dedicated channel that leaves the control selection (currentId / manip / smart-tag) untouched. Record it as
@@ -4215,12 +4232,156 @@ class DesignerSession {
     if (this.engineKind === 'net48') {
       // reconstruct the DataGridView.Columns on the live instance for an immediate net48 picture (T1.1b)
       await this.liveCollection48(id, 'Columns', 'System.Windows.Forms.DataGridViewColumn',
-        columns.map((c) => ({ id: c.id, text: c.headerText, width: c.width, readOnly: c.readOnly, visible: c.visible })));
+        columns.map((c) => ({
+          id: c.id,
+          text: c.headerText,
+          width: c.width,
+          readOnly: c.readOnly,
+          visible: c.visible,
+          dataPropertyName: c.dataPropertyName,
+          format: c.format,
+          alignment: c.alignment,
+          nullValue: c.nullValue,
+        })));
     } else {
       await this.fullRender();
     }
     await this.loadProps(id);
     await this.postDirty();
+  }
+
+  /** Read one control's canonical DataBindings from the unsaved buffer. Pure text, including for net48 forms. */
+  async sendBindingItems(id: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'bindingItems', id, ok: false, bindings: [], sources: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('modern');
+      const res = await listBindings(eng, this.designerFile, id, this.doc.designerText);
+      this.post({
+        type: 'bindingItems',
+        id,
+        ok: res.ok,
+        bindings: res.bindings ?? [],
+        sources: res.sources ?? [],
+        reason: res.reason,
+      });
+    } catch (err) {
+      this.post({ type: 'bindingItems', id, ok: false, bindings: [], sources: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Commit the DataBindings popup atomically, then rebuild the picture from the edited source. */
+  async bindingsFromGrid(id: string, bindings: BindingItem[]): Promise<void> {
+    if (!this.designerFile) return;
+    try {
+      const eng = await this.ensureEngine('modern');
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+      const res = await setBindings(eng, this.designerFile, id, bindings, before);
+      if (!res.safe || res.text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+        await this.loadProps(id);
+        return;
+      }
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(id);
+        return;
+      }
+      if (!this.commit(before, res.text, `Set ${id}.DataBindings`)) return;
+      this.output.appendLine(`set ${id}.DataBindings = ${bindings.length} binding(s) (unsaved)`);
+      this.post({ type: 'status', message: t('status.propSet', { id, prop: 'DataBindings' }) });
+      await this.fullRender();
+      await this.loadProps(id);
+      await this.postDirty();
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  async sendDataSourceInfo(id: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'dataSourceInfo', id, ok: false, kind: 'none', value: '', components: [], reason: 'not available' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('modern');
+      const res = await getDataSource(eng, this.designerFile, id, this.doc.designerText);
+      this.post({
+        type: 'dataSourceInfo',
+        id,
+        ok: res.ok,
+        kind: res.kind,
+        value: res.value,
+        components: res.components ?? [],
+        reason: res.reason,
+      });
+    } catch (err) {
+      this.post({ type: 'dataSourceInfo', id, ok: false, kind: 'none', value: '', components: [], reason: errMsg(err) });
+    }
+  }
+
+  async dataSourceFromGrid(id: string, kind: 'none' | 'component' | 'type', value: string): Promise<void> {
+    if (!this.designerFile) return;
+    try {
+      const eng = await this.ensureEngine('modern');
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+      const res = await setDataSource(eng, this.designerFile, id, kind, value, before);
+      if (!res.safe || res.text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+        await this.loadProps(id);
+        return;
+      }
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(id);
+        return;
+      }
+      if (!this.commit(before, res.text, `Set ${id}.DataSource`)) return;
+      this.output.appendLine(`set ${id}.DataSource = ${kind}:${value} (unsaved)`);
+      this.post({ type: 'status', message: t('status.propSet', { id, prop: 'DataSource' }) });
+      await this.fullRender();
+      await this.loadProps(id);
+      await this.postDirty();
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  async extenderFromGrid(providerId: string, targetId: string, propertyName: string,
+    propertyType: string, value: string): Promise<void> {
+    if (!this.designerFile) return;
+    try {
+      const eng = await this.ensureEngine('modern');
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+      const res = await setExtender(
+        eng, this.designerFile, providerId, targetId, propertyName, propertyType, value, before);
+      if (!res.safe || res.text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+        await this.loadProps(targetId);
+        return;
+      }
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(targetId);
+        return;
+      }
+      if (!this.commit(before, res.text, `Set ${providerId}.${propertyName}(${targetId})`)) return;
+      this.output.appendLine(`set extender ${providerId}.${propertyName}(${targetId}) = ${value} (unsaved)`);
+      this.post({ type: 'status', message: t('status.propSet', { id: targetId, prop: propertyName }) });
+      await this.fullRender();
+      await this.loadProps(targetId);
+      await this.postDirty();
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(targetId); } catch { /* best effort */ }
+    }
   }
 
   private async applyEdits(id: string, edits: Array<{ prop: string; propType: string; value: string }>): Promise<void> {
@@ -4616,6 +4777,75 @@ class DesignerSession {
     this.post({ type: 'status', message: t('status.addedTray', { name: res.name }) });
   }
 
+  /** The base name of the code-behind partial when it references `id`, else null. The engine only ever sees the
+   * .Designer.cs buffer, so a component the user's own code calls (`timer1.Start()`, `errorProvider1.SetError(…)`)
+   * would keep compiling in the designer and break at the next build — long after we reported success. A whole-word
+   * scan is deliberately conservative: a mention in a comment also blocks the rename, which fails closed. */
+  private async codeBehindReference(id: string): Promise<string | null> {
+    const codePath = this.codeFile();
+    if (!codePath || !id) return null;
+    let text: string;
+    try { text = (await vscode.workspace.openTextDocument(codePath)).getText(); }
+    catch { return null; }
+    // C# identifiers may be non-ASCII (the engine validates with SyntaxFacts.IsValidIdentifier), and JS `\b` is
+    // ASCII-only — a Unicode field name would have matched nothing and let the rename through, failing OPEN. Use
+    // Unicode-aware boundaries, and escape the id so it can never be read as a pattern.
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // The boundary class mirrors what C# allows in an identifier PART — letters, digits, underscore/connectors,
+    // combining marks and format characters — so `timer` is not "found" inside a longer identifier that merely
+    // continues with a combining mark. (Verbatim `@name` and \uXXXX-escaped identifiers are still matched only in
+    // their plain spelling; that direction fails closed for the escape form only, which no designer emits.)
+    const part = '\\p{L}\\p{N}_\\p{M}\\p{Pc}\\p{Cf}';
+    const word = new RegExp(`(?<![${part}])${escaped}(?![${part}])`, 'u');
+    return word.test(text) ? path.basename(codePath) : null;
+  }
+
+  private async applyTrayRename(oldId: string, newId: string): Promise<void> {
+    if (!this.designerFile || this.disposed || oldId === 'this') return;
+    const referencedIn = await this.codeBehindReference(oldId);
+    if (referencedIn) {
+      this.post({ type: 'status', message: t('status.trayRenameCodeBehind', { old: oldId, file: referencedIn }) });
+      await this.fullRender();
+      return;
+    }
+    const eng = await this.ensureEngine('modern');
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const res = await renameComponent(eng, this.designerFile, oldId, newId, before);
+    if (!res.safe || res.newText === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe rename' }) });
+      await this.fullRender();
+      return;
+    }
+    if (this.doc.rev !== rev) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.fullRender();
+      return;
+    }
+    // Re-check the code-behind immediately before committing. doc.rev only tracks the .Designer.cs custom document,
+    // so a reference typed into the sibling partial while the engine RPC was in flight would otherwise be missed —
+    // and this rename cannot rewrite it.
+    const referencedNow = await this.codeBehindReference(oldId);
+    if (referencedNow) {
+      this.post({ type: 'status', message: t('status.trayRenameCodeBehind', { old: oldId, file: referencedNow }) });
+      await this.fullRender();
+      return;
+    }
+    if (this.doc.rev !== rev) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.fullRender();
+      return;
+    }
+    if (!this.commit(before, res.newText, `Rename ${oldId} to ${res.name}`)) return;
+    // Only follow the rename with the selection if the user is still ON it. A selection-only pick does not bump
+    // doc.rev, so the revision check above cannot see it: without this guard a rename that lands after the user
+    // clicked another control snaps the selection back and re-arms Delete on a target they no longer chose.
+    if (this.currentId === oldId) this.currentId = res.name;
+    this.output.appendLine(`renamed tray component ${oldId} -> ${res.name} (unsaved)`);
+    await this.fullRender();
+    this.post({ type: 'status', message: t('status.trayRenamed', { old: oldId, new: res.name }) });
+  }
+
   private async applyRemoveControl(id: string): Promise<void> {
     if (!this.designerFile || this.disposed || id === 'this') return;
     const eng = await this.ensureEngine();
@@ -4692,6 +4922,7 @@ class DesignerSession {
     let text = before;
     let last = '';
     let applied = 0;
+    const unavailable = new Set<string>();
     // For the net48 compiled preview, mirror each accepted paste by live-instantiating the clone (the net9 text
     // splice below isn't in the compiled instance). It comes up default-styled at the pasted Location, exactly like
     // Add; a project rebuild reconciles the copied property values (net48's text-is-truth / picture-best-effort).
@@ -4701,9 +4932,15 @@ class DesignerSession {
       if (res.safe && res.newText !== null) {
         text = res.newText; last = res.name; applied++;
         if (this.engineKind === 'net48' && res.typeName) live48Adds.push({ typeName: res.typeName, name: res.name, x: res.x, y: res.y });
+      } else {
+        for (const dependency of res.missingDependencies ?? []) unavailable.add(dependency);
       }
     }
-    if (!applied) { this.post({ type: 'status', message: t('status.pasteRejected') }); return; }
+    if (!applied) {
+      const detail = unavailable.size ? ` Missing dependencies: ${[...unavailable].join(', ')}.` : '';
+      this.post({ type: 'status', message: t('status.pasteRejected') + detail });
+      return;
+    }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, text, `Paste ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = last || this.currentId;
@@ -5376,10 +5613,13 @@ ${cspMeta(webview, nonce)}
   #status { padding: 4px 8px; min-height: 1em; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-panel-border, #333); }
   /* component tray — non-visual components below the surface */
   #tray { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-top: 1px solid var(--vscode-panel-border, #333); background: var(--vscode-editorWidget-background, #252526); max-height: 88px; overflow: auto; }
-  .trayItem { font-size: 12px; padding: 3px 8px; border-radius: 2px; cursor: pointer; user-select: none; white-space: nowrap;
+  .trayItem { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px; border-radius: 2px; cursor: pointer; user-select: none; white-space: nowrap;
     background: var(--vscode-button-secondaryBackground, #3a3d41); color: var(--vscode-button-secondaryForeground, #fff); }
   .trayItem:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
   .trayItem.sel { outline: 1px solid #4ea1ff; }
+  .trayIcon { width: 16px; height: 16px; object-fit: contain; image-rendering: auto; }
+  .trayRename { width: 120px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-focusBorder, #007fd4); border-radius: 2px; padding: 1px 3px; font-size: 12px; }
   /* pixel ruler around the form surface (toggled by the toolbar button) */
   .ruler { position: absolute; background: var(--vscode-editorWidget-background, #252526); z-index: 8; pointer-events: none; overflow: hidden; color: var(--vscode-descriptionForeground, #999); }
   .rulerH { top: -22px; left: 0; height: 18px; border-bottom: 1px solid var(--vscode-panel-border, #555); }
@@ -5643,9 +5883,25 @@ ${cspMeta(webview, nonce)}
   .columnsAdd { margin: 0 6px 6px; padding: 2px 10px; cursor: pointer; color: var(--vscode-foreground);
     background: var(--vscode-button-secondaryBackground, rgba(255,255,255,.08)); border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
   .columnsAdd:hover { filter: brightness(1.15); }
-  .gridColumnsPop .columnsList { min-width: 340px; }
+  .gridColumnsPop .columnsList { min-width: 560px; }
+  .gridColumnCard { padding: 4px; margin-bottom: 5px; border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
+  .gridColumnCard .columnsRow:last-child { margin-bottom: 0; }
+  .gridStyleRow .gridFmt, .gridStyleRow .gridNull { flex: 0 1 90px; min-width: 65px; }
   .colChkLbl { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--vscode-descriptionForeground); }
   .colChk { margin: 0; }
+  .bindingsPop .bindingList { margin: 6px; max-height: 310px; min-width: 390px; overflow-y: auto; }
+  .bindingRow { padding: 5px; margin-bottom: 5px; border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
+  .bindingLine { display: flex; align-items: center; gap: 5px; margin-bottom: 4px; }
+  .bindingLine:last-child { margin-bottom: 0; }
+  .bindingLine input[type="text"], .bindingLine select { flex: 1 1 0; min-width: 80px; color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: 2px; padding: 2px 4px; font-size: 12px; box-sizing: border-box; }
+  .bindingCheck { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; color: var(--vscode-descriptionForeground); }
+  .bindingCheck input { margin: 0; }
+  .dataSourceBody { display: flex; gap: 5px; min-width: 330px; padding: 7px; }
+  .dataSourceBody select, .dataSourceBody input { flex: 1 1 0; min-width: 90px; color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: 2px; padding: 2px 4px; font-size: 12px; box-sizing: border-box; }
   /* floating popup surface (color picker / flags checkboxes) — on <body>, position:fixed so #grid can't clip it */
   .propPopup { position: fixed; z-index: 70; background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-foreground);
     border: 1px solid var(--vscode-widget-border, #454545); border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.5); font-size: 12px; }

@@ -366,6 +366,8 @@
   "status.referenced": "{file} में {name} को रेफरेंस किया",
   "status.referencedReview": " — समीक्षा करके सहेजें",
   "status.addedTray": "{name} को ट्रे में जोड़ा — असहेजित",
+  "status.trayRenamed": "{old} का नाम बदलकर {new} किया — असहेजित",
+  "status.trayRenameCodeBehind": "{old} का नाम नहीं बदल सकते: {file} इसका संदर्भ देती है — पहले वहाँ नाम बदलें",
   "status.nothingCopied": "कुछ भी कॉपी नहीं हुआ (रूट / चाइल्ड वाला कंटेनर / कहीं और रेफरेंस किया गया)",
   "status.copied": {
     "one": "{n} कंट्रोल कॉपी किया",

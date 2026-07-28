@@ -54,6 +54,9 @@ namespace WinFormsDesigner.Engine
         public string TypeName { get; init; } = "";
         public int X { get; init; } = -1;
         public int Y { get; init; } = -1;
+        /// <summary>Named dependencies the target form lacks or declares with a different type. A failed paste
+        /// returns these explicitly so the UI can explain what must be added instead of reporting generic unsafe data.</summary>
+        public List<string> MissingDependencies { get; init; } = new();
     }
 
     /// <summary>Result of <see cref="DesignerControlEditor.MoveZOrder"/> (Bring to Front / Send to Back): the
@@ -251,7 +254,7 @@ namespace WinFormsDesigner.Engine
         /// or null when none is embedded / extraction fails. Read via the type's own <c>[ToolboxBitmap]</c> —
         /// this resolves the bitmap the framework ships for that control (same source VS uses), so no external
         /// icon asset is needed. Fully guarded: any failure degrades to no icon, never throws.</summary>
-        private static string? ToolboxIconPng(Type t)
+        public static string? ToolboxIconPng(Type t)
         {
             try
             {
@@ -1130,9 +1133,17 @@ namespace WinFormsDesigner.Engine
         /// for the chosen target).</summary>
         private sealed class ClipData
         {
+            public int Version { get; set; } = 2;
             public string Fqn { get; set; } = "";
             public string Name { get; set; } = "";
             public List<string> Statements { get; set; } = new();
+            public List<ClipDependency> Dependencies { get; set; } = new();
+        }
+
+        private sealed class ClipDependency
+        {
+            public string Name { get; set; } = "";
+            public string Fqn { get; set; } = "";
         }
 
         /// <summary>
@@ -1140,8 +1151,8 @@ namespace WinFormsDesigner.Engine
         /// that build it (the <c>this.&lt;id&gt; = new…</c> ctor and every <c>this.&lt;id&gt;.X = …</c> / method call on it),
         /// EXCLUDING event wirings (<c>+=</c>) and the parenting <c>Controls.Add(this.&lt;id&gt;)</c> (Paste regenerates
         /// the Add for the chosen container). Refuses the root, a container WITH children, a shared field
-        /// declaration, or a control referenced as an ARGUMENT elsewhere (AddRange / extender SetX / assignment
-        /// value) — the same entanglement that blocks a faithful clone.
+        /// declaration, or a control referenced as an ARGUMENT elsewhere. Canonical common extender calls are the
+        /// exception: their provider is captured as an exact typed dependency and validated again on paste.
         /// </summary>
         public static ControlCopyResult CopyControl(string src, string controlId)
         {
@@ -1162,7 +1173,9 @@ namespace WinFormsDesigner.Engine
             string fqn = fieldDecl.Declaration.Type.ToString();
             if (!IsValidTypeName(fqn)) return new ControlCopyResult { Safe = false, Reason = "control has an unrecognized field type" };
 
+            var fieldTypes = GatherFieldTypes(cls);
             var statements = new List<string>();
+            var dependencies = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var st in init.Body.Statements)
             {
                 bool include = ClassifyForCopy(st, controlId, out bool refuse, out string? why);
@@ -1172,13 +1185,28 @@ namespace WinFormsDesigner.Engine
                 // values are designer-representable (literals, enums, Point/Size/Color/Font/… ) — never one that
                 // references a sibling or calls into a non-designer type. This keeps the clip clean so PasteControl
                 // (which re-validates identically) accepts a real copy while rejecting a crafted blob.
-                if (st is not ExpressionStatementSyntax es || !IsAllowedControlStatement(es.Expression, controlId, fqn))
+                if (st is not ExpressionStatementSyntax es)
+                    return new ControlCopyResult { Safe = false, Reason = "control has a statement that cannot be safely copied" };
+                foreach (string dep in DependencyIds(st, controlId))
+                {
+                    if (!fieldTypes.TryGetValue(dep, out var depType) || !IsValidTypeName(depType))
+                        return new ControlCopyResult { Safe = false, Reason = "control depends on an unsupported field: " + dep };
+                    dependencies[dep] = depType;
+                }
+                if (!IsAllowedControlStatement(es.Expression, controlId, fqn, dependencies))
                     return new ControlCopyResult { Safe = false, Reason = "control has a statement that cannot be safely copied" };
                 statements.Add(st.ToString());
             }
             if (statements.Count == 0) return new ControlCopyResult { Safe = false, Reason = "nothing to copy" };
 
-            var clip = new ClipData { Fqn = fqn, Name = controlId, Statements = statements };
+            var clip = new ClipData
+            {
+                Fqn = fqn,
+                Name = controlId,
+                Statements = statements,
+                Dependencies = dependencies.Select(kv => new ClipDependency { Name = kv.Key, Fqn = kv.Value })
+                    .OrderBy(x => x.Name, StringComparer.Ordinal).ToList(),
+            };
             return new ControlCopyResult { Safe = true, Clip = System.Text.Json.JsonSerializer.Serialize(clip) };
         }
 
@@ -1216,6 +1244,12 @@ namespace WinFormsDesigner.Engine
                             && receiver.Count >= 1 && receiver[receiver.Count - 1] == "Controls"
                             && Flatten(inv.ArgumentList.Arguments[0].Expression) is { Count: 1 } ac && ac[0] == id;
                         if (isParenting) return false; // the parenting Add — regenerated for the paste target, not cloned
+                        bool isCommonExtender = receiver.Count == 1
+                            && CopyableExtenderMethods.Contains(method)
+                            && inv.ArgumentList.Arguments.Count == 2
+                            && Flatten(inv.ArgumentList.Arguments[0].Expression) is { Count: 1 } target
+                            && target[0] == id;
+                        if (isCommonExtender) return true; // exact provider type/method validation happens below
                         refuse = true; why = "control is referenced in " + method + "(...) — cannot copy it in isolation";
                     }
                     return false;
@@ -1260,6 +1294,28 @@ namespace WinFormsDesigner.Engine
             var names = GatherFieldNames(cls);
             if (!parentRoot && !names.Contains(parentId)) return new ControlPasteResult { Safe = false, Reason = "unknown parent: " + parentId };
 
+            var targetFieldTypes = GatherFieldTypes(cls);
+            var dependencyIds = new HashSet<string>(StringComparer.Ordinal);
+            var dependencyTypes = new Dictionary<string, string>(StringComparer.Ordinal);
+            var missingDependencies = new List<string>();
+            foreach (var dependency in clip.Dependencies ?? new List<ClipDependency>())
+            {
+                if (!IsValidIdentifier(dependency.Name) || !IsValidTypeName(dependency.Fqn)
+                    || dependency.Name == clip.Name || !dependencyIds.Add(dependency.Name))
+                    return new ControlPasteResult { Safe = false, Reason = "clipboard dependency metadata is invalid" };
+                dependencyTypes[dependency.Name] = dependency.Fqn;
+                if (!targetFieldTypes.TryGetValue(dependency.Name, out var targetType)
+                    || !string.Equals(targetType, dependency.Fqn, StringComparison.Ordinal))
+                    missingDependencies.Add(dependency.Name + " (" + dependency.Fqn + ")");
+            }
+            if (missingDependencies.Count > 0)
+                return new ControlPasteResult
+                {
+                    Safe = false,
+                    Reason = "unavailable dependencies: " + string.Join(", ", missingDependencies),
+                    MissingDependencies = missingDependencies,
+                };
+
             string baseName = ShortName(clip.Fqn).ToLowerInvariant();
             if (!IsValidIdentifier(baseName)) baseName = "control"; // guard against an odd clipboard Fqn short name
             string newName = UniqueName(baseName, names);
@@ -1287,7 +1343,7 @@ namespace WinFormsDesigner.Engine
                 // assignment/layout-call on the control with designer-representable values (this is the second line of
                 // defense against a crafted clip injecting a side-effecting RHS), then rename the receiver on the tree
                 // (string literals untouched), sync Name, and offset Location.
-                string? processed = ProcessPastedStatement(raw, clip.Name, newName, clip.Fqn);
+                string? processed = ProcessPastedStatement(raw, clip.Name, newName, clip.Fqn, dependencyTypes);
                 if (processed == null) return new ControlPasteResult { Safe = false, Reason = "clipboard contains an unsupported statement" };
                 S(processed);
             }
@@ -1332,14 +1388,16 @@ namespace WinFormsDesigner.Engine
         /// <summary>Validate + rename + retouch ONE cloned statement on the AST, returning the emit text or null to
         /// REJECT. Validation (<see cref="IsAllowedControlStatement"/>) requires an assignment/layout-call on
         /// <paramref name="oldId"/> with designer-representable values — so a crafted clip can't smuggle a
-        /// side-effecting RHS or a sibling reference. The receiver rename is done on the syntax tree (string literals
-        /// and comments are never touched), the <c>Name</c> property is kept equal to the new field name, and an
+        /// side-effecting RHS or an undeclared sibling reference. The receiver rename is done on the syntax tree
+        /// (string literals and comments are never touched), the <c>Name</c> property is kept equal to the new field
+        /// name, and an
         /// integer <c>Location</c> is nudged by <see cref="PasteOffset"/>.</summary>
-        private static string? ProcessPastedStatement(string rawStmt, string oldId, string newName, string fqn)
+        private static string? ProcessPastedStatement(string rawStmt, string oldId, string newName, string fqn,
+            IReadOnlyDictionary<string, string> dependencyTypes)
         {
             var parsed = SyntaxFactory.ParseStatement(rawStmt);
             if (parsed.ContainsDiagnostics || parsed is not ExpressionStatementSyntax es) return null;
-            if (!IsAllowedControlStatement(es.Expression, oldId, fqn)) return null;
+            if (!IsAllowedControlStatement(es.Expression, oldId, fqn, dependencyTypes)) return null;
 
             var renamed = (ExpressionStatementSyntax)new ThisReceiverRenamer(oldId, newName).Visit(es)!;
             if (renamed.Expression is AssignmentExpressionSyntax asg && asg.Left is MemberAccessExpressionSyntax ma)
@@ -1383,13 +1441,23 @@ namespace WinFormsDesigner.Engine
         { "Point", "PointF", "Size", "SizeF", "Rectangle", "RectangleF", "Color", "SystemColors", "Font", "FontFamily", "Padding" };
         private static readonly HashSet<string> CopyableMethods = new(StringComparer.Ordinal)
         { "SuspendLayout", "ResumeLayout", "PerformLayout", "BeginInit", "EndInit" };
+        private static readonly HashSet<string> CopyableExtenderMethods = new(StringComparer.Ordinal)
+        {
+            "SetToolTip",
+            "SetError", "SetIconAlignment", "SetIconPadding",
+            "SetHelpString", "SetHelpKeyword", "SetHelpNavigator", "SetShowHelp",
+        };
 
         /// <summary>True when <paramref name="expr"/> is a statement a control can OWN and a copy can faithfully
         /// reproduce: <c>this.&lt;id&gt; = new &lt;fqn&gt;(safeArgs)</c> (the ctor), <c>this.&lt;id&gt;.&lt;member…&gt; = &lt;safe value&gt;</c>
         /// (a property), or <c>this.&lt;id&gt;.&lt;layoutMethod&gt;(safeArgs)</c>. Anything else (a Controls.Add, a sibling
         /// reference, a non-designer call) is rejected.</summary>
-        private static bool IsAllowedControlStatement(ExpressionSyntax expr, string ownerId, string fqn)
+        private static bool IsAllowedControlStatement(ExpressionSyntax expr, string ownerId, string fqn,
+            IReadOnlyDictionary<string, string>? allowedDependencies = null)
         {
+            HashSet<string>? dependencyNames = allowedDependencies == null
+                ? null
+                : new HashSet<string>(allowedDependencies.Keys, StringComparer.Ordinal);
             if (expr is AssignmentExpressionSyntax asg)
             {
                 if (!asg.IsKind(SyntaxKind.SimpleAssignmentExpression)) return false;
@@ -1397,23 +1465,56 @@ namespace WinFormsDesigner.Engine
                 if (lhs.Count < 1 || lhs[0] != ownerId) return false;
                 if (lhs.Count == 1)
                     return asg.Right is ObjectCreationExpressionSyntax oc && oc.Type.ToString() == fqn
-                        && (oc.ArgumentList == null || oc.ArgumentList.Arguments.All(a => IsSafeValueExpr(a.Expression)));
-                return IsSafeValueExpr(asg.Right);
+                        && (oc.ArgumentList == null || oc.ArgumentList.Arguments.All(a => IsSafeValueExpr(a.Expression, dependencyNames)));
+                return IsSafeValueExpr(asg.Right, dependencyNames);
             }
             if (expr is InvocationExpressionSyntax inv && inv.Expression is MemberAccessExpressionSyntax ma)
             {
                 var recv = Flatten(ma.Expression);
                 if (recv.Count == 1 && recv[0] == ownerId && CopyableMethods.Contains(ma.Name.Identifier.Text))
-                    return inv.ArgumentList.Arguments.All(a => IsSafeValueExpr(a.Expression));
+                    return inv.ArgumentList.Arguments.All(a => IsSafeValueExpr(a.Expression, dependencyNames));
+                if (recv.Count == 2 && recv[0] == ownerId && recv[1] == "DataBindings"
+                    && ma.Name.Identifier.ValueText == "Add" && inv.ArgumentList.Arguments.Count == 1)
+                    return IsSafeValueExpr(inv.ArgumentList.Arguments[0].Expression, dependencyNames);
+                if (IsCopyableExtenderInvocation(inv, ma, ownerId, allowedDependencies))
+                    return true;
             }
             return false;
         }
 
+        /// <summary>Closed validation for an extender call copied with a control. The provider itself is a typed
+        /// clipboard dependency, the first argument must be the copied control, and only the common framework
+        /// provider/method pairs supported by the 1.2 property-grid editor are allowed.</summary>
+        private static bool IsCopyableExtenderInvocation(InvocationExpressionSyntax invocation,
+            MemberAccessExpressionSyntax method, string ownerId,
+            IReadOnlyDictionary<string, string>? allowedDependencies)
+        {
+            if (allowedDependencies == null || invocation.ArgumentList.Arguments.Count != 2)
+                return false;
+            var receiver = Flatten(method.Expression);
+            if (receiver.Count != 1 || !allowedDependencies.TryGetValue(receiver[0], out var providerType))
+                return false;
+            var target = Flatten(invocation.ArgumentList.Arguments[0].Expression);
+            if (target.Count != 1 || target[0] != ownerId)
+                return false;
+
+            string normalizedType = providerType.Replace("global::", "", StringComparison.Ordinal);
+            string methodName = method.Name.Identifier.ValueText;
+            bool supported = normalizedType switch
+            {
+                "System.Windows.Forms.ToolTip" => methodName == "SetToolTip",
+                "System.Windows.Forms.ErrorProvider" => methodName is "SetError" or "SetIconAlignment" or "SetIconPadding",
+                "System.Windows.Forms.HelpProvider" => methodName is "SetHelpString" or "SetHelpKeyword" or "SetHelpNavigator" or "SetShowHelp",
+                _ => false,
+            };
+            return supported && IsSafeValueExpr(invocation.ArgumentList.Arguments[1].Expression);
+        }
+
         /// <summary>True when an expression is a designer-representable VALUE: literals, enum/static member reads, and
-        /// constructions/calls of designer value types (Point/Size/Color/Font/…). Rejects any <c>this.&lt;x&gt;</c>
-        /// reference (no sibling refs in a value), lambdas, await, and any construction/invocation of a non-designer
-        /// type (System.IO.File.ReadAllText, System.Diagnostics.Process.Start, a project type, …).</summary>
-        private static bool IsSafeValueExpr(ExpressionSyntax expr)
+        /// constructions/calls of designer value types (Point/Size/Color/Font/…). Direct <c>this.&lt;x&gt;</c>
+        /// references are accepted only when <c>x</c> is declared in the clipboard dependency set; nested references,
+        /// lambdas, await, and constructions/invocations of non-designer types remain rejected.</summary>
+        private static bool IsSafeValueExpr(ExpressionSyntax expr, HashSet<string>? allowedDependencies = null)
         {
             foreach (var node in expr.DescendantNodesAndSelf())
             {
@@ -1421,7 +1522,11 @@ namespace WinFormsDesigner.Engine
                 {
                     case AnonymousFunctionExpressionSyntax: return false;
                     case AwaitExpressionSyntax: return false;
-                    case MemberAccessExpressionSyntax m when m.Expression is ThisExpressionSyntax: return false;
+                    case MemberAccessExpressionSyntax m when IsRootedAtThis(m):
+                        var chain = Flatten(m);
+                        if (chain.Count != 1 || allowedDependencies == null || !allowedDependencies.Contains(chain[0]))
+                            return false;
+                        break;
                     case ObjectCreationExpressionSyntax oc when !IsSafeTypeRef(oc.Type.ToString()): return false;
                     case InvocationExpressionSyntax iv:
                         if (iv.Expression is not MemberAccessExpressionSyntax callee || !IsSafeTypeRef(callee.Expression.ToString())) return false;
@@ -1433,6 +1538,24 @@ namespace WinFormsDesigner.Engine
 
         /// <summary>True when a type/receiver path is a designer value type — fully-qualified under a safe namespace
         /// (System.Drawing.*, …) or a recognized short name (Color, Point, Padding, …) for a <c>using</c>-shortened form.</summary>
+        private static bool IsRootedAtThis(ExpressionSyntax expression) => expression switch
+        {
+            MemberAccessExpressionSyntax member => IsRootedAtThis(member.Expression),
+            ParenthesizedExpressionSyntax parenthesized => IsRootedAtThis(parenthesized.Expression),
+            ThisExpressionSyntax => true,
+            _ => false,
+        };
+
+        private static HashSet<string> DependencyIds(SyntaxNode statement, string ownerId)
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var member in statement.DescendantNodesAndSelf().OfType<MemberAccessExpressionSyntax>())
+                if (member.Expression is ThisExpressionSyntax
+                    && member.Name.Identifier.ValueText != ownerId)
+                    result.Add(member.Name.Identifier.ValueText);
+            return result;
+        }
+
         private static bool IsSafeTypeRef(string path)
         {
             path = path.Trim();
@@ -1769,6 +1892,16 @@ namespace WinFormsDesigner.Engine
         // one. These names both generate fresh ids and answer "is this control mine": a partial-blind scan could mint a
         // name that collides with a field in the form's OTHER partial (CS0102), or refuse a control that plainly exists.
         private static HashSet<string> GatherFieldNames(ClassDeclarationSyntax cls) => FormClassResolver.FieldNamesOf(cls);
+
+        private static Dictionary<string, string> GatherFieldTypes(ClassDeclarationSyntax cls)
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var part in FormClassResolver.PartialsOf(cls))
+                foreach (var field in part.Members.OfType<FieldDeclarationSyntax>())
+                    foreach (var variable in field.Declaration.Variables)
+                        result[variable.Identifier.ValueText] = field.Declaration.Type.ToString();
+            return result;
+        }
 
         private static List<string> FieldDeclNames(SyntaxNode root)
         {
