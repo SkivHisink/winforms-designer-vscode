@@ -427,6 +427,10 @@ namespace WinFormsDesigner.Engine
             "System.Drawing.Common", "System.ComponentModel.Primitives", "System.ComponentModel.TypeConverter",
             "System.Diagnostics.Process", "System.Diagnostics.EventLog", "System.Diagnostics.PerformanceCounter",
             "System.IO.Ports", "System.ServiceProcess.ServiceController", "System.DirectoryServices",
+            // NOT added here: System.IO.FileSystem.Watcher / System.ComponentModel.EventBasedAsync. Listing
+            // FileSystemWatcher and BackgroundWorker is only half the job — a Choose-Items row carries no
+            // is-component flag, so the toolbox would offer them as draggable CONTROLS and adding one would fail as an
+            // unknown control type. They belong here together with a component-aware add path.
         };
 
         private static List<ToolboxCandidate>? _frameworkCandidates;

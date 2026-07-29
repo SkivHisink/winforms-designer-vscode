@@ -9,6 +9,90 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-07-29
+
+**Vendor forms render live, and editing them keeps up.** Canonical third-party editor forms (the DevExpress
+`XtraForm` / `XtraTabControl` shape is the reference case) used to fall back to the disclosed last-build picture
+because of two constructs their generated designer files always emit. Both are now part of the executable statement
+IR, so those forms render from the source you are editing — and a drag on one no longer re-interprets the whole
+form for every frame.
+
+### Added
+
+- **Chained `ISupportInitialize` brackets.** `((ISupportInitialize)(this.textEdit1.Properties)).BeginInit()` — the
+  bracket every XtraEditors control emits around its `RepositoryItem` — is now represented and replayed. The IR
+  carries the member path, and the executor walks it with the same most-derived member rule the C# compiler uses,
+  so a property covariantly re-declared per editor type resolves to the one the source names.
+- **Nested flag expressions.** A parenthesized `A | B | C | D` (four-member `AnchorStyles`, for example) is
+  collected across the whole tree instead of only the outermost `|`. Every member must belong to one enum type and
+  the count is bounded, so a malformed or mixed expression still fails closed with a reason.
+- **Executable layout calls.** `SuspendLayout` / `ResumeLayout(bool)` / `PerformLayout` are replayed as real calls
+  rather than dropped as no-ops. Dropping them made the interpreted picture disagree with the build — a demo tab page
+  measured 116×1 against the compiled 120×36. Resolution is C#-like: a root that hides `SuspendLayout` with its own
+  `new` member (`XtraForm` does exactly this) gets the member the compiler would have picked, and an ambiguous or
+  non-exact signature is refused rather than guessed.
+- **Sortable Choose Toolbox Items.** Name, Namespace, Assembly, Version, and Directory are click- and
+  keyboard-sortable. Version compares numerically (`21.2` sorts above `9.0`), the active column is announced through
+  `aria-sort`, and keyboard focus survives the re-sort.
+- **A DevExpress sample form** under `samples/DevExpressDemo` — `XtraForm` root, `XtraTabControl` with two pages, and
+  the editors a real form uses. It is deliberately outside the CI solution (it needs a licensed DevExpress install);
+  `DevExpressBinDir` and `DevExpressVersion` are overridable so it builds against whichever version is installed.
+- **`winformsDesigner.net48.releaseOnFocusLoss`** — the setting behind the change below.
+
+### Changed
+
+- **Releasing the .NET Framework build output when VS Code loses focus is now opt-in, and off by default.** It exists
+  so a build started in an *external* Visual Studio is not blocked by the open designer, but it charged every
+  alt-tab for that case: the release unloads the AppDomain, so the first edit after coming back waited for the whole
+  assembly graph to load again — measured at 6.7 s on a DevExpress form, against ~20 ms warm. Builds started inside
+  VS Code already release the output through the existing task coordination, and **Release .NET Framework Assembly
+  (for Rebuild)** remains available on demand. Turn the setting on if you build outside VS Code.
+- **Refocus now re-renders unconditionally** when the release did happen. The size+mtime shortcut that was there to
+  suppress the churn cannot see a changed dependency, a resource-only rebuild, a same-size copy with a preserved
+  timestamp, or a build still running — and guessing wrong leaves pre-build pixels on the canvas with no disclosure.
+  The churn it was suppressing is gone because the release itself no longer happens by default.
+
+### Performance
+
+- **A drag on a .NET Framework form no longer re-interprets it.** The engine keeps the interpreted control graph and
+  applies the same committed edit to it, returning a fresh picture and layout instead of rebuilding from source:
+  ~410–480 ms per frame down to 12–26 ms. When the user stops, the buffer is re-interpreted once off the critical
+  path, so the canvas always settles on a genuine interpretation of the source rather than trusting the live value.
+- **Re-rendering an unchanged buffer reuses the graph** (~23 ms), and `describeInterpretedComponent` — every property
+  grid load and every reference-write revalidation — went from ~414 ms to 7–24 ms.
+- **A geometry edit on the modern engine no longer probes for a dirty-region patch.** The probe is a full extra graph
+  build whose only outcome would be "patch refused", because a control that moved leaves a hole its own patch cannot
+  repaint. A drag went from probe + frame (~127 ms) to frame (~74 ms).
+
+### Safety and verification
+
+- Graph reuse requires exact identity — designer buffer hash, `.resx` content hash, selected tab state, render scale,
+  requested size, and the build id of the assembly — plus a bounded age (10 s, on a monotonic clock, so a system
+  clock change cannot make a stale graph look fresh). Anything else evicts and re-interprets.
+- A graph that has been live-edited is marked mutated and can never answer a later render or describe: the live
+  picture is provisional by construction. A partially applied batch, a stale or missing buffer, a rebuilt assembly,
+  or a buffer that moved while the edit was in flight all evict the graph and fall back to interpretation from source.
+  `Dock` / `Anchor` commits never take the fast path — setting one deletes its conjugate assignment in the same
+  commit, so the live batch would carry half the change.
+- The host applies a live edit only when the committed buffer is exactly one revision ahead of the picture, so a
+  commit that deliberately changes source without re-rendering (Modifiers, event wiring) cannot ride along uncertified.
+- The cached graph is handed back when the designer closes — but only if the engine is actually running, and without
+  ever starting an AppDomain just to be told there is nothing to discard.
+- Engine unit tests cover the new IR shapes directly: nested and chained forms, an empty member path for an unchained
+  bracket, layout-call IR including parameterless `ResumeLayout()`, misbound shapes, type-uncertain fields, the
+  root-declared method gate, and same-simple-name types in different namespaces. A `VendorEdit` fixture reproduces the
+  vendor pattern — an `ISupportInitialize` whose `EndInit` changes geometry, and a `new`-hiding `SuspendLayout` — so a
+  regression in either rule shows up as a wrong picture, not just a wrong call count.
+- The named-pipe E2E gained two legs: an interpreted live edit compared two-way against a genuine rebuild of the same
+  buffer (control ids, rects, frame and client size, tray), and a describe served from a reused graph compared
+  property-for-property against a fresh one.
+
+### Known limitation
+
+- Reuse of an interpreted graph is a bounded-staleness policy, not a proof of equivalence with a fresh replay: a
+  control that animates on its own timer can differ within the window. The bound (exact identity + 10 s + mutation
+  barrier) is the guarantee; forms whose picture depends on wall-clock time are outside it.
+
 ## [1.2.0] — 2026-07-24
 
 **Data-bound forms.** This release closes the routine line-of-business binding workflow: controls, binding
@@ -1121,7 +1205,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.1...v1.0.2

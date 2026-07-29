@@ -343,4 +343,272 @@ namespace Demo {
 }");
         Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
     }
+
+    // The shape VS emits for THREE OR MORE flags: left-nested and parenthesized, one operand per line. A collector
+    // that only descended through bare binary nodes stopped at the parenthesized left operand and dropped the whole
+    // form to fallback — which hit every control anchored on 3+ sides, not just vendor forms.
+    [Fact]
+    public void NestedParenthesizedFlags_AreOneEnumValue()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private System.Windows.Forms.Panel panel1;
+    private void InitializeComponent() {
+      this.panel1 = new System.Windows.Forms.Panel();
+      this.panel1.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+            | System.Windows.Forms.AnchorStyles.Left)
+            | System.Windows.Forms.AnchorStyles.Right)));
+    }
+  }
+}");
+        Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+        var anchor = doc.Statements.OfType<IrSetProperty>().Single(s => s.PropertyPath.Count == 1 && s.PropertyPath[0] == "Anchor");
+        var en = Assert.IsType<IrEnum>(anchor.Value is IrCast c ? c.Inner : anchor.Value);
+        Assert.Equal("System.Windows.Forms.AnchorStyles", en.EnumTypeName);
+        Assert.Equal(new[] { "Top", "Bottom", "Left", "Right" }, en.Members.ToArray());
+    }
+
+    // Every DevExpress XtraEditors control brackets its RepositoryItem, not itself:
+    // ((ISupportInitialize)(this.textEdit1.Properties)).BeginInit(). The bracket must carry the hop chain so the
+    // executor initializes the SUB-OBJECT — dropping the hop would have silently un-bracketed the vendor editor.
+    [Fact]
+    public void ChainedSupportInitBracket_CarriesTargetPath()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private Vendor.TextEdit textEdit1;
+    private void InitializeComponent() {
+      this.textEdit1 = new Vendor.TextEdit();
+      ((System.ComponentModel.ISupportInitialize)(this.textEdit1.Properties)).BeginInit();
+      ((System.ComponentModel.ISupportInitialize)(this.textEdit1.Properties)).EndInit();
+    }
+  }
+}");
+        Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+        var begin = doc.Statements.OfType<IrBeginInit>().Single();
+        Assert.Equal("textEdit1", begin.TargetName);
+        Assert.Equal(new[] { "Properties" }, begin.TargetPath.ToArray());
+        var end = doc.Statements.OfType<IrEndInit>().Single();
+        Assert.Equal("textEdit1", end.TargetName);
+        Assert.Equal(new[] { "Properties" }, end.TargetPath.ToArray());
+    }
+
+    // The un-chained bracket keeps its exact previous shape: an EMPTY path, so an executor built before the chain
+    // existed and one built after agree on what `((ISupportInitialize)(this.grid1)).BeginInit()` means.
+    [Fact]
+    public void UnchainedSupportInitBracket_HasEmptyTargetPath()
+    {
+        var doc = BuildOk(RepresentableForm);
+        Assert.Empty(doc.Statements.OfType<IrBeginInit>().Single(b => b.TargetName == "grid1").TargetPath);
+        Assert.Empty(doc.Statements.OfType<IrEndInit>().Single(e => e.TargetName == "grid1").TargetPath);
+    }
+
+    // The layout bracket is REPLAYED, not dropped: with layout live, assigning the form's ClientSize after an
+    // anchored child was added resizes that child, which the compiled form (bracketed) never does.
+    [Fact]
+    public void LayoutBracket_IsExecutableIr_NotDropped()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private System.Windows.Forms.SplitContainer splitContainer1;
+    private void InitializeComponent() {
+      this.splitContainer1 = new System.Windows.Forms.SplitContainer();
+      this.SuspendLayout();
+      this.splitContainer1.Panel1.SuspendLayout();
+      this.splitContainer1.Panel1.ResumeLayout(false);
+      this.splitContainer1.PerformLayout();
+      this.ResumeLayout(true);
+    }
+  }
+}");
+        Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+        var calls = doc.Statements.OfType<IrLayoutCall>().ToList();
+        Assert.Equal(5, calls.Count);
+        Assert.True(calls[0].TargetIsRoot && calls[0].Op == IrLayoutOp.Suspend && calls[0].TargetPath.Count == 0);
+        Assert.Equal(new[] { "Panel1" }, calls[1].TargetPath.ToArray());
+        Assert.Equal("splitContainer1", calls[1].TargetName);
+        Assert.False(calls[1].TargetIsRoot);
+        Assert.True(calls[2].Op == IrLayoutOp.Resume && !calls[2].Arg, "ResumeLayout(false) must carry Arg=false");
+        Assert.Equal(IrLayoutOp.Perform, calls[3].Op);
+        Assert.True(calls[4].Op == IrLayoutOp.Resume && calls[4].Arg, "ResumeLayout(true) must carry Arg=true");
+    }
+
+    // `Control.ResumeLayout()` IS `ResumeLayout(true)` — it performs the pending layout. Modeling the absent argument
+    // as false would resume WITHOUT laying out, so a later statement in the same replay reads pre-layout geometry
+    // the compiled form never had.
+    [Fact]
+    public void ParameterlessResumeLayout_MeansResumeLayoutTrue()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      this.ResumeLayout();
+    }
+  }
+}");
+        Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+        var call = doc.Statements.OfType<IrLayoutCall>().Single();
+        Assert.Equal(IrLayoutOp.Resume, call.Op);
+        Assert.True(call.Arg, "a parameterless ResumeLayout() must carry Arg=true");
+    }
+
+    // Shapes that COMPILE but bind to a different member than the IR models: a generic name, an argument the
+    // framework member does not take (so the call binds to a vendor/extension overload), and a named argument.
+    // Representing any of them would drop the real call and replay the framework one instead.
+    [Theory]
+    [InlineData("this.panel1.SuspendLayout(true);")]
+    [InlineData("this.panel1.PerformLayout(true);")]
+    [InlineData("this.panel1.ResumeLayout(GetFlag());")]
+    [InlineData("this.panel1.ResumeLayout(performLayout: false);")]
+    [InlineData("this.panel1.SuspendLayout<int>();")]
+    [InlineData("((System.ComponentModel.ISupportInitialize)(this.panel1.Properties)).BeginInit(7);")]
+    [InlineData("((System.ComponentModel.ISupportInitialize)(this.panel1)).EndInit<int>();")]
+    public void MisboundCapabilityShapes_AreGaps(string statement)
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private System.Windows.Forms.Panel panel1;
+    private void InitializeComponent() {
+      this.panel1 = new System.Windows.Forms.Panel();
+      " + statement + @"
+    }
+  }
+}");
+        Assert.False(doc.FullCoverage, "must not represent: " + statement);
+    }
+
+    // C# binds a hidden (`new`) member through the receiver's STATIC type, but the executor only sees the instance.
+    // When a field's declared type is not the type constructed into it, those two can disagree — so the front-end
+    // refuses to represent calls and hops whose meaning depends on that binding. (DevExpress's XtraForm really does
+    // hide SuspendLayout, so this is not hypothetical.)
+    [Theory]
+    [InlineData("this.edit1.SuspendLayout();")]
+    [InlineData("((System.ComponentModel.ISupportInitialize)(this.edit1.Properties)).BeginInit();")]
+    public void CallsOnATypeUncertainField_AreGaps(string statement)
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private Vendor.BaseEdit edit1;
+    private void InitializeComponent() {
+      this.edit1 = new Vendor.DerivedEdit();
+      " + statement + @"
+    }
+  }
+}");
+        Assert.False(doc.FullCoverage, "must not represent: " + statement);
+    }
+
+    // The hop-free bracket does NOT need type certainty: the cast makes it an interface dispatch, which binds the
+    // same member whatever the field's static type is.
+    [Fact]
+    public void HopFreeBracket_OnATypeUncertainField_StaysRepresentable()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private Vendor.BaseEdit edit1;
+    private void InitializeComponent() {
+      this.edit1 = new Vendor.DerivedEdit();
+      ((System.ComponentModel.ISupportInitialize)(this.edit1)).BeginInit();
+      ((System.ComponentModel.ISupportInitialize)(this.edit1)).EndInit();
+    }
+  }
+}");
+        Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+        Assert.Empty(doc.Statements.OfType<IrBeginInit>().Single().TargetPath);
+    }
+
+    // The interpreted root is an instance of the designed class's BASE, so a layout method the designed class itself
+    // declares is not on it at all. Replaying the base's member would run something the build never ran.
+    [Fact]
+    public void RootLayoutCall_WhenTheDesignedClassDeclaresThatMethod_IsAGap()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private new void SuspendLayout() { }
+    private void InitializeComponent() {
+      this.SuspendLayout();
+    }
+  }
+}");
+        Assert.False(doc.FullCoverage);
+    }
+
+    // Two types can share a simple name. Certainty is decided on the type text AS WRITTEN, so `A.Edit e = new B.Edit()`
+    // is uncertain — otherwise C# would bind hidden members through A.Edit while the executor searched B.Edit.
+    [Fact]
+    public void SameSimpleNameFromDifferentNamespaces_IsNotTypeCertain()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private A.Edit edit1;
+    private void InitializeComponent() {
+      this.edit1 = new B.Edit();
+      this.edit1.SuspendLayout();
+    }
+  }
+}");
+        Assert.False(doc.FullCoverage);
+    }
+
+    // The source's arity is carried, not just its meaning: `ResumeLayout()` and `ResumeLayout(bool)` are distinct
+    // declarations, and a type that hides one must not be replayed through the other.
+    [Fact]
+    public void LayoutCall_CarriesWhetherTheSourcePassedAnArgument()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      this.ResumeLayout();
+      this.ResumeLayout(false);
+    }
+  }
+}");
+        var calls = doc.Statements.OfType<IrLayoutCall>().ToList();
+        Assert.False(calls[0].HasArg);
+        Assert.True(calls[0].Arg, "parameterless ResumeLayout() means ResumeLayout(true)");
+        Assert.True(calls[1].HasArg);
+        Assert.False(calls[1].Arg);
+    }
+
+    // A layout call on something that isn't `this` or a field stays a gap — the executor resolves by field name, so
+    // representing it would replay it onto the wrong object (or silently swallow a call that changes layout).
+    [Fact]
+    public void LayoutCall_OnNonFieldReceiver_IsGap()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      Something.Else.SuspendLayout();
+    }
+  }
+}");
+        Assert.False(doc.FullCoverage);
+    }
+
+    // A bracket whose target is not rooted in a field (a local, a call result) stays an honest gap — the executor
+    // resolves targets by field name only, so representing it would mean replaying it onto the wrong object.
+    [Fact]
+    public void SupportInitBracket_OnNonFieldTarget_IsGap()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      ((System.ComponentModel.ISupportInitialize)(Something.Else.Properties)).BeginInit();
+    }
+  }
+}");
+        Assert.False(doc.FullCoverage);
+    }
 }

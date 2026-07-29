@@ -118,6 +118,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // it on close (the engine holds the user's dlls open until then; see releaseNet48Output). The engines live here,
   // so the doer does too — the hub only owns the refcount.
   DesignerHub.instance.setNet48Release(releaseNet48Output);
+  DesignerHub.instance.setNet48RunningProbe(() => {
+    const eng = engines.get('net48');
+    return !!eng && !shuttingDown && eng.process.exitCode == null && eng.process.signalCode == null;
+  });
 
   // The unified VS-style designer: a custom editor on *.cs (the sibling .Designer.cs gate is enforced at
   // resolve time). priority "option" keeps the C# text editor the default; the designer opens via
@@ -229,16 +233,21 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(DesignerHub.instance.onDidChangeActive(() => updateControlStatus()));
   updateControlStatus();
 
-  // 1.0.0 — auto-release the net48 build-output lock when VS Code loses OS focus (the user has almost certainly
-  // switched to Visual Studio to build), and re-render the active preview when focus returns so it shows the fresh
-  // build. Makes the "designer pins my dll" lock invisible for the common alt-tab-to-VS-and-Build flow, without the
-  // user ever running the release command. A small debounce swallows momentary focus blips (no needless domain
-  // reload); the release/re-render are chained so a refocus never recreates a domain the in-flight unload is tearing
-  // down. See autoReleaseNet48OnBlur.
+  // 1.0.0 — release the net48 build-output lock when VS Code loses OS focus, so a build started in an EXTERNAL
+  // Visual Studio is not blocked by the open designer, and re-render on return if that build produced a new output.
+  //
+  // 1.2.x — OFF by default (`winformsDesigner.net48.releaseOnFocusLoss`). It charges every alt-tab for a case only
+  // external-VS users have: releasing unloads the AppDomain, so the first edit after coming back — a drag, a
+  // property change — waits for the whole assembly graph (a DevExpress one especially) to load again. Builds
+  // started INSIDE VS Code already release the output themselves through the task coordination below, and
+  // "Release .NET Framework Assembly (for Rebuild)" stays available for anything else.
   let blurReleaseTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingBlurRelease: Promise<boolean> | undefined;
+  const releaseOnFocusLoss = () =>
+    vscode.workspace.getConfiguration('winformsDesigner').get<boolean>('net48.releaseOnFocusLoss', false);
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((st) => {
+      if (!releaseOnFocusLoss()) return;
       if (!st.focused) {
         if (blurReleaseTimer || pendingBlurRelease) return; // already scheduled / released for this away-stint
         blurReleaseTimer = setTimeout(() => {
@@ -254,7 +263,13 @@ export function activate(context: vscode.ExtensionContext): void {
           // The active preview's domain was unloaded while away; its picture may predate the user's rebuild. Re-render
           // it (only the active net48 preview — a no-op for anything else) so they see what they just built.
           const s = DesignerHub.instance.activeSession;
-          if (s?.isCompiledPreview) void s.rerenderFromDoc();
+          if (!s?.isCompiledPreview) return;
+          // Re-render unconditionally. A "did the output change?" shortcut was tempting — it was the churn fix before
+          // this whole path became opt-in — but the main assembly's size+mtime cannot see a changed dependency, a
+          // resource-only rebuild, a same-size copy with a preserved timestamp, or a build still running when the user
+          // comes back. Guessing wrong leaves pre-build pixels on the canvas with no disclosure, so the conservative
+          // render wins; the churn it used to cause is gone because the release itself no longer happens by default.
+          void s.rerenderFromDoc();
         });
       }
     }),
@@ -756,13 +771,15 @@ async function releaseNet48Output(assemblyPath: string): Promise<boolean> {
  * bounded-RPC + recycle-on-stuck-unload the manual command does, so the release is as robust. Returns true if handles
  * were freed (so the caller can re-render the active preview on refocus to pick up the just-built output).
  */
+
 async function autoReleaseNet48OnBlur(): Promise<boolean> {
   const eng = engines.get('net48');
   // Same "process is really alive" facts releaseNet48Output checks; never start an engine just to release.
   if (!eng || shuttingDown || eng.process.exitCode != null || eng.process.signalCode != null) return false;
   // Nothing an OPEN designer pins ⇒ nothing to do. (A source-switched leak that no session names is left to the
   // manual command, exactly as today — auto-release deliberately stays cheap and only fires for open previews.)
-  if (DesignerHub.instance.net48OutputsInUse().length === 0) return false;
+  const inUse = DesignerHub.instance.net48OutputsInUse();
+  if (inUse.length === 0) return false;
   let result;
   try {
     // Bound the RPC like the command: a wedged STA dispatcher must not hang the release with the dll still pinned.

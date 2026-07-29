@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- DevExpress showcase sample (LOCAL ONLY — deliberately NOT built by CI).
+       A real net48 WinForms app whose form derives from XtraForm and hosts an XtraTabControl plus the common
+       XtraEditors, so the .NET Framework 4.8 engine can be demonstrated on genuine vendor controls: the engine
+       interprets this project's live .Designer.cs source onto the COMPILED DevExpress instances, so the preview
+       paints the real skinned controls.
+
+       Requires a local DevExpress WinForms installation (v21.2 by default). Point DevExpressBinDir at another
+       install or version to build elsewhere:
+         dotnet build samples/DevExpressDemo -c Debug -p:PlatformTarget=x64 -p:DevExpressVersion=22.2 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>DevExpressDemo</AssemblyName>
+    <RootNamespace>DevExpressDemo</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <DevExpressVersion Condition="'$(DevExpressVersion)' == ''">21.2</DevExpressVersion>
+    <DevExpressBinDir Condition="'$(DevExpressBinDir)' == ''">$(ProgramFiles) (x86)\DevExpress $(DevExpressVersion)\Components\Bin\Framework\</DevExpressBinDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- XtraTabControl / XtraTabPage and every XtraEditors control used by MainForm live in DevExpress.XtraEditors;
+         Utils and Data are its own dependencies. Copied local so the engine resolves them from this project's output. -->
+    <Reference Include="DevExpress.Data.v$(DevExpressVersion)">
+      <HintPath>$(DevExpressBinDir)DevExpress.Data.v$(DevExpressVersion).dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="DevExpress.Utils.v$(DevExpressVersion)">
+      <HintPath>$(DevExpressBinDir)DevExpress.Utils.v$(DevExpressVersion).dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="DevExpress.XtraEditors.v$(DevExpressVersion)">
+      <HintPath>$(DevExpressBinDir)DevExpress.XtraEditors.v$(DevExpressVersion).dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

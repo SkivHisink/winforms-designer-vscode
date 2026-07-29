@@ -62,6 +62,45 @@ namespace WinFormsDesigner.Engine.Net48
             /// <summary>The LOGICAL designed type name reported as RootType. Null on the compiled path (Type is the
             /// designed type there); set on the interpreted path, where Type is the instantiated BASE type.</summary>
             public string? DesignedTypeName = null;
+            /// <summary>1.2.x INTERPRETED REUSE — the exact source buffer (+ tab overrides) this graph was built from,
+            /// as an opaque key from the host side. An interpreted graph may only be re-snapshotted while the engine
+            /// can PROVE it still corresponds to the caller's buffer, so the key is compared on every render and
+            /// re-stamped only by an edit the engine itself applied to this instance. Any mismatch rebuilds.
+            /// "" on the compiled path, which is keyed by build identity instead.</summary>
+            public string SourceKey = "";
+            /// <summary>Just the buffer half of <see cref="SourceKey"/> — describe needs to know the graph is this
+            /// TEXT, but is indifferent to which tab is shown or at what capture scale the picture was taken.</summary>
+            public string BufferKey = "";
+            /// <summary>The interpreter plan (identity model) this graph was built from, so a describe can read the
+            /// same instances the picture was drawn from instead of building a throwaway graph of its own.</summary>
+            public InterpretedRenderPlan? Plan = null;
+            /// <summary>Set the moment a live edit mutates this graph. A mutated graph is a PICTURE, not an
+            /// interpretation: setting a property on a finished graph is not the same as replaying the edited source
+            /// (lowering NumericUpDown.Maximum clamps an existing Value, where a replay would hit the unchanged
+            /// Value statement and fail closed), and a pumped message can move it further still. So it may be shown
+            /// for the edit that produced it and never reused to answer a later render or describe.</summary>
+            public bool Mutated = false;
+            /// <summary>Which buffer the LAST PICTURE handed to the host claims to represent. Equals SourceKey for a
+            /// freshly interpreted graph and advances with each live edit, so a following edit can prove it started
+            /// from the picture actually on screen.</summary>
+            public string PictureKey = "";
+            /// <summary>The size this graph was hosted at (0 = the form's own). Part of the compiled entry's identity:
+            /// a graph built for one requested size is not a picture of another.</summary>
+            public int ReqWidth = 0;
+            public int ReqHeight = 0;
+            /// <summary>Capture scale this graph belongs to. Kept per-graph because the worker serves several forms: a
+            /// live-op Snapshot that does not restate the scale must use the one ITS graph was rendered at, not
+            /// whatever another form set last.</summary>
+            public int Scale = 0; // 0 = not stated for this graph → fall back to the worker-wide value
+            /// <summary>When this graph was interpreted (UTC ticks). Reuse is TIME-BOUNDED: a cached graph is not
+            /// frozen — any RPC that pumps the STA also dispatches ITS pending messages, so a vendor control with an
+            /// animation or blink timer advances where a fresh replay would not. Seconds-old reuse is still the same
+            /// picture (and that is the whole working window: a drag burst, a re-render of the same buffer); a
+            /// minutes-old graph is rebuilt rather than trusted.</summary>
+            public long BuiltAtUtcTicks = 0;
+            /// <summary>The design-time container owning this graph's sited components (interpreted path only).
+            /// Cached alongside the form so eviction disposes both, in reverse order.</summary>
+            public IDisposable? Container = null;
         }
 
         /// <summary>The build identity the host compares across renders — see <see cref="LiveDesign.BuildId"/>.
@@ -125,8 +164,7 @@ namespace WinFormsDesigner.Engine.Net48
         /// the net9 engine's transform so a selection rectangle drawn by the host lines up.</summary>
         public RenderLayoutResult RenderWithLayout(string assemblyPath, string rootTypeName, int reqWidth, int reqHeight, int renderScale = 1)
         {
-            _renderScale = renderScale;
-            return _sta.Invoke(() => Snapshot(GetOrCreate(assemblyPath, rootTypeName, reqWidth, reqHeight)));
+            return _sta.Invoke(() => { _renderScale = renderScale; return Snapshot(GetOrCreate(assemblyPath, rootTypeName, reqWidth, reqHeight)); });
         }
 
         /// <summary>Render the LIVE .Designer.cs source via the IR interpreter (VS model: instantiate
@@ -135,11 +173,29 @@ namespace WinFormsDesigner.Engine.Net48
         /// the form. Always returns a picture; RenderMode ("interpreted" | "compiledFallback") + FallbackReason tell
         /// the host which it got. NOT cached — it reflects the exact source buffer on every call (the whole point).</summary>
         public RenderLayoutResult RenderInterpretedWithLayout(string designerFilePath, string assemblyPath, IrDocument? doc,
-            string rootTypeName, int reqWidth, int reqHeight, string[]? selectedTabs = null, int renderScale = 1)
+            string rootTypeName, int reqWidth, int reqHeight, string[]? selectedTabs = null, int renderScale = 1,
+            string sourceKey = "")
         {
-            _renderScale = renderScale;
             return _sta.Invoke(() =>
             {
+                _renderScale = renderScale;
+                // 1.2.x INTERPRETED REUSE. Rebuilding the whole graph — construct every vendor control, replay the IR,
+                // host it off-screen, pump, lay out — costs ~400 ms on a real DevExpress form, while snapshotting a
+                // graph that is already live costs ~12 ms. So a render whose buffer the cached graph provably matches
+                // re-snapshots instead of rebuilding. The proof is exact and conservative: same source key (buffer +
+                // tab overrides + capture scale), same build identity, or it rebuilds.
+                string reuseKey = InterpretedKey(designerFilePath, assemblyPath, rootTypeName);
+                if (!string.IsNullOrEmpty(sourceKey) && _cache.TryGetValue(reuseKey, out var cached))
+                {
+                    // Reuse demands three proofs: the graph is a pure INTERPRETATION (never live-mutated), it was
+                    // built from this exact identity (buffer + sibling .resx + tab overrides + capture scale +
+                    // requested size), and the build under it has not moved. Anything else rebuilds.
+                    if (!cached.Mutated && IsFresh(cached)
+                        && cached.SourceKey == SourceStamp(designerFilePath, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight)
+                        && cached.BuildId == ComputeBuildId(assemblyPath))
+                        return Snapshot(cached);
+                    EvictInterpreted(reuseKey); // stale, aged out or mutated — not what the caller is asking for
+                }
                 Assembly asm;
                 try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); }
                 catch (Exception ex)
@@ -164,6 +220,7 @@ namespace WinFormsDesigner.Engine.Net48
                 var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath));
                 Form? builtForm = null;
                 InterpretedRenderPlan? plan = null;
+                bool keepAlive = false; // set once the graph is cached for reuse — then `finally` must NOT tear it down
                 try
                 {
                     // Resolve the BASE type from the COMPILED designed type's BaseType — the reliable source, since a VS
@@ -217,8 +274,24 @@ namespace WinFormsDesigner.Engine.Net48
                         BuildId = ComputeBuildId(assemblyPath),
                         Mode = "interpreted",
                         DesignedTypeName = plan.DesignedTypeName,
+                        SourceKey = SourceStamp(designerFilePath, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
+                        PictureKey = SourceStamp(designerFilePath, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
+                        BufferKey = sourceKey + "|r" + ResxStamp(designerFilePath),
+                        Plan = plan,
+                        Container = container,
+                        Scale = renderScale,
+                        BuiltAtUtcTicks = System.Diagnostics.Stopwatch.GetTimestamp(),
                     };
-                    return Snapshot(live);
+                    var shot = Snapshot(live);
+                    // Keep the graph ONLY when the caller identified its buffer; without a key the next render could
+                    // not prove the cache still matches, so the old build-and-throw-away behaviour is kept verbatim.
+                    if (!string.IsNullOrEmpty(sourceKey))
+                    {
+                        TrimInterpretedCache(MaxInterpretedGraphs - 1); // make room, oldest first
+                        _cache[reuseKey] = live;
+                        keepAlive = true;
+                    }
+                    return shot;
                 }
                 catch (Exception ex)
                 {
@@ -229,12 +302,191 @@ namespace WinFormsDesigner.Engine.Net48
                 {
                     // Snapshot has already drawn the tree to PNG + geometry (it keeps no live reference), so tearing the
                     // graph down here runs AFTER the result is computed. Best-effort — a teardown failure must not mask it.
-                    try { builtForm?.Dispose(); } catch { /* cascades to the realized child-control HWND/GDI tree */ }
-                    try { if (builtForm == null && plan?.Root is IDisposable d) d.Dispose(); } catch { /* partly-built root on a late fallback */ }
-                    try { container.Dispose(); } catch { /* reverse-order dispose of every sited component */ }
+                    // A graph that was CACHED for reuse is deliberately left alive; its eviction (EvictInterpreted) owns
+                    // the same teardown, so the handles are released exactly once either way.
+                    if (!keepAlive)
+                    {
+                        try { builtForm?.Dispose(); } catch { /* cascades to the realized child-control HWND/GDI tree */ }
+                        try { if (builtForm == null && plan?.Root is IDisposable d) d.Dispose(); } catch { /* partly-built root on a late fallback */ }
+                        try { container.Dispose(); } catch { /* reverse-order dispose of every sited component */ }
+                    }
                 }
             });
         }
+
+        /// <summary>Cache key for the INTERPRETED graph of (assembly, designed type). Prefixed so it can never collide
+        /// with the compiled entry for the same pair — the two are different pictures of the same form and both may be
+        /// live at once (a compiled fallback rendered while an interpreted graph is cached).</summary>
+        private static string InterpretedKey(string designerFilePath, string assemblyPath, string rootTypeName)
+        {
+            string full;
+            try { full = Path.GetFullPath(assemblyPath); } catch { full = assemblyPath ?? ""; }
+            string file;
+            try { file = Path.GetFullPath(designerFilePath ?? ""); } catch { file = designerFilePath ?? ""; }
+            // The designer FILE is part of the identity, not just the type: it selects the sibling .resx the graph was
+            // built from, and two files can declare the same type name.
+            return "interpreted|" + full + "|" + file + "|" + rootTypeName;
+        }
+
+        /// <summary>Identity of the sibling .resx as the graph consumed it. The interpreted graph resolves
+        /// `resources.GetObject(...)` from that file, so a resource-only change — re-importing an image under the same
+        /// key, which the host deliberately commits without touching .Designer.cs — must invalidate the cache even
+        /// though the source text is byte-identical.</summary>
+        /// <summary>Size cap shared by the resolver and the cache stamp — a sibling .resx is repository-controlled
+        /// input, and neither reading it into a DOM nor hashing it may be unbounded.</summary>
+        private const long MaxResxBytes = 32L << 20;
+
+        private static string ResxStamp(string designerFilePath)
+        {
+            try
+            {
+                string baseName = designerFilePath ?? "";
+                if (baseName.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) baseName = baseName.Substring(0, baseName.Length - ".Designer.cs".Length);
+                else if (baseName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) baseName = baseName.Substring(0, baseName.Length - ".cs".Length);
+                string resx = baseName + ".resx";
+                if (!File.Exists(resx)) return "none";
+                // Same size cap the RESOLVER enforces (see LoadSiblingResx): an over-cap file is not read into the
+                // graph, so hashing it here would be pure cost on repository-controlled input — and repeated per
+                // render, describe and edit. Over-cap means "no resources were loaded", which is exactly "none".
+                var fi = new FileInfo(resx);
+                if (fi.Length > MaxResxBytes) return "none";
+                // CONTENT, not timestamp+length: a designer writes resources through a save/replace, and a same-size
+                // rewrite with a preserved (or restored) mtime would read as unchanged while the bytes the graph was
+                // built from are gone.
+                using (var sha = System.Security.Cryptography.SHA256.Create())
+                    return Convert.ToBase64String(sha.ComputeHash(File.ReadAllBytes(resx)));
+            }
+            catch { return "unreadable:" + Guid.NewGuid().ToString("N"); } // never equal to any later stamp → never reused
+        }
+
+        /// <summary>Everything that changes what an interpreted snapshot LOOKS like, folded into the reuse key: the
+        /// caller's buffer identity, the transient selected-tab overrides, and the capture scale. Anything not in here
+        /// must not be able to alter the picture, or reuse would show a stale frame.</summary>
+        private static string SourceStamp(string designerFilePath, string sourceKey, string[]? selectedTabs,
+            int renderScale, int reqWidth, int reqHeight)
+            => sourceKey + "|r" + ResxStamp(designerFilePath) + "|s" + renderScale
+               + "|d" + reqWidth + "x" + reqHeight
+               + "|t" + string.Join(",", selectedTabs ?? Array.Empty<string>());
+
+        /// <summary>How long an interpreted graph may answer for its buffer. `Mutated` proves nobody EDITED it; it
+        /// cannot prove the object graph did not advance on its own — a pending vendor timer ticks whenever any other
+        /// RPC pumps this STA. Within a few seconds that is the same picture; beyond it, replay from source instead of
+        /// asserting an equivalence nothing checked.</summary>
+        private static readonly TimeSpan InterpretedGraphMaxAge = TimeSpan.FromSeconds(10);
+
+        /// <summary>Age on a MONOTONIC clock: a wall-clock rollback (an NTP correction, a resumed VM) would otherwise
+        /// make an old graph look freshly built for the length of the jump — and would scramble the eviction order.</summary>
+        private static bool IsFresh(LiveDesign live)
+        {
+            long elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - live.BuiltAtUtcTicks;
+            return elapsed >= 0 && elapsed <= (long)(InterpretedGraphMaxAge.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+        }
+
+        /// <summary>How many interpreted graphs may stay alive at once. Each holds a realized off-screen Form, its
+        /// whole HWND/GDI tree, the sited components and whatever the vendor controls allocate — so this is a hard
+        /// ceiling, not a hint. The host also hands a form's graph back when its designer closes; this bounds the
+        /// damage when it cannot (a crash, a session that never closed, a direct RPC caller).</summary>
+        private const int MaxInterpretedGraphs = 4;
+
+        /// <summary>Evict the OLDEST interpreted graphs until at most <paramref name="keep"/> remain. Ordered by the
+        /// graphs' own build timestamps, not by dictionary enumeration: .NET's Dictionary reuses freed slots, so
+        /// enumeration order is not insertion order and "evict the first key" could throw away the graph that was
+        /// just built while keeping older ones.</summary>
+        private void TrimInterpretedCache(int keep)
+        {
+            var interpreted = _cache.Where(kv => kv.Key.StartsWith("interpreted|", StringComparison.Ordinal))
+                .OrderBy(kv => kv.Value.BuiltAtUtcTicks)
+                .Select(kv => kv.Key)
+                .ToList();
+            for (int i = 0; i + keep < interpreted.Count; i++) EvictInterpreted(interpreted[i]);
+        }
+
+        /// <summary>Drop a cached interpreted graph and release its window/GDI handles + sited components.</summary>
+        private void EvictInterpreted(string key)
+        {
+            if (!_cache.TryGetValue(key, out var live)) return;
+            _cache.Remove(key);
+            try { live.Form?.Dispose(); } catch { /* cascades to the realized child-control HWND/GDI tree */ }
+            try { live.Container?.Dispose(); } catch { /* reverse-order dispose of every sited component */ }
+        }
+
+        /// <summary>
+        /// 1.2.x — apply property edits to the CACHED INTERPRETED graph and re-snapshot, instead of re-interpreting the
+        /// whole buffer. This is what makes a drag feel immediate on a vendor form: ~12 ms rather than ~400 ms.
+        ///
+        /// The result is a PICTURE, not a certified interpretation: setting a property on a finished graph is not the
+        /// same operation as replaying the edited source (lowering NumericUpDown.Maximum clamps an existing Value,
+        /// where a replay would reach the unchanged Value statement and fail closed). So the graph is marked Mutated,
+        /// which permanently bars it from answering any later render or describe — only a genuine re-interpretation
+        /// can do that, and the host schedules one. Further live edits may keep using it: they are the same
+        /// provisional picture, advancing with the user's drag.
+        ///
+        /// Refuses (Applied=false, no picture) unless an interpreted graph is cached for this form, its build is
+        /// unchanged, and the picture it currently shows is the one the caller says it edited FROM. A refusal simply
+        /// means "do the full render", which is always correct — so this can only ever be an optimization.
+        /// </summary>
+        public RenderLayoutResult ApplyInterpretedEdits(string designerFilePath, string assemblyPath, string rootTypeName,
+            PropEdit[] edits, string expectedSourceKey, string newSourceKey, string[]? selectedTabs, int renderScale,
+            int reqWidth, int reqHeight)
+        {
+            return _sta.Invoke(() =>
+            {
+                string key = InterpretedKey(designerFilePath, assemblyPath, rootTypeName);
+                // An empty batch would mutate nothing and yet re-stamp the picture as a different buffer — a direct
+                // caller could certify any text that way. There is nothing to apply, so there is nothing to certify.
+                if (edits == null || edits.Length == 0) return NotApplied("no edits to apply");
+                if (string.IsNullOrEmpty(expectedSourceKey) || string.IsNullOrEmpty(newSourceKey)
+                    || !_cache.TryGetValue(key, out var live))
+                    return NotApplied("no cached interpreted graph for this form");
+                if (!IsFresh(live))
+                {
+                    // The same age bound render and describe obey. Without it, "describe (too old → fresh throwaway
+                    // graph) then edit" quietly answered from a graph that had been sitting in the cache for minutes.
+                    EvictInterpreted(key);
+                    return NotApplied("the cached interpreted graph is too old to edit from");
+                }
+                if (live.PictureKey != SourceStamp(designerFilePath, expectedSourceKey, selectedTabs, renderScale, reqWidth, reqHeight))
+                    return NotApplied("the cached picture is not the buffer this edit started from");
+                if (live.BuildId != ComputeBuildId(assemblyPath))
+                {
+                    EvictInterpreted(key); // rebuilt since: the graph's compiled types are the old build
+                    return NotApplied("the assembly was rebuilt since this graph was interpreted");
+                }
+
+                _renderScale = renderScale;
+                live.Mutated = true; // set BEFORE touching anything: a throw mid-batch must not leave it reusable
+                var notes = new List<string>();
+                try
+                {
+                    foreach (var e in edits)
+                        if (!TryApply(live, e.ComponentId ?? "this", e.PropName ?? "", e.RawValue ?? "", out string reason)) notes.Add(reason);
+                }
+                catch (Exception ex)
+                {
+                    // A setter that THREW leaves the graph in a state neither buffer describes. Same treatment as a
+                    // refused edit: no picture, and the graph goes — otherwise the next burst edit would chain from it.
+                    EvictInterpreted(key);
+                    return NotApplied("live edit threw " + ex.GetType().Name + ": " + ex.Message);
+                }
+                if (notes.Count > 0)
+                {
+                    // A partially applied batch is a picture of neither buffer. Return no picture at all and drop the
+                    // graph, so the host's own re-render starts from source.
+                    EvictInterpreted(key);
+                    return NotApplied(string.Join("; ", notes));
+                }
+                live.Root.PerformLayout();
+                Application.DoEvents();
+                var r = Snapshot(live);
+                r.Applied = true;
+                live.PictureKey = SourceStamp(designerFilePath, newSourceKey, selectedTabs, renderScale, reqWidth, reqHeight);
+                return r;
+            });
+        }
+
+        /// <summary>A refusal from the live-edit fast path: no picture, no cache mutation, a reason the host logs.</summary>
+        private static RenderLayoutResult NotApplied(string reason)
+            => new RenderLayoutResult { Applied = false, Diagnostics = reason, Png = Array.Empty<byte>() };
 
         /// <summary>Render the compiled last build and stamp it as a disclosed fallback (the interpreter couldn't
         /// cover this form). Reuses the exact compiled path so a fallback is byte-identical to a plain compiled render.</summary>
@@ -256,10 +508,32 @@ namespace WinFormsDesigner.Engine.Net48
         /// component — the host then leaves the panel UNAVAILABLE (it must NEVER substitute compiled values under an
         /// interpreted canvas). NOT cached, like the interpreted render.</summary>
         public ComponentDesc? DescribeInterpretedComponent(string designerFilePath, string assemblyPath, IrDocument? doc,
-            string rootTypeName, string componentId, int reqWidth, int reqHeight)
+            string rootTypeName, string componentId, int reqWidth, int reqHeight, string sourceKey = "")
         {
             return _sta.Invoke(() =>
             {
+                // 1.2.x — describe from the CACHED interpreted graph when it is provably this buffer's. Building a
+                // throwaway graph here cost as much as a full render (~400 ms on a DevExpress form) and every drag
+                // starts with a describe to read the control's current Location — so the reuse is the difference
+                // between a drag that lands immediately and one that pays for two full interpretations.
+                // The tab override, capture scale and requested size are deliberately NOT part of this comparison:
+                // they change which page is SHOWN and how the picture is captured, not what a component's properties
+                // are. A MUTATED graph is refused like everywhere else — describing live-edited values as if they were
+                // the source's would report what a replay may never produce.
+                string describeKey = InterpretedKey(designerFilePath, assemblyPath, rootTypeName);
+                if (!string.IsNullOrEmpty(sourceKey) && _cache.TryGetValue(describeKey, out var cached))
+                {
+                    // An entry this describe will not use is DROPPED, not stepped over: leaving an aged-out graph in
+                    // the cache let the edit that follows the describe answer from it.
+                    if (cached.Mutated || !IsFresh(cached)) EvictInterpreted(describeKey);
+                    else if (cached.BufferKey == sourceKey + "|r" + ResxStamp(designerFilePath)
+                        && cached.Plan != null && cached.BuildId == ComputeBuildId(assemblyPath))
+                    {
+                        try { return DescribeInterpretedOn(cached.Plan, (Control)cached.Root, componentId ?? ""); }
+                        catch { /* fall through to a fresh graph — a describe must never take the picture down with it */ }
+                    }
+                }
+
                 Assembly asm;
                 try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); } catch { return (ComponentDesc?)null; }
                 var container = new DesignTimeContainer();
@@ -1511,8 +1785,19 @@ namespace WinFormsDesigner.Engine.Net48
         private LiveDesign GetOrCreate(string assemblyPath, string rootTypeName, int reqWidth, int reqHeight)
         {
             string key = Path.GetFullPath(assemblyPath) + "|" + rootTypeName;
-            if (_cache.TryGetValue(key, out var live)) return live;
+            // The REQUESTED size is part of what Build produces (it sizes the hosting form), so a cached instance
+            // built for one size cannot answer a request for another. The extension always asks for 0×0 ("use the
+            // form's own size"), but the RPC is public: a caller that asked for 300×200 and then 800×600 used to get
+            // the first picture twice. Rebuild instead of handing back a differently-sized graph.
+            if (_cache.TryGetValue(key, out var live))
+            {
+                if (live.ReqWidth == reqWidth && live.ReqHeight == reqHeight) return live;
+                _cache.Remove(key);
+                try { live.Form?.Dispose(); } catch { /* the entry is already dropped */ }
+            }
             live = Build(assemblyPath, rootTypeName, reqWidth, reqHeight);
+            live.ReqWidth = reqWidth;
+            live.ReqHeight = reqHeight;
             _cache[key] = live;
             return live;
         }
@@ -1522,14 +1807,35 @@ namespace WinFormsDesigner.Engine.Net48
         /// .Designer.cs text: the cached instance still carries the live mutations of the now-reverted edit (net48
         /// renders the compiled INSTANCE, not the text), so reusing it would keep showing the undone change. Disposing
         /// the form releases its GDI/window handles. Returns true if an entry was actually dropped.</summary>
-        public bool DiscardLive(string assemblyPath, string rootTypeName)
+        public bool DiscardLive(string assemblyPath, string rootTypeName, string designerFilePath = "")
         {
-            string key;
-            try { key = Path.GetFullPath(assemblyPath) + "|" + rootTypeName; } catch { return false; }
-            if (!_cache.TryGetValue(key, out var live)) return false;
-            _cache.Remove(key);
-            try { live.Form?.Dispose(); } catch { /* best effort — the entry is already dropped */ }
-            return true;
+            // ON THE STA, like every other operation that touches the cache or a realized control tree. Called from the
+            // RPC thread, it could remove and dispose a Form while a render or a live edit was still pumping messages
+            // on it — a cross-thread teardown of live HWNDs, plus an unsynchronized write to the dictionary.
+            return _sta.Invoke(() =>
+            {
+                string key;
+                try { key = Path.GetFullPath(assemblyPath) + "|" + rootTypeName; } catch { return false; }
+                // The INTERPRETED graph is dropped for the same reason: it carries the live mutations of an edit the
+                // host has just reverted, and its key no longer names any buffer the user can produce. The designer
+                // path may be absent (older callers): then drop every interpreted entry for this assembly + type.
+                bool dropped = false;
+                if (!string.IsNullOrEmpty(designerFilePath))
+                {
+                    string ik = InterpretedKey(designerFilePath, assemblyPath, rootTypeName);
+                    if (_cache.ContainsKey(ik)) { EvictInterpreted(ik); dropped = true; }
+                }
+                else
+                {
+                    foreach (var k in _cache.Keys.Where(x => x.StartsWith("interpreted|", StringComparison.Ordinal)
+                                                             && x.EndsWith("|" + rootTypeName, StringComparison.Ordinal)).ToList())
+                    { EvictInterpreted(k); dropped = true; }
+                }
+                if (!_cache.TryGetValue(key, out var live)) return dropped; // an interpreted-only drop is still a drop
+                _cache.Remove(key);
+                try { live.Form?.Dispose(); } catch { /* best effort — the entry is already dropped */ }
+                return true;
+            });
         }
 
         /// <summary>
@@ -1713,7 +2019,10 @@ namespace WinFormsDesigner.Engine.Net48
         {
             Control root = live.Root;
             int w = Math.Max(root.Width, 1), h = Math.Max(root.Height, 1);
-            byte[] png = CaptureScaledPng(root, w, h, _renderScale);
+            // A graph that stated its own scale (the interpreted cache, which may be snapshotted by a live edit that
+            // never restates it) wins; a compiled graph has none, so the current request's scale applies — anything
+            // else silently captured every compiled and fallback preview at 1x on a HiDPI display.
+            byte[] png = CaptureScaledPng(root, w, h, live.Scale > 0 ? live.Scale : _renderScale);
 
             string rootClassName = live.DesignedTypeName != null ? InterpretedDescribeResolver.ShortName(live.DesignedTypeName) : live.Type.Name;
             var controls = BuildLayoutControls(root, rootClassName, live.FieldNames, w, h);

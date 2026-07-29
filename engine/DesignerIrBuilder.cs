@@ -56,11 +56,26 @@ namespace WinFormsDesigner.Engine
             }
 
             // Field names across ALL partials (a form may split fields into a sibling partial — mirror Interpret).
+            // The DECLARED type is kept beside the name: C# binds a hidden (`new`) member through the receiver's
+            // STATIC type, so a call or hop on a field whose declared type differs from the instance it is given can
+            // denote a different member than the one this syntax-only IR would replay (see TypeCertain below).
             var fieldNames = new HashSet<string>(StringComparer.Ordinal);
+            var fieldDeclaredTypes = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var part in DesignerModifiers.PartialsOf(cls))
                 foreach (var f in part.Members.OfType<FieldDeclarationSyntax>())
                     foreach (var v in f.Declaration.Variables)
+                    {
                         fieldNames.Add(v.Identifier.Text);
+                        // Compared as WRITTEN, not by simple name: `private A.Edit e; this.e = new B.Edit();` where
+                        // B.Edit derives from A.Edit shares the simple name `Edit`, and treating that as certain would
+                        // let a crafted file bind through A.Edit while the executor searches B.Edit.
+                        fieldDeclaredTypes[v.Identifier.Text] = NormalizeTypeText(f.Declaration.Type.ToString());
+                    }
+
+            var designedMethodNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var part in DesignerModifiers.PartialsOf(cls))
+                foreach (var m in part.Members.OfType<MethodDeclarationSyntax>())
+                    designedMethodNames.Add(m.Identifier.Text);
 
             // `IContainer components = new Container()` names (lets a `new T(this.components)` ctor be recognized),
             // and ComponentResourceManager locals (lets `resources.GetObject("k")` be recognized). Both are collected
@@ -68,6 +83,8 @@ namespace WinFormsDesigner.Engine
             var containerNames = new HashSet<string>(StringComparer.Ordinal);
             var resxVars = new HashSet<string>(StringComparer.Ordinal);
             var treeNodeLocals = new HashSet<string>(StringComparer.Ordinal);
+            var typeCertain = new HashSet<string>(StringComparer.Ordinal);
+            var constructedOnce = new HashSet<string>(StringComparer.Ordinal);
             string designedShort = LastTypeSegment(doc.DesignedTypeName);
             foreach (var stmt in init.Body.Statements)
             {
@@ -88,14 +105,23 @@ namespace WinFormsDesigner.Engine
                 }
                 if (stmt is ExpressionStatementSyntax es0 && es0.Expression is AssignmentExpressionSyntax a0
                     && Flatten(a0.Left) is { Count: 1 } lhs && fieldNames.Contains(lhs[0])
-                    && a0.Right is ObjectCreationExpressionSyntax cc && (cc.ArgumentList?.Arguments.Count ?? 0) == 0
-                    && cc.Initializer == null && LastTypeSegment(cc.Type.ToString()) == "Container")
+                    && a0.Right is ObjectCreationExpressionSyntax cc)
                 {
-                    containerNames.Add(lhs[0]);
+                    string ctorType = NormalizeTypeText(cc.Type.ToString());
+                    if ((cc.ArgumentList?.Arguments.Count ?? 0) == 0 && cc.Initializer == null && LastTypeSegment(cc.Type.ToString()) == "Container")
+                        containerNames.Add(lhs[0]);
+                    // A field constructed EXACTLY ONCE with its own declared type binds hidden members the same way
+                    // whether C# resolves them statically or the executor resolves them on the instance. Constructed
+                    // twice, or with a different type, and that equivalence is unproven → the field is not certain.
+                    if (fieldDeclaredTypes.TryGetValue(lhs[0], out var declared))
+                    {
+                        if (constructedOnce.Add(lhs[0]) && declared == ctorType) typeCertain.Add(lhs[0]);
+                        else typeCertain.Remove(lhs[0]);
+                    }
                 }
             }
 
-            var ctx = new Ctx(fieldNames, containerNames, resxVars, treeNodeLocals);
+            var ctx = new Ctx(fieldNames, containerNames, resxVars, treeNodeLocals, typeCertain, designedMethodNames);
             foreach (var stmt in init.Body.Statements)
             {
                 doc.TotalSourceStatements++;
@@ -133,7 +159,16 @@ namespace WinFormsDesigner.Engine
             public readonly HashSet<string> Containers;
             public readonly HashSet<string> ResxVars;
             public readonly HashSet<string> TreeNodeLocals;
-            public Ctx(HashSet<string> f, HashSet<string> c, HashSet<string> r, HashSet<string> tn) { Fields = f; Containers = c; ResxVars = r; TreeNodeLocals = tn; }
+            /// <summary>Fields whose DECLARED type is the type actually constructed into them. Only for those can the
+            /// executor's runtime-type member lookup be trusted to select what C# bound at the call site — a
+            /// `private BaseEdit e; this.e = new DerivedEdit();` field would bind hidden members through BaseEdit
+            /// while the executor sees DerivedEdit.</summary>
+            public readonly HashSet<string> TypeCertain;
+            /// <summary>Method names the designed class declares in THIS file — a member of the designed class hides
+            /// the base's, and the interpreted root (a base instance) cannot carry it.</summary>
+            public readonly HashSet<string> DesignedMethodNames;
+            public Ctx(HashSet<string> f, HashSet<string> c, HashSet<string> r, HashSet<string> tn, HashSet<string> tc, HashSet<string> dm)
+            { Fields = f; Containers = c; ResxVars = r; TreeNodeLocals = tn; TypeCertain = tc; DesignedMethodNames = dm; }
         }
 
         /// <summary>Side-effect-free properties the designer sets on a TreeNode local — the ONLY writes the tree-node
@@ -302,7 +337,16 @@ namespace WinFormsDesigner.Engine
         private static (List<IrStatement>, bool, string?) ClassifyInvocation(InvocationExpressionSyntax inv, Ctx ctx)
         {
             if (inv.Expression is not MemberAccessExpressionSyntax ma) return Gap(Trim(inv));
+            // A GENERIC name (`BeginInit<T>()`) carries the same identifier text but binds to a different member than
+            // the one the executor would call. The front-end has no semantic model, so the only safe rule is: a
+            // recognized capability must be spelled as a plain identifier. Anything else is an honest gap.
+            if (ma.Name is not IdentifierNameSyntax) return Gap(Trim(inv));
             string method = ma.Name.Identifier.Text;
+            // Argument shapes the recognized capabilities never have. A named / ref / out / in argument means the call
+            // binds to something else (an extension or vendor overload), and dropping it would replay a DIFFERENT
+            // method than the source runs.
+            static bool PlainArgs(InvocationExpressionSyntax i) =>
+                i.ArgumentList.Arguments.All(a => a.NameColon == null && a.RefKindKeyword.IsKind(SyntaxKind.None));
 
             // layout scaffolding — inert, represented (regenerated canonically by the serializer). ONLY the canonical
             // VS shapes qualify: receiver is `this` or a FIELD-ROOTED member chain, args are empty or a single bool
@@ -314,24 +358,84 @@ namespace WinFormsDesigner.Engine
             if (method is "SuspendLayout" or "ResumeLayout" or "PerformLayout")
             {
                 var lrecv = Flatten(ma.Expression);
-                bool okRecv = lrecv.Count == 0 || ctx.Fields.Contains(lrecv[0]);
+                bool lrecvIsRoot = lrecv.Count == 0;
+                bool okRecv = lrecvIsRoot || ctx.Fields.Contains(lrecv[0]);
                 var largs = inv.ArgumentList.Arguments;
-                bool okArgs = largs.Count == 0
-                    || (largs.Count == 1 && largs[0].Expression is LiteralExpressionSyntax ll
-                        && (ll.IsKind(SyntaxKind.TrueLiteralExpression) || ll.IsKind(SyntaxKind.FalseLiteralExpression)));
-                return okRecv && okArgs ? NoOp() : Gap(Trim(inv));
+                // Per-method arg rules, because these are now EXECUTED. `Control` declares SuspendLayout() and
+                // PerformLayout() with no bool overload at all, so `panel1.SuspendLayout(true)` can only bind to a
+                // vendor/extension method — accepting it and calling the framework method instead would replay
+                // something the compiled form never did. ResumeLayout takes zero args or one bool.
+                bool argValue = false;
+                bool okArgs;
+                bool hasArg = largs.Count == 1;
+                if (largs.Count == 0)
+                {
+                    okArgs = true;
+                    // `Control.ResumeLayout()` is `ResumeLayout(true)` — it PERFORMS the pending layout, unlike the
+                    // (false) overload VS emits. Modeling the absent argument as false would resume without laying
+                    // out, so a later statement in the same replay would read pre-layout geometry.
+                    argValue = method == "ResumeLayout";
+                }
+                else if (method == "ResumeLayout" && largs.Count == 1 && PlainArgs(inv)
+                    && largs[0].Expression is LiteralExpressionSyntax ll
+                    && (ll.IsKind(SyntaxKind.TrueLiteralExpression) || ll.IsKind(SyntaxKind.FalseLiteralExpression)))
+                {
+                    okArgs = true;
+                    argValue = ll.IsKind(SyntaxKind.TrueLiteralExpression);
+                }
+                else
+                {
+                    okArgs = false;
+                }
+                var lpath = lrecvIsRoot ? lrecv : lrecv.Skip(1).ToList();
+                if (!okRecv || !okArgs || lpath.Count > IrLimits.MaxPathLength) return Gap(Trim(inv));
+                // A field receiver must be type-certain: the executor picks the layout member off the INSTANCE, and a
+                // vendor control that hides SuspendLayout (DevExpress's XtraForm does) makes that the same member C#
+                // bound only when the declared and constructed types agree.
+                if (!lrecvIsRoot && !ctx.TypeCertain.Contains(lrecv[0])) return Gap(Trim(inv));
+                // `this` is NOT automatically safe: the interpreted root is an instance of the designed class's BASE,
+                // so a layout method the designed class itself declares (`private new void SuspendLayout()`) is not on
+                // the instance at all, and replaying the base's member would run something the build never ran.
+                // Only what this file can see is checked — a hider in the code-behind partial stays out of reach.
+                if (lrecvIsRoot && ctx.DesignedMethodNames.Contains(method)) return Gap(Trim(inv));
+                // REPLAYED, not dropped: the bracket is what keeps a property assignment from re-running layout on an
+                // already-added anchored child (see IrLayoutCall). The serializer still regenerates these calls
+                // canonically on a whole-file write — this node only drives the interpreted render.
+                return One(new IrLayoutCall
+                {
+                    TargetIsRoot = lrecvIsRoot,
+                    TargetName = lrecvIsRoot ? "" : lrecv[0],
+                    TargetPath = lpath,
+                    Op = method == "SuspendLayout" ? IrLayoutOp.Suspend
+                        : method == "ResumeLayout" ? IrLayoutOp.Resume : IrLayoutOp.Perform,
+                    Arg = argValue,
+                    HasArg = hasArg,
+                });
             }
 
             // ((System.ComponentModel.ISupportInitialize)(this.x)).BeginInit()/.EndInit() — REAL replay on net48.
-            if (method is "BeginInit" or "EndInit" && ma.Expression is ParenthesizedExpressionSyntax pe
+            if (method is "BeginInit" or "EndInit" && inv.ArgumentList.Arguments.Count == 0
+                && ma.Expression is ParenthesizedExpressionSyntax pe
                 && pe.Expression is CastExpressionSyntax ce && ce.Type.ToString() == "System.ComponentModel.ISupportInitialize")
             {
-                var initTarget = Flatten(ce.Expression); // the cast operand, e.g. (this.dataGridView1)
-                if (initTarget.Count == 1 && ctx.Fields.Contains(initTarget[0]))
+                // Zero args is required, not cosmetic: the interface members take none, so `BeginInit(x)` binds to an
+                // extension or vendor overload. Representing it would drop that argument and call the interface
+                // method instead — a different operation than the source performs.
+                // The cast operand is `(this.dataGridView1)` — or, for every DevExpress XtraEditors control,
+                // `(this.textEdit1.Properties)`: the bracketed object is the editor's RepositoryItem reached through
+                // read-only hops. Model the hops as a path; the executor resolves and type-checks them (a hop that
+                // isn't readable, or a target that isn't really ISupportInitialize, fails closed → fallback).
+                var initTarget = Flatten(ce.Expression);
+                // The bracket itself is exact — the cast makes it an interface dispatch whatever the field's static
+                // type is. The HOPS are not: `this.edit1.Properties` binds through the field's declared type, so a
+                // chained bracket needs the same type-certainty a layout call does. A hop-free bracket does not.
+                if (initTarget.Count >= 1 && initTarget.Count <= IrLimits.MaxPathLength + 1 && ctx.Fields.Contains(initTarget[0])
+                    && (initTarget.Count == 1 || ctx.TypeCertain.Contains(initTarget[0])))
                 {
+                    var initPath = initTarget.Skip(1).ToList();
                     IrStatement n = method == "BeginInit"
-                        ? new IrBeginInit { TargetName = initTarget[0] }
-                        : (IrStatement)new IrEndInit { TargetName = initTarget[0] };
+                        ? new IrBeginInit { TargetName = initTarget[0], TargetPath = initPath }
+                        : (IrStatement)new IrEndInit { TargetName = initTarget[0], TargetPath = initPath };
                     return One(n);
                 }
                 return Gap(Trim(inv));
@@ -572,7 +676,7 @@ namespace WinFormsDesigner.Engine
                         // flags enum: A.B | A.C | ... — collect members; every operand must be an enum member of ONE type.
                         var members = new List<string>();
                         string? enumType = null;
-                        if (!CollectFlagMembers(bin, ctx, ref enumType, members)) return null;
+                        if (!CollectFlagMembers(bin, ctx, ref enumType, members, 0)) return null;
                         if (enumType == null || members.Count == 0 || members.Count > IrLimits.MaxEnumMembers) return null;
                         return new IrEnum { EnumTypeName = enumType, Members = members };
                     }
@@ -585,12 +689,21 @@ namespace WinFormsDesigner.Engine
             }
         }
 
-        private static bool CollectFlagMembers(ExpressionSyntax expr, Ctx ctx, ref string? enumType, List<string> members)
+        /// <summary>Collect `A.X | A.Y | …` flag members. Operands are unparenthesized FIRST because VS emits the
+        /// left-nested, parenthesized shape for three or more flags — `(((Top | Bottom) | Left) | Right)` — so a
+        /// recursion that only descended through bare binary nodes dropped every 3+-side Anchor to fallback. Depth is
+        /// bounded: the operand tree is attacker-controlled source, and the walk must not be able to exhaust the stack
+        /// before <see cref="IrLimits.MaxEnumMembers"/> is checked by the caller.</summary>
+        private static bool CollectFlagMembers(ExpressionSyntax expr, Ctx ctx, ref string? enumType, List<string> members, int depth)
         {
+            // Bail on BOTH axes before doing the work: nesting depth (a deep spine must not exhaust the stack) and
+            // the member count the caller would reject anyway (a wide balanced tree must not be collected first).
+            if (depth > IrLimits.MaxEnumMembers || members.Count > IrLimits.MaxEnumMembers) return false;
+            expr = Unparen(expr);
             if (expr is BinaryExpressionSyntax bin && bin.IsKind(SyntaxKind.BitwiseOrExpression))
-                return CollectFlagMembers(bin.Left, ctx, ref enumType, members)
-                    && CollectFlagMembers(bin.Right, ctx, ref enumType, members);
-            if (Unparen(expr) is MemberAccessExpressionSyntax ma)
+                return CollectFlagMembers(bin.Left, ctx, ref enumType, members, depth + 1)
+                    && CollectFlagMembers(bin.Right, ctx, ref enumType, members, depth + 1);
+            if (expr is MemberAccessExpressionSyntax ma)
             {
                 string prefix = FullDottedName(ma.Expression);
                 string member = ma.Name.Identifier.Text;
@@ -714,6 +827,12 @@ namespace WinFormsDesigner.Engine
             }
             return false;
         }
+
+        /// <summary>Type text with all whitespace removed, so a spaced and an unspaced spelling of the SAME name
+        /// compare equal while two different namespaces sharing a simple name do not. Deliberately textual: the
+        /// front-end has no semantic model, so equality here means "written the same way" — which is what
+        /// VS-generated code always is for a field declaration and the construction assigned into it.</summary>
+        private static string NormalizeTypeText(string s) => new string(s.Where(c => !char.IsWhiteSpace(c)).ToArray());
 
         private static ExpressionSyntax Unparen(ExpressionSyntax e)
         {

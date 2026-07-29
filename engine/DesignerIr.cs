@@ -38,7 +38,10 @@ namespace WinFormsDesigner.Engine
     /// the AppDomain boundary (produce and consume) — the executor never trusts the producer.</summary>
     public static class IrLimits
     {
-        public const int SchemaVersion = 1;
+        // 2: IrBeginInit/IrEndInit carry an optional TargetPath (the vendor `((ISupportInitialize)(this.edit.Properties))`
+        //    bracket). Bumped per the vocabulary rule on IrValidate.Closed — a producer and an executor built from
+        //    different revisions must refuse each other loudly rather than replay a path one side cannot see.
+        public const int SchemaVersion = 2;
         public const int MaxStatements = 20000;
         /// <summary>Max nesting depth of IrValue trees (arrays of casts of ctors …).</summary>
         public const int MaxValueDepth = 16;
@@ -230,9 +233,49 @@ namespace WinFormsDesigner.Engine
     /// the batching): interface dispatch only, zero args, target must exist and implement the real interface;
     /// unmatched/failed pairs are a HARD interpreted-render failure → dispose graph → fallback (never Snapshot a
     /// half-initialized vendor tree).</summary>
-    [Serializable] public sealed class IrBeginInit : IrStatement { public string TargetName { get; set; } = ""; }
+    /// <para>TargetPath is the optional read-only hop chain from the field to the object actually being bracketed:
+    /// every DevExpress XtraEditors control emits `((ISupportInitialize)(this.textEdit1.Properties)).BeginInit()`,
+    /// where the initialized object is the editor's RepositoryItem, not the control. Empty = the field itself.</para>
+    [Serializable] public sealed class IrBeginInit : IrStatement
+    {
+        public string TargetName { get; set; } = "";
+        public List<string> TargetPath { get; set; } = new List<string>();
+    }
     /// <summary>`((ISupportInitialize)x).EndInit();` — see <see cref="IrBeginInit"/>.</summary>
-    [Serializable] public sealed class IrEndInit : IrStatement { public string TargetName { get; set; } = ""; }
+    [Serializable] public sealed class IrEndInit : IrStatement
+    {
+        public string TargetName { get; set; } = "";
+        public List<string> TargetPath { get; set; } = new List<string>();
+    }
+
+    /// <summary>Which layout call an <see cref="IrLayoutCall"/> replays.</summary>
+    public enum IrLayoutOp { Suspend = 0, Resume = 1, Perform = 2 }
+
+    /// <summary>`this.SuspendLayout();` / `this.panel1.ResumeLayout(false);` / `x.PerformLayout();` — REPLAYED, not
+    /// dropped. VS brackets InitializeComponent in SuspendLayout/ResumeLayout precisely so that the property
+    /// assignments inside do not trigger layout: with layout live, assigning the form's ClientSize AFTER an anchored
+    /// child was added re-runs the anchor rules and resizes that child, so an interpreter that treated the bracket as
+    /// a no-op drew anchored controls at sizes the compiled form never had. Replaying the calls verbatim keeps the
+    /// interpreted picture identical to the compiled one in BOTH directions, including hand-written files that omit
+    /// the bracket.</summary>
+    [Serializable]
+    public sealed class IrLayoutCall : IrStatement
+    {
+        public bool TargetIsRoot { get; set; }
+        public string TargetName { get; set; } = "";
+        /// <summary>Read-only hops to a nested container, e.g. `splitContainer1.Panel1`. Empty = the target itself.</summary>
+        public List<string> TargetPath { get; set; } = new List<string>();
+        public IrLayoutOp Op { get; set; }
+        /// <summary>The `ResumeLayout(bool)` argument. TRUE for a parameterless `ResumeLayout()`, which the framework
+        /// defines as `ResumeLayout(true)` — it performs the pending layout, unlike the `(false)` overload VS emits.
+        /// Always false for the other two ops (which take no argument at all).</summary>
+        public bool Arg { get; set; }
+        /// <summary>Whether the SOURCE passed an argument. Kept beside <see cref="Arg"/> because the executor looks the
+        /// member up by exact signature: `x.ResumeLayout()` and `x.ResumeLayout(true)` mean the same thing on
+        /// <see cref="System.Windows.Forms.Control"/> but denote DIFFERENT declarations, and a type that hides one of
+        /// them must not be replayed through the other.</summary>
+        public bool HasArg { get; set; }
+    }
 
     /// <summary>`target.Click += this.Handler;` — INERT METADATA. The executor never wires events (design surface
     /// must not run user handlers); carried for describe parity (bold/handler columns) and re-emit.</summary>
@@ -326,7 +369,7 @@ namespace WinFormsDesigner.Engine
             typeof(IrKnownCtor), typeof(IrStaticFactory), typeof(IrStaticRead), typeof(IrComponentRef),
             typeof(IrArray), typeof(IrResourceRef), typeof(IrCast),
             typeof(IrConstructComponent), typeof(IrSetProperty), typeof(IrAddControl), typeof(IrAddCollectionItem),
-            typeof(IrSetExtender), typeof(IrBeginInit), typeof(IrEndInit), typeof(IrWireEvent),
+            typeof(IrSetExtender), typeof(IrBeginInit), typeof(IrEndInit), typeof(IrWireEvent), typeof(IrLayoutCall),
             typeof(IrConstructTreeNode), typeof(IrSetTreeNodeProp), typeof(IrAddTreeNodes),
         };
 
@@ -395,8 +438,20 @@ namespace WinFormsDesigner.Engine
                     if (!ValidTarget(x.TargetIsRoot, x.TargetName)) return "invalid extender target";
                     if (!ValidIdent(x.PropertyName)) return "invalid extender property";
                     return CheckValue(x.Value, 0, ref nodes, ref chars);
-                case IrBeginInit b: return ValidIdent(b.TargetName) ? null : "invalid BeginInit target";
-                case IrEndInit e: return ValidIdent(e.TargetName) ? null : "invalid EndInit target";
+                case IrLayoutCall l:
+                    if (!ValidTarget(l.TargetIsRoot, l.TargetName)) return "invalid layout-call target";
+                    if (l.Op != IrLayoutOp.Suspend && l.Op != IrLayoutOp.Resume && l.Op != IrLayoutOp.Perform)
+                        return "unknown layout op";
+                    // One canonical encoding per source shape: only ResumeLayout carries an argument, so a document
+                    // claiming `SuspendLayout(true)` is malformed rather than quietly executed as the no-arg call.
+                    if (l.Op != IrLayoutOp.Resume && (l.Arg || l.HasArg)) return "layout op carries an argument it has none of";
+                    return CheckPath(l.TargetPath, min: 0);
+                case IrBeginInit b:
+                    if (!ValidIdent(b.TargetName)) return "invalid BeginInit target";
+                    return CheckPath(b.TargetPath, min: 0);
+                case IrEndInit e:
+                    if (!ValidIdent(e.TargetName)) return "invalid EndInit target";
+                    return CheckPath(e.TargetPath, min: 0);
                 case IrWireEvent w:
                     if (!ValidTarget(w.TargetIsRoot, w.TargetName)) return "invalid event target";
                     if (!ValidIdent(w.EventName) || !ValidIdent(w.HandlerName)) return "invalid event/handler name";

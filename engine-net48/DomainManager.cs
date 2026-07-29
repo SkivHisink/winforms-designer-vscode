@@ -34,6 +34,22 @@ namespace WinFormsDesigner.Engine.Net48
         private readonly List<AppDomain> _leaked = new List<AppDomain>();
         private readonly object _lock = new object();
 
+        /// <summary>The worker for this output IF one already exists — never creates a domain. For teardown-side
+        /// callers (a designer closing hands its cached graph back): creating a child AppDomain, its STA thread and
+        /// its configuration just to be told there is nothing to discard is pure cost, and when it happens to lose a
+        /// race with the output release it leaves a freshly created empty domain behind the release just unloaded.</summary>
+        public RenderWorker? PeekWorker(string assemblyPath)
+        {
+            string full;
+            try { full = Path.GetFullPath(assemblyPath); } catch { return null; }
+            string? binDir = Path.GetDirectoryName(full);
+            if (string.IsNullOrEmpty(binDir)) return null;
+            lock (_lock)
+            {
+                return _byBinDir.TryGetValue(binDir!, out var existing) ? existing.Worker : null;
+            }
+        }
+
         public RenderWorker GetWorker(string assemblyPath, string[] probeDirs)
         {
             string full = Path.GetFullPath(assemblyPath);

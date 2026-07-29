@@ -21,6 +21,7 @@ import {
   setCompiledStringArrayLive,
   LiveCollItem,
   applyCompiledEdits,
+  applyInterpretedEditsLive,
   removeCompiledControls,
   setCompiledZOrder,
   addCompiledControl,
@@ -542,6 +543,12 @@ export class DesignerHub {
    * Unset until then, which is safe: no engine can be running before activation, so nothing is pinned. */
   private releaseNet48: ReleaseNet48Output | undefined;
   setNet48Release(release: ReleaseNet48Output): void { this.releaseNet48 = release; }
+  /** Whether a net48 engine process is ALREADY running. Closing a designer hands its interpreted graph back, but that
+   * must never be a reason to START an engine — there is nothing to discard in a process that does not exist, and a
+   * fresh worker created at close time would race the output release that follows it. */
+  private net48Running: (() => boolean) | undefined;
+  setNet48RunningProbe(probe: () => boolean): void { this.net48Running = probe; }
+  get isNet48EngineRunning(): boolean { return this.net48Running?.() ?? false; }
 
   private net48TaskDepth = 0;
   get net48TaskActive(): boolean { return this.net48TaskDepth > 0; }
@@ -1046,6 +1053,16 @@ class DesignerSession {
    * "last build" disclosure, it IS the source), 'compiledFallback' (a form the interpreter can't cover → the compiled
    * last build WITH the disclosure + reason), or 'compiled'. Drives composeFormNotice. Ignored on the modern engine. */
   private net48RenderMode = 'compiled';
+  /** 1.2.x — the exact buffer the CURRENT interpreted picture was built from, so the engine can prove its cached
+   * graph still matches before re-snapshotting it instead of re-interpreting. Undefined whenever the picture is not
+   * an interpretation of a known buffer (a compiled render, a live compiled op, before the first render). */
+  private renderedText: string | undefined;
+  /** The document revision the current interpreted picture was built from. A live edit is only allowed to claim the
+   * cached graph when EXACTLY the commit it is sending has happened since — otherwise some other commit (Modifiers,
+   * event wiring: source changes that deliberately do not re-render) went into the buffer without reaching the graph. */
+  private renderedRev = -1;
+  /** Pending post-burst re-interpretation (see scheduleInterpretedReconcile). Cleared on dispose. */
+  private interpretedReconcileTimer: ReturnType<typeof setTimeout> | undefined;
   private net48FallbackReason = '';
   // transient interpreted tab view-state: tab-host field id → selected page field id. Re-supplied
   // to every interpreted render (the interpreted graph is uncached), so a tab-click's selection survives later renders. A
@@ -1141,6 +1158,18 @@ class DesignerSession {
     DesignerHub.instance.unregisterSession(this);
     DesignerHub.instance.clearIfActive(this);
     if (this.debounce) clearTimeout(this.debounce);
+    if (this.interpretedReconcileTimer) clearTimeout(this.interpretedReconcileTimer);
+    // Hand back the interpreted graph this form left in the engine. Its off-screen Form, HWND tree, sited components
+    // and any vendor timers live until something drops them, and the output-release below is deliberately suppressed
+    // while a sibling designer from the same project stays open — so without this, closing forms one after another in
+    // a long session accumulates whole realized control trees in the render domain.
+    if (this.engineKind === 'net48' && this.designerFile && this.asm() && DesignerHub.instance.isNet48EngineRunning) {
+      const file = this.designerFile;
+      const asm = this.asm()!;
+      void this.ensureEngine('net48')
+        .then((eng) => discardCompiledLive(eng, file, asm))
+        .catch(() => { /* best effort — an engine that is gone has already released everything */ });
+    }
     for (const d of this.disposables.splice(0)) {
       try { d.dispose(); } catch { /* ignore */ }
     }
@@ -2115,6 +2144,11 @@ class DesignerSession {
     DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
     void this.refreshPalette();
     this.post({ type: 'loading', message: t('host.loading.rendering') });
+    // A full render IS the reconciliation, so drop any pending one. Left running, it fired mid-render, bumped the
+    // sequence, and made THIS render lose its own freshness gate — repainting the same source while suppressing the
+    // selection/property refresh the original render was doing.
+    if (this.interpretedReconcileTimer) { clearTimeout(this.interpretedReconcileTimer); this.interpretedReconcileTimer = undefined; }
+    const renderRev = this.doc.rev; // the buffer revision this picture will represent (see renderedRev)
     const text = await this.currentText();
     let result: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
@@ -2147,6 +2181,11 @@ class DesignerSession {
       const ir = result as typeof result & { renderMode: string; fallbackReason: string };
       this.net48RenderMode = ir.renderMode;
       this.net48FallbackReason = ir.fallbackReason;
+      // Record which buffer this picture IS, but only when it is genuinely an interpretation of one — a compiled
+      // fallback is a picture of the last build, and pretending otherwise would let a later live edit re-snapshot a
+      // graph that never carried these edits.
+      this.renderedText = ir.renderMode === 'interpreted' ? (text ?? '') : undefined;
+      this.renderedRev = ir.renderMode === 'interpreted' ? renderRev : -1;
     }
     this.output.appendLine(`[designer] render #${seq} ok: ${result.png.length}B, ${result.controls.length} controls`);
 
@@ -2617,7 +2656,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     if (!this.commit(before, text, `Move ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`moved ${applied} controls by (${Math.round(dx)}, ${Math.round(dy)}) (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits), true, {});
+    if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits), true, { edits: live48Edits });
     else await this.fullRender();
     this.post({ type: 'status', message: tn('status.moved', applied) });
   }
@@ -2693,7 +2732,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     if (!this.commit(before, text, `Align ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`aligned ${applied} controls (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, {});
+    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, { edits: live48Edits });
     else await this.fullRender();
     this.post({ type: 'status', message: tn('status.aligned', applied) });
   }
@@ -2724,7 +2763,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
     if (!this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.output.appendLine(`resized ${applied} controls (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, {});
+    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, { edits: live48Edits });
     else await this.fullRender();
     this.post({ type: 'status', message: tn('status.resized', applied) });
   }
@@ -2993,7 +3032,8 @@ class DesignerSession {
     // control select instead breaks a visibility-changing edit (Visible=false leaves the control out of the layout →
     // selection snaps to the form → the hidden control's grid is dropped and can't be set back) and clears an item/nested
     // highlight — both are visibility contracts (CONTROL-visibility + ITEM-highlight).
-    await this.live48((eng) => setCompiledPropertyLive(eng, this.designerFile!, asm, id, prop, raw), true, { skipReselect: true });
+    await this.live48((eng) => setCompiledPropertyLive(eng, this.designerFile!, asm, id, prop, raw), true,
+      { skipReselect: true, edits: [{ componentId: id, propName: prop, rawValue: raw }] });
   }
 
   /** net48 compiled preview for a typed "…" collection edit: after the text edit is committed, reconstruct the
@@ -3041,6 +3081,8 @@ class DesignerSession {
     // rendered 'interpreted', a subsequent live op flips the canvas back to the build, and composeFormNotice must
     // re-show the "last build" disclosure. Leaving the stale 'interpreted' flag hid it.
     this.net48RenderMode = 'compiled';
+    this.renderedText = undefined; // this picture is the build, not an interpretation of any buffer
+    this.renderedRev = -1;
     this.controls = res.controls;
     this.toolStripItems = res.toolStripItems ?? [];
     this.rootClient = { w: res.clientWidth, h: res.clientHeight };
@@ -3070,9 +3112,21 @@ class DesignerSession {
    * per-control loop that ends in its own fullRender) keep the compiled live-mirror path — the honest earlier behavior,
    * never a NEW break. `interp.skipReselect` threads through to fullRender for callers that must preserve a non-control
    * selection. */
-  private async live48(op: (eng: EngineHandle) => Promise<RenderLayout>, notifyOnNotApplied = true, interp?: { skipReselect?: boolean }): Promise<boolean> {
+  private async live48(op: (eng: EngineHandle) => Promise<RenderLayout>, notifyOnNotApplied = true,
+    interp?: { skipReselect?: boolean; edits?: CompiledEdit[] }): Promise<boolean> {
     if (!this.designerFile || !this.asm()) return false;
-    if (interp && this.net48RenderMode === 'interpreted') return this.fullRender(interp.skipReselect ?? false);
+    if (interp && this.net48RenderMode === 'interpreted') {
+      // 1.2.x — the same edits the compiled path would apply, applied to the cached INTERPRETED graph instead. That
+      // keeps the canvas interpreted (this is still the live source) at the cost of a snapshot rather than a full
+      // re-interpretation, which is what makes a drag land immediately on a vendor form. Anything the engine will not
+      // certify falls through to the re-interpretation below, which is always correct.
+      // Dock/Anchor commits are NOT fully described by the property they send: setting one deletes its conjugate
+      // assignment from the source in the same commit, so the live batch would carry half the change and the
+      // provisional picture (and any burst edit chained from it) would show a form the buffer no longer describes.
+      const fullyDescribed = !interp.edits?.some((e) => e.propName === 'Dock' || e.propName === 'Anchor');
+      if (fullyDescribed && interp.edits?.length && await this.liveInterpreted48(interp.edits)) return true;
+      return this.fullRender(interp.skipReselect ?? false);
+    }
     const seq = ++this.renderSeq;
     try {
       const res = await op(await this.ensureEngine('net48'));
@@ -3084,6 +3138,87 @@ class DesignerSession {
       this.post({ type: 'status', message: errMsg(err) });
       return false;
     }
+  }
+
+  /**
+   * 1.2.x — the interpreted fast path behind {@link live48}: hand the engine the edits plus BOTH buffers (the one the
+   * current picture was interpreted from and the one just committed) and let it re-snapshot its cached graph.
+   *
+   * Returns false — caller re-interprets — whenever anything is unproven: no picture-buffer on record, the buffer
+   * cannot be read, the engine has no cached graph for this form, its graph is keyed to a different buffer, the
+   * assembly was rebuilt under it, or an edit did not apply. The engine drops its cache in that last case, so the
+   * fallback render starts from source.
+   */
+  private async liveInterpreted48(edits: CompiledEdit[]): Promise<boolean> {
+    const before = this.renderedText;
+    if (before === undefined || !this.designerFile || !this.asm()) return false;
+    const rev = this.doc.rev;
+    // EXACTLY the commit being sent must separate the picture from the buffer. Commits that deliberately change
+    // source without re-rendering — Modifiers, event wiring, a conjugate Dock/Anchor delete — would otherwise ride
+    // along invisibly: the engine would apply only the edits in this batch and then certify the whole buffer.
+    if (rev !== this.renderedRev + 1) {
+      this.output.appendLine(`[designer] interpreted live edit skipped: picture is rev ${this.renderedRev}, buffer is rev ${rev}`);
+      return false;
+    }
+    const after = await this.currentText();
+    if (after === undefined || after === null) return false;
+    const seq = ++this.renderSeq;
+    try {
+      const eng = await this.ensureEngine('net48');
+      const res = await applyInterpretedEditsLive(eng, this.designerFile, this.asm()!, edits, before, after,
+        undefined, undefined, this.tabViewState(), this.renderScale);
+      // The buffer moved WHILE the edit was in flight (another writer, a second editor on the same file). The engine
+      // has now keyed its graph to a buffer that also carries that other change, which the graph never received — so
+      // a later render of that same text would reuse a picture missing it. Throw the graph away and re-interpret.
+      if (this.doc.rev !== rev) {
+        this.renderedText = undefined;
+        try { await discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, this.asm()!); }
+        catch { /* best effort: the stamp mismatch on the next render is the backstop */ }
+        this.output.appendLine('[designer] buffer changed during an interpreted live edit — dropping the cached graph');
+        return false;
+      }
+      if (res.applied === false) {
+        this.output.appendLine('[designer] interpreted live edit not applied (' + (res.diagnostics || 'no reason') + ') — re-interpreting');
+        return false;
+      }
+      if (seq !== this.renderSeq || this.disposed) return true; // superseded by a newer render; it owns the picture
+      this.renderedText = after; // the picture now corresponds to the committed buffer
+      this.renderedRev = rev;
+      this.controls = res.controls;
+      this.toolStripItems = res.toolStripItems ?? [];
+      this.rootClient = { w: res.clientWidth, h: res.clientHeight };
+      this.rootFrame = { w: res.width, h: res.height };
+      this.post({ type: 'render', png: res.png.toString('base64'), width: res.width, height: res.height, gen: seq });
+      this.postLayout(res.controls, this.toolStripItems);
+      this.post({ type: 'tray', items: res.tray });
+      // Deliberately NOT show48: that flips the canvas to 'compiled' (it exists for build-based live ops). This
+      // picture is still the interpreted live source, so the mode — and the absence of the "last build" disclosure —
+      // must stay exactly as it was.
+      this.composeFormNotice({});
+      this.scheduleInterpretedReconcile();
+      return true;
+    } catch (err) {
+      this.output.appendLine('[designer] interpreted live edit failed (' + errMsg(err) + ') — re-interpreting');
+      return false;
+    }
+  }
+
+  /**
+   * 1.2.x — after a burst of live edits, re-interpret the committed buffer once, off the critical path.
+   *
+   * A live edit sets the value through the control's TypeConverter, while a full interpretation materializes the
+   * expression the splice wrote. Those agree for the geometry and simple values a designer produces, but the product
+   * rule is that the picture is the SOURCE — so rather than trust the agreement forever, the canvas is brought back
+   * to a genuine interpretation once the user stops. The user never waits for it: it runs after a quiet period and
+   * repaints identically when (as expected) nothing differs.
+   */
+  private scheduleInterpretedReconcile(): void {
+    if (this.interpretedReconcileTimer) clearTimeout(this.interpretedReconcileTimer);
+    this.interpretedReconcileTimer = setTimeout(() => {
+      this.interpretedReconcileTimer = undefined;
+      if (this.disposed || this.engineKind !== 'net48' || this.net48RenderMode !== 'interpreted') return;
+      void this.fullRender(true).catch(() => { /* a failed reconcile leaves the live picture, which fullRender itself reports */ });
+    }, 700);
   }
 
   /** Describe a component from the engine that owns this session (net48 live instance, or the net9 graph). */
@@ -4420,8 +4555,12 @@ class DesignerSession {
       // a multi-property control edit (e.g. an N/W/NW/NE/SW resize = Location+Size) is a committed
       // source-backed edit; opt into interpreted re-render. skipReselect (like liveEdit48) so the trailing loadProps(id)
       // keeps the grid and a visibility-changing property can't strand the selection.
-      await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!,
-        edits.map((ed) => ({ componentId: id, propName: ed.prop, rawValue: ed.value }))), true, { skipReselect: true });
+      // The batch is threaded into `interp` too: a corner resize commits Location AND Size together, and without it
+      // the interpreted branch fell back to a full re-interpretation — so N/W/NW/NE/SW resizes kept paying the whole
+      // rebuild while E/S ones were instant.
+      const liveBatch = edits.map((ed) => ({ componentId: id, propName: ed.prop, rawValue: ed.value }));
+      await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, liveBatch), true,
+        { skipReselect: true, edits: liveBatch });
     } else {
       await this.patchOrRerender(id, edits[edits.length - 1].prop);
     }
@@ -5210,7 +5349,14 @@ class DesignerSession {
 
     // A dirty-region patch is a 1x single-control PNG at logical coords; under a >1 DPI capture the frame is scaled, so a
     // 1x patch would land wrong-sized and blurry. Force the full (scaled) frame instead when rendering at high DPI.
-    const patchPossible = id !== 'this' && prop !== 'Checked' && prop !== 'CheckState' && this.renderScale === 1;
+    //
+    // 1.2.x — and never even PROBE for a patch when the edit is one that moves or resizes the control. The probe is a
+    // whole extra graph build in the engine (~53 ms on a small form, the dominant cost of a render), and the patch it
+    // is probing for is refused a moment later anyway: a control that changed geometry leaves a hole at its old rect
+    // that a single-control patch cannot repaint, so `geometryUnchanged` below always sends these to the full frame.
+    // Measured on a plain form: a drag went from probe+frame (~127 ms) to frame (~74 ms).
+    const patchPossible = id !== 'this' && prop !== 'Checked' && prop !== 'CheckState' && this.renderScale === 1
+      && !GeometryProps.has(prop);
     if (patchPossible) {
       let layout: Awaited<ReturnType<typeof describeLayout>>;
       try {
@@ -5310,6 +5456,16 @@ function removeToolStripItem(forest: ToolStripItemModel[], id: string): ToolStri
   }
   return out;
 }
+
+/**
+ * Properties whose edit MOVES or RESIZES something, so a dirty-region patch can never apply (the control leaves a
+ * hole at its old rect, and layout-affecting values reflow siblings). Used to skip the layout probe entirely for
+ * these edits — the probe is a full extra graph build whose only outcome would be "patch refused".
+ */
+const GeometryProps = new Set<string>([
+  'Location', 'Size', 'Bounds', 'ClientSize', 'Left', 'Top', 'Width', 'Height',
+  'Dock', 'Anchor', 'Padding', 'Margin', 'AutoSize', 'AutoSizeMode', 'Visible', 'TabIndex',
+]);
 
 /** Two layouts describe the same geometry (same ids at the same window rects) — patch-safety gate. */
 function sameLayout(a: LayoutControl[], b: LayoutControl[]): boolean {
@@ -5436,6 +5592,11 @@ ${cspMeta(webview, nonce)}
   table { width: 100%; border-collapse: collapse; }
   th { position: sticky; top: 0; background: var(--vscode-sideBarSectionHeader-background, #2a2a2a); text-align: left; font-weight: normal;
     padding: 4px 8px; border-bottom: 1px solid var(--vscode-panel-border, #333); }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  th.sortable:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0e70c0); outline-offset: -1px; }
+  th.sorted { color: var(--vscode-list-activeSelectionForeground, #fff); }
+  .sortmark { opacity: 0.8; }
   td { padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border, #2b2b2b); white-space: nowrap; }
   tr:hover td { background: var(--vscode-list-hoverBackground, #2a2d2e); }
   tr.sel td { background: var(--vscode-list-activeSelectionBackground, #094771); color: var(--vscode-list-activeSelectionForeground, #fff); }

@@ -715,6 +715,25 @@ export async function applyCompiledEdits(
   return fromCompiledRaw(raw);
 }
 
+/**
+ * 1.2.x — apply a batch of edits to the net48 engine's CACHED INTERPRETED graph and re-snapshot, instead of
+ * re-interpreting the whole buffer (~400 ms → ~15 ms on a real DevExpress form).
+ *
+ * `beforeSourceText` is the buffer the picture on screen was built from and `afterSourceText` the one just committed.
+ * The engine refuses (applied=false, empty png) unless its cached graph really is the "before" picture — the caller
+ * then falls back to a full interpreted render, which is always correct. So this can only ever be an optimization.
+ */
+export async function applyInterpretedEditsLive(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, edits: CompiledEdit[],
+  beforeSourceText: string, afterSourceText: string,
+  rootTypeName?: string, probeDirs?: string[], selectedTabs?: string[], renderScale?: number,
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'ApplyInterpretedEditsLive', designerFilePath, assemblyPath, edits, beforeSourceText, afterSourceText,
+    rootTypeName ?? null, probeDirs ?? null, selectedTabs ?? null, renderScale ?? 1);
+  return fromCompiledRaw(raw);
+}
+
 /** Remove field-backed controls from the net48 live instance + re-render. */
 export async function removeCompiledControls(
   engine: EngineHandle, designerFilePath: string, assemblyPath: string, ids: string[],

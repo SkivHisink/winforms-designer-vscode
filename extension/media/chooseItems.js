@@ -36,6 +36,34 @@
   var statusEl = document.getElementById('ciStatus');
 
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'; }); }
+
+  // Click a header to sort by it, click again to reverse — the columns Visual Studio's dialog sorts by.
+  var SORT_COLS = [
+    { key: 'name', label: 'chooseItems.col.name' },
+    { key: 'namespace', label: 'chooseItems.col.namespace' },
+    { key: 'assembly', label: 'chooseItems.col.assembly' },
+    { key: 'version', label: 'chooseItems.col.version' },
+    { key: 'directory', label: 'chooseItems.col.directory' },
+  ];
+  var sortCol = 'name';
+  var sortAsc = true;
+  // Versions sort by component, not as text — otherwise 10.0.0.0 lands before 2.0.0.0.
+  function cmpVersion(a, b) {
+    var x = String(a).split('.'), y = String(b).split('.');
+    for (var i = 0; i < Math.max(x.length, y.length); i++) {
+      var xi = parseInt(x[i], 10), yi = parseInt(y[i], 10);
+      if (isNaN(xi) || isNaN(yi)) return String(a).localeCompare(String(b));
+      if (xi !== yi) return xi - yi;
+    }
+    return 0;
+  }
+  function sortKeyOf(it, key) {
+    if (key === 'namespace') return it.namespace || '';
+    if (key === 'assembly') return it.assemblyName || '';
+    if (key === 'version') return it.version || '';
+    if (key === 'directory') return it.directory || (it.fromProject ? T('chooseItems.project') : '');
+    return it.name || '';
+  }
   function fqnOf(it) { return it.namespace ? it.namespace + '.' + it.name : it.name; }
   function showLoading(on) { loadingEl.style.display = on ? 'flex' : 'none'; tableEl.style.display = on ? 'none' : 'block'; }
   function setStatus() { if (statusEl) statusEl.textContent = targetTab ? T('chooseItems.status.tabTarget', { tab: targetTab }) : T('chooseItems.status.noTab'); }
@@ -50,9 +78,22 @@
       return !q || it.name.toLowerCase().indexOf(q) >= 0 ||
         (it.namespace || '').toLowerCase().indexOf(q) >= 0 || (it.assemblyName || '').toLowerCase().indexOf(q) >= 0;
     });
-    list.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    list.sort(function (a, b) {
+      var d = sortCol === 'version'
+        ? cmpVersion(sortKeyOf(a, sortCol), sortKeyOf(b, sortCol))
+        : String(sortKeyOf(a, sortCol)).localeCompare(String(sortKeyOf(b, sortCol)));
+      // Name breaks ties on every other column, so equal namespaces/assemblies still read alphabetically.
+      if (d === 0 && sortCol !== 'name') d = a.name.localeCompare(b.name);
+      return sortAsc ? d : -d;
+    });
     if (!list.length) { tableEl.innerHTML = '<div class="empty">' + esc(T('chooseItems.noMatching')) + '</div>'; return; }
-    var h = '<table><thead><tr><th class="chk"></th><th>' + esc(T('chooseItems.col.name')) + '</th><th>' + esc(T('chooseItems.col.namespace')) + '</th><th>' + esc(T('chooseItems.col.assembly')) + '</th><th>' + esc(T('chooseItems.col.version')) + '</th><th>' + esc(T('chooseItems.col.directory')) + '</th></tr></thead><tbody>';
+    var h = '<table><thead><tr><th class="chk"></th>' +
+      SORT_COLS.map(function (c) {
+        var active = sortCol === c.key;
+        return '<th class="sortable' + (active ? ' sorted' : '') + '" data-sort="' + c.key + '" role="columnheader" tabindex="0"' +
+          ' aria-sort="' + (active ? (sortAsc ? 'ascending' : 'descending') : 'none') + '">' +
+          esc(T(c.label)) + '<span class="sortmark" aria-hidden="true">' + (active ? (sortAsc ? ' ▲' : ' ▼') : '') + '</span></th>';
+      }).join('') + '</tr></thead><tbody>';
     list.forEach(function (it) {
       var fqn = fqnOf(it);
       h += '<tr data-fqn="' + esc(fqn) + '">' +
@@ -65,6 +106,22 @@
     });
     h += '</tbody></table>';
     tableEl.innerHTML = h;
+    var heads = tableEl.querySelectorAll('thead th.sortable');
+    for (var k = 0; k < heads.length; k++) {
+      (function (th) {
+        function apply() {
+          var key = th.getAttribute('data-sort');
+          if (sortCol === key) sortAsc = !sortAsc; else { sortCol = key; sortAsc = true; }
+          render();
+          // render() rebuilds the table, which destroys the focused header — so a keyboard user could sort once and
+          // then had to tab all the way back to reverse it. Put focus on the new header for the same column.
+          var again = tableEl.querySelector('thead th[data-sort="' + key + '"]');
+          if (again && again.focus) again.focus();
+        }
+        th.addEventListener('click', apply);
+        th.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(); } });
+      })(heads[k]);
+    }
     var rows = tableEl.querySelectorAll('tbody tr');
     for (var i = 0; i < rows.length; i++) { (function (r) { r.addEventListener('click', function () { selectRow(r); }); })(rows[i]); }
     var cbs = tableEl.querySelectorAll('tbody input[type=checkbox]');

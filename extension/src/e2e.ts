@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
+import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
@@ -1620,6 +1620,81 @@ async function main(): Promise<void> {
           if (!ilInterp.fallbackReason) throw new Error('net48: a fallback must carry a named reason (never silent)');
           if (ilInterp.png.length === 0) throw new Error('net48: a compiled fallback still renders a picture');
           console.log(`e2e: net48 INTERPRETED render verified — DerivedForm renders via the IR interpreter (base instantiated, VS model) surfacing inherited baseButton + current-source derivedButton with geometry parity to compiled; ImageListForm falls back (${ilInterp.fallbackReason}) with a picture + reason, never silent`);
+
+          // ---- 1.2.x INTERPRETED LIVE EDIT — the fast path behind a drag on a vendor form. Re-interpreting the whole
+          // buffer costs ~400 ms on a real DevExpress form; re-snapshotting the graph that is already live costs ~15 ms.
+          // The contract this leg pins is not the speed (unmeasurable in CI) but the EQUIVALENCE: the picture and the
+          // geometry the fast path produces must be what a full re-interpretation of the same buffer produces, and the
+          // engine must REFUSE whenever it cannot prove its cached graph is the "before" picture.
+          {
+            const movedSrc = derivedSrc.replace(
+              'this.derivedButton.Location = new System.Drawing.Point(',
+              'this.derivedButton.Location = new System.Drawing.Point(');
+            if (!/this\.derivedButton\.Location = new System\.Drawing\.Point\((\d+), (\d+)\);/.test(movedSrc))
+              throw new Error('net48 live-edit leg: derivedButton has no literal Location to move — fixture drifted');
+            const [, ox, oy] = /this\.derivedButton\.Location = new System\.Drawing\.Point\((\d+), (\d+)\);/.exec(movedSrc)!;
+            const nx = Number(ox) + 17;
+            const ny = Number(oy) + 23;
+            const afterSrc = movedSrc.replace(
+              `this.derivedButton.Location = new System.Drawing.Point(${ox}, ${oy});`,
+              `this.derivedButton.Location = new System.Drawing.Point(${nx}, ${ny});`);
+            if (afterSrc === movedSrc) throw new Error('net48 live-edit leg: could not build the edited buffer');
+
+            // Re-establish the "before" picture, then move the control through the live path.
+            await renderInterpretedWithLayout(n48, derivedForm, ctxFixtureDll, derivedSrc, 'SampleApp.DerivedForm');
+            const fast = await applyInterpretedEditsLive(n48, derivedForm, ctxFixtureDll,
+              [{ componentId: 'derivedButton', propName: 'Location', rawValue: `${nx}, ${ny}` }],
+              derivedSrc, afterSrc, 'SampleApp.DerivedForm');
+            if (fast.applied === false) throw new Error(`net48 live-edit: the fast path must apply a plain Location move — ${fast.diagnostics}`);
+            if (fast.png.length === 0) throw new Error('net48 live-edit: the fast path must return a picture');
+
+            // The authority: a FULL re-interpretation of the very same buffer. It really is one — a live edit marks
+            // the graph MUTATED, and a mutated graph is barred from answering any later render. (An earlier version of
+            // this leg rendered a different form first and called that an eviction; entries are keyed per form, so it
+            // silently compared the fast graph with itself and could not have caught a divergence.)
+            const slow = await renderInterpretedWithLayout(n48, derivedForm, ctxFixtureDll, afterSrc, 'SampleApp.DerivedForm');
+            if (slow.renderMode !== 'interpreted') throw new Error(`net48 live-edit: the authority render must interpret — got ${slow.renderMode}`);
+            // Compared BOTH ways: an extra control in the fast picture is just as much a divergence as a missing one.
+            if (slow.controls.length !== fast.controls.length)
+              throw new Error(`net48 live-edit: control count differs — full ${slow.controls.length} vs live ${fast.controls.length}`);
+            if (slow.width !== fast.width || slow.height !== fast.height
+              || slow.clientWidth !== fast.clientWidth || slow.clientHeight !== fast.clientHeight)
+              throw new Error(`net48 live-edit: frame differs — full ${slow.width}x${slow.height} (client ${slow.clientWidth}x${slow.clientHeight}) vs live ${fast.width}x${fast.height} (client ${fast.clientWidth}x${fast.clientHeight})`);
+            if ((slow.tray ?? []).length !== (fast.tray ?? []).length)
+              throw new Error('net48 live-edit: tray component count differs between the live picture and a full interpretation');
+            for (const c of slow.controls.filter((x) => !x.isRoot)) {
+              const f = fast.controls.find((x) => x.id === c.id);
+              if (!f) throw new Error(`net48 live-edit: the fast path lost ${c.id}`);
+              if (Math.abs(c.x - f.x) > 2 || Math.abs(c.y - f.y) > 2 || Math.abs(c.width - f.width) > 2 || Math.abs(c.height - f.height) > 2)
+                throw new Error(`net48 live-edit: fast path diverges for ${c.id} — full (${c.x},${c.y},${c.width}x${c.height}) vs live (${f.x},${f.y},${f.width}x${f.height})`);
+            }
+            const movedCtl = slow.controls.find((x) => x.id === 'derivedButton')!;
+            const beforeCtl = di.controls.find((x) => x.id === 'derivedButton')!;
+            if (movedCtl.x === beforeCtl.x && movedCtl.y === beforeCtl.y)
+              throw new Error('net48 live-edit: the edit did not move anything — the leg would prove nothing');
+
+            // The describe that every drag starts with (to read the control's current Location) must read the SAME
+            // cached graph — it used to build a throwaway interpretation of its own, which cost as much as a full
+            // render. Reuse is only allowed to be faster, never different: describing the rendered buffer must equal
+            // describing it with nothing cached.
+            await renderInterpretedWithLayout(n48, derivedForm, ctxFixtureDll, afterSrc, 'SampleApp.DerivedForm');
+            const fromCache = await describeInterpretedComponent(n48, derivedForm, ctxFixtureDll, afterSrc, 'derivedButton', 'SampleApp.DerivedForm');
+            await renderInterpretedWithLayout(n48, imageListForm, ctxFixtureDll, ilSrc, 'SampleApp.ImageListForm'); // evict
+            const fromScratch = await describeInterpretedComponent(n48, derivedForm, ctxFixtureDll, afterSrc, 'derivedButton', 'SampleApp.DerivedForm');
+            if (!fromCache || !fromScratch) throw new Error('net48 describe reuse: both describes must resolve derivedButton');
+            const pick = (d: typeof fromCache) => (d!.properties ?? []).map((p) => `${p.name}=${p.value}`).sort().join('|');
+            if (pick(fromCache) !== pick(fromScratch))
+              throw new Error('net48 describe reuse: describing from the cached graph differs from a fresh interpretation');
+            console.log(`e2e: 1.2.x interpreted DESCRIBE reuse verified — ${(fromCache.properties ?? []).length} properties identical whether read from the cached graph or a fresh interpretation`);
+
+            // FAIL-CLOSED: a "before" buffer the engine never certified must be refused, not guessed at.
+            const wrong = await applyInterpretedEditsLive(n48, derivedForm, ctxFixtureDll,
+              [{ componentId: 'derivedButton', propName: 'Location', rawValue: '1, 1' }],
+              afterSrc + '\n// a buffer this graph was never built from\n', afterSrc, 'SampleApp.DerivedForm');
+            if (wrong.applied !== false) throw new Error('net48 live-edit: an uncertified "before" buffer must be refused');
+            if (!wrong.diagnostics) throw new Error('net48 live-edit: a refusal must carry a reason');
+            console.log(`e2e: 1.2.x interpreted LIVE EDIT verified — a Location move applied to the cached interpreted graph matches a full re-interpretation control-for-control (derivedButton ${beforeCtl.x},${beforeCtl.y} → ${movedCtl.x},${movedCtl.y}); an uncertified buffer is refused (${wrong.diagnostics})`);
+          }
 
           // ---- IR coverage: TreeView (nodes are LOCAL variables, bottom-up) — the TreeNode interpreter subsystem must
           // render TreeForm interpreted (not fall back), proving local-variable node construction + Nodes.AddRange.

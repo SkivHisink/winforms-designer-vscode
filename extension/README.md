@@ -6,11 +6,38 @@ Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered
 
 > ✅ **1.2.0.** Requires **Windows x64** and the **.NET 10 Desktop Runtime (x64)**. Linux, macOS, WSL and Linux remote workspaces are not supported. The **.NET Framework 4.8 engine** (for `net4x` / DevExpress) renders your **live source** through an IR interpreter, with a disclosed compiled fallback for constructs it can't yet reproduce — see [Support matrix & limitations](#support-matrix--limitations).
 
-![The WinForms designer surface running inside VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/docs/images/canvas.png)
+![WinForms Designer for VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/main-picture.png)
 
-| Property grid | Toolbox |
-| :---: | :---: |
-| ![Visual Studio-style property grid](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/docs/images/properties.png) | ![Toolbox grouped into VS categories](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/docs/images/toolbox.png) |
+## Drag & drop, live
+
+Drop a control from the toolbox onto a **DevExpress** form and it lands where you put it — snaplines, selection
+handles and all — while the change goes back into `.Designer.cs` as a minimal edit.
+
+![Dragging a ComboBox from the toolbox onto a DevExpress form](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/demo-drag-drop.gif)
+
+## Screenshots
+
+**A DevExpress form, designed in VS Code.** The canvas is your live `.Designer.cs` replayed onto the real vendor
+controls; the property grid is the `XtraForm` itself, not a stand-in.
+
+![A DevExpress XtraForm in the designer, with its property grid](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/demo-devexpress.png)
+
+**Vendor smart tags** — the control's own designer verbs, read off the compiled type:
+
+![The XtraTabControl Tasks smart-tag panel on the canvas](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/demo-devexpress-xtratab-menu.png)
+
+**Choose Toolbox Items** — framework, project and browsed assemblies, with sortable columns:
+
+![Choose Toolbox Items dialog](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/demo-choose-toolbox-items.png)
+
+**Zoom, snaplines and your own controls** — a custom gauge painted by its real `OnPaint` at 214%:
+
+![A custom gauge control on the canvas at 214% zoom with snaplines](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/demo-zoomed.png)
+
+**A real production form** — hundreds of controls, a third-party suite, and an honest disclosure when a construct
+falls outside what the designer can replay:
+
+![A production line-of-business form open in the designer](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/real-window.png)
 
 ## Features
 
@@ -55,6 +82,7 @@ x64-only .NET Framework/vendor engine. There is intentionally no Linux/macOS/WSL
 | `winformsDesigner.autoOpenDesigner` | `true` | Open the designer automatically when a form's `.cs` becomes active. |
 | `winformsDesigner.assemblyPath` | `""` | Explicit path to the built control assembly. Leave empty for auto-discovery. |
 | `winformsDesigner.net48.probeDirectories` | `[]` | Extra directories the **net48** engine searches for control assemblies it can't otherwise find (e.g. a 3rd-party control SDK installed outside the project's output and not in the GAC). Applies after a **Reload Window**. |
+| `winformsDesigner.net48.releaseOnFocusLoss` | `false` | Release the **net48** build output whenever VS Code loses focus, so a build started in an **external Visual Studio** is never blocked by the open designer. Off by default: releasing unloads the preview, so the next edit waits for the assembly graph to load again. Builds started **inside** VS Code release the output on their own. |
 | `winformsDesigner.language` | `en` | UI language of the designer, dialogs and messages (English, Русский, 简体中文, Français, Deutsch, Español, हिन्दी). |
 
 ### Language

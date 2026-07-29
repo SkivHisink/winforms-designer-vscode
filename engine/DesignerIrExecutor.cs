@@ -268,10 +268,32 @@ namespace WinFormsDesigner.Engine
                         return null;
                     }
 
+                case IrLayoutCall l:
+                    {
+                        if (!TryTarget(l.TargetIsRoot, l.TargetName, inst, out var lt, out var lterr)) return lterr;
+                        var lperr = WalkInitPath(ref lt, l.TargetIsRoot ? "this" : l.TargetName, l.TargetPath, "layout call");
+                        if (lperr != null) return lperr;
+                        if (lt is not Control lc) return InitTargetName(l.TargetIsRoot ? "this" : l.TargetName, l.TargetPath) + " is not a Control";
+                        string lname = l.Op == IrLayoutOp.Suspend ? "SuspendLayout" : l.Op == IrLayoutOp.Resume ? "ResumeLayout" : "PerformLayout";
+                        // The SOURCE arity picks the overload: `ResumeLayout()` and `ResumeLayout(bool)` are distinct
+                        // declarations, and a type that hides only one of them must not be replayed through the other.
+                        var lsig = l.Op == IrLayoutOp.Resume && l.HasArg ? new[] { typeof(bool) } : Type.EmptyTypes;
+                        var lm = LayoutMember(lc.GetType(), lname, lsig);
+                        if (lm == null) return lname + " on " + lc.GetType().Name + " does not resolve to a Control layout member";
+                        // A receiver reached through hops has an unknown static type, so a vendor member HIDING the
+                        // framework one cannot be shown to be what C# bound — accept only the framework member there.
+                        if (l.TargetPath.Count > 0 && lm.DeclaringType != typeof(Control))
+                            return lname + " through " + InitTargetName(l.TargetIsRoot ? "this" : l.TargetName, l.TargetPath) + " resolves to a hiding member whose binding is unprovable";
+                        lm.Invoke(lc, l.Op == IrLayoutOp.Resume && l.HasArg ? new object[] { l.Arg } : Array.Empty<object>());
+                        return null;
+                    }
+
                 case IrBeginInit b:
                     {
                         if (!inst.TryGetValue(b.TargetName, out var o)) return "BeginInit unknown target " + b.TargetName;
-                        if (o is not ISupportInitialize si) return b.TargetName + " is not ISupportInitialize";
+                        var berr = WalkInitPath(ref o, b.TargetName, b.TargetPath, "BeginInit");
+                        if (berr != null) return berr;
+                        if (o is not ISupportInitialize si) return InitTargetName(b.TargetName, b.TargetPath) + " is not ISupportInitialize";
                         si.BeginInit();
                         beganInit.Add(o);
                         return null;
@@ -279,10 +301,18 @@ namespace WinFormsDesigner.Engine
                 case IrEndInit e:
                     {
                         if (!inst.TryGetValue(e.TargetName, out var o)) return "EndInit unknown target " + e.TargetName;
-                        if (o is not ISupportInitialize si) return e.TargetName + " is not ISupportInitialize";
+                        var eerr = WalkInitPath(ref o, e.TargetName, e.TargetPath, "EndInit");
+                        if (eerr != null) return eerr;
+                        if (o is not ISupportInitialize si) return InitTargetName(e.TargetName, e.TargetPath) + " is not ISupportInitialize";
                         // EndInit must match a pending BeginInit on the SAME instance (LIFO not required by WinForms, but
-                        // the target must actually be open) — fail closed on a stray EndInit.
-                        if (!beganInit.Remove(o)) return "EndInit without matching BeginInit for " + e.TargetName;
+                        // the target must actually be open) — fail closed on a stray EndInit. A sub-object reached through
+                        // TargetPath must therefore be the SAME instance its BeginInit saw: a hop whose getter hands out a
+                        // fresh object each read is refused here instead of silently leaving the first one half-open.
+                        // Matched by REFERENCE, never by Equals: List.Remove would consult the target's own (vendor,
+                        // overridable) equality, so a wrapper that declares two distinct instances equal could close the
+                        // bracket on one object while the other stays half-initialized — and the comparison itself would
+                        // run vendor code the designer statement never invokes.
+                        if (!RemoveByReference(beganInit, o)) return "EndInit without matching BeginInit for " + InitTargetName(e.TargetName, e.TargetPath);
                         si.EndInit();
                         return null;
                     }
@@ -506,6 +536,130 @@ namespace WinFormsDesigner.Engine
             if (inst.TryGetValue(name, out target!)) return true;
             target = null!; err = "unknown target " + name; return false;
         }
+
+        /// <summary>Resolve an ISupportInitialize/layout target's optional sub-object hops (`this.textEdit1.Properties`,
+        /// `this.splitContainer1.Panel1`). Any missing or null hop is a hard statement failure (→ fallback), never a
+        /// skipped call: a vendor editor left un-bracketed can finalize its layout differently from the compiled form.
+        /// <para>Resolved through CLR REFLECTION rather than TypeDescriptor. These hops select an object that then
+        /// receives a real lifecycle/layout call, so the object must be the one the C# expression denotes — a
+        /// synthetic <c>ICustomTypeDescriptor</c>/<c>TypeDescriptionProvider</c> property is a design-time projection
+        /// that need not correspond to any CLR member. (IrSetProperty deliberately keeps its TypeDescriptor walk: it
+        /// mirrors what the property grid writes.)</para>
+        /// <para>A hop hidden by `new` in a derived type is the DevExpress editor pattern — `TextEdit.Properties`
+        /// redeclares `BaseEdit.Properties` with a narrower type. The MOST-DERIVED declaration is taken, which is what
+        /// C# binds because the front-end only represents these hops for type-certain fields (declared type ==
+        /// constructed type); an uncertain field is refused there, before any getter runs.</para></summary>
+        private static string? WalkInitPath(ref object target, string name, List<string>? path, string op)
+        {
+            if (path == null) return null;
+            for (int i = 0; i < path.Count; i++)
+            {
+                string hop = path[i];
+                // Hop 0 starts from a type-certain field (or the root), so the instance's most-derived declaration is
+                // the one C# bound. Deeper hops start from an object whose STATIC type this IR never recorded, so they
+                // are only replayed when the name is declared exactly once in the hierarchy — where most-derived and
+                // any-derived are the same member and the choice cannot be wrong.
+                var p = MostDerived(target.GetType(), hop, requireUnique: i > 0);
+                if (p == null) return op + ": no unambiguous public property " + hop + " on " + target.GetType().Name;
+                var next = p.GetValue(target);
+                if (next == null) return op + ": null intermediate at " + name + "." + hop;
+                target = next;
+            }
+            return null;
+        }
+
+        /// <summary>The most-derived readable, non-indexed instance property with this name, requiring a PUBLIC getter
+        /// (a public property may declare a private getter, which the equivalent C# expression could not call). With
+        /// <paramref name="requireUnique"/>, refuse when more than one type in the hierarchy declares the name.</summary>
+        private static System.Reflection.PropertyInfo? MostDerived(Type t, string name, bool requireUnique)
+        {
+            System.Reflection.PropertyInfo? best = null;
+            int declarations = 0;
+            for (var cur = t; cur != null; cur = cur.BaseType)
+            {
+                var p = cur.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (p == null) continue;
+                declarations++;
+                if (best == null)
+                {
+                    if (p.GetIndexParameters().Length != 0) return null;
+                    if (p.GetGetMethod(nonPublic: false) == null) return null;
+                    best = p;
+                    if (!requireUnique) break;
+                }
+            }
+            return requireUnique && declarations > 1 ? null : best;
+        }
+
+        /// <summary>A public, non-generic, void instance method whose parameters are exactly this signature — no
+        /// optional parameter, params array or by-ref, each of which would let a call with these arguments bind here
+        /// while meaning something else.</summary>
+        private static bool IsExactLayoutSignature(MethodInfo m, Type[] signature)
+        {
+            if (!m.IsPublic || m.IsGenericMethodDefinition || m.ReturnType != typeof(void)) return false;
+            var ps = m.GetParameters();
+            if (ps.Length != signature.Length) return false;
+            for (int i = 0; i < ps.Length; i++)
+            {
+                if (ps[i].ParameterType != signature[i] || ps[i].IsOptional || ps[i].ParameterType.IsByRef) return false;
+                if (ps[i].IsDefined(typeof(ParamArrayAttribute), false)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Whether a call with this many arguments could bind to <paramref name="m"/> — counting optional
+        /// parameters and a trailing params array, and treating any generic method as a possible target.</summary>
+        private static bool CouldAcceptArgCount(MethodInfo m, int argCount)
+        {
+            if (m.IsGenericMethodDefinition) return true;
+            var ps = m.GetParameters();
+            bool hasParamsArray = ps.Length > 0 && ps[ps.Length - 1].IsDefined(typeof(ParamArrayAttribute), false);
+            int required = ps.Count(p => !p.IsOptional) - (hasParamsArray ? 1 : 0);
+            return argCount >= required && (hasParamsArray || argCount <= ps.Length);
+        }
+
+        /// <summary>Remove one pending-init entry by REFERENCE (never <c>Equals</c>), keeping multiset behavior so a
+        /// repeated BeginInit on the same instance still needs its own EndInit.</summary>
+        private static bool RemoveByReference(List<object> pending, object target)
+        {
+            for (int i = 0; i < pending.Count; i++)
+            {
+                if (ReferenceEquals(pending[i], target)) { pending.RemoveAt(i); return true; }
+            }
+            return false;
+        }
+
+        /// <summary>The layout member a call on this instance binds to — the MOST-DERIVED declaration, because a
+        /// vendor control may HIDE the framework method with `new` (DevExpress's XtraForm hides SuspendLayout) and the
+        /// compiled form runs the vendor one. Calling `Control`'s instead would replay a different method than the
+        /// build did. The declaration must still live inside the Control hierarchy, and the front-end only emits these
+        /// calls for `this` or a type-certain field, so the instance's most-derived member is the one C# bound.</summary>
+        private static MethodInfo? LayoutMember(Type t, string name, Type[] signature)
+        {
+            for (var cur = t; cur != null; cur = cur.BaseType)
+            {
+                // C# member lookup stops at the FIRST type declaring the name — base declarations are then not
+                // candidates at all. Mirror that, and only accept a declaration whose identity is unambiguous:
+                // one public, non-generic, void member matching the source arity EXACTLY. An optional parameter, a
+                // params array, a generic overload, or an accessible non-public hider all mean the call may bind
+                // somewhere this executor cannot reach, so the honest answer is to fail closed.
+                var declared = cur.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                    .Where(m => m.Name == name).ToList();
+                if (declared.Count == 0) continue;
+                var exact = declared.Where(m => IsExactLayoutSignature(m, signature)).ToList();
+                if (exact.Count != 1) return null;
+                // Overloading is fine (Control itself declares ResumeLayout() and ResumeLayout(bool)) as long as no
+                // OTHER declaration could also take this call — a generic one, or one reachable through optional
+                // parameters / a params array, might be what C# picked.
+                if (declared.Any(m => m != exact[0] && CouldAcceptArgCount(m, signature.Length))) return null;
+                if (!typeof(Control).IsAssignableFrom(exact[0].DeclaringType)) return null;
+                return exact[0];
+            }
+            return null;
+        }
+
+        private static string InitTargetName(string name, List<string>? path) =>
+            path == null || path.Count == 0 ? name : name + "." + string.Join(".", path);
 
         private static bool TryNumber(IrNumber n, out object? value, out string? err)
         {

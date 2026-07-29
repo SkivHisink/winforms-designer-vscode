@@ -16,7 +16,17 @@ Render, click-select, edit and lay out `.Designer.cs` forms — live — without
 
 <div align="center">
 
-![The WinForms designer surface running inside VS Code](docs/images/canvas.png)
+![WinForms Designer for VS Code](pictures/main-picture.png)
+
+</div>
+
+## 🎬 Drag & drop, live
+
+Drop a control from the toolbox onto a **DevExpress** form and it lands where you put it — snaplines, selection handles and all — while the change goes back into `.Designer.cs` as a minimal edit.
+
+<div align="center">
+
+![Dragging a ComboBox from the toolbox onto a DevExpress form](pictures/demo-drag-drop.gif)
 
 </div>
 
@@ -34,15 +44,27 @@ The rendering is real: a headless .NET host actually instantiates your controls 
 
 ## 📸 Screenshots
 
-| Property grid | Toolbox |
-| :---: | :---: |
-| ![Visual Studio-style property grid](docs/images/properties.png) | ![Toolbox grouped into VS categories](docs/images/toolbox.png) |
+**A DevExpress form, designed in VS Code.** The canvas is your live `.Designer.cs` replayed onto the real vendor
+controls; the property grid on the left is the `XtraForm` itself, not a stand-in.
 
-**Choose Toolbox Items** — browse framework and project controls, just like Visual Studio:
+![A DevExpress XtraForm in the designer, with its property grid](pictures/demo-devexpress.png)
 
-![Choose Toolbox Items dialog](docs/images/choose-items.png)
+**Vendor smart tags** — the control's own designer verbs, read off the compiled type:
 
-> 🎬 _Animated GIFs of the live edit/drag/resize loop are on the way (see [issues](https://github.com/SkivHisink/winforms-designer-vscode/issues))._
+![The XtraTabControl Tasks smart-tag panel on the canvas](pictures/demo-devexpress-xtratab-menu.png)
+
+**Choose Toolbox Items** — framework, project and browsed assemblies, with sortable columns:
+
+![Choose Toolbox Items dialog](pictures/demo-choose-toolbox-items.png)
+
+**Zoom, snaplines and your own controls** — a custom gauge painted by its real `OnPaint` at 214%:
+
+![A custom gauge control on the canvas at 214% zoom with snaplines](pictures/demo-zoomed.png)
+
+**A real production form** — hundreds of controls, a third-party suite, and an honest disclosure when a construct
+falls outside what the designer can replay:
+
+![A production line-of-business form open in the designer](pictures/real-window.png)
 
 ## ✨ Features
 
@@ -157,6 +179,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev loop, tests, and arc
 | `winformsDesigner.autoOpenDesigner` | `true` | Open the designer automatically when a form's `.cs` becomes active. |
 | `winformsDesigner.assemblyPath` | `""` | Explicit path to the built control assembly. Leave empty for auto-discovery; set it for multi-target / custom `OutputPath` / not-yet-built projects. |
 | `winformsDesigner.net48.probeDirectories` | `[]` | Extra directories the **net48** engine searches for control assemblies it can't otherwise find — e.g. a 3rd-party control SDK installed outside the project's output and not in the GAC. The project's own output is always searched, so most projects need nothing here. Applies after a **Reload Window**. |
+| `winformsDesigner.net48.releaseOnFocusLoss` | `false` | Release the **net48** build output whenever VS Code loses focus, so a build started in an **external Visual Studio** is never blocked by the open designer. Off by default: releasing unloads the preview, so the next edit waits for the assembly graph to load again (seconds, on a DevExpress form). Builds started **inside** VS Code release the output on their own, and **Release .NET Framework Assembly (for Rebuild)** remains available on demand. |
 | `winformsDesigner.language` | `"en"` | UI language of the designer, dialogs and messages: `en` English, `ru` Русский, `zh-cn` 简体中文, `fr` Français, `de` Deutsch, `es` Español, `hi` हिन्दी. Chosen **here** (window scope) — it does **not** follow the VS Code display language. |
 
 ### Language
@@ -206,8 +229,8 @@ See the **[release roadmap](ROADMAP.md)** for the shipped 1.0 baseline, the 1.1 
 project-integration milestone, the verified 1.2 data-bound form workflow, the later 1.x milestones through
 enterprise localization in 1.5.0, and the extensible design-time host planned for 2.0.0.
 
-The safety core has fast C# and TypeScript unit coverage; the webview UI is validated headless (532 checks
-across 137 tests), startup/render latency is guarded by a repeatable performance baseline, and activation,
+The safety core has fast C# and TypeScript unit coverage; the webview UI is validated headless (539 checks
+across 139 tests), startup/render latency is guarded by a repeatable performance baseline, and activation,
 engine startup, capabilities, and lifecycle diagnostics are smoke-tested in the real VS Code Extension Host on
 VS Code 1.84 and current Stable. Found a rough edge? Please [file an issue](https://github.com/SkivHisink/winforms-designer-vscode/issues).
 

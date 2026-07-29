@@ -705,9 +705,13 @@ namespace WinFormsDesigner.Engine.Net48
             if (string.IsNullOrWhiteSpace(assemblyPath) || !File.Exists(assemblyPath)) return false;
             try
             {
+                // PEEK, never create: discarding is a teardown operation, and a domain that does not exist holds
+                // nothing to discard. Creating one here also raced the output release a closing designer starts
+                // right after, leaving a brand-new empty domain behind the release had just unloaded.
+                var worker = _domains.PeekWorker(assemblyPath);
+                if (worker == null) return false;
                 string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-                var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
-                return worker.DiscardLive(assemblyPath, typeName);
+                return worker.DiscardLive(assemblyPath, typeName, designerFilePath);
             }
             catch { return false; }
         }
@@ -790,7 +794,37 @@ namespace WinFormsDesigner.Engine.Net48
             // crosses the boundary. RootTypeResolver/SourceMetadata already parse here.
             // selectedTabs () = transient "hostField=pageField" tab overrides, re-supplied each render.
             var doc = DesignerIrBuilder.Build(sourceText ?? "");
-            return worker.RenderInterpretedWithLayout(designerFilePath, assemblyPath, doc, typeName, width, height, selectedTabs, renderScale);
+            return worker.RenderInterpretedWithLayout(designerFilePath, assemblyPath, doc, typeName, width, height,
+                selectedTabs, renderScale, SourceKey(sourceText));
+        }
+
+        /// <summary>1.2.x — the buffer identity the child domain uses to decide whether its cached interpreted graph is
+        /// still the picture of THIS text (see RenderWorker.ApplyInterpretedEdits). A content hash, so it survives the
+        /// AppDomain boundary cheaply and can never be confused with a different buffer of the same length.</summary>
+        private static string SourceKey(string? sourceText)
+        {
+            if (sourceText == null) return "";
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                return Convert.ToBase64String(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(sourceText)));
+        }
+
+        /// <summary>
+        /// 1.2.x — apply designer-originated property edits to the LIVE interpreted graph and re-snapshot, skipping the
+        /// full re-interpretation of the buffer (~400 ms → ~12 ms on a DevExpress form, which is the difference between
+        /// a drag that lands instantly and one that visibly lags).
+        ///
+        /// <paramref name="beforeSourceText"/> is the buffer the picture currently shows and <paramref name="afterSourceText"/>
+        /// the one the host has just committed. The worker refuses unless its cached graph really is the "before"
+        /// picture; the host then falls back to <see cref="RenderInterpretedWithLayout"/>, which is always correct.
+        /// </summary>
+        public RenderLayoutResult ApplyInterpretedEditsLive(string designerFilePath, string assemblyPath,
+            PropEdit[] edits, string beforeSourceText, string afterSourceText, string? rootTypeName = null,
+            string[]? probeDirs = null, string[]? selectedTabs = null, int renderScale = 1)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.ApplyInterpretedEdits(designerFilePath, assemblyPath, typeName, edits ?? Array.Empty<PropEdit>(),
+                SourceKey(beforeSourceText), SourceKey(afterSourceText), selectedTabs, renderScale, 0, 0);
         }
 
         /// <summary>describe one component of the INTERPRETED live-source instance so the
@@ -806,7 +840,7 @@ namespace WinFormsDesigner.Engine.Net48
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
             var doc = DesignerIrBuilder.Build(sourceText ?? "");
             var desc = worker.DescribeInterpretedComponent(designerFilePath, assemblyPath, doc, typeName,
-                string.IsNullOrEmpty(componentId) ? "this" : componentId, width, height);
+                string.IsNullOrEmpty(componentId) ? "this" : componentId, width, height, SourceKey(sourceText));
             if (desc != null) SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
             return desc;
         }
