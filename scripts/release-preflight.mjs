@@ -12,6 +12,8 @@ const manifest = readJson(path.join(extensionDir, 'package.json'));
 const lock = readJson(path.join(extensionDir, 'package-lock.json'));
 const globalJson = readJson(path.join(repo, 'global.json'));
 const changelog = fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8');
+const readme = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
+const marketplaceReadme = fs.readFileSync(path.join(extensionDir, 'README.md'), 'utf8');
 const engineProject = fs.readFileSync(path.join(repo, 'engine', 'Engine.csproj'), 'utf8');
 const ciWorkflow = fs.readFileSync(path.join(repo, '.github', 'workflows', 'ci.yml'), 'utf8');
 const releaseWorkflow = fs.readFileSync(path.join(repo, '.github', 'workflows', 'release.yml'), 'utf8');
@@ -34,6 +36,11 @@ expect(manifest.capabilities?.virtualWorkspaces?.supported === false,
 expect(manifest.extensionKind?.includes('workspace'), 'extensionKind must include workspace');
 expect(new RegExp(`^##\\s*\\[${version.replace(/\./g, '\\.')}\\]`, 'm').test(changelog),
   `CHANGELOG.md has no ## [${version}] section`);
+const [major, minor] = version.split('.');
+expect(readme.includes(`Version ${major}.${minor}`) && readme.includes(`version-${major}.${minor}-brightgreen.svg`),
+  `README.md version badge must advertise ${major}.${minor}`);
+expect(marketplaceReadme.includes(`**${version}.**`),
+  `extension/README.md release banner must advertise ${version}`);
 expect(/^10\./.test(globalJson.sdk?.version ?? ''),
   `global.json must pin the .NET 10 SDK for v${version}, got ${JSON.stringify(globalJson.sdk?.version)}`);
 expect(/<TargetFramework>net10\.0-windows<\/TargetFramework>/.test(engineProject),
@@ -76,6 +83,10 @@ for (const [name, workflow] of [['CI', ciWorkflow], ['Release', releaseWorkflow]
   expect(workflow.includes('run: npm run mojibake:scan'),
     `${name} workflow must run the mojibake scan (a CP1251/Latin-1 round trip passes every other gate)`);
   expect(workflow.includes('10.0.x'), `${name} workflow must install the .NET 10 SDK`);
+  expect(workflow.includes('--target win32-x64'), `${name} workflow must package win32-x64`);
+  expect(workflow.includes('--target win32-arm64'), `${name} workflow must package win32-arm64`);
+  expect(workflow.includes('ExpectedRuntimeIdentifier win-x64'), `${name} workflow must assert the win-x64 engine RID`);
+  expect(workflow.includes('ExpectedRuntimeIdentifier win-arm64'), `${name} workflow must assert the win-arm64 engine RID`);
 }
 
 const explicitTag = process.argv.find((arg) => arg.startsWith('--tag='))?.slice('--tag='.length);

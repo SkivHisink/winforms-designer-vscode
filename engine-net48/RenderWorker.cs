@@ -33,6 +33,10 @@ namespace WinFormsDesigner.Engine.Net48
             public Type Type = default!;
             public Dictionary<object, string> FieldNames = default!;
             public Dictionary<string, Control> ByField = default!;
+            public HashSet<string> AmbiguousIds = default!;
+            /// <summary>Per-instance visual-inheritance ownership. Every editable route consults this map; a missing
+            /// entry is <see cref="InheritedOwnershipPolicy.Unresolved"/> and therefore fails closed.</summary>
+            public Dictionary<object, string> Ownership = default!;
             /// <summary>1.0.0 fail-closed — identity of THIS compiled instance, stamped once at construction and
             /// reported to the host on every response (<see cref="RenderLayoutResult.LiveInstanceId"/>).
             ///
@@ -260,9 +264,23 @@ namespace WinFormsDesigner.Engine.Net48
                     var fieldNames = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
                     foreach (var kv in exec.Instances)
                         if (kv.Key.Length != 0 && !fieldNames.ContainsKey(kv.Value)) fieldNames[kv.Value] = kv.Key;
-                    var byField = new Dictionary<string, Control>(StringComparer.Ordinal);
-                    foreach (var kv in fieldNames)
-                        if (kv.Key is Control c && !byField.ContainsKey(kv.Value)) byField[kv.Value] = c;
+                    var byField = BuildControlIndex(fieldNames, out var ambiguousIds);
+                    var ownership = new Dictionary<object, string>(ReferenceEqualityComparer.Instance)
+                    {
+                        [rootCtl] = InheritedOwnershipPolicy.Root,
+                    };
+                    foreach (var kv in exec.Instances)
+                    {
+                        if (ReferenceEquals(kv.Value, rootCtl)) continue;
+                        string value = InheritedOwnershipPolicy.Unresolved;
+                        if (exec.Origins.TryGetValue(kv.Key, out var origin))
+                        {
+                            if (origin == IrOrigin.DeclaredInCurrentSource) value = InheritedOwnershipPolicy.CurrentSource;
+                            else if (origin == IrOrigin.Inherited) value = InheritedOwnershipPolicy.Inherited;
+                            else if (origin == IrOrigin.Root) value = InheritedOwnershipPolicy.Root;
+                        }
+                        if (!ownership.ContainsKey(kv.Value)) ownership[kv.Value] = value;
+                    }
 
                     var live = new LiveDesign
                     {
@@ -271,6 +289,8 @@ namespace WinFormsDesigner.Engine.Net48
                         Type = rootCtl.GetType(),
                         FieldNames = fieldNames,
                         ByField = byField,
+                        AmbiguousIds = ambiguousIds,
+                        Ownership = ownership,
                         BuildId = ComputeBuildId(assemblyPath),
                         Mode = "interpreted",
                         DesignedTypeName = plan.DesignedTypeName,
@@ -581,9 +601,66 @@ namespace WinFormsDesigner.Engine.Net48
             // unit-tested InterpretedDescribeResolver; a null result means the id is inherited/unknown → the panel stays
             // unavailable. The one net48-only step — turning the resolved target into a ComponentDesc through the real
             // TypeDescriptor — stays here.
-            var t = InterpretedDescribeResolver.Resolve(plan.Execution!, plan.DesignedTypeName, root, componentId);
-            if (t == null) return null;
-            return CompiledDescriber.Describe(t.Target, t.IsRoot ? "this" : componentId, t.Name, t.IsRoot, t.Parent, t.Siblings, root);
+            var exec = plan.Execution!;
+            componentId = componentId ?? "";
+            bool isRoot = componentId == "this" || componentId.Length == 0;
+            var resolved = InterpretedDescribeResolver.Resolve(exec, plan.DesignedTypeName, root, componentId);
+            IComponent? target = resolved?.Target;
+            string name = resolved?.Name ?? (isRoot ? InterpretedDescribeResolver.ShortName(plan.DesignedTypeName) : componentId);
+            string? parent = resolved?.Parent;
+            var siblings = resolved?.Siblings;
+            if (target == null)
+            {
+                object? value = null;
+                if (isRoot) value = root;
+                else exec.Instances.TryGetValue(componentId, out value);
+                target = value as IComponent;
+                if (target == null) return null;
+                siblings = CurrentSourceSiblings(exec, target);
+                parent = isRoot ? null : (target is Control ctl
+                    ? InterpretedIdentityParent(ctl, root, exec, plan.DesignedTypeName)
+                    : null);
+            }
+
+            string ownership = InterpretedOwnership(exec, root, componentId, target);
+            var desc = CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent,
+                siblings ?? new List<KeyValuePair<string, IComponent>>(), root);
+            return StampDescription(desc, ownership, target);
+        }
+
+        private static List<KeyValuePair<string, IComponent>> CurrentSourceSiblings(IrExecutionResult exec, IComponent target)
+        {
+            var siblings = new List<KeyValuePair<string, IComponent>>();
+            foreach (var kv in exec.Instances)
+            {
+                if (kv.Key.Length == 0 || ReferenceEquals(kv.Value, target)) continue;
+                if (exec.Origins.TryGetValue(kv.Key, out var origin)
+                    && origin == IrOrigin.DeclaredInCurrentSource && kv.Value is IComponent component)
+                    siblings.Add(new KeyValuePair<string, IComponent>(kv.Key, component));
+            }
+            siblings.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+            return siblings;
+        }
+
+        private static string? InterpretedIdentityParent(Control control, Control root, IrExecutionResult exec, string designedTypeName)
+        {
+            for (Control? parent = control.Parent; parent != null; parent = parent.Parent)
+            {
+                if (ReferenceEquals(parent, root)) return InterpretedDescribeResolver.ShortName(designedTypeName);
+                foreach (var kv in exec.Instances)
+                    if (kv.Key.Length != 0 && ReferenceEquals(kv.Value, parent)) return kv.Key;
+            }
+            return null;
+        }
+
+        private static string InterpretedOwnership(IrExecutionResult exec, Control root, string componentId, IComponent target)
+        {
+            if (ReferenceEquals(target, root) || componentId == "this" || componentId.Length == 0)
+                return InheritedOwnershipPolicy.Root;
+            if (!exec.Origins.TryGetValue(componentId, out var origin)) return InheritedOwnershipPolicy.Unresolved;
+            if (origin == IrOrigin.DeclaredInCurrentSource) return InheritedOwnershipPolicy.CurrentSource;
+            if (origin == IrOrigin.Inherited) return InheritedOwnershipPolicy.Inherited;
+            return origin == IrOrigin.Root ? InheritedOwnershipPolicy.Root : InheritedOwnershipPolicy.Unresolved;
         }
 
         /// <summary>the INTERPRETED analogue of HitTestTab: which tab page's header is under the
@@ -821,9 +898,8 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                bool isRoot = componentId == "this" || componentId.Length == 0;
-                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
-                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                if (!TryResolveEditableControl(live, componentId, out Control? owner, out string ownershipReason))
+                    return Note(live, ownershipReason);
                 try
                 {
                     // Resolve the collection property via TypeDescriptor (mirrors TryApply/TryReset): its indexer returns
@@ -909,9 +985,8 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                bool isRoot = componentId == "this" || componentId.Length == 0;
-                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
-                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                if (!TryResolveEditableControl(live, componentId, out Control? owner, out string ownershipReason))
+                    return Note(live, ownershipReason);
                 try
                 {
                     // TypeDescriptor indexer → most-derived descriptor (never AmbiguousMatchException on a `new`-shadowed
@@ -948,8 +1023,9 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                if (!(ResolveLiveTarget(live, componentId) is ImageList target))
-                    return Note(live, "no ImageList '" + componentId + "'");
+                if (!TryResolveEditableTarget(live, componentId, out IComponent? editableTarget, out string ownershipReason))
+                    return Note(live, ownershipReason);
+                if (!(editableTarget is ImageList target)) return Note(live, "no ImageList '" + componentId + "'");
                 var decoded = ImageListSerializer.Deserialize(imageStreamBase64 ?? "");
                 if (!decoded.Ok) return Note(live, "could not decode ImageList: " + decoded.Reason);
                 try
@@ -985,9 +1061,8 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                bool isRoot = componentId == "this" || componentId.Length == 0;
-                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
-                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                if (!TryResolveEditableControl(live, componentId, out Control? owner, out string ownershipReason))
+                    return Note(live, ownershipReason);
                 try
                 {
                     // Resolve the collection via TypeDescriptor (mirrors SetCollectionLive): its indexer returns the
@@ -1073,10 +1148,16 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                bool isRoot = componentId == "this" || componentId.Length == 0;
-                Control? owner = isRoot ? live.Root : (live.ByField.TryGetValue(componentId, out var c) ? c : null);
-                if (owner == null) return Note(live, "no control '" + componentId + "'");
+                if (!TryResolveEditableControl(live, componentId, out Control? owner, out string ownershipReason))
+                    return Note(live, ownershipReason);
                 if (!(owner is ToolStrip strip)) return Note(live, "'" + componentId + "' is not a ToolStrip");
+                foreach (ToolStripItem existing in EnumerateToolStripItems(strip.Items))
+                {
+                    string existingOwnership = OwnershipOf(live, existing);
+                    if (!InheritedOwnershipPolicy.IsEditable(existingOwnership))
+                        return Note(live, "cannot update items on " + componentId + ": "
+                            + InheritedOwnershipPolicy.ReadOnlyReason(existingOwnership));
+                }
                 try
                 {
                     // Phase 1 (pure): build the per-collection reconciliation plans — reuse existing item objects,
@@ -1091,7 +1172,11 @@ namespace WinFormsDesigner.Engine.Net48
                     // Phase 2 (apply): register newly-built items in the field map (tray/describe parity + stable
                     // matching on the next live edit), rebuild each collection to its exact order (Clear detaches
                     // without disposing, so reused items keep their props), dispose deletions, apply deferred renames.
-                    foreach (var reg in registers) live.FieldNames[reg.Key] = reg.Value;
+                    foreach (var reg in registers)
+                    {
+                        live.FieldNames[reg.Key] = reg.Value;
+                        live.Ownership[reg.Key] = InheritedOwnershipPolicy.CurrentSource;
+                    }
                     foreach (var p in plans)
                     {
                         // Prune each deletion's WHOLE subtree from the field map BEFORE disposing it: a deleted
@@ -1181,9 +1266,20 @@ namespace WinFormsDesigner.Engine.Net48
         private static void RemoveItemFieldEntries(ToolStripItem item, LiveDesign live)
         {
             live.FieldNames.Remove(item);
+            live.Ownership.Remove(item);
             if (item is ToolStripDropDownItem ddi)
                 foreach (ToolStripItem child in ddi.DropDownItems)
                     RemoveItemFieldEntries(child, live);
+        }
+
+        private static IEnumerable<ToolStripItem> EnumerateToolStripItems(ToolStripItemCollection items)
+        {
+            foreach (ToolStripItem item in items)
+            {
+                yield return item;
+                if (item is ToolStripDropDownItem dropDown && dropDown.HasDropDownItems)
+                    foreach (var child in EnumerateToolStripItems(dropDown.DropDownItems)) yield return child;
+            }
         }
 
         /// <summary>The 10 item types a NEW item may be constructed as — the same allowlist the net9 editor gates adds
@@ -1222,14 +1318,32 @@ namespace WinFormsDesigner.Engine.Net48
                 var notes = new List<string>();
                 foreach (var id in ids)
                 {
-                    if (live.ByField.TryGetValue(id, out var ctl) && ctl.Parent != null)
+                    if (TryResolveEditableControl(live, id ?? "", out Control? ctl, out string ownershipReason)
+                        && !ReferenceEquals(ctl, live.Root) && ctl.Parent != null)
                     {
+                        var subtree = new List<Control>();
+                        Collect(ctl, subtree);
+                        var blocked = subtree.FirstOrDefault(child => live.FieldNames.ContainsKey(child)
+                            && !InheritedOwnershipPolicy.IsEditable(OwnershipOf(live, child)));
+                        if (blocked != null)
+                        {
+                            notes.Add("cannot remove '" + id + "': "
+                                + InheritedOwnershipPolicy.ReadOnlyReason(OwnershipOf(live, blocked)));
+                            continue;
+                        }
                         ctl.Parent.Controls.Remove(ctl);
-                        live.ByField.Remove(id);
-                        live.FieldNames.Remove(ctl);
+                        foreach (var child in subtree)
+                        {
+                            if (live.FieldNames.TryGetValue(child, out var childId))
+                            {
+                                live.ByField.Remove(childId);
+                                live.FieldNames.Remove(child);
+                            }
+                            live.Ownership.Remove(child);
+                        }
                         try { ctl.Dispose(); } catch { /* best effort */ }
                     }
-                    else notes.Add("cannot remove '" + id + "'");
+                    else notes.Add(ownershipReason.Length > 0 ? ownershipReason : "cannot remove '" + id + "'");
                 }
                 live.Root.PerformLayout();
                 Application.DoEvents();
@@ -1246,16 +1360,22 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                var notes = new List<string>();
                 foreach (var id in ids)
                 {
-                    if (live.ByField.TryGetValue(id, out var ctl))
+                    if (TryResolveEditableControl(live, id ?? "", out Control? ctl, out string ownershipReason)
+                        && !ReferenceEquals(ctl, live.Root))
                     {
                         if (toFront) ctl.BringToFront(); else ctl.SendToBack();
                     }
+                    else notes.Add(ownershipReason.Length > 0 ? ownershipReason : "cannot change z-order of '" + id + "'");
                 }
                 live.Root.PerformLayout();
                 Application.DoEvents();
-                return Snapshot(live);
+                var result = Snapshot(live);
+                result.Applied = notes.Count == 0;
+                if (notes.Count > 0) result.Diagnostics = string.Join("; ", notes);
+                return result;
             });
         }
 
@@ -1267,10 +1387,10 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                Control? parent = (parentId == "this" || parentId.Length == 0)
-                    ? live.Root
-                    : (live.ByField.TryGetValue(parentId, out var p) ? p : null);
-                if (parent == null) return Note(live, "no parent control '" + parentId + "'");
+                if (!TryResolveEditableControl(live, parentId, out Control? parent, out string ownershipReason))
+                    return Note(live, ownershipReason);
+                if (!string.IsNullOrEmpty(newId) && live.FieldNames.Any(kv => kv.Value == newId))
+                    return Note(live, "component id is already present: " + newId);
 
                 Type? ct = ResolveControlType(controlTypeKey);
                 if (ct == null) return Note(live, "control type not found: " + controlTypeKey);
@@ -1285,6 +1405,7 @@ namespace WinFormsDesigner.Engine.Net48
                     {
                         live.FieldNames[ctl] = newId;
                         live.ByField[newId] = ctl;
+                        live.Ownership[ctl] = InheritedOwnershipPolicy.CurrentSource;
                     }
                     live.Root.PerformLayout();
                     Application.DoEvents();
@@ -1417,10 +1538,10 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                Control? host = (hostId == "this" || hostId.Length == 0)
-                    ? live.Root
-                    : (live.ByField.TryGetValue(hostId, out var h) ? h : null);
-                if (host == null) return Note(live, "no tab host '" + hostId + "'");
+                if (!TryResolveEditableControl(live, hostId, out Control? host, out string ownershipReason))
+                    return Note(live, ownershipReason);
+                if (!string.IsNullOrEmpty(newId) && live.FieldNames.Any(kv => kv.Value == newId))
+                    return Note(live, "component id is already present: " + newId);
                 var pagesProp = FindTabProp(host.GetType(), "TabPages");
                 if (pagesProp == null) return Note(live, "not a tab host: " + hostId);
                 Type? pt = ResolveControlType(pageTypeFqn);
@@ -1434,7 +1555,12 @@ namespace WinFormsDesigner.Engine.Net48
                         m.Name == "Add" && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType.IsInstanceOfType(page));
                     if (coll == null || add == null) return Note(live, "tab collection has no Add(page)");
                     add.Invoke(coll, new object[] { page });
-                    if (!string.IsNullOrEmpty(newId)) { live.FieldNames[page] = newId; live.ByField[newId] = page; }
+                    if (!string.IsNullOrEmpty(newId))
+                    {
+                        live.FieldNames[page] = newId;
+                        live.ByField[newId] = page;
+                        live.Ownership[page] = InheritedOwnershipPolicy.CurrentSource;
+                    }
                     // make the new tab active so it's the one shown
                     var selProp = FindTabProp(host.GetType(), "SelectedTabPage", "SelectedPage", "SelectedTab");
                     if (selProp != null && selProp.CanWrite) { try { selProp.SetValue(host, page); } catch { /* best effort */ } }
@@ -1455,16 +1581,26 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
-                Control? host = (hostId == "this" || hostId.Length == 0)
-                    ? live.Root
-                    : (live.ByField.TryGetValue(hostId, out var h) ? h : null);
-                if (host == null) return Note(live, "no tab host '" + hostId + "'");
-                if (!live.ByField.TryGetValue(pageId, out var page) || page == null) return Note(live, "no tab page '" + pageId + "'");
+                if (!TryResolveEditableControl(live, hostId, out Control? host, out string hostOwnershipReason))
+                    return Note(live, hostOwnershipReason);
+                if (!TryResolveEditableControl(live, pageId, out Control? page, out string pageOwnershipReason))
+                    return Note(live, pageOwnershipReason);
                 var subtree = new List<Control>();
                 Collect(page, subtree); // page + descendants — captured BEFORE detach/dispose while Controls is intact
+                foreach (var child in subtree)
+                {
+                    if (!live.FieldNames.ContainsKey(child)) continue;
+                    string childOwnership = OwnershipOf(live, child);
+                    if (!InheritedOwnershipPolicy.IsEditable(childOwnership))
+                        return Note(live, "cannot remove tab '" + pageId + "': "
+                            + InheritedOwnershipPolicy.ReadOnlyReason(childOwnership));
+                }
                 if (!TryRemoveTabPage(host, page)) return Note(live, "could not remove tab '" + pageId + "'");
                 foreach (var c in subtree)
+                {
                     if (live.FieldNames.TryGetValue(c, out var fid)) { live.ByField.Remove(fid); live.FieldNames.Remove(c); }
+                    live.Ownership.Remove(c);
+                }
                 try { page.Dispose(); } catch { /* best effort */ }
                 live.Root.PerformLayout();
                 Application.DoEvents();
@@ -1658,8 +1794,7 @@ namespace WinFormsDesigner.Engine.Net48
             // component (a Timer) must NOT be live-mutated, or e.g. Timer.Enabled=true would Start() it and the render
             // pump would dispatch its compiled Tick handler inside the preview. A control/item hits the same instances
             // ByField/reverse-scan, so its path is byte-identical.
-            IComponent? target = ResolveLiveTarget(live, componentId);
-            if (target == null) { reason = "no control '" + componentId + "'"; return false; }
+            if (!TryResolveEditableTarget(live, componentId, out IComponent? target, out reason)) return false;
             var pd = TypeDescriptor.GetProperties(target)[propName];
             if (pd == null) { reason = "no property '" + propName + "'"; return false; }
             if (pd.IsReadOnly) { reason = propName + " is read-only"; return false; }
@@ -1696,6 +1831,12 @@ namespace WinFormsDesigner.Engine.Net48
                             : (rawValue.StartsWith("this.") ? rawValue.Substring(5) : rawValue);
                         var inst = rawValue == CompiledDescriber.ReferenceThis ? live.Root : ResolveLiveTarget(live, refName);
                         if (inst == null) { reason = "no component '" + refName + "' to reference from " + propName; return false; }
+                        string referencedOwnership = OwnershipOf(live, inst);
+                        if (!InheritedOwnershipPolicy.IsEditable(referencedOwnership))
+                        {
+                            reason = "cannot reference '" + refName + "': " + InheritedOwnershipPolicy.ReadOnlyReason(referencedOwnership);
+                            return false;
+                        }
                         // Mirror the describe candidate set exactly, so a direct RPC/CLI caller bypassing the host's
                         // referenceValues re-validation can't assign a reference the dropdown never offers. The ROOT form is
                         // NOW an offered candidate (the "(this)" token) whenever it is assignable, so it is no longer
@@ -1753,8 +1894,9 @@ namespace WinFormsDesigner.Engine.Net48
             // reverse-scan; never a non-item component — see ResolveLiveEditTarget) so the two mirrors never diverge.
             // The host currently disables per-property Reset for a ToolStrip item (no ownerId thread), so the item
             // branch is defensive; if it is ever wired, reset works.
-            IComponent? target = ResolveLiveEditTarget(live, componentId);
-            if (target == null) { reason = "no control '" + componentId + "'"; return false; }
+            if (!TryResolveEditableTarget(live, componentId, out IComponent? target, out reason)) return false;
+            if (!(target is Control || target is ToolStripItem))
+            { reason = "no control '" + componentId + "'"; return false; }
             var pd = TypeDescriptor.GetProperties(target)[propName];
             if (pd == null) { reason = "no property '" + propName + "'"; return false; }
             if (pd.IsReadOnly) { reason = propName + " is read-only"; return false; }
@@ -1938,6 +2080,8 @@ namespace WinFormsDesigner.Engine.Net48
             }
 
             var fieldNames = BuildFieldNameMap(instance, type);
+            var ownership = BuildOwnershipMap(instance, type);
+            ownership[rootCtl] = InheritedOwnershipPolicy.Root;
 
             Form form;
             if (rootCtl is Form rootForm)
@@ -1979,13 +2123,19 @@ namespace WinFormsDesigner.Engine.Net48
             rootCtl.PerformLayout();
             Application.DoEvents();
 
-            var byField = new Dictionary<string, Control>(StringComparer.Ordinal);
-            foreach (var kv in fieldNames)
-            {
-                if (kv.Key is Control ctl && !byField.ContainsKey(kv.Value)) byField[kv.Value] = ctl;
-            }
+            var byField = BuildControlIndex(fieldNames, out var ambiguousIds);
 
-            return new LiveDesign { Form = form, Root = rootCtl, Type = type, FieldNames = fieldNames, ByField = byField, BuildId = ComputeBuildId(assemblyPath) };
+            return new LiveDesign
+            {
+                Form = form,
+                Root = rootCtl,
+                Type = type,
+                FieldNames = fieldNames,
+                ByField = byField,
+                AmbiguousIds = ambiguousIds,
+                Ownership = ownership,
+                BuildId = ComputeBuildId(assemblyPath),
+            };
         }
 
         /// <summary>Capture <paramref name="root"/> to a PNG at an integer DPI scale. scale &gt; 1 scales the control tree
@@ -2025,7 +2175,7 @@ namespace WinFormsDesigner.Engine.Net48
             byte[] png = CaptureScaledPng(root, w, h, live.Scale > 0 ? live.Scale : _renderScale);
 
             string rootClassName = live.DesignedTypeName != null ? InterpretedDescribeResolver.ShortName(live.DesignedTypeName) : live.Type.Name;
-            var controls = BuildLayoutControls(root, rootClassName, live.FieldNames, w, h);
+            var controls = BuildLayoutControls(live, rootClassName, w, h);
             var tray = BuildTray(live);
             var toolStripItems = BuildToolStripItemGeometry(live);
 
@@ -2090,7 +2240,424 @@ namespace WinFormsDesigner.Engine.Net48
                 if (val is IComponent comp && !ReferenceEquals(comp, live.Root) && seenSib.Add(comp))
                     siblings.Add(new KeyValuePair<string, IComponent>(f.Name, comp));
             }
-            return CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent, siblings, live.Root);
+            return StampDescription(
+                CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent, siblings, live.Root),
+                OwnershipOf(live, target), target);
+        }
+
+        private static ComponentDesc StampDescription(ComponentDesc desc, string ownership, IComponent target)
+        {
+            desc.Ownership = ownership;
+            desc.Editable = InheritedOwnershipPolicy.IsEditable(ownership);
+            desc.ReadOnlyReason = InheritedOwnershipPolicy.ReadOnlyReason(ownership);
+            EnrichPropertyMetadata(desc, target, desc.Editable);
+            if (!desc.Editable && desc.Properties != null)
+                foreach (var property in desc.Properties)
+                    if (property != null)
+                    {
+                        property.ReadOnly = true;
+                        property.UiTypeEditor = null;
+                        ForceExpandableReadOnly(property.Properties);
+                    }
+            return desc;
+        }
+
+        private static readonly HashSet<string> GenericListSupportedItemTypes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "System.String", "System.Boolean", "System.Char", "System.SByte", "System.Byte",
+            "System.Int16", "System.UInt16", "System.Int32", "System.UInt32", "System.Int64",
+            "System.UInt64", "System.Single", "System.Double", "System.Decimal",
+            "System.Windows.Forms.AnchorStyles", "System.Windows.Forms.DockStyle", "System.Windows.Forms.CheckState",
+            "System.Windows.Forms.DialogResult", "System.Windows.Forms.FormBorderStyle", "System.Windows.Forms.ComboBoxStyle",
+            "System.Windows.Forms.FlatStyle", "System.Windows.Forms.ScrollBars", "System.Windows.Forms.BorderStyle",
+            "System.Windows.Forms.Orientation", "System.Windows.Forms.HorizontalAlignment",
+            "System.Windows.Forms.DataGridViewContentAlignment", "System.Windows.Forms.Keys",
+            "System.Drawing.FontStyle", "System.Drawing.GraphicsUnit", "System.Drawing.ContentAlignment",
+            "System.Drawing.Drawing2D.DashStyle", "System.Drawing.Point", "System.Drawing.Size",
+            "System.Drawing.Color", "System.Drawing.Rectangle", "System.Windows.Forms.Padding",
+            "System.Drawing.Font", "System.Windows.Forms.Cursor",
+        };
+
+        private static readonly HashSet<string> ExpandableSourceValueTypes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "System.Drawing.Point", "System.Drawing.Size", "System.Drawing.Color", "System.Drawing.Rectangle",
+            "System.Windows.Forms.Padding", "System.Drawing.Font", "System.Windows.Forms.Cursor",
+        };
+
+        private static void EnrichPropertyMetadata(ComponentDesc desc, IComponent target, bool componentEditable)
+        {
+            if (desc.Properties == null || desc.Properties.Count == 0) return;
+            PropertyDescriptorCollection descriptors;
+            try { descriptors = TypeDescriptor.GetProperties(target); }
+            catch { return; }
+
+            foreach (var property in desc.Properties)
+            {
+                if (property == null || string.IsNullOrEmpty(property.Name)) continue;
+                PropertyDescriptor? descriptor;
+                try { descriptor = descriptors[property.Name]; } catch { descriptor = null; }
+                if (descriptor == null) continue; // extender/source pseudo-property, not a live descriptor
+
+                object? raw;
+                try { raw = descriptor.GetValue(target); } catch { raw = null; }
+
+                DesignerSerializationVisibilityAttribute? visibility;
+                try
+                {
+                    visibility = (DesignerSerializationVisibilityAttribute?)descriptor.Attributes[
+                        typeof(DesignerSerializationVisibilityAttribute)];
+                }
+                catch { visibility = null; }
+
+                if (!property.IsCollection && !property.TableCell
+                    && visibility?.Visibility == DesignerSerializationVisibility.Content
+                    && IsGenericListShape(descriptor.PropertyType))
+                {
+                    string? itemType = GenericCollectionItemType(descriptor.PropertyType);
+                    if (itemType != null)
+                    {
+                        property.IsCollection = true;
+                        property.GenericCollection = true;
+                        property.CollectionItemType = itemType;
+                        property.Value = null;
+                        property.ReadOnly = !componentEditable;
+                    }
+                }
+
+                property.UiTypeEditor = componentEditable && !property.ReadOnly
+                    && descriptor.PropertyType == typeof(System.Drawing.Color)
+                        ? "System.Drawing.Design.ColorEditor"
+                        : componentEditable && !property.ReadOnly
+                            && descriptor.PropertyType == typeof(System.Drawing.Font)
+                                ? "System.Drawing.Design.FontEditor"
+                                : null;
+
+                bool suppressExpansion = property.TableCell || property.IsCollection || property.IsImage
+                    || property.ReferenceValues || property.IsDataSource;
+                var expansion = ExpandablePropertiesOf(descriptor, target, raw, descriptor.Name,
+                    suppressExpansion, componentEditable);
+                property.Properties = expansion.Properties;
+                property.PropertiesTruncated = expansion.Truncated;
+            }
+        }
+
+        private static bool IsGenericListShape(Type type)
+        {
+            try
+            {
+                if (typeof(IList).IsAssignableFrom(type)) return true;
+                if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IList<>)) return true;
+                return type.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IList<>));
+            }
+            catch { return false; }
+        }
+
+        private static string? GenericCollectionItemType(Type collectionType)
+        {
+            try
+            {
+                var interfaceItems = new HashSet<Type>();
+                if (collectionType.IsGenericType && collectionType.GetGenericTypeDefinition() == typeof(IList<>))
+                    interfaceItems.Add(collectionType.GetGenericArguments()[0]);
+                foreach (var iface in collectionType.GetInterfaces())
+                    if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IList<>))
+                        interfaceItems.Add(iface.GetGenericArguments()[0]);
+                if (interfaceItems.Count > 1) return null;
+
+                Type? itemType = interfaceItems.SingleOrDefault();
+                if (itemType == null)
+                {
+                    var addTypes = collectionType.GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                        .Where(m => m.Name == "Add" && !m.IsGenericMethodDefinition)
+                        .Select(m => m.GetParameters())
+                        .Where(p => p.Length == 1 && !p[0].ParameterType.IsByRef)
+                        .Select(p => p[0].ParameterType)
+                        .Distinct()
+                        .ToList();
+                    if (addTypes.Count != 1) return null;
+                    itemType = addTypes[0];
+                }
+
+                string? name = itemType.FullName;
+                return name != null && GenericListSupportedItemTypes.Contains(name) ? name : null;
+            }
+            catch { return null; }
+        }
+
+        private const int ExpandableMaxDepth = 4;
+        private const int ExpandableMaxNodes = 128;
+        private const int ExpandableMaxChildrenPerNode = 64;
+        private const int ExpandableMaxStandardValues = 64;
+        private const int ExpandableMaxNameChars = 128;
+        private const int ExpandableMaxTypeChars = 256;
+        private const int ExpandableMaxPathChars = 512;
+        private const int ExpandableMaxValueChars = 1024;
+        private const int ExpandableMaxDescriptionChars = 1024;
+        private const int ExpandableMaxCategoryChars = 128;
+
+        private sealed class ExpandableResult
+        {
+            public List<ExpandablePropertyDesc>? Properties;
+            public bool Truncated;
+        }
+
+        private static ExpandableResult ExpandablePropertiesOf(PropertyDescriptor descriptor, object owner, object? raw,
+            string path, bool suppressForBespokeEditor, bool componentEditable)
+        {
+            if (suppressForBespokeEditor || raw == null) return new ExpandableResult();
+            var budget = new ExpandableBudget(ExpandableMaxNodes);
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            bool truncated = false;
+            var properties = ExpandablePropertiesOf(descriptor, owner, raw, path, 0, budget, visited,
+                componentEditable, ref truncated);
+            return new ExpandableResult { Properties = properties, Truncated = truncated };
+        }
+
+        private static List<ExpandablePropertyDesc>? ExpandablePropertiesOf(PropertyDescriptor ownerDescriptor,
+            object owner, object raw, string path, int depth, ExpandableBudget budget, HashSet<object> visited,
+            bool componentEditable, ref bool truncated)
+        {
+            if (depth >= ExpandableMaxDepth) { truncated = true; return null; }
+            if (!TryEnterExpandable(raw, visited)) return null;
+            try
+            {
+                TypeConverter? converter;
+                try { converter = ownerDescriptor.Converter; } catch { converter = null; }
+                if (converter == null) return null;
+                var context = new ExpandableDescribeContext(owner, ownerDescriptor);
+                if (!ConverterPropertiesSupported(converter, context)) return null;
+                var children = ConverterProperties(converter, context, raw);
+                if (children == null || children.Count == 0) return null;
+
+                var result = new List<ExpandablePropertyDesc>();
+                int emittedForNode = 0;
+                foreach (PropertyDescriptor child in children)
+                {
+                    if (emittedForNode >= ExpandableMaxChildrenPerNode) { truncated = true; break; }
+                    if (!budget.TryTake()) { truncated = true; break; }
+                    if (!ShouldSurfaceExpandableChild(child)) continue;
+
+                    string childPath = BoundString(JoinPropertyPath(path, child.Name), ExpandableMaxPathChars);
+                    object? childRaw;
+                    try { childRaw = child.GetValue(raw); } catch { childRaw = null; }
+                    string? childValue;
+                    try { childValue = BoundNullable(StringifyInvariant(child, childRaw), ExpandableMaxValueChars); }
+                    catch { childValue = null; }
+
+                    bool descriptorReadOnly;
+                    try { descriptorReadOnly = child.IsReadOnly; } catch { descriptorReadOnly = true; }
+                    bool childReadOnly = !componentEditable || descriptorReadOnly;
+                    var standards = ExpandableStandardValues(child, raw);
+
+                    string? description;
+                    try { description = BoundNullable(string.IsNullOrEmpty(child.Description) ? null : child.Description, ExpandableMaxDescriptionChars); }
+                    catch { description = null; }
+                    string category;
+                    try { category = BoundString(string.IsNullOrEmpty(child.Category) ? "Misc" : child.Category, ExpandableMaxCategoryChars); }
+                    catch { category = "Misc"; }
+
+                    bool nestedTruncated = false;
+                    var nested = childRaw == null ? null : ExpandablePropertiesOf(child, raw, childRaw, childPath,
+                        depth + 1, budget, visited, componentEditable, ref nestedTruncated);
+                    if (nestedTruncated) truncated = true;
+
+                    result.Add(new ExpandablePropertyDesc
+                    {
+                        Name = BoundString(child.Name, ExpandableMaxNameChars),
+                        PropertyPath = childPath,
+                        Type = BoundString(child.PropertyType.FullName ?? child.PropertyType.Name, ExpandableMaxTypeChars),
+                        Value = childValue,
+                        ReadOnly = childReadOnly,
+                        SourceEditable = componentEditable
+                            && SourceEditableThroughExistingValueConversion(child.PropertyType, childValue, descriptorReadOnly),
+                        Category = category,
+                        Description = description,
+                        StandardValues = standards.Values,
+                        StandardValuesExclusive = standards.Exclusive,
+                        Properties = nested,
+                        PropertiesTruncated = nestedTruncated,
+                    });
+                    emittedForNode++;
+                }
+                result.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+                return result.Count == 0 ? null : result;
+            }
+            catch { return null; }
+            finally { ExitExpandable(raw, visited); }
+        }
+
+        private static bool ConverterPropertiesSupported(TypeConverter converter, ITypeDescriptorContext context)
+        {
+            try { return converter.GetPropertiesSupported(context); }
+            catch { try { return converter.GetPropertiesSupported(); } catch { return false; } }
+        }
+
+        private static PropertyDescriptorCollection? ConverterProperties(TypeConverter converter,
+            ITypeDescriptorContext context, object value)
+        {
+            try { return converter.GetProperties(context, value, Array.Empty<Attribute>()); }
+            catch { try { return converter.GetProperties(value); } catch { return null; } }
+        }
+
+        private static bool ShouldSurfaceExpandableChild(PropertyDescriptor descriptor)
+        {
+            try { if (!descriptor.IsBrowsable) return false; } catch { return false; }
+            try
+            {
+                var visibility = (DesignerSerializationVisibilityAttribute?)descriptor.Attributes[
+                    typeof(DesignerSerializationVisibilityAttribute)];
+                return visibility == null || visibility.Visibility != DesignerSerializationVisibility.Hidden;
+            }
+            catch { return false; }
+        }
+
+        private sealed class ExpandableStandardValuesResult
+        {
+            public List<string>? Values;
+            public bool Exclusive;
+        }
+
+        private static ExpandableStandardValuesResult ExpandableStandardValues(PropertyDescriptor descriptor, object owner)
+        {
+            try
+            {
+                if (descriptor.PropertyType.IsEnum
+                    && descriptor.PropertyType.IsDefined(typeof(FlagsAttribute), false)) return new ExpandableStandardValuesResult();
+                TypeConverter? converter;
+                try { converter = descriptor.Converter; } catch { converter = null; }
+                if (converter == null) return new ExpandableStandardValuesResult();
+                var context = new ExpandableDescribeContext(owner, descriptor);
+                System.Collections.ICollection? collection;
+                try { collection = converter.GetStandardValuesSupported(context) ? converter.GetStandardValues(context) : null; }
+                catch { try { collection = converter.GetStandardValuesSupported() ? converter.GetStandardValues() : null; } catch { collection = null; } }
+                if (collection == null) return new ExpandableStandardValuesResult();
+
+                var values = new List<string>();
+                foreach (var item in collection)
+                {
+                    if (item == null) continue;
+                    string? value;
+                    try { value = converter.CanConvertTo(typeof(string)) ? converter.ConvertToInvariantString(item) : null; }
+                    catch { value = null; }
+                    if (string.IsNullOrEmpty(value) || value.Length > ExpandableMaxValueChars) continue;
+                    if (!values.Contains(value)) values.Add(value);
+                    if (values.Count >= ExpandableMaxStandardValues) break;
+                }
+                if (values.Count == 0) return new ExpandableStandardValuesResult();
+                bool exclusive;
+                try { exclusive = converter.GetStandardValuesExclusive(context); }
+                catch { try { exclusive = converter.GetStandardValuesExclusive(); } catch { exclusive = false; } }
+                return new ExpandableStandardValuesResult { Values = values, Exclusive = exclusive };
+            }
+            catch { return new ExpandableStandardValuesResult(); }
+        }
+
+        private static string? StringifyInvariant(PropertyDescriptor descriptor, object? value)
+        {
+            if (value == null) return null;
+            TypeConverter? converter;
+            try { converter = descriptor.Converter; } catch { converter = null; }
+            if (converter == null || !converter.CanConvertTo(typeof(string))) return null;
+            return converter.ConvertToInvariantString(value);
+        }
+
+        private static bool SourceEditableThroughExistingValueConversion(Type type, string? value, bool readOnly)
+        {
+            if (readOnly || string.IsNullOrEmpty(value) || value.Length > ExpandableMaxValueChars
+                || type.FullName == null || !ExpandableSourceValueTypes.Contains(type.FullName)) return false;
+            try
+            {
+                TypeConverter converter = TypeDescriptor.GetConverter(type);
+                if (!converter.CanConvertFrom(typeof(string))
+                    || !converter.CanConvertTo(typeof(System.ComponentModel.Design.Serialization.InstanceDescriptor))) return false;
+                object? parsed = converter.ConvertFromInvariantString(value);
+                if (parsed == null) return false;
+                if (parsed is System.Drawing.Font font)
+                {
+                    if (font.GdiCharSet != 1 || font.GdiVerticalFont) return false;
+                    string requestedFamily = value.Split(',')[0].Trim();
+                    if (requestedFamily.Length > 0
+                        && !string.Equals(font.Name, requestedFamily, StringComparison.OrdinalIgnoreCase)) return false;
+                }
+                var descriptor = converter.ConvertTo(parsed,
+                    typeof(System.ComponentModel.Design.Serialization.InstanceDescriptor))
+                    as System.ComponentModel.Design.Serialization.InstanceDescriptor;
+                return descriptor?.MemberInfo != null;
+            }
+            catch { return false; }
+        }
+
+        private static bool TryEnterExpandable(object value, HashSet<object> visited)
+        {
+            Type type;
+            try { type = value.GetType(); } catch { return false; }
+            return type.IsValueType || visited.Add(value);
+        }
+
+        private static void ExitExpandable(object value, HashSet<object> visited)
+        {
+            try { if (!value.GetType().IsValueType) visited.Remove(value); } catch { }
+        }
+
+        private static void ForceExpandableReadOnly(List<ExpandablePropertyDesc>? properties)
+        {
+            if (properties == null) return;
+            foreach (var property in properties)
+            {
+                property.ReadOnly = true;
+                property.SourceEditable = false;
+                ForceExpandableReadOnly(property.Properties);
+            }
+        }
+
+        private static string JoinPropertyPath(string parent, string child) =>
+            string.IsNullOrEmpty(parent) ? child : parent + "." + child;
+
+        private static string BoundString(string value, int maxChars)
+        {
+            if (value.Length <= maxChars) return value;
+            if (maxChars <= 17) return value.Substring(0, maxChars);
+            return value.Substring(0, maxChars - 17) + "~" + StableHash64(value).ToString("x16",
+                System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static string? BoundNullable(string? value, int maxChars) =>
+            value == null ? null : BoundString(value, maxChars);
+
+        private static ulong StableHash64(string value)
+        {
+            const ulong offset = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong hash = offset;
+            foreach (char character in value) { hash ^= character; hash *= prime; }
+            return hash;
+        }
+
+        private sealed class ExpandableBudget
+        {
+            private int _remaining;
+            public ExpandableBudget(int remaining) { _remaining = remaining; }
+            public bool TryTake()
+            {
+                if (_remaining <= 0) return false;
+                _remaining--;
+                return true;
+            }
+        }
+
+        private sealed class ExpandableDescribeContext : ITypeDescriptorContext
+        {
+            private readonly object _instance;
+            private readonly PropertyDescriptor _descriptor;
+            public ExpandableDescribeContext(object instance, PropertyDescriptor descriptor)
+            { _instance = instance; _descriptor = descriptor; }
+            public IContainer? Container { get { try { return (_instance as IComponent)?.Site?.Container; } catch { return null; } } }
+            public object? Instance => _instance;
+            public PropertyDescriptor? PropertyDescriptor => _descriptor;
+            public object? GetService(Type serviceType)
+            { try { return (_instance as IComponent)?.Site?.GetService(serviceType); } catch { return null; } }
+            public bool OnComponentChanging() => true;
+            public void OnComponentChanged() { }
         }
 
         /// <summary>Reverse the component→field-name map to find the live component a designer field id names — the
@@ -2100,9 +2667,14 @@ namespace WinFormsDesigner.Engine.Net48
         /// unique, so at most one entry matches.</summary>
         private static IComponent? ResolveComponentByFieldName(LiveDesign live, string fieldName)
         {
+            IComponent? match = null;
             foreach (var kv in live.FieldNames)
-                if (kv.Value == fieldName && kv.Key is IComponent comp) return comp;
-            return null;
+            {
+                if (kv.Value != fieldName || !(kv.Key is IComponent component)) continue;
+                if (match != null && !ReferenceEquals(match, component)) return null;
+                match = component;
+            }
+            return match;
         }
 
         /// <summary>Resolve a component id to its live instance for a per-property live edit / reset / describe: a
@@ -2112,7 +2684,48 @@ namespace WinFormsDesigner.Engine.Net48
         private IComponent? ResolveLiveTarget(LiveDesign live, string componentId)
         {
             if (componentId == "this" || componentId.Length == 0) return live.Root;
+            if (live.AmbiguousIds != null && live.AmbiguousIds.Contains(componentId)) return null;
             return live.ByField.TryGetValue(componentId, out var c) ? c : ResolveComponentByFieldName(live, componentId);
+        }
+
+        private static string OwnershipOf(LiveDesign live, object target)
+        {
+            if (ReferenceEquals(target, live.Root)) return InheritedOwnershipPolicy.Root;
+            return live.Ownership != null && live.Ownership.TryGetValue(target, out var ownership)
+                ? ownership
+                : InheritedOwnershipPolicy.Unresolved;
+        }
+
+        /// <summary>The server-authoritative visual-inheritance gate. UI metadata is only an affordance; every live
+        /// edit route calls this policy so a direct RPC cannot mutate a base-declared or unproven identity.</summary>
+        private bool TryResolveEditableTarget(LiveDesign live, string componentId, out IComponent? target, out string reason)
+        {
+            target = ResolveLiveTarget(live, componentId ?? "");
+            if (target == null)
+            {
+                reason = "no component '" + componentId + "'";
+                return false;
+            }
+            string ownership = OwnershipOf(live, target);
+            if (!InheritedOwnershipPolicy.IsEditable(ownership))
+            {
+                reason = "cannot edit '" + componentId + "': " + InheritedOwnershipPolicy.ReadOnlyReason(ownership);
+                return false;
+            }
+            reason = "";
+            return true;
+        }
+
+        private bool TryResolveEditableControl(LiveDesign live, string componentId, out Control? control, out string reason)
+        {
+            if (!TryResolveEditableTarget(live, componentId, out var target, out reason) || !(target is Control value))
+            {
+                control = null;
+                if (reason.Length == 0) reason = "no control '" + componentId + "'";
+                return false;
+            }
+            control = value;
+            return true;
         }
 
         /// <summary>Resolve a component id for a live property EDIT / RESET — like <see cref="ResolveLiveTarget"/> (the
@@ -2126,7 +2739,7 @@ namespace WinFormsDesigner.Engine.Net48
         /// every non-item component (only a ToolStripItem is newly live-editable). Null for an unknown id too.</summary>
         private IComponent? ResolveLiveEditTarget(LiveDesign live, string componentId)
         {
-            var target = ResolveLiveTarget(live, componentId);
+            if (!TryResolveEditableTarget(live, componentId, out var target, out _)) return null;
             return target is Control || target is ToolStripItem ? target : null;
         }
 
@@ -2188,9 +2801,49 @@ namespace WinFormsDesigner.Engine.Net48
             return map;
         }
 
-        private static List<LayoutControl> BuildLayoutControls(Control root, string rootClassName,
-            Dictionary<object, string> fieldNames, int frameW, int frameH)
+        private static Dictionary<string, Control> BuildControlIndex(Dictionary<object, string> fieldNames,
+            out HashSet<string> ambiguousIds)
         {
+            var index = new Dictionary<string, Control>(StringComparer.Ordinal);
+            ambiguousIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var kv in fieldNames)
+            {
+                if (!(kv.Key is Control control) || kv.Value.Length == 0) continue;
+                if (ambiguousIds.Contains(kv.Value)) continue;
+                if (index.TryGetValue(kv.Value, out var existing) && !ReferenceEquals(existing, control))
+                {
+                    index.Remove(kv.Value);
+                    ambiguousIds.Add(kv.Value);
+                }
+                else index[kv.Value] = control;
+            }
+            return index;
+        }
+
+        /// <summary>Classify the same reflection identities as <see cref="BuildFieldNameMap"/> by the field's declaring
+        /// type. The loops and first-instance-wins rule intentionally match that method exactly, including hidden-field
+        /// collisions; an object whose identity cannot be tied to a field is absent and therefore unresolved.</summary>
+        private static Dictionary<object, string> BuildOwnershipMap(object instance, Type designedType)
+        {
+            var map = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
+            for (Type? t = designedType; t != null && t != typeof(object); t = t.BaseType)
+            {
+                foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    if (!typeof(IComponent).IsAssignableFrom(f.FieldType)) continue;
+                    object? value;
+                    try { value = f.GetValue(instance); } catch { continue; }
+                    if (value != null && !map.ContainsKey(value))
+                        map[value] = InheritedOwnershipPolicy.FromDeclaration(designedType, f.DeclaringType);
+                }
+            }
+            return map;
+        }
+
+        private static List<LayoutControl> BuildLayoutControls(LiveDesign live, string rootClassName, int frameW, int frameH)
+        {
+            Control root = live.Root;
+            Dictionary<object, string> fieldNames = live.FieldNames;
             var all = new List<Control>();
             Collect(root, all);
 
@@ -2223,6 +2876,9 @@ namespace WinFormsDesigner.Engine.Net48
                 }
 
                 var (x, y) = ComputeWindowOffset(ctrl, root);
+                string ownership = !isRoot && live.AmbiguousIds.Contains(id)
+                    ? InheritedOwnershipPolicy.Unresolved
+                    : OwnershipOf(live, ctrl);
                 list.Add(new LayoutControl
                 {
                     Id = id,
@@ -2230,6 +2886,9 @@ namespace WinFormsDesigner.Engine.Net48
                     Type = ctrl.GetType().FullName ?? ctrl.GetType().Name,
                     ParentId = parentId,
                     IsRoot = isRoot,
+                    Ownership = ownership,
+                    Editable = InheritedOwnershipPolicy.IsEditable(ownership),
+                    ReadOnlyReason = InheritedOwnershipPolicy.ReadOnlyReason(ownership),
                     X = isRoot ? 0 : x,
                     Y = isRoot ? 0 : y,
                     Width = isRoot ? frameW : Math.Max(ctrl.Width, 1),
@@ -2348,6 +3007,7 @@ namespace WinFormsDesigner.Engine.Net48
                         : new ToolStripItemBounds { OwnerId = ownerId, IsTypeHere = true, X = ox + disp.Left, Y = oy + contentEnd + 2, Width = Math.Max(disp.Width, 1), Height = TypeHereExtent });
                 }
             }
+            StampToolStripOwnership(items, live);
             return items;
         }
 
@@ -2376,6 +3036,23 @@ namespace WinFormsDesigner.Engine.Net48
                 }
             }
             return kids;
+        }
+
+        private static void StampToolStripOwnership(IEnumerable<ToolStripItemBounds> bounds, LiveDesign live)
+        {
+            foreach (var bound in bounds)
+            {
+                object? target = null;
+                if (!string.IsNullOrEmpty(bound.ItemId)) target = ResolveComponentByFieldName(live, bound.ItemId);
+                else if (bound.OwnerId == "this" || bound.OwnerId.Length == 0) target = live.Root;
+                else if (live.ByField.TryGetValue(bound.OwnerId, out var owner)) target = owner;
+
+                string ownership = target == null ? InheritedOwnershipPolicy.Unresolved : OwnershipOf(live, target);
+                bound.Ownership = ownership;
+                bound.Editable = InheritedOwnershipPolicy.IsEditable(ownership);
+                bound.ReadOnlyReason = InheritedOwnershipPolicy.ReadOnlyReason(ownership);
+                if (bound.Children != null && bound.Children.Count > 0) StampToolStripOwnership(bound.Children, live);
+            }
         }
 
         private static void Collect(Control c, List<Control> acc)
@@ -2451,11 +3128,17 @@ namespace WinFormsDesigner.Engine.Net48
                 // The tray holds only non-visual components (Timer/ToolTip/…) + off-tree Controls (ContextMenuStrip).
                 if (kv.Key is ToolStripItem) continue;
                 if (!seen.Add(kv.Key)) continue;
+                string ownership = live.FieldNames.Count(pair => pair.Value == kv.Value) > 1
+                    ? InheritedOwnershipPolicy.Unresolved
+                    : OwnershipOf(live, kv.Key);
                 tray.Add(new TrayComponent
                 {
                     Id = kv.Value,
                     Name = kv.Value,
                     Type = kv.Key.GetType().FullName ?? kv.Key.GetType().Name,
+                    Ownership = ownership,
+                    Editable = InheritedOwnershipPolicy.IsEditable(ownership),
+                    ReadOnlyReason = InheritedOwnershipPolicy.ReadOnlyReason(ownership),
                     IconPng = ToolboxIconPng(kv.Key.GetType()),
                     // An OFF-TREE ToolStrip (a ContextMenuStrip) carries its top-level Items so the canvas opens a
                     // synthetic flyout from its tray chip; a non-strip component leaves this empty.
@@ -2486,6 +3169,7 @@ namespace WinFormsDesigner.Engine.Net48
                     Children = BuildItemChildren(it, ownerId, live),
                 });
             }
+            StampToolStripOwnership(forest, live);
             return forest;
         }
 

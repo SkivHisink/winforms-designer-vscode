@@ -22,6 +22,16 @@ namespace WinFormsDesigner.Engine
     {
         private static async Task<int> Main(string[] args)
         {
+            // Supported UITypeEditor dialogs run in a short-lived child process. Require both the private switch and
+            // the environment stamp set by our no-shell runner so a normal/user-launched engine cannot accidentally
+            // enter the stdin protocol. This branch precedes StaDispatcher creation: the worker owns its one STA.
+            if (args.Length == 1 && args[0] == "--uitypeeditor-worker"
+                && string.Equals(Environment.GetEnvironmentVariable("WFD_UITYPEEDITOR_WORKER"), "1", StringComparison.Ordinal))
+            {
+                return await DesignerUiTypeEditorWorker.RunStandardIoAsync(Console.In, Console.Out, Console.Error)
+                    .ConfigureAwait(false);
+            }
+
             var sta = new StaDispatcher();
 
             // Pre-warm project-output resolution off the STA thread (mirrors EngineApi.Prewarm): the
@@ -1450,6 +1460,38 @@ namespace WinFormsDesigner.Engine
             Notes = "Allowlisted source interpretation with immediate unsaved-buffer preview and source-first edits.",
         };
 
+        /// <summary>Run one explicitly allowlisted framework UITypeEditor in a bounded child process. The result is
+        /// an invariant value only; the extension must still route it through the normal source-first SetProperty
+        /// preview and one-undo commit. Arbitrary project/vendor editor types are never accepted.</summary>
+        public async Task<DesignerUiTypeEditorBrokerResult> EditSupportedUiTypeEditor(
+            string requestId,
+            string editorTypeName,
+            string valueTypeName,
+            string invariantValue,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var broker = new DesignerUiTypeEditorBroker(
+                    DesignerUiTypeEditorProcessRunnerFactory.CreateForCurrentEngine());
+                return await broker.EditAsync(new DesignerUiTypeEditorRequest
+                {
+                    RequestId = requestId ?? "",
+                    EditorTypeName = editorTypeName ?? "",
+                    ValueTypeName = valueTypeName ?? "",
+                    InvariantValue = invariantValue ?? "",
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorBrokerResult
+                {
+                    ErrorCode = "worker_failed",
+                    Reason = "The editor worker could not be started.",
+                };
+            }
+        }
+
         /// <summary>Blank/whitespace → null, so a client can send "" to mean "auto-discover the assembly".</summary>
         private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
 
@@ -1675,6 +1717,21 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
+        /// <summary>Read a metadata-routed IList/IList&lt;T&gt; collection through the bounded generic adapter.
+        /// The exact item type is supplied by DescribeComponent and is revalidated by the adapter.</summary>
+        public DesignerGenericListItemsResult ListGenericListItems(string designerFilePath, string ownerId,
+            string propertyName, string itemTypeName, string? sourceText = null) =>
+            DesignerRenderer.ListGenericListItems(designerFilePath, ownerId, propertyName, itemTypeName, NullIfBlank(sourceText));
+
+        /// <summary>Return a source-first, minimal generic-list edit preview. The engine never writes the file.</summary>
+        public EditPreview SetGenericListItems(string designerFilePath, string ownerId, string propertyName,
+            string itemTypeName, string[] items, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyGenericListEdit(designerFilePath, ownerId, propertyName, itemTypeName,
+                items ?? Array.Empty<string>(), NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
         /// <summary>Read a generic <c>string[]</c> property's current items (TextBox/RichTextBox.Lines) for the
         /// string-array editor. <see cref="CollectionItemsResult.Ok"/> is false for a non-literal (bound/computed)
         /// value so the webview keeps it read-only.</summary>
@@ -1809,6 +1866,42 @@ namespace WinFormsDesigner.Engine
         {
             Prewarm(designerFilePath, controlAssemblyPath);
             return _sta.Invoke(() => DesignerRenderer.DescribeLayout(designerFilePath, NullIfBlank(controlAssemblyPath), sourceText));
+        }
+
+        /// <summary>
+        /// Engine-authoritative direct-manipulation drag-start. Returns live logical bounds, parent/layout metadata,
+        /// and fail-closed move/resize permissions for the selected component.
+        /// </summary>
+        public GeometryDragStartResult BeginGeometryDrag(string designerFilePath, string componentId, string? controlAssemblyPath = null, string? sourceText = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            return _sta.Invoke(() => DesignerRenderer.BeginGeometryDrag(designerFilePath, componentId, NullIfBlank(controlAssemblyPath), sourceText));
+        }
+
+        /// <summary>
+        /// Validate a candidate logical rectangle on the live STA graph, apply SetBounds in memory, run layout, and
+        /// return corrected bounds plus a no-write source preview for the corrected values.
+        /// </summary>
+        public GeometryCommitResult CommitGeometryBounds(
+            string designerFilePath,
+            string componentId,
+            int x,
+            int y,
+            int width,
+            int height,
+            string? controlAssemblyPath = null,
+            string? sourceText = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            return _sta.Invoke(() => DesignerRenderer.CommitGeometryBounds(
+                designerFilePath,
+                componentId,
+                x,
+                y,
+                width,
+                height,
+                NullIfBlank(controlAssemblyPath),
+                sourceText));
         }
 
         /// <summary>

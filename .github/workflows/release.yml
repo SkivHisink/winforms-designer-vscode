@@ -136,20 +136,34 @@ jobs:
         run: npm run extension-host-e2e -- --version=stable
 
       # Runs `vscode:prepublish` (build + bundle the engine into extension/engine/ + copy LICENSE).
-      - name: Package VSIX
+      - name: Package VSIX (Windows x64)
         working-directory: extension
         run: npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix
 
-      - name: Assert VSIX contains the bundled engine
+      - name: Assert VSIX contains the bundled engines (Windows x64)
         working-directory: extension
         shell: pwsh
-        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix
+        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664
+
+      - name: Package VSIX (Windows ARM64)
+        working-directory: extension
+        shell: pwsh
+        env:
+          WFD_BUNDLE_RID: win-arm64
+        run: npx --yes @vscode/vsce@3.9.2 package --target win32-arm64 --no-dependencies -o winforms-designer-win32-arm64.vsix
+
+      - name: Assert VSIX contains the bundled engines (Windows ARM64)
+        working-directory: extension
+        shell: pwsh
+        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-arm64.vsix -ExpectedTarget win32-arm64 -ExpectedRuntimeIdentifier win-arm64 -ExpectedModernMachine 0xAA64 -ExpectedNet48Machine 0x8664
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v7
         with:
           name: winforms-designer-vsix
-          path: extension/winforms-designer-win32-x64.vsix
+          path: |
+            extension/winforms-designer-win32-x64.vsix
+            extension/winforms-designer-win32-arm64.vsix
           if-no-files-found: error
 
       # The publish/release steps only run for a real tag push (v*).
@@ -192,12 +206,12 @@ jobs:
           $tag = "${{ github.ref_name }}"
           $null = & gh release view $tag 2>&1   # exit 0 = a release for this tag already exists (draft or public)
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists (previous attempt) - re-uploading the VSIX instead of recreating it."
-            & gh release upload $tag winforms-designer-win32-x64.vsix --clobber
+            Write-Host "Release $tag already exists (previous attempt) - re-uploading the VSIX artifacts instead of recreating it."
+            & gh release upload $tag winforms-designer-win32-x64.vsix winforms-designer-win32-arm64.vsix --clobber
             if ($LASTEXITCODE -ne 0) { Write-Error "gh release upload failed for $tag."; exit 1 }
           } else {
             $notes = "${{ github.workspace }}/release-notes.md"
-            & gh release create $tag winforms-designer-win32-x64.vsix --draft --title $tag --notes-file $notes --generate-notes
+            & gh release create $tag winforms-designer-win32-x64.vsix winforms-designer-win32-arm64.vsix --draft --title $tag --notes-file $notes --generate-notes
             if ($LASTEXITCODE -ne 0) { Write-Error "gh release create failed for $tag."; exit 1 }
           }
 
@@ -211,16 +225,24 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           if (-not $env:VSCE_PAT) { Write-Error 'VSCE_PAT secret not set - stable Marketplace publish cannot continue.'; exit 1 }
-          for ($i = 1; $i -le 3; $i++) {
-            Write-Host "Marketplace publish attempt $i/3..."
-            $out = & npx --yes @vscode/vsce@3.9.2 publish --packagePath winforms-designer-win32-x64.vsix 2>&1 | Out-String
-            Write-Host $out
-            if ($LASTEXITCODE -eq 0) { Write-Host 'Published to Marketplace.'; exit 0 }
-            if ($out -match 'already exists') { Write-Host 'Version already published - treating as success.'; exit 0 }
-            Write-Host "::warning::Marketplace publish attempt $i failed (exit $LASTEXITCODE)."
-            if ($i -lt 3) { Start-Sleep -Seconds (15 * $i) }
+          $packages = @(
+            'winforms-designer-win32-x64.vsix',
+            'winforms-designer-win32-arm64.vsix'
+          )
+          foreach ($package in $packages) {
+            $published = $false
+            for ($i = 1; $i -le 3; $i++) {
+              Write-Host "Marketplace publish for $package attempt $i/3..."
+              $out = & npx --yes @vscode/vsce@3.9.2 publish --packagePath $package 2>&1 | Out-String
+              Write-Host $out
+              if ($LASTEXITCODE -eq 0) { Write-Host "Published $package to Marketplace."; $published = $true; break }
+              if ($out -match 'already exists') { Write-Host "$package version already published - treating as success."; $published = $true; break }
+              Write-Host "::warning::Marketplace publish for $package attempt $i failed (exit $LASTEXITCODE)."
+              if ($i -lt 3) { Start-Sleep -Seconds (15 * $i) }
+            }
+            if (-not $published) { Write-Error "Marketplace publish failed for $package after 3 attempts."; exit 1 }
           }
-          Write-Error 'Marketplace publish failed after 3 attempts.'; exit 1
+          Write-Host 'Published all VSIX artifacts to Marketplace.'
 
       # The point of no return: the draft only goes public now that the Marketplace serves the same VSIX. Gated on
       # the Marketplace step (not Open VSX, which is optional) so an Open VSX outage can't hold the release back.
@@ -243,13 +265,21 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           if (-not $env:OVSX_PAT) { Write-Host 'OVSX_PAT secret not set - skipping Open VSX publish.'; exit 0 }
-          for ($i = 1; $i -le 3; $i++) {
-            Write-Host "Open VSX publish attempt $i/3..."
-            $out = & npx --yes ovsx@1.0.2 publish winforms-designer-win32-x64.vsix -p $env:OVSX_PAT 2>&1 | Out-String
-            Write-Host $out
-            if ($LASTEXITCODE -eq 0) { Write-Host 'Published to Open VSX.'; exit 0 }
-            if ($out -match 'already exists') { Write-Host 'Version already published - treating as success.'; exit 0 }
-            Write-Host "::warning::Open VSX publish attempt $i failed (exit $LASTEXITCODE)."
-            if ($i -lt 3) { Start-Sleep -Seconds (15 * $i) }
+          $packages = @(
+            'winforms-designer-win32-x64.vsix',
+            'winforms-designer-win32-arm64.vsix'
+          )
+          foreach ($package in $packages) {
+            $published = $false
+            for ($i = 1; $i -le 3; $i++) {
+              Write-Host "Open VSX publish for $package attempt $i/3..."
+              $out = & npx --yes ovsx@1.0.2 publish $package -p $env:OVSX_PAT 2>&1 | Out-String
+              Write-Host $out
+              if ($LASTEXITCODE -eq 0) { Write-Host "Published $package to Open VSX."; $published = $true; break }
+              if ($out -match 'already exists') { Write-Host "$package version already published - treating as success."; $published = $true; break }
+              Write-Host "::warning::Open VSX publish for $package attempt $i failed (exit $LASTEXITCODE)."
+              if ($i -lt 3) { Start-Sleep -Seconds (15 * $i) }
+            }
+            if (-not $published) { Write-Error "Open VSX publish failed for $package after 3 attempts."; exit 1 }
           }
-          Write-Error 'Open VSX publish failed after 3 attempts.'; exit 1
+          Write-Host 'Published all VSIX artifacts to Open VSX.'

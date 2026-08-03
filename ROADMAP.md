@@ -88,28 +88,42 @@ unsupported expressions continue to fail closed.
 
 ## 1.3.0 — General editor framework
 
-- Replace more hard-coded collection cases with an editable `IList` / `IList<T>` collection framework.
-- Surface expandable objects and vendor value types through `TypeConverter` metadata.
-- Broker supported modal `UITypeEditor` operations through a cancellable, isolated host path.
-- Unify complex editor changes into source-first transactions with one undo unit and the same fail-closed
-  verification used by built-in editors.
+**Status: repository-side closed by the 1.4.0 completion work**
 
-**Exit criterion:** adding support for a new property or collection type usually requires metadata or a
-small adapter, not a new end-to-end bespoke pipeline.
+- Bounded metadata routes canonical, allowlisted `IList` / `IList<T>` values through a shared source adapter instead
+  of a per-property pipeline; ambiguous types, expressions, or trivia-sensitive rewrites remain read-only.
+- Expandable objects and vendor value types expose recursive `TypeConverter` metadata with depth/node limits,
+  exception/cycle guards, and explicit truncation. Nested metadata is display-only until a safe nested writer exists.
+- The supported framework Color/Font `UITypeEditor` pairs run through a cancellable, short-lived isolated worker.
+  Project/vendor/editor-attribute types are not loaded merely because metadata advertises them.
+- Every new generic/modal edit returns to the existing source-first transaction, revision/minimality firewall,
+  authoritative re-render, and one undo unit.
+
+**Exit criterion — met for the supported adapter surface:** adding a safe property or collection shape normally
+requires metadata or a bounded adapter, not a new end-to-end stack. Arbitrary vendor editors remain a deliberate
+2.0 design-host problem. See the [1.4.0 completion record](docs/release-1.4.0-completion-plan.md).
 
 ## 1.4.0 — Layout, inheritance, DPI, and ARM64
 
-- Make inherited forms editable with explicit base/derived ownership and read-only rules.
-- Add visual TableLayoutPanel / FlowLayoutPanel structure tools and outline drag/reparent/reorder.
-- Move snap, drag, and layout constraints into the engine where real-form testing shows client-side geometry
-  can drift.
-- Verify HiDPI coordinate correctness across every supported scaling factor and fractional ratio (the crisp
-  backing-store render itself shipped in 1.0.0).
-- Publish a native Windows ARM64 package for the modern engine, with an explicit reduced-feature policy for
-  .NET Framework and vendor controls that remain x64-only.
+**Status: repository-side implementation complete; publication and hardware/vendor acceptance are external gates**
 
-**Exit criterion:** complex nested layouts remain pixel- and source-correct across DPI modes, inheritance,
-and supported Windows architectures.
+- Inherited surfaces carry explicit `root` / `currentSource` / `inherited` / `unresolved` ownership. Current-source
+  properties remain source-editable; inherited or ambiguous identities stay visible and are refused by server
+  mutation gates. Direct geometry additionally requires the base graph to resolve, because its layout constraints
+  cannot be inferred safely from an unavailable base type.
+- TableLayoutPanel cell/style and FlowLayoutPanel order tools compose with outline drag/reparent/reorder, preserving
+  the existing source-first structural writers and one-undo behavior.
+- Modern free-control commits are authorized and corrected by the live WinForms graph; docking, auto-size,
+  layout-managed, inherited, custom, and unsafe source shapes fail closed.
+- HiDPI tests cover `1`, `1.25`, `1.5`, `1.75`, and `2`: coordinates stay logical while fractional displays use a
+  safe 2x capture that Chromium downsamples to the device grid.
+- CI/release packaging produces separate `win32-x64` and `win32-arm64` VSIX artifacts with matching native modern
+  apphosts. The net48 engine is explicitly an x64 compatibility fallback in the ARM64 package.
+
+**Exit criterion — met in the checked-in automated and package corpus:** supported nested layouts remain source-safe
+across the DPR matrix, ownership modes, and x64/ARM64 artifacts. Real multi-monitor visual inspection, x64-emulated
+net48/vendor stacks on ARM64, and Marketplace/Open VSX publication remain explicit external gates in the
+[completion record](docs/release-1.4.0-completion-plan.md).
 
 ## 1.5.0 — Enterprise localization
 

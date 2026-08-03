@@ -261,6 +261,11 @@ export interface LayoutControl {
   dock: string; // dock style ("Fill"/"Top"/… / "None") for the canvas dock indicator
   isTabHost?: boolean; // net48 compiled preview: control is a tab host (TabControl/XtraTabControl) → header clicks switch tabs
   isStripHost?: boolean; // control is a ToolStrip/MenuStrip/StatusStrip → canvas routes clicks into on-canvas item mode
+  /** Visual-inheritance origin supplied by the engine. Missing on older engines and treated as unresolved/read-only. */
+  ownership?: 'root' | 'currentSource' | 'inherited' | 'unresolved';
+  /** Engine-authoritative editability. The host/webview must not infer this from the control name or tree position. */
+  editable?: boolean;
+  readOnlyReason?: string | null;
 }
 
 /** One top-level ToolStrip/MenuStrip/StatusStrip item's window-space rect (or the trailing "Type Here" slot) for
@@ -313,6 +318,213 @@ export interface LayoutResult {
 */
 export function describeLayout(engine: EngineHandle, designerFilePath: string, controlAssemblyPath?: string, sourceText?: string): Promise<LayoutResult> {
   return engine.connection.sendRequest<LayoutResult>('DescribeLayout', designerFilePath, ...asmTextTail(controlAssemblyPath, sourceText));
+}
+
+/** Parent-relative or full-frame rectangle returned by the engine-authoritative geometry API. */
+export interface GeometryRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface GeometrySpacing {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export interface GeometrySourceValue {
+  componentId: string;
+  propertyName: string;
+  expression: string;
+}
+
+/** Live-graph metadata and fail-closed permissions for one direct-manipulation gesture. */
+export interface GeometryDragStartResult {
+  ok: boolean;
+  reason: string;
+  componentId: string;
+  componentType: string;
+  parentId: string;
+  parentType: string;
+  parentLayoutKind: string;
+  logicalBounds: GeometryRect | null;
+  windowBounds: GeometryRect | null;
+  margin: GeometrySpacing | null;
+  padding: GeometrySpacing | null;
+  parentPadding: GeometrySpacing | null;
+  anchor: string;
+  dock: string;
+  autoSize: boolean;
+  minimumWidth: number;
+  minimumHeight: number;
+  maximumWidth: number;
+  maximumHeight: number;
+  canMove: boolean;
+  canResize: boolean;
+}
+
+/** Engine-corrected direct-manipulation result. `designerText` is the only text the host may commit. */
+export interface GeometryCommitResult {
+  ok: boolean;
+  reason: string;
+  componentId: string;
+  requestedLogicalBounds: GeometryRect | null;
+  correctedLogicalBounds: GeometryRect | null;
+  correctedWindowBounds: GeometryRect | null;
+  corrected: boolean;
+  designerText: string | null;
+  sourceValues: GeometrySourceValue[];
+}
+
+export function beginGeometryDrag(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  controlAssemblyPath?: string,
+  sourceText?: string,
+): Promise<GeometryDragStartResult> {
+  return engine.connection.sendRequest<GeometryDragStartResult>(
+    'BeginGeometryDrag', designerFilePath, componentId, ...asmTextTail(controlAssemblyPath, sourceText));
+}
+
+export function commitGeometryBounds(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  bounds: GeometryRect,
+  controlAssemblyPath?: string,
+  sourceText?: string,
+): Promise<GeometryCommitResult> {
+  return engine.connection.sendRequest<GeometryCommitResult>(
+    'CommitGeometryBounds', designerFilePath, componentId,
+    bounds.x, bounds.y, bounds.width, bounds.height,
+    ...asmTextTail(controlAssemblyPath, sourceText));
+}
+
+/**
+ * Translate a canvas window-space preview into the selected control's parent-relative coordinates using the
+ * engine's own live-graph start metadata. This is only coordinate translation; the returned candidate still has to
+ * pass CommitGeometryBounds, whose corrected bounds and DesignerText remain authoritative.
+ */
+export function geometryCandidateFromWindow(
+  start: GeometryDragStartResult,
+  windowCandidate: GeometryRect,
+): GeometryRect | null {
+  if (!start.logicalBounds || !start.windowBounds) return null;
+  return {
+    x: start.logicalBounds.x + Math.round(windowCandidate.x - start.windowBounds.x),
+    y: start.logicalBounds.y + Math.round(windowCandidate.y - start.windowBounds.y),
+    width: Math.round(windowCandidate.width),
+    height: Math.round(windowCandidate.height),
+  };
+}
+
+export interface AuthorizedGeometryCommit {
+  ok: boolean;
+  reason: string;
+  designerText: string | null;
+  start: GeometryDragStartResult;
+  result: GeometryCommitResult | null;
+}
+
+export interface GeometryBatchIntent {
+  id: string;
+  mode: 'move' | 'resize';
+  candidate: (start: GeometryDragStartResult) => GeometryRect | null;
+}
+
+export interface AuthorizedGeometryBatch {
+  ok: boolean;
+  reason: string;
+  failedId: string | null;
+  designerText: string | null;
+  appliedCount: number;
+}
+
+/**
+ * One fail-closed modern geometry authorization/commit round. RPC failures deliberately propagate to the host; this
+ * helper never calls SetProperty or constructs replacement source. A successful caller may commit only designerText,
+ * which is copied verbatim from CommitGeometryBounds after the live engine has corrected the candidate.
+ */
+export async function authorizeGeometryCommit(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  mode: 'move' | 'resize',
+  candidate: (start: GeometryDragStartResult) => GeometryRect | null,
+  controlAssemblyPath?: string,
+  sourceText?: string,
+): Promise<AuthorizedGeometryCommit> {
+  const start = await beginGeometryDrag(engine, designerFilePath, componentId, controlAssemblyPath, sourceText);
+  const permitted = mode === 'move' ? start.canMove : start.canResize;
+  if (!start.ok || start.componentId !== componentId || !start.logicalBounds || !start.windowBounds || !permitted) {
+    return {
+      ok: false,
+      reason: start.reason || `${mode} is not permitted by the live layout`,
+      designerText: null,
+      start,
+      result: null,
+    };
+  }
+
+  const requested = candidate(start);
+  if (!requested) {
+    return { ok: false, reason: 'live geometry metadata is incomplete', designerText: null, start, result: null };
+  }
+  const result = await commitGeometryBounds(
+    engine, designerFilePath, componentId, requested, controlAssemblyPath, sourceText);
+  if (!result.ok || result.componentId !== componentId) {
+    return {
+      ok: false,
+      reason: result.reason || 'invalid geometry commit response',
+      designerText: null,
+      start,
+      result,
+    };
+  }
+  return { ok: true, reason: '', designerText: result.designerText, start, result };
+}
+
+/**
+ * Authorize a multi-selection against evolving in-memory source, but expose no partial text when any member refuses.
+ * The host makes exactly one undoable commit after this entire batch succeeds.
+ */
+export async function authorizeGeometryBatch(
+  engine: EngineHandle,
+  designerFilePath: string,
+  intents: GeometryBatchIntent[],
+  controlAssemblyPath: string | undefined,
+  sourceText: string,
+): Promise<AuthorizedGeometryBatch> {
+  let text = sourceText;
+  let appliedCount = 0;
+  for (const intent of intents) {
+    const authorized = await authorizeGeometryCommit(
+      engine, designerFilePath, intent.id, intent.mode, intent.candidate, controlAssemblyPath, text);
+    if (!authorized.ok) {
+      return {
+        ok: false,
+        reason: authorized.reason,
+        failedId: intent.id,
+        designerText: null,
+        appliedCount: 0,
+      };
+    }
+    if (authorized.designerText !== null && authorized.designerText !== text) {
+      text = authorized.designerText;
+      appliedCount++;
+    }
+  }
+  return {
+    ok: true,
+    reason: '',
+    failedId: null,
+    designerText: text === sourceText ? null : text,
+    appliedCount,
+  };
 }
 
 /** A full-frame render + the click-to-select hit-test map from ONE engine graph load. See RenderWithLayout. */
@@ -817,6 +1029,21 @@ export function getCapabilities(engine: EngineHandle): Promise<EngineCapabilitie
 
 // ---- describe / edit (property-grid data + write side) ----
 
+export interface ExpandablePropertyDesc {
+  name: string;
+  propertyPath: string;
+  type: string;
+  value?: string | null;
+  readOnly: boolean;
+  sourceEditable: boolean;
+  category: string;
+  description?: string | null;
+  standardValues?: string[] | null;
+  standardValuesExclusive?: boolean;
+  properties?: ExpandablePropertyDesc[] | null;
+  propertiesTruncated?: boolean;
+}
+
 export interface PropertyDesc {
   name: string;
   type: string;
@@ -851,6 +1078,8 @@ export interface PropertyDesc {
   isCollection?: boolean;
   /** The collection's item type (currently always "System.String"), or null/absent when not a collection. */
   collectionItemType?: string | null;
+  /** True when the engine exposed this through the bounded generic IList/IList<T> source adapter. */
+  genericCollection?: boolean;
   /** The property's DescriptionAttribute text (shown in the description pane below the grid), or null/absent
    * when the property carries no description. */
   description?: string | null;
@@ -867,6 +1096,11 @@ export interface PropertyDesc {
    * property. The panel tags its edit `designTime` so the host routes to the field-declaration splice (setModifier),
    * not setProperty. Routing on this flag (not the name) keeps a real property named "Modifiers" on the normal path. */
   designTime?: boolean;
+  /** Bounded TypeConverter-provided child metadata. Nested writes remain fail-closed unless a dedicated adapter exists. */
+  properties?: ExpandablePropertyDesc[] | null;
+  propertiesTruncated?: boolean;
+  /** Exact allowlisted framework UITypeEditor FQN, or null/absent when modal editing is unavailable. */
+  uiTypeEditor?: string | null;
 }
 
 export interface EventDesc {
@@ -882,6 +1116,9 @@ export interface ComponentDesc {
   type: string;
   parent: string | null;
   isRoot: boolean;
+  ownership?: 'root' | 'currentSource' | 'inherited' | 'unresolved';
+  editable?: boolean;
+  readOnlyReason?: string | null;
   properties: PropertyDesc[];
   events: EventDesc[];
 }
@@ -965,6 +1202,27 @@ export function previewSave(engine: EngineHandle, designerFilePath: string, cont
 */
 export function convertValue(engine: EngineHandle, typeName: string, invariantValue: string): Promise<string | null> {
   return engine.connection.sendRequest<string | null>('ConvertValue', typeName, invariantValue);
+}
+
+/** Fail-closed result from the isolated, allowlisted framework UITypeEditor worker. */
+export interface SupportedUiTypeEditorResult {
+  ok: boolean;
+  applied: boolean;
+  dismissed: boolean;
+  invariantValue?: string | null;
+  errorCode: string;
+  reason: string;
+}
+
+export function editSupportedUiTypeEditor(
+  engine: EngineHandle,
+  requestId: string,
+  editorTypeName: string,
+  valueTypeName: string,
+  invariantValue: string,
+): Promise<SupportedUiTypeEditorResult> {
+  return engine.connection.sendRequest<SupportedUiTypeEditorResult>(
+    'EditSupportedUiTypeEditor', requestId, editorTypeName, valueTypeName, invariantValue);
 }
 
 /** One color-dropdown swatch: a KnownColor name + its opaque RRGGBB hex (theme-accurate for system colors). */
@@ -1463,6 +1721,38 @@ export function setCollectionItems(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetCollectionItems', designerFilePath, ownerId, propertyName, items, ...tail);
+}
+
+/** Source-first generic IList/IList&lt;T&gt; adapter result. Items are invariant strings validated against itemTypeName. */
+export interface GenericListItems extends CollectionItems {
+  itemTypeName: string;
+}
+
+export function listGenericListItems(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  propertyName: string,
+  itemTypeName: string,
+  sourceText?: string,
+): Promise<GenericListItems> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<GenericListItems>(
+    'ListGenericListItems', designerFilePath, ownerId, propertyName, itemTypeName, ...tail);
+}
+
+export function setGenericListItems(
+  engine: EngineHandle,
+  designerFilePath: string,
+  ownerId: string,
+  propertyName: string,
+  itemTypeName: string,
+  items: string[],
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>(
+    'SetGenericListItems', designerFilePath, ownerId, propertyName, itemTypeName, items, ...tail);
 }
 
 /** Read a generic string[] property's current items (TextBox/RichTextBox.Lines) for the "…" editor. `ok` is false

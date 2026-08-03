@@ -141,20 +141,34 @@ jobs:
         working-directory: extension
         run: npm run extension-host-e2e -- --version=stable
 
-      - name: Package VSIX
+      - name: Package VSIX (Windows x64)
         # `vsce package` runs the `vscode:prepublish` script, which builds, bundles the engine
         # into extension/engine/, and copies the LICENSE — so the artifact is self-contained.
         working-directory: extension
         run: npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix
 
-      - name: Assert VSIX contains the bundled engine
+      - name: Assert VSIX contains the bundled engines (Windows x64)
         working-directory: extension
         shell: pwsh
-        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix
+        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664
+
+      - name: Package VSIX (Windows ARM64)
+        working-directory: extension
+        shell: pwsh
+        env:
+          WFD_BUNDLE_RID: win-arm64
+        run: npx --yes @vscode/vsce@3.9.2 package --target win32-arm64 --no-dependencies -o winforms-designer-win32-arm64.vsix
+
+      - name: Assert VSIX contains the bundled engines (Windows ARM64)
+        working-directory: extension
+        shell: pwsh
+        run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-arm64.vsix -ExpectedTarget win32-arm64 -ExpectedRuntimeIdentifier win-arm64 -ExpectedModernMachine 0xAA64 -ExpectedNet48Machine 0x8664
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v7
         with:
           name: winforms-designer-vsix
-          path: extension/winforms-designer-win32-x64.vsix
+          path: |
+            extension/winforms-designer-win32-x64.vsix
+            extension/winforms-designer-win32-arm64.vsix
           if-no-files-found: error

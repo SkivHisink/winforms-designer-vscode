@@ -1,6 +1,22 @@
 param(
   [Parameter(Mandatory = $true)]
-  [string] $VsixPath
+  [string] $VsixPath,
+
+  [Parameter(Mandatory = $false)]
+  [ValidateSet('win32-x64', 'win32-arm64')]
+  [string] $ExpectedTarget = 'win32-x64',
+
+  [Parameter(Mandatory = $false)]
+  [ValidateSet('win-x64', 'win-arm64')]
+  [string] $ExpectedRuntimeIdentifier = 'win-x64',
+
+  [Parameter(Mandatory = $false)]
+  [ValidateSet('0x8664', '0xAA64')]
+  [string] $ExpectedModernMachine = '0x8664',
+
+  [Parameter(Mandatory = $false)]
+  [ValidateSet('0x8664')]
+  [string] $ExpectedNet48Machine = '0x8664'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,8 +80,8 @@ try {
   }
 
   $manifest = Read-ZipText 'extension.vsixmanifest'
-  if ($manifest -notmatch 'TargetPlatform="win32-x64"') {
-    throw 'VSIX manifest is not targeted to win32-x64.'
+  if ($manifest -notmatch "TargetPlatform=`"$([regex]::Escape($ExpectedTarget))`"") {
+    throw "VSIX manifest is not targeted to $ExpectedTarget."
   }
 
   $package = (Read-ZipText 'extension/package.json') | ConvertFrom-Json
@@ -86,16 +102,22 @@ try {
   if ($deps -notmatch 'StreamJsonRpc/2\.25\.29' -or $deps -notmatch 'MessagePack/2\.5\.302') {
     throw 'Bundled modern engine does not contain the audited StreamJsonRpc/MessagePack versions.'
   }
+  if ($deps -notmatch "/$([regex]::Escape($ExpectedRuntimeIdentifier))`"") {
+    throw "Bundled modern engine deps.json does not target $ExpectedRuntimeIdentifier."
+  }
 
   $modernMachine = Get-ZipPeMachine 'extension/engine/WinFormsDesigner.Engine.exe'
   $net48Machine = Get-ZipPeMachine 'extension/engine-net48/WinFormsDesigner.Engine.Net48.exe'
-  if ($modernMachine -ne '0x8664' -or $net48Machine -ne '0x8664') {
-    throw "VSIX engines are not both AMD64: modern=$modernMachine, net48=$net48Machine"
+  if ($modernMachine -ne $ExpectedModernMachine) {
+    throw "Modern engine apphost has unexpected PE machine: actual=$modernMachine, expected=$ExpectedModernMachine"
+  }
+  if ($net48Machine -ne $ExpectedNet48Machine) {
+    throw "net48 compatibility engine has unexpected PE machine: actual=$net48Machine, expected=$ExpectedNet48Machine"
   }
 
   $item = Get-Item -LiteralPath $resolvedVsix
   $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedVsix).Hash
-  Write-Host "VSIX verified: version=$($package.version), target=win32-x64, tfm=$($runtime.runtimeOptions.tfm), desktop=$($desktop[0].version), entries=$($zip.Entries.Count), bytes=$($item.Length), sha256=$hash"
+  Write-Host "VSIX verified: version=$($package.version), target=$ExpectedTarget, rid=$ExpectedRuntimeIdentifier, tfm=$($runtime.runtimeOptions.tfm), desktop=$($desktop[0].version), modernMachine=$modernMachine, net48Machine=$net48Machine, entries=$($zip.Entries.Count), bytes=$($item.Length), sha256=$hash"
 } finally {
   $zip.Dispose()
 }

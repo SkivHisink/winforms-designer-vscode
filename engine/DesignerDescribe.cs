@@ -4,10 +4,31 @@ using System.ComponentModel;
 using System.ComponentModel.Design;
 using System.ComponentModel.Design.Serialization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Windows.Forms;
 
 namespace WinFormsDesigner.Engine
 {
+    public sealed class ExpandablePropertyInfo
+    {
+        public string Name { get; init; } = "";
+        public string PropertyPath { get; init; } = "";
+        public string Type { get; init; } = "";
+        /// <summary>Current value as a bounded invariant string, or null if null / not invariantly convertible.</summary>
+        public string? Value { get; init; }
+        /// <summary>The nested descriptor's own read-only state. This is metadata only; no nested write route is implied.</summary>
+        public bool ReadOnly { get; init; }
+        /// <summary>True when the current value is read/write and can be converted by the existing source expression converter.
+        /// Metadata only: this does not advertise a nested property write API.</summary>
+        public bool SourceEditable { get; init; }
+        public string Category { get; init; } = "Misc";
+        public string? Description { get; init; }
+        public List<string>? StandardValues { get; init; }
+        public bool StandardValuesExclusive { get; init; }
+        public List<ExpandablePropertyInfo>? Properties { get; init; }
+        public bool PropertiesTruncated { get; init; }
+    }
+
     public sealed class PropertyInfo
     {
         public string Name { get; init; } = "";
@@ -80,6 +101,14 @@ namespace WinFormsDesigner.Engine
         /// edit to the dedicated field-declaration splice, NOT setProperty; distinguishing on this flag (not the name)
         /// keeps a real control property that happens to be named "Modifiers" on the normal edit path.</summary>
         public bool DesignTime { get; init; }
+        /// <summary>True when the shared generic IList editor, rather than a bespoke collection editor, owns the route.</summary>
+        public bool GenericCollection { get; init; }
+        /// <summary>Closed, engine-supported modal editor type. Never populated from arbitrary EditorAttribute metadata.</summary>
+        public string? UiTypeEditor { get; init; }
+        /// <summary>Bounded TypeConverter-provided nested property metadata for expandable objects. Supplemental
+        /// read-side metadata only; existing scalar/collection/image/reference edit routes are unchanged.</summary>
+        public List<ExpandablePropertyInfo>? Properties { get; init; }
+        public bool PropertiesTruncated { get; init; }
     }
 
     /// <summary>One event of a component, for the Events tab. <see cref="Handler"/> is the wired handler
@@ -95,6 +124,16 @@ namespace WinFormsDesigner.Engine
         public string? Handler { get; init; }
     }
 
+    /// <summary>Renderer-supplied identity and source ownership for one live graph component.</summary>
+    public sealed class ComponentOwnershipInfo
+    {
+        public string Id { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string Ownership { get; init; } = "unresolved";
+        public bool Editable { get; init; }
+        public string? ReadOnlyReason { get; init; }
+    }
+
     public sealed class ComponentInfo
     {
         /// <summary>Edit id to pass to SetProperty: "this" for the root, Site.Name for other components.</summary>
@@ -102,6 +141,11 @@ namespace WinFormsDesigner.Engine
         /// <summary>Display name: the class name for the root, Site.Name for other components.</summary>
         public string Name { get; init; } = "";
         public string Type { get; init; } = "";
+        /// <summary>Source ownership: root, currentSource, inherited, or unresolved.</summary>
+        public string Ownership { get; init; } = "unresolved";
+        /// <summary>True only when this component is addressable from the current designer source.</summary>
+        public bool Editable { get; init; }
+        public string? ReadOnlyReason { get; init; }
         /// <summary>Parent component display name, or null for the root.</summary>
         public string? Parent { get; init; }
         public bool IsRoot { get; init; }
@@ -137,16 +181,18 @@ namespace WinFormsDesigner.Engine
             HashSet<(IComponent, string)> explicitMembers,
             int total, int representable, List<string> unrepresentable,
             Dictionary<string, Dictionary<string, string>>? eventWirings = null,
-            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null)
+            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null,
+            IReadOnlyList<IComponent>? graphComponents = null,
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership = null)
         {
             var root = host.RootComponent;
-            var all = host.Container.Components.Cast<IComponent>().ToList();
+            var all = (graphComponents ?? host.Container.Components.Cast<IComponent>().ToList()).Distinct().ToList();
             // Reference-dropdown candidates: every sited component EXCEPT the root form — a field-backed component the
             // write can name as `this.<field>`. The root is `this` (no field), never a `this.<name>` reference target,
             // so exclude it (matches the net48 side, whose FieldNames map holds no root entry).
-            var siblings = all.Where(x => !ReferenceEquals(x, root)).ToList();
+            var siblings = all.Where(x => !ReferenceEquals(x, root) && OwnershipOf(x, root, rootName, ownership).Editable).ToList();
             var components = all
-                .Select(c => BuildComponentInfo(c, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers))
+                .Select(c => BuildComponentInfo(c, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers, ownership))
                 .OrderByDescending(c => c.IsRoot)
                 .ThenBy(c => c.Name, StringComparer.Ordinal)
                 .ToList();
@@ -165,38 +211,60 @@ namespace WinFormsDesigner.Engine
         public static ComponentInfo? DescribeComponent(IDesignerHost host, string rootName,
             HashSet<(IComponent, string)> explicitMembers, string componentId,
             Dictionary<string, Dictionary<string, string>>? eventWirings = null,
-            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null)
+            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null,
+            IReadOnlyList<IComponent>? graphComponents = null,
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership = null)
         {
             var root = host.RootComponent;
-            var all = host.Container.Components.Cast<IComponent>().ToList();
-            var siblings = all.Where(x => !ReferenceEquals(x, root)).ToList(); // see Describe: root is never a `this.<field>` reference target
+            var all = (graphComponents ?? host.Container.Components.Cast<IComponent>().ToList()).Distinct().ToList();
+            var siblings = all.Where(x => !ReferenceEquals(x, root) && OwnershipOf(x, root, rootName, ownership).Editable).ToList(); // see Describe: root is never a `this.<field>` reference target
             IComponent? target = (componentId is "this" or "")
                 ? root
-                : all.FirstOrDefault(c => c.Site?.Name == componentId);
-            return target == null ? null : BuildComponentInfo(target, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers);
+                : all.FirstOrDefault(c => OwnershipOf(c, root, rootName, ownership).Id == componentId);
+            return target == null ? null : BuildComponentInfo(target, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers, ownership);
         }
 
         private static ComponentInfo BuildComponentInfo(IComponent c, IComponent root, string rootName,
             HashSet<(IComponent, string)> explicitMembers,
             Dictionary<string, Dictionary<string, string>>? eventWirings,
             IReadOnlyList<IComponent> siblings,
-            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null)
+            Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers,
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership)
         {
             bool isRoot = ReferenceEquals(c, root);
-            string idKey = isRoot ? "this" : (c.Site?.Name ?? "");
+            var source = OwnershipOf(c, root, rootName, ownership);
+            string idKey = source.Id;
             Dictionary<string, string>? wired = null;
             eventWirings?.TryGetValue(idKey, out wired);
-            var props = DescribeProperties(c, explicitMembers, siblings, root);
-            InjectDesignTimeProperties(props, c, root, fieldModifiers);
+            var props = DescribeProperties(c, explicitMembers, siblings, root, source.Editable);
+            if (source.Editable) InjectDesignTimeProperties(props, c, root, fieldModifiers);
             return new ComponentInfo
             {
                 Id = idKey,
-                Name = isRoot ? rootName : (c.Site?.Name ?? ""),
+                Name = source.Name,
                 Type = c.GetType().FullName ?? c.GetType().Name,
-                Parent = ParentName(c, root, rootName),
+                Ownership = source.Ownership,
+                Editable = source.Editable,
+                ReadOnlyReason = source.ReadOnlyReason,
+                Parent = ParentName(c, root, rootName, ownership),
                 IsRoot = isRoot,
                 Properties = props,
                 Events = DescribeEvents(c, wired),
+            };
+        }
+
+        private static ComponentOwnershipInfo OwnershipOf(IComponent c, IComponent root, string rootName,
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership)
+        {
+            if (ownership != null && ownership.TryGetValue(c, out var found)) return found;
+            bool isRoot = ReferenceEquals(c, root);
+            string id = isRoot ? "this" : (c.Site?.Name ?? "");
+            return new ComponentOwnershipInfo
+            {
+                Id = id,
+                Name = isRoot ? rootName : id,
+                Ownership = isRoot ? "root" : "currentSource",
+                Editable = true,
             };
         }
 
@@ -347,18 +415,19 @@ namespace WinFormsDesigner.Engine
             }
         }
 
-        private static string? ParentName(IComponent c, IComponent root, string rootName)
+        private static string? ParentName(IComponent c, IComponent root, string rootName,
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership)
         {
             if (ReferenceEquals(c, root)) return null;
             if (c is Control ctl && ctl.Parent is Control p)
             {
-                return ReferenceEquals(p, root) ? rootName : (p.Site?.Name ?? "");
+                return ReferenceEquals(p, root) ? rootName : OwnershipOf(p, root, rootName, ownership).Name;
             }
             return null;
         }
 
         private static List<PropertyInfo> DescribeProperties(IComponent c, HashSet<(IComponent, string)> explicitMembers,
-            IReadOnlyList<IComponent> siblings, IComponent root)
+            IReadOnlyList<IComponent> siblings, IComponent root, bool componentEditable = true)
         {
             var list = new List<PropertyInfo>();
             // a child sited directly in a TableLayoutPanel exposes the panel's Column/Row extender properties; they
@@ -374,15 +443,21 @@ namespace WinFormsDesigner.Engine
                 // editor even though Items is [Browsable(false)] + Hidden serialization — the grid needs them.
                 bool isStringCollection = IsStringCollectionProperty(pd);
                 string? typedCollectionItem = TypedCollectionItemType(pd);
+                var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
                 // a generic writable string[] property (flagship: TextBox/RichTextBox.Lines) is surfaced through the
                 // SAME "…" editor as the string collections, but marked with the distinct CollectionItemType sentinel
                 // "System.String[]" so the host routes it to the string-array RPCs (a single `= new string[]{…}`
                 // assignment) rather than the Items.Add/AddRange splicer. Gate on a real setter — a getter-only
                 // string[] (computed) would show editable but never apply.
                 bool isStringArray = pd.PropertyType.FullName == "System.String[]" && !pd.IsReadOnly;
-                bool isCollection = isStringCollection || typedCollectionItem != null || isStringArray;
+                string? genericCollectionItem = !isStringCollection && typedCollectionItem == null && !isStringArray
+                    && vis?.Visibility == DesignerSerializationVisibility.Content
+                    && IsListShape(pd.PropertyType)
+                    ? GenericCollectionItemType(pd.PropertyType)
+                    : null;
+                bool genericCollection = genericCollectionItem != null;
+                bool isCollection = isStringCollection || typedCollectionItem != null || isStringArray || genericCollection;
                 if (!pd.IsBrowsable && !isTableCell && !isCollection) continue;
-                var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
                 if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
 
                 // 0.11.0 minimal (Collection) routing — an editable collection the designer serializes inline
@@ -392,7 +467,7 @@ namespace WinFormsDesigner.Engine
                 // (no edit path = no data-loss / no broken "…"). A dedicated generic list editor is the deferred XL work.
                 bool unhandledCollection = !isCollection && !isTableCell
                     && vis != null && vis.Visibility == DesignerSerializationVisibility.Content
-                    && typeof(System.Collections.IList).IsAssignableFrom(pd.PropertyType);
+                    && IsListShape(pd.PropertyType);
 
                 // read value and default-state in SEPARATE guarded blocks: a throwing ShouldSerializeValue
                 // must not discard a value that read fine, and vice versa.
@@ -412,12 +487,17 @@ namespace WinFormsDesigner.Engine
                 // GdiCharSet/GdiVerticalFont — so editing a Font that carries a non-default charset (e.g. 204 =
                 // RUSSIAN_CHARSET, common in Cyrillic/CJK forms) would silently drop the charset on save. Show
                 // such a Font read-only so the value can't be lost; plain fonts (charset 1) stay editable.
-                bool readOnly = pd.IsReadOnly || unhandledCollection; // an unhandled collection has no edit path → read-only
-                if (isDataSource) readOnly = false;
+                bool readOnly = !componentEditable || (!genericCollection && pd.IsReadOnly) || unhandledCollection; // Content lists use their source-first editor despite a getter-only property.
+                if (isDataSource && componentEditable) readOnly = false;
                 if (raw is System.Drawing.Font font && (font.GdiCharSet != 1 || font.GdiVerticalFont))
                 {
                     readOnly = true;
                 }
+                string? uiTypeEditor = !readOnly && pd.PropertyType == typeof(System.Drawing.Color)
+                    ? "System.Drawing.Design.ColorEditor"
+                    : !readOnly && pd.PropertyType == typeof(System.Drawing.Font)
+                        ? "System.Drawing.Design.FontEditor"
+                        : null;
 
                 var (standardValues, stdExclusive) = StandardValuesOf(pd, c);
 
@@ -456,6 +536,9 @@ namespace WinFormsDesigner.Engine
                 string? description = null;
                 try { description = string.IsNullOrEmpty(pd.Description) ? null : pd.Description; } catch { description = null; }
 
+                var expandable = ExpandablePropertiesOf(pd, c, raw, pd.Name,
+                    isTableCell || isCollection || unhandledCollection || isImage || referenceValues || isDataSource);
+
                 list.Add(new PropertyInfo
                 {
                     Name = pd.Name,
@@ -477,21 +560,230 @@ namespace WinFormsDesigner.Engine
                     IsImage = isImage,
                     ImagePreview = imagePreview,
                     IsCollection = isCollection,
-                    CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : typedCollectionItem),
+                    GenericCollection = genericCollection,
+                    CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : (typedCollectionItem ?? genericCollectionItem)),
+                    UiTypeEditor = uiTypeEditor,
                     ReferenceValues = referenceValues,
                     IsDataSource = isDataSource,
+                    Properties = expandable.properties,
+                    PropertiesTruncated = expandable.truncated,
                 });
             }
-            InjectExtenderProperties(list, c, siblings);
+            if (componentEditable) InjectExtenderProperties(list, c, siblings);
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return list;
+        }
+
+        private const int ExpandableMaxDepth = 4;
+        private const int ExpandableMaxNodes = 128;
+        private const int ExpandableMaxChildrenPerNode = 64;
+        private const int ExpandableMaxStandardValues = 64;
+        private const int ExpandableMaxNameChars = 128;
+        private const int ExpandableMaxTypeChars = 256;
+        private const int ExpandableMaxPathChars = 512;
+        private const int ExpandableMaxValueChars = 1024;
+        private const int ExpandableMaxDescriptionChars = 1024;
+        private const int ExpandableMaxCategoryChars = 128;
+
+        private static (List<ExpandablePropertyInfo>? properties, bool truncated) ExpandablePropertiesOf(
+            PropertyDescriptor pd, object owner, object? raw, string path, bool suppressForBespokeEditor)
+        {
+            if (suppressForBespokeEditor || raw == null) return (null, false);
+            var budget = new ExpandableBudget(ExpandableMaxNodes);
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            bool truncated = false;
+            var properties = ExpandablePropertiesOf(pd, owner, raw, path, 0, budget, visited, ref truncated);
+            return (properties, truncated);
+        }
+
+        private static List<ExpandablePropertyInfo>? ExpandablePropertiesOf(PropertyDescriptor ownerDescriptor, object owner,
+            object raw, string path, int depth, ExpandableBudget budget, HashSet<object> visited, ref bool truncated)
+        {
+            if (depth >= ExpandableMaxDepth) { truncated = true; return null; }
+            if (!TryEnterVisited(raw, visited)) return null;
+            try
+            {
+                var conv = SafeConverter(ownerDescriptor);
+                if (conv == null) return null;
+                var ctx = new DescribeContext(owner, ownerDescriptor);
+                if (!ConverterPropertiesSupported(conv, ctx)) return null;
+                var childDescriptors = ConverterProperties(conv, ctx, raw);
+                if (childDescriptors == null || childDescriptors.Count == 0) return null;
+
+                var result = new List<ExpandablePropertyInfo>();
+                int emittedForNode = 0;
+                foreach (PropertyDescriptor child in childDescriptors)
+                {
+                    if (emittedForNode >= ExpandableMaxChildrenPerNode) { truncated = true; break; }
+                    if (!budget.TryTake()) { truncated = true; break; }
+                    if (!ShouldSurfaceExpandableChild(child)) continue;
+
+                    string childPath = StableBound(JoinPropertyPath(path, child.Name), ExpandableMaxPathChars);
+                    object? childRaw = null;
+                    try { childRaw = child.GetValue(raw); } catch { childRaw = null; }
+                    string? childValue = null;
+                    try { childValue = BoundNullable(StringifyInvariant(child, childRaw), ExpandableMaxValueChars); } catch { childValue = null; }
+
+                    bool childReadOnly = true;
+                    try { childReadOnly = child.IsReadOnly; } catch { childReadOnly = true; }
+
+                    var (standardValues, stdExclusive) = StandardValuesOf(child, raw, ExpandableMaxStandardValues, ExpandableMaxValueChars);
+
+                    string? description = null;
+                    try { description = BoundNullable(string.IsNullOrEmpty(child.Description) ? null : child.Description, ExpandableMaxDescriptionChars); }
+                    catch { description = null; }
+
+                    string category = "Misc";
+                    try { category = BoundString(string.IsNullOrEmpty(child.Category) ? "Misc" : child.Category, ExpandableMaxCategoryChars); }
+                    catch { category = "Misc"; }
+
+                    bool nestedTruncated = false;
+                    var nested = childRaw == null
+                        ? null
+                        : ExpandablePropertiesOf(child, raw, childRaw, childPath, depth + 1, budget, visited, ref nestedTruncated);
+                    if (nestedTruncated) truncated = true;
+
+                    result.Add(new ExpandablePropertyInfo
+                    {
+                        Name = BoundString(child.Name, ExpandableMaxNameChars),
+                        PropertyPath = childPath,
+                        Type = BoundString(child.PropertyType.FullName ?? child.PropertyType.Name, ExpandableMaxTypeChars),
+                        Value = childValue,
+                        ReadOnly = childReadOnly,
+                        SourceEditable = SourceEditableThroughExistingValueConversion(child.PropertyType, childValue, childReadOnly),
+                        Category = category,
+                        Description = description,
+                        StandardValues = standardValues,
+                        StandardValuesExclusive = stdExclusive,
+                        Properties = nested,
+                        PropertiesTruncated = nestedTruncated,
+                    });
+                    emittedForNode++;
+                }
+                result.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+                return result.Count == 0 ? null : result;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                ExitVisited(raw, visited);
+            }
+        }
+
+        private static TypeConverter? SafeConverter(PropertyDescriptor pd)
+        {
+            try { return pd.Converter; } catch { return null; }
+        }
+
+        private static bool ConverterPropertiesSupported(TypeConverter conv, ITypeDescriptorContext ctx)
+        {
+            try { return conv.GetPropertiesSupported(ctx); }
+            catch
+            {
+                try { return conv.GetPropertiesSupported(); }
+                catch { return false; }
+            }
+        }
+
+        private static PropertyDescriptorCollection? ConverterProperties(TypeConverter conv, ITypeDescriptorContext ctx, object value)
+        {
+            try { return conv.GetProperties(ctx, value, Array.Empty<Attribute>()); }
+            catch
+            {
+                try { return conv.GetProperties(value); }
+                catch { return null; }
+            }
+        }
+
+        private static bool ShouldSurfaceExpandableChild(PropertyDescriptor pd)
+        {
+            try { if (!pd.IsBrowsable) return false; } catch { return false; }
+            try
+            {
+                var vis = (DesignerSerializationVisibilityAttribute?)pd.Attributes[typeof(DesignerSerializationVisibilityAttribute)];
+                if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden) return false;
+            }
+            catch { return false; }
+            return true;
+        }
+
+        private static bool SourceEditableThroughExistingValueConversion(Type type, string? value, bool readOnly)
+        {
+            if (readOnly || string.IsNullOrEmpty(value)) return false;
+            try { return DesignerValueConverter.ToExpression(type.FullName ?? type.Name, value) != null; }
+            catch { return false; }
+        }
+
+        private static bool TryEnterVisited(object value, HashSet<object> visited)
+        {
+            Type t;
+            try { t = value.GetType(); } catch { return false; }
+            if (t.IsValueType) return true;
+            return visited.Add(value);
+        }
+
+        private static void ExitVisited(object value, HashSet<object> visited)
+        {
+            try { if (!value.GetType().IsValueType) visited.Remove(value); } catch { /* ignore */ }
+        }
+
+        private static string JoinPropertyPath(string parent, string child) =>
+            string.IsNullOrEmpty(parent) ? child : parent + "." + child;
+
+        private static string BoundString(string value, int maxChars)
+        {
+            if (value.Length <= maxChars) return value;
+            if (maxChars <= 17) return value.Substring(0, maxChars);
+            return value.Substring(0, maxChars - 17) + "~" + StableHash64(value).ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static string StableBound(string value, int maxChars) => BoundString(value, maxChars);
+
+        private static string? BoundNullable(string? value, int maxChars) => value == null ? null : BoundString(value, maxChars);
+
+        private static ulong StableHash64(string value)
+        {
+            const ulong offset = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong hash = offset;
+            foreach (char ch in value)
+            {
+                hash ^= ch;
+                hash *= prime;
+            }
+            return hash;
+        }
+
+        private sealed class ExpandableBudget
+        {
+            private int _remaining;
+            public ExpandableBudget(int remaining) { _remaining = remaining; }
+            public bool TryTake()
+            {
+                if (_remaining <= 0) return false;
+                _remaining--;
+                return true;
+            }
+        }
+
+        private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
+        {
+            public static readonly ReferenceEqualityComparer Instance = new();
+            public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
+            public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
         }
 
         /// <summary>The property's TypeConverter standard values as invariant strings + whether the set is
         /// exclusive (closed). Returns (null, false) when none are offered, the type is a flags enum (a
         /// single-select can't express combined flags), or any value fails to stringify. Bounded and fully
         /// guarded — a hostile converter degrades to no dropdown, never throws.</summary>
-        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd, IComponent owner)
+        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd, object owner) =>
+            StandardValuesOf(pd, owner, 256, 0);
+
+        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd, object owner, int maxValues, int maxValueChars)
         {
             try
             {
@@ -524,8 +816,12 @@ namespace WinFormsDesigner.Engine
                     if (isImageConv && ((sv is string ks && ks.Length == 0) || (sv is int ki && ki < 0))) continue;
                     string? s = null;
                     try { if (conv.CanConvertTo(typeof(string))) s = conv.ConvertToInvariantString(sv); } catch { s = null; }
-                    if (!string.IsNullOrEmpty(s) && !vals.Contains(s!)) vals.Add(s!);
-                    if (vals.Count >= 256) break; // bound — keep the payload sane for huge converters
+                    if (!string.IsNullOrEmpty(s))
+                    {
+                        if (maxValueChars > 0) s = BoundString(s!, maxValueChars);
+                        if (!vals.Contains(s!)) vals.Add(s!);
+                    }
+                    if (vals.Count >= maxValues) break; // bound — keep the payload sane for huge converters
                 }
                 // vals.Count==0 → no dropdown (plain field). For an image converter that means the ImageList is absent/empty
                 // (only the sentinel, now filtered) — so a populated 1-image list (even a no-sentinel NoneExcludedImageIndex
@@ -643,13 +939,13 @@ namespace WinFormsDesigner.Engine
         /// Read-only: the change notifications are no-ops (describe never mutates through the converter).</summary>
         private sealed class DescribeContext : ITypeDescriptorContext
         {
-            private readonly IComponent _instance;
+            private readonly object _instance;
             private readonly PropertyDescriptor _pd;
-            public DescribeContext(IComponent instance, PropertyDescriptor pd) { _instance = instance; _pd = pd; }
-            public IContainer? Container { get { try { return _instance.Site?.Container; } catch { return null; } } }
+            public DescribeContext(object instance, PropertyDescriptor pd) { _instance = instance; _pd = pd; }
+            public IContainer? Container { get { try { return (_instance as IComponent)?.Site?.Container; } catch { return null; } } }
             public object? Instance => _instance;
             public PropertyDescriptor? PropertyDescriptor => _pd;
-            public object? GetService(Type serviceType) { try { return _instance.Site?.GetService(serviceType); } catch { return null; } }
+            public object? GetService(Type serviceType) { try { return (_instance as IComponent)?.Site?.GetService(serviceType); } catch { return null; } }
             public bool OnComponentChanging() => true;
             public void OnComponentChanged() { }
         }
@@ -743,6 +1039,52 @@ namespace WinFormsDesigner.Engine
 
         private static string? TypedCollectionItemType(PropertyDescriptor pd) =>
             pd.PropertyType.FullName != null && TypedCollectionItemTypes.TryGetValue(pd.PropertyType.FullName, out var it) ? it : null;
+
+        /// <summary>Resolve one unambiguous generic-list item type without instantiating the collection or invoking
+        /// vendor metadata. A single IList&lt;T&gt; wins; legacy IList shapes may instead expose one exact public Add(T).
+        /// The shared source editor's allowlist is the final capability gate.</summary>
+        private static string? GenericCollectionItemType(Type collectionType)
+        {
+            try
+            {
+                var interfaceItems = new HashSet<Type>();
+                if (collectionType.IsGenericType && collectionType.GetGenericTypeDefinition() == typeof(IList<>))
+                    interfaceItems.Add(collectionType.GetGenericArguments()[0]);
+                foreach (var iface in collectionType.GetInterfaces())
+                    if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IList<>))
+                        interfaceItems.Add(iface.GetGenericArguments()[0]);
+                if (interfaceItems.Count > 1) return null;
+
+                Type? itemType = interfaceItems.SingleOrDefault();
+                if (itemType == null)
+                {
+                    var addTypes = collectionType.GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+                        .Where(m => m.Name == "Add" && !m.IsGenericMethodDefinition)
+                        .Select(m => m.GetParameters())
+                        .Where(p => p.Length == 1 && !p[0].ParameterType.IsByRef)
+                        .Select(p => p[0].ParameterType)
+                        .Distinct()
+                        .ToList();
+                    if (addTypes.Count != 1) return null;
+                    itemType = addTypes[0];
+                }
+
+                string? name = itemType.FullName;
+                return name != null && DesignerGenericListEditor.SupportsItemType(name) ? name : null;
+            }
+            catch { return null; }
+        }
+
+        private static bool IsListShape(Type type)
+        {
+            try
+            {
+                if (typeof(System.Collections.IList).IsAssignableFrom(type)) return true;
+                if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IList<>)) return true;
+                return type.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IList<>));
+            }
+            catch { return false; }
+        }
 
         private const int ThumbMax = 64;             // preview swatch cap (px); larger sources are scaled down, aspect-preserved
         private const long MaxSrcPixels = 4096L * 4096L; // total-pixel bound on the SOURCE — reject a pixel bomb before DrawImage allocates

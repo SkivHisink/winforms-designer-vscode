@@ -15,6 +15,12 @@ namespace WinFormsDesigner.Engine
         /// <summary>Display name (root class name for the root, Site.Name otherwise).</summary>
         public string Name { get; init; } = "";
         public string Type { get; init; } = "";
+        /// <summary>Source ownership: root, currentSource, inherited, or unresolved.</summary>
+        public string Ownership { get; init; } = "unresolved";
+        /// <summary>True only when every mutation route can address this component in the current designer source.</summary>
+        public bool Editable { get; init; }
+        /// <summary>Stable fail-closed explanation when <see cref="Editable"/> is false.</summary>
+        public string? ReadOnlyReason { get; init; }
         /// <summary>Parent control's edit id, or null for the root.</summary>
         public string? ParentId { get; init; }
         public bool IsRoot { get; init; }
@@ -80,6 +86,9 @@ namespace WinFormsDesigner.Engine
         public string Id { get; init; } = "";
         public string Name { get; init; } = "";
         public string Type { get; init; } = "";
+        public string Ownership { get; init; } = "unresolved";
+        public bool Editable { get; init; }
+        public string? ReadOnlyReason { get; init; }
         /// <summary>The component type's 16x16 ToolboxBitmap icon as a base64 PNG, when available.</summary>
         public string? IconPng { get; init; }
         /// <summary>For an OFF-TREE ToolStrip surfaced in the tray (a ContextMenuStrip / ToolStripDropDown, which is a

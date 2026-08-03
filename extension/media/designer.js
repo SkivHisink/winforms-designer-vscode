@@ -897,8 +897,8 @@
       if (g < lastDrawnGen) return;
       lastDrawnGen = g;
       if (full) {
-        // Backing store = the PNG's REAL pixel size (the engine renders at the display's devicePixelRatio, so text is
-        // crisp on 4K instead of an upscaled blur). natW/natH stay the LOGICAL form size so zoom, overlays and
+        // Backing store = the PNG's REAL pixel size (the engine uses a safe integer capture scale, so text is crisp on
+        // high-DPI displays instead of an upscaled blur). natW/natH stay the LOGICAL form size so zoom, overlays and
         // hit-testing keep working in form pixels; CSS size is logical×zoom (applyZoomStyles). natScale (physical/logical)
         // drives image-rendering — a high-DPI backing must NOT be pixelated (that would throw away the extra pixels).
         canvas.width = img.naturalWidth || dw; canvas.height = img.naturalHeight || dh;
@@ -2182,6 +2182,17 @@
     }
   });
 
-  // Report devicePixelRatio so the host asks the engine to render the PNG at the display's resolution (crisp on 4K).
-  vscode.postMessage({ type: 'ready', dpr: window.devicePixelRatio || 1 });
+  // Report the exact display DPR separately from the engine's integer capture scale.  The host supersamples at 2x for
+  // fractional Windows ratios and lets Chromium downsample into the actual device grid, so form coordinates remain
+  // logical pixels and the cached net48 graph never needs a lossy fractional Scale/Scale-back cycle.
+  var lastReportedDpr = (typeof window.devicePixelRatio === 'number' && isFinite(window.devicePixelRatio))
+    ? window.devicePixelRatio : 1;
+  vscode.postMessage({ type: 'ready', dpr: lastReportedDpr });
+  window.addEventListener('resize', function () {
+    var nextDpr = (typeof window.devicePixelRatio === 'number' && isFinite(window.devicePixelRatio))
+      ? window.devicePixelRatio : 1;
+    if (Math.abs(nextDpr - lastReportedDpr) < 0.01) return;
+    lastReportedDpr = nextDpr;
+    vscode.postMessage({ type: 'dprChanged', dpr: nextDpr });
+  });
 })();

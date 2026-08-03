@@ -2,10 +2,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { randomBytes } from 'crypto';
+import { designerDpiScale, displayDprChanged } from './dpiScale';
 import {
   EngineHandle,
   LayoutControl,
   ToolStripItemBounds,
+  GeometryRect,
+  GeometryDragStartResult,
   ComponentDesc,
   VendorSmartTag,
   renderWithLayout,
@@ -39,14 +42,20 @@ import {
   listToolStripItems,
   setToolStripItems,
   describeLayout,
+  beginGeometryDrag,
+  authorizeGeometryBatch,
+  geometryCandidateFromWindow,
   describeComponent,
   renderControl,
   setProperty,
   setModifier,
   convertValue,
+  editSupportedUiTypeEditor,
   setTableCell,
   listCollectionItems,
   setCollectionItems,
+  listGenericListItems,
+  setGenericListItems,
   listStringArray,
   setStringArray,
   listColumns,
@@ -84,6 +93,7 @@ import {
   copyControl,
   pasteControl,
   moveZOrder,
+  reparentControl,
   addTabPage,
   addCompiledTab,
   removeTabPage,
@@ -173,8 +183,9 @@ const LOCALIZABLE_BLOCKED = new Set<string>([
   'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'addTab', 'deleteTab',
   // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
   'importImage', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
+  'setGenericList', 'uiTypeEditor',
   'setColumns', 'setGridColumns', 'setBindings', 'setDataSource', 'setExtender', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
-  'addControl', 'addComponent', 'deleteSelected',
+  'addControl', 'addComponent', 'deleteSelected', 'outlineReparent', 'outlineMoveZOrder',
 ]);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
 * diffs these against the current toolbox membership to add/remove/hide items. */
@@ -913,7 +924,9 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
       providerId?: string; extenderProperty?: string;
       refEdit?: boolean; designTime?: boolean; kind?: 'none' | 'component' | 'type';
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
+      parentId?: string; toFront?: boolean;
       items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; bindings?: BindingItem[]; nodes?: TreeNodeItem[];
+      itemType?: string; editorType?: string;
       toolStripItems?: ToolStripItemModel[];
       state?: unknown; toolboxUi?: unknown;
     }) => {
@@ -944,6 +957,9 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'setTableCell' && m.id && m.cell) { await s?.tableCellFromGrid(m.id, m.cell, m.value ?? ''); }
         else if (m?.type === 'listCollection' && m.id && m.prop) { await s?.sendCollectionItems(m.id, m.prop); }
         else if (m?.type === 'setCollection' && m.id && m.prop && Array.isArray(m.items)) { await s?.collectionFromGrid(m.id, m.prop, m.items as string[]); }
+        else if (m?.type === 'listGenericList' && m.id && m.prop && m.itemType) { await s?.sendGenericListItems(m.id, m.prop, m.itemType); }
+        else if (m?.type === 'setGenericList' && m.id && m.prop && m.itemType && Array.isArray(m.items)) { await s?.genericListFromGrid(m.id, m.prop, m.itemType, m.items as string[]); }
+        else if (m?.type === 'uiTypeEditor' && m.id && m.prop && m.propType && m.editorType) { await s?.uiTypeEditorFromGrid(m.id, m.prop, m.propType, m.editorType); }
         else if (m?.type === 'listStringArray' && m.id && m.prop) { await s?.sendStringArray(m.id, m.prop); }
         else if (m?.type === 'setStringArray' && m.id && m.prop && Array.isArray(m.items)) { await s?.stringArrayFromGrid(m.id, m.prop, m.items as string[]); }
         else if (m?.type === 'listColumns' && m.id) { await s?.sendColumnItems(m.id); }
@@ -968,6 +984,8 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'navigateHandler' && m.id) { await s?.navigateToHandler(m.id, m.event ?? '', m.handler ?? undefined, m.ownerId); }
         else if (m?.type === 'listHandlers' && m.id) { await s?.sendCandidates(m.id); }
         else if (m?.type === 'addControl' && m.controlType) { await s?.addControlFromToolbox(m.controlType); }
+        else if (m?.type === 'outlineReparent' && m.id && m.parentId) { await s?.reparentFromOutline(m.id, m.parentId); }
+        else if (m?.type === 'outlineMoveZOrder' && m.id && typeof m.toFront === 'boolean') { await s?.zOrderFromOutline(m.id, m.toFront); }
         else if (m?.type === 'addComponent' && m.componentType) { await s?.addComponentFromToolbox(m.componentType); }
         else if (m?.type === 'deleteSelected') { s?.deleteSelectedFromPanel(); }
         else if (m?.type === 'chooseItems') { s?.openChooseItems(m.tab); }
@@ -1032,10 +1050,12 @@ class DesignerSession {
   /** Which engine renders THIS form — detected per render from the resolved control assembly's runtime
    * (net48 = .NET Framework/DevExpress compiled preview). Drives engine routing + edit gating + the badge. */
   private engineKind: EngineKind = 'modern';
-  /** Integer DPI capture scale for the picture, from the webview's devicePixelRatio (1 = logical, 2 = 4K@200%…). The
-   * engine renders the PNG at this factor so text/metrics are crisp instead of the frame being upscaled on a high-DPI
-   * display. Clamped to [1,2]: ×2/×0.5 is exactly reversible, which the net48 CACHED compiled instance requires. */
-  private renderScale = 1;
+  /** Exact clamped DPR reported by the current webview display. It is diagnostic/change-detection state only: all
+   * WinForms layout, hit-testing, snapline and source coordinates remain logical pixels. */
+  private displayDpr = 1;
+  /** Safe integer backing capture. Every DPR above 1 uses 2x supersampling and browser downsampling; the cached net48
+   * graph therefore sees only the exactly reversible 2x/0.5x path, never a cumulative fractional Scale cycle. */
+  private renderScale: 1 | 2 = 1;
   private debounce?: ReturnType<typeof setTimeout>;
   private disposed = false;
   private gotReady = false;
@@ -1090,6 +1110,12 @@ class DesignerSession {
   private readonly documentUri: vscode.Uri;
   /** The custom document whose in-memory .Designer.cs text this session renders and edits (issue #2). */
   private readonly doc: WinFormsDesignDocument;
+  /** One isolated modal editor at a time per designer session. The engine broker is cancellable/fail-closed, but
+   * serialising this ingress also prevents two dialogs racing to apply values against the same document revision. */
+  private uiTypeEditorBusy = false;
+  /** Last property metadata actually published to the panel. Mutating editor messages are untrusted webview input;
+   * they must match this exact component/revision before an engine adapter is invoked. */
+  private publishedPropertyComponent: { id: string; rev: number; component: ComponentDesc | null } | undefined;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -1657,10 +1683,9 @@ class DesignerSession {
       if (this.refuseStaleRenderEdit(m.type)) return;
       if (m.type === 'ready') {
         this.gotReady = true;
-        // The webview reports its devicePixelRatio so the engine can render the PNG at the display's resolution (crisp on
-        // 4K) instead of a blurry upscale. Clamp to an integer in [1,2] — 2 covers the common 4K@200% and keeps the net48
-        // cached-instance up/down scaling exactly reversible. A dpr change (window dragged to another monitor) re-posts ready.
-        if (typeof m.dpr === 'number' && isFinite(m.dpr)) this.renderScale = Math.max(1, Math.min(2, Math.round(m.dpr)));
+        const dpi = designerDpiScale(m.dpr);
+        this.displayDpr = dpi.displayDpr;
+        this.renderScale = dpi.captureScale;
         // A fresh/reloaded webview cleared its DOM. Drop the notice cache so fullRender re-sends it, and post the dirty
         // badge SYNCHRONOUSLY now — before the awaited fullRender, which posts dirty only after loadProps and may return
         // early (unbuilt output / engine or render failure) or stall in hydration. Without this, a recovered/pre-existing
@@ -1673,6 +1698,16 @@ class DesignerSession {
         this.pushPersistedViewState();
         this.output.appendLine('[designer] webview ready: ' + this.designerFile);
         await this.fullRender();
+      } else if (m.type === 'dprChanged') {
+        const dpi = designerDpiScale(m.dpr);
+        if (!displayDprChanged(this.displayDpr, dpi.displayDpr)) return;
+        const captureChanged = this.renderScale !== dpi.captureScale;
+        this.displayDpr = dpi.displayDpr;
+        this.renderScale = dpi.captureScale;
+        this.output.appendLine(`[designer] display DPR changed: ${dpi.displayDpr} (capture ${dpi.captureScale}x)`);
+        // Chromium automatically remaps an existing 2x backing when only the fractional display grid changes. Re-render
+        // only when the engine capture itself changes (100% <-> any supported high-DPI ratio).
+        if (captureChanged) await this.fullRender();
       } else if (m.type === 'canvasViewStateChanged') {
         this.updateCanvasViewState(m.state);
       } else if (m.type === 'diagnosticAction' && m.action) {
@@ -2459,6 +2494,7 @@ class DesignerSession {
         vendorTags = v;
       }
       if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return; // a newer pick OR SOURCE edit superseded this load
+      this.publishedPropertyComponent = { id, rev: srcRev, component: comp };
       DesignerHub.instance.pushPanel(this, { type: 'props', id, component: comp });
       this.post({ type: 'tasks', id, component: comp, vendorTags }); // canvas smart-tag flyout data
       // A null describe under an INTERPRETED canvas means the selection is unavailable (unknown/inherited) — disable
@@ -2474,11 +2510,30 @@ class DesignerSession {
     const text9 = await this.currentText();
     const component = await describeComponent(eng, this.designerFile, id, this.asm(), text9);
     if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return; // a newer pick OR SOURCE edit superseded this load
+    this.publishedPropertyComponent = { id, rev: srcRev, component };
     DesignerHub.instance.pushPanel(this, { type: 'props', id, component });
     // No vendor tags on net9: reading them needs the real compiled vendor type, which this engine can't load (a form
     // that uses vendor controls doesn't render here at all). Sent explicitly so the canvas clears a stale net48 menu.
     this.post({ type: 'tasks', id, component, vendorTags: [] }); // canvas smart-tag flyout data
-    const manip = this.manipFor(id, component);
+    // Modern direct manipulation is permitted only by the live engine graph. If the RPC is absent, fails, resolves
+    // another component, or reports a layout/inheritance/custom-control refusal, publish no canvas affordance. The
+    // commit path repeats authorization against the then-current source, so this probe is UX metadata, not a stale grant.
+    let manip = (id === 'this' || this.controls.find((c) => c.id === id)?.isRoot)
+      ? this.manipFor(id, component)
+      : { move: false, resize: false };
+    if (id !== 'this' && !this.controls.find((c) => c.id === id)?.isRoot) {
+      try {
+        const geometry = await beginGeometryDrag(eng, this.designerFile, id, this.asm(), text9);
+        if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return;
+        if (geometry.ok && geometry.componentId === id && geometry.logicalBounds && geometry.windowBounds) {
+          manip = { move: geometry.canMove, resize: geometry.canResize };
+        } else {
+          this.output.appendLine(`[designer] geometry unavailable for ${id}: ${geometry.reason || 'invalid engine response'}`);
+        }
+      } catch (e) {
+        this.output.appendLine(`[designer] geometry authorization failed for ${id}: ${(e as Error).message}`);
+      }
+    }
     this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
   }
 
@@ -2590,15 +2645,151 @@ class DesignerSession {
     return 'this';
   }
 
+  public async reparentFromOutline(id: string, parentId: string): Promise<void> {
+    await this.applyReparent(id, parentId);
+  }
+
+  public async zOrderFromOutline(id: string, toFront: boolean): Promise<void> {
+    await this.applyZOrder([id], toFront);
+  }
+
+  private outlineFlagged(c: LayoutControl): boolean {
+    const flags = c as LayoutControl & { readOnly?: boolean; inherited?: boolean; isInherited?: boolean };
+    return !!(flags.readOnly || flags.inherited || flags.isInherited || c.editable === false
+      || c.ownership === 'inherited' || c.ownership === 'unresolved');
+  }
+
+  private outlineSupportedContainer(c: LayoutControl): boolean {
+    return c.isRoot || /Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type);
+  }
+
+  private outlineHasChildren(id: string): boolean {
+    return this.controls.some((c) => c.parentId === id);
+  }
+
+  private outlineIsAncestor(ancestorId: string, id: string): boolean {
+    let cur = this.controls.find((c) => c.id === id);
+    while (cur?.parentId) {
+      if (cur.parentId === ancestorId) return true;
+      cur = this.controls.find((c) => c.id === cur?.parentId);
+    }
+    return false;
+  }
+
+  private outlineReparentReason(id: string, parentId: string): string {
+    const child = this.controls.find((c) => c.id === id);
+    const parent = this.controls.find((c) => c.id === parentId);
+    if (!child || !parent) return 'layout changed';
+    if (child.isRoot || id === 'this' || this.outlineFlagged(child)) return 'control cannot be moved';
+    if (this.outlineFlagged(parent)) return 'target cannot accept moved controls';
+    if (id === parentId) return 'cannot move a control into itself';
+    if (this.outlineIsAncestor(id, parentId)) return 'cannot move a control into its own child';
+    if (this.outlineHasChildren(id)) return 'move child controls first';
+    if (!this.outlineSupportedContainer(parent)) return 'target is not a supported container';
+    return '';
+  }
+
+  private async applyReparent(id: string, parentId: string): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const reason = this.outlineReparentReason(id, parentId);
+    if (reason) { this.post({ type: 'status', message: t('status.editRejected', { reason }) }); return; }
+    const eng = await this.ensureEngine();
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const res = await reparentControl(eng, this.designerFile, id, parentId, before);
+    if (!res.safe || res.newText === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe reparent' }) });
+      return;
+    }
+    if (res.newText === before) { this.post({ type: 'status', message: t('status.editRejected', { reason: 'already in that container' }) }); return; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
+    if (!this.commit(before, res.newText, `Reparent ${id}`)) return;
+    this.currentId = id;
+    this.output.appendLine(`reparented ${id} to ${parentId} (unsaved)`);
+    await this.fullRender();
+    this.post({ type: 'status', message: `Moved ${id}` });
+  }
+
+  /**
+   * Apply one or more modern-engine geometry intents as a single source transaction. Every component is authorized
+   * and committed against the evolving, still-local text; one refusal rejects the whole batch before commit(), so a
+   * multi-selection can never land partially. The client preview only supplies an intent/candidate. The only text
+   * allowed into commit() is GeometryCommitResult.designerText returned for the engine-corrected live bounds.
+   */
+  private async applyModernGeometryTransaction(
+    label: string,
+    intents: Array<{
+      id: string;
+      mode: 'move' | 'resize';
+      candidate: (start: GeometryDragStartResult) => GeometryRect | null;
+    }>,
+  ): Promise<number | null> {
+    if (!this.designerFile || this.disposed || this.engineKind !== 'modern' || !intents.length) return null;
+    const eng = await this.ensureEngine('modern');
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+
+    const reject = async (id: string, reason: string): Promise<null> => {
+      const why = reason || 'engine did not authorize the geometry edit';
+      this.output.appendLine(`[designer] geometry edit refused for ${id}: ${why}`);
+      this.post({ type: 'status', message: t('status.editRejected', { reason: why }) });
+      // Keyboard nudges mutate the webview's local layout while mouse gestures move selection overlays. A fresh render
+      // is therefore part of fail-closed rejection: it restores the last authoritative graph instead of leaving a
+      // client preview that looks committed.
+      await this.fullRender();
+      return null;
+    };
+
+    let authorized: Awaited<ReturnType<typeof authorizeGeometryBatch>>;
+    try {
+      authorized = await authorizeGeometryBatch(eng, this.designerFile, intents, this.asm(), before);
+      if (!authorized.ok) return await reject(authorized.failedId ?? intents[0]?.id ?? '', authorized.reason);
+    } catch (e) {
+      // Modern geometry has deliberately no setProperty/client-authored fallback. An engine/RPC failure is a refusal.
+      return await reject(intents[0]?.id ?? '', (e as Error).message || 'geometry RPC failed');
+    }
+
+    if (this.doc.rev !== rev) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.fullRender();
+      return null;
+    }
+    if (authorized.designerText === null) {
+      await this.fullRender();
+      return 0;
+    }
+    if (!this.commit(before, authorized.designerText, label)) {
+      await this.fullRender();
+      return null;
+    }
+    await this.fullRender(); // renders engine-corrected bounds from the authoritative returned source
+    return authorized.appliedCount;
+  }
+
   private async applyManipulate(id: string, mode: string, winX: number, winY: number, w: number, h: number): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const old = this.controls.find((c) => c.id === id);
     if (!old) return;
-    if (id === 'this') {
+    // Root resizing is a ClientSize transaction, not a child Bounds transaction. The geometry RPC intentionally
+    // refuses root direct manipulation, so preserve the proven engine-converted ClientSize route on both engines.
+    if (id === 'this' || old.isRoot) {
       if (mode !== 'resize' || !this.rootClient) return;
       const nw = Math.max(1, this.rootClient.w + Math.round(w - old.width));
       const nh = Math.max(1, this.rootClient.h + Math.round(h - old.height));
       await this.applyEdit(id, 'ClientSize', 'System.Drawing.Size', false, `${nw}, ${nh}`);
+      return;
+    }
+    if (this.engineKind === 'modern') {
+      if (mode !== 'move' && mode !== 'resize') return;
+      const windowCandidate = { x: Math.round(winX), y: Math.round(winY), width: Math.round(w), height: Math.round(h) };
+      const applied = await this.applyModernGeometryTransaction(
+        `${mode === 'resize' ? 'Resize' : 'Move'} ${id}`,
+        [{ id, mode, candidate: (start) => geometryCandidateFromWindow(start, windowCandidate) }],
+      );
+      if (applied && applied > 0) {
+        this.output.appendLine(`${mode === 'resize' ? 'resized' : 'moved'} ${id} with engine-authoritative bounds (unsaved)`);
+        this.post({ type: 'status', message: mode === 'resize' ? tn('status.resized', 1) : tn('status.moved', 1) });
+      }
       return;
     }
     if (mode === 'resize') {
@@ -2630,12 +2821,36 @@ class DesignerSession {
   /**
    * Move several controls together (multi-select group drag): each control's Location += the window-space
    * delta (its parent's origin is constant during a drag), chained into ONE undoable edit + a single
-   * re-render. Controls without a representable Location (layout-managed) are skipped.
+   * re-render. Modern authorizes every member and rejects the whole batch when one is layout-managed; net48 keeps
+   * its established best-effort behavior for controls without a representable Location.
    */
   private async applyGroupMove(ids: string[], dx: number, dy: number): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const movable = ids.filter((id) => id && id !== 'this');
     if (!movable.length || (Math.round(dx) === 0 && Math.round(dy) === 0)) return;
+    if (this.engineKind === 'modern') {
+      const mx = Math.round(dx), my = Math.round(dy);
+      const applied = await this.applyModernGeometryTransaction(
+        `Move ${movable.length} control${movable.length > 1 ? 's' : ''}`,
+        movable.map((id) => ({
+          id,
+          mode: 'move' as const,
+          candidate: (start: GeometryDragStartResult): GeometryRect | null => start.logicalBounds ? {
+            x: start.logicalBounds.x + mx,
+            y: start.logicalBounds.y + my,
+            width: start.logicalBounds.width,
+            height: start.logicalBounds.height,
+          } : null,
+        })),
+      );
+      if (applied && applied > 0) {
+        this.output.appendLine(`moved ${applied} controls by (${mx}, ${my}) with engine-authoritative bounds (unsaved)`);
+        this.post({ type: 'status', message: tn('status.moved', applied) });
+      } else if (applied === 0) {
+        this.post({ type: 'status', message: t('status.nothingMoved') });
+      }
+      return;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -2706,12 +2921,34 @@ class DesignerSession {
   /**
    * Align (Phase 2): apply a PER-CONTROL window-space delta to each control's Location (its parent origin is
    * constant), chained into ONE undoable edit + a single re-render — like applyGroupMove but with distinct
-   * deltas. Layout-managed controls (no representable Location) are skipped.
+   * deltas. Modern rejects an unauthorized member atomically; net48 keeps its established best-effort skip behavior.
    */
   private async applyAlign(edits: Array<{ id: string; dx: number; dy: number }>): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const wanted = edits.filter((e) => e.id && e.id !== 'this' && (Math.round(e.dx) !== 0 || Math.round(e.dy) !== 0));
     if (!wanted.length) return;
+    if (this.engineKind === 'modern') {
+      const applied = await this.applyModernGeometryTransaction(
+        `Align ${wanted.length} control${wanted.length > 1 ? 's' : ''}`,
+        wanted.map((e) => ({
+          id: e.id,
+          mode: 'move' as const,
+          candidate: (start: GeometryDragStartResult): GeometryRect | null => start.logicalBounds ? {
+            x: start.logicalBounds.x + Math.round(e.dx),
+            y: start.logicalBounds.y + Math.round(e.dy),
+            width: start.logicalBounds.width,
+            height: start.logicalBounds.height,
+          } : null,
+        })),
+      );
+      if (applied && applied > 0) {
+        this.output.appendLine(`aligned ${applied} controls with engine-authoritative bounds (unsaved)`);
+        this.post({ type: 'status', message: tn('status.aligned', applied) });
+      } else if (applied === 0) {
+        this.post({ type: 'status', message: t('status.nothingAligned') });
+      }
+      return;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -2739,13 +2976,35 @@ class DesignerSession {
 
   /**
    * Make-same-size (Phase 2): apply a target Size to each control, chained into ONE undoable edit + a single
-   * re-render — like applyAlign but writing Size instead of Location. Layout-managed controls (no representable
-   * Size assignment anchor) are skipped by the engine's targeted-edit gate.
+   * re-render — like applyAlign but writing Size instead of Location. Modern rejects an unauthorized member
+   * atomically; net48 retains the existing targeted-edit behavior.
    */
   private async applyResize(edits: Array<{ id: string; width: number; height: number }>): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const wanted = edits.filter((e) => e.id && e.id !== 'this' && Math.round(e.width) > 0 && Math.round(e.height) > 0);
     if (!wanted.length) return;
+    if (this.engineKind === 'modern') {
+      const applied = await this.applyModernGeometryTransaction(
+        `Resize ${wanted.length} control${wanted.length > 1 ? 's' : ''}`,
+        wanted.map((e) => ({
+          id: e.id,
+          mode: 'resize' as const,
+          candidate: (start: GeometryDragStartResult): GeometryRect | null => start.logicalBounds ? {
+            x: start.logicalBounds.x,
+            y: start.logicalBounds.y,
+            width: Math.round(e.width),
+            height: Math.round(e.height),
+          } : null,
+        })),
+      );
+      if (applied && applied > 0) {
+        this.output.appendLine(`resized ${applied} controls with engine-authoritative bounds (unsaved)`);
+        this.post({ type: 'status', message: tn('status.resized', applied) });
+      } else if (applied === 0) {
+        this.post({ type: 'status', message: t('status.nothingResized') });
+      }
+      return;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -3794,6 +4053,145 @@ class DesignerSession {
       this.post({ type: 'collectionItems', id, prop, ok: res.ok, items: res.items ?? [], reason: res.reason });
     } catch (err) {
       this.post({ type: 'collectionItems', id, prop, ok: false, items: [], reason: errMsg(err) });
+    }
+  }
+
+  /** Resolve an editor request only against metadata that this session actually published for the current source
+   * revision. Webview messages are untrusted, so neither an item type nor a modal editor type can be invented by a
+   * forged postMessage. */
+  private publishedEditableProperty(id: string, prop: string): ComponentDesc['properties'][number] | null {
+    const published = this.publishedPropertyComponent;
+    if (!published || published.id !== id || published.rev !== this.doc.rev) return null;
+    const component = published.component;
+    if (!component || component.editable === false) return null;
+    const property = component.properties.find((p) => p.name === prop) ?? null;
+    return property && !property.readOnly ? property : null;
+  }
+
+  /** Read side of the bounded generic IList/IList<T> source adapter. Like every source collection reader, this is
+   * deliberately routed through the modern Roslyn engine even when the picture is a net48 compiled/interpreted form. */
+  async sendGenericListItems(id: string, prop: string, itemType: string): Promise<void> {
+    if (!this.designerFile) {
+      this.post({ type: 'genericListItems', id, prop, itemType, ok: false, items: [], reason: 'not available' });
+      return;
+    }
+    const metadata = this.publishedEditableProperty(id, prop);
+    if (!metadata?.genericCollection || metadata.collectionItemType !== itemType) {
+      this.post({ type: 'genericListItems', id, prop, itemType, ok: false, items: [], reason: 'property metadata changed' });
+      return;
+    }
+    try {
+      const eng = await this.ensureEngine('modern');
+      const res = await listGenericListItems(eng, this.designerFile, id, prop, itemType, this.doc.designerText);
+      // The shared popup is deliberately line-based. A scalar string/char item containing a physical newline cannot
+      // be represented losslessly there (it would be mistaken for two items), so refuse the read instead of opening
+      // an editor that could silently rewrite the collection on OK.
+      const multilineItem = res.ok && (res.items ?? []).some((item) => /[\r\n]/.test(item));
+      this.post({
+        type: 'genericListItems', id, prop, itemType: res.itemTypeName || itemType,
+        ok: multilineItem ? false : res.ok,
+        items: multilineItem ? [] : (res.items ?? []),
+        reason: multilineItem ? 'an item contains a newline and cannot be edited losslessly in the line editor' : res.reason,
+      });
+    } catch (err) {
+      this.post({ type: 'genericListItems', id, prop, itemType, ok: false, items: [], reason: errMsg(err) });
+    }
+  }
+
+  async genericListFromGrid(id: string, prop: string, itemType: string, items: string[]): Promise<void> {
+    try {
+      await this.applyGenericList(id, prop, itemType, items);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  private async applyGenericList(id: string, prop: string, itemType: string, items: string[]): Promise<void> {
+    if (!this.designerFile) return;
+    const metadata = this.publishedEditableProperty(id, prop);
+    if (!metadata?.genericCollection || metadata.collectionItemType !== itemType) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'property metadata changed' }) });
+      await this.loadProps(id);
+      return;
+    }
+
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+    const eng = await this.ensureEngine('modern');
+    const res = await setGenericListItems(eng, this.designerFile, id, prop, itemType, items, before);
+    if (!res.safe || res.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      await this.loadProps(id);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(id);
+      return;
+    }
+    if (!this.commit(before, res.text, `Set ${id}.${prop}`)) return;
+    this.output.appendLine(`set ${id}.${prop} = ${itemType}[${items.length}] (generic source collection, unsaved)`);
+    this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
+    // No broad live-mutation adapter exists for arbitrary vendor IList values. A full render is the only safe visual
+    // follow-up: modern/net48-interpreted re-materialise the source, while net48 compiled fallback honestly remains
+    // the last build under its existing disclosure instead of mutating an unknown runtime collection.
+    await this.fullRender();
+    await this.loadProps(id);
+    await this.postDirty();
+  }
+
+  /** Invoke one allowlisted framework UITypeEditor in the engine's isolated worker, then feed the returned invariant
+   * value through the existing source-first scalar transaction. The worker never writes source and a dismissal is a
+   * true no-op. */
+  async uiTypeEditorFromGrid(id: string, prop: string, propType: string, editorType: string): Promise<void> {
+    if (this.uiTypeEditorBusy) {
+      this.post({ type: 'status', message: 'A property editor is already open.' });
+      return;
+    }
+    const metadata = this.publishedEditableProperty(id, prop);
+    if (!metadata || metadata.type !== propType || metadata.uiTypeEditor !== editorType) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'property metadata changed' }) });
+      return;
+    }
+
+    const revBefore = this.doc.rev;
+    this.uiTypeEditorBusy = true;
+    try {
+      const eng = await this.ensureEngine('modern');
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        return;
+      }
+      const result = await editSupportedUiTypeEditor(
+        eng,
+        `ui-${randomBytes(16).toString('hex')}`,
+        editorType,
+        propType,
+        metadata.value ?? '',
+      );
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(id);
+        return;
+      }
+      if (result.dismissed || !result.applied) {
+        if (!result.ok && !result.dismissed) {
+          this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || result.errorCode || 'editor failed' }) });
+        }
+        return;
+      }
+      if (!result.ok || result.invariantValue == null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || result.errorCode || 'editor returned no value' }) });
+        return;
+      }
+      // editFromGrid re-runs normal conversion/minimality/revision checks and creates exactly one undo entry. Calling
+      // it (rather than committing broker output) keeps the source transaction authoritative.
+      await this.editFromGrid(id, prop, propType, metadata.isEnum, result.invariantValue);
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+    } finally {
+      this.uiTypeEditorBusy = false;
     }
   }
 
@@ -6108,8 +6506,14 @@ ${cspMeta(webview, nonce)}
   /* outline pane (Document outline) */
   #outlineTree { flex: 1; min-height: 0; overflow: auto; padding: 4px; font-size: 12px; }
   .treeNode { white-space: nowrap; cursor: pointer; user-select: none; padding: 1px 2px; border-radius: 2px; overflow: hidden; text-overflow: ellipsis; }
+  .outlineStatus { flex: 0 0 auto; min-height: 16px; padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border, #333); color: var(--vscode-descriptionForeground, #999); font-size: 11px; }
+  .treeNode[draggable="true"] { cursor: grab; }
+  .treeNode[draggable="true"]:active { cursor: grabbing; }
   .treeNode:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
   .treeNode.sel { background: var(--vscode-list-activeSelectionBackground, #094771); color: var(--vscode-list-activeSelectionForeground, #fff); }
+  .treeNode.dragging { opacity: .55; }
+  .treeNode.drop-ok { outline: 1px solid var(--vscode-focusBorder, #007acc); background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  .treeNode.drop-bad { outline: 1px solid var(--vscode-errorForeground, #f48771); }
   .treeNode .tw { white-space: pre; }
   /* toolbox pane — VS-style: vertical stack of collapsible category "tabs", right-click menu, custom tabs */
   #tbBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }

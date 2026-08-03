@@ -76,6 +76,30 @@ test('smoke: designer loads and posts ready', () => {
   h.destroy();
 });
 
+test('HiDPI 1.4: reports fractional monitor changes exactly and keeps canvas hit-testing in logical pixels', () => {
+  const h = loadDesigner();
+  eq(only(h.posted, 'ready')[0]?.dpr, 1, 'initial ready carries the exact jsdom DPR');
+  h.resetPosted();
+
+  Object.defineProperty(h.window, 'devicePixelRatio', { value: 1.25, configurable: true });
+  h.window.dispatchEvent(new h.window.Event('resize'));
+  eq(only(h.posted, 'dprChanged').map((m) => m.dpr), [1.25], '125% is reported without integer rounding');
+
+  // A normal viewport resize on the same monitor is not a scale event and must not trigger an engine refresh.
+  h.window.dispatchEvent(new h.window.Event('resize'));
+  eq(only(h.posted, 'dprChanged').length, 1, 'unchanged DPR is suppressed');
+
+  Object.defineProperty(h.window, 'devicePixelRatio', { value: 1.5, configurable: true });
+  h.window.dispatchEvent(new h.window.Event('resize'));
+  eq(only(h.posted, 'dprChanged').map((m) => m.dpr), [1.25, 1.5], '150% monitor transition is exact');
+
+  h.send({ type: 'layout', controls: [mkCtrl()] });
+  h.resetPosted();
+  h.mouse('click', { offsetX: 20, offsetY: 30 }, h.el('surface'));
+  eq(only(h.posted, 'pick')[0]?.id, 'button1', 'fractional display DPR does not scale logical control hit boxes');
+  h.destroy();
+});
+
 test('nudge: Arrow moves 1px and commits exactly one manipulate after the idle debounce', async () => {
   // This is the SOLE test that waits out the real 250ms debounce (to prove the idle-commit actually fires). The
   // margin is deliberately generous so a loaded CI runner / GC pause can't make it flaky; every OTHER nudge test
@@ -2145,6 +2169,38 @@ function findPropRow(h: Harness, name: string): any {
 function hasSet(h: Harness, name: string): boolean {
   return findPropRow(h, name).querySelector('td.name').className.indexOf('set') >= 0;
 }
+function setupOutline(h: Harness): void {
+  h.send({
+    type: 'layout',
+    controls: [
+      mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true, depth: 0, tabIndex: -1 }),
+      mkCtrl({ id: 'panel1', name: 'panel1', type: 'System.Windows.Forms.Panel', parentId: 'this', depth: 1, tabIndex: 0 }),
+      mkCtrl({ id: 'label1', name: 'label1', type: 'System.Windows.Forms.Label', parentId: 'panel1', depth: 2, tabIndex: 0 }),
+      mkCtrl({ id: 'button1', name: 'button1', type: 'System.Windows.Forms.Button', parentId: 'this', depth: 1, tabIndex: 1 }),
+      mkCtrl({ id: 'button2', name: 'button2', type: 'System.Windows.Forms.Button', parentId: 'this', depth: 1, tabIndex: 2 }),
+      mkCtrl({ id: 'lockedButton', name: 'lockedButton', type: 'System.Windows.Forms.Button', parentId: 'this', depth: 1, tabIndex: 3, readOnly: true }),
+    ],
+  });
+  h.click(h.el('mainTabOutline'));
+  h.resetPosted();
+}
+function outlineNode(h: Harness, id: string): any {
+  return h.el('outlineTree').querySelector(`.treeNode[data-id="${id}"]`);
+}
+function outlineDrag(h: Harness, type: string, target: any, data: Record<string, string> = {}): Event {
+  const store = { ...data };
+  const ev = new h.window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'dataTransfer', {
+    value: {
+      effectAllowed: '',
+      dropEffect: '',
+      setData(k: string, v: string) { store[k] = v; },
+      getData(k: string) { return store[k] || ''; },
+    },
+  });
+  target.dispatchEvent(ev);
+  return ev;
+}
 
 test('smoke: panel loads and posts ready', () => {
   const h = loadPanel();
@@ -2174,6 +2230,67 @@ test('per-form panel/toolbox state (1.1.0): active tab, collapsed categories and
   ok(heads.some((head) => head.classList.contains('custom') && /Favorites/.test(head.textContent)), 'the custom toolbox tab is restored');
   const common = heads.find((head) => /Common Controls|panel\.cat\.commonControls/.test(head.textContent));
   ok(!!common && /^▸/.test(common.textContent), 'the per-form Common Controls category restores collapsed');
+  h.destroy();
+});
+
+test('panel outline drag: dropping a leaf on a supported container posts one outlineReparent', () => {
+  const h = loadPanel();
+  setupOutline(h);
+  const button = outlineNode(h, 'button1');
+  const panel = outlineNode(h, 'panel1');
+  ok(!!button && !!panel, 'outline rendered the source and target nodes');
+  ok(button.draggable, 'non-root outline nodes are draggable');
+  outlineDrag(h, 'dragstart', button);
+  const over = outlineDrag(h, 'dragover', panel, { 'application/vnd.winforms-outline-id': 'button1' });
+  ok(over.defaultPrevented, 'supported container accepts the dragover');
+  outlineDrag(h, 'drop', panel, { 'application/vnd.winforms-outline-id': 'button1' });
+  const reparent = only(h.posted, 'outlineReparent');
+  eq(reparent.length, 1, 'drop posts exactly one reparent message');
+  eq([reparent[0].id, reparent[0].parentId], ['button1', 'panel1'], 'reparent carries the child and target container');
+  ok(!!h.el('outlineStatus')?.textContent, 'outline shows visible drop status');
+  h.destroy();
+});
+
+test('panel outline drag: invalid drops are refused without posting outlineReparent', () => {
+  const h = loadPanel();
+  setupOutline(h);
+  ok(!outlineNode(h, 'this').draggable, 'the root node is not draggable');
+  ok(!outlineNode(h, 'lockedButton').draggable, 'read-only/inherited flags, when present, disable dragging');
+
+  const panel = outlineNode(h, 'panel1');
+  const label = outlineNode(h, 'label1');
+  const button = outlineNode(h, 'button1');
+  const otherButton = outlineNode(h, 'button2');
+  outlineDrag(h, 'dragstart', button);
+  const leafOver = outlineDrag(h, 'dragover', otherButton, { 'application/vnd.winforms-outline-id': 'button1' });
+  ok(!leafOver.defaultPrevented, 'non-container targets refuse dragover');
+  outlineDrag(h, 'drop', otherButton, { 'application/vnd.winforms-outline-id': 'button1' });
+  outlineDrag(h, 'drop', button, { 'application/vnd.winforms-outline-id': 'button1' });
+  outlineDrag(h, 'dragstart', panel);
+  outlineDrag(h, 'drop', label, { 'application/vnd.winforms-outline-id': 'panel1' });
+  eq(only(h.posted, 'outlineReparent').length, 0, 'non-container, self, and descendant/container-with-children drops post nothing');
+  ok(/Drop on|itself|child|Move child/.test(h.el('outlineStatus')?.textContent || ''), 'outline status explains the refused drop');
+  h.destroy();
+});
+
+test('panel outline reorder: keyboard and context menu post outlineMoveZOrder', () => {
+  const h = loadPanel();
+  setupOutline(h);
+  const button = outlineNode(h, 'button1');
+  button.focus();
+  h.key('keydown', { key: 'Home', altKey: true }, h.el('outlineTree'));
+  let moves = only(h.posted, 'outlineMoveZOrder');
+  eq(moves.length, 1, 'Alt+Home posts one outline z-order message');
+  eq([moves[0].id, moves[0].toFront], ['button1', true], 'Alt+Home maps to bring-to-front');
+
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 7, clientY: 9, button: 2 }, button);
+  const sendBack = findMenuItem(h, 'tbMenu', 'designer.menu.sendToBack');
+  ok(!!sendBack && sendBack.className.indexOf('disabled') < 0, 'outline context menu offers Send to Back');
+  h.click(sendBack);
+  moves = only(h.posted, 'outlineMoveZOrder');
+  eq(moves.length, 1, 'context Send to Back posts one outline z-order message');
+  eq([moves[0].id, moves[0].toFront], ['button1', false], 'context menu maps to send-to-back');
   h.destroy();
 });
 
@@ -2305,6 +2422,114 @@ test('panel collection editor: the "…" button posts listCollection', () => {
   const lc = only(h.posted, 'listCollection');
   eq(lc.length, 1, 'listCollection posted');
   eq([lc[0].id, lc[0].prop], ['lb', 'Items'], 'targets the control + property');
+  h.destroy();
+});
+
+test('panel generic IList editor: routes the metadata item type through list + one popup commit', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'settings1', name: 'settings1', type: 'Acme.SettingsControl',
+    properties: [prop('Thresholds', {
+      type: 'System.Collections.Generic.IList`1[[System.Int32]]', value: '(Collection)',
+      isCollection: true, genericCollection: true, collectionItemType: 'System.Int32', category: 'Data',
+    })],
+    events: [],
+  });
+  const btn = findPropRow(h, 'Thresholds').querySelector('button.genericListBtn');
+  ok(!!btn, 'generic IList metadata renders its dedicated ellipsis action');
+  h.click(btn);
+  const list = only(h.posted, 'listGenericList');
+  eq(list.length, 1, 'one generic list read is posted');
+  eq([list[0].id, list[0].prop, list[0].itemType], ['settings1', 'Thresholds', 'System.Int32'], 'the metadata item type is carried to the host');
+  h.resetPosted();
+  h.send({ type: 'genericListItems', id: 'settings1', prop: 'Thresholds', itemType: 'System.Int32', ok: true, items: ['1', '2'], reason: '' });
+  const popup = h.document.querySelector('.collectionPop') as any;
+  ok(!!popup, 'the line editor opens after the matching host reply');
+  ok(/Int32/.test(popup.querySelector('.collectionTitle').textContent || ''), 'the popup title discloses the item type');
+  const ta = popup.querySelector('textarea') as any;
+  ta.value = '3\n5';
+  h.click(popup.querySelector('button.collectionOk'));
+  const set = only(h.posted, 'setGenericList');
+  eq(set.length, 1, 'OK posts exactly one generic collection edit');
+  eq([set[0].id, set[0].prop, set[0].itemType], ['settings1', 'Thresholds', 'System.Int32'], 'the write retains the exact metadata item type');
+  eq(set[0].items, ['3', '5'], 'the line editor commits invariant item strings');
+  h.destroy();
+});
+
+test('panel expandable TypeConverter metadata: nested values are bounded read-only rows with truncation disclosure', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'vendor1', name: 'vendor1', type: 'Acme.VendorControl',
+    properties: [prop('Options', {
+      type: 'Acme.Options', value: 'Acme.Options', category: 'Vendor',
+      properties: [{
+        name: 'Appearance', propertyPath: 'Options.Appearance', type: 'Acme.AppearanceOptions', value: 'Appearance',
+        readOnly: false, sourceEditable: true, category: 'Vendor', description: 'Appearance metadata',
+        properties: [{
+          name: 'CornerRadius', propertyPath: 'Options.Appearance.CornerRadius', type: 'System.Int32', value: '6',
+          readOnly: false, sourceEditable: true, category: 'Layout', description: 'Rounded corner radius',
+          properties: [], propertiesTruncated: true,
+        }], propertiesTruncated: false,
+      }],
+      propertiesTruncated: true,
+    })],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Options').querySelector('.tw'));
+  const nested = Array.from(h.el('props').querySelectorAll('tr.expandableMeta')) as any[];
+  ok(nested.some((r) => r.getAttribute('data-property-path') === 'Options.Appearance'), 'first nested property preserves propertyPath');
+  const radius = nested.find((r) => r.getAttribute('data-property-path') === 'Options.Appearance.CornerRadius');
+  ok(!!radius, 'recursive metadata renders the second level');
+  eq(radius.querySelector('td.ro').textContent, '6', 'nested invariant value is displayed');
+  ok(/Layout/.test(radius.querySelector('td.name').title || '') && /Rounded corner radius/.test(radius.querySelector('td.name').title || ''), 'category and description remain available');
+  ok(nested.filter((r) => r.className.indexOf('expandableTruncated') >= 0).length >= 2, 'root and nested truncation are both disclosed');
+  ok(!nested.some((r) => r.querySelector('input,select,textarea,button')), 'sourceEditable metadata never advertises a nested write action');
+  h.destroy();
+});
+
+test('panel UITypeEditor: editable metadata adds one accessible ellipsis action with the exact editor type', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'label1', name: 'label1', type: 'System.Windows.Forms.Label',
+    properties: [prop('Font', {
+      type: 'System.Drawing.Font', value: 'Segoe UI, 9pt', category: 'Appearance',
+      uiTypeEditor: 'System.Drawing.Design.FontEditor',
+    })],
+    events: [],
+  });
+  const btn = findPropRow(h, 'Font').querySelector('button.uiTypeEditorBtn');
+  ok(!!btn, 'the existing Font value editor gains a modal ellipsis action');
+  ok(/Edit Font/.test(btn.getAttribute('aria-label') || ''), 'the modal action has an accessible property label');
+  h.click(btn);
+  const posts = only(h.posted, 'uiTypeEditor');
+  eq(posts.length, 1, 'one modal editor request is posted');
+  eq([posts[0].id, posts[0].prop, posts[0].propType, posts[0].editorType],
+    ['label1', 'Font', 'System.Drawing.Font', 'System.Drawing.Design.FontEditor'], 'the request carries current property metadata');
+  h.destroy();
+});
+
+test('panel ownership: editable=false suppresses scalar, collection, modal, reset, and event creation actions', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'baseButton', name: 'baseButton', type: 'System.Windows.Forms.Button', editable: false,
+    readOnlyReason: 'Declared by the base form.',
+    properties: [
+      prop('Text', { value: 'Base', sourceExplicit: true, category: 'Appearance' }),
+      prop('Font', { type: 'System.Drawing.Font', value: 'Segoe UI, 9pt', uiTypeEditor: 'System.Drawing.Design.FontEditor', category: 'Appearance' }),
+      prop('Values', { type: 'System.Collections.IList', isCollection: true, genericCollection: true, collectionItemType: 'System.Int32', value: '(Collection)', category: 'Data' }),
+    ],
+    events: [{ name: 'Click', type: 'System.EventHandler', handler: '', category: 'Action' }],
+  });
+  ok(!!findPropRow(h, 'Text').querySelector('td.ro') && !findPropRow(h, 'Text').querySelector('input'), 'scalar property is display-only');
+  ok(!findPropRow(h, 'Font').querySelector('button.uiTypeEditorBtn'), 'modal property editor is suppressed');
+  ok(!findPropRow(h, 'Values').querySelector('button.collectionBtn'), 'collection editor is suppressed');
+  h.mouse('contextmenu', { clientX: 5, clientY: 5 }, findPropRow(h, 'Text').querySelector('td.name'));
+  const reset = h.el('tbMenu').querySelector('.mi');
+  ok(reset.className.indexOf('disabled') >= 0, 'Reset is disabled for a read-only component');
+  h.click(h.el('tabEvents'));
+  ok(!h.el('events').querySelector('input'), 'event creation/wiring input is suppressed');
+  h.mouse('dblclick', {}, h.el('events').querySelector('td.name'));
+  eq(only(h.posted, 'createHandler').length, 0, 'double-click cannot create an event handler');
   h.destroy();
 });
 

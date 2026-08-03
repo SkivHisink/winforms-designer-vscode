@@ -400,6 +400,9 @@
     if (p.referenceValues) return true;
     return p.type === 'System.String' || p.type === 'System.Boolean' || p.type === 'System.Char' || NUM.has(p.type) || COMPLEX.has(p.type);
   }
+  function componentEditable(c) {
+    return !!c && c.editable !== false && c.readOnly !== true;
+  }
   // The engine's ShouldSerializeValue over-reports a few ambient/runtime props on the interpreted host, so an
   // untouched control would otherwise show them non-default (per DesignerDescribe.cs:17-21). Visible/Enabled are
   // ambient; TabIndex is assigned implicitly by the layout engine and ShouldSerialize reports any non-zero value —
@@ -472,7 +475,7 @@
       // is tagged with the strip host id (ownerId) — mirroring the edit path — so the host routes it to the item-reset
       // path (splices the item field, refreshes via itemProps, keeps the canvas item highlight). A read-only item
       // (net48 unresolved placeholder, currentItemEditable=false) keeps reset greyed like a non-source-explicit prop.
-      { label: T('panel.menu.reset'), disabled: !p.sourceExplicit || (!!currentItemId && !currentItemEditable), act: function () {
+      { label: T('panel.menu.reset'), disabled: !componentEditable(c) || p.readOnly || !p.sourceExplicit || (!!currentItemId && !currentItemEditable), act: function () {
         var rmsg = { type: 'resetProperty', id: c.id, prop: p.name };
         if (currentItemId && c.id === currentItemId && currentItemOwner) rmsg.ownerId = currentItemOwner;
         vscode.postMessage(rmsg);
@@ -509,6 +512,95 @@
   // ---- Document outline: hierarchical tree built from the layout's parentId/depth ----
   var outlineEl = document.getElementById('outlineTree');
   var outlineCollapsed = {}; // control id -> true when collapsed
+  var outlineDragId = null;
+  var outlineStatusEl = document.getElementById('outlineStatus');
+  function ensureOutlineStatus() {
+    if (outlineStatusEl || !outlineEl) return outlineStatusEl;
+    outlineStatusEl = document.createElement('div');
+    outlineStatusEl.id = 'outlineStatus';
+    outlineStatusEl.className = 'outlineStatus';
+    outlineStatusEl.setAttribute('role', 'status');
+    outlineStatusEl.setAttribute('aria-live', 'polite');
+    if (outlinePane) outlinePane.insertBefore(outlineStatusEl, outlineEl);
+    else if (outlineEl.parentNode) outlineEl.parentNode.insertBefore(outlineStatusEl, outlineEl);
+    return outlineStatusEl;
+  }
+  function setOutlineStatus(message) {
+    var el = ensureOutlineStatus();
+    if (el) el.textContent = message || '';
+  }
+  function outlineControl(id) { return controls.find(function (c) { return c.id === id; }); }
+  function outlineChildren(id) { return controls.filter(function (c) { return c.parentId === id; }); }
+  function outlineHasChildren(id) { return controls.some(function (c) { return c.parentId === id; }); }
+  function outlineFlagged(c) {
+    return !!(c && (c.readOnly || c.inherited || c.isInherited || c.editable === false
+      || c.ownership === 'inherited' || c.ownership === 'unresolved'));
+  }
+  function outlineSupportedContainer(c) {
+    return !!(c && (c.isRoot || /Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type || '')));
+  }
+  function outlineIsAncestor(ancestorId, id) {
+    var p = outlineControl(id);
+    while (p && p.parentId != null) {
+      if (p.parentId === ancestorId) return true;
+      p = outlineControl(p.parentId);
+    }
+    return false;
+  }
+  function outlineCanDrag(c) {
+    return !!(c && !c.isRoot && c.id !== 'this' && !outlineFlagged(c));
+  }
+  function outlineReparentReason(childId, parentId) {
+    var child = outlineControl(childId);
+    var parent = outlineControl(parentId);
+    if (!child || !parent) return 'Drop target is no longer available.';
+    if (!outlineCanDrag(child)) return 'That control cannot be moved.';
+    if (outlineFlagged(parent)) return 'That container cannot accept moved controls.';
+    if (childId === parentId) return 'A control cannot be moved into itself.';
+    if (outlineIsAncestor(childId, parentId)) return 'A control cannot be moved into its own child.';
+    if (outlineHasChildren(childId)) return 'Move child controls first, then move the empty container.';
+    if (!outlineSupportedContainer(parent)) return 'Drop on the form or a container.';
+    return '';
+  }
+  function postOutlineZOrder(id, toFront) {
+    var c = outlineControl(id);
+    if (!outlineCanDrag(c)) { setOutlineStatus('That control cannot be reordered.'); return; }
+    vscode.postMessage({ type: 'outlineMoveZOrder', id: id, toFront: !!toFront });
+    setOutlineStatus(toFront ? T('designer.menu.bringToFront') : T('designer.menu.sendToBack'));
+  }
+  function openOutlineMenu(x, y, c) {
+    if (!tbMenuEl || !c) return;
+    currentId = c.id;
+    if (treeEl) treeEl.value = c.id;
+    renderOutline();
+    var disabled = !outlineCanDrag(c) || !outlineChildren(c.parentId).filter(function (s) { return s.id !== c.id; }).length;
+    tbMenuEl.innerHTML = '';
+    [
+      { label: T('designer.menu.bringToFront'), disabled: disabled, act: function () { postOutlineZOrder(c.id, true); } },
+      { label: T('designer.menu.sendToBack'), disabled: disabled, act: function () { postOutlineZOrder(c.id, false); } }
+    ].forEach(function (mi) {
+      var d = document.createElement('div'); d.className = 'mi' + (mi.disabled ? ' disabled' : '');
+      d.innerHTML = '<span>' + escapeHtml(mi.label) + '</span>';
+      if (!mi.disabled && mi.act) d.addEventListener('click', function () { closeTbMenu(); mi.act(); });
+      tbMenuEl.appendChild(d);
+    });
+    tbMenuEl.className = 'ctxmenu open';
+    tbMenuEl.style.left = '0px'; tbMenuEl.style.top = '0px';
+    var w = tbMenuEl.offsetWidth, h = tbMenuEl.offsetHeight;
+    tbMenuEl.style.left = Math.max(2, Math.min(x, window.innerWidth - w - 4)) + 'px';
+    tbMenuEl.style.top = Math.max(2, Math.min(y, window.innerHeight - h - 4)) + 'px';
+  }
+  function dragPayload(ev) {
+    if (outlineDragId) return outlineDragId;
+    try { return ev.dataTransfer ? ev.dataTransfer.getData('application/vnd.winforms-outline-id') : ''; }
+    catch { return ''; }
+  }
+  function clearOutlineDropClasses() {
+    if (!outlineEl) return;
+    Array.prototype.forEach.call(outlineEl.querySelectorAll('.treeNode'), function (n) {
+      n.classList.remove('dragging', 'drop-ok', 'drop-bad');
+    });
+  }
   function renderOutline() {
     if (!outlineEl) return;
     // a11y mirror-tree: the outline IS the accessible mirror of the design surface — expose it as an ARIA
@@ -544,6 +636,10 @@
       if (children.length) node.setAttribute('aria-expanded', outlineCollapsed[c.id] ? 'false' : 'true');
       node.tabIndex = isSel ? 0 : -1;          // roving tabindex — one tab stop, arrows move within the tree
       node.dataset.id = c.id;
+      if (outlineCanDrag(c)) {
+        node.draggable = true;
+        node.setAttribute('aria-grabbed', 'false');
+      }
       var tw = document.createElement('span'); tw.className = 'tw';
       if (children.length) {
         tw.textContent = (outlineCollapsed[c.id] ? '▸ ' : '▾ ');
@@ -560,6 +656,50 @@
       node.appendChild(label);
       node.title = c.id + ' : ' + c.type;
       node.addEventListener('click', function () { pickOutline(c.id); });
+      node.addEventListener('contextmenu', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openOutlineMenu(ev.clientX || 0, ev.clientY || 0, c);
+      });
+      node.addEventListener('dragstart', function (ev) {
+        if (!outlineCanDrag(c)) { ev.preventDefault(); setOutlineStatus('That control cannot be moved.'); return; }
+        outlineDragId = c.id;
+        node.classList.add('dragging');
+        node.setAttribute('aria-grabbed', 'true');
+        try {
+          ev.dataTransfer.effectAllowed = 'move';
+          ev.dataTransfer.setData('application/vnd.winforms-outline-id', c.id);
+          ev.dataTransfer.setData('text/plain', c.id);
+        } catch { /* jsdom/older webviews may expose no DataTransfer */ }
+        setOutlineStatus('Drop on the form or a container.');
+      });
+      node.addEventListener('dragover', function (ev) {
+        var id = dragPayload(ev);
+        if (!id) return;
+        var reason = outlineReparentReason(id, c.id);
+        node.classList.toggle('drop-ok', !reason);
+        node.classList.toggle('drop-bad', !!reason);
+        if (!reason) {
+          ev.preventDefault();
+          try { ev.dataTransfer.dropEffect = 'move'; } catch { /* ignore */ }
+        }
+      });
+      node.addEventListener('dragleave', function () { node.classList.remove('drop-ok', 'drop-bad'); });
+      node.addEventListener('drop', function (ev) {
+        var id = dragPayload(ev);
+        if (!id) return;
+        ev.preventDefault();
+        var reason = outlineReparentReason(id, c.id);
+        clearOutlineDropClasses();
+        if (reason) { setOutlineStatus(reason); return; }
+        vscode.postMessage({ type: 'outlineReparent', id: id, parentId: c.id });
+        setOutlineStatus('Reparenting ' + id + '...');
+      });
+      node.addEventListener('dragend', function () {
+        outlineDragId = null;
+        node.setAttribute('aria-grabbed', 'false');
+        clearOutlineDropClasses();
+      });
       outlineEl.appendChild(node);
       if (!outlineCollapsed[c.id]) children.forEach(function (ch) { emit(ch, level + 1); });
     }
@@ -580,7 +720,9 @@
     if (idx < 0) { for (var i = 0; i < nodes.length; i++) { if (nodes[i].classList.contains('sel')) { idx = i; break; } } }
     function focusAt(j) { var n = nodes[j]; if (!n) return; nodes.forEach(function (x) { x.tabIndex = -1; }); n.tabIndex = 0; n.focus(); }
     var aid = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.id : null;
-    if (e.key === 'ArrowDown') { e.preventDefault(); focusAt(idx < 0 ? 0 : Math.min(nodes.length - 1, idx + 1)); }
+    if ((e.altKey || e.ctrlKey) && e.key === 'Home' && aid) { e.preventDefault(); postOutlineZOrder(aid, true); }
+    else if ((e.altKey || e.ctrlKey) && e.key === 'End' && aid) { e.preventDefault(); postOutlineZOrder(aid, false); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); focusAt(idx < 0 ? 0 : Math.min(nodes.length - 1, idx + 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); focusAt(idx <= 0 ? 0 : idx - 1); }
     else if (e.key === 'ArrowRight') { if (aid && outlineCollapsed[aid]) { e.preventDefault(); outlineCollapsed[aid] = false; renderOutline(); } }
     else if (e.key === 'ArrowLeft') { if (aid && !outlineCollapsed[aid]) { e.preventDefault(); outlineCollapsed[aid] = true; renderOutline(); } }
@@ -1084,6 +1226,7 @@
   var pendingTreeNodes = null;  // { id, anchor } awaiting the host's treeNodeItems reply
   var pendingToolStrip = null;  // { id, anchor, ownerType } awaiting the host's toolStripItems reply
   var pendingStringArray = null; // { id, prop, anchor } awaiting the host's stringArrayItems reply
+  var pendingGenericList = null; // { id, prop, itemType, anchor } awaiting the host's genericListItems reply
   function collectionEditor(c, p) {
     var wrap = document.createElement('div'); wrap.className = 'collectionEd';
     var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
@@ -1094,6 +1237,21 @@
     btn.addEventListener('click', function () {
       pendingCollection = { id: c.id, prop: p.name, anchor: btn };
       vscode.postMessage({ type: 'listCollection', id: c.id, prop: p.name });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  function genericListEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd genericListEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    lbl.title = p.type + ' — items: ' + p.collectionItemType;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn genericListBtn'; btn.textContent = '…';
+    btn.title = 'Edit ' + shortType(p.collectionItemType) + ' items…';
+    btn.setAttribute('aria-label', 'Edit ' + p.name + ' (' + shortType(p.collectionItemType) + ' items)');
+    btn.addEventListener('click', function () {
+      pendingGenericList = { id: c.id, prop: p.name, itemType: p.collectionItemType, anchor: btn };
+      vscode.postMessage({ type: 'listGenericList', id: c.id, prop: p.name, itemType: p.collectionItemType });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1114,11 +1272,14 @@
     wrap.appendChild(btn);
     return wrap;
   }
-  function openCollectionPopup(anchor, id, prop, ok, items, reason, msgType) {
+  function openCollectionPopup(anchor, id, prop, ok, items, reason, msgType, itemType) {
     var commitType = msgType || 'setCollection';
     openPopup(anchor, function (pop) {
       pop.classList.add('collectionPop');
-      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = prop; pop.appendChild(title);
+      var title = document.createElement('div'); title.className = 'collectionTitle';
+      title.textContent = itemType ? prop + ' (' + shortType(itemType) + ')' : prop;
+      if (itemType) title.title = itemType;
+      pop.appendChild(title);
       if (!ok) {
         var note = document.createElement('div'); note.className = 'collectionNote';
         note.textContent = 'This collection can’t be edited here (' + (reason || 'non-literal items') + ').';
@@ -1149,7 +1310,9 @@
         if (commitType !== 'setStringArray') {
           while (lines.length && lines[lines.length - 1] === '') lines.pop();
         }
-        vscode.postMessage({ type: commitType, id: id, prop: prop, items: lines });
+        var msg = { type: commitType, id: id, prop: prop, items: lines };
+        if (commitType === 'setGenericList') msg.itemType = itemType;
+        vscode.postMessage(msg);
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -1819,18 +1982,51 @@
     });
   }
 
+  function appendExpandableTruncation(t, depth) {
+    var tr = document.createElement('tr'); tr.className = 'expandableMeta expandableTruncated';
+    var nameTd = document.createElement('td'); nameTd.className = 'name';
+    nameTd.style.paddingLeft = (depth * 14) + 'px'; nameTd.textContent = '… more properties not shown';
+    var valTd = document.createElement('td'); valTd.className = 'ro'; valTd.textContent = '';
+    tr.setAttribute('aria-label', 'Additional nested properties were truncated');
+    addColSplit(nameTd); tr.appendChild(nameTd); tr.appendChild(valTd); t.appendChild(tr);
+  }
+  function appendExpandableRows(t, properties, depth) {
+    (properties || []).forEach(function (child) {
+      var tr = document.createElement('tr'); tr.className = 'expandableMeta';
+      tr.setAttribute('data-property-path', child.propertyPath || child.name || '');
+      var nameTd = document.createElement('td'); nameTd.className = 'name expandableMetaName';
+      nameTd.style.paddingLeft = (depth * 14) + 'px'; nameTd.textContent = child.name || child.propertyPath || '';
+      var details = [child.propertyPath, child.type, child.category, child.description].filter(function (v) { return !!v; }).join(' — ');
+      nameTd.title = details;
+      var valTd = document.createElement('td'); valTd.className = 'ro expandableMetaValue';
+      valTd.textContent = child.value == null ? '' : String(child.value); valTd.title = child.type || '';
+      addColSplit(nameTd); tr.appendChild(nameTd); tr.appendChild(valTd); t.appendChild(tr);
+      appendExpandableRows(t, child.properties || [], depth + 1);
+      if (child.propertiesTruncated) appendExpandableTruncation(t, depth + 1);
+    });
+  }
+
   function propRow(c, p, t) {
-    var comp = editable(p) ? COMPOSITE[p.type] : null;
+    var itemActive = !!currentItemId;
+    var itemRO = itemActive && !currentItemEditable;
+    var canAct = componentEditable(c) && !p.readOnly && !itemRO;
+    var propEditable = canAct && editable(p);
+    var comp = propEditable ? COMPOSITE[p.type] : null;
     var parts = comp ? parseParts(p.value, comp.fields.length) : null;
     // Anchor/Dock are expandable too: collapsed shows the visual glyph editor (value cell), expanded adds
     // combobox sub-rows — Anchor → a True/False <select> per edge, Dock → a single DockStyle <select>.
-    var isAnchor = editable(p) && p.type === ANCHOR_TYPE;
-    var isDock = editable(p) && p.type === DOCK_TYPE;
-    var isColor = editable(p) && p.type === COLOR_TYPE;
-    var isFont = editable(p) && p.type === FONT_TYPE;
+    var isAnchor = propEditable && p.type === ANCHOR_TYPE;
+    var isDock = propEditable && p.type === DOCK_TYPE;
+    var isColor = propEditable && p.type === COLOR_TYPE;
+    var isFont = propEditable && p.type === FONT_TYPE;
     // generic [Flags] enums (Anchor keeps its dedicated glyph editor) → checkbox dropdown
-    var isFlags = editable(p) && p.isEnum && !isAnchor && p.flagsMembers && p.flagsMembers.length;
-    var canExpand = !!parts || isAnchor || isDock || isFont;
+    var isFlags = propEditable && p.isEnum && !isAnchor && p.flagsMembers && p.flagsMembers.length;
+    // Built-in Point/Size/Padding/Anchor/Dock/Font editors keep precedence. TypeConverter metadata is a bounded,
+    // display-only fallback for every other expandable value; sourceEditable on a child is intentionally ignored
+    // because no nested write adapter exists.
+    var builtInExpand = !!parts || isAnchor || isDock || isFont;
+    var metadataExpand = !builtInExpand && ((p.properties && p.properties.length) || p.propertiesTruncated);
+    var canExpand = builtInExpand || metadataExpand;
     var isOpen = canExpand && expandedProps.has(p.name);
 
     var tr = document.createElement('tr');
@@ -1863,30 +2059,29 @@
     // DropDownItems is a ToolStrip forest, not a flat collection) that aren't item-aware. Scalar/complex-scalar props stay
     // editable via the normal `edit` route (setProperty is field-agnostic). itemRO also forces the whole grid read-only on
     // net48 (currentItemEditable=false), where item editing isn't supported this slice.
-    var itemActive = !!currentItemId;
-    var itemRO = itemActive && !currentItemEditable;
     var valTd = document.createElement('td');
-    if (p.isDataSource && !itemActive) {
+    if (canAct && p.isDataSource && !itemActive) {
       valTd.className = 'val';
       valTd.appendChild(dataSourceEditor(c, p));
-    } else if (p.isImage && !itemActive) {
+    } else if (canAct && p.isImage && !itemActive) {
       // Image/Icon properties (resx-backed): preview swatch + Import…/(none) — no text field (value isn't a literal)
       valTd.className = 'val';
       valTd.appendChild(imageEditor(c, p));
-    } else if (p.isCollection && !itemActive) {
+    } else if (canAct && p.isCollection && !itemActive) {
       // a collection surfaced with a "…" editor. The value isn't a literal → no text field. String-item
       // collections (ComboBox/ListBox/CheckedListBox.Items) open the one-item-per-line editor; a typed
       // collection (ListView.Columns) opens the per-item grid editor.
       valTd.className = 'val';
       valTd.appendChild(
-        p.collectionItemType === COLUMN_ITEM_TYPE ? columnsEditor(c, p)
+        p.genericCollection && p.collectionItemType ? genericListEditor(c, p)
+        : p.collectionItemType === COLUMN_ITEM_TYPE ? columnsEditor(c, p)
         : p.collectionItemType === GRIDCOLUMN_ITEM_TYPE ? gridColumnsEditor(c, p)
         : p.collectionItemType === BINDING_ITEM_TYPE ? bindingsEditor(c, p)
         : p.collectionItemType === TREENODE_ITEM_TYPE ? treeNodesEditor(c, p)
         : p.collectionItemType === TOOLSTRIP_ITEM_TYPE ? toolStripEditor(c, p)
         : p.collectionItemType === STRINGARRAY_ITEM_TYPE ? stringArrayEditor(c, p)
         : collectionEditor(c, p));
-    } else if (editable(p) && !itemRO) {
+    } else if (propEditable) {
       valTd.className = 'val';
       if (isAnchor) {
         valTd.appendChild(anchorEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
@@ -1906,6 +2101,19 @@
       valTd.className = 'ro';
       valTd.textContent = (p.value == null ? '' : p.value) + (p.readOnly ? T('panel.grid.readOnly') : '');
       valTd.title = p.type;
+    }
+    if (propEditable && !itemActive && p.uiTypeEditor) {
+      var modalBtn = document.createElement('button');
+      modalBtn.type = 'button'; modalBtn.className = 'uiTypeEditorBtn'; modalBtn.textContent = '…';
+      modalBtn.title = 'Open ' + shortType(p.uiTypeEditor) + '…';
+      modalBtn.setAttribute('aria-label', 'Edit ' + p.name + ' with ' + shortType(p.uiTypeEditor));
+      modalBtn.addEventListener('click', function () {
+        vscode.postMessage({
+          type: 'uiTypeEditor', id: c.id, prop: p.name, propType: p.type,
+          editorType: p.uiTypeEditor
+        });
+      });
+      valTd.appendChild(modalBtn);
     }
     addColSplit(nameTd);
     tr.appendChild(nameTd); tr.appendChild(valTd); t.appendChild(tr);
@@ -1937,6 +2145,9 @@
       }));
     } else if (isOpen && isFont) {
       fontSubRows(c, p, t);
+    } else if (isOpen && metadataExpand) {
+      appendExpandableRows(t, p.properties || [], 1);
+      if (p.propertiesTruncated) appendExpandableTruncation(t, 1);
     }
   }
 
@@ -2062,6 +2273,7 @@
     var evs = filterSort(c.events || [], filter);
     if (!evs.length) { eventsEl.textContent = filter ? T('panel.grid.noMatchingEvents') : T('panel.grid.noEvents'); return; }
     var t = gridTable();
+    var eventsEditable = componentEditable(c) && (!currentItemId || currentItemEditable);
     var lastCat = '';
     var hideCat = false;
     for (var i = 0; i < evs.length; i++) {
@@ -2074,15 +2286,19 @@
       var nameTd = document.createElement('td');
       nameTd.className = 'name' + (ev.handler ? ' set' : '');
       nameTd.textContent = ev.name;
-      nameTd.style.cursor = 'pointer';
-      var valTd = document.createElement('td'); valTd.className = 'val';
-      valTd.appendChild(eventCombo(c, ev));
+      nameTd.style.cursor = (eventsEditable || ev.handler) ? 'pointer' : 'default';
+      var valTd = document.createElement('td');
+      if (eventsEditable) {
+        valTd.className = 'val'; valTd.appendChild(eventCombo(c, ev));
+      } else {
+        valTd.className = 'ro'; valTd.textContent = ev.handler || '';
+      }
       (function (e) {
         nameTd.title = e.type + (e.handler ? T('panel.event.wiredTip') : T('panel.event.unwiredTip'));
         // VS-style: double-click an event → if wired, go to the handler; if unwired, CREATE one (auto-named) and go.
         nameTd.addEventListener('dblclick', function () {
           if (e.handler) vscode.postMessage(tagItemOwner({ type: 'navigateHandler', id: c.id, event: e.name, handler: e.handler }));
-          else vscode.postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: e.name }));
+          else if (eventsEditable) vscode.postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: e.name }));
         });
       })(ev);
       addColSplit(nameTd);
@@ -2201,6 +2417,16 @@
         var saAnchor = pendingStringArray.anchor;
         pendingStringArray = null;
         if (saAnchor && saAnchor.isConnected) openCollectionPopup(saAnchor, m.id, m.prop, !!m.ok, m.items || [], m.reason, 'setStringArray');
+      }
+    } else if (m.type === 'genericListItems') {
+      if (pendingGenericList && pendingGenericList.id === m.id && pendingGenericList.prop === m.prop
+        && pendingGenericList.itemType === m.itemType) {
+        var glAnchor = pendingGenericList.anchor;
+        var glItemType = pendingGenericList.itemType;
+        pendingGenericList = null;
+        if (glAnchor && glAnchor.isConnected) {
+          openCollectionPopup(glAnchor, m.id, m.prop, !!m.ok, m.items || [], m.reason, 'setGenericList', glItemType);
+        }
       }
     } else if (m.type === 'columnItems') {
       // reply to a ListView.Columns "…" click — open the typed grid editor anchored to the requesting button

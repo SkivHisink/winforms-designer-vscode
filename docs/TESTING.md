@@ -31,6 +31,13 @@ It complements the dev/test commands in
 - **Live-webview E2E** — `npm run webview-e2e` drives the real designer and property-panel scripts. Its 1.2 cases
   cover the `DataBindings` and `DataSource` popups, extender message routing, tray icons, and inline tray rename in
   addition to the existing selection, menu, toolbar, and collection workflows.
+- **1.4 editor/layout corpus** — focused modern-engine tests cover bounded expandable `TypeConverter` metadata,
+  generic `IList` / `IList<T>` source adapters, isolated supported `UITypeEditor` policy, inherited-component
+  ownership, and engine-corrected geometry. The webview suite covers outline reparent/reorder and the property-grid
+  routes; the TypeScript DPR matrix pins `1`, `1.25`, `1.5`, `1.75`, and `2` without rounding logical coordinates.
+- **Architecture-aware package assertions** — CI and release jobs build separate `win32-x64` and `win32-arm64`
+  VSIX files. `scripts/assert-vsix.ps1` verifies the VSIX target, modern engine RID and PE machine (`0x8664` or
+  `0xAA64`), while requiring the documented x64 .NET Framework compatibility engine in both packages.
 - **Extension Host smoke** — the extension is built and executed in both the declared minimum VS Code 1.84 and current Stable; it must activate, start the .NET 10 engine, and export latency, memory, capability, PID, and lifecycle diagnostics.
 - **Performance baseline** — `npm run perf:baseline` checks startup, warm median, and warm p95 in CI and release jobs. Thresholds can be overridden with `WFD_PERF_STARTUP_MS`, `WFD_PERF_WARM_MEDIAN_MS`, and `WFD_PERF_WARM_P95_MS`.
 - **Engine self-test** — the `--selftest <designerFile>` CLI verb does a smoke check on a designer file.
@@ -72,6 +79,8 @@ The engine uses `[assembly: InternalsVisibleTo("Engine.UnitTests")]`; allowlists
 | `OnlyTargetChanged` / `OnlyWiringChanged` / `OnlyWiringAdded` | Only the targeted `(comp, prop)` / wiring changed → `true`; any side-effect statement → `false`. |
 | `IsValidIdentifier` | Accepts valid C# identifiers; rejects injection (`"x; System.Diagnostics.Process.Start(...)"`), keywords, empty, leading digits, and look-alike unicode. |
 | `DesignerValueConverter.ToExpression` | Round-trips `Point`, `Size`, `Color` (named / `FromArgb` / `SystemColors`), `Font` (plain / bold / bold+italic), `Padding`, `Rectangle`; returns `null` on invalid input, an uninstalled font family, and blank. |
+| General editor framework | Expandable metadata is bounded and cycle-safe; supported generic lists round-trip canonical `Add` / `AddRange`; unsupported expressions and editor types return no source preview. |
+| Inheritance and geometry | Current-source controls remain editable; inherited/unresolved controls are visible but refused by server mutation gates; committed free-control bounds are the WinForms graph's corrected values. |
 | `AddControl(src, …)` / `RemoveControl(src, …)` | `.Safe` true for a leaf control on the form; false for root, a container-with-children, or an unknown type/parent. `add` then `remove` returns the **original bytes**. |
 | Binding / grid / extender / clipboard source editors | Canonical reads and byte-local writes round-trip; custom expressions, unmanaged statements, bad enum/provider values, missing or type-mismatched dependencies, and crafted clipboard references fail closed without returning edited text. |
 | Interpreter allowlists (via crafted source or `internal`) | `new FileStream/Bitmap/Cursor(path)`, `MessageBox.Show(...)`, `Image.FromFile(...)`, `Environment.MachineName` → unrepresentable / not executed (no file created). Allowed: `Color.FromArgb(...)`, `new Point(...)`, `SystemColors.Control`. |

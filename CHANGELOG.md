@@ -9,6 +9,60 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-08-03
+
+**Layout decisions now come back from the WinForms engine, inherited controls carry explicit ownership, and the
+modern engine ships natively for Windows ARM64.** This release also closes the bounded, metadata-driven editor
+framework work left open by the broader 1.3.0 roadmap without enabling arbitrary project or vendor code editors.
+
+### Added
+
+- **Explicit visual-inheritance ownership.** Layout and component descriptions distinguish the root, controls
+  declared by the current source, inherited controls, and unresolved ownership. Inherited or unresolved controls
+  stay visible but are read-only, and edit routes enforce the same rule in the engine instead of trusting the UI.
+- **Outline drag/reparent/reorder.** Non-root editable controls can be moved onto the form or a supported container
+  from the document outline, with self/descendant/unsupported/read-only drops refused. Context and keyboard actions
+  use the existing source-first z-order path.
+- **Engine-authoritative modern geometry commits.** Direct manipulation still previews responsively in the webview,
+  but final free-control bounds are applied to a real WinForms graph, laid out, read back, and converted into a
+  minimal source preview by the engine. `MinimumSize`/`MaximumSize`, docking, auto-size, layout-managed children,
+  inherited controls, custom-control constraints, and unsafe source shapes fail closed instead of accepting
+  client-invented final bounds.
+  A form whose base graph cannot be resolved may still accept safe current-source property edits, but direct geometry
+  stays disabled because the missing base layout constraints cannot be made engine-authoritative.
+- **Native Windows ARM64 VSIX.** CI and release workflows now build and verify separate `win32-x64`/`win-x64` and
+  `win32-arm64`/`win-arm64` modern-engine artifacts, including VSIX target, deps RID, and PE-machine assertions.
+  The bundled .NET Framework engine remains an explicitly reduced-feature x64 compatibility fallback on ARM64.
+- **Metadata-driven expandable values.** Bounded `TypeConverter` child metadata includes stable paths, categories,
+  descriptions, standard values, nested children, truncation disclosure, and cycle/exception guards. Bespoke image,
+  reference, data-source, table-cell, and collection editors retain their dedicated safe routes.
+- **Generic scalar `IList` / `IList<T>` adapter.** Metadata-routed lists use one bounded source-first adapter for
+  canonical `Add`/`AddRange` statements and allowlisted strings, primitives, enums/flags, and existing safe complex
+  values. Unsupported types, expressions, comments that would move, ambiguous item types, and oversized inputs stay
+  read-only or are rejected before a source preview is returned.
+- **Isolated supported `UITypeEditor` broker.** The framework Color and Font editor pairs can run in a short-lived
+  child process with a fixed timeout, cancellation, bounded stdin/stdout/stderr, strict JSON, process-tree cleanup,
+  invariant-value revalidation, and the normal one-undo source-first property transaction. Project/vendor,
+  assembly-qualified, file/image/resource, and arbitrary `EditorAttribute` editors remain disabled.
+
+### Changed
+
+- Fractional Windows display ratios (`1.25`, `1.5`, `1.75`) use a safe 2x integer backing capture while preserving
+  exact logical WinForms coordinates; the browser downsamples the backing image to the actual device grid. This
+  keeps the cached .NET Framework control graph on its reversible integer-scale path and avoids cumulative drift.
+- TableLayoutPanel cell/style tools and FlowLayoutPanel order now compose with the document-outline container and
+  order gestures, so nested layout structure can be maintained without a client-only source rewrite.
+- Complex editor commits introduced by this release reuse the existing revision check, minimal engine preview,
+  byte-local persistence firewall, full re-render, and single undo unit.
+
+### Safety and release policy
+
+- ARM64 packaging is a repository/CI capability, not a claim that an x64-only vendor DLL, COM/ActiveX control,
+  targeting pack, kernel driver, or native dependency works on Windows ARM64. Those remain compatibility- and
+  hardware-gated as documented in `docs/arm64-support.md`.
+- Marketplace/Open VSX publication is still performed only by the guarded tag workflow; this repository-side close
+  does not create a tag, publish an artifact, or exercise external credentials.
+
 ## [1.3.0] — 2026-07-29
 
 **Vendor forms render live, and editing them keeps up.** Canonical third-party editor forms (the DevExpress
@@ -1205,7 +1259,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.0.2...v1.1.0

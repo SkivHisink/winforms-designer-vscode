@@ -9,6 +9,38 @@ namespace WinFormsDesigner.Engine.Net48
     // net48 lacks IsExternalInit for). A future refactor can hoist these into a shared netstandard2.0 assembly
     // referenced by both engines; duplicated here to ship the first increment without touching the net9 build.
 
+    /// <summary>
+    /// Canonical ownership vocabulary for visual inheritance. The values deliberately travel as strings so adding
+    /// them to the JSON/AppDomain DTOs is backward compatible: older hosts ignore the new fields, while a newer host
+    /// can fail closed when it receives an unknown value. Only the logical root and members declared by the currently
+    /// designed source are editable; inherited and unresolved identities are always read-only.
+    /// </summary>
+    public static class InheritedOwnershipPolicy
+    {
+        public const string Root = "root";
+        public const string CurrentSource = "currentSource";
+        public const string Inherited = "inherited";
+        public const string Unresolved = "unresolved";
+
+        /// <summary>Classify a field by the type that declared it. An absent/unrelated declaring type is not guessed.</summary>
+        public static string FromDeclaration(Type designedType, Type? declaringType)
+        {
+            if (designedType == null || declaringType == null) return Unresolved;
+            if (ReferenceEquals(designedType, declaringType)) return CurrentSource;
+            return declaringType.IsAssignableFrom(designedType) ? Inherited : Unresolved;
+        }
+
+        public static bool IsEditable(string? ownership) =>
+            ownership == Root || ownership == CurrentSource;
+
+        public static string ReadOnlyReason(string? ownership)
+        {
+            if (IsEditable(ownership)) return "";
+            if (ownership == Inherited) return "Declared by a base type; inherited components are read-only.";
+            return "Component ownership could not be proven; editing is disabled.";
+        }
+    }
+
     /// <summary>1.0.0 — outcome of releasing every held build output (the "release for rebuild" command). The host
     /// shows success only when Failed == 0; a non-zero Failed means some AppDomain refused to unload and is still
     /// pinning the user's dlls, so the host recycles the whole net48 engine process to free them.</summary>
@@ -109,6 +141,12 @@ namespace WinFormsDesigner.Engine.Net48
         public string Type { get; set; } = "";
         public string? ParentId { get; set; }
         public bool IsRoot { get; set; }
+        /// <summary>"root", "currentSource", "inherited", or "unresolved". Added compatibly for 1.4.0.</summary>
+        public string Ownership { get; set; } = InheritedOwnershipPolicy.Unresolved;
+        /// <summary>True only for the logical root or a control declared in the currently designed source.</summary>
+        public bool Editable { get; set; }
+        /// <summary>Stable user-facing refusal reason when <see cref="Editable"/> is false; empty otherwise.</summary>
+        public string ReadOnlyReason { get; set; } = InheritedOwnershipPolicy.ReadOnlyReason(InheritedOwnershipPolicy.Unresolved);
         public int X { get; set; }
         public int Y { get; set; }
         public int Width { get; set; }
@@ -141,6 +179,10 @@ namespace WinFormsDesigner.Engine.Net48
         public int Width { get; set; }
         public int Height { get; set; }
         public bool IsTypeHere { get; set; }
+        /// <summary>Ownership/editability of the item, or of the owning strip for synthetic add/overflow entries.</summary>
+        public string Ownership { get; set; } = InheritedOwnershipPolicy.Unresolved;
+        public bool Editable { get; set; }
+        public string ReadOnlyReason { get; set; } = InheritedOwnershipPolicy.ReadOnlyReason(InheritedOwnershipPolicy.Unresolved);
         /// <summary>True for the strip's OVERFLOW chevron button (bounds-carrying, id-less); its <see cref="Children"/> are
         /// the overflow-placed items. Mirrors the net9 DTO. When set the strip is full → no "Type Here" slot is emitted.</summary>
         public bool Overflow { get; set; }
@@ -255,6 +297,23 @@ namespace WinFormsDesigner.Engine.Net48
 
     /// <summary>One property row for the grid. Mirrors WinFormsDesigner.Engine.PropertyInfo (→ TS PropertyDesc).</summary>
     [Serializable]
+    public sealed class ExpandablePropertyDesc
+    {
+        public string Name { get; set; } = "";
+        public string PropertyPath { get; set; } = "";
+        public string Type { get; set; } = "";
+        public string? Value { get; set; }
+        public bool ReadOnly { get; set; } = true;
+        public bool SourceEditable { get; set; }
+        public string Category { get; set; } = "Misc";
+        public string? Description { get; set; }
+        public List<string>? StandardValues { get; set; }
+        public bool StandardValuesExclusive { get; set; }
+        public List<ExpandablePropertyDesc>? Properties { get; set; }
+        public bool PropertiesTruncated { get; set; }
+    }
+
+    [Serializable]
     public sealed class PropertyDesc
     {
         public string Name { get; set; } = "";
@@ -290,6 +349,13 @@ namespace WinFormsDesigner.Engine.Net48
         public string? ExtenderProperty { get; set; }
         /// <summary>True for a source-backed design-time pseudo-property (Modifiers / GenerateMember).</summary>
         public bool DesignTime { get; set; }
+        /// <summary>True when the shared source-first generic IList adapter owns this collection route.</summary>
+        public bool GenericCollection { get; set; }
+        /// <summary>Closed framework editor metadata. Never populated from arbitrary EditorAttribute values.</summary>
+        public string? UiTypeEditor { get; set; }
+        /// <summary>Bounded recursive TypeConverter metadata for expandable objects.</summary>
+        public List<ExpandablePropertyDesc>? Properties { get; set; }
+        public bool PropertiesTruncated { get; set; }
     }
 
     /// <summary>One event row for the Events tab. Mirrors WinFormsDesigner.Engine.EventInfo (→ TS EventDesc).</summary>
@@ -311,6 +377,10 @@ namespace WinFormsDesigner.Engine.Net48
         public string Type { get; set; } = "";
         public string? Parent { get; set; }
         public bool IsRoot { get; set; }
+        /// <summary>Visual-inheritance ownership metadata. Unknown/missing ownership fails closed.</summary>
+        public string Ownership { get; set; } = InheritedOwnershipPolicy.Unresolved;
+        public bool Editable { get; set; }
+        public string ReadOnlyReason { get; set; } = InheritedOwnershipPolicy.ReadOnlyReason(InheritedOwnershipPolicy.Unresolved);
         /// <summary>Host-only guard: ToolStripItem properties use the item edit channel and must not receive
         /// control-field Modifiers pseudo-properties.</summary>
         public bool IsToolStripItem { get; set; }
@@ -325,6 +395,10 @@ namespace WinFormsDesigner.Engine.Net48
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
         public string Type { get; set; } = "";
+        /// <summary>Ownership/editability for non-visual and off-tree field-backed components.</summary>
+        public string Ownership { get; set; } = InheritedOwnershipPolicy.Unresolved;
+        public bool Editable { get; set; }
+        public string ReadOnlyReason { get; set; } = InheritedOwnershipPolicy.ReadOnlyReason(InheritedOwnershipPolicy.Unresolved);
         public string? IconPng { get; set; }
         /// <summary>For an OFF-TREE ToolStrip surfaced in the tray (a ContextMenuStrip), its top-level Items as a
         /// BOUNDS-LESS forest (id/text/type + recursive Children) so the canvas can open a synthetic flyout from the
