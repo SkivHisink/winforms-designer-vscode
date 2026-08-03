@@ -96,12 +96,12 @@ falls outside what the designer can replay:
                          ▼
         ┌────────────────────────────────────────────────┐
         │  Engine host — routed per form:                │
-        │  • .NET 10 LTS engine (C#)                    │
+        │  • .NET 10 LTS engine (C#)                     │
         │      Roslyn parse → safe interpret →           │  render • describe • edit
         │      WinForms host → DrawToBitmap              │
         │  • .NET Framework 4.8 engine (C#)              │
         │      interpret live source (VS model) onto     │  render • describe • edit
-        │      compiled net4x / DevExpress controls       │
+        │      compiled net4x / DevExpress controls      │
         └────────────────────────────────────────────────┘
                          ▲  JSON-RPC over a named pipe
                          │  (StreamJsonRpc, camelCase DTOs)
