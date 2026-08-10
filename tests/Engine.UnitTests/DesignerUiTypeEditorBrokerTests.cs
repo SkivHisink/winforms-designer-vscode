@@ -67,9 +67,12 @@ public sealed class DesignerUiTypeEditorBrokerTests
         var runnerCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var runner = new DelegateRunner(async (_, token) =>
         {
-            using var registration = token.Register(() => runnerCancelled.TrySetResult());
             started.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            // Observe cancellation through the delay itself: a token.Register callback races with the
+            // registration Task.Delay makes on the same token (callbacks run LIFO, and the resumed body
+            // would dispose ours before the source reaches it).
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            catch (OperationCanceledException) { runnerCancelled.TrySetResult(); throw; }
             throw new InvalidOperationException("unreachable");
         });
         using var cancellation = new CancellationTokenSource();
@@ -91,8 +94,8 @@ public sealed class DesignerUiTypeEditorBrokerTests
         var runnerCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var runner = new DelegateRunner(async (_, token) =>
         {
-            using var registration = token.Register(() => runnerCancelled.TrySetResult());
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            catch (OperationCanceledException) { runnerCancelled.TrySetResult(); throw; }
             throw new InvalidOperationException("unreachable");
         });
         var broker = new DesignerUiTypeEditorBroker(runner, TimeSpan.FromMilliseconds(40));
