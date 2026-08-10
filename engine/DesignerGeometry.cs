@@ -33,6 +33,8 @@ namespace WinFormsDesigner.Engine
     {
         public string ComponentId { get; init; } = "";
         public string PropertyName { get; init; } = "";
+        public string PropertyTypeName { get; init; } = "";
+        public string InvariantValue { get; init; } = "";
         public string Expression { get; init; } = "";
     }
 
@@ -297,6 +299,9 @@ namespace WinFormsDesigner.Engine
                 {
                     ComponentId = componentId,
                     PropertyName = "Location",
+                    PropertyTypeName = "System.Drawing.Point",
+                    InvariantValue = corrected.X.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + ", " + corrected.Y.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     Expression = "new System.Drawing.Point(" + corrected.X.ToString(System.Globalization.CultureInfo.InvariantCulture)
                         + ", " + corrected.Y.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")",
                 });
@@ -307,6 +312,9 @@ namespace WinFormsDesigner.Engine
                 {
                     ComponentId = componentId,
                     PropertyName = "Size",
+                    PropertyTypeName = "System.Drawing.Size",
+                    InvariantValue = corrected.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + ", " + corrected.Height.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     Expression = "new System.Drawing.Size(" + corrected.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)
                         + ", " + corrected.Height.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")",
                 });

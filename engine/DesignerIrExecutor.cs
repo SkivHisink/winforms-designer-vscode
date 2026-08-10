@@ -49,6 +49,10 @@ namespace WinFormsDesigner.Engine
         /// <summary>True when the safe resolver deliberately REFUSED the key (a binary/SOAP/typed/file-ref node) — lets
         /// the executor emit the precise unsafeBinaryResource fallback instead of silently assigning null.</summary>
         bool WasResourceRefused(string key);
+        /// <summary>Apply `resources.ApplyResources(target, key)` through the SAFE resolver. Returns false with a
+        /// reason when a matching resource node was refused, a target property is invalid, or conversion is not
+        /// allowlisted. No arbitrary ResourceManager or binary deserialization is allowed here.</summary>
+        bool ApplyResources(object target, string key, out string? error);
     }
 
     /// <summary>Where a named identity came from — the hybrid model. The
@@ -384,6 +388,14 @@ namespace WinFormsDesigner.Engine
                         if (!ps[0].ParameterType.IsInstanceOfType(tgt)) return "extender target is not a " + ps[0].ParameterType.Name;
                         if (!TryMaterialize(x.Value, ps[1].ParameterType, inst, host, out var xval, out var xerr)) return xerr;
                         mi.Invoke(prov, new[] { tgt, Coerce(xval, ps[1].ParameterType) });
+                        return null;
+                    }
+
+                case IrApplyResources ar:
+                    {
+                        if (!TryTarget(ar.TargetIsRoot, ar.TargetName, inst, out var target, out var terr)) return terr;
+                        if (!host.ApplyResources(target, ar.ResourceKey, out var aerr))
+                            return aerr ?? ("ApplyResources failed for '" + ar.ResourceKey + "'");
                         return null;
                     }
 

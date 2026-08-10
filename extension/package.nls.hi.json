@@ -8,6 +8,7 @@
   "command.showProperties.title": "WinForms: प्रॉपर्टीज़ दिखाएं",
   "command.exportDiagnostics.title": "WinForms: डिज़ाइनर डायग्नोस्टिक्स एक्सपोर्ट करें",
   "command.selectControlAssembly.title": "WinForms: कंट्रोल असेंबली / प्रोजेक्ट चुनें…",
+  "command.selectLocalizationCulture.title": "WinForms: फ़ॉर्म की स्थानीयकरण संस्कृति चुनें…",
   "configuration.title": "WinForms Designer",
   "untrusted.description": "डिज़ाइनर को रेंडर करने पर प्रोजेक्ट की कंट्रोल असेंबलियां लोड और एक्ज़िक्यूट होती हैं (प्रीव्यू पर कंस्ट्रक्टर / OnPaint चलते हैं), इसलिए अविश्वसनीय वर्कस्पेस में यह एक्सटेंशन अक्षम रहता है।",
   "config.autoOpenDesigner.description": "जब किसी फ़ॉर्म की `.cs` फ़ाइल (जिसका जनरेट किया गया `.Designer.cs` साथी हो) सक्रिय एडिटर बनती है, तो WinForms डिज़ाइनर को अपने-आप खोलें — Visual Studio की तरह, जहां `Form1.cs` खोलने पर डिज़ाइनर दिखता है। किसी फ़ॉर्म को उसके `.cs` टेक्स्ट पर वापस ले जाने के लिए **कोड देखें** का उपयोग करें (जब तक आप फ़ाइल दोबारा नहीं खोलते, तब तक ऑटो-ओपन उसे फिर से हाईजैक नहीं करेगा)। C# टेक्स्ट एडिटर बनाए रखने और डिज़ाइनर को मैन्युअली खोलने के लिए इसे अक्षम करें — **WinForms: डिज़ाइनर खोलें** या *Reopen Editor With…* के ज़रिए।",

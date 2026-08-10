@@ -8,6 +8,7 @@
   "command.showProperties.title": "WinForms: Show Properties",
   "command.exportDiagnostics.title": "WinForms: Export Designer Diagnostics",
   "command.selectControlAssembly.title": "WinForms: Select Control Assembly / Project…",
+  "command.selectLocalizationCulture.title": "WinForms: Select Form Localization Culture…",
   "configuration.title": "WinForms Designer",
   "untrusted.description": "Rendering a designer loads and executes the project's control assemblies (constructors / OnPaint run on preview), so the extension is disabled in untrusted workspaces.",
   "config.autoOpenDesigner.description": "Automatically open the WinForms designer when a form's `.cs` (one that has a generated `.Designer.cs` partner) becomes the active editor — mirroring Visual Studio, where opening `Form1.cs` shows the designer. Use **View Code** to switch a form back to its `.cs` text (auto-open won't re-hijack it until you reopen the file). Disable this to keep the C# text editor and open the designer manually via **WinForms: Open Designer** or *Reopen Editor With…*.",

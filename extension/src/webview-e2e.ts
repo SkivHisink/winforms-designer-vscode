@@ -6,7 +6,7 @@
 // Style mirrors e2e.ts: plain throw-on-failure assertions, run sequentially, print a PASS/FAIL summary and exit.
 // Run: `npm run webview-e2e` (after `npm run build`). jsdom is a devDependency (never shipped in the VSIX).
 
-import { loadDesigner, loadPanel, delay, drainHarnesses, Harness } from './webviewHarness';
+import { loadDesigner, loadPanel, loadChooseItems, delay, drainHarnesses, Harness } from './webviewHarness';
 
 let checks = 0;
 function ok(cond: boolean, msg: string): void {
@@ -73,6 +73,41 @@ function flushNudge(h: Harness): void {
 test('smoke: designer loads and posts ready', () => {
   const h = loadDesigner();
   ok(only(h.posted, 'ready').length === 1, 'designer posted exactly one ready on load');
+  h.destroy();
+});
+
+test('Choose Items scope guard: COM/WPF cannot browse/apply; .NET still emits scoped messages', () => {
+  const h = loadChooseItems();
+  eq(only(h.posted, 'ready').length, 1, 'Choose Items posts ready');
+  h.send({
+    type: 'items', tab: 'General', chosen: [], check: [],
+    items: [{ name: 'Widget', namespace: 'Demo', assemblyName: 'Demo.Controls', assemblyPath: 'C:\\Demo.Controls.dll', checked: false }],
+  });
+
+  const tabs = Array.from(h.document.querySelectorAll('#ciTabs .t')) as any[];
+  const net = tabs.find((x) => x.getAttribute('data-tab') === 'net');
+  const com = tabs.find((x) => x.getAttribute('data-tab') === 'com');
+  const wpf = tabs.find((x) => x.getAttribute('data-tab') === 'wpf');
+  for (const unsupported of [com, wpf]) {
+    h.click(unsupported);
+    ok(h.el('ciBrowse').disabled && h.el('ciOk').disabled, 'unsupported scope visibly disables Browse and OK');
+    h.resetPosted();
+    // Harness dispatches even on a disabled button, pinning the script-side guard as defense in depth.
+    h.click(h.el('ciBrowse'));
+    h.click(h.el('ciOk'));
+    eq(only(h.posted, 'browse'), [], 'unsupported scope cannot browse');
+    eq(only(h.posted, 'applyChooseItems'), [], 'unsupported scope cannot apply');
+  }
+
+  h.click(net);
+  ok(!h.el('ciBrowse').disabled && !h.el('ciOk').disabled, '.NET restores its original enabled action state');
+  h.resetPosted();
+  h.click(h.el('ciBrowse'));
+  h.click(h.el('ciOk'));
+  eq(only(h.posted, 'browse'), [{ type: 'browse', scope: 'net' }], '.NET Browse carries the bounded scope');
+  const apply = only(h.posted, 'applyChooseItems');
+  eq(apply.length, 1, '.NET Apply is still posted');
+  eq(apply[0].scope, 'net', '.NET Apply carries the bounded scope');
   h.destroy();
 });
 
@@ -227,15 +262,15 @@ test('diag actions (1.1.0): Retry/Rebuild/Choose Assembly/Copy post explicit rec
   h.destroy();
 });
 
-test('formNotice (0.10.0): persistent read-only strip shows on a kind, hides on null, coexists with #diag, honors a custom icon', () => {
+test('formNotice: persistent context strip shows on a kind, hides on null, coexists with #diag, honors a custom icon', () => {
   const h = loadDesigner();
 
-  // localizable read-only lock → the persistent strip shows with the given text
-  h.send({ type: 'formNotice', kind: 'localizable', text: 'Localizable form — read-only preview.' });
+  // localizable resource context → the persistent strip shows with the given text
+  h.send({ type: 'formNotice', kind: 'localizable', icon: '🌐', text: 'Localized resources are editable — culture: fr-FR.' });
   ok(h.el('formNotice').style.display !== 'none', 'formNotice visible when a kind is set');
-  eq(h.el('formNoticeMsg').textContent, 'Localizable form — read-only preview.', 'notice text set');
+  eq(h.el('formNoticeMsg').textContent, 'Localized resources are editable — culture: fr-FR.', 'notice text set');
 
-  // independence from #diag: a partial-render warn banner and the lock strip must both be visible at once
+  // independence from #diag: a partial-render warning and the resource-context strip remain visible together
   h.send({ type: 'renderDiag', items: [{ category: 'unsupported', text: 'resources.ApplyResources(this.b, "b")', detail: '' }] });
   ok(h.el('diag').style.display !== 'none', 'diag banner shows alongside…');
   ok(h.el('formNotice').style.display !== 'none', '…the formNotice strip (neither overwrites the other)');
@@ -245,9 +280,9 @@ test('formNotice (0.10.0): persistent read-only strip shows on a kind, hides on 
   eq(h.el('formNoticeIcon').textContent, '⚠', 'custom icon applied');
   eq(h.el('formNoticeMsg').textContent, 'Inherited base — preview incomplete.', 'notice text updated');
 
-  // A later notice with NO icon must RESET to the default lock glyph, not leak the prior ⚠
-  h.send({ type: 'formNotice', kind: 'localizable', text: 'Localizable form — read-only preview.' });
-  eq(h.el('formNoticeIcon').textContent, '🔒', 'icon resets to the lock default when a notice supplies none (no leak)');
+  // A later notice with NO icon resets to the kind's legacy default instead of leaking the prior warning glyph.
+  h.send({ type: 'formNotice', kind: 'localizable', text: 'Localized resources are editable.' });
+  eq(h.el('formNoticeIcon').textContent, '🔒', 'icon resets to the kind default when a notice supplies none (no leak)');
 
   // null kind clears it (a clean / non-localizable render)
   h.send({ type: 'formNotice', kind: null });
@@ -265,16 +300,16 @@ test('formNotice (0.10.0 S2): inherited-base notice shows the ⚠️ warning gly
   eq(h.el('formNoticeIcon').textContent, '⚠️', 'inherited-base uses the warning glyph, not the lock');
   ok(/inherits from BaseForm/.test(h.el('formNoticeMsg').textContent || ''), 'the base type name is interpolated into the notice text');
 
-  // a following localizable render (precedence: localizable wins) must reset the glyph back to the lock (no ⚠️ leak)
-  h.send({ type: 'formNotice', kind: 'localizable', text: 'Localizable form — read-only preview.' });
-  eq(h.el('formNoticeIcon').textContent, '🔒', 'switching to the localizable lock resets the glyph (no warning-icon leak)');
+  // a following localizable render (precedence: localizable wins) supplies the globe and cannot leak the warning glyph
+  h.send({ type: 'formNotice', kind: 'localizable', icon: '🌐', text: 'Localized resources are editable.' });
+  eq(h.el('formNoticeIcon').textContent, '🌐', 'switching to the localizable context applies the globe (no warning-icon leak)');
 
   h.send({ type: 'formNotice', kind: null });
   eq(h.el('formNotice').style.display, 'none', 'inherited-base notice clears on a clean render');
   h.destroy();
 });
 
-test('formNotice (0.10.0 S3): binary-resx notice shows ⚠️ + count, and a COMPOSED lock+binaryResx message keeps 🔒', () => {
+test('formNotice: binary-resx notice shows ⚠️ + count, and a composed localization+binary message keeps 🌐', () => {
   const h = loadDesigner();
 
   // binaryResx-only: the exact host payload for a form whose .resx has binary/ImageStream resources (net9).
@@ -283,11 +318,10 @@ test('formNotice (0.10.0 S3): binary-resx notice shows ⚠️ + count, and a COM
   eq(h.el('formNoticeIcon').textContent, '⚠️', 'binaryResx uses the warning glyph');
   ok(/2 binary\/ImageStream/.test(h.el('formNoticeMsg').textContent || ''), 'the resource count is shown');
 
-  // composed (localizable + binaryResx): the host keeps the 🔒 lock glyph and appends the binaryResx clause, so the
-  // data-loss disclosure is never hidden by the read-only lock.
-  h.send({ type: 'formNotice', kind: 'localizable', icon: '🔒', text: 'Localizable form — read-only preview. This form has 1 binary/ImageStream resource(s) the .NET preview can’t render.' });
-  eq(h.el('formNoticeIcon').textContent, '🔒', 'the composed lock+binaryResx notice keeps the lock glyph');
-  ok(/binary\/ImageStream/.test(h.el('formNoticeMsg').textContent || ''), 'the binaryResx disclosure is composed into the lock message (not hidden)');
+  // composed (localizable + binaryResx): the host keeps the 🌐 culture glyph and appends the binaryResx clause.
+  h.send({ type: 'formNotice', kind: 'localizable', icon: '🌐', text: 'Localized resources are editable. This form has 1 binary/ImageStream resource(s) the .NET preview can’t render.' });
+  eq(h.el('formNoticeIcon').textContent, '🌐', 'the composed localization+binaryResx notice keeps the culture glyph');
+  ok(/binary\/ImageStream/.test(h.el('formNoticeMsg').textContent || ''), 'the binaryResx disclosure is composed into the localization message (not hidden)');
 
   h.send({ type: 'formNotice', kind: null });
   eq(h.el('formNotice').style.display, 'none', 'binaryResx notice clears on a clean render');
@@ -1986,7 +2020,7 @@ test('auto-reopen: each page load seeds a DISTINCT token epoch, so an in-flight 
   ok(a !== b, 'two independent page loads mint tokens from different epochs (a rebuild can’t reuse an in-flight token)');
 });
 
-test('tab-host context menu: Add Tab / Delete Tab labels come from the i18n catalog (localized, not hardcoded literals)', () => {
+test('tab-host context menu: Add / Move Left-Right / Delete are localized and post the active page identity', () => {
   const h = loadDesigner();
   h.send({ type: 'render', png: '', width: 300, height: 200, gen: 0 });
   h.send({ type: 'layout', controls: [
@@ -1997,7 +2031,19 @@ test('tab-host context menu: Add Tab / Delete Tab labels come from the i18n cata
   // right-click the tab HEADER area (y=15 is above the page at y=30) so the hit-test lands on the tab host, not the page
   h.mouse('contextmenu', { clientX: 40, clientY: 15, button: 2 }, h.el('surfaceWrap'));
   ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.addTab'), 'the Add-Tab item is keyed by designer.menu.addTab (localizable — was a hardcoded "Add Tab")');
+  const moveLeft = findMenuItem(h, 'ctxMenu', 'designer.menu.moveTabLeft');
+  const moveRight = findMenuItem(h, 'ctxMenu', 'designer.menu.moveTabRight');
+  ok(!!moveLeft && !!moveRight, 'both adjacent tab-order commands come from the i18n catalog');
   ok(!!findMenuItem(h, 'ctxMenu', 'designer.menu.deleteTabNamed'), 'the Delete-Tab item is keyed by designer.menu.deleteTabNamed with the active page name (was a hardcoded literal)');
+
+  h.click(moveLeft!);
+  eq(only(h.posted, 'moveTab'), [{ type: 'moveTab', hostId: 'tabControl1', pageId: 'tabPage1', direction: 'left' }],
+    'Move Left carries the active field-backed page, not only the host');
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 40, clientY: 15, button: 2 }, h.el('surfaceWrap'));
+  h.click(findMenuItem(h, 'ctxMenu', 'designer.menu.moveTabRight')!);
+  eq(only(h.posted, 'moveTab'), [{ type: 'moveTab', hostId: 'tabControl1', pageId: 'tabPage1', direction: 'right' }],
+    'Move Right uses the same bounded active-page route');
   h.destroy();
 });
 
@@ -2248,6 +2294,31 @@ test('panel outline drag: dropping a leaf on a supported container posts one out
   eq(reparent.length, 1, 'drop posts exactly one reparent message');
   eq([reparent[0].id, reparent[0].parentId], ['button1', 'panel1'], 'reparent carries the child and target container');
   ok(!!h.el('outlineStatus')?.textContent, 'outline shows visible drop status');
+  h.destroy();
+});
+
+test('tab host gestures: single/double header clicks post tabClick/tabRename, while modifiers and nonhosts do not', () => {
+  const h = loadDesigner();
+  const host = mkCtrl({ id: 'tabControl1', name: 'tabControl1', type: 'System.Windows.Forms.TabControl', x: 8, y: 8, width: 200, height: 150, isTabHost: true });
+  const page = mkCtrl({ id: 'tabPage1', name: 'tabPage1', type: 'System.Windows.Forms.TabPage', parentId: 'tabControl1', x: 12, y: 30, width: 190, height: 120 });
+  h.send({ type: 'layout', controls: [host, page] });
+  h.resetPosted();
+
+  h.mouse('click', { offsetX: 40, offsetY: 15 }, h.el('surface'));
+  eq(only(h.posted, 'tabClick'), [{ type: 'tabClick', hostId: 'tabControl1', x: 40, y: 15 }], 'plain tab-header click is routed to the host');
+  eq(only(h.posted, 'pick').length, 1, 'normal selection still accompanies tab navigation');
+
+  h.resetPosted();
+  h.mouse('dblclick', { offsetX: 40, offsetY: 15 }, h.el('surface'));
+  eq(only(h.posted, 'tabRename'), [{ type: 'tabRename', hostId: 'tabControl1', x: 40, y: 15 }], 'double-click is routed to tab rename');
+
+  h.resetPosted();
+  h.mouse('click', { offsetX: 40, offsetY: 15, ctrlKey: true }, h.el('surface'));
+  eq(only(h.posted, 'tabClick'), [], 'modifier multi-select never changes the active tab');
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'panel1', name: 'panel1', type: 'System.Windows.Forms.Panel', isTabHost: false, x: 8, y: 8, width: 200, height: 150 })] });
+  h.resetPosted();
+  h.mouse('dblclick', { offsetX: 40, offsetY: 15 }, h.el('surface'));
+  eq(only(h.posted, 'tabRename'), [], 'a non-tab control never emits a tab verb');
   h.destroy();
 });
 

@@ -7,9 +7,11 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using System.Xml;
 
 namespace WinFormsDesigner.Engine.Net48
 {
@@ -125,6 +127,7 @@ namespace WinFormsDesigner.Engine.Net48
         // reused by every Snapshot (incl. live-op re-renders) so the whole session stays crisp at the display's ratio.
         private int _renderScale = 1;
         private readonly Dictionary<string, LiveDesign> _cache = new Dictionary<string, LiveDesign>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _designerCultures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private string[] _probeDirs = Array.Empty<string>();
 
         // Infinite lease — the host holds this proxy across many calls; without it the remoting lease would
@@ -138,6 +141,27 @@ namespace WinFormsDesigner.Engine.Net48
         {
             _probeDirs = probeDirs ?? Array.Empty<string>();
             AppDomain.CurrentDomain.AssemblyResolve += OnResolve;
+        }
+
+        /// <summary>Set the selected UI culture for one designer file. Empty/null means the neutral .resx only.
+        /// Non-empty values are validated through <see cref="CultureInfo.GetCultureInfo(string)"/> and stored in the
+        /// framework-normalized form (for example, "fr-fr" becomes "fr-FR").</summary>
+        public string SetDesignerCulture(string designerFilePath, string cultureName)
+        {
+            return _sta.Invoke(() =>
+            {
+                string designerKey = NormalizeDesignerPath(designerFilePath);
+                string culture = NormalizeDesignerCulture(cultureName);
+                if (culture.Length == 0) _designerCultures.Remove(designerKey);
+                else _designerCultures[designerKey] = culture;
+                return culture;
+            });
+        }
+
+        /// <summary>Read the selected UI culture for one designer file. Empty means neutral.</summary>
+        public string GetDesignerCulture(string designerFilePath)
+        {
+            return _sta.Invoke(() => SelectedCultureForDesigner(designerFilePath));
         }
 
         private Assembly? OnResolve(object sender, ResolveEventArgs e)
@@ -183,6 +207,7 @@ namespace WinFormsDesigner.Engine.Net48
             return _sta.Invoke(() =>
             {
                 _renderScale = renderScale;
+                string cultureName = SelectedCultureForDesigner(designerFilePath);
                 // 1.2.x INTERPRETED REUSE. Rebuilding the whole graph — construct every vendor control, replay the IR,
                 // host it off-screen, pump, lay out — costs ~400 ms on a real DevExpress form, while snapshotting a
                 // graph that is already live costs ~12 ms. So a render whose buffer the cached graph provably matches
@@ -195,7 +220,7 @@ namespace WinFormsDesigner.Engine.Net48
                     // built from this exact identity (buffer + sibling .resx + tab overrides + capture scale +
                     // requested size), and the build under it has not moved. Anything else rebuilds.
                     if (!cached.Mutated && IsFresh(cached)
-                        && cached.SourceKey == SourceStamp(designerFilePath, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight)
+                        && cached.SourceKey == SourceStamp(designerFilePath, cultureName, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight)
                         && cached.BuildId == ComputeBuildId(assemblyPath))
                         return Snapshot(cached);
                     EvictInterpreted(reuseKey); // stale, aged out or mutated — not what the caller is asking for
@@ -221,7 +246,7 @@ namespace WinFormsDesigner.Engine.Net48
                 // fallback, never a hard RPC error: the method's contract is "always return a picture; RenderMode +
                 // FallbackReason say which".
                 var container = new DesignTimeContainer();
-                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath));
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName));
                 Form? builtForm = null;
                 InterpretedRenderPlan? plan = null;
                 bool keepAlive = false; // set once the graph is cached for reuse — then `finally` must NOT tear it down
@@ -294,9 +319,9 @@ namespace WinFormsDesigner.Engine.Net48
                         BuildId = ComputeBuildId(assemblyPath),
                         Mode = "interpreted",
                         DesignedTypeName = plan.DesignedTypeName,
-                        SourceKey = SourceStamp(designerFilePath, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
-                        PictureKey = SourceStamp(designerFilePath, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
-                        BufferKey = sourceKey + "|r" + ResxStamp(designerFilePath),
+                        SourceKey = SourceStamp(designerFilePath, cultureName, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
+                        PictureKey = SourceStamp(designerFilePath, cultureName, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
+                        BufferKey = BufferStamp(designerFilePath, cultureName, sourceKey),
                         Plan = plan,
                         Container = container,
                         Scale = renderScale,
@@ -356,35 +381,137 @@ namespace WinFormsDesigner.Engine.Net48
         /// input, and neither reading it into a DOM nor hashing it may be unbounded.</summary>
         private const long MaxResxBytes = 32L << 20;
 
-        private static string ResxStamp(string designerFilePath)
+        private sealed class ResxCandidate
+        {
+            public string CultureName = "";
+            public string Path = "";
+        }
+
+        private static string NormalizeDesignerCulture(string cultureName)
+        {
+            if (string.IsNullOrWhiteSpace(cultureName)) return "";
+            return CultureInfo.GetCultureInfo(cultureName.Trim()).Name;
+        }
+
+        private static string NormalizeDesignerPath(string designerFilePath)
+        {
+            try { return Path.GetFullPath(designerFilePath ?? ""); }
+            catch { return designerFilePath ?? ""; }
+        }
+
+        private string SelectedCultureForDesigner(string designerFilePath)
+        {
+            return _designerCultures.TryGetValue(NormalizeDesignerPath(designerFilePath), out var culture)
+                ? culture
+                : "";
+        }
+
+        private static string DesignerResourceBase(string designerFilePath)
+        {
+            string baseName = designerFilePath ?? "";
+            const string designerSuffix = ".Designer.cs";
+            if (baseName.EndsWith(designerSuffix, StringComparison.OrdinalIgnoreCase))
+                return baseName.Substring(0, baseName.Length - designerSuffix.Length);
+            if (baseName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                return baseName.Substring(0, baseName.Length - ".cs".Length);
+            return Path.ChangeExtension(baseName, null) ?? baseName;
+        }
+
+        private static List<ResxCandidate> ResxCandidates(string designerFilePath, string cultureName)
+        {
+            string normalizedCulture = NormalizeDesignerCulture(cultureName);
+            string baseName = DesignerResourceBase(designerFilePath);
+            var candidates = new List<ResxCandidate>
+            {
+                new ResxCandidate { CultureName = "", Path = baseName + ".resx" },
+            };
+            if (normalizedCulture.Length == 0) return candidates;
+
+            var chain = new List<CultureInfo>();
+            for (var culture = CultureInfo.GetCultureInfo(normalizedCulture);
+                 culture != null && culture.Name.Length != 0;
+                 culture = culture.Parent)
+            {
+                chain.Add(culture);
+            }
+            chain.Reverse();
+            foreach (var culture in chain)
+                candidates.Add(new ResxCandidate { CultureName = culture.Name, Path = baseName + "." + culture.Name + ".resx" });
+            return candidates;
+        }
+
+        private static string ResxIdentity(string resxPath)
+        {
+            string full;
+            try { full = Path.GetFullPath(resxPath ?? ""); } catch { full = resxPath ?? ""; }
+            try
+            {
+                if (!File.Exists(resxPath)) return full + ":missing";
+                var fi = new FileInfo(resxPath);
+                if (fi.Length > MaxResxBytes) return full + ":overcap";
+                using (var sha = System.Security.Cryptography.SHA256.Create())
+                    return full + ":sha256:" + Convert.ToBase64String(sha.ComputeHash(File.ReadAllBytes(resxPath)));
+            }
+            catch { return full + ":unreadable:" + Guid.NewGuid().ToString("N"); }
+        }
+
+        private static string? TryReadResxXml(string resxPath)
         {
             try
             {
-                string baseName = designerFilePath ?? "";
-                if (baseName.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) baseName = baseName.Substring(0, baseName.Length - ".Designer.cs".Length);
-                else if (baseName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) baseName = baseName.Substring(0, baseName.Length - ".cs".Length);
-                string resx = baseName + ".resx";
-                if (!File.Exists(resx)) return "none";
-                // Same size cap the RESOLVER enforces (see LoadSiblingResx): an over-cap file is not read into the
-                // graph, so hashing it here would be pure cost on repository-controlled input — and repeated per
-                // render, describe and edit. Over-cap means "no resources were loaded", which is exactly "none".
-                var fi = new FileInfo(resx);
-                if (fi.Length > MaxResxBytes) return "none";
-                // CONTENT, not timestamp+length: a designer writes resources through a save/replace, and a same-size
-                // rewrite with a preserved (or restored) mtime would read as unchanged while the bytes the graph was
-                // built from are gone.
-                using (var sha = System.Security.Cryptography.SHA256.Create())
-                    return Convert.ToBase64String(sha.ComputeHash(File.ReadAllBytes(resx)));
+                if (!File.Exists(resxPath)) return null;
+                if (new FileInfo(resxPath).Length > MaxResxBytes) return null;
+                return File.ReadAllText(resxPath);
             }
-            catch { return "unreadable:" + Guid.NewGuid().ToString("N"); } // never equal to any later stamp → never reused
+            catch { return null; }
+        }
+
+        private static string MergedSiblingResxXml(string designerFilePath, string cultureName)
+        {
+            var effectiveData = new Dictionary<string, XmlNode>(StringComparer.Ordinal);
+            foreach (var candidate in ResxCandidates(designerFilePath, cultureName))
+            {
+                var xml = TryReadResxXml(candidate.Path);
+                if (string.IsNullOrEmpty(xml)) continue;
+                var source = new XmlDocument { XmlResolver = null };
+                try { source.LoadXml(xml); }
+                catch { continue; }
+                foreach (XmlNode node in source.GetElementsByTagName("data"))
+                {
+                    var name = node.Attributes?["name"]?.Value;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    effectiveData[name!] = node.CloneNode(true);
+                }
+            }
+
+            if (effectiveData.Count == 0) return "";
+            var merged = new XmlDocument { XmlResolver = null };
+            var root = merged.CreateElement("root");
+            merged.AppendChild(root);
+            foreach (var node in effectiveData.Values)
+                root.AppendChild(merged.ImportNode(node, true));
+            return merged.OuterXml;
+        }
+
+        private static string ResxStamp(string designerFilePath, string cultureName)
+        {
+            var parts = new List<string> { "culture=" + NormalizeDesignerCulture(cultureName) };
+            foreach (var candidate in ResxCandidates(designerFilePath, cultureName))
+                parts.Add(candidate.CultureName + "=" + ResxIdentity(candidate.Path));
+            return string.Join("|", parts.ToArray());
+        }
+
+        private static string BufferStamp(string designerFilePath, string cultureName, string sourceKey)
+        {
+            return sourceKey + "|r" + ResxStamp(designerFilePath, cultureName);
         }
 
         /// <summary>Everything that changes what an interpreted snapshot LOOKS like, folded into the reuse key: the
         /// caller's buffer identity, the transient selected-tab overrides, and the capture scale. Anything not in here
         /// must not be able to alter the picture, or reuse would show a stale frame.</summary>
-        private static string SourceStamp(string designerFilePath, string sourceKey, string[]? selectedTabs,
+        private static string SourceStamp(string designerFilePath, string cultureName, string sourceKey, string[]? selectedTabs,
             int renderScale, int reqWidth, int reqHeight)
-            => sourceKey + "|r" + ResxStamp(designerFilePath) + "|s" + renderScale
+            => BufferStamp(designerFilePath, cultureName, sourceKey) + "|s" + renderScale
                + "|d" + reqWidth + "x" + reqHeight
                + "|t" + string.Join(",", selectedTabs ?? Array.Empty<string>());
 
@@ -465,7 +592,8 @@ namespace WinFormsDesigner.Engine.Net48
                     EvictInterpreted(key);
                     return NotApplied("the cached interpreted graph is too old to edit from");
                 }
-                if (live.PictureKey != SourceStamp(designerFilePath, expectedSourceKey, selectedTabs, renderScale, reqWidth, reqHeight))
+                string cultureName = SelectedCultureForDesigner(designerFilePath);
+                if (live.PictureKey != SourceStamp(designerFilePath, cultureName, expectedSourceKey, selectedTabs, renderScale, reqWidth, reqHeight))
                     return NotApplied("the cached picture is not the buffer this edit started from");
                 if (live.BuildId != ComputeBuildId(assemblyPath))
                 {
@@ -499,7 +627,7 @@ namespace WinFormsDesigner.Engine.Net48
                 Application.DoEvents();
                 var r = Snapshot(live);
                 r.Applied = true;
-                live.PictureKey = SourceStamp(designerFilePath, newSourceKey, selectedTabs, renderScale, reqWidth, reqHeight);
+                live.PictureKey = SourceStamp(designerFilePath, cultureName, newSourceKey, selectedTabs, renderScale, reqWidth, reqHeight);
                 return r;
             });
         }
@@ -532,6 +660,7 @@ namespace WinFormsDesigner.Engine.Net48
         {
             return _sta.Invoke(() =>
             {
+                string cultureName = SelectedCultureForDesigner(designerFilePath);
                 // 1.2.x — describe from the CACHED interpreted graph when it is provably this buffer's. Building a
                 // throwaway graph here cost as much as a full render (~400 ms on a DevExpress form) and every drag
                 // starts with a describe to read the control's current Location — so the reuse is the difference
@@ -546,7 +675,7 @@ namespace WinFormsDesigner.Engine.Net48
                     // An entry this describe will not use is DROPPED, not stepped over: leaving an aged-out graph in
                     // the cache let the edit that follows the describe answer from it.
                     if (cached.Mutated || !IsFresh(cached)) EvictInterpreted(describeKey);
-                    else if (cached.BufferKey == sourceKey + "|r" + ResxStamp(designerFilePath)
+                    else if (cached.BufferKey == BufferStamp(designerFilePath, cultureName, sourceKey)
                         && cached.Plan != null && cached.BuildId == ComputeBuildId(assemblyPath))
                     {
                         try { return DescribeInterpretedOn(cached.Plan, (Control)cached.Root, componentId ?? ""); }
@@ -557,7 +686,7 @@ namespace WinFormsDesigner.Engine.Net48
                 Assembly asm;
                 try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); } catch { return (ComponentDesc?)null; }
                 var container = new DesignTimeContainer();
-                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath));
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName));
                 Form? builtForm = null;
                 InterpretedRenderPlan? plan = null;
                 try
@@ -673,10 +802,11 @@ namespace WinFormsDesigner.Engine.Net48
         {
             return _sta.Invoke(() =>
             {
+                string cultureName = SelectedCultureForDesigner(designerFilePath);
                 Assembly asm;
                 try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); } catch { return new TabHit(); }
                 var container = new DesignTimeContainer();
-                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath));
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName));
                 Form? builtForm = null;
                 InterpretedRenderPlan? plan = null;
                 try
@@ -718,27 +848,9 @@ namespace WinFormsDesigner.Engine.Net48
             typeof(ISupportInitialize).Assembly, typeof(object).Assembly,
         };
 
-        private static SafeResxResolver LoadSiblingResx(string designerFilePath)
+        private static SafeResxResolver LoadSiblingResx(string designerFilePath, string cultureName)
         {
-            try
-            {
-                if (!string.IsNullOrEmpty(designerFilePath))
-                {
-                    const string suffix = ".Designer.cs";
-                    string resx = designerFilePath.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
-                        ? designerFilePath.Substring(0, designerFilePath.Length - suffix.Length) + ".resx"
-                        : Path.ChangeExtension(designerFilePath, ".resx");
-                    // Size cap: a sibling .resx is repository-controlled input read into an XML DOM on
-                    // every render — bound it so a hostile/pathological multi-hundred-MB .resx can't exhaust memory.
-                    // 32 MiB is far above any real form's string table yet well below an OOM. Over-cap → empty (fail
-                    // closed): any GetString/GetObject then falls back, exactly as for a refused node.
-                    const long MaxResxBytes = 32L << 20;
-                    if (File.Exists(resx) && new FileInfo(resx).Length <= MaxResxBytes)
-                        return SafeResxResolver.Parse(File.ReadAllText(resx));
-                }
-            }
-            catch { /* fall through to empty (fail closed) */ }
-            return SafeResxResolver.Parse("");
+            return SafeResxResolver.Parse(MergedSiblingResxXml(designerFilePath, cultureName));
         }
 
         /// <summary>apply transient tab VIEW STATE: set each named TabControl's SelectedTab to the
@@ -1608,6 +1720,119 @@ namespace WinFormsDesigner.Engine.Net48
                 r.Applied = true;
                 return r;
             });
+        }
+
+        /// <summary>Move one existing tab page a single position left/right in the LIVE compiled-preview collection,
+        /// preserve the active page, and re-render. The persisted order is still the net10 pure-text splice; this
+        /// method mirrors it only while a net48 canvas is on the disclosed compiled fallback.</summary>
+        public RenderLayoutResult MoveTab(string assemblyPath, string rootTypeName, string hostId, string pageId, bool left)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                if (!TryResolveEditableControl(live, hostId, out Control? host, out string hostOwnershipReason))
+                    return Note(live, hostOwnershipReason);
+                if (!TryResolveEditableControl(live, pageId, out Control? page, out string pageOwnershipReason))
+                    return Note(live, pageOwnershipReason);
+                if (!TryMoveTabPage(host, page, left, out bool moved, out string reason))
+                    return Note(live, reason);
+                if (!moved) return Note(live, "tab is already at the requested edge");
+                live.Root.PerformLayout();
+                Application.DoEvents();
+                var result = Snapshot(live);
+                result.Applied = true;
+                return result;
+            });
+        }
+
+        /// <summary>Reflection-bounded collection move for standard TabPageCollection and vendor equivalents. Prefer
+        /// a native Move(old,new), otherwise use IList or canonical RemoveAt+Insert. A failed two-step mutation attempts
+        /// to restore the page at its original index before returning false.</summary>
+        private static bool TryMoveTabPage(Control host, Control page, bool left, out bool moved, out string reason)
+        {
+            moved = false; reason = "could not reorder tab";
+            var pagesProp = FindTabProp(host.GetType(), "TabPages");
+            var coll = pagesProp?.GetValue(host);
+            if (coll == null) { reason = "not a tab host: " + host.Name; return false; }
+
+            var selectedProp = FindTabProp(host.GetType(), "SelectedTabPage", "SelectedPage", "SelectedTab");
+            object? selected = null;
+            try { selected = selectedProp?.GetValue(host); } catch { /* selection restore is best effort */ }
+
+            int index;
+            int count;
+            if (coll is IList list)
+            {
+                index = list.IndexOf(page);
+                count = list.Count;
+            }
+            else
+            {
+                var indexOf = coll.GetType().GetMethods().FirstOrDefault(m => m.Name == "IndexOf"
+                    && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType.IsInstanceOfType(page));
+                var countProp = coll.GetType().GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+                if (indexOf == null || countProp == null)
+                { reason = "tab collection has no bounded IndexOf/Count surface"; return false; }
+                try
+                {
+                    index = Convert.ToInt32(indexOf.Invoke(coll, new object[] { page }), CultureInfo.InvariantCulture);
+                    count = Convert.ToInt32(countProp.GetValue(coll), CultureInfo.InvariantCulture);
+                }
+                catch (Exception ex) { reason = "could not inspect tab collection: " + ex.Message; return false; }
+            }
+            if (index < 0 || index >= count) { reason = "page is not a member of tab host"; return false; }
+            int target = left ? index - 1 : index + 1;
+            if (target < 0 || target >= count) { moved = false; reason = "tab is already at the requested edge"; return true; }
+
+            try
+            {
+                var nativeMove = coll.GetType().GetMethods().FirstOrDefault(m => m.Name == "Move"
+                    && m.GetParameters().Length == 2
+                    && m.GetParameters()[0].ParameterType == typeof(int)
+                    && m.GetParameters()[1].ParameterType == typeof(int));
+                if (nativeMove != null)
+                {
+                    nativeMove.Invoke(coll, new object[] { index, target });
+                }
+                else if (coll is IList mutable)
+                {
+                    object moving = mutable[index]!;
+                    mutable.RemoveAt(index);
+                    try { mutable.Insert(target, moving); }
+                    catch
+                    {
+                        try { mutable.Insert(Math.Min(index, mutable.Count), moving); } catch { /* live preview will rebuild */ }
+                        throw;
+                    }
+                }
+                else
+                {
+                    var removeAt = coll.GetType().GetMethod("RemoveAt", new[] { typeof(int) });
+                    var insert = coll.GetType().GetMethods().FirstOrDefault(m => m.Name == "Insert"
+                        && m.GetParameters().Length == 2
+                        && m.GetParameters()[0].ParameterType == typeof(int)
+                        && m.GetParameters()[1].ParameterType.IsInstanceOfType(page));
+                    if (removeAt == null || insert == null)
+                    { reason = "tab collection has no Move or RemoveAt+Insert surface"; return false; }
+                    removeAt.Invoke(coll, new object[] { index });
+                    try { insert.Invoke(coll, new object[] { target, page }); }
+                    catch
+                    {
+                        try { insert.Invoke(coll, new object[] { index, page }); } catch { /* live preview will rebuild */ }
+                        throw;
+                    }
+                }
+                if (selected != null && selectedProp?.CanWrite == true)
+                    try { selectedProp.SetValue(host, selected); } catch { /* preserve order even if vendor rejects reselection */ }
+                moved = true;
+                reason = "";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = "could not reorder tab: " + (ex.InnerException?.Message ?? ex.Message);
+                return false;
+            }
         }
 
         /// <summary>Detach a tab page from its host: prefer the host's TabPages collection Remove (covers WinForms
@@ -3107,6 +3332,10 @@ namespace WinFormsDesigner.Engine.Net48
             }
             int originX = Math.Max(0, (root.Width - root.ClientSize.Width) / 2);
             int originY = Math.Max(0, (root.Height - root.ClientSize.Height) - originX);
+            // RightToLeftLayout mirrors the Form's client DC while leaving serialized Control.Left values logical.
+            // Return painted/window coordinates so the webview overlays and hit testing line up with DrawToBitmap.
+            if (root is Form form && form.RightToLeft == RightToLeft.Yes && form.RightToLeftLayout)
+                x = root.ClientSize.Width - x - ctrl.Width;
             return (x + originX, y + originY);
         }
 

@@ -49,6 +49,7 @@ namespace Demo {
 </root>";
 
     private static AssemblyIrHost Host() => new(Probe, new DesignTimeContainer(), SafeResxResolver.Parse(Resx));
+    private static AssemblyIrHost Host(string neutral, string? culture = null) => new(Probe, new DesignTimeContainer(), SafeResxResolver.Parse(neutral, culture));
 
     [Fact]
     public void SafeResxString_IsResolved_AndComponentIsSited()
@@ -95,5 +96,72 @@ namespace Demo {
         var host = new AssemblyIrHost(new[] { typeof(object).Assembly }, new DesignTimeContainer(), SafeResxResolver.Parse(""));
         Assert.Equal(typeof(Button), host.ResolveType("System.Windows.Forms.Button"));
         Assert.Null(host.ResolveType("No.Such.Vendor.Control"));
+    }
+
+    [Fact]
+    public void ApplyResources_ReplaysSafeScalarOverlay_AndSitesComponent()
+    {
+        const string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private System.Windows.Forms.Button button1;
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      this.button1 = new System.Windows.Forms.Button();
+      resources.ApplyResources(this.button1, ""button1"");
+      resources.ApplyResources(this, ""$this"");
+      this.Controls.Add(this.button1);
+    }
+  }
+}";
+        const string neutral = @"<root>
+  <data name='button1.Text'><value>Neutral</value></data>
+  <data name='button1.Location' type='System.Drawing.Point, System.Drawing'><value>5, 6</value></data>
+  <data name='button1.Size' type='System.Drawing.Size, System.Drawing'><value>100, 25</value></data>
+  <data name='$this.RightToLeft' type='System.Windows.Forms.RightToLeft, System.Windows.Forms'><value>Yes</value></data>
+  <data name='$this.RightToLeftLayout' type='System.Boolean, mscorlib'><value>True</value></data>
+</root>";
+        const string culture = @"<root>
+  <data name='button1.Text'><value>Culture</value></data>
+</root>";
+
+        var doc = DesignerIrBuilder.Build(source);
+        Assert.True(doc!.FullCoverage, string.Join(" | ", doc.UnrepresentableReasons));
+        var root = new Form();
+        var res = DesignerIrExecutor.Execute(doc, root, Host(neutral, culture));
+        Assert.True(res.Ok, res.FailureReason);
+
+        var button1 = (Button)res.Instances["button1"];
+        Assert.Equal("Culture", button1.Text);
+        Assert.Equal(new Point(5, 6), button1.Location);
+        Assert.Equal(new Size(100, 25), button1.Size);
+        Assert.Equal(RightToLeft.Yes, root.RightToLeft);
+        Assert.True(root.RightToLeftLayout);
+        Assert.NotNull(button1.Site);
+    }
+
+    [Fact]
+    public void ApplyResources_RefusedMatchingNode_FailsClosed()
+    {
+        const string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private System.Windows.Forms.Button button1;
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      this.button1 = new System.Windows.Forms.Button();
+      resources.ApplyResources(this.button1, ""button1"");
+    }
+  }
+}";
+        const string resx = @"<root>
+  <data name='button1.BackgroundImage' mimetype='application/x-microsoft.net.object.binary.base64'><value>AAEAAAD/////</value></data>
+</root>";
+
+        var doc = DesignerIrBuilder.Build(source);
+        Assert.True(doc!.FullCoverage, string.Join(" | ", doc.UnrepresentableReasons));
+        var res = DesignerIrExecutor.Execute(doc, new Form(), Host(resx));
+        Assert.False(res.Ok);
+        Assert.Contains("UNSAFE_RESOURCE", res.FailureReason);
     }
 }

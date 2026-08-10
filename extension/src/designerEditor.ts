@@ -29,6 +29,7 @@ import {
   setCompiledZOrder,
   addCompiledControl,
   selectCompiledTabAt,
+  hitTestTab,
   hitTestCompiledTab,
   hitTestInterpretedTab,
   CompiledEdit,
@@ -70,6 +71,10 @@ import {
   setExtender,
   resetProperty,
   setImageResource,
+  setLocalizationCulture,
+  setLocalizedResources,
+  setLocalizedImageResource,
+  LocalizedResourceEdit,
   serializeImageList,
   deserializeImageList,
   setCompiledImageListLive,
@@ -93,11 +98,13 @@ import {
   copyControl,
   pasteControl,
   moveZOrder,
+  moveTabPage,
   reparentControl,
   addTabPage,
   addCompiledTab,
   removeTabPage,
   removeCompiledTab,
+  moveCompiledTab,
   listCompiledVendorSmartTags,
 } from './engineClient';
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
@@ -119,8 +126,10 @@ import { chooseFormNoticeKind, FormNoticeKind } from './formNotice';
 import { binaryResxCount } from './binaryResx';
 import { isByteLocalEdit } from './byteLocal';
 import { refuseWhileRenderFailed } from './renderGate';
+import { sanitizeSelectedTabs, selectedTabsFromEntries } from './tabViewState';
 import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
+import { transitionResourceSetAtomic } from './resourceTransaction';
 
 export type EngineKind = 'modern' | 'net48';
 type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
@@ -161,32 +170,36 @@ function net48OutputKey(assemblyPath: string): string {
 }
 
 /**
-* 0.10.0 trust-floor — every webview message that MUTATES the form (persists the .Designer.cs, and/or
-* writes the .resx / the code-behind stub directly). On a [Localizable(true)] form the extension is a
-* read-only preview: each of these is refused up front (before any live-picture mutation or file
-* write), because an edit would either splice a direct `this.x.Prop = …` into the .Designer.cs while
-* the real value lives in the .resx (a silent divergence VS drops on its next save) or write the
-* .resx / code-behind of a form the banner promised not to touch. commit() is the airtight data-loss
-* backstop for the .Designer.cs (the single funnel every persisted text edit flows through); this set
-* additionally covers the direct-file-write ops (importImage/clearImage → .resx, createHandler → .cs)
-* and gives an honest up-front refusal. Spans BOTH message handlers: the canvas (onMessage) and the
-* Properties panel (WinFormsDesignerProvider.resolveWebviewView). Read-only messages (pick, select,
+ * Localizable-form source boundary. ApplyResources-backed scalar, geometry, Color/Font, image and reset
+ * operations are deliberately removed from this set and route through the selected culture's .resx.
+ * Structural operations that would splice generated source or write code-behind stay refused up front:
+ * they have no resource-only representation and would diverge from Visual Studio's localization model.
+ * commit() is the airtight backstop for .Designer.cs (the single funnel every persisted text edit flows
+ * through). This set spans BOTH message handlers: the canvas (onMessage) and the Properties panel
+ * (WinFormsDesignerProvider.resolveWebviewView). Inspection-only messages (pick, select,
 * copy, tabClick navigation, every list* collection read, navigate/list handler reads, viewCode,
 * learnMore, showProperties, chooseItems, ready, save) are deliberately absent so inspection still
 * works. Keep in sync with the mutating branches of BOTH handlers.
 */
-const LOCALIZABLE_BLOCKED = new Set<string>([
+const STALE_RENDER_BLOCKED = new Set<string>([
   // canvas (designer.js → onMessage)
   'manipulate', 'manipulateGroup', 'edit', 'alignControls', 'centerInForm', 'resizeControls',
   'dropControl', 'removeControl', 'removeControls', 'cut', 'cutControls', 'paste', 'duplicate',
   'bringToFront', 'bringToFrontGroup', 'sendToBack', 'sendToBackGroup', 'tabRename',
-  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'addTab', 'deleteTab',
+  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'addTab', 'deleteTab', 'moveTab',
   // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
   'importImage', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
   'setGenericList', 'uiTypeEditor',
   'setColumns', 'setGridColumns', 'setBindings', 'setDataSource', 'setExtender', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
   'addControl', 'addComponent', 'deleteSelected', 'outlineReparent', 'outlineMoveZOrder',
 ]);
+
+const LOCALIZABLE_SOURCE_BLOCKED = new Set<string>(
+  [...STALE_RENDER_BLOCKED].filter((type) => ![
+    'edit', 'manipulate', 'manipulateGroup', 'alignControls', 'centerInForm', 'resizeControls',
+    'importImage', 'clearImage', 'resetProperty', 'uiTypeEditor',
+  ].includes(type)),
+);
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
 * diffs these against the current toolbox membership to add/remove/hide items. */
 type ChooseRow = {
@@ -199,6 +212,7 @@ type ChooseRow = {
 interface DesignerCanvasState {
   zoom?: number;
   lockedIds?: string[];
+  selectedTabs?: Record<string, string>;
 }
 
 /** Per-form state of the shared Properties / Outline / Toolbox view. Custom toolbox tabs are intentionally NOT
@@ -221,6 +235,7 @@ interface ToolboxUiState {
 interface DesignerViewState {
   canvas?: DesignerCanvasState;
   panel?: DesignerPanelState;
+  localizationCulture?: string;
 }
 
 interface ToolboxScanCacheEntry {
@@ -266,6 +281,13 @@ function boolMap(value: unknown): Record<string, boolean> {
   return out;
 }
 
+function cultureName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (text === '') return '';
+  return /^[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8}){0,4}$/.test(text) ? text.replace(/_/g, '-') : undefined;
+}
+
 function sanitizeDesignerViewState(value: unknown): DesignerViewState {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const hasCanvas = !!raw.canvas && typeof raw.canvas === 'object';
@@ -277,13 +299,18 @@ function sanitizeDesignerViewState(value: unknown): DesignerViewState {
   const activeTab = panelRaw.activeTab === 'outline' || panelRaw.activeTab === 'toolbox'
     ? panelRaw.activeTab : 'props';
   return {
-    canvas: hasCanvas ? { zoom, lockedIds: stringList(canvasRaw.lockedIds) } : undefined,
+    canvas: hasCanvas ? {
+      zoom,
+      lockedIds: stringList(canvasRaw.lockedIds),
+      selectedTabs: sanitizeSelectedTabs(canvasRaw.selectedTabs),
+    } : undefined,
     panel: hasPanel ? {
       activeTab,
       toolboxCollapsed: Object.prototype.hasOwnProperty.call(panelRaw, 'toolboxCollapsed')
         ? boolMap(panelRaw.toolboxCollapsed) : undefined,
       outlineCollapsed: stringList(panelRaw.outlineCollapsed),
     } : undefined,
+    localizationCulture: cultureName(raw.localizationCulture),
   };
 }
 
@@ -354,6 +381,62 @@ export function resolveOpenTarget(file: string): string | null {
 /** True when the "Open Designer" action has somewhere to go (drives the editor-title button). */
 export function canOpenDesigner(file: string): boolean {
   return resolveOpenTarget(file) !== null;
+}
+
+export interface LocalizationCultureChoice {
+  cultureName: string;
+  resxPath: string;
+  label: string;
+  description: string;
+  neutral: boolean;
+  exists: boolean;
+}
+
+function designerBasePath(file: string): string {
+  return /\.Designer\.cs$/i.test(file) ? file.slice(0, -'.Designer.cs'.length)
+    : /\.cs$/i.test(file) ? file.slice(0, -'.cs'.length) : file;
+}
+
+export function neutralResxPathForDesigner(file: string): string {
+  return designerBasePath(file) + '.resx';
+}
+
+export function localizedResxPathForDesigner(file: string, culture: string): string {
+  const name = cultureName(culture) ?? '';
+  return name ? `${designerBasePath(file)}.${name}.resx` : neutralResxPathForDesigner(file);
+}
+
+export function discoverLocalizationCultures(file: string): LocalizationCultureChoice[] {
+  const base = designerBasePath(file);
+  const dir = path.dirname(base);
+  const stem = path.basename(base);
+  const neutral = neutralResxPathForDesigner(file);
+  const choices: LocalizationCultureChoice[] = [{
+    cultureName: '',
+    resxPath: neutral,
+    label: '$(globe) (Default)',
+    description: path.basename(neutral),
+    neutral: true,
+    exists: fs.existsSync(neutral),
+  }];
+  const seen = new Set(['']);
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const m = new RegExp('^' + escapeRegex(stem) + '\\.([A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8}){0,4})\\.resx$', 'i').exec(name);
+      const normalized = cultureName(m?.[1]);
+      if (!normalized || seen.has(normalized.toLowerCase())) continue;
+      seen.add(normalized.toLowerCase());
+      choices.push({
+        cultureName: normalized,
+        resxPath: path.join(dir, name),
+        label: `$(globe) ${normalized}`,
+        description: name,
+        neutral: false,
+        exists: true,
+      });
+    }
+  } catch { /* no sibling directory access: keep the neutral option */ }
+  return choices.sort((a, b) => Number(b.neutral) - Number(a.neutral) || a.cultureName.localeCompare(b.cultureName));
 }
 
 /**
@@ -494,6 +577,7 @@ export class DesignerHub {
     all[key] = sanitizeDesignerViewState({
       canvas: patch.canvas ?? before.canvas,
       panel: patch.panel ?? before.panel,
+      localizationCulture: patch.localizationCulture ?? before.localizationCulture,
     });
     // Bound stale state: keep the most recently written 256 form entries. JS object insertion order is stable, so
     // delete+reinsert moves this form to the tail before pruning the oldest keys.
@@ -744,11 +828,11 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // Snapshot the exact text we write: if an edit/undo commits during the async write, the file holds this
     // snapshot, so only mark THAT as saved (a newer edit stays dirty — no silent data loss / reload-drop).
     const snapshot = this.designerText;
-    // 0.10.0 trust-floor — refuse to flush a DIRTY localizable buffer. commit() already blocks new edits,
-    // so the only way a localizable form is dirty here is a recovered hot-exit backup that a PRE-lock
+    // Refuse to flush a DIRTY generated-source buffer for a localizable form. Resource-first v1.5 edits
+    // never dirty .Designer.cs, so the only way this state exists is a recovered hot-exit backup that a PRE-v1.5
     // version left holding a direct `this.x.Prop = …` assignment which diverges from the .resx. This native
     // save path never calls commit(), so without this guard it would persist the exact divergence the
-    // read-only lock forbids. Throw so VS Code keeps the document dirty and surfaces the reason — the user
+    // source boundary forbids. Throw so VS Code keeps the document dirty and surfaces the reason — the user
     // must revert the file (or hand-resolve the recovered content). A CLEAN localizable form is never dirty
     // (isDirty === false → this is a no-op), so this never spuriously fails an ordinary save.
     if (this.isDirty && isLocalizableDesigner(snapshot)) throw new Error(t('status.localizableSaveRefused'));
@@ -932,9 +1016,8 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     }) => {
       const s = DesignerHub.instance.activeSession;
       try {
-        // 0.10.0 trust-floor: a localizable form is read-only — refuse every mutating panel op (grid
-        // edit, image import/clear, reset, collections, event wiring, toolbox add) before it can splice
-        // the .Designer.cs or write the .resx / code-behind. Reads (list*, navigate, ready, pick) pass.
+        // Localizable forms route supported property/image/reset edits through the selected .resx. Refuse only
+        // structural/source operations that do not have a resource representation; reads always pass.
         if (s?.refuseLocalizableEdit(m?.type)) return;
         if (s?.refuseStaleRenderEdit(m?.type)) return; // 0.10.0 S5 — read-only while the last render failed (stale graph)
         if (m?.type === 'ready') { s?.refreshViews(); }
@@ -1003,6 +1086,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
 * so a resx write and its code-behind assignment land — and revert — as one atomic unit.
 */
 interface ResxTx { uri: vscode.Uri; before: string | null; after: string; bom: boolean; }
+type ResourceTxSet = ResxTx | ResxTx[];
 
 /** A .resx read: its text with any leading UTF-8 BOM stripped, plus whether that BOM was there — so every write
 * back can restore it byte-for-byte instead of silently rewriting the whole file's encoding signature. */
@@ -1087,8 +1171,43 @@ class DesignerSession {
   // transient interpreted tab view-state: tab-host field id → selected page field id. Re-supplied
   // to every interpreted render (the interpreted graph is uncached), so a tab-click's selection survives later renders. A
   // stale entry (host/page removed) is a no-op via the engine's narrow adapter.
-  private net48SelectedTabs = new Map<string, string>();
-  private tabViewState(): string[] { return Array.from(this.net48SelectedTabs, ([h, p]) => `${h}=${p}`); }
+  private selectedTabs = new Map<string, string>();
+  private tabViewState(): string[] { return Array.from(this.selectedTabs, ([h, p]) => `${h}=${p}`); }
+
+  private persistTabViewState(): void {
+    if (!this.designerFile) return;
+    const state = DesignerHub.instance.formViewState(this.designerFile);
+    DesignerHub.instance.updateFormViewState(this.designerFile, {
+      canvas: { ...(state.canvas ?? {}), selectedTabs: selectedTabsFromEntries(this.selectedTabs) },
+      panel: state.panel,
+      localizationCulture: state.localizationCulture,
+    });
+  }
+
+  private setSelectedTab(hostId: string, pageId: string): void {
+    this.selectedTabs.set(hostId, pageId);
+    this.persistTabViewState();
+  }
+
+  private clearSelectedTab(hostId: string, pageId?: string): void {
+    if (pageId !== undefined && this.selectedTabs.get(hostId) !== pageId) return;
+    if (this.selectedTabs.delete(hostId)) this.persistTabViewState();
+  }
+
+  private pruneSelectedTabs(controls: LayoutControl[]): void {
+    if (!this.selectedTabs.size) return;
+    const byId = new Map(controls.map((c) => [c.id, c]));
+    let changed = false;
+    for (const [hostId, pageId] of this.selectedTabs) {
+      const host = byId.get(hostId);
+      const page = byId.get(pageId);
+      if (!host?.isTabHost || page?.parentId !== hostId) {
+        this.selectedTabs.delete(hostId);
+        changed = true;
+      }
+    }
+    if (changed) this.persistTabViewState();
+  }
   /** Auto-populated toolbox palette — fetched once, then mirrored to the Toolbox view. */
   private toolboxItems: ToolboxItemInfo[] | undefined;
   /** One-shot latch: we prompt "select a control source" at most once per form (until it renders clean or the
@@ -1133,6 +1252,10 @@ class DesignerSession {
     this.doc = document;
     this.documentUri = document.uri;
     this.designerFile = document.designerFile;
+    if (this.designerFile) {
+      const restored = DesignerHub.instance.formViewState(this.designerFile).canvas?.selectedTabs ?? {};
+      this.selectedTabs = new Map(Object.entries(restored));
+    }
     DesignerHub.instance.registerSession(this); // so a live language switch can re-emit this canvas too
     panel.webview.options = {
       enableScripts: true,
@@ -1254,18 +1377,18 @@ class DesignerSession {
   /** The .Designer.cs this session renders (the key the control-source override is stored under). */
   get designerFilePath(): string | null { return this.designerFile; }
 
-  /** True when this form is rendered by the net48 engine — the picture is a real compiled instance of the last build
+  /** True when this form is rendered by the net48 engine — the picture may be a real compiled instance of the last build
    * rather than an interpretation of the text. NOT a read-only state: net48 forms are editable (net9 splices the
-   * source, net48 mirrors supported edits onto the live instance). The only read-only states are `localizable` and a
-   * failed render (`renderOk` false); net48 additionally shows an unconditional "last build" disclosure banner. */
+   * source, net48 mirrors supported edits onto the live instance). A failed render remains read-only; localizable
+   * forms instead use interpreted resource overlays. Compiled net48 fallback is disclosed in the output channel. */
   get isCompiledPreview(): boolean { return this.engineKind === 'net48'; }
 
   /**
-   * 0.10.0 trust-floor — true when THIS form is [Localizable(true)] (its InitializeComponent uses
-   * ComponentResourceManager.ApplyResources), making it a read-only preview: a persisted edit would
-   * diverge from the .resx (VS drops it on its next save = silent data loss), and net9 mis-renders it.
-   * Computed FRESH from the current in-memory buffer on every read — never cached — so the read-only
-   * lock is authoritative regardless of render timing (no stale-false window before the first render,
+   * True when THIS form is [Localizable(true)] (its InitializeComponent uses
+   * ComponentResourceManager.ApplyResources). v1.5 routes supported value/geometry/image edits through the selected
+   * culture's .resx; source-only structural operations remain blocked. Computed FRESH from the current in-memory
+   * buffer on every read — never cached — so the resource/source boundary is authoritative regardless of render
+   * timing (no stale-false window before the first render,
    * no stale-true window after an external edit). Cheap: two regex tests, only on user-gesture paths.
    */
   private get localizable(): boolean { return isLocalizableDesigner(this.doc.designerText); }
@@ -1273,6 +1396,68 @@ class DesignerSession {
   /** The control assembly currently in effect: explicit override, else the auto-resolved framework assembly
    * (net48/DevExpress) from the last render, else undefined (a net9 form → engine auto-discovery). */
   get controlAssembly(): string | undefined { return this.asm(); }
+
+  get localizationCulture(): string {
+    return this.designerFile ? (DesignerHub.instance.formViewState(this.designerFile).localizationCulture ?? '') : '';
+  }
+
+  private localizationCultureLabel(): string {
+    const culture = this.localizationCulture;
+    return culture || t('localization.default');
+  }
+
+  async selectLocalizationCulture(): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const current = this.localizationCulture;
+    const picks: Array<vscode.QuickPickItem & { cultureName?: string; create?: boolean }> =
+      discoverLocalizationCultures(this.designerFile).map((choice) => ({
+      label: choice.neutral ? `$(globe) ${t('localization.default')}` : choice.label,
+      description: choice.description,
+      detail: choice.neutral ? t('localization.defaultDetail') : choice.resxPath,
+      cultureName: choice.cultureName,
+      picked: choice.cultureName.toLowerCase() === current.toLowerCase(),
+    }));
+    picks.push({
+      label: `$(add) ${t('localization.create')}`,
+      detail: t('localization.createDetail'),
+      create: true,
+    });
+    const pick = await vscode.window.showQuickPick(picks, {
+      title: t('localization.pickTitle'),
+      placeHolder: t('localization.pickPlaceholder'),
+    });
+    if (!pick) return;
+    let requested = pick.cultureName ?? '';
+    if (pick.create) {
+      const entered = await vscode.window.showInputBox({
+        title: t('localization.createTitle'),
+        prompt: t('localization.createPrompt'),
+        placeHolder: 'fr-FR',
+        validateInput: (value) => cultureName(value) === undefined ? t('localization.invalidCulture') : null,
+      });
+      if (entered === undefined) return;
+      requested = entered;
+    }
+    let normalized: string;
+    try {
+      normalized = await setLocalizationCulture(
+        await this.ensureEngine('modern'), this.designerFile, requested);
+    } catch (error) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: errMsg(error) }) });
+      return;
+    }
+    const state = DesignerHub.instance.formViewState(this.designerFile);
+    DesignerHub.instance.updateFormViewState(this.designerFile, {
+      canvas: state.canvas,
+      panel: state.panel,
+      localizationCulture: normalized,
+    });
+    this.lastNoticeSig = undefined;
+    this.output.appendLine(`[designer] localization culture for ${this.designerFile}: ${normalized || '(Default)'}`);
+    this.post({ type: 'status', message: t('status.localizationCultureSet', { culture: normalized || t('localization.default') }) });
+    await this.fullRender();
+    this.refreshViews();
+  }
 
   /** Re-render after the user changed the control source (Select Control Assembly): drop the cached toolbox so
    * Project Controls re-discover against the NEW assembly, then a full render (loads the new controls). */
@@ -1390,9 +1575,12 @@ class DesignerSession {
     if (!this.designerFile || this.disposed) return;
     const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const current = DesignerHub.instance.formViewState(this.designerFile);
+    const fromWebview = sanitizeDesignerViewState({ canvas: raw }).canvas;
     DesignerHub.instance.updateFormViewState(this.designerFile, {
-      canvas: sanitizeDesignerViewState({ canvas: raw }).canvas,
+      // The webview owns zoom/locks only; its debounced payload must not erase host-owned tab selection.
+      canvas: { ...(fromWebview ?? {}), selectedTabs: current.canvas?.selectedTabs },
       panel: current.panel,
+      localizationCulture: current.localizationCulture,
     });
   }
 
@@ -1487,7 +1675,7 @@ class DesignerSession {
    * closures. Callers live-update the canvas (patch or full render) AFTER this; undo/redo do a full render.
    */
   // Returns TRUE when the edit was applied (or was a no-op) and the caller may run its success follow-up; FALSE when a
-  // fail-closed gate (byte-local / render-failed / localizable) REFUSED it — the caller must then skip its success
+  // fail-closed gate (byte-local / render-failed / localizable source edit) REFUSED it — the caller must then skip its success
   // status + live-preview mutation so a refused edit never shows as applied was void, callers diverged).
   //
   // 0.11.0 write-safety — an optional `resx` transaction ties a sibling-.resx disk write to THIS undoable edit: the
@@ -1496,12 +1684,13 @@ class DesignerSession {
   // prior bytes) and Ctrl+Y re-applies it. If a fail-closed gate REFUSES here, no edit is fired — the caller then
   // rolls the resx back (revertResx) so neither half lands. The gates run before anything is mutated, so a refusal
   // never leaves a half-applied transaction.
-  private commit(before: string, after: string, label: string, resx?: ResxTx): boolean {
+  private commit(before: string, after: string, label: string, resx?: ResourceTxSet): boolean {
     // No-op edit → nothing to persist. But if a resx transaction is attached whose bytes actually CHANGED (a
     // re-import of a new image into a property whose `resources.GetObject("key")` assignment is byte-identical —
     // designer text unchanged, base64 payload different), we must still fire an undo entry so Ctrl+Z reverts the
     // resource. Fall through in that case.
-    const resxChanged = !!resx && resx.before !== resx.after;
+    const resxList = Array.isArray(resx) ? resx : resx ? [resx] : [];
+    const resxChanged = resxList.some((tx) => tx.before !== tx.after);
     if (after === before && !resxChanged) return true;
     // 0.10.0 trust-floor S4 — byte-local firewall. Every persisted edit is a targeted net9 splice of `before`, which
     // preserves the file outside the edited span by construction (net48 never writes source — it persists the SAME
@@ -1532,14 +1721,14 @@ class DesignerSession {
       this.post({ type: 'status', message: t('status.designerDiskConflict') });
       return false;
     }
-    // 0.10.0 trust-floor — airtight data-loss backstop. Every persisted edit funnels through here; on a
-    // localizable form a forward edit would diverge from the .resx (VS drops it on its next save), so
-    // refuse to persist even if a mutating message slipped past the LOCALIZABLE_BLOCKED dispatch gate.
+    // Airtight localizable-source backstop. A resource-only edit has identical before/after designer text and an
+    // attached resource transaction, so it is allowed. Any generated-source mutation would diverge from ApplyResources
+    // and is refused even if a message slipped past the LOCALIZABLE_SOURCE_BLOCKED dispatch gate.
     // Classified FRESH from the buffer (the getter), so it is correct even during a render race — the
     // firewall never trusts a stale render-populated flag. (undo/redo set designerText directly, NOT via
     // commit, so reverting a pre-lock edit still works.)
-    if (this.localizable) {
-      this.output.appendLine('[designer] edit refused — localizable form is read-only (' + label + ')');
+    if (this.localizable && !(after === before && resxChanged)) {
+      this.output.appendLine('[designer] edit refused — generated-source mutation is unsupported for a localizable form (' + label + ')');
       return false;
     }
     this.doc.rev++;
@@ -1557,12 +1746,12 @@ class DesignerSession {
       // designerText is left untouched and the undo/redo promise rejects, so the two halves never split (
       // mutating text before a fallible resx op leaves the code reverted while the resource didn't move).
       undo: async () => {
-        if (resx) await this.revertResx(resx.uri, resx.before, resx.after, resx.bom);
+        await this.transitionResourceSet(resxList, 'undo');
         this.doc.rev++; this.doc.designerText = before;
         await this.rerenderFromDoc();
       },
       redo: async () => {
-        if (resx) await this.reapplyResx(resx.uri, resx.before, resx.after, resx.bom);
+        await this.transitionResourceSet(resxList, 'redo');
         this.doc.rev++; this.doc.designerText = after;
         await this.rerenderFromDoc();
       },
@@ -1607,28 +1796,26 @@ class DesignerSession {
   }
 
   /**
-   * 0.10.0 trust-floor — the read-only lock for a [Localizable(true)] form. Returns true (and shows the
-   * read-only status) when this form is localizable AND `type` is a mutating message; the caller then
+   * Resource/source boundary for a [Localizable(true)] form. Returns true (and shows the status) when this form is
+   * localizable AND `type` is a structural/source-mutating message with no safe resource representation; the caller
    * returns without dispatching. Public because BOTH webview message handlers gate through it: the
    * canvas (onMessage) and the Properties panel (WinFormsDesignerProvider.resolveWebviewView), which
-   * carries the direct-file-write ops (importImage/clearImage/createHandler) that never reach commit().
+   * also carries direct code-behind writes that never reach commit().
    */
   public refuseLocalizableEdit(type: string | undefined): boolean {
-    if (!type || !LOCALIZABLE_BLOCKED.has(type) || !this.localizable) return false;
-    this.post({ type: 'status', message: t('status.localizableReadonly') });
+    if (!type || !LOCALIZABLE_SOURCE_BLOCKED.has(type) || !this.localizable) return false;
+    this.post({ type: 'status', message: t('status.localizableSourceBlocked') });
     return true;
   }
 
   /**
-   * 0.10.0 trust-floor — method-level read-only guard (defense-in-depth beyond the dispatch gates).
-   * True (and shows the status) when this form is localizable. Called at the entry of the mutation
-   * methods that either write an IRREVERSIBLE side effect before commit() (importImage/clearImage → .resx)
-   * or are reachable via a NON-dispatch-gated ingress (navigateHandler → createHandler writes a code-behind
-   * stub), so a refused commit() can't be reached with the file already changed.
+   * Method-level guard for operations that still mutate generated source or code-behind on a localizable form.
+   * Supported resource edits use applyLocalizedResourceEdits instead; this defense-in-depth guard covers operations
+   * such as ImageList structural rewrites and createHandler that do not yet have a resource-only representation.
    */
   private refuseLocalizableMutation(): boolean {
     if (!this.localizable) return false;
-    this.post({ type: 'status', message: t('status.localizableReadonly') });
+    this.post({ type: 'status', message: t('status.localizableSourceBlocked') });
     return true;
   }
 
@@ -1660,7 +1847,7 @@ class DesignerSession {
    * backstops persistence. A subsequent successful render flips renderOk true and re-enables editing.
    */
   public refuseStaleRenderEdit(type: string | undefined): boolean {
-    if (!refuseWhileRenderFailed(type, LOCALIZABLE_BLOCKED, this.renderOk)) return false;
+    if (!refuseWhileRenderFailed(type, STALE_RENDER_BLOCKED, this.renderOk)) return false;
     this.post({ type: 'status', message: t('status.renderFailedReadonly') });
     return true;
   }
@@ -1670,13 +1857,12 @@ class DesignerSession {
     ids?: string[]; dx?: number; dy?: number; prop?: string; propType?: string; isEnum?: boolean; value?: string;
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
-    axis?: 'h' | 'v'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; token?: number; reopenToken?: number;
+    axis?: 'h' | 'v'; direction?: 'left' | 'right'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; token?: number; reopenToken?: number;
     dpr?: number; newName?: string; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy';
   }): Promise<void> {
     try {
-      // 0.10.0 trust-floor: a localizable form is a read-only preview — refuse every mutating gesture
-      // up front (before any live-picture mutation or text splice) so an edit can't diverge from the
-      // .resx. commit() backstops persistence; this gate keeps the UX honest and the picture stable.
+      // Route supported localizable value edits later in the handler; refuse only structural/source gestures
+      // up front so they cannot diverge from ApplyResources. commit() backstops persistence.
       if (this.refuseLocalizableEdit(m.type)) return;
       // 0.10.0 trust-floor S5 — if the last render failed, the canvas is a stale preview of a form that didn't
       // load; refuse mutating gestures so an edit can't target a graph the designer couldn't build.
@@ -1784,6 +1970,8 @@ class DesignerSession {
         await this.applyAddTab(m.hostId);
       } else if (m.type === 'deleteTab' && m.hostId && m.pageId) {
         await this.applyDeleteTab(m.hostId, m.pageId);
+      } else if (m.type === 'moveTab' && m.hostId && m.pageId && (m.direction === 'left' || m.direction === 'right')) {
+        await this.applyMoveTab(m.hostId, m.pageId, m.direction === 'left');
       } else if (m.type === 'learnMore') {
         await this.openLearnMore(m.typeName);
       } else if (m.type === 'showProperties') {
@@ -1837,10 +2025,10 @@ class DesignerSession {
     );
     this.chooseItemsPanel = panel;
     panel.webview.html = chooseItemsHtml(panel.webview, this.extensionUri);
-    panel.webview.onDidReceiveMessage(async (m: { type?: string; tab?: string | null; rows?: ChooseRow[] }) => {
+    panel.webview.onDidReceiveMessage(async (m: { type?: string; scope?: string; tab?: string | null; rows?: ChooseRow[] }) => {
       if (m?.type === 'ready') await this.pushCandidates(panel);
-      else if (m?.type === 'browse') await this.browseChooseItems(panel);
-      else if (m?.type === 'applyChooseItems') { this.applyChosen(m.tab ?? undefined, m.rows ?? []); panel.dispose(); }
+      else if (m?.type === 'browse' && m.scope === 'net') await this.browseChooseItems(panel);
+      else if (m?.type === 'applyChooseItems' && m.scope === 'net') { this.applyChosen(m.tab ?? undefined, m.rows ?? []); panel.dispose(); }
       else if (m?.type === 'close') panel.dispose();
     });
     panel.onDidDispose(() => { if (this.chooseItemsPanel === panel) this.chooseItemsPanel = undefined; });
@@ -2173,6 +2361,12 @@ class DesignerSession {
       return false;
     }
     if (seq !== this.renderSeq || this.disposed) return false;
+    try {
+      await this.applyEngineLocalizationCulture(eng);
+    } catch (err) {
+      if (seq === this.renderSeq && !this.disposed) this.fail(err);
+      return false;
+    }
     // Toolbox: net9 shows framework + project controls (one enumeration); net48 merges net9 framework controls
     // with the project/vendor (DevExpress) controls the net48 engine enumerates (the net9 ALC can't load them).
     await this.loadToolboxItems();
@@ -2200,7 +2394,7 @@ class DesignerSession {
         result = ir;
       } else {
         result = await this.withTimeout(
-            renderWithLayout(eng, this.designerFile, asm, text, this.renderScale),
+            renderWithLayout(eng, this.designerFile, asm, text, this.renderScale, this.tabViewState()),
             20000, 'engine render timed out — it may be stuck (first-run / MSBuild)');
       }
     } catch (err) {
@@ -2225,6 +2419,7 @@ class DesignerSession {
     this.output.appendLine(`[designer] render #${seq} ok: ${result.png.length}B, ${result.controls.length} controls`);
 
     this.controls = result.controls;
+    if (this.engineKind === 'modern' || this.net48RenderMode === 'interpreted') this.pruneSelectedTabs(result.controls);
     this.toolStripItems = result.toolStripItems ?? [];
     this.rootClient = { w: result.clientWidth, h: result.clientHeight };
     this.rootFrame = { w: result.width, h: result.height };
@@ -2292,7 +2487,7 @@ class DesignerSession {
    * render path stays consistent. A clean modern render posts `kind:null` (hides the banner).
    *
    * Visible banner producers:
-   * - localizable read-only lock (S1) — 🔒;
+   * - localizable resource-editing context — 🌐;
    * - binary/ImageStream resx (S3) and inherited/unresolved base (S2) — ⚠️ disclosures on an editable modern form
    * (its targeted splices preserve what the preview couldn't draw); modern-engine only.
    *
@@ -2315,18 +2510,18 @@ class DesignerSession {
     } else {
       this.lastNet48NoticeLog = undefined;
     }
-    // The visible banner covers only the modern-engine disclosures (⚠️ binaryResx / inheritedBase) and the localizable
-    // read-only lock (🔒). net48Preview is deliberately NOT passed — it no longer drives a banner (see above).
+    // The visible banner covers modern-engine disclosures (⚠️ binaryResx / inheritedBase) and the active localizable
+    // resource context (🌐). net48Preview is deliberately NOT passed — it no longer drives a banner (see above).
     const kind = chooseFormNoticeKind(this.localizable, inheritedModern, binaryResx);
     let payload: { type: 'formNotice'; kind: FormNoticeKind; icon?: string; text?: string };
     if (kind === null) {
     payload = { type: 'formNotice', kind: null }; // clean render → hide
     } else {
       const parts: string[] = [];
-      if (this.localizable) parts.push(t('designer.notice.localizable'));
+      if (this.localizable) parts.push(t('designer.notice.localizationEditable', { culture: this.localizationCultureLabel() }));
       if (binaryResx) parts.push(t('designer.notice.binaryResx', { n: res.unrenderableResxCount ?? 0 }));
       if (inheritedModern) parts.push(t('designer.notice.inheritedBase', { base: res.baseTypeName ?? '' }));
-      const icon = this.localizable ? '🔒' : '⚠️';
+      const icon = this.localizable ? '🌐' : '⚠️';
       payload = { type: 'formNotice', kind, icon, text: parts.join(' ') };
     }
     // Skip a re-post byte-identical to the one already on screen: the notice is composed on the
@@ -2481,6 +2676,7 @@ class DesignerSession {
         srcRev = this.doc.rev; // bind the SOURCE revision (bumps on edit/undo/load, not a view render) BEFORE the sync text sample
         const text = await this.currentText();
       const eng48 = await this.ensureEngine('net48');
+      await this.applyEngineLocalizationCulture(eng48);
         // when the net48 CANVAS is interpreted (live source), describe the SAME interpreted
         // instance so the panel matches the canvas on an unsaved edit; a null (unknown/inherited/non-interpreted) leaves
         // the panel UNAVAILABLE — it must NEVER fall back to compiled values under an interpreted canvas. Only a
@@ -2694,6 +2890,7 @@ class DesignerSession {
     const reason = this.outlineReparentReason(id, parentId);
     if (reason) { this.post({ type: 'status', message: t('status.editRejected', { reason }) }); return; }
     const eng = await this.ensureEngine();
+    await this.applyEngineLocalizationCulture(eng);
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     const res = await reparentControl(eng, this.designerFile, id, parentId, before);
@@ -2726,6 +2923,7 @@ class DesignerSession {
   ): Promise<number | null> {
     if (!this.designerFile || this.disposed || this.engineKind !== 'modern' || !intents.length) return null;
     const eng = await this.ensureEngine('modern');
+    await this.applyEngineLocalizationCulture(eng);
     const before = this.doc.designerText;
     const rev = this.doc.rev;
 
@@ -2753,6 +2951,27 @@ class DesignerSession {
       this.post({ type: 'status', message: t('status.docChanged') });
       await this.fullRender();
       return null;
+    }
+    if (this.localizable) {
+      const values = authorized.sourceValues ?? [];
+      if (values.some((value) => !value.propertyTypeName || value.invariantValue === undefined)) {
+        return await reject(intents[0]?.id ?? '', 'engine did not return typed localized geometry values');
+      }
+      if (!values.length) {
+        await this.fullRender();
+        return 0;
+      }
+      const ok = await this.applyLocalizedResourceEdits(label, values.map((value) => ({
+        componentId: value.componentId,
+        propertyName: value.propertyName,
+        propertyTypeName: value.propertyTypeName!,
+        invariantValue: value.invariantValue!,
+      })), rev);
+      if (!ok) {
+        await this.fullRender();
+        return null;
+      }
+      return authorized.appliedCount;
     }
     if (authorized.designerText === null) {
       await this.fullRender();
@@ -2848,6 +3067,27 @@ class DesignerSession {
         this.post({ type: 'status', message: tn('status.moved', applied) });
       } else if (applied === 0) {
         this.post({ type: 'status', message: t('status.nothingMoved') });
+      }
+      return;
+    }
+    if (this.localizable) {
+      const revBefore = this.doc.rev;
+      const localized: LocalizedResourceEdit[] = [];
+      for (const id of movable) {
+        const comp = await this.describeFor(id);
+        const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
+        if (!loc) continue;
+        localized.push({
+          componentId: id,
+          propertyName: 'Location',
+          propertyTypeName: 'System.Drawing.Point',
+          invariantValue: `${loc[0] + Math.round(dx)}, ${loc[1] + Math.round(dy)}`,
+        });
+      }
+      if (!localized.length) { this.post({ type: 'status', message: t('status.nothingMoved') }); return; }
+      if (await this.applyLocalizedResourceEdits(`Move ${localized.length} localized controls`, localized, revBefore)) {
+        this.output.appendLine(`moved ${localized.length} localized controls by (${Math.round(dx)}, ${Math.round(dy)})`);
+        this.post({ type: 'status', message: tn('status.moved', localized.length) });
       }
       return;
     }
@@ -2949,6 +3189,27 @@ class DesignerSession {
       }
       return;
     }
+    if (this.localizable) {
+      const revBefore = this.doc.rev;
+      const localized: LocalizedResourceEdit[] = [];
+      for (const edit of wanted) {
+        const comp = await this.describeFor(edit.id);
+        const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
+        if (!loc) continue;
+        localized.push({
+          componentId: edit.id,
+          propertyName: 'Location',
+          propertyTypeName: 'System.Drawing.Point',
+          invariantValue: `${loc[0] + Math.round(edit.dx)}, ${loc[1] + Math.round(edit.dy)}`,
+        });
+      }
+      if (!localized.length) { this.post({ type: 'status', message: t('status.nothingAligned') }); return; }
+      if (await this.applyLocalizedResourceEdits(`Align ${localized.length} localized controls`, localized, revBefore)) {
+        this.output.appendLine(`aligned ${localized.length} localized controls`);
+        this.post({ type: 'status', message: tn('status.aligned', localized.length) });
+      }
+      return;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -3002,6 +3263,20 @@ class DesignerSession {
         this.post({ type: 'status', message: tn('status.resized', applied) });
       } else if (applied === 0) {
         this.post({ type: 'status', message: t('status.nothingResized') });
+      }
+      return;
+    }
+    if (this.localizable) {
+      const revBefore = this.doc.rev;
+      const localized = wanted.map((edit): LocalizedResourceEdit => ({
+        componentId: edit.id,
+        propertyName: 'Size',
+        propertyTypeName: 'System.Drawing.Size',
+        invariantValue: `${Math.round(edit.width)}, ${Math.round(edit.height)}`,
+      }));
+      if (await this.applyLocalizedResourceEdits(`Resize ${localized.length} localized controls`, localized, revBefore)) {
+        this.output.appendLine(`resized ${localized.length} localized controls`);
+        this.post({ type: 'status', message: tn('status.resized', localized.length) });
       }
       return;
     }
@@ -3081,6 +3356,38 @@ class DesignerSession {
     // (non-compiling save). Capturing here makes the rev-check below catch any edit during describe/convert/splice.
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
+
+    // v1.5.0: ApplyResources-backed properties live in the selected culture's .resx. Keep structural/reference and
+    // design-time pseudo-properties source-locked, but route ordinary scalar edits entirely through the lossless
+    // resource editor. Dock/Anchor remain mutually exclusive by removing the conjugate override in the same batch.
+    if (this.localizable) {
+      if (refEdit || designTime) {
+        this.post({ type: 'status', message: t('status.localizableSourceBlocked') });
+        await this.loadProps(id);
+        return;
+      }
+      const edits: LocalizedResourceEdit[] = [{
+        componentId: id,
+        propertyName: prop,
+        propertyTypeName: propType,
+        invariantValue: raw,
+      }];
+      const conjugate = prop === 'Dock' ? 'Anchor' : prop === 'Anchor' ? 'Dock' : null;
+      const clearConjugate = prop === 'Anchor' || (prop === 'Dock' && raw.trim() !== '' && raw.trim() !== 'None');
+      if (conjugate && clearConjugate) edits.push({
+        componentId: id,
+        propertyName: conjugate,
+        propertyTypeName: 'System.String',
+        invariantValue: '',
+        removeOverride: true,
+      });
+      if (await this.applyLocalizedResourceEdits(`Set ${id}.${prop} (${this.localizationCultureLabel()})`, edits, revBefore)) {
+        this.output.appendLine(`set localized ${id}.${prop} = ${raw} (${this.localizationCultureLabel()})`);
+        this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
+        await this.loadProps(id);
+      }
+      return;
+    }
 
     const eng = await this.ensureEngine();
 
@@ -3224,6 +3531,20 @@ class DesignerSession {
     if (COMPLEX_TYPE_SET.has(propType) && raw.trim() === '') {
       this.post({ type: 'status', message: t('status.enterValue', { type: shortName(propType) }) });
       await this.loadItemProps(ownerId, itemId);
+      return;
+    }
+
+    if (this.localizable) {
+      if (await this.applyLocalizedResourceEdits(`Set localized ${itemId}.${prop}`, [{
+        componentId: itemId,
+        propertyName: prop,
+        propertyTypeName: propType,
+        invariantValue: raw,
+      }])) {
+        this.output.appendLine(`set localized ${itemId}.${prop} = ${raw} (${this.localizationCultureLabel()})`);
+        this.post({ type: 'status', message: t('status.propSet', { id: itemId, prop }) });
+        await this.loadItemProps(ownerId, itemId);
+      }
       return;
     }
 
@@ -3492,21 +3813,25 @@ class DesignerSession {
       try {
         const textR = await this.currentText();
         const eng48r = await this.ensureEngine('net48');
+        await this.applyEngineLocalizationCulture(eng48r);
         return this.net48RenderMode === 'interpreted'
           ? await describeInterpretedComponent(eng48r, this.designerFile, asm, textR ?? '', id)
           : await describeCompiledComponent(eng48r, this.designerFile, asm, id, undefined, undefined, textR);
       }
       catch { return null; }
     }
-    return describeComponent(await this.ensureEngine(), this.designerFile, id, asm, await this.currentText());
+    const eng = await this.ensureEngine();
+    await this.applyEngineLocalizationCulture(eng);
+    return describeComponent(eng, this.designerFile, id, asm, await this.currentText());
   }
 
   /** The sibling .resx for the current designer file (Foo.Designer.cs / Foo.cs → Foo.resx). */
   private resxUri(): vscode.Uri {
-    const f = this.designerFile!;
-    const base = /\.Designer\.cs$/i.test(f) ? f.slice(0, -'.Designer.cs'.length)
-      : /\.cs$/i.test(f) ? f.slice(0, -'.cs'.length) : f;
-    return vscode.Uri.file(base + '.resx');
+    return vscode.Uri.file(neutralResxPathForDesigner(this.designerFile!));
+  }
+
+  private localizedResxUri(culture = this.localizationCulture): vscode.Uri {
+    return vscode.Uri.file(localizedResxPathForDesigner(this.designerFile!, culture));
   }
 
   /**
@@ -3594,6 +3919,108 @@ class DesignerSession {
     await this.atomicWriteFile(uri, this.resxBytesOf(afterText, bom));
   }
 
+  /** Write one side of a resource transition. A null side means the transaction owns creation/deletion of the file. */
+  private async writeResxState(uri: vscode.Uri, text: string | null, bom: boolean): Promise<void> {
+    if (text !== null) {
+      await this.atomicWriteFile(uri, this.resxBytesOf(text, bom));
+      return;
+    }
+    try { await vscode.workspace.fs.delete(uri); }
+    catch (error) { if (!isFileNotFound(error)) throw error; }
+  }
+
+  /**
+   * Atomically-at-the-set-level transition every .resx in an edit. VS Code exposes no filesystem transaction, so
+   * this uses the strongest available protocol: preflight ALL exact source states, write sequentially, and on a
+   * failure compensate only files that still contain the bytes just written by this transition. Each target is checked
+   * again immediately before its write; detected external edits fail closed, and incomplete compensation is surfaced.
+   */
+  private async transitionResourceSet(txs: ResxTx[], direction: 'forward' | 'undo' | 'redo'): Promise<void> {
+    await transitionResourceSetAtomic(txs.map((tx) => ({
+      target: tx,
+      before: { text: tx.before, bom: tx.bom },
+      after: { text: tx.after, bom: tx.bom },
+    })), direction, {
+      read: async (tx) => {
+        const current = await this.readResx(tx.uri);
+        return { text: current?.text ?? null, bom: current?.hadBom ?? false };
+      },
+      write: (tx, state) => this.writeResxState(tx.uri, state.text, state.bom),
+      describe: (tx) => path.normalize(tx.uri.fsPath),
+    });
+  }
+
+  private async commitResourceSet(label: string, txs: ResxTx[], statusTarget?: string): Promise<boolean> {
+    if (!this.designerFile || !txs.length) return false;
+    const before = this.doc.designerText;
+    for (const tx of txs) {
+      const fresh = await this.readResx(tx.uri);
+      if ((fresh?.text ?? null) !== tx.before || (fresh?.hadBom ?? false) !== tx.bom) {
+        this.post({ type: 'status', message: t('status.docChangedImport') });
+        return false;
+      }
+      const droppedN = binaryResxCount(tx.before) - binaryResxCount(tx.after);
+      if (droppedN > 0) {
+        this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: droppedN }) });
+        return false;
+      }
+    }
+    try {
+      await this.transitionResourceSet(txs, 'forward');
+    } catch (error) {
+      this.output.appendLine(`[designer] localized resource transaction refused: ${errMsg(error)}`);
+      this.post({ type: 'status', message: t('status.docChangedImport') });
+      return false;
+    }
+    if (!this.commit(before, before, label, txs)) {
+      await this.transitionResourceSet(txs, 'undo');
+      return false;
+    }
+    if (statusTarget) this.output.appendLine(`${label} -> ${statusTarget} (.resx written)`);
+    await this.fullRender();
+    await this.loadProps(this.currentId);
+    await this.postDirty();
+    return true;
+  }
+
+  private async applyLocalizedResourceEdits(
+    label: string,
+    edits: LocalizedResourceEdit[],
+    expectedDesignerRev = this.doc.rev,
+  ): Promise<boolean> {
+    if (!this.designerFile || !edits.length) return false;
+    if (this.refuseUnknownBaselineMutation()) return false;
+    if (this.refuseStaleRenderMutation()) return false;
+    const culture = this.localizationCulture;
+    const eng = await this.ensureEngine('modern');
+    const resxUri = this.localizedResxUri(culture);
+    const resxRead = await this.readResx(resxUri);
+    const resxText = resxRead?.text ?? null;
+    const res = await setLocalizedResources(eng, this.designerFile, culture, resxText, edits);
+    if (!res.safe || res.resxText === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
+      return false;
+    }
+    if (this.doc.rev !== expectedDesignerRev || this.localizationCulture !== culture) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      return false;
+    }
+    const tx: ResxTx = { uri: resxUri, before: resxText, after: res.resxText, bom: resxRead?.hadBom ?? false };
+    const ok = await this.commitResourceSet(label, [tx], res.resxKey);
+    if (ok) this.post({ type: 'status', message: t('status.localizedResourceSet', { culture: culture || t('localization.default') }) });
+    return ok;
+  }
+
+  private async removeLocalizedOverride(id: string, prop: string, label: string): Promise<boolean> {
+    return this.applyLocalizedResourceEdits(label, [{
+      componentId: id,
+      propertyName: prop,
+      propertyTypeName: 'System.String',
+      invariantValue: '',
+      removeOverride: true,
+    }]);
+  }
+
   /**
    * Import an image into a resx-backed image/icon property ("Import…"): pick a file, embed it into the form's
    * sibling .resx and write the `resources.GetObject` assignment. The .resx is written to disk immediately (a
@@ -3605,7 +4032,6 @@ class DesignerSession {
    */
   async importImageFromGrid(id: string, prop: string, propType: string): Promise<void> {
     if (!this.designerFile) return;
-    if (this.refuseLocalizableMutation()) return; // writes the .resx before commit() — guard the irreversible write
     if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     const isIcon = propType === 'System.Drawing.Icon';
     const picked = await vscode.window.showOpenDialog({
@@ -3618,6 +4044,38 @@ class DesignerSession {
       const bytes = await vscode.workspace.fs.readFile(picked[0]);
       if (bytes.byteLength > 16 * 1024 * 1024) { this.post({ type: 'status', message: t('status.imageTooLarge') }); return; }
       const imageBase64 = Buffer.from(bytes).toString('base64');
+      if (this.localizable) {
+        const revBefore = this.doc.rev;
+        const culture = this.localizationCulture;
+        const resxUri = this.localizedResxUri(culture);
+        const resxRead = await this.readResx(resxUri);
+        const resxText = resxRead?.text ?? null;
+        const localized = await setLocalizedImageResource(
+          await this.ensureEngine('modern'), this.designerFile, culture, resxText,
+          id, prop, propType, imageBase64);
+        if (!localized.safe || localized.resxText === null) {
+          this.post({ type: 'status', message: t('status.importRejected', { reason: localized.reason || 'unsafe' }) });
+          await this.loadProps(id);
+          return;
+        }
+        if (this.doc.rev !== revBefore || this.localizationCulture !== culture
+          || this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation()) {
+          await this.loadProps(id);
+          return;
+        }
+        const tx: ResxTx = {
+          uri: resxUri,
+          before: resxText,
+          after: localized.resxText,
+          bom: resxRead?.hadBom ?? false,
+        };
+        if (await this.commitResourceSet(`Import localized ${id}.${prop} image`, [tx], localized.resxKey)) {
+          this.output.appendLine(`imported localized image into ${id}.${prop} -> ${localized.resxKey} (${culture || '(Default)'})`);
+          this.post({ type: 'status', message: t('status.imageImported', { id, prop }) });
+          await this.loadProps(id);
+        }
+        return;
+      }
       const eng = await this.ensureEngine();
       const resxUri = this.resxUri();
       const resxRead = await this.readResx(resxUri);
@@ -3640,7 +4098,7 @@ class DesignerSession {
 
       // 0.10.0 trust-floor TOCTOU close: the form could have turned localizable DURING the file picker /
       // engine round-trip above (the entry guard ran before them). Re-check FRESH immediately before the
-      // irreversible .resx write, so a form that became read-only mid-operation can't have its .resx changed.
+      // irreversible ordinary-form .resx write, so a form that became localizable mid-operation must reroute instead.
       // The render can equally have FAILED, or the baseline gone unknown, across that same (user-length!) window:
       // commit() would then refuse and revertResx would roll the file back, so this was never a lost write — but
       // refusing here means the user's .resx is never written-then-unwritten at all.
@@ -3699,6 +4157,13 @@ class DesignerSession {
    * entry is left as a harmless orphan (mirrors VS, which also doesn't prune unused resources on clear). */
   async clearImageFromGrid(id: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
+    if (this.localizable) {
+      if (await this.removeLocalizedOverride(id, prop, `Reset localized ${id}.${prop} image`)) {
+        this.post({ type: 'status', message: t('status.imageCleared', { id, prop }) });
+        await this.loadProps(id);
+      }
+      return;
+    }
     if (this.refuseLocalizableMutation()) return; // read-only lock: no source mutation on a localizable form (this path resets the .cs assignment; it does NOT write the .resx, so no binary-resx regenerate risk)
     if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     try {
@@ -3927,6 +4392,14 @@ class DesignerSession {
   async resetFromGrid(id: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
     try {
+      if (this.localizable) {
+        if (await this.removeLocalizedOverride(id, prop, `Reset localized ${id}.${prop}`)) {
+          this.output.appendLine(`reset localized ${id}.${prop} -> culture fallback (${this.localizationCultureLabel()})`);
+          this.post({ type: 'status', message: t('status.propReset', { id, prop }) });
+          await this.loadProps(id);
+        }
+        return;
+      }
       const eng = await this.ensureEngine();
       const before = this.doc.designerText;
       const revBefore = this.doc.rev;
@@ -3959,6 +4432,13 @@ class DesignerSession {
   async resetItemFromGrid(ownerId: string, itemId: string, prop: string): Promise<void> {
     if (!this.designerFile) return;
     try {
+      if (this.localizable) {
+        if (await this.removeLocalizedOverride(itemId, prop, `Reset localized ${itemId}.${prop}`)) {
+          this.post({ type: 'status', message: t('status.propReset', { id: itemId, prop }) });
+          await this.loadItemProps(ownerId, itemId);
+        }
+        return;
+      }
       const eng = await this.ensureEngine();
       const before = this.doc.designerText;
       const revBefore = this.doc.rev;
@@ -4142,8 +4622,8 @@ class DesignerSession {
   }
 
   /** Invoke one allowlisted framework UITypeEditor in the engine's isolated worker, then feed the returned invariant
-   * value through the existing source-first scalar transaction. The worker never writes source and a dismissal is a
-   * true no-op. */
+   * value through the existing scalar transaction (source-first on ordinary forms, selected .resx on localizable
+   * forms). The worker never writes files and a dismissal is a true no-op. */
   async uiTypeEditorFromGrid(id: string, prop: string, propType: string, editorType: string): Promise<void> {
     if (this.uiTypeEditorBusy) {
       this.post({ type: 'status', message: 'A property editor is already open.' });
@@ -4919,6 +5399,21 @@ class DesignerSession {
 
   private async applyEdits(id: string, edits: Array<{ prop: string; propType: string; value: string }>): Promise<void> {
     if (!this.designerFile || !edits.length) return;
+    if (this.localizable) {
+      const revBefore = this.doc.rev;
+      const localized = edits.map((edit) => ({
+        componentId: id,
+        propertyName: edit.prop,
+        propertyTypeName: edit.propType,
+        invariantValue: edit.value,
+      }));
+      if (await this.applyLocalizedResourceEdits(
+        `Set ${id} (${edits.length} localized properties)`, localized, revBefore)) {
+        this.output.appendLine(`set localized ${id} ${edits.map((e) => e.prop).join('+')} (${this.localizationCultureLabel()})`);
+        await this.loadProps(id);
+      }
+      return;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
@@ -4969,6 +5464,11 @@ class DesignerSession {
   /** The live designer text — the custom document's in-memory payload (engine renders/edits from this). */
   private async currentText(): Promise<string | undefined> {
     return this.designerFile ? this.doc.designerText : undefined;
+  }
+
+  private async applyEngineLocalizationCulture(engine: EngineHandle): Promise<void> {
+    if (!this.designerFile) return;
+    await setLocalizationCulture(engine, this.designerFile, this.localizationCulture);
   }
 
   private async saveDesigner(): Promise<void> {
@@ -5036,7 +5536,7 @@ class DesignerSession {
 
     // 0.10.0 trust-floor TOCTOU close: the form could have turned localizable DURING the engine round-trip
     // above (the entry guard ran before it). Re-check FRESH before writing the code-behind stub so a form
-    // that became read-only mid-operation can't gain a stub + wiring.
+    // that became localizable mid-operation can't gain a generated-source stub + wiring.
     if (this.refuseLocalizableMutation()) return;
     if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     // Same for the render gate: a concurrent fullRender can FAIL during the engine round-trip above without moving
@@ -5600,14 +6100,23 @@ class DesignerSession {
     this.post({ type: 'status', message: toFront ? t('status.broughtFront') : t('status.sentBack') });
   }
 
-  /**
-   * A click that landed on a tab host (net48 compiled preview): ask the engine to switch the active tab to the
-   * header under (x,y). If it switched, the live re-render shows the newly-active tab's controls (the hidden-tab
-   * filter then exposes them); if the point wasn't on another tab's header it's a harmless no-op re-render, and the
-   * normal `pick` (sent alongside by the webview) still selects the tab host.
-   */
+  /** Switch the standard tab page whose real header contains (x,y). Modern and net48 live-source canvases persist
+   * only bounded view state; compiled net48 also updates its cached instance and records the hit for a later
+   * live-source route. No source/resource edit is produced, and an off-header point is a harmless no-op. */
   private async applyTabClick(hostId: string, x: number, y: number): Promise<void> {
-    if (this.disposed || this.engineKind !== 'net48') return; // net9 tab-switching is a future parity item
+    if (this.disposed || !this.designerFile) return;
+    if (this.engineKind === 'modern') {
+      let hit;
+      try {
+        hit = await hitTestTab(await this.ensureEngine('modern'), this.designerFile, hostId,
+          Math.round(x), Math.round(y), this.asm(), (await this.currentText()) ?? '', this.tabViewState());
+      } catch { return; }
+      if (hit.pageId) {
+        this.setSelectedTab(hostId, hit.pageId);
+        await this.fullRender(true);
+      }
+      return;
+    }
     const asm = this.asm();
     if (!asm) return;
     if (this.net48RenderMode === 'interpreted') {
@@ -5617,31 +6126,40 @@ class DesignerSession {
     let hit;
       try { hit = await hitTestInterpretedTab(await this.ensureEngine('net48'), this.designerFile!, asm, (await this.currentText()) ?? '', hostId, Math.round(x), Math.round(y), this.tabViewState()); }
     catch { return; }
-      if (hit.pageId) { this.net48SelectedTabs.set(hostId, hit.pageId); await this.fullRender(true); }
+      if (hit.pageId) { this.setSelectedTab(hostId, hit.pageId); await this.fullRender(true); }
       return;
     }
     // notifyOnNotApplied=false — this is NAVIGATION, not an edit: it persists no source, and its ordinary
     // `applied===false` (the point wasn't on another tab's header — the active tab or the page body) is a plain no-op,
     // so it must not post a "changes aren't reflected" status.
+    // Persist the field-backed hit as well as mutating the cached compiled picture. A later live-source route keeps
+    // the same page; the disclosed compiled fallback remains build-derived after restart. Off-header stays a no-op.
+    try {
+      const hit = await hitTestCompiledTab(await this.ensureEngine('net48'), this.designerFile, asm, hostId, Math.round(x), Math.round(y));
+      if (hit.pageId) this.setSelectedTab(hostId, hit.pageId);
+    } catch { /* the live select below remains the compatibility path */ }
     await this.live48((e) => selectCompiledTabAt(e, this.designerFile!, asm, hostId, Math.round(x), Math.round(y)), false);
   }
 
   /**
-   * Double-click on a tab header (net48 compiled preview): find the tab page under (x,y), prompt for a new caption,
+   * Double-click a field-backed tab header on either engine, prompt for a new caption,
    * and rename it by editing that page's Text through the normal edit path (net9 splices `this.<page>.Text = "…"`,
    * net48 updates the live picture). A no-op if the point wasn't on a field-backed tab header.
    */
   private async applyTabRename(hostId: string, x: number, y: number): Promise<void> {
-    if (this.disposed || this.engineKind !== 'net48') return; // net9 uses the property grid to rename a tab
+    if (this.disposed || !this.designerFile) return;
     const asm = this.asm();
-    if (!asm) return;
+    if (this.engineKind === 'net48' && !asm) return;
     let hit;
     // hit-test against the geometry the user actually sees: interpreted when the canvas is interpreted
     // (else the compiled build's tab-header rects, which can differ after a live move.
     try {
-      hit = this.net48RenderMode === 'interpreted'
-        ? await hitTestInterpretedTab(await this.ensureEngine('net48'), this.designerFile!, asm, (await this.currentText()) ?? '', hostId, Math.round(x), Math.round(y), this.tabViewState())
-        : await hitTestCompiledTab(await this.ensureEngine('net48'), this.designerFile!, asm, hostId, Math.round(x), Math.round(y));
+      hit = this.engineKind === 'modern'
+        ? await hitTestTab(await this.ensureEngine('modern'), this.designerFile, hostId, Math.round(x), Math.round(y),
+          asm, (await this.currentText()) ?? '', this.tabViewState())
+        : this.net48RenderMode === 'interpreted'
+          ? await hitTestInterpretedTab(await this.ensureEngine('net48'), this.designerFile, asm!, (await this.currentText()) ?? '', hostId, Math.round(x), Math.round(y), this.tabViewState())
+          : await hitTestCompiledTab(await this.ensureEngine('net48'), this.designerFile, asm!, hostId, Math.round(x), Math.round(y));
     }
     catch { return; }
     if (!hit || !hit.pageId) return; // not on a tab header (or the page has no .Designer.cs field)
@@ -5657,14 +6175,14 @@ class DesignerSession {
   }
 
   /**
-   * Add a new empty tab page to the tab host (net48 compiled preview). net9 splices the field + `TabPages.Add`
+   * Add a new empty tab page on either engine. The modern engine splices the field + `TabPages.Add`
    * (the page type is derived from an existing page in the layout), then net48 live-adds the page and makes it
    * active. Undoable in one commit. Persisted text keeps the tab even before a rebuild.
    */
   private async applyAddTab(hostId: string): Promise<void> {
-    if (this.disposed || this.engineKind !== 'net48') return; // net9 add-tab needs interpreter support (future)
+    if (this.disposed) return;
     const asm = this.asm();
-    if (!asm) return;
+    if (this.engineKind === 'net48' && !asm) return;
     const pageType = this.controls.find((c) => c.parentId === hostId)?.type;
     if (!pageType) { this.post({ type: 'status', message: 'add tab: could not determine the tab page type' }); return; }
     const eng = await this.ensureEngine(); // net9 for the text splice
@@ -5675,25 +6193,58 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     if (!this.commit(before, res.newText, `Add tab ${res.name}`)) return;
     this.currentId = res.name;
+    // The newly-added page must be visible on the very next source render. Persist before either modern or
+    // interpreted-net48 re-renders; compiled net48 also records the state for a later interpreted render.
+    this.setSelectedTab(hostId, res.name);
     this.output.appendLine(`added tab ${res.name} to ${hostId} (unsaved)`);
     // Adding a tab is a committed source-backed edit: opt into interpreted re-render (like delete-tab) so an interpreted
     // net48 canvas re-interprets the new source rather than mutating the compiled instance and flipping to the last build.
     // A compiled-fallback canvas keeps the live addCompiledTab path.
-    await this.live48((e) => addCompiledTab(e, this.designerFile!, asm, hostId, pageType, res.name), true, {});
+    if (this.engineKind === 'modern') await this.fullRender();
+    else await this.live48((e) => addCompiledTab(e, this.designerFile!, asm!, hostId, pageType, res.name), true, {});
     this.post({ type: 'status', message: `added tab ${res.name} — unsaved` });
   }
 
+  /** Move the active field-backed page one position left/right in the canonical source collection order. The engine
+   * swaps only adjacent Add/AddRange page references and proves the exact permutation before this one undoable commit.
+   * Modern/net48 interpreted canvases replay the new source; a compiled fallback mirrors it on the live collection. */
+  private async applyMoveTab(hostId: string, pageId: string, left: boolean): Promise<void> {
+    if (this.disposed || !this.designerFile) return;
+    const asm = this.asm();
+    if (this.engineKind === 'net48' && !asm) return;
+    const eng = await this.ensureEngine();
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const res = await moveTabPage(eng, this.designerFile, hostId, pageId, left, before);
+    if (!res.safe || res.newText === null) {
+      this.post({ type: 'status', message: 'move tab rejected: ' + (res.reason || 'unsafe') });
+      return;
+    }
+    if (res.newText === before) {
+      this.post({ type: 'status', message: `tab ${pageId} is already ${left ? 'first' : 'last'}` });
+      return;
+    }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
+    if (!this.commit(before, res.newText, `Move tab ${pageId} ${left ? 'left' : 'right'}`)) return;
+    this.currentId = pageId;
+    this.setSelectedTab(hostId, pageId);
+    this.output.appendLine(`moved tab ${pageId} ${left ? 'left' : 'right'} in ${hostId} (unsaved)`);
+    if (this.engineKind === 'modern') await this.fullRender();
+    else await this.live48((e) => moveCompiledTab(e, this.designerFile!, asm!, hostId, pageId, left), true, {});
+    this.post({ type: 'status', message: `moved tab ${pageId} ${left ? 'left' : 'right'} — unsaved` });
+  }
+
   /**
-   * Delete a whole tab page (the page + its entire subtree) from the tab host (net48 compiled preview). net9 removes
+   * Delete a whole tab page (the page + its entire subtree) on either engine. The modern engine removes
    * the subtree's fields/statements and detaches the page from the host's tab collection (whole Controls.Add /
    * TabPages.Add, or a trimmed TabPages.AddRange element); net48 live-removes the page from the picture. Undoable in
    * one commit. Declines (with a status) when the page's subtree is referenced from outside it. The page id is the
    * host's currently-active tab (the visible one), so the user deletes what they see. Confirmed first (destructive).
    */
   private async applyDeleteTab(hostId: string, pageId: string): Promise<void> {
-    if (this.disposed || this.engineKind !== 'net48') return; // net9 delete-tab needs interpreter support (future)
+    if (this.disposed) return;
     const asm = this.asm();
-    if (!asm) return;
+    if (this.engineKind === 'net48' && !asm) return;
     const pick = await vscode.window.showWarningMessage(
       `Delete tab "${pageId}" and all controls on it? This cannot be undone except via Undo.`,
       { modal: true },
@@ -5708,11 +6259,13 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     if (!this.commit(before, res.newText, `Delete tab ${pageId}`)) return;
     if (this.currentId === pageId) this.currentId = hostId;
+    this.clearSelectedTab(hostId, pageId);
     this.output.appendLine(`deleted tab ${pageId} from ${hostId} (unsaved)`);
     // A deleted tab is a committed source-backed edit: opt into interpreted re-render (like a multi-property edit) so an
     // interpreted net48 canvas re-interprets the new source (the page is gone) instead of running the compiled-instance
     // mutation and flipping the picture to the last build. A compiled-fallback canvas keeps the live removeCompiledTab path.
-    await this.live48((e) => removeCompiledTab(e, this.designerFile!, asm, hostId, pageId), true, {});
+    if (this.engineKind === 'modern') await this.fullRender();
+    else await this.live48((e) => removeCompiledTab(e, this.designerFile!, asm!, hostId, pageId), true, {});
     this.post({ type: 'status', message: `deleted tab ${pageId} — unsaved` });
   }
 
@@ -5741,6 +6294,7 @@ class DesignerSession {
   private async patchOrRerender(id: string, prop: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const eng = await this.ensureEngine();
+    await this.applyEngineLocalizationCulture(eng);
     const asm = this.asm();
     const text = await this.currentText();
     const seq = ++this.renderSeq;
@@ -5753,8 +6307,12 @@ class DesignerSession {
     // is probing for is refused a moment later anyway: a control that changed geometry leaves a hole at its old rect
     // that a single-control patch cannot repaint, so `geometryUnchanged` below always sends these to the full frame.
     // Measured on a plain form: a drag went from probe+frame (~127 ms) to frame (~74 ms).
-    const patchPossible = id !== 'this' && prop !== 'Checked' && prop !== 'CheckState' && this.renderScale === 1
-      && !GeometryProps.has(prop);
+    // A TabPage.Text edit repaints the PARENT host header, not the page's own client bitmap. Force one full frame for
+    // both property-grid and header-double-click renames; otherwise the dirty patch leaves the old caption visible.
+    const tabHeaderText = prop === 'Text' && this.controls.some((page) => page.id === id
+      && this.controls.some((host) => host.id === page.parentId && host.isTabHost));
+    const patchPossible = id !== 'this' && prop !== 'Checked' && prop !== 'CheckState' && !tabHeaderText
+      && this.renderScale === 1 && !GeometryProps.has(prop);
     if (patchPossible) {
       let layout: Awaited<ReturnType<typeof describeLayout>>;
       try {
@@ -5798,7 +6356,7 @@ class DesignerSession {
 
     let frame: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
-      frame = await renderWithLayout(eng, this.designerFile, asm, text, this.renderScale);
+      frame = await renderWithLayout(eng, this.designerFile, asm, text, this.renderScale, this.tabViewState());
     } catch (err) {
       // S5: the full re-render of the current source FAILED → the form isn't renderable right now → read-only
       // (fail-closed; self-recovers when a later render — e.g. after Undo restores a renderable buffer — succeeds).
@@ -5810,6 +6368,7 @@ class DesignerSession {
     }
     if (seq !== this.renderSeq || this.disposed) return;
     this.controls = frame.controls;
+    this.pruneSelectedTabs(frame.controls);
     this.toolStripItems = frame.toolStripItems ?? [];
     this.rootClient = { w: frame.clientWidth, h: frame.clientHeight };
     this.rootFrame = { w: frame.width, h: frame.height };

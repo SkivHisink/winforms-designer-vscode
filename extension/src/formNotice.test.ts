@@ -1,6 +1,6 @@
 // 1.0.0 — #formNotice kind precedence after the net48 divergence lock was descoped.
-// The net48 "compiled preview" disclosure is UNCONDITIONAL and editable (ℹ️); the only genuine read-only lock is
-// `localizable` (🔒); binaryResx / inheritedBase are modern-engine ⚠️ disclosures.
+// The net48 "compiled preview" disclosure is unconditional and editable (ℹ️); `localizable` is the selected-culture
+// resource context (🌐); binaryResx / inheritedBase are modern-engine ⚠️ disclosures.
 
 import { describe, it, expect } from 'vitest';
 import { chooseFormNoticeKind } from './formNotice';
@@ -14,7 +14,7 @@ describe('chooseFormNoticeKind', () => {
     expect(chooseFormNoticeKind(false, false, false, true)).toBe('compiledPreview');
   });
 
-  it('the localizable read-only lock outranks the net48 disclosure', () => {
+  it('the active localizable resource context outranks the net48 disclosure', () => {
     expect(chooseFormNoticeKind(true, false, false, true)).toBe('localizable');
   });
 
@@ -28,7 +28,7 @@ describe('chooseFormNoticeKind', () => {
     expect(chooseFormNoticeKind(false, true, false, false)).toBe('inheritedBase');
   });
 
-  it('localizable + inherited keeps its combined 🔒 kind', () => {
+  it('localizable + inherited keeps its combined resource-context kind', () => {
     expect(chooseFormNoticeKind(true, true, false, false)).toBe('localizableInherited');
   });
 

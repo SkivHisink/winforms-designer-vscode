@@ -190,6 +190,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('winformsDesigner.selectControlAssembly', () => selectControlAssembly(context)),
   );
 
+  // v1.5.0 VS-style Language selector: neutral plus discovered/created culture-specific sibling .resx files.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.selectLocalizationCulture',
+      () => DesignerHub.instance.activeSession?.selectLocalizationCulture()),
+  );
+
   // 0.11.0 ImageList editor — edit the selected ImageList's images (add/remove) on the active designer.
   context.subscriptions.push(
     vscode.commands.registerCommand('winformsDesigner.editImageListImages',

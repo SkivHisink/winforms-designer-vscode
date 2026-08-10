@@ -3,8 +3,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive } from './engineClient';
+import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, moveCompiledTab, hitTestCompiledTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, setLocalizationCulture, setLocalizedResources } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
+import { hitTestTab } from './engineClient';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
 import { chooseFormNoticeKind } from './formNotice';
@@ -280,10 +281,10 @@ function verifyCsprojHelpers(repo: string): void {
     console.log('e2e: T2.2 render-diagnostics categorize verified — unresolved-type→missingType (jacket stripped), exception→initError (message), bare statement→unsupported; blank ignored + dup collapsed; empty/undefined→[]; signature order-independent, set-sensitive & collision-free; tail-anchored jacket (sibling "[Ex:]" literal kept); prose "unresolved type"→initError; "(unresolved type) X"→missingType');
   }
 
-  // ---- 0.10.0 trust-floor: localizable-form detection (read-only refusal) ----
-  // isLocalizableDesigner is the runtime-independent trust boundary that turns a [Localizable(true)] form into a
-  // read-only preview (a property edit on such a form would splice a direct assignment that diverges from the .resx =
-  // silent data loss). It is deliberately BROAD/fail-closed: it keys on the `ApplyResources(` CALL alone (the
+  // ---- localizable-form detection (resource/source routing boundary) ----
+  // isLocalizableDesigner is the runtime-independent boundary that routes supported edits through the selected
+  // culture .resx and refuses generated-source mutations that would diverge from ApplyResources. It deliberately
+  // keys on the `ApplyResources(` CALL alone (the
   // ComponentResourceManager bulk-apply only a localizable form emits), NOT the manager declaration shape — so no
   // valid-C# declaration spelling can evade it (a false negative is the data-loss path). A false positive is a
   // harmless read-only refusal (the two-signal rule was defeated by a cross-file `global using`
@@ -404,23 +405,23 @@ function verifyCsprojHelpers(repo: string): void {
     if (chooseFormNoticeKind(false, false) !== null) throw new Error('formNotice: clean render → null (banner hidden)');
     // S3 binaryResx precedence
     if (chooseFormNoticeKind(false, false, true) !== 'binaryResx') throw new Error('formNotice: binaryResx-only → binaryResx');
-    if (chooseFormNoticeKind(true, false, true) !== 'localizable') throw new Error('formNotice: localizable subsumes binaryResx (lock icon dominates)');
+    if (chooseFormNoticeKind(true, false, true) !== 'localizable') throw new Error('formNotice: localizable resource context subsumes binaryResx');
     if (chooseFormNoticeKind(false, true, true) !== 'binaryResx') throw new Error('formNotice: binaryResx (data-loss) outranks inherited (incomplete)');
-    if (chooseFormNoticeKind(true, true, true) !== 'localizableInherited') throw new Error('formNotice: all three → localizableInherited (🔒), host appends binaryResx clause');
+    if (chooseFormNoticeKind(true, true, true) !== 'localizableInherited') throw new Error('formNotice: all three → localizableInherited, host appends binaryResx clause');
     // 1.0.0 — the 4th flag is `net48Preview`, the UNCONDITIONAL
     // "this canvas is your last build" disclosure. net48 forms stay editable, so it is NOT a read-only lock; it
-    // outranks the two ⚠️ modern disclosures but not the localizable read-only lock. Order: localizable >
+    // outranks the two ⚠️ modern disclosures but not the localizable culture context. Order: localizable >
     // compiledPreview > binaryResx > inheritedBase.
     if (chooseFormNoticeKind(false, false, false, true) !== 'compiledPreview') throw new Error('formNotice: net48Preview-only → compiledPreview');
     if (chooseFormNoticeKind(false, false, true, true) !== 'compiledPreview') throw new Error('formNotice: compiledPreview outranks binaryResx (net48 never flags binaryResx anyway)');
     if (chooseFormNoticeKind(false, true, false, true) !== 'compiledPreview') throw new Error('formNotice: compiledPreview outranks inheritedBase');
-    if (chooseFormNoticeKind(true, false, false, true) !== 'localizable') throw new Error('formNotice: localizable read-only lock subsumes the net48 disclosure');
+    if (chooseFormNoticeKind(true, false, false, true) !== 'localizable') throw new Error('formNotice: localizable resource context subsumes the net48 disclosure');
     // REGRESSION GUARD: the pre-1.0 2-arg/3-arg call sites must keep their exact meaning — the new param defaults
     // false, so adding it cannot silently re-classify an existing caller.
     if (chooseFormNoticeKind(false, false) !== null) throw new Error('formNotice: clean render must stay null with the new param defaulted');
     if (chooseFormNoticeKind(false, true) !== 'inheritedBase') throw new Error('formNotice: 2-arg inherited-only must stay inheritedBase');
     if (chooseFormNoticeKind(false, false, true) !== 'binaryResx') throw new Error('formNotice: 3-arg binaryResx-only must stay binaryResx');
-    console.log('e2e: 1.0.0 formNotice kind selection verified — localizable > compiledPreview > binaryResx > inheritedBase; localizable is the only 🔒 read-only lock, net48 compiledPreview is an ℹ️ editable disclosure, binaryResx/inheritedBase are ⚠️; pre-1.0 call sites unchanged');
+    console.log('e2e: v1.5.0 formNotice kind selection verified — localizable resource context > compiledPreview > binaryResx > inheritedBase; net48 compiledPreview remains an editable disclosure');
   }
 
   // ---- 0.10.0 trust-floor S3: binary-resx host detector (pure) ----
@@ -567,6 +568,54 @@ async function main(): Promise<void> {
   try {
     const pong = await ping(engine);
     console.log('e2e: ping ->', pong);
+
+    // v1.5.0 localization workflow: the same designer path renders/describes neutral, parent/exact and RTL culture
+    // overlays; resource-only RPC edits preserve opaque nodes and RemoveOverride restores ResourceManager fallback.
+    {
+      const localizedDesigner = path.join(repo, 'engine', 'samples', 'LocalizableForm.Designer.cs');
+      const prop = async (id: string, name: string): Promise<string | null | undefined> =>
+        (await describeComponent(engine, localizedDesigner, id))?.properties?.find((p) => p.name === name)?.value;
+
+      if (await setLocalizationCulture(engine, localizedDesigner, '') !== '')
+        throw new Error('localization: neutral culture did not normalize to empty');
+      if (await prop('button1', 'Text') !== 'Click me')
+        throw new Error('localization: neutral button1.Text was not applied');
+      const neutralLayout = await renderWithLayout(engine, localizedDesigner);
+      const neutralButton = neutralLayout.controls.find((control) => control.id === 'button1');
+      if (!neutralButton) throw new Error('localization: neutral render lost button1');
+
+      if (await setLocalizationCulture(engine, localizedDesigner, 'fr-fr') !== 'fr-FR')
+        throw new Error('localization: fr-fr did not normalize to fr-FR');
+      if (await prop('button1', 'Text') !== 'Cliquez-moi')
+        throw new Error('localization: exact French button1.Text was not applied');
+      if (await prop('button1', 'Size') !== '120, 32')
+        throw new Error('localization: French culture lost neutral Size fallback');
+
+      await setLocalizationCulture(engine, localizedDesigner, 'ar-SA');
+      if (await prop('this', 'RightToLeft') !== 'Yes' || await prop('this', 'RightToLeftLayout') !== 'True')
+        throw new Error('localization: Arabic RTL / RightToLeftLayout overlay was not applied');
+      const rtl = await renderWithLayout(engine, localizedDesigner);
+      if (!isPng(rtl.png)) throw new Error('localization: Arabic render is not a PNG');
+      const rtlButton = rtl.controls.find((control) => control.id === 'button1');
+      if (!rtlButton || rtlButton.x <= neutralButton.x || rtlButton.width !== neutralButton.width)
+        throw new Error(`localization: RightToLeftLayout did not mirror button1 (${neutralButton.x} -> ${rtlButton?.x})`);
+
+      const opaqueResx = `<?xml version="1.0" encoding="utf-8"?><root><!--keep--><data name="opaque.Payload" mimetype="application/x-microsoft.net.object.binary.base64"><value>AAEAAAD/////</value></data><data name="button1.Text" xml:space="preserve"><value>Old</value></data></root>`;
+      const edited = await setLocalizedResources(engine, localizedDesigner, 'fr-FR', opaqueResx, [{
+        componentId: 'button1', propertyName: 'Text', propertyTypeName: 'System.String', invariantValue: 'Nouveau',
+      }]);
+      if (!edited.safe || !edited.resxText?.includes('<value>Nouveau</value>')
+        || !edited.resxText.includes('<!--keep-->') || !edited.resxText.includes('opaque.Payload'))
+        throw new Error('localization: resource-only RPC did not preserve opaque/comment nodes while upserting');
+      const reset = await setLocalizedResources(engine, localizedDesigner, 'fr-FR', edited.resxText, [{
+        componentId: 'button1', propertyName: 'Text', propertyTypeName: 'System.String', invariantValue: '', removeOverride: true,
+      }]);
+      if (!reset.safe || reset.resxText?.includes('button1.Text') || !reset.resxText?.includes('opaque.Payload'))
+        throw new Error('localization: RemoveOverride did not restore fallback without touching opaque resources');
+
+      await setLocalizationCulture(engine, localizedDesigner, '');
+      console.log(`e2e: v1.5.0 localization verified — neutral/exact/fallback + Arabic RTL mirror (${neutralButton.x} -> ${rtlButton.x}); resource-only upsert/reset preserves opaque binary/comment nodes`);
+    }
 
     const png = await renderDesigner(engine, designer);
     fs.writeFileSync(outPng, png);
@@ -1747,6 +1796,14 @@ async function main(): Promise<void> {
             const tabDefault = await renderInterpretedWithLayout(n48, tabFormDes, ctxFixtureDll, tabSrc, 'SampleApp.TabForm');
             if (tabDefault.renderMode !== 'interpreted') throw new Error(`tabs: TabForm must interpret — got ${tabDefault.renderMode} (${tabDefault.fallbackReason})`);
             if (!tabDefault.controls.some((c) => c.id === 'pageButton1')) throw new Error('tabs: default view (SelectedIndex=0) must show page 1 (pageButton1)');
+            const compiledMoved = await moveCompiledTab(n48, tabFormDes, ctxFixtureDll, 'tabControl1', 'tabPage2', true, 'SampleApp.TabForm');
+            if (!compiledMoved.applied) throw new Error('tabs: compiled-fallback live Move Left was not applied: ' + (compiledMoved.diagnostics || 'no diagnostics'));
+            const compiledHost = compiledMoved.controls.find((c) => c.id === 'tabControl1');
+            if (!compiledHost) throw new Error('tabs: compiled Move Left lost the tab host');
+            const compiledFirst = await hitTestCompiledTab(n48, tabFormDes, ctxFixtureDll, 'tabControl1', compiledHost.x + 10, compiledHost.y + 10);
+            if (compiledFirst.pageId !== 'tabPage2') throw new Error('tabs: compiled Move Left did not put tabPage2 under the first header');
+            const compiledRestored = await moveCompiledTab(n48, tabFormDes, ctxFixtureDll, 'tabControl1', 'tabPage2', false, 'SampleApp.TabForm');
+            if (!compiledRestored.applied) throw new Error('tabs: compiled-fallback live Move Right did not restore the order');
             const tabP2 = await renderInterpretedWithLayout(n48, tabFormDes, ctxFixtureDll, tabSrc, 'SampleApp.TabForm', undefined, 0, 0, ['tabControl1=tabPage2']);
             if (tabP2.renderMode !== 'interpreted') throw new Error(`tabs: the view-state render must STAY interpreted — got ${tabP2.renderMode}`);
             if (!tabP2.controls.some((c) => c.id === 'pageLabel2')) throw new Error('tabs: the selected-tab override must render page 2 (pageLabel2)');
@@ -1754,7 +1811,13 @@ async function main(): Promise<void> {
             // a foreign/unresolvable override is a safe no-op (narrow adapter) — stays on the source-selected page 1
             const tabBogus = await renderInterpretedWithLayout(n48, tabFormDes, ctxFixtureDll, tabSrc, 'SampleApp.TabForm', undefined, 0, 0, ['tabControl1=no_such_page']);
             if (!tabBogus.controls.some((c) => c.id === 'pageButton1')) throw new Error('tabs: a bogus tab override must be a no-op (stay on the source-selected page)');
-            console.log('e2e:  interpreted tab view-state verified — TabForm interprets (default page 1 = pageButton1); a "tabControl1=tabPage2" override renders page 2 (pageLabel2) STAYING interpreted (never the compiled build); a bogus override is a safe no-op');
+            const movedTab = await moveTabPage(engine, tabFormDes, 'tabControl1', 'tabPage2', true, tabSrc);
+            if (!movedTab.safe || movedTab.newText === null) throw new Error('tabs: source-first move-left rejected: ' + movedTab.reason);
+            const movedDefault = await renderInterpretedWithLayout(n48, tabFormDes, ctxFixtureDll, movedTab.newText, 'SampleApp.TabForm');
+            if (movedDefault.renderMode !== 'interpreted' || !movedDefault.controls.some((c) => c.id === 'pageLabel2')) {
+              throw new Error('tabs: reordered live source must replay page 2 at SelectedIndex=0 without falling back to the compiled build');
+            }
+            console.log('e2e:  net48 tab order verified — compiled fallback mirrors Move Left/Right live (first-header identity checked); transient selection stays interpreted; source-first Move Left replays page 2 at SelectedIndex=0');
           }
 
           // ---- FakeVendor corpus — the interpreter must reproduce DEVEXPRESS-LIKE patterns without a
@@ -3482,6 +3545,41 @@ async function main(): Promise<void> {
       if (!ids.includes('pageButton1')) throw new Error('hidden-tab filter dropped the ACTIVE tab control pageButton1: ' + ids.join(','));
       if (ids.includes('pageLabel2')) throw new Error('hidden-tab filter must drop pageLabel2 (on the non-active tabPage2): ' + ids.join(','));
       if (!ids.includes('tabControl1')) throw new Error('tab host tabControl1 missing from the layout');
+      const tabHost = layout.controls.find((c) => c.id === 'tabControl1')!;
+      if (!tabHost.isTabHost) throw new Error('modern layout must mark standard TabControl as isTabHost');
+
+      const selectedP2 = await renderWithLayout(engine, tabForm, undefined, tabDisk, undefined, ['tabControl1=tabPage2']);
+      if (!selectedP2.controls.some((c) => c.id === 'pageLabel2') || selectedP2.controls.some((c) => c.id === 'pageButton1')) {
+        throw new Error('modern selected-tab view state must show page 2 and hide page 1');
+      }
+      const invalidSelection = await renderWithLayout(engine, tabForm, undefined, tabDisk, undefined, ['tabControl1=pageButton1']);
+      if (!invalidSelection.controls.some((c) => c.id === 'pageButton1') || invalidSelection.controls.some((c) => c.id === 'pageLabel2')) {
+        throw new Error('modern selected-tab view state must ignore a nonmember/non-TabPage override');
+      }
+      const firstHeader = await hitTestTab(engine, tabForm, 'tabControl1', tabHost.x + 10, tabHost.y + 10, undefined, tabDisk);
+      const secondHeader = await hitTestTab(engine, tabForm, 'tabControl1', tabHost.x + 80, tabHost.y + 10, undefined, tabDisk, ['tabControl1=tabPage2']);
+      if (firstHeader.pageId !== 'tabPage1' || secondHeader.pageId !== 'tabPage2') {
+        throw new Error(`modern tab header hit-test mismatch: first=${firstHeader.pageId}, second=${secondHeader.pageId}`);
+      }
+      if ((await hitTestTab(engine, tabForm, 'tabControl1', tabHost.x + 10, tabHost.y + 100, undefined, tabDisk)).pageId !== '') {
+        throw new Error('modern tab hit-test must fail closed off the header');
+      }
+
+      const movedP2 = await moveTabPage(engine, tabForm, 'tabControl1', 'tabPage2', true, tabDisk);
+      if (!movedP2.safe || movedP2.newText === null) throw new Error('MoveTabPage(tabPage2,left) rejected: ' + movedP2.reason);
+      if (movedP2.newText.indexOf('this.tabControl1.Controls.Add(this.tabPage2)') > movedP2.newText.indexOf('this.tabControl1.Controls.Add(this.tabPage1)')) {
+        throw new Error('move-tab left did not place tabPage2 before tabPage1');
+      }
+      const movedLayout = await renderWithLayout(engine, tabForm, undefined, movedP2.newText);
+      if (!movedLayout.controls.some((c) => c.id === 'pageLabel2') || movedLayout.controls.some((c) => c.id === 'pageButton1')) {
+        throw new Error('move-tab source replay must make reordered tabPage2 the SelectedIndex=0 surface');
+      }
+      const restoredP2 = await moveTabPage(engine, tabForm, 'tabControl1', 'tabPage2', false, movedP2.newText);
+      if (!restoredP2.safe || restoredP2.newText !== tabDisk) throw new Error('move-tab right must exactly restore the original adjacent order');
+      if ((await moveTabPage(engine, tabForm, 'tabControl1', 'tabPage1', true, tabDisk)).newText !== tabDisk) {
+        throw new Error('moving the first tab left must be an explicit no-op');
+      }
+      if (fs.readFileSync(tabForm, 'utf8') !== tabDisk) throw new Error('move-tab must NOT modify the file on disk');
 
       const at = await addTabPage(engine, tabForm, 'tabControl1', 'System.Windows.Forms.TabPage', tabDisk);
       if (!at.safe || at.newText === null) throw new Error('AddTabPage rejected: ' + at.reason);
@@ -3489,9 +3587,10 @@ async function main(): Promise<void> {
       if (at.newText.indexOf(`this.${at.name} = new System.Windows.Forms.TabPage();`) < 0) throw new Error('add-tab missing ctor for ' + at.name);
       if (at.newText.indexOf(`this.tabControl1.TabPages.Add(this.${at.name});`) < 0) throw new Error('add-tab missing TabPages.Add for ' + at.name);
       if (fs.readFileSync(tabForm, 'utf8') !== tabDisk) throw new Error('add-tab must NOT modify the file on disk');
-      const afterAdd = await renderWithLayout(engine, tabForm, undefined, at.newText);
+      const afterAdd = await renderWithLayout(engine, tabForm, undefined, at.newText, undefined, [`tabControl1=${at.name}`]);
       if (!isPng(afterAdd.png)) throw new Error('add-tab: form did not render with the new tab');
       if (!afterAdd.controls.some((c) => c.id === 'tabControl1')) throw new Error('add-tab: tab host lost after add');
+      if (!afterAdd.controls.some((c) => c.id === at.name && c.parentId === 'tabControl1')) throw new Error('add-tab: selected view state did not expose the new page');
       console.log(`e2e: tabs verified — hidden-tab filter drops non-active-page controls (pageLabel2 gone, pageButton1 kept); AddTabPage splices field + TabPages.Add (${at.name}) past the gate & renders; disk untouched`);
 
       // Delete-tab (Controls.Add idiom): removing tabPage2 must drop the page AND its subtree (pageLabel2) — field
@@ -3512,6 +3611,8 @@ async function main(): Promise<void> {
       const delIds = afterDel.controls.map((c) => c.id);
       if (delIds.includes('tabPage2') || delIds.includes('pageLabel2')) throw new Error('delete-tab: removed page still in the layout: ' + delIds.join(','));
       if (!delIds.includes('tabControl1')) throw new Error('delete-tab: tab host lost after delete');
+      const staleAfterDel = await renderWithLayout(engine, tabForm, undefined, del.newText, undefined, ['tabControl1=tabPage2']);
+      if (!staleAfterDel.controls.some((c) => c.id === 'pageButton1')) throw new Error('delete-tab: stale selected-page state must be a harmless no-op');
       // Refusals: an unknown page, and the host itself, must be declined (never a bad edit).
       if ((await removeTabPage(engine, tabForm, 'tabControl1', 'nope', tabDisk)).safe) throw new Error('RemoveTabPage must refuse an unknown page');
       if ((await removeTabPage(engine, tabForm, 'tabControl1', 'this', tabDisk)).safe) throw new Error('RemoveTabPage must refuse the root form');
@@ -3526,6 +3627,12 @@ async function main(): Promise<void> {
     const tabAddRange = path.join(repo, 'engine', 'samples', 'TabAddRangeForm.Designer.cs');
     if (fs.existsSync(tabAddRange)) {
       const arDisk = fs.readFileSync(tabAddRange, 'utf8');
+      const moveB = await moveTabPage(engine, tabAddRange, 'tabControl1', 'tabPageB', false, arDisk);
+      if (!moveB.safe || moveB.newText === null) throw new Error('MoveTabPage(AddRange, tabPageB, right) rejected: ' + moveB.reason);
+      const aPos = moveB.newText.indexOf('this.tabPageA,');
+      const cPos = moveB.newText.indexOf('this.tabPageC,');
+      const bPos = moveB.newText.indexOf('this.tabPageB}');
+      if (!(aPos >= 0 && aPos < cPos && cPos < bPos)) throw new Error('AddRange move-tab must produce A,C,B without rewriting the collection shape');
       const delB = await removeTabPage(engine, tabAddRange, 'tabControl1', 'tabPageB', arDisk);
       if (!delB.safe || delB.newText === null) throw new Error('RemoveTabPage(AddRange, tabPageB) rejected: ' + delB.reason);
       if (/\bthis\.tabPageB\b/.test(delB.newText)) throw new Error('AddRange delete left a reference to this.tabPageB');
@@ -3539,7 +3646,7 @@ async function main(): Promise<void> {
         throw new Error('AddRange delete: trimmed array must still contain tabPageA and tabPageC');
       }
       if (fs.readFileSync(tabAddRange, 'utf8') !== arDisk) throw new Error('AddRange delete must NOT modify the file on disk');
-      console.log('e2e: delete-tab AddRange surgery verified — tabPageB trimmed from TabPages.AddRange, subtree (bLabel) removed, A & C kept, disk untouched');
+      console.log('e2e: AddRange tab order/delete verified — B moves right as A,C,B by adjacent expression swap; delete then trims B + subtree while A/C remain; disk untouched');
     } else {
       console.log('e2e: delete-tab AddRange SKIPPED — engine/samples/TabAddRangeForm.Designer.cs missing');
     }

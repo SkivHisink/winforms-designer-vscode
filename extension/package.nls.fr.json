@@ -8,6 +8,7 @@
   "command.showProperties.title": "WinForms : Afficher les propriétés",
   "command.exportDiagnostics.title": "WinForms : Exporter les diagnostics du concepteur",
   "command.selectControlAssembly.title": "WinForms : Sélectionner l'assembly / le projet des contrôles…",
+  "command.selectLocalizationCulture.title": "WinForms : Sélectionner la culture de localisation du formulaire…",
   "configuration.title": "Concepteur WinForms",
   "untrusted.description": "Le rendu d'un concepteur charge et exécute les assemblys de contrôles du projet (les constructeurs / OnPaint s'exécutent lors de l'aperçu), donc l'extension est désactivée dans les espaces de travail non approuvés.",
   "config.autoOpenDesigner.description": "Ouvre automatiquement le concepteur WinForms lorsque le `.cs` d'un formulaire (ayant un `.Designer.cs` généré comme partenaire) devient l'éditeur actif — à l'image de Visual Studio, où l'ouverture de `Form1.cs` affiche le concepteur. Utilisez **Afficher le code** pour rebasculer un formulaire vers son texte `.cs` (l'ouverture automatique ne le détournera pas de nouveau tant que vous ne rouvrez pas le fichier). Désactivez cette option pour conserver l'éditeur de texte C# et ouvrir le concepteur manuellement via **WinForms : Ouvrir le concepteur** ou *Rouvrir l'éditeur avec…*.",

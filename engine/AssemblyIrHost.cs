@@ -95,6 +95,8 @@ namespace WinFormsDesigner.Engine
 
         public bool WasResourceRefused(string key) => _resx.WasRefused(key);
 
+        public bool ApplyResources(object target, string key, out string? error) => _resx.ApplyResources(target, key, out error);
+
         /// <summary>The `new T(this.components)` provider/tray shape: pass the design-time container to a ctor that
         /// takes an IContainer; otherwise fall back to the parameterless ctor (the executor already restricted this
         /// to the container-arg case, so a missing IContainer ctor is a genuine mismatch).</summary>

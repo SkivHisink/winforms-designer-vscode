@@ -12,10 +12,9 @@
   <resheader name="writer">
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms</value>
   </resheader>
-  <!-- Localizable form: per-control and $this properties live here, applied by ApplyResources at
-       runtime. The net9 interpreter does not read these (ApplyResources is unrepresentable) — they
-       exist so the fixture is an authentic localizable form. Plain string-serialized values only
-       (no BinaryFormatter), so this file itself is trivially safe. -->
+  <!-- Localizable form: per-control and $this properties live here and are applied by the designer's
+       allowlisted ApplyResources implementation. Plain string-serialized values only (no BinaryFormatter),
+       so this fixture exercises the neutral resource layer without unsafe deserialization. -->
   <data name="$this.Text" xml:space="preserve">
     <value>Localizable Form</value>
   </data>

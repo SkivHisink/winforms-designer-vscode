@@ -37,6 +37,7 @@ namespace Engine.Net48.UnitTests
             public object CreateComponent(Type type, string name, bool withContainer) => Activator.CreateInstance(type);
             public object ResolveResource(string key, bool isString) => null;
             public bool WasResourceRefused(string key) => false;
+            public bool ApplyResources(object target, string key, out string error) { error = "no test resources"; return false; }
         }
 
         private const string Src = @"

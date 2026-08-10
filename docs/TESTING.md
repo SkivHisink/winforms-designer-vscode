@@ -35,6 +35,21 @@ It complements the dev/test commands in
   generic `IList` / `IList<T>` source adapters, isolated supported `UITypeEditor` policy, inherited-component
   ownership, and engine-corrected geometry. The webview suite covers outline reparent/reorder and the property-grid
   routes; the TypeScript DPR matrix pins `1`, `1.25`, `1.5`, `1.75`, and `2` without rounding logical coordinates.
+- **1.5 localization corpus** — modern and net48 unit tests execute shared `ApplyResources` IR against neutral,
+  parent, exact, and Arabic resource overlays. They cover fallback, culture isolation, `RightToLeftLayout`, localized
+  scalar/image values, `SizeF`, unsafe resource refusal, and lossless upsert/remove behavior. The named-pipe E2E
+  asserts a translated render and mirrored RTL child geometry on both engines.
+- **1.6 tab/session and workflow-hardening corpus** — modern engine tests identify standard `TabControl` hosts,
+  apply bounded transient selected-page overrides, hit-test real tab headers, and prove unknown/removed mappings are
+  no-ops. Named-pipe and live-webview cases pin click/rename/add/delete routing, persisted view-state sanitation, and
+  the rule that unsupported COM/WPF Choose Items pages cannot browse or apply hidden `.NET` rows.
+- **1.7 tab-order corpus** — pure engine tests cover adjacent moves in canonical `Controls.Add`, `TabPages.Add`,
+  `AddRange`, and mixed `AddRange + Add` sequences, edge no-ops, exact-permutation gating, and duplicate/non-trivial
+  refusal. Named-pipe E2E verifies modern and net48 live-source replay plus compiled-fallback live mirroring; the
+  webview suite pins localized Move Left/Right routing with the active page identity.
+- **Resource-set transaction tests** — pure Vitest cases cover create/update/delete across forward, undo, and redo;
+  exact-state preflight; duplicate-target rejection; partial-write compensation; and the rule that compensation must
+  never overwrite a concurrent external edit.
 - **Architecture-aware package assertions** — CI and release jobs build separate `win32-x64` and `win32-arm64`
   VSIX files. `scripts/assert-vsix.ps1` verifies the VSIX target, modern engine RID and PE machine (`0x8664` or
   `0xAA64`), while requiring the documented x64 .NET Framework compatibility engine in both packages.
@@ -100,11 +115,11 @@ The full MSBuild design-time evaluation path (filesystem + `dotnet msbuild`) sta
 
 **Framework:** [Vitest](https://vitest.dev/) (pure, no `vscode`), invoked by `npm test`.
 
-| Target ([`valueExpr.ts`](../extension/src/valueExpr.ts)) | Assert |
+| Target | Assert |
 |--------|--------|
-| `toCSharpExpression(type, isEnum, raw)` | Correct literals for primitives/enums/strings (incl. escaping); `null` on invalid. |
-| `COMPLEX_TYPE_SET` / `shortName` | Membership of the complex types; namespace-stripping. |
+| [`valueExpr.ts`](../extension/src/valueExpr.ts): `toCSharpExpression`, `COMPLEX_TYPE_SET`, `shortName` | Correct literals for primitives/enums/strings; invalid-input refusal; complex-type membership and namespace stripping. |
 | `EngineRecoveryPolicy` | Two bounded restarts with exponential backoff, crash-loop stop, independent runtime state, and window expiry. |
+| [`resourceTransaction.ts`](../extension/src/resourceTransaction.ts) | Set-wide exact preflight; forward/undo/redo for created, updated, and deleted resources; duplicate-target refusal; reverse compensation only while just-written bytes still match. |
 
 Later (P2): factor the pure parts of the `assemblyPath` resolution out of the `vscode`-coupled code in `extension.ts` so the `~` / relative / missing-path logic can be unit-tested without mocking the VS Code API.
 
@@ -119,6 +134,14 @@ Both [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and
 - name: Unit tests (extension)
   working-directory: extension
   run: npm test
+- name: M6 coverage gate (engine samples)
+  run: dotnet run --project engine -c Release --coverage-report engine/samples --min-rate 80
+- name: Syntax-check webview scripts
+  working-directory: extension
+  run: |
+    node --check media/designer.js
+    node --check media/panel.js
+    node --check media/chooseItems.js
 - name: Performance baseline
   working-directory: extension
   run: npm run perf:baseline

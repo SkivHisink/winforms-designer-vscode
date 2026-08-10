@@ -7,8 +7,8 @@ namespace WinFormsDesigner.Engine
     {
         /// <summary>Fully round-trips: renders AND re-serialization reproduces every original statement.</summary>
         Safe,
-        /// <summary>[Localizable(true)] → ApplyResources; the real values live in the sibling .resx and the net9
-        /// preview can't reproduce them (read-only lock, 0.10.0 S1).</summary>
+        /// <summary>[Localizable(true)] → ApplyResources; targeted culture-resource edits are supported, but the
+        /// whole-file CodeDom regenerate remains refused because it cannot reproduce the resource calls losslessly.</summary>
         Localizable,
         /// <summary>The sibling .resx holds BinaryFormatter/SOAP/ImageStream resources net9 can't serialize
         /// (PlatformNotSupportedException) → the whole file is read-only for regenerate (0.10.0 S3).</summary>
@@ -44,6 +44,10 @@ namespace WinFormsDesigner.Engine
             foreach (var u in unrepresentable)
             {
                 if (u.Contains("ApplyResources")) return SaveSafetyReason.Localizable;
+            }
+            foreach (var missing in missingStatements)
+            {
+                if (missing.Contains("ApplyResources")) return SaveSafetyReason.Localizable;
             }
             foreach (var u in unrepresentable)
             {

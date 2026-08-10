@@ -48,6 +48,7 @@ public sealed class IrExecutorTests
 
         public object? ResolveResource(string key, bool isString) => null;
         public bool WasResourceRefused(string key) => false;
+        public bool ApplyResources(object target, string key, out string? error) { error = "no test resources"; return false; }
     }
 
     // The production-shaped host: constructs AND sites each component into a real design-time container, so the
@@ -66,6 +67,7 @@ public sealed class IrExecutorTests
         }
         public object? ResolveResource(string key, bool isString) => null;
         public bool WasResourceRefused(string key) => false;
+        public bool ApplyResources(object target, string key, out string? error) { error = "no test resources"; return false; }
     }
 
     [Fact]

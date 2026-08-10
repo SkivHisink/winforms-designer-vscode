@@ -1,14 +1,13 @@
 namespace SampleApp
 {
-    // 0.10.0 trust-floor fixture — a [Localizable(true)] WinForms form. VS routes every localizable
+    // v1.5.0 localization fixture — a [Localizable(true)] WinForms form. VS routes every localizable
     // property (Text / Location / Size / TabIndex / the form's own $this.* properties) through the
     // ComponentResourceManager's bulk `resources.ApplyResources(component, "name")` calls instead of
     // direct `this.x.Prop = ...` assignments; the real values live in the sibling LocalizableForm.resx.
     //
-    // The net9 interpreter has NO handling for ApplyResources, so those statements are dropped as
-    // unrepresentable and the controls render at their field defaults (a silent mis-render), and a
-    // property edit would splice a direct assignment that diverges from the .resx (silent data loss).
-    // The extension therefore treats this form as a READ-ONLY preview (isLocalizableDesigner → true).
+    // Both engines interpret ApplyResources through the neutral/parent/exact culture chain. The extension routes
+    // scalar, geometry, RTL and image edits to the selected .resx while keeping structural source edits fail-closed.
+    // isLocalizableDesigner remains the routing signal that prevents a direct source assignment from diverging.
     // Excluded from compilation (samples/**).
     partial class LocalizableForm
     {

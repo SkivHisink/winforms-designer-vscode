@@ -10,7 +10,7 @@ Render, click-select, edit and lay out `.Designer.cs` forms — live — without
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code Engine](https://img.shields.io/badge/VS%20Code-%5E1.84-007ACC?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![Version 1.4](https://img.shields.io/badge/version-1.4-brightgreen.svg)](#-support-matrix)
+[![Version 1.7](https://img.shields.io/badge/version-1.7-brightgreen.svg)](#-support-matrix)
 
 </div>
 
@@ -69,15 +69,17 @@ falls outside what the designer can replay:
 ## ✨ Features
 
 - **Live form rendering** from `.Designer.cs` — full frame plus fast per-control dirty-region patches.
-- **.NET Framework & DevExpress support** — `net4x` forms render on a bundled **.NET Framework 4.8** engine that interprets your **live source** (the Visual Studio model) onto the compiled controls (so DevExpress `XtraUserControl` & co. look pixel-accurate); the extension auto-routes each form to the right engine, and the property grid, drag/resize/align, add/remove, z-order, cut/paste, tab-page add/rename/delete, dropping the project's own vendor controls from the toolbox, and the collection editors apply live on the interpreted picture. A construct the interpreter can't yet reproduce falls back to a disclosed compiled render of the last build.
+- **.NET Framework & DevExpress support** — `net4x` forms render on a bundled **.NET Framework 4.8** engine that interprets your **live source** (the Visual Studio model) onto the compiled controls (so DevExpress `XtraUserControl` & co. look pixel-accurate); the extension auto-routes each form to the right engine, and the property grid, drag/resize/align, add/remove, z-order, cut/paste, tab-page add/rename/delete/reorder, dropping the project's own vendor controls from the toolbox, and the collection editors apply live on the interpreted picture. A construct the interpreter can't yet reproduce falls back to a disclosed compiled render of the last build.
 - **Visual Studio–style workflow** — opening `Form.cs` opens the designer; *View Code* switches back to text.
 - **Property grid** — primitives, enums, safe complex types, and bounded metadata-driven `TypeConverter` expansion for framework/vendor value objects. VS-style **Color**, **Font**, **flags-enum**, **Anchor/Dock**, **Cursor**, and **image** editors remain source-first; the supported framework Color/Font `UITypeEditor` dialogs run in a cancellable isolated process. **Component-reference** properties become compatible-component dropdowns, non-default values are **bold**, and right-click **Reset** restores the default.
 - **Data-bound forms** — edit canonical `DataBindings` entries (target property, `BindingSource`, data member, formatting, update mode, and format string) and choose a supported `DataSource` as `(none)`, another component, or `typeof(T)`. Bound `DataGridView` columns expose `DataPropertyName`, format, alignment, and literal null-display values in the column editor. Editing is source-first and exact on both engines; the *preview* does not evaluate bindings (neither does Visual Studio's), so a `DataBindings.Add(…)` statement is reported as a skipped construct in the render note — and on the .NET Framework engine it means the form previews from your last build until that changes.
 - **Collection editors** — the `…` button opens a Visual Studio–style **Collection Editor** for string collections, string arrays, allowlisted scalar/enum/complex `IList` / `IList<T>` values, `ListView.Columns`, `DataGridView.Columns`, and recursive `TreeView.Nodes`. Unsupported item types and non-canonical source expressions stay read-only. A panel **"Type Here"** editor also **reorders / adds / removes / renames** `MenuStrip` / `ToolStrip` items.
 - **On-canvas menu & toolbar editing** — edit `MenuStrip` / `ToolStrip` items **directly on the strip**, Visual Studio–style: click the trailing **"Type Here"** slot to **add** (with a type picker), **double-click / F2** to **rename**, click to **select** and **Delete** — down through **nested submenus**, an **off-tree `ContextMenuStrip`** (from its tray chip), and the **overflow** area. Selecting an item opens **its own property grid** (with an **Events** tab), kept separate from the control selection. On **both** engines.
 - **Images & `.resx`** — images stored in a form's sibling `.resx` are rendered in the preview; **import** or **clear** `Image` / `BackgroundImage` / `Icon`, and add, remove, reorder, or rename the keys of **ImageList** images. ImageList changes reconcile attached `ImageIndex` / `ImageKey` assignments in one undoable `.Designer.cs` + `.resx` transaction.
+- **Localized forms** — `Localizable = true` / `ApplyResources` forms are editable across the neutral and culture-specific `.resx` files. **WinForms: Select Localization Culture** switches the designer context; scalar values, Color/Font values, geometry, localized images/icons, `RightToLeft`, and `RightToLeftLayout` are written to that culture without changing `.Designer.cs`. Removing an override restores normal ResourceManager fallback.
+- **Tabbed forms** — click a standard `TabControl` header to switch the designer view, double-click to rename a page, use Add Tab / Delete Tab, or move the active page one position left/right on either engine. Reordering swaps only canonical adjacent `Controls/TabPages.Add[Range]` page references and fails closed on ambiguous source. The selected page is per-form workspace state on modern and net48 live-source canvases: it survives close/reopen without adding a `SelectedIndex` edit to generated source. A disclosed net48 compiled fallback remains build-derived and mirrors supported moves live.
 - **Layout panels** — edit `TableLayoutPanel` cells and column/row styles, `SplitContainer` splitter distance, and `FlowLayoutPanel` order, with anchor tethers drawn on the canvas.
-- **Toolbox** — auto-populated from `System.Windows.Forms` (~39 controls in VS categories, with their native icons) plus controls discovered from project outputs, configured probe directories, browsed libraries, and registered .NET assemblies. **Choose Toolbox Items** scans libraries without instantiating controls, remembers chosen items and custom tabs across reloads, and uses the exact source assembly when adding a control or project reference.
+- **Toolbox** — auto-populated from `System.Windows.Forms` (~39 controls in VS categories, with their native icons) plus controls discovered from project outputs, configured probe directories, browsed libraries, and registered .NET assemblies. **Choose Toolbox Items** scans `.NET` libraries without instantiating controls, remembers chosen items and custom tabs across reloads, and uses the exact source assembly when adding a control or project reference. COM and WPF toolbox pages are explicitly unsupported and inert.
 - **Control sources** — pick which project (`.csproj`) or assembly (`.dll`) supplies your custom / 3rd-party controls; dropping a control from an unreferenced assembly offers to add the project reference.
 - **Direct manipulation** — select, move, resize (8 handles), keyboard nudge (arrow keys), multi-select (Ctrl/Shift + rubber-band), group move/delete, reparent, z-order, copy/paste, **duplicate** (`Ctrl+D`), **lock controls**, align + distribute + make-same-size, tab-order editor, snaplines, on-canvas **smart-tags**, and a VS-style right-click menu. Modern final free-control bounds are corrected by the real WinForms graph before the source transaction is accepted. Cross-form paste validates every typed binding/extender dependency first and names any unavailable dependency without changing source.
 - **Events** — describe, wire / unwire / rewire handlers, generate a handler stub, and navigate to the handler body in the `.cs` partner.
@@ -186,6 +188,8 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev loop, tests, and arc
 
 The designer surface, property grid, toolbox, dialogs and status / notification messages are localized and follow the **`winformsDesigner.language`** setting — seven languages: **English** (default), **Русский**, **简体中文**, **Français**, **Deutsch**, **Español**, **हिन्दी**. The language is picked in the extension settings, **not** from the VS Code display language, and switches **live** in already-open designer views. The VS Code **command palette** titles and the **settings page** itself follow VS Code's own *Display Language* (a platform limitation), so those pieces of chrome may stay in a different language until you **Reload Window** (you'll be prompted). Enum and color *values* stay canonical English so they remain typeable and round-trip cleanly.
 
+That setting controls the extension UI. To edit a form's own translations, run **WinForms: Select Localization Culture**. Choose **(Default)** for the neutral `.resx`, choose an existing culture, or create a valid culture such as `fr-FR` or `ar-SA`. The selected culture is kept per form; parent-culture and neutral fallback remain visible, while an edited value is stored only in the selected layer.
+
 ## 🔒 Security & Workspace Trust
 
 Rendering a designer **loads and runs your project's control assemblies** — control constructors and `OnPaint` execute when the preview is built. For that reason:
@@ -201,12 +205,14 @@ Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SEC
 
 | Capability | Modern projects (`net8.0-windows` / `net9.0-windows` / `net10.0-windows`) | .NET Framework 4.8 (`net4x` / DevExpress, x64 native; ARM64 x64-compat fallback) |
 | --- | :---: | :---: |
-| Live render | ✅ interpreted from your current source (Roslyn, allowlisted) | ✅ compiled instance of your **last build** (rebuild to refresh) |
+| Live render | ✅ interpreted from your current source (Roslyn, allowlisted) | ✅ live-source IR interpretation; disclosed compiled **last-build** fallback for unsupported constructs |
 | Select · property grid (Color / Font / flags / Anchor-Dock / Cursor / image editors) | ✅ | ✅ |
 | Move · resize · nudge · align · z-order · copy / paste · duplicate · lock | ✅ | ✅ live-rebuilt |
 | Collection & "Type Here" editors · on-canvas menu / toolbar editing | ✅ | ✅ |
 | DataBindings · DataSource · bound DataGridView column styles · common extenders | ✅ edits; binding statements skipped in the preview | ✅ source-first edits; a bound form previews from the last build |
 | `.resx` images · ImageList editor · `ImageIndex` / `ImageKey` | ✅ | ✅ (binary via net48) |
+| `Localizable = true` · neutral/per-culture `.resx` · RTL mirroring · localized scalar/image edits | ✅ | ✅ interpreted resource overlay; compiled fallback remains disclosed |
+| Tab header navigation · add/rename/delete · selected-page continuity | ✅ | ✅ live-source; compiled fallback remains build-derived |
 | Component tray · document outline · events · Modifiers | ✅ | ✅ |
 | Inherited-form ownership (derived fields editable; inherited/unresolved nodes read-only) | ✅ | ✅ |
 | Safe byte-surgical save | ✅ | ✅ (via modern Roslyn splice) |
@@ -214,24 +220,25 @@ Only open projects you trust. To report a vulnerability, see **[SECURITY.md](SEC
 
 ### Fail-closed by design
 
-Rather than risk a bad regenerate, the designer refuses to whole-file-save (read-only, with a named reason) when a form is backed by **binary `.resx`** it can't reproduce, references an **unresolved base type**, or contains a **statement it can't represent** without loss. A **capability preflight** names the category — `safe` / `localizable` / `binaryResx` / `unresolvedType` / `lostStatements` / `unrepresentable` — so nothing regenerate-based ever guesses. On those forms, property and geometry edits still apply as **targeted byte-surgical splices**, which preserve everything outside the edited span. The one exception is a **`Localizable = true`** form (its layout lives in per-culture `.resx` via `ApplyResources`): that is **read-only outright**, because any edit here would diverge from the resources.
+Rather than risk a bad regenerate, the designer refuses to whole-file-save (with a named reason) when a form is backed by **binary `.resx`** it can't reproduce, references an **unresolved base type**, or contains a **statement it can't represent** without loss. A **capability preflight** names the category — `safe` / `localizable` / `binaryResx` / `unresolvedType` / `lostStatements` / `unrepresentable` — so nothing regenerate-based ever guesses. Ordinary limited forms use targeted byte-surgical source splices. A **`Localizable = true`** form instead uses a resource-first path: supported value, geometry, RTL, Color/Font, image/icon, and reset edits change only the selected culture's `.resx`, with exact multi-file preflight, one undo/redo transaction, and conflict-safe compensation. Unknown comments/nodes and opaque binary resources are preserved. Structural operations that require rewriting localized generated source remain explicitly refused.
 
 The **.NET Framework engine** renders your **live `.Designer.cs` source** through an IR interpreter — the Visual Studio model: parse `InitializeComponent` (never execute it), instantiate the form's base type, and replay the parsed statements onto the *compiled* control instances (so real net4x / DevExpress controls paint), and the property panel + live edits read and re-derive from that same interpreted picture. A construct the interpreter can't yet reproduce falls back to a compiled render of your *last build* with a **disclosed, named reason** (`unrepresentableStatements` / `unsafeBinaryResource` / `baseTypeChanged` / …) — never a silent mismatch, and the boundary is fail-closed (a hostile `.Designer.cs` can't run arbitrary code on open). It stays **fully editable**; safety comes from the byte-local splice.
 
 ### Not yet
 
 Arbitrary vendor-specific property editors and modal `UITypeEditor` operations beyond the supported framework
-Color/Font pair, advanced `.resx` (non-image resources and the full `ApplyResources` per-culture localization workflow),
-and RTL. These are **read-only-safe today** and tracked in the later roadmap milestones.
+Color/Font pair, structural editing that would rewrite a localizable form's generated source, and executing a vendor's
+full design-time service stack. Those operations remain fail-closed and are tracked for the extensible 2.0 host.
 
 **`net4x` build coordination.** The preview renders a *real compiled instance* of your form and therefore loads your assemblies in place (shadow-copying would break delay-signed vendor controls). Use **WinForms: Run Build Task** / **Run Test Task** — `Ctrl+Shift+B` is routed through the coordinated build command while the designer is active — to release the output before the task, invalidate the compiled fallback, and re-render afterward. Build/test tasks launched elsewhere also trigger best-effort lifecycle coordination; **Release .NET Framework Assembly (for Rebuild)** remains available as a manual recovery control. The modern .NET engine interprets your source and does not pin the project output.
 
 See the **[release roadmap](ROADMAP.md)** for the shipped 1.0 baseline, the 1.1 daily-workflow and
 project-integration milestone, the verified 1.2 data-bound form workflow, the editor/layout/ARM64 completion in
-1.3–1.4, enterprise localization in 1.5.0, and the extensible design-time host planned for 2.0.0.
+1.3–1.4, enterprise localization in 1.5.0, cross-engine tab/session parity and release hardening in 1.6.0,
+safe source-first tab ordering in 1.7.0, and the extensible design-time host planned for 2.0.0.
 
-The safety core has fast C# and TypeScript unit coverage; the webview UI is validated headless (584 checks
-across 147 tests), startup/render latency is guarded by a repeatable performance baseline, and activation,
+The safety core has fast C# and TypeScript unit coverage; the webview UI is validated headless (603 checks
+across 149 tests), startup/render latency is guarded by a repeatable performance baseline, and activation,
 engine startup, capabilities, and lifecycle diagnostics are smoke-tested in the real VS Code Extension Host on
 VS Code 1.84 and current Stable. Found a rough edge? Please [file an issue](https://github.com/SkivHisink/winforms-designer-vscode/issues).
 

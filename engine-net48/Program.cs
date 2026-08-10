@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
@@ -672,8 +674,44 @@ namespace WinFormsDesigner.Engine.Net48
     public sealed class EngineApi
     {
         private readonly DomainManager _domains = new DomainManager();
+        private readonly object _cultureGate = new object();
+        private readonly Dictionary<string, string> _designerCultures =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public string Ping() => "winforms-engine-net48 ok / " + RuntimeInformation.FrameworkDescription;
+
+        /// <summary>Select the VS-style design culture for one form. The selection is retained in the parent domain
+        /// even before a render AppDomain exists and is copied into every worker before an interpreted operation.</summary>
+        public string SetLocalizationCulture(string designerFilePath, string cultureName)
+        {
+            string normalized = string.IsNullOrWhiteSpace(cultureName)
+                ? ""
+                : CultureInfo.GetCultureInfo(cultureName.Trim()).Name;
+            string key = NormalizeDesignerPath(designerFilePath);
+            lock (_cultureGate)
+            {
+                if (normalized.Length == 0) _designerCultures.Remove(key);
+                else _designerCultures[key] = normalized;
+            }
+            return normalized;
+        }
+
+        private RenderWorker ConfigureCulture(RenderWorker worker, string designerFilePath)
+        {
+            string selected;
+            lock (_cultureGate)
+                selected = _designerCultures.TryGetValue(NormalizeDesignerPath(designerFilePath), out var culture)
+                    ? culture
+                    : "";
+            worker.SetDesignerCulture(designerFilePath, selected);
+            return worker;
+        }
+
+        private static string NormalizeDesignerPath(string designerFilePath)
+        {
+            try { return Path.GetFullPath(designerFilePath ?? ""); }
+            catch { return designerFilePath ?? ""; }
+        }
 
         /// <summary>0.11.0 ImageList editor — serialize the given images + settings into a VS-format ImageStream base64
         /// payload (the one op that needs the .NET Framework runtime; the net9 interpreter can't serialize an
@@ -776,7 +814,7 @@ namespace WinFormsDesigner.Engine.Net48
             string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0, int renderScale = 1)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
             return worker.RenderWithLayout(assemblyPath, typeName, width, height, renderScale);
         }
 
@@ -787,7 +825,7 @@ namespace WinFormsDesigner.Engine.Net48
             string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0, string[]? selectedTabs = null, int renderScale = 1)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
             // Parse the source into IR HERE, in the engine's DEFAULT AppDomain — Roslyn must never load into the render
             // child domain (its binding redirects are unified on the user's assembly versions, which would redirect
             // Roslyn's own graph, e.g. System.Collections.Immutable, and break it). Only the [Serializable] IrDocument
@@ -822,7 +860,7 @@ namespace WinFormsDesigner.Engine.Net48
             string[]? probeDirs = null, string[]? selectedTabs = null, int renderScale = 1)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
             return worker.ApplyInterpretedEdits(designerFilePath, assemblyPath, typeName, edits ?? Array.Empty<PropEdit>(),
                 SourceKey(beforeSourceText), SourceKey(afterSourceText), selectedTabs, renderScale, 0, 0);
         }
@@ -837,7 +875,7 @@ namespace WinFormsDesigner.Engine.Net48
             string componentId, string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
             var doc = DesignerIrBuilder.Build(sourceText ?? "");
             var desc = worker.DescribeInterpretedComponent(designerFilePath, assemblyPath, doc, typeName,
                 string.IsNullOrEmpty(componentId) ? "this" : componentId, width, height, SourceKey(sourceText));
@@ -1081,7 +1119,7 @@ namespace WinFormsDesigner.Engine.Net48
             int x, int y, string[]? selectedTabs = null, string? rootTypeName = null, string[]? probeDirs = null)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
             var doc = DesignerIrBuilder.Build(sourceText ?? "");
             return worker.HitTestInterpretedTab(designerFilePath, assemblyPath, doc, typeName, hostId ?? "this", x, y, selectedTabs);
         }
@@ -1104,6 +1142,16 @@ namespace WinFormsDesigner.Engine.Net48
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
             return worker.RemoveTab(assemblyPath, typeName, hostId ?? "this", pageId ?? "");
+        }
+
+        /// <summary>Move a tab page one position left/right in the live compiled-preview host. The persisted source
+        /// order is produced by the net10 engine; this mirrors it until the project is rebuilt.</summary>
+        public RenderLayoutResult MoveCompiledTab(string designerFilePath, string assemblyPath, string hostId, string pageId, bool left,
+            string? rootTypeName = null, string[]? probeDirs = null)
+        {
+            string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
+            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            return worker.MoveTab(assemblyPath, typeName, hostId ?? "this", pageId ?? "", left);
         }
 
         private static string ResolveTypeName(string designerFilePath, string assemblyPath, string? rootTypeName)

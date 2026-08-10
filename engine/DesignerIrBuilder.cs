@@ -348,6 +348,33 @@ namespace WinFormsDesigner.Engine
             static bool PlainArgs(InvocationExpressionSyntax i) =>
                 i.ArgumentList.Arguments.All(a => a.NameColon == null && a.RefKindKeyword.IsKind(SyntaxKind.None));
 
+            // resources.ApplyResources(this.button1, "button1") / resources.ApplyResources(this, "$this").
+            // Represent ONLY the VS-canonical same-form ComponentResourceManager local. A foreign manager was not
+            // registered in ResxVars, and any computed target/key/named/ref argument shape falls back honestly.
+            if (method == "ApplyResources")
+            {
+                string recv = FullDottedName(ma.Expression);
+                var args = inv.ArgumentList.Arguments;
+                if (ctx.ResxVars.Contains(recv) && args.Count == 2 && PlainArgs(inv)
+                    && args[1].Expression is LiteralExpressionSyntax keyLit
+                    && keyLit.IsKind(SyntaxKind.StringLiteralExpression))
+                {
+                    bool targetIsRoot = args[0].Expression is ThisExpressionSyntax;
+                    var targetChain = Flatten(args[0].Expression);
+                    string targetName = targetIsRoot ? "" : (targetChain.Count == 1 ? targetChain[0] : "");
+                    if (targetIsRoot || (targetName.Length != 0 && ctx.Fields.Contains(targetName)))
+                    {
+                        return One(new IrApplyResources
+                        {
+                            TargetIsRoot = targetIsRoot,
+                            TargetName = targetName,
+                            ResourceKey = (string)(keyLit.Token.Value ?? ""),
+                        });
+                    }
+                }
+                return Gap(Trim(inv));
+            }
+
             // layout scaffolding — inert, represented (regenerated canonically by the serializer). ONLY the canonical
             // VS shapes qualify: receiver is `this` or a FIELD-ROOTED member chain, args are empty or a single bool
             // literal. A non-canonical shape (a receiver not rooted at this/a field, or a computed/dropped arg) must NOT

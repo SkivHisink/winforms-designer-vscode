@@ -8,6 +8,7 @@
   "command.showProperties.title": "WinForms: Mostrar propiedades",
   "command.exportDiagnostics.title": "WinForms: Exportar diagnósticos del diseñador",
   "command.selectControlAssembly.title": "WinForms: Seleccionar ensamblado o proyecto de controles…",
+  "command.selectLocalizationCulture.title": "WinForms: Seleccionar la cultura de localización del formulario…",
   "configuration.title": "WinForms Designer",
   "untrusted.description": "Renderizar un diseñador carga y ejecuta los ensamblados de controles del proyecto (los constructores / OnPaint se ejecutan en la vista previa), por lo que la extensión se deshabilita en áreas de trabajo que no son de confianza.",
   "config.autoOpenDesigner.description": "Abre automáticamente el diseñador de WinForms cuando el `.cs` de un formulario (uno que tiene un `.Designer.cs` generado asociado) se convierte en el editor activo — replicando Visual Studio, donde abrir `Form1.cs` muestra el diseñador. Use **Ver código** para volver a mostrar el texto `.cs` de un formulario (la apertura automática no lo volverá a acaparar hasta que reabra el archivo). Deshabilite esto para mantener el editor de texto de C# y abrir el diseñador manualmente mediante **WinForms: Abrir el diseñador** o *Reabrir editor con…*.",

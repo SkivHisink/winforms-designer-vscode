@@ -34,6 +34,13 @@
   var detailsEl = document.getElementById('ciDetails');
   var loadNameEl = document.getElementById('ciLoadName');
   var statusEl = document.getElementById('ciStatus');
+  var clearEl = document.getElementById('ciClear');
+  var browseEl = document.getElementById('ciBrowse');
+  var resetEl = document.getElementById('ciReset');
+  var okEl = document.getElementById('ciOk');
+  // Preserve each control's .NET-tab baseline (Reset intentionally starts disabled); Cancel is deliberately absent.
+  var scopedActionEls = [filterEl, clearEl, browseEl, resetEl, okEl];
+  var netDisabledState = scopedActionEls.map(function (el) { return el.disabled; });
 
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'; }); }
 
@@ -70,7 +77,7 @@
 
   function render() {
     if (view !== 'net') {
-      tableEl.innerHTML = '<div class="empty">' + esc(T('chooseItems.notImpl', { kind: view === 'com' ? T('chooseItems.tab.com') : T('chooseItems.tab.wpf') })) + '</div>';
+      tableEl.innerHTML = '<div class="empty">' + esc(T('chooseItems.unsupportedScope', { kind: view === 'com' ? T('chooseItems.tab.com') : T('chooseItems.tab.wpf') })) + '</div>';
       return;
     }
     var q = (filterEl.value || '').trim().toLowerCase();
@@ -145,6 +152,8 @@
 
   function setView(v) {
     view = v;
+    var net = view === 'net';
+    for (var a = 0; a < scopedActionEls.length; a++) scopedActionEls[a].disabled = net ? netDisabledState[a] : true;
     var ts = document.querySelectorAll('#ciTabs .t');
     for (var i = 0; i < ts.length; i++) ts[i].className = ts[i].getAttribute('data-tab') === v ? 't active' : 't';
     render();
@@ -153,13 +162,15 @@
   var tabs = document.querySelectorAll('#ciTabs .t');
   for (var i = 0; i < tabs.length; i++) { (function (el) { el.addEventListener('click', function () { setView(el.getAttribute('data-tab')); }); })(tabs[i]); }
   filterEl.addEventListener('input', render);
-  document.getElementById('ciClear').addEventListener('click', function () { filterEl.value = ''; render(); });
-  document.getElementById('ciBrowse').addEventListener('click', function () {
+  clearEl.addEventListener('click', function () { if (view !== 'net') return; filterEl.value = ''; render(); });
+  browseEl.addEventListener('click', function () {
+    if (view !== 'net') return;
     if (loadNameEl) loadNameEl.textContent = T('chooseItems.scanningSelected');
     showLoading(true); // the host always re-posts items (even on cancel), so this never sticks
-    vscode.postMessage({ type: 'browse' });
+    vscode.postMessage({ type: 'browse', scope: 'net' });
   });
-  document.getElementById('ciOk').addEventListener('click', function () {
+  okEl.addEventListener('click', function () {
+    if (view !== 'net') return;
     // send EVERY shown row + its checkbox state so the host can diff against the current toolbox (add/remove/hide)
     var rows = items.map(function (it) {
       var f = fqnOf(it);
@@ -168,7 +179,7 @@
         assemblyPath: it.assemblyPath, fromProject: it.fromProject, checked: !!selected[f]
       };
     });
-    vscode.postMessage({ type: 'applyChooseItems', tab: targetTab, rows: rows });
+    vscode.postMessage({ type: 'applyChooseItems', scope: 'net', tab: targetTab, rows: rows });
   });
   document.getElementById('ciCancel').addEventListener('click', function () { vscode.postMessage({ type: 'close' }); });
 

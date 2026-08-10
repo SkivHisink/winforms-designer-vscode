@@ -102,6 +102,17 @@ public sealed class SaveSafetyTests
             DesignerSaveSplicer.MissingOriginalStatements(original, generated));
     }
 
+    [Fact]
+    public void Classify_ApplyResourcesMissingFromWholeFileRegenerate_RemainsLocalizable()
+    {
+        var reason = SaveSafety.Classify(
+            Array.Empty<string>(),
+            new[] { "resources.ApplyResources(this.button1, \"button1\");" });
+
+        Assert.Equal(SaveSafetyReason.Localizable, reason);
+        Assert.Equal("localizable", SaveSafety.CategoryName(reason));
+    }
+
     private static string WrapInit(string body) => $$"""
         partial class Form1
         {

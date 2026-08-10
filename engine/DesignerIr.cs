@@ -38,10 +38,10 @@ namespace WinFormsDesigner.Engine
     /// the AppDomain boundary (produce and consume) — the executor never trusts the producer.</summary>
     public static class IrLimits
     {
-        // 2: IrBeginInit/IrEndInit carry an optional TargetPath (the vendor `((ISupportInitialize)(this.edit.Properties))`
-        //    bracket). Bumped per the vocabulary rule on IrValidate.Closed — a producer and an executor built from
-        //    different revisions must refuse each other loudly rather than replay a path one side cannot see.
-        public const int SchemaVersion = 2;
+        // 3: IrApplyResources carries ComponentResourceManager.ApplyResources as a closed host capability. Bumped per
+        //    the vocabulary rule on IrValidate.Closed — a producer and an executor built from different revisions must
+        //    refuse each other loudly rather than replay a capability one side cannot see.
+        public const int SchemaVersion = 3;
         public const int MaxStatements = 20000;
         /// <summary>Max nesting depth of IrValue trees (arrays of casts of ctors …).</summary>
         public const int MaxValueDepth = 16;
@@ -229,6 +229,18 @@ namespace WinFormsDesigner.Engine
         public IrValue Value { get; set; } = new IrNull();
     }
 
+    /// <summary>`resources.ApplyResources(target, "key")` for the SAME-form ComponentResourceManager only. The
+    /// executor resolves target to the root or a component this document knows, then delegates the resource-key
+    /// overlay/conversion work to the host's safe resolver capability. A refused/invalid key aborts the whole
+    /// interpreted render (compiled fallback), never partially applies resource data.</summary>
+    [Serializable]
+    public sealed class IrApplyResources : IrStatement
+    {
+        public bool TargetIsRoot { get; set; }
+        public string TargetName { get; set; } = "";
+        public string ResourceKey { get; set; } = "";
+    }
+
     /// <summary>`((ISupportInitialize)x).BeginInit();` — REAL replay on the net48 executor (vendor grids depend on
     /// the batching): interface dispatch only, zero args, target must exist and implement the real interface;
     /// unmatched/failed pairs are a HARD interpreted-render failure → dispose graph → fallback (never Snapshot a
@@ -369,7 +381,7 @@ namespace WinFormsDesigner.Engine
             typeof(IrKnownCtor), typeof(IrStaticFactory), typeof(IrStaticRead), typeof(IrComponentRef),
             typeof(IrArray), typeof(IrResourceRef), typeof(IrCast),
             typeof(IrConstructComponent), typeof(IrSetProperty), typeof(IrAddControl), typeof(IrAddCollectionItem),
-            typeof(IrSetExtender), typeof(IrBeginInit), typeof(IrEndInit), typeof(IrWireEvent), typeof(IrLayoutCall),
+            typeof(IrSetExtender), typeof(IrApplyResources), typeof(IrBeginInit), typeof(IrEndInit), typeof(IrWireEvent), typeof(IrLayoutCall),
             typeof(IrConstructTreeNode), typeof(IrSetTreeNodeProp), typeof(IrAddTreeNodes),
         };
 
@@ -438,6 +450,12 @@ namespace WinFormsDesigner.Engine
                     if (!ValidTarget(x.TargetIsRoot, x.TargetName)) return "invalid extender target";
                     if (!ValidIdent(x.PropertyName)) return "invalid extender property";
                     return CheckValue(x.Value, 0, ref nodes, ref chars);
+                case IrApplyResources ar:
+                    if (!ValidTarget(ar.TargetIsRoot, ar.TargetName)) return "invalid apply-resources target";
+                    if (ar.ResourceKey == null || ar.ResourceKey.Length == 0 || ar.ResourceKey.Length > IrLimits.MaxIdentifierLength)
+                        return "invalid apply-resources key";
+                    return OverBudget(ref chars, ar.TargetName) || OverBudget(ref chars, ar.ResourceKey)
+                        ? "string budget exceeded" : null;
                 case IrLayoutCall l:
                     if (!ValidTarget(l.TargetIsRoot, l.TargetName)) return "invalid layout-call target";
                     if (l.Op != IrLayoutOp.Suspend && l.Op != IrLayoutOp.Resume && l.Op != IrLayoutOp.Perform)

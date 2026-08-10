@@ -1978,6 +1978,16 @@
       var activePage = null;
       for (var pi = 0; pi < controls.length; pi++) { if (controls[pi].parentId === primary.id) { activePage = controls[pi]; break; } }
       menu.push({
+        label: T('designer.menu.moveTabLeft'),
+        disabled: !activePage,
+        act: function () { if (activePage) vscode.postMessage({ type: 'moveTab', hostId: primary.id, pageId: activePage.id, direction: 'left' }); },
+      });
+      menu.push({
+        label: T('designer.menu.moveTabRight'),
+        disabled: !activePage,
+        act: function () { if (activePage) vscode.postMessage({ type: 'moveTab', hostId: primary.id, pageId: activePage.id, direction: 'right' }); },
+      });
+      menu.push({
         label: activePage ? T('designer.menu.deleteTabNamed', { name: activePage.name }) : T('designer.menu.deleteTab'),
         disabled: !activePage,
         act: function () { if (activePage) vscode.postMessage({ type: 'deleteTab', hostId: primary.id, pageId: activePage.id }); },

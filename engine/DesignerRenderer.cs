@@ -185,6 +185,11 @@ namespace WinFormsDesigner.Engine
             }
             int originX = Math.Max(0, (root.Width - root.ClientSize.Width) / 2);
             int originY = Math.Max(0, (root.Height - root.ClientSize.Height) - originX);
+            // A Form with RightToLeftLayout uses WS_EX_LAYOUTRTL: WinForms keeps each child's logical Left unchanged,
+            // but paints the whole client surface mirrored. Overlay/hit-test/dirty-patch coordinates must describe the
+            // painted window, not the serialized logical coordinate, or selection lands on the opposite side.
+            if (root is Form form && form.RightToLeft == RightToLeft.Yes && form.RightToLeftLayout)
+                x = root.ClientSize.Width - x - ctrl.Width;
             return (x + originX, y + originY);
         }
 
@@ -322,10 +327,12 @@ namespace WinFormsDesigner.Engine
         /// and rebuilt the graph (the dominant cost on large forms); folding them halves that work. The
         /// returned Png/Width/Height and Controls are byte/field-identical to the two separate calls.
         /// </summary>
-        public static RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null, int renderScale = 1)
+        public static RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null,
+            int renderScale = 1, string[]? selectedTabs = null)
         {
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
             var root = (Control)g.Host.RootComponent;
+            ApplyTabViewState(g, selectedTabs);
             if (root.Width <= 0 || root.Height <= 0)
             {
                 root.ClientSize = new Size(400, 300);
@@ -362,6 +369,43 @@ namespace WinFormsDesigner.Engine
                 Tray = BuildTray(g, root),
                 ToolStripItems = toolStripItems,
             };
+        }
+
+        /// <summary>Resolve the standard WinForms tab page whose real header contains a window-space point. The
+        /// request rebuilds the same source graph as RenderWithLayout, applies its transient selected-tab overrides
+        /// first, and returns an identity only for a field-backed TabPage that belongs to the requested TabControl.
+        /// Unknown ids, vendor-shaped hosts, stale state, and off-header points are harmless empty hits.</summary>
+        public static TabHit HitTestTab(string designerFilePath, string hostId, int winX, int winY,
+            string? controlAssemblyPath = null, string? sourceText = null, string[]? selectedTabs = null)
+        {
+            try
+            {
+                using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
+                var root = (Control)g.Host.RootComponent;
+                ApplyTabViewState(g, selectedTabs);
+                if (root.Width <= 0 || root.Height <= 0) root.ClientSize = new Size(400, 300);
+                root.CreateControl();
+                root.PerformLayout();
+
+                if (FindGraphControl(g, hostId) is not TabControl host) return new TabHit();
+                host.CreateControl();
+                host.PerformLayout();
+                var (hostX, hostY) = ComputeWindowOffset(host, root);
+                var local = new Point(winX - hostX, winY - hostY);
+                for (int i = 0; i < host.TabCount; i++)
+                {
+                    Rectangle header;
+                    try { header = host.GetTabRect(i); }
+                    catch { continue; }
+                    if (!header.Contains(local)) continue;
+                    var page = host.TabPages[i];
+                    if (!g.Ownership.TryGetValue(page, out var source)
+                        || string.IsNullOrWhiteSpace(source.Id) || source.Id == "this") return new TabHit();
+                    return new TabHit { PageId = source.Id, Text = page.Text ?? "" };
+                }
+            }
+            catch { /* malformed graph or handle creation failure -> fail closed */ }
+            return new TabHit();
         }
 
         /// <summary>
@@ -433,6 +477,9 @@ namespace WinFormsDesigner.Engine
                     // Only a strip PARENTED into the tree gets on-canvas item geometry (BuildToolStripItems skips
                     // parentless off-tree strips like a ContextMenuStrip), so keep the flag in lockstep — a future
                     // click-to-add path must not route into item mode for a strip with no slot.
+                    // Modern tab gestures are intentionally limited to the standard WinForms contract. Vendor tab
+                    // hosts need an explicit adapter; reflection-based hidden-page filtering alone grants no verbs.
+                    IsTabHost = ctrl is TabControl,
                     IsStripHost = ctrl is ToolStrip && (isRoot || ctrl.Parent != null),
                 });
             }
@@ -1781,6 +1828,17 @@ namespace WinFormsDesigner.Engine
             return DesignerControlEditor.RemoveTabPage(src, hostId, pageId);
         }
 
+        /// <summary>Move a tab page one source-collection position left/right. Pure text, no graph load; supports
+        /// canonical Controls/TabPages Add and AddRange shapes and preserves every non-attachment statement.</summary>
+        public static ControlReorderResult MoveTabPage(string designerFilePath, string hostId, string pageId, bool left, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            string? ownershipError = CurrentSourceOwnershipError(src, hostId)
+                ?? CurrentSourceOwnershipError(src, pageId);
+            if (ownershipError != null) return new ControlReorderResult { Safe = false, Reason = ownershipError };
+            return DesignerControlEditor.MoveTabPage(src, hostId, pageId, left);
+        }
+
         /// <summary>Reparent a leaf control into a different container / the root as a MINIMAL text edit —
         /// rewrites only the receiver of its Controls.Add. Pure text, no graph load. See
         /// <see cref="DesignerControlEditor.Reparent"/>.</summary>
@@ -2636,7 +2694,9 @@ namespace WinFormsDesigner.Engine
                 // System.Resources.ResourceManager local could target a DIFFERENT resource set than the sibling
                 // .resx, so routing its lookups here would render a wrong value.
                 if (stmt is LocalDeclarationStatementSyntax lds
-                    && LastTypeSegment(lds.Declaration.Type.ToString()) == "ComponentResourceManager")
+                    && (LastTypeSegment(lds.Declaration.Type.ToString()).TrimEnd('?') == "ComponentResourceManager"
+                        || lds.Declaration.Variables.Any(v => v.Initializer?.Value is ObjectCreationExpressionSyntax oce
+                            && LastTypeSegment(oce.Type.ToString()) == "ComponentResourceManager")))
                 {
                     foreach (var v in lds.Declaration.Variables) resxVars.Add(v.Identifier.Text);
                 }
@@ -2968,6 +3028,51 @@ namespace WinFormsDesigner.Engine
             return c.Count == 1 && containerNames.Contains(c[0]);
         }
 
+        private static bool TryResolveApplyResourcesTarget(ExpressionSyntax expr, Control root,
+            Dictionary<string, IComponent> comps, out object target)
+        {
+            target = root;
+            if (expr is ThisExpressionSyntax) return true;
+            var chain = Flatten(expr);
+            if (chain.Count == 1 && comps.TryGetValue(chain[0], out var component))
+            {
+                target = component;
+                return true;
+            }
+            return false;
+        }
+
+        private static Control? FindGraphControl(LoadedGraph g, string id)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return null;
+            foreach (var component in g.GraphComponents)
+                if (component is Control control && g.Ownership.TryGetValue(component, out var source)
+                    && string.Equals(source.Id, id, StringComparison.Ordinal)) return control;
+            return null;
+        }
+
+        /// <summary>Apply bounded, request-local tab view state. Only exact identities in the loaded graph are used,
+        /// and only a standard TabControl -> member TabPage relation may be mutated. Invalid entries are ignored.</summary>
+        private static void ApplyTabViewState(LoadedGraph g, string[]? selectedTabs)
+        {
+            if (selectedTabs == null) return;
+            for (int i = 0; i < selectedTabs.Length && i < 128; i++)
+            {
+                var entry = selectedTabs[i];
+                if (string.IsNullOrEmpty(entry) || entry.Length > 513) continue;
+                int separator = entry.IndexOf('=');
+                if (separator <= 0 || separator != entry.LastIndexOf('=') || separator > 256
+                    || entry.Length - separator - 1 > 256) continue;
+                var hostId = entry[..separator];
+                var pageId = entry[(separator + 1)..];
+                if (FindGraphControl(g, hostId) is not TabControl host
+                    || FindGraphControl(g, pageId) is not TabPage page
+                    || !host.TabPages.Contains(page)) continue;
+                try { host.SelectedTab = page; }
+                catch { /* a custom TabControl subclass may reject selection; retain source-selected state */ }
+            }
+        }
+
         /// <summary>
         /// ISupportInitialize init bracketing: ((System.ComponentModel.ISupportInitialize)(this.x)).BeginInit()/.EndInit()
         /// — designer-managed init scaffolding VS emits around any DataGridView/BindingSource/PictureBox/NumericUpDown/
@@ -3004,6 +3109,21 @@ namespace WinFormsDesigner.Engine
 
             var targetChain = Flatten(ma.Expression);
 
+            if (method == "ApplyResources"
+                && _resx is { } rx
+                && rx.vars.Contains(targetChain.Count == 1 ? targetChain[0] : "")
+                && (inv.ArgumentList?.Arguments.Count ?? 0) == 2
+                && inv.ArgumentList is { } applyArgs
+                && TryResolveApplyResourcesTarget(applyArgs.Arguments[0].Expression, root, comps, out var resourceTarget)
+                && applyArgs.Arguments[1].Expression is LiteralExpressionSyntax keyLiteral
+                && keyLiteral.IsKind(SyntaxKind.StringLiteralExpression))
+            {
+                if (rx.resolver == null || rx.resolver.ApplyResources(resourceTarget, keyLiteral.Token.ValueText))
+                    return true;
+                why = "ApplyResources refused unsafe or incompatible resources: " + inv.ToString().Trim();
+                return false;
+            }
+
             if (method == "Add" && targetChain.Count >= 1 && targetChain[^1] == "Controls")
             {
                 Control parent;
@@ -3023,6 +3143,7 @@ namespace WinFormsDesigner.Engine
                 }
                 else { why = "Controls.Add on unknown parent: " + ma.Expression; return false; }
 
+                if (inv.ArgumentList == null) { why = "Controls.Add with no arguments: " + inv.ToString().Trim(); return false; }
                 var addArgs = inv.ArgumentList.Arguments;
                 if (addArgs.Count == 0) { why = "Controls.Add with no arguments: " + inv.ToString().Trim(); return false; }
                 var argChain = Flatten(addArgs[0].Expression);

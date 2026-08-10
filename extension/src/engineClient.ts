@@ -339,6 +339,8 @@ export interface GeometrySourceValue {
   componentId: string;
   propertyName: string;
   expression: string;
+  propertyTypeName?: string;
+  invariantValue?: string;
 }
 
 /** Live-graph metadata and fail-closed permissions for one direct-manipulation gesture. */
@@ -441,6 +443,7 @@ export interface AuthorizedGeometryBatch {
   reason: string;
   failedId: string | null;
   designerText: string | null;
+  sourceValues: GeometrySourceValue[];
   appliedCount: number;
 }
 
@@ -501,6 +504,7 @@ export async function authorizeGeometryBatch(
 ): Promise<AuthorizedGeometryBatch> {
   let text = sourceText;
   let appliedCount = 0;
+  const sourceValues: GeometrySourceValue[] = [];
   for (const intent of intents) {
     const authorized = await authorizeGeometryCommit(
       engine, designerFilePath, intent.id, intent.mode, intent.candidate, controlAssemblyPath, text);
@@ -510,12 +514,14 @@ export async function authorizeGeometryBatch(
         reason: authorized.reason,
         failedId: intent.id,
         designerText: null,
+        sourceValues: [],
         appliedCount: 0,
       };
     }
     if (authorized.designerText !== null && authorized.designerText !== text) {
       text = authorized.designerText;
       appliedCount++;
+      sourceValues.push(...(authorized.result?.sourceValues ?? []));
     }
   }
   return {
@@ -523,6 +529,7 @@ export async function authorizeGeometryBatch(
     reason: '',
     failedId: null,
     designerText: text === sourceText ? null : text,
+    sourceValues,
     appliedCount,
   };
 }
@@ -579,6 +586,7 @@ export async function renderWithLayout(
   controlAssemblyPath?: string,
   sourceText?: string,
   scale?: number,
+  selectedTabs?: string[],
 ): Promise<RenderLayout> {
   // Explicit positional args (not asmTextTail's variable tail) so renderScale always lands in the 4th slot; the C#
   // RenderWithLayout treats null asm/text exactly like the omitted-tail form. scale = integer DPI factor (1 default).
@@ -586,7 +594,7 @@ export async function renderWithLayout(
     png: string; width: number; height: number; clientWidth: number; clientHeight: number;
     rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; toolStripItems?: ToolStripItemBounds[]; unrepresentable?: string[];
     inheritedBase?: boolean; baseTypeName?: string; unrenderableResxCount?: number;
-  }>('RenderWithLayout', designerFilePath, controlAssemblyPath ?? null, sourceText ?? null, scale ?? 1);
+  }>('RenderWithLayout', designerFilePath, controlAssemblyPath ?? null, sourceText ?? null, scale ?? 1, selectedTabs ?? null);
   return {
     png: Buffer.from(raw.png ?? '', 'base64'),
     width: raw.width,
@@ -607,6 +615,15 @@ export async function renderWithLayout(
     baseTypeName: raw.baseTypeName ?? '',
     unrenderableResxCount: raw.unrenderableResxCount ?? 0, // pre-S3 engine → 0 (no banner), same version-skew default as inheritedBase
   };
+}
+
+/** v1.5.0 localization preview/edit context. Empty cultureName means VS "(Default)" / neutral resources. */
+export function setLocalizationCulture(
+  engine: EngineHandle,
+  designerFilePath: string,
+  cultureName: string,
+): Promise<string> {
+  return engine.connection.sendRequest<string>('SetLocalizationCulture', designerFilePath, cultureName);
 }
 
 /**
@@ -980,6 +997,16 @@ export async function selectCompiledTabAt(
 /** The tab page (field id + current Text) whose header is under window-space (x,y) on the net48 live tab host —
 * for renaming a tab. `pageId` is "" when the point isn't on a header of a field-backed page. */
 export interface TabHit { pageId: string; text: string; }
+
+/** Modern standard-TabControl header hit-test against the same live-source graph and transient tab state used by
+* RenderWithLayout. Empty pageId means unknown/nonhost/off-header/non-field-backed and is always a harmless no-op. */
+export function hitTestTab(
+  engine: EngineHandle, designerFilePath: string, hostId: string, x: number, y: number,
+  controlAssemblyPath?: string, sourceText?: string, selectedTabs?: string[],
+): Promise<TabHit> {
+  return engine.connection.sendRequest<TabHit>(
+    'HitTestTab', designerFilePath, hostId, x, y, controlAssemblyPath ?? null, sourceText ?? null, selectedTabs ?? null);
+}
 export function hitTestCompiledTab(
   engine: EngineHandle, designerFilePath: string, assemblyPath: string, hostId: string, x: number, y: number,
   rootTypeName?: string, probeDirs?: string[],
@@ -1214,6 +1241,50 @@ export interface SupportedUiTypeEditorResult {
   reason: string;
 }
 
+export interface LocalizedResourceEdit {
+  componentId: string;
+  propertyName: string;
+  propertyTypeName: string;
+  invariantValue: string;
+  /** Remove this culture's override so ResourceManager falls back to its parent/neutral value. */
+  removeOverride?: boolean;
+}
+
+export interface LocalizedResourceEditPreview {
+  safe: boolean;
+  reason: string;
+  resxText: string | null;
+  resxKey: string;
+}
+
+/** v1.5.0 resource-only localized scalar edits. The engine returns only the target .resx text, never source text. */
+export function setLocalizedResources(
+  engine: EngineHandle,
+  designerFilePath: string,
+  cultureName: string,
+  resxText: string | null,
+  edits: LocalizedResourceEdit[],
+): Promise<LocalizedResourceEditPreview> {
+  return engine.connection.sendRequest<LocalizedResourceEditPreview>(
+    'SetLocalizedResources', designerFilePath, cultureName, resxText, edits);
+}
+
+/** v1.5.0 resource-only localized image/icon import. */
+export function setLocalizedImageResource(
+  engine: EngineHandle,
+  designerFilePath: string,
+  cultureName: string,
+  resxText: string | null,
+  componentId: string,
+  propertyName: string,
+  propertyTypeName: string,
+  imageBase64: string,
+): Promise<LocalizedResourceEditPreview> {
+  return engine.connection.sendRequest<LocalizedResourceEditPreview>(
+    'SetLocalizedImageResource',
+    designerFilePath, cultureName, resxText, componentId, propertyName, propertyTypeName, imageBase64);
+}
+
 export function editSupportedUiTypeEditor(
   engine: EngineHandle,
   requestId: string,
@@ -1425,6 +1496,17 @@ export async function removeCompiledTab(
   return fromCompiledRaw(raw);
 }
 
+/** Move a tab page one position left/right on the net48 live compiled-preview host + re-render. The source edit is
+* performed separately by moveTabPage; this keeps the last-build fallback picture in step before a rebuild. */
+export async function moveCompiledTab(
+  engine: EngineHandle, designerFilePath: string, assemblyPath: string, hostId: string, pageId: string, left: boolean,
+  rootTypeName?: string, probeDirs?: string[],
+): Promise<RenderLayout> {
+  const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
+    'MoveCompiledTab', designerFilePath, assemblyPath, hostId, pageId, left, rootTypeName ?? null, probeDirs ?? null);
+  return fromCompiledRaw(raw);
+}
+
 /** Toolbox add-component: add a non-visual component (Timer/ToolTip/dialog…) — a bare `new T()` that lands in the
 * component tray (no parent/location). componentTypeKey must be a toolbox component key. Host applies the returned text. */
 export function addComponent(
@@ -1557,6 +1639,20 @@ export function removeTabPage(
 ): Promise<ControlRemoveResult> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<ControlRemoveResult>('RemoveTabPage', designerFilePath, hostId, pageId, ...tail);
+}
+
+/** Move a field-backed tab page one canonical source-collection position left/right. Supports Controls/TabPages
+* Add and fresh-array AddRange shapes; returns the original text for an edge no-op and refuses ambiguous source. */
+export function moveTabPage(
+  engine: EngineHandle,
+  designerFilePath: string,
+  hostId: string,
+  pageId: string,
+  left: boolean,
+  sourceText?: string,
+): Promise<ControlReorderResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlReorderResult>('MoveTabPage', designerFilePath, hostId, pageId, left, ...tail);
 }
 
 /** Result of CopyControl: an OPAQUE clipboard blob the host stores and hands back to pasteControl. */

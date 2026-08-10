@@ -78,8 +78,14 @@ for (const [name, workflow] of [['CI', ciWorkflow], ['Release', releaseWorkflow]
     `${name} workflow must run the engine unit tests`);
   expect(workflow.includes('dotnet test tests/Engine.Net48.UnitTests -c Release'),
     `${name} workflow must run the net48 engine unit tests (ADR 0001 net48 unit floor)`);
+  expect(workflow.includes('dotnet run --project engine -c Release --coverage-report engine/samples --min-rate 80'),
+    `${name} workflow must run the M6 sample-corpus coverage gate`);
   expect(workflow.includes('run: npm test'), `${name} workflow must run the extension unit tests`);
   expect(workflow.includes('run: npm run perf:baseline'), `${name} workflow must run the performance baseline`);
+  expect(workflow.includes('node --check media/designer.js')
+    && workflow.includes('node --check media/panel.js')
+    && workflow.includes('node --check media/chooseItems.js'),
+  `${name} workflow must syntax-check every shipped webview script`);
   expect(workflow.includes('run: npm run mojibake:scan'),
     `${name} workflow must run the mojibake scan (a CP1251/Latin-1 round trip passes every other gate)`);
   expect(workflow.includes('10.0.x'), `${name} workflow must install the .NET 10 SDK`);

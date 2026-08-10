@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\fixtures\FakeVendor\FakeVendor.csproj" />
+    <ProjectReference Include="..\..\engine-net48\Engine.Net48.csproj" ReferenceOutputAssembly="false" />
     <Compile Include="..\..\engine-net48\Dtos.cs" Link="ToolboxScan\Dtos.cs" />
     <Compile Include="..\..\engine-net48\ToolboxAssemblyScanner.cs" Link="ToolboxScan\ToolboxAssemblyScanner.cs" />
   </ItemGroup>
@@ -42,6 +43,8 @@
     <Compile Include="..\..\engine\DesignerAllowlists.cs" Link="Shared\DesignerAllowlists.cs" />
     <Compile Include="..\..\engine\DesignerIrBuilder.cs" Link="Shared\DesignerIrBuilder.cs" />
     <Compile Include="..\..\engine\DesignerIrExecutor.cs" Link="Shared\DesignerIrExecutor.cs" />
+    <Compile Include="..\..\engine\SafeResxResolver.cs" Link="Shared\SafeResxResolver.cs" />
+    <Compile Include="..\..\engine\AssemblyIrHost.cs" Link="Shared\AssemblyIrHost.cs" />
     <Compile Include="..\..\engine\DesignTimeSite.cs" Link="Shared\DesignTimeSite.cs" />
     <Compile Include="..\..\engine\InterpretedDescribeResolver.cs" Link="Shared\InterpretedDescribeResolver.cs" />
     <Compile Include="..\..\engine-net48\IsExternalInit.cs" Link="Shared\IsExternalInit.cs" />

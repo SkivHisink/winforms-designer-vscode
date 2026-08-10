@@ -59,8 +59,14 @@ public sealed class DesignerGeometryTests
         Assert.NotNull(commit.DesignerText);
         Assert.Contains("this.okButton.Location = new System.Drawing.Point(151, 205);", commit.DesignerText);
         Assert.Contains("this.okButton.Size = new System.Drawing.Size(80, 25);", commit.DesignerText);
-        Assert.Contains(commit.SourceValues, v => v.PropertyName == "Location" && v.Expression == "new System.Drawing.Point(151, 205)");
-        Assert.Contains(commit.SourceValues, v => v.PropertyName == "Size" && v.Expression == "new System.Drawing.Size(80, 25)");
+        Assert.Contains(commit.SourceValues, v => v.PropertyName == "Location"
+            && v.PropertyTypeName == "System.Drawing.Point"
+            && v.InvariantValue == "151, 205"
+            && v.Expression == "new System.Drawing.Point(151, 205)");
+        Assert.Contains(commit.SourceValues, v => v.PropertyName == "Size"
+            && v.PropertyTypeName == "System.Drawing.Size"
+            && v.InvariantValue == "80, 25"
+            && v.Expression == "new System.Drawing.Size(80, 25)");
     }
 
     [Fact]

@@ -9,6 +9,117 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-08-09
+
+**Tab order is now a safe, source-first part of the standard tab workflow on both engines.** An active field-backed
+page can move one position left or right without regenerating the form, rewriting its property block, or persisting
+the designer's view-only selected page.
+
+### Added
+
+- **Move Tab Left / Move Tab Right.** The `TabControl` context menu exposes adjacent page moves on modern .NET and
+  .NET Framework canvases. All seven shipped UI locales include the new commands.
+- **Canonical `Add` / `AddRange` order editing.** The engine flattens `Controls.Add`, `TabPages.Add`, and fresh-array
+  `AddRange` attachments into one execution order, then swaps only the two adjacent field-reference expressions. A
+  move can cross an `AddRange` + later `Add` boundary without changing collection shape or page initialization code.
+- **Compiled-fallback live parity.** A net48 last-build canvas mirrors the committed move in its live tab collection,
+  preserves the active page, and verifies the new first-header identity. Live-source modern/net48 canvases replay the
+  edited source as the authority.
+
+### Safety and release policy
+
+- A separate safety gate proves the exact adjacent permutation while requiring every non-tab statement, attachment
+  shape, field, and class member count to remain unchanged. Duplicate pages, unknown fields, non-trivial collection
+  expressions, inherited/unresolved ownership, stale renders, and localizable structural-source edits fail closed.
+- `TabIndex`, page property blocks, and selected-page view state are not rewritten. Edge moves are explicit no-ops;
+  successful moves remain one conflict-checked undo unit.
+- This repository-side close does not create a commit, tag, push, Marketplace/Open VSX publication, or external
+  credential operation. Real ARM64 hardware, multi-monitor/DPI, native RTL/culture UX, and licensed vendor acceptance
+  remain explicit external gates.
+
+## [1.6.0] — 2026-08-09
+
+**The standard WinForms `TabControl` workflow is now engine-neutral and durable, while the localization and release
+surfaces introduced around 1.5 fail closed more consistently.** Modern .NET forms gain the same on-canvas tab
+navigation and source-first tab operations already available on the .NET Framework path, without persisting a
+view-only page selection into generated source.
+
+### Added
+
+- **Modern on-canvas tab workflow.** A standard WinForms `TabControl` is identified by the modern engine, tab-header
+  clicks are hit-tested against the real hosted control, double-click renames the field-backed page, and the existing
+  byte-local Add Tab / Delete Tab writers are available on modern forms as well as net48 forms.
+- **Durable per-form tab selection.** The selected page of each tab host is bounded, validated view state stored in the
+  workspace. It survives re-render, undo/redo, and editor close/reopen on modern and net48 live-source canvases without
+  changing `.Designer.cs` or `.resx`; a removed or unknown host/page degrades to the source-selected page. A disclosed
+  net48 compiled fallback remains build-derived and does not promise to restore that view override after restart.
+- **Complete localization-workflow copy.** The v1.5 culture selector, localized-resource status, and fail-closed
+  structural-edit messages are translated in every supported runtime locale. The command title now explicitly refers
+  to the form's localization culture rather than the extension UI language.
+
+### Fixed
+
+- The intentionally unsupported COM and WPF tabs in **Choose Toolbox Items** no longer leave the `.NET` filter,
+  Browse, Reset, or OK actions live behind an unsupported placeholder. They cannot invisibly browse or apply hidden
+  `.NET` rows; returning to the `.NET` tab restores the normal controls.
+- Adding a tab while the net48 canvas is in live-source interpreted mode now records the new page as transient view
+  state before re-rendering, so the page the user just added is actually the active page.
+
+### Release hardening
+
+- The release workflow now runs the same `engine/samples` interpreted-coverage floor as CI and syntax-checks both
+  shipped webview scripts. Release preflight asserts that neither workflow can silently lose those gates.
+- Tab navigation remains view-only, while rename/add/delete reuse existing revision, ownership, byte-locality,
+  undo/redo, and localizable-source firewalls. Tab-page reorder and arbitrary vendor tab hosts are not implied by this
+  release; vendor design-time hosting remains the 2.0 boundary.
+- This repository-side close does not create a commit, tag, push, Marketplace/Open VSX publication, or external
+  credential operation. Real ARM64 hardware, multi-monitor/DPI, native RTL/culture UX, and licensed vendor acceptance
+  remain explicit external gates.
+
+## [1.5.0] — 2026-08-09
+
+**Localized `ApplyResources` forms are now editable across neutral and culture-specific resources instead of being
+globally read-only.** The workflow keeps generated source unchanged, preserves fallback and opaque resources, and
+uses the same fail-closed conflict/undo discipline on both modern .NET and .NET Framework forms.
+
+### Added
+
+- **Per-form localization culture selector.** **WinForms: Select Localization Culture** switches between the neutral
+  `.resx`, discovered translations, and a newly validated culture name such as `fr-FR` or `ar-SA`. The choice is
+  stored in designer view state and normalized through the engine rather than trusted as an arbitrary filename.
+- **Executable `ApplyResources` IR.** Both engines resolve same-form resources with neutral → parent → exact overlay
+  semantics and apply allowlisted scalar, `Color`, `Font`, geometry, image/icon, `RightToLeft`, and
+  `RightToLeftLayout` values. The net48 interpreter uses the same shared host/resolver model; unsupported binary,
+  SOAP, external-file, or unsafe typed resource payloads still fail closed.
+- **Lossless localized resource editor.** Scalar upsert, image/icon upsert, and Remove Override RPCs preserve comments,
+  unknown nodes, and opaque binary resource entries. Removing an exact-culture value restores parent/neutral
+  ResourceManager fallback instead of copying a fallback value into the child file.
+- **Atomic resource-set history.** Multi-file edits preflight every exact source state, recheck each target immediately
+  before its write, reject duplicate targets, run as one undo/redo unit, and compensate a partial write only while the
+  just-written bytes remain unchanged. Detected conflicts fail closed; incomplete compensation is reported instead of
+  overwriting a later external edit.
+- **Cross-runtime localization corpus.** Modern and net48 tests cover neutral/parent/exact strings and geometry,
+  translated images/scalars, RTL properties and mirrored layout, culture isolation, unknown/binary preservation, and
+  named-pipe resource upsert/remove behavior.
+
+### Changed
+
+- Property-grid edits, Reset, supported Color/Font dialogs, image/icon import/clear, direct geometry, group move,
+  align, center, resize, and ToolStrip item property edits route through the selected culture `.resx` on localizable
+  forms. Generated `.Designer.cs` stays byte-identical and does not become dirty for those operations.
+- The localizable-form banner is now an editable culture-context disclosure. Structural/reference operations that
+  require generated-source changes remain explicitly refused because they have no safe resource-only representation.
+- The shared IR schema is version 3 and advertises the `ApplyResources` capability; render/describe/hit-test/edit
+  requests configure the selected culture before interpreted execution.
+
+### Safety and release policy
+
+- Whole-file regeneration of a localizable form remains classified `localizable` and refused. v1.5 adds a targeted
+  resource writer; it does not weaken the established source-regeneration firewall.
+- This repository-side close does not create a commit, tag, push, Marketplace/Open VSX publication, or external
+  credential operation. Native RTL/culture UX, Windows ARM64 hardware, multi-monitor fidelity, and vendor/device
+  compatibility remain external acceptance gates.
+
 ## [1.4.0] — 2026-08-03
 
 **Layout decisions now come back from the WinForms engine, inherited controls carry explicit ownership, and the
@@ -1259,7 +1370,10 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.1.0...v1.2.0

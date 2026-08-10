@@ -147,6 +147,20 @@ export const PANEL_SCAFFOLD = `
   </div>
 `;
 
+// Choose Toolbox Items webview scaffold; mirrors chooseItemsHtml and lets the guard tests execute the real script.
+export const CHOOSE_ITEMS_SCAFFOLD = `
+  <div id="ciTabs">
+    <div class="t active" data-tab="net">.NET</div>
+    <div class="t" data-tab="com">COM</div>
+    <div class="t" data-tab="wpf">WPF</div>
+  </div>
+  <div id="ciLoading"><div id="ciLoadName"></div></div>
+  <div id="ciTable"></div>
+  <div id="ciFilterRow"><input id="ciFilter"><button id="ciClear">Clear</button><button id="ciBrowse">Browse</button></div>
+  <div id="ciDetails"></div><div id="ciStatus"></div>
+  <button id="ciReset" disabled>Reset</button><button id="ciCancel">Cancel</button><button id="ciOk">OK</button>
+`;
+
 function load(scriptFile: string, bodyHtml: string, needCanvas: boolean): Harness {
   const dom = new JSDOM(`<!DOCTYPE html><html><head></head><body>${bodyHtml}</body></html>`, {
     runScripts: 'dangerously',
@@ -233,6 +247,9 @@ export function loadDesigner(): Harness {
 }
 export function loadPanel(): Harness {
   return load('panel.js', PANEL_SCAFFOLD, false);
+}
+export function loadChooseItems(): Harness {
+  return load('chooseItems.js', CHOOSE_ITEMS_SCAFFOLD, false);
 }
 
 /** Real-timer delay — the nudge commit debounce (250ms) fires on jsdom's Node-backed timers, so a test waits it out. */

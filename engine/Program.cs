@@ -1543,10 +1543,21 @@ namespace WinFormsDesigner.Engine
         /// separate calls. controlAssemblyPath optionally overrides project auto-discovery (see
         /// <see cref="RenderDesigner"/>).
         /// </summary>
-        public RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null, int renderScale = 1)
+        public RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null,
+            int renderScale = 1, string[]? selectedTabs = null)
         {
             Prewarm(designerFilePath, controlAssemblyPath);
-            return _sta.Invoke(() => DesignerRenderer.RenderWithLayout(designerFilePath, NullIfBlank(controlAssemblyPath), sourceText, renderScale));
+            return _sta.Invoke(() => DesignerRenderer.RenderWithLayout(designerFilePath, NullIfBlank(controlAssemblyPath), sourceText, renderScale, selectedTabs));
+        }
+
+        /// <summary>Modern standard-TabControl header hit-test. selectedTabs is transient view state only;
+        /// unknown/nonmember identities and off-header points return an empty hit.</summary>
+        public TabHit HitTestTab(string designerFilePath, string hostId, int x, int y,
+            string? controlAssemblyPath = null, string? sourceText = null, string[]? selectedTabs = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            return _sta.Invoke(() => DesignerRenderer.HitTestTab(designerFilePath, hostId ?? "", x, y,
+                NullIfBlank(controlAssemblyPath), sourceText, selectedTabs));
         }
 
         /// <summary>
@@ -1615,6 +1626,81 @@ namespace WinFormsDesigner.Engine
         {
             var r = DesignerRenderer.ApplyPropertyEdit(designerFilePath, componentName, propertyName, newValueExpr, sourceText);
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Select the VS-style design culture for this form. Empty means the neutral resource set.</summary>
+        public string SetLocalizationCulture(string designerFilePath, string cultureName)
+        {
+            if (!DesignerCultureSelection.TrySetCultureName(designerFilePath, cultureName, out var normalized, out var reason))
+                throw new ArgumentException(reason, nameof(cultureName));
+            return normalized;
+        }
+
+        /// <summary>Produce a resource-only batch edit for the selected neutral or per-culture .resx. The engine never
+        /// writes the file; the extension applies the returned text through its conflict-checked resource transaction.</summary>
+        public LocalizedResourceEditPreview SetLocalizedResources(string designerFilePath, string cultureName,
+            string? resxText, LocalizedResourceRpcEdit[] edits)
+        {
+            if (!DesignerCultureSelection.TryNormalizeCultureName(cultureName, out _, out var cultureReason))
+                return new LocalizedResourceEditPreview { Safe = false, Reason = cultureReason };
+            if (string.IsNullOrWhiteSpace(designerFilePath))
+                return new LocalizedResourceEditPreview { Safe = false, Reason = "designer file path is empty" };
+
+            var mapped = (edits ?? Array.Empty<LocalizedResourceRpcEdit>()).Select(edit => new LocalizedResourceEdit
+            {
+                Kind = edit.RemoveOverride ? LocalizedResourceEditKind.RemoveOverride : LocalizedResourceEditKind.UpsertScalar,
+                ComponentId = edit.ComponentId ?? "",
+                PropertyName = edit.PropertyName ?? "",
+                ValueTypeName = edit.PropertyTypeName ?? "",
+                ScalarValue = edit.InvariantValue ?? "",
+            }).ToArray();
+            var result = DesignerLocalizedResxEditor.ApplyScalarEdits(resxText, mapped);
+            return new LocalizedResourceEditPreview
+            {
+                Safe = result.Ok,
+                Reason = result.Reason,
+                ResxText = result.ResxText,
+                ResxKey = string.Join(",", result.Keys),
+            };
+        }
+
+        /// <summary>Produce one localized image/icon resource override without touching .Designer.cs.</summary>
+        public LocalizedResourceEditPreview SetLocalizedImageResource(string designerFilePath, string cultureName,
+            string? resxText, string componentId, string propertyName, string propertyTypeName, string imageBase64)
+        {
+            if (!DesignerCultureSelection.TryNormalizeCultureName(cultureName, out _, out var cultureReason))
+                return new LocalizedResourceEditPreview { Safe = false, Reason = cultureReason };
+            if (string.IsNullOrWhiteSpace(designerFilePath))
+                return new LocalizedResourceEditPreview { Safe = false, Reason = "designer file path is empty" };
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(imageBase64 ?? ""); }
+            catch { return new LocalizedResourceEditPreview { Safe = false, Reason = "image data is not valid base64" }; }
+
+            var kind = string.Equals(propertyTypeName, "System.Drawing.Icon", StringComparison.Ordinal)
+                ? LocalizedResourceEditKind.UpsertIcon
+                : LocalizedResourceEditKind.UpsertImage;
+            if (kind == LocalizedResourceEditKind.UpsertImage
+                && propertyTypeName is not ("System.Drawing.Image" or "System.Drawing.Bitmap"))
+                return new LocalizedResourceEditPreview { Safe = false, Reason = "unsupported localized image type: " + propertyTypeName };
+
+            var result = DesignerLocalizedResxEditor.ApplyEdits(resxText, new[]
+            {
+                new LocalizedResourceEdit
+                {
+                    Kind = kind,
+                    ComponentId = componentId ?? "",
+                    PropertyName = propertyName ?? "",
+                    ValueTypeName = propertyTypeName ?? "",
+                    BinaryValue = bytes,
+                },
+            });
+            return new LocalizedResourceEditPreview
+            {
+                Safe = result.Ok,
+                Reason = result.Reason,
+                ResxText = result.ResxText,
+                ResxKey = result.Keys.FirstOrDefault() ?? "",
+            };
         }
 
         /// <summary>
@@ -2005,6 +2091,11 @@ namespace WinFormsDesigner.Engine
         public ControlRemoveResult RemoveTabPage(string designerFilePath, string hostId, string pageId, string? sourceText = null) =>
             DesignerRenderer.RemoveTabPage(designerFilePath, hostId, pageId, sourceText);
 
+        /// <summary>Move a field-backed tab page one position left/right in its canonical source collection order.
+        /// PURE TEXT — no graph load/STA. The host applies the returned text and re-renders or mirrors it live.</summary>
+        public ControlReorderResult MoveTabPage(string designerFilePath, string hostId, string pageId, bool left, string? sourceText = null) =>
+            DesignerRenderer.MoveTabPage(designerFilePath, hostId, pageId, left, sourceText);
+
         /// <summary>Copy a leaf control to an opaque clipboard blob (field type + InitializeComponent statements).
         /// PURE TEXT — no graph load/STA. The host stores the blob and hands it back to <see cref="PasteControl"/>.</summary>
         public ControlCopyResult CopyControl(string designerFilePath, string controlId, string? sourceText = null) =>
@@ -2069,6 +2160,25 @@ namespace WinFormsDesigner.Engine
         public string Mode { get; set; } = "";
         public string? Text { get; set; }
         public string Reason { get; set; } = "";
+    }
+
+    /// <summary>Wire DTO for one invariant localized scalar value.</summary>
+    public sealed class LocalizedResourceRpcEdit
+    {
+        public string ComponentId { get; set; } = "";
+        public string PropertyName { get; set; } = "";
+        public string PropertyTypeName { get; set; } = "";
+        public string InvariantValue { get; set; } = "";
+        public bool RemoveOverride { get; set; }
+    }
+
+    /// <summary>No-write result for a localized resource-only edit.</summary>
+    public sealed class LocalizedResourceEditPreview
+    {
+        public bool Safe { get; set; }
+        public string Reason { get; set; } = "";
+        public string? ResxText { get; set; }
+        public string ResxKey { get; set; } = "";
     }
 
     /// <summary>DTO for the image-import RPC (<see cref="EngineApi.SetImageResource"/>): the new .Designer.cs text

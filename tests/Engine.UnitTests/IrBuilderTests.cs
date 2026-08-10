@@ -344,6 +344,51 @@ namespace Demo {
         Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
     }
 
+    [Fact]
+    public void SameFormResourceManager_ApplyResources_EmitsClosedCapability()
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private System.Windows.Forms.Button button1;
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      this.button1 = new System.Windows.Forms.Button();
+      resources.ApplyResources(this.button1, ""button1"");
+      resources.ApplyResources(this, ""$this"");
+    }
+  }
+}");
+        Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+        var calls = doc.Statements.OfType<IrApplyResources>().ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.False(calls[0].TargetIsRoot);
+        Assert.Equal("button1", calls[0].TargetName);
+        Assert.Equal("button1", calls[0].ResourceKey);
+        Assert.True(calls[1].TargetIsRoot);
+        Assert.Equal("$this", calls[1].ResourceKey);
+    }
+
+    [Theory]
+    [InlineData("resources.ApplyResources(this.button1, GetKey());")]
+    [InlineData("resources.ApplyResources(this.button1, key: \"button1\");")]
+    [InlineData("resources.ApplyResources(this.button1.Text, \"button1\");")]
+    public void NonCanonicalApplyResources_IsGap(string statement)
+    {
+        var doc = BuildOk(@"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private System.Windows.Forms.Button button1;
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      this.button1 = new System.Windows.Forms.Button();
+      " + statement + @"
+    }
+  }
+}");
+        Assert.False(doc.FullCoverage, "must not represent: " + statement);
+    }
+
     // The shape VS emits for THREE OR MORE flags: left-nested and parenthesized, one operand per line. A collector
     // that only descended through bare binary nodes stopped at the parenthesized left operand and dropped the whole
     // form to fallback — which hit every control anchored on 3+ sides, not just vendor forms.

@@ -69,5 +69,7 @@ Thumbs.db
 docs/plans/
 docs/handoffs/
 docs/maps/
+# Local per-release completion records (1.4.0 predates this rule and stays tracked).
+docs/release-*-completion-plan.md
 run-codex.cmd
 test_handler_regex.js

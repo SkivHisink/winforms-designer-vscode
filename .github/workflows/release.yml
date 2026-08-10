@@ -57,6 +57,9 @@ jobs:
       - name: Unit tests (engine, net48)
         run: dotnet test tests/Engine.Net48.UnitTests -c Release
 
+      - name: M6 coverage gate (engine samples)
+        run: dotnet run --project engine -c Release --coverage-report engine/samples --min-rate 80
+
       - name: Build sample fixtures
         run: |
           dotnet build samples/CustomControls -c Release
@@ -107,6 +110,13 @@ jobs:
       - name: Performance baseline
         working-directory: extension
         run: npm run perf:baseline
+
+      - name: Syntax-check webview scripts
+        working-directory: extension
+        run: |
+          node --check media/designer.js
+          node --check media/panel.js
+          node --check media/chooseItems.js
 
       # Text-integrity gate — see the same step in ci.yml.
       - name: Mojibake scan

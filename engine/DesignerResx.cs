@@ -1,7 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.ComponentModel.Design;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Resources;
@@ -11,80 +13,71 @@ using System.Xml.Linq;
 namespace WinFormsDesigner.Engine
 {
     /// <summary>
-    /// Loads a WinForms form's sibling <c>.resx</c> and resolves <c>resources.GetObject/GetString(name)</c>
-    /// for the interpreter — the READ side of image/icon property support (BackgroundImage, PictureBox.Image,
-    /// Form.Icon, …), which VS stores as <c>resources.GetObject("comp.Prop")</c> rather than an inline literal.
-    ///
-    /// SECURITY (this is a new deserialization + file-read surface fed by an attacker-influenced repo, so it is
-    /// deliberately narrow, defense-in-depth):
-    ///   • Nodes are read with <c>UseResXDataNodes = true</c> so nothing is materialized on load.
-    ///   • A value materializes ONLY when its declared value-type is on <see cref="SafeTypes"/> — a strict
-    ///     allowlist of TypeConverter-backed value types (images/icons/strings/primitives).
-    ///   • BinaryFormatter/SOAP-serialized nodes (mimetype application/x-microsoft.net.object.binary.base64 /
-    ///     .soap.base64) are refused by an explicit mimetype pre-scan (<see cref="_binaryKeys"/>) BEFORE any
-    ///     GetValue — so the refusal does NOT rely on the .NET 9 runtime having removed BinaryFormatter (though
-    ///     it also would throw there). This keeps the guard correct if the engine is ever retargeted.
-    ///   • <see cref="ResXDataNode.FileRef"/> entries (external file references) are refused — materializing one
-    ///     reads an attacker-controllable path off disk. Only embedded (base64) resources are honored.
-    ///   • The whole .resx is bounded: files over <see cref="MaxBytes"/> are skipped, and at most
-    ///     <see cref="MaxNodes"/> entries are held — so a hostile giant .resx can't balloon memory on open.
-    /// Any failure degrades to null: the property stays unset and the form still renders (never throws out).
+    /// Safe read-side resolver for sibling WinForms .resx files. It never materializes nodes during load, overlays the
+    /// neutral -> parent culture -> exact culture chain by key, and materializes only a narrow allowlist of values.
     /// </summary>
     public sealed class ResxResolver
     {
-        private const long MaxBytes = 64L * 1024 * 1024; // skip absurdly large .resx (DoS bound; forms are tiny)
-        private const int MaxNodes = 20000;              // cap held entries (a real form has < ~100)
-        private const int MaxScanNodes = 200000;         // bound the metadata count scan on a hostile file (still honest ≥1)
-        private const long MaxImagePixels = 4096L * 4096L; // reject a materialized pixel-bomb image (~16.7M px / ~64MB @32bpp)
-        private const int MaxImageDimension = 20000;       // and an absurd per-axis dimension
+        private const long MaxBytes = 64L * 1024 * 1024;
+        private const int MaxNodes = 20000;
+        private const int MaxScanNodes = 200000;
+        private const long MaxImagePixels = 4096L * 4096L;
+        private const int MaxImageDimension = 20000;
 
         private readonly Dictionary<string, ResXDataNode> _nodes = new(StringComparer.Ordinal);
-        /// <summary>Resource names whose &lt;data&gt; carries a BinaryFormatter/SOAP mimetype — refused outright.</summary>
         private readonly HashSet<string> _binaryKeys = new(StringComparer.Ordinal);
 
         private ResxResolver() { }
 
-        /// <summary>Load the .resx that sits beside a form's designer file (Foo.Designer.cs / Foo.cs → Foo.resx),
-        /// or null when there is no sibling .resx / it can't be read / it exceeds the size bound. Fully guarded.</summary>
         public static ResxResolver? TryLoadForDesigner(string designerFilePath)
+            => TryLoadForDesigner(designerFilePath, DesignerCultureSelection.GetCultureName(designerFilePath));
+
+        public static ResxResolver? TryLoadForDesigner(string designerFilePath, string? cultureName)
         {
             try
             {
-                string? path = ResxPathFor(designerFilePath);
-                if (path == null || !File.Exists(path)) return null;
-                if (new FileInfo(path).Length > MaxBytes) return null; // DoS bound — refuse a giant file wholesale
-
                 var r = new ResxResolver();
-                r.ScanBinaryKeys(path);
-                using var reader = new ResXResourceReader(path) { UseResXDataNodes = true };
-                foreach (DictionaryEntry e in reader)
+                foreach (string path in ResxChainFor(designerFilePath, cultureName))
                 {
-                    if (e.Key is string k && e.Value is ResXDataNode node) r._nodes[k] = node;
-                    if (r._nodes.Count >= MaxNodes) break; // cap held entries
+                    if (!File.Exists(path)) continue;
+                    if (new FileInfo(path).Length > MaxBytes) return null;
+                    r.LoadIntoOverlay(path);
+                    if (r._nodes.Count >= MaxNodes) break;
                 }
                 return r._nodes.Count > 0 ? r : null;
             }
             catch { return null; }
         }
 
-        /// <summary>0.10.0 S3: how many sibling-.resx resources this net9 preview can't render — BinaryFormatter/SOAP/
-        /// ImageStream nodes, external FileRefs, and non-allowlisted value types. Drives an honest "preview may be
-        /// incomplete" banner. Independent of <see cref="TryLoadForDesigner"/> so it is:
-        ///   • SIZE-INDEPENDENT — streams the XML metadata, so a .resx too big for the node-load bound still gets a
-        ///     truthful count instead of a false 0 (codex: oversized→no-banner);
-        ///   • UNCAPPED — not bounded by the MaxNodes node-hold cap (codex: past-cap FileRef/non-allowlisted→no-banner);
-        ///   • NAMESPACE-AGNOSTIC — matches &lt;data&gt; by LocalName like ResXResourceReader, not an exact no-namespace
-        ///     XName (codex: a namespaced .resx→false 0);
-        ///   • METADATA-ONLY — reads the mimetype/type ATTRIBUTES, never GetValue/GetValueTypeName (which can deserialize
-        ///     a mimetype-bearing node), so a BinaryFormatter payload is never materialized during counting;
-        ///   • MIMETYPE-AUTHORITATIVE — a binary/SOAP node counts regardless of any "safe" declared type.
-        /// A sibling .resx that exists but can't be scanned → 1 (fail-closed: its resources are omitted → honest banner).
-        /// net48 renders the real compiled instance (all resources present), so its host path reports 0.</summary>
         public static int UnrenderableResourceCount(string designerFilePath)
+            => UnrenderableResourceCount(designerFilePath, DesignerCultureSelection.GetCultureName(designerFilePath));
+
+        public static int UnrenderableResourceCount(string designerFilePath, string? cultureName)
         {
-            string? path;
-            try { path = ResxPathFor(designerFilePath); } catch { return 0; }
-            if (path == null || !File.Exists(path)) return 0; // no sibling .resx → nothing to render
+            Dictionary<string, bool> unsafeByKey = new(StringComparer.Ordinal);
+            bool scanFailed = false;
+            List<string> paths;
+            try { paths = ResxChainFor(designerFilePath, cultureName).ToList(); }
+            catch { return 0; }
+
+            foreach (string path in paths)
+            {
+                if (!File.Exists(path)) continue;
+                var scan = ScanUnrenderableMeta(path);
+                if (scan == null)
+                {
+                    scanFailed = true;
+                    continue;
+                }
+                foreach (var kv in scan) unsafeByKey[kv.Key] = kv.Value;
+            }
+
+            int n = unsafeByKey.Count(kv => kv.Value);
+            return scanFailed ? Math.Max(n, 1) : n;
+        }
+
+        private static Dictionary<string, bool>? ScanUnrenderableMeta(string path)
+        {
             try
             {
                 var settings = new XmlReaderSettings
@@ -95,36 +88,54 @@ namespace WinFormsDesigner.Engine
                     IgnoreProcessingInstructions = true,
                 };
                 using var xr = XmlReader.Create(path, settings);
-                int n = 0, seen = 0;
+                var byKey = new Dictionary<string, bool>(StringComparer.Ordinal);
+                int seen = 0;
                 while (xr.Read())
                 {
                     if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "data") continue;
-                    if (++seen > MaxScanNodes) return Math.Max(n, 1); // bound worst-case CPU on a hostile file → still honest (≥1)
-                    if (IsUnrenderableMeta(xr.GetAttribute("mimetype"), xr.GetAttribute("type"))) n++;
+                    string? name = xr.GetAttribute("name");
+                    if (name == null) continue;
+                    if (++seen > MaxScanNodes)
+                    {
+                        byKey["__scan_cap__"] = true;
+                        return byKey;
+                    }
+                    byKey[name] = IsUnrenderableMeta(xr.GetAttribute("mimetype"), xr.GetAttribute("type"));
                 }
-                return n;
+                return byKey;
             }
-            catch { return 1; } // exists but unparseable/too-big-to-stream → fail-closed: resources may be missing → banner
+            catch { return null; }
         }
 
-        // Classify a &lt;data&gt; node from its mimetype/type ATTRIBUTES alone (no materialization). mimetype is
-        // authoritative (checked first), so a binary/SOAP node counts even if it also declares an allowlisted type.
         private static bool IsUnrenderableMeta(string? mimetype, string? type)
         {
             if (mimetype != null && (mimetype.IndexOf("binary.base64", StringComparison.OrdinalIgnoreCase) >= 0
                                   || mimetype.IndexOf("soap.base64", StringComparison.OrdinalIgnoreCase) >= 0)) return true;
-            if (type == null) return false; // untyped node → a plain string value → renderable
+            if (type == null) return false;
             string shortName = type.Split(',')[0].Trim();
-            if (shortName == "System.Resources.ResXFileRef") return true; // external file reference → refused
-            return !SafeTypes.Contains(shortName); // not an allowlisted safe value type
+            if (shortName == "System.Resources.ResXFileRef") return true;
+            return !SafeTypes.Contains(shortName) && !IsSafeEnum(shortName);
         }
 
-        /// <summary>Pre-scan the .resx XML (DTD/entity resolution disabled) for &lt;data&gt; entries with a
-        /// BinaryFormatter/SOAP mimetype, so <see cref="GetObject"/> can refuse them without ever materializing.
-        /// Matches by LocalName (namespace-agnostic, like ResXResourceReader) so a namespaced binary node is still
-        /// refused. A failed scan is non-fatal — the allowlist + runtime guard still apply.</summary>
-        private void ScanBinaryKeys(string path)
+        private void LoadIntoOverlay(string path)
         {
+            var binaryKeys = ScanBinaryKeys(path);
+            using var reader = new ResXResourceReader(path) { UseResXDataNodes = true };
+            foreach (DictionaryEntry e in reader)
+            {
+                if (e.Key is string k && e.Value is ResXDataNode node)
+                {
+                    _nodes[k] = node;
+                    if (binaryKeys.Contains(k)) _binaryKeys.Add(k);
+                    else _binaryKeys.Remove(k);
+                }
+                if (_nodes.Count >= MaxNodes) break;
+            }
+        }
+
+        private static HashSet<string> ScanBinaryKeys(string path)
+        {
+            var keys = new HashSet<string>(StringComparer.Ordinal);
             try
             {
                 var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
@@ -138,11 +149,12 @@ namespace WinFormsDesigner.Engine
                         (mime.IndexOf("binary.base64", StringComparison.OrdinalIgnoreCase) >= 0
                          || mime.IndexOf("soap.base64", StringComparison.OrdinalIgnoreCase) >= 0))
                     {
-                        _binaryKeys.Add(name);
+                        keys.Add(name);
                     }
                 }
             }
-            catch { /* pre-scan is best-effort defense-in-depth */ }
+            catch { }
+            return keys;
         }
 
         private static string? ResxPathFor(string designerFilePath)
@@ -158,8 +170,26 @@ namespace WinFormsDesigner.Engine
             return Path.Combine(dir, @base + ".resx");
         }
 
-        /// <summary>Value-type full names (assembly-qualified prefix, i.e. the part before the first comma) that
-        /// may be materialized from a resx node. Only side-effect-free, TypeConverter-backed value types.</summary>
+        private static IEnumerable<string> ResxChainFor(string designerFilePath, string? cultureName)
+        {
+            string? neutralPath = ResxPathFor(designerFilePath);
+            if (neutralPath == null) yield break;
+            yield return neutralPath;
+            if (!DesignerCultureSelection.TryNormalizeCultureName(cultureName, out var normalized, out _) || normalized.Length == 0)
+                yield break;
+
+            var culture = CultureInfo.GetCultureInfo(normalized);
+            var cultures = new Stack<CultureInfo>();
+            for (var c = culture; !c.Equals(CultureInfo.InvariantCulture); c = c.Parent) cultures.Push(c);
+            string dir = Path.GetDirectoryName(neutralPath) ?? ".";
+            string stem = Path.GetFileNameWithoutExtension(neutralPath);
+            while (cultures.Count > 0)
+            {
+                var c = cultures.Pop();
+                yield return Path.Combine(dir, stem + "." + c.Name + ".resx");
+            }
+        }
+
         private static readonly HashSet<string> SafeTypes = new(StringComparer.Ordinal)
         {
             "System.Drawing.Bitmap",
@@ -171,43 +201,130 @@ namespace WinFormsDesigner.Engine
             "System.Drawing.Point",
             "System.Drawing.Size",
             "System.Drawing.SizeF",
+            "System.Drawing.Rectangle",
             "System.Drawing.Font",
+            "System.Boolean",
+            "System.Byte",
+            "System.SByte",
+            "System.Int16",
+            "System.UInt16",
+            "System.Int32",
+            "System.UInt32",
+            "System.Int64",
+            "System.UInt64",
+            "System.Single",
+            "System.Double",
+            "System.Decimal",
+            "System.Windows.Forms.Padding",
+            "System.Windows.Forms.RightToLeft",
+            "System.Windows.Forms.AnchorStyles",
+            "System.Windows.Forms.DockStyle",
+            "System.Windows.Forms.FlatStyle",
+            "System.Drawing.ContentAlignment",
         };
 
-        /// <summary>Resolve <c>resources.GetObject(name)</c> to a safe materialized value, or null.</summary>
-        public object? GetObject(string name)
+        public object? GetObject(string name) => TryGetObject(name, out var value) ? value : null;
+
+        private bool TryGetObject(string name, out object? value)
         {
-            if (!_nodes.TryGetValue(name, out var node)) return null;
-            if (_binaryKeys.Contains(name)) return null; // BinaryFormatter/SOAP node → refuse without materializing
+            value = null;
+            if (!_nodes.TryGetValue(name, out var node)) return false;
+            return TryMaterialize(name, node, out value);
+        }
+
+        private bool TryMaterialize(string name, ResXDataNode node, out object? value)
+        {
+            value = null;
+            if (_binaryKeys.Contains(name)) return false;
             try
             {
-                if (node.FileRef != null) return null; // external file reference → refuse (arbitrary file read)
+                if (node.FileRef != null) return false;
                 string? typeName = node.GetValueTypeName((ITypeResolutionService?)null);
-                if (typeName == null) return null;
+                if (typeName == null) return false;
                 string shortName = typeName.Split(',')[0].Trim();
-                if (!SafeTypes.Contains(shortName)) return null; // not an allowlisted safe value type
-                object? value = node.GetValue((ITypeResolutionService?)null);
-                // bound a materialized image/icon: a pixel-bomb entry (tiny base64, huge dimensions) decodes to a
-                // multi-GB raster that would then be rendered onto the form + thumbnailed. Reject (and dispose) an
-                // oversized one so it is never drawn → the property stays unset and the form still renders.
+                if (!SafeTypes.Contains(shortName) && !IsSafeEnum(shortName)) return false;
+                value = node.GetValue((ITypeResolutionService?)null);
                 if (value is System.Drawing.Image img
                     && ((long)img.Width * img.Height > MaxImagePixels || img.Width > MaxImageDimension || img.Height > MaxImageDimension))
                 {
                     img.Dispose();
-                    return null;
+                    value = null;
+                    return false;
                 }
                 if (value is System.Drawing.Icon ico
                     && ((long)ico.Width * ico.Height > MaxImagePixels || ico.Width > MaxImageDimension || ico.Height > MaxImageDimension))
                 {
                     ico.Dispose();
-                    return null;
+                    value = null;
+                    return false;
                 }
-                return value;
+                return true;
             }
-            catch { return null; } // unresolvable / bad bytes / (retarget) binary → degrade to null
+            catch { value = null; return false; }
         }
 
-        /// <summary>Resolve <c>resources.GetString(name)</c> to a string, or null.</summary>
+        private static bool IsSafeEnum(string shortName) =>
+            shortName == "System.Windows.Forms.RightToLeft"
+            || shortName == "System.Windows.Forms.AnchorStyles"
+            || shortName == "System.Windows.Forms.DockStyle"
+            || shortName == "System.Windows.Forms.FlatStyle"
+            || shortName == "System.Drawing.ContentAlignment";
+
         public string? GetString(string name) => GetObject(name) as string;
+
+        public bool ApplyResources(object target, string key)
+        {
+            string prefix = key + ".";
+            var pending = new List<(PropertyDescriptor pd, object? value)>();
+            foreach (var kv in _nodes.Where(kv => kv.Key.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                string prop = kv.Key.Substring(prefix.Length);
+                if (prop.Length == 0 || prop.IndexOf('.') >= 0) return false;
+                if (!TryMaterialize(kv.Key, kv.Value, out var value)) return false;
+                var pd = TypeDescriptor.GetProperties(target)[prop];
+                if (pd == null || pd.IsReadOnly) return false;
+                if (!TryCoerceForProperty(value, pd.PropertyType, out var coerced)) return false;
+                pending.Add((pd, coerced));
+            }
+
+            foreach (var item in pending)
+            {
+                try { item.pd.SetValue(target, item.value); }
+                catch { return false; }
+            }
+            return true;
+        }
+
+        private static bool TryCoerceForProperty(object? value, Type propertyType, out object? coerced)
+        {
+            coerced = value;
+            if (value == null) return !propertyType.IsValueType || Nullable.GetUnderlyingType(propertyType) != null;
+            if (propertyType.IsInstanceOfType(value)) return true;
+            try
+            {
+                var target = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+                if (value is string s)
+                {
+                    if (target.IsEnum)
+                    {
+                        coerced = Enum.Parse(target, s);
+                        return true;
+                    }
+                    var converter = TypeDescriptor.GetConverter(target);
+                    if (converter.CanConvertFrom(typeof(string)))
+                    {
+                        coerced = converter.ConvertFromInvariantString(s);
+                        return true;
+                    }
+                }
+                if (value is IConvertible)
+                {
+                    coerced = Convert.ChangeType(value, target, CultureInfo.InvariantCulture);
+                    return true;
+                }
+            }
+            catch { return false; }
+            return false;
+        }
     }
 }

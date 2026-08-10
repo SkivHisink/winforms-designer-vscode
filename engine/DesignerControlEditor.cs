@@ -59,9 +59,9 @@ namespace WinFormsDesigner.Engine
         public List<string> MissingDependencies { get; init; } = new();
     }
 
-    /// <summary>Result of <see cref="DesignerControlEditor.MoveZOrder"/> (Bring to Front / Send to Back): the
-    /// reordered .Designer.cs text. <see cref="NewText"/> equals the input (a no-op) when the control is already
-    /// at the requested end of its sibling z-order; null on reject.</summary>
+    /// <summary>Result of <see cref="DesignerControlEditor.MoveZOrder"/> (Bring to Front / Send to Back) or
+    /// <see cref="DesignerControlEditor.MoveTabPage"/> (one position left/right): the reordered .Designer.cs text.
+    /// <see cref="NewText"/> equals the input for an edge no-op; null on reject.</summary>
     public sealed class ControlReorderResult
     {
         public bool Safe { get; init; }
@@ -914,6 +914,203 @@ namespace WinFormsDesigner.Engine
             if (!parseOk || !gateOk)
                 return new ControlRemoveResult { Safe = false, Reason = !parseOk ? "edited text has syntax errors" : "edit changed more than the tab subtree" };
             return new ControlRemoveResult { Safe = true, NewText = text };
+        }
+
+        /// <summary>
+        /// Move one field-backed tab page a single position left/right in its host's source collection order.
+        /// Supports the two canonical serializer shapes used by WinForms and vendor controls:
+        /// <c>host.Controls/TabPages.Add(this.page)</c> and a fresh-array
+        /// <c>host.Controls/TabPages.AddRange(new[]{ this.page, ... })</c>. The operation swaps only the two adjacent
+        /// page-reference expressions, so it also works across an AddRange + later Add boundary without moving page
+        /// initialization/property blocks or touching <c>TabIndex</c>. Non-trivial/duplicate attachment expressions
+        /// fail closed. <see cref="OnlyTabPageMoved"/> independently proves the exact adjacent permutation.
+        /// </summary>
+        public static ControlReorderResult MoveTabPage(string src, string hostId, string pageId, bool left)
+        {
+            if (pageId is "this" or "") return new ControlReorderResult { Safe = false, Reason = "cannot reorder the root form" };
+            if (!IsValidIdentifier(hostId)) return new ControlReorderResult { Safe = false, Reason = "invalid tab host id: " + hostId };
+            if (!IsValidIdentifier(pageId)) return new ControlReorderResult { Safe = false, Reason = "invalid tab page id: " + pageId };
+            if (hostId == pageId) return new ControlReorderResult { Safe = false, Reason = "page and host are the same control" };
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = FindClassWithIC(root);
+            if (cls == null || FormClassResolver.InitMethodOf(cls)?.Body == null)
+                return new ControlReorderResult { Safe = false, Reason = "InitializeComponent not found" };
+            var names = GatherFieldNames(cls);
+            if (!names.Contains(hostId)) return new ControlReorderResult { Safe = false, Reason = "unknown tab host: " + hostId };
+            if (!names.Contains(pageId)) return new ControlReorderResult { Safe = false, Reason = "unknown tab page: " + pageId };
+
+            if (!TryCollectTabAttachments(root, hostId, out var pages, out _, out _, out string? why))
+                return new ControlReorderResult { Safe = false, Reason = why ?? "tab attachment order is not safely representable" };
+            if (pages.Count == 0)
+                return new ControlReorderResult { Safe = false, Reason = "tab host has no canonical Controls.Add / TabPages.Add[Range] pages" };
+            if (pages.Select(p => p.PageId).Distinct(StringComparer.Ordinal).Count() != pages.Count)
+                return new ControlReorderResult { Safe = false, Reason = "tab collection contains a duplicate page attachment" };
+
+            int index = pages.FindIndex(p => p.PageId == pageId);
+            if (index < 0)
+                return new ControlReorderResult { Safe = false, Reason = "page is not attached to host " + hostId + " (no canonical Controls.Add / TabPages.Add[Range])" };
+            int adjacent = left ? index - 1 : index + 1;
+            if (adjacent < 0 || adjacent >= pages.Count)
+                return new ControlReorderResult { Safe = true, NewText = src }; // already at the requested edge
+
+            var mine = pages[index].PageExpression;
+            var other = pages[adjacent].PageExpression;
+            if (HasCommentTrivia(mine) || HasCommentTrivia(other))
+                return new ControlReorderResult { Safe = false, Reason = "tab attachment has a comment on the page expression — reformat first" };
+
+            string mineText = src.Substring(mine.SpanStart, mine.Span.Length);
+            string otherText = src.Substring(other.SpanStart, other.Span.Length);
+            var edits = new List<(int start, int end, string replacement)>
+            {
+                (mine.SpanStart, mine.Span.End, otherText),
+                (other.SpanStart, other.Span.End, mineText),
+            };
+            edits.Sort((a, b) => b.start.CompareTo(a.start));
+            string text = src;
+            foreach (var edit in edits)
+                text = text.Substring(0, edit.start) + edit.replacement + text.Substring(edit.end);
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(text).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool gateOk = parseOk && OnlyTabPageMoved(src, text, hostId, pageId, left);
+            if (!parseOk || !gateOk)
+                return new ControlReorderResult { Safe = false, Reason = !parseOk ? "reordered text has syntax errors" : "edit changed more than the adjacent tab order" };
+            return new ControlReorderResult { Safe = true, NewText = text };
+        }
+
+        private sealed class TabAttachment
+        {
+            public StatementSyntax Statement { get; }
+            public ExpressionSyntax PageExpression { get; }
+            public string PageId { get; }
+
+            public TabAttachment(StatementSyntax statement, ExpressionSyntax pageExpression, string pageId)
+            {
+                Statement = statement;
+                PageExpression = pageExpression;
+                PageId = pageId;
+            }
+        }
+
+        /// <summary>Extract the canonical, execution-ordered page references attached to one host. Host collection
+        /// statements are represented separately from every other InitializeComponent statement so the move gate can
+        /// prove that only page identities changed inside otherwise-identical Add/AddRange shapes.</summary>
+        private static bool TryCollectTabAttachments(SyntaxNode root, string hostId, out List<TabAttachment> pages,
+            out List<string> nonTabStatements, out List<string> attachmentShapes, out string? why)
+        {
+            pages = new List<TabAttachment>();
+            nonTabStatements = new List<string>();
+            attachmentShapes = new List<string>();
+            why = null;
+            var cls = FindClassWithIC(root);
+            var init = FormClassResolver.InitMethodOf(cls);
+            if (init?.Body == null) { why = "InitializeComponent not found"; return false; }
+            var names = cls == null ? new HashSet<string>(StringComparer.Ordinal) : GatherFieldNames(cls);
+
+            foreach (var st in init.Body.Statements)
+            {
+                if (!TryGetTabCollectionInvocation(st, hostId, out var inv, out string method))
+                {
+                    nonTabStatements.Add(NormalizeStmt(st.ToString()));
+                    continue;
+                }
+
+                var statementExpressions = new List<ExpressionSyntax>();
+                if (method == "Add")
+                {
+                    if (inv!.ArgumentList.Arguments.Count != 1)
+                    { why = "tab Add must have exactly one page argument"; return false; }
+                    statementExpressions.Add(inv.ArgumentList.Arguments[0].Expression);
+                }
+                else
+                {
+                    var initializer = FindArrayInitializer(st);
+                    if (initializer == null)
+                    { why = "tab AddRange must use a fresh array initializer"; return false; }
+                    statementExpressions.AddRange(initializer.Expressions);
+                }
+
+                foreach (var expression in statementExpressions)
+                {
+                    if (!TrySimpleFieldReference(expression, out string page) || !names.Contains(page))
+                    { why = "tab collection contains a non-trivial or unknown page expression"; return false; }
+                    pages.Add(new TabAttachment(st, expression, page));
+                }
+                attachmentShapes.Add(TabAttachmentShape(st, statementExpressions));
+            }
+            return true;
+        }
+
+        private static bool TryGetTabCollectionInvocation(StatementSyntax st, string hostId,
+            out InvocationExpressionSyntax? invocation, out string method)
+        {
+            invocation = null; method = "";
+            if (st is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }) return false;
+            if (inv.Expression is not MemberAccessExpressionSyntax ma) return false;
+            method = ma.Name.Identifier.Text;
+            if (method != "Add" && method != "AddRange") return false;
+            var chain = Flatten(ma.Expression);
+            if (chain.Count != 2 || chain[0] != hostId || (chain[1] != "Controls" && chain[1] != "TabPages")) return false;
+            invocation = inv;
+            return true;
+        }
+
+        private static bool TrySimpleFieldReference(ExpressionSyntax expression, out string id)
+        {
+            id = "";
+            if (expression is IdentifierNameSyntax bare)
+            {
+                id = bare.Identifier.Text;
+                return IsValidIdentifier(id);
+            }
+            if (expression is MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax, Name: IdentifierNameSyntax member })
+            {
+                id = member.Identifier.Text;
+                return IsValidIdentifier(id);
+            }
+            return false;
+        }
+
+        private static string TabAttachmentShape(StatementSyntax statement, IReadOnlyList<ExpressionSyntax> expressions)
+        {
+            var replaced = statement.ReplaceNodes(expressions, (original, _) =>
+            {
+                ExpressionSyntax placeholder = original is MemberAccessExpressionSyntax
+                    ? SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression,
+                        SyntaxFactory.ThisExpression(), SyntaxFactory.IdentifierName("__TAB_PAGE__"))
+                    : SyntaxFactory.IdentifierName("__TAB_PAGE__");
+                return placeholder.WithTriviaFrom(original);
+            });
+            return NormalizeStmt(replaced.ToString());
+        }
+
+        private static bool HasCommentTrivia(SyntaxNode node) => node.DescendantTrivia(descendIntoTrivia: true).Any(t =>
+            t.IsKind(SyntaxKind.SingleLineCommentTrivia)
+            || t.IsKind(SyntaxKind.MultiLineCommentTrivia)
+            || t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
+            || t.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia));
+
+        /// <summary>Independent safety gate for a one-step tab move: non-tab statements, tab attachment shapes,
+        /// fields, and class member count must be unchanged; the host's flattened page sequence must be exactly the
+        /// original sequence with the requested page swapped with its immediate left/right neighbor.</summary>
+        public static bool OnlyTabPageMoved(string original, string edited, string hostId, string pageId, bool left)
+        {
+            var oRoot = CSharpSyntaxTree.ParseText(original).GetRoot();
+            var eRoot = CSharpSyntaxTree.ParseText(edited).GetRoot();
+            if (!TryCollectTabAttachments(oRoot, hostId, out var oPages, out var oNon, out var oShapes, out _)
+                || !TryCollectTabAttachments(eRoot, hostId, out var ePages, out var eNon, out var eShapes, out _)) return false;
+            if (!oNon.SequenceEqual(eNon, StringComparer.Ordinal) || !oShapes.SequenceEqual(eShapes, StringComparer.Ordinal)) return false;
+            if (ClassMemberCount(oRoot) != ClassMemberCount(eRoot)) return false;
+            if (!MultisetEqual(FieldDeclNames(oRoot), FieldDeclNames(eRoot))) return false;
+
+            var before = oPages.Select(p => p.PageId).ToList();
+            var after = ePages.Select(p => p.PageId).ToList();
+            if (before.Count != after.Count || before.Distinct(StringComparer.Ordinal).Count() != before.Count) return false;
+            int index = before.IndexOf(pageId);
+            int adjacent = left ? index - 1 : index + 1;
+            if (index < 0 || adjacent < 0 || adjacent >= before.Count) return false;
+            (before[index], before[adjacent]) = (before[adjacent], before[index]);
+            return before.SequenceEqual(after, StringComparer.Ordinal);
         }
 
         /// <summary>True when <paramref name="st"/> is <c>this.&lt;host&gt;.(Controls|TabPages).Add(this.&lt;page&gt;)</c>
@@ -1937,10 +2134,14 @@ namespace WinFormsDesigner.Engine
 
         private static string UniqueName(string baseName, HashSet<string> names)
         {
+            // C# identifiers are case-sensitive, but the WinForms component container is not: adding `tabpage1`
+            // beside an existing `tabPage1` throws while the generated designer is interpreted. Generate against a
+            // case-insensitive view so every source writer produces names that both C# and DesignSurface can accept.
+            var occupied = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
             for (int i = 1; i < 100000; i++)
             {
                 string cand = baseName + i;
-                if (!names.Contains(cand)) return cand;
+                if (!occupied.Contains(cand)) return cand;
             }
             return baseName + "_x";
         }

@@ -8,6 +8,7 @@
   "command.showProperties.title": "WinForms: Eigenschaften anzeigen",
   "command.exportDiagnostics.title": "WinForms: Designer-Diagnose exportieren",
   "command.selectControlAssembly.title": "WinForms: Steuerelement-Assembly / Projekt auswählen…",
+  "command.selectLocalizationCulture.title": "WinForms: Lokalisierungskultur des Formulars auswählen…",
   "configuration.title": "WinForms Designer",
   "untrusted.description": "Beim Rendern eines Designers werden die Steuerelement-Assemblys des Projekts geladen und ausgeführt (Konstruktoren / OnPaint laufen in der Vorschau), daher ist die Erweiterung in nicht vertrauenswürdigen Arbeitsbereichen deaktiviert.",
   "config.autoOpenDesigner.description": "Öffnet automatisch den WinForms-Designer, wenn die `.cs` eines Formulars (eine mit einer generierten `.Designer.cs`-Partnerdatei) zum aktiven Editor wird — analog zu Visual Studio, wo das Öffnen von `Form1.cs` den Designer anzeigt. Verwenden Sie **Code anzeigen**, um ein Formular wieder zu seinem `.cs`-Text zu wechseln (das automatische Öffnen übernimmt es nicht erneut, bis Sie die Datei erneut öffnen). Deaktivieren Sie dies, um beim C#-Texteditor zu bleiben und den Designer manuell über **WinForms: Designer öffnen** oder *Editor erneut öffnen mit…* zu öffnen.",

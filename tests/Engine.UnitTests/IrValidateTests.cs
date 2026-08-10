@@ -104,6 +104,18 @@ public sealed class IrValidateTests
     }
 
     [Fact]
+    public void ApplyResources_InvalidTargetOrKey_Refused()
+    {
+        var badTarget = WellFormed();
+        badTarget.Statements.Add(new IrApplyResources { TargetIsRoot = false, TargetName = "1bad", ResourceKey = "button1" });
+        Assert.NotNull(IrValidate.Check(badTarget));
+
+        var badKey = WellFormed();
+        badKey.Statements.Add(new IrApplyResources { TargetIsRoot = true, ResourceKey = "" });
+        Assert.NotNull(IrValidate.Check(badKey));
+    }
+
+    [Fact]
     public void PropertyPath_NonIdentifierSegment_Refused()
     {
         var d = WellFormed();

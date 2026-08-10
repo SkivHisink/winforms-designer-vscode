@@ -37,9 +37,20 @@ namespace WinFormsDesigner.Engine
         public string Anchor { get; init; } = "None";
         /// <summary>Dock style ("Fill"/"Top"/… / "None") — feeds the canvas dock indicator. Root = "None".</summary>
         public string Dock { get; init; } = "None";
+        /// <summary>True for a standard WinForms TabControl (including subclasses). The canvas uses this
+        /// engine-issued capability bit to route header gestures into the bounded tab view-state protocol.</summary>
+        public bool IsTabHost { get; init; }
         /// <summary>True when this control is a ToolStrip/MenuStrip/StatusStrip — the canvas routes clicks on it into
         /// on-canvas item mode ("Type Here" add / item rename / delete) instead of a plain control select.</summary>
         public bool IsStripHost { get; init; }
+    }
+
+    /// <summary>The field-backed tab page whose actual header contains a window-space point. Empty fields are the
+    /// fail-closed result for an unknown/non-tab host, an off-header point, or a page without a designer identity.</summary>
+    public sealed class TabHit
+    {
+        public string PageId { get; init; } = "";
+        public string Text { get; init; } = "";
     }
 
     /// <summary>
