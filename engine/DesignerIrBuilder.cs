@@ -46,6 +46,7 @@ namespace WinFormsDesigner.Engine
             {
                 DesignedTypeName = FormClassResolver.QualifiedName(cls),
                 BaseTypeSyntaxName = FirstBaseTypeName(cls) ?? "",
+                NamespaceContext = NamespaceContextOf(cls),
             };
 
             var init = FormClassResolver.InitMethodOf(cls);
@@ -912,6 +913,81 @@ namespace WinFormsDesigner.Engine
         {
             string s = t.ToString().Replace(" ", "");
             return KeywordTypeAliases.TryGetValue(s, out var fqn) ? fqn : s;
+        }
+
+        /// <summary>
+        /// The namespaces an UNQUALIFIED type name in this file may resolve to, most likely first: every `using`
+        /// directive that is in scope (file-level and inside the namespace, in source order), then the enclosing
+        /// namespace and each ancestor of it.
+        ///
+        /// Why the enclosing chain and not only the usings: a control declared in the form's own namespace (or in a
+        /// parent of it) needs no using at all, and C# would still bind it.
+        ///
+        /// Deliberately syntax-only and deliberately NOT clever: alias directives (`using DX = Vendor.Controls;`) are
+        /// skipped rather than half-resolved — an alias makes the written name itself unresolvable, which is a
+        /// different problem from a missing namespace and must not be papered over here. Static usings are skipped
+        /// too (they import members, not types). The result is bounded and each entry is validated by IrValidate.
+        /// </summary>
+        private static List<string> NamespaceContextOf(ClassDeclarationSyntax cls)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var result = new List<string>();
+            void Add(string? candidate)
+            {
+                if (string.IsNullOrEmpty(candidate)) return;
+                string ns = candidate!.Replace(" ", "");
+                if (ns.Length == 0 || ns.Length > IrLimits.MaxTypeNameLength) return;
+                if (result.Count >= IrLimits.MaxNamespaceContext) return;
+                if (seen.Add(ns)) result.Add(ns);
+            }
+
+            // Scope by scope, innermost first — and INSIDE each scope the namespace's own members come BEFORE its
+            // `using` directives, because that is how C# binds: in
+            //     namespace App { using Vendor; class Widget … ; … new Widget(); }
+            // the compiler creates `App.Widget`, not `Vendor.Widget`. Getting this backwards would silently construct
+            // a different component than the source compiles to. `namespace A.B.C` is equivalent to three nested
+            // scopes, so its ancestors are searched after that scope's usings and before the next outer scope.
+            // BaseNamespaceDeclarationSyntax, not NamespaceDeclarationSyntax: it also covers the FILE-SCOPED form
+            // (`namespace X;`), whose usings and namespace would otherwise be invisible.
+            var scopes = new List<BaseNamespaceDeclarationSyntax>();
+            CompilationUnitSyntax? unit = null;
+            for (SyntaxNode? node = cls; node != null; node = node.Parent)
+            {
+                if (node is BaseNamespaceDeclarationSyntax ns) scopes.Add(ns);
+                else if (node is CompilationUnitSyntax cu) unit = cu;
+            }
+            for (int i = 0; i < scopes.Count; i++)
+            {
+                string full = FullNamespaceOf(scopes[i]);
+                string outer = i + 1 < scopes.Count ? FullNamespaceOf(scopes[i + 1]) : "";
+                Add(full);
+                foreach (var u in scopes[i].Usings)
+                    if (u.Alias == null && u.StaticKeyword.IsKind(SyntaxKind.None)) Add(u.Name?.ToString());
+                // the dotted ancestors this scope stands for, down to (not including) the next scope outward
+                for (string cur = full; ; )
+                {
+                    int dot = cur.LastIndexOf('.');
+                    if (dot <= 0) break;
+                    cur = cur.Substring(0, dot);
+                    if (cur == outer) break;
+                    Add(cur);
+                }
+            }
+            if (unit != null)
+                foreach (var u in unit.Usings)
+                    if (u.Alias == null && u.StaticKeyword.IsKind(SyntaxKind.None)) Add(u.Name?.ToString());
+            return result;
+        }
+
+        /// <summary>A namespace declaration's FULL name, composed from every enclosing declaration: the inner block of
+        /// `namespace Product { namespace Ui { … } }` is `Product.Ui`, not `Ui`. Covers the file-scoped form
+        /// (`namespace X;`) too, since both shapes are BaseNamespaceDeclarationSyntax.</summary>
+        private static string FullNamespaceOf(BaseNamespaceDeclarationSyntax declaration)
+        {
+            var parts = new List<string>();
+            for (SyntaxNode? n = declaration; n != null; n = n.Parent)
+                if (n is BaseNamespaceDeclarationSyntax ns) parts.Insert(0, ns.Name.ToString().Replace(" ", ""));
+            return string.Join(".", parts);
         }
 
         private static string? FirstBaseTypeName(ClassDeclarationSyntax cls)

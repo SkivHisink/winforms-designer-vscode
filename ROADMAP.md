@@ -191,30 +191,297 @@ hardware/vendor acceptance, and publication remain outside this minor release.
 source transaction, and fail closed on ambiguous source. Real vendor/hardware interaction and Marketplace/Open VSX
 publication remain explicit external gates.
 
-## 2.0.0 — Extensible design-time platform
+## 1.8.0 — Placement override, a self-maintaining toolbox, and design-time safety
 
-**Status: next active roadmap milestone**
+**Status: repository-side implementation complete; publication and hands-on platform/vendor acceptance are external gates**
 
-- Introduce an isolated design-time service host with the `IDesignerHost` / `IDesigner` services required by
-  real `ControlDesigner` implementations.
-- Execute supported third-party `DesignerActionList` and designer verbs instead of only displaying vendor
-  smart-tag metadata and mapping a small safe subset to built-in operations.
-- Run design workers under explicit runtime/architecture isolation policies with deterministic recovery,
-  unload, timeout, and crash reporting.
-- Define a versioned protocol and adapter surface for vendor-specific toolbox, property-editor, collection,
-  and smart-tag integrations.
-- Ship migration and self-repair paths for any setting, cache, or worker-protocol changes introduced by the
-  new host.
+This milestone closes two workflow gaps that showed up in daily use: the canvas always deciding where a control
+lands, and the toolbox only knowing about libraries the user pointed it at by hand.
 
-**Exit criterion:** third-party control suites can participate through a documented design-time integration
-surface rather than project-specific hard-coding, while the 1.0 fail-closed and no-silent-data-loss promises
-remain intact.
+### Placement override
+
+- A held modifier suppresses alignment for the duration of one drag or resize, so a control can be
+  placed at an arbitrary position instead of being pulled to a sibling edge/center within the snap threshold.
+  The suppression is per-gesture and never a persistent mode, so the default stays "aligned unless asked".
+- The default is **Alt** (the Visual Studio binding) rather than Shift: on this canvas `Shift`/`Ctrl` + click already
+  extend the selection, and `Shift` + arrow already means resize-by-keyboard, so a Shift-drag override would
+  collide with multi-select. The modifier is configurable if the VS default is not wanted.
+- While the override is held, the canvas draws no snaplines and shows the live position/size readout, so the user can see
+  the exact value they are choosing instead of guessing why the control stopped moving.
+- Free placement still goes through the existing geometry pipeline: the engine corrects final bounds, and
+  layout-managed, docked, locked, inherited, and read-only controls keep refusing the move as they do today.
+  Suppressing alignment must not become a way around a fail-closed geometry rule.
+
+### Self-maintaining toolbox
+
+- The owning project and its explicit `ProjectReference` graph supply build-output roots automatically instead of
+  an all-workspace project scan or a required manual pass through **Choose Toolbox Items**. Conventional `bin` roots
+  and concrete custom `BaseOutputPath` / `OutputPath` / `OutDir` values are recognized without expanding dynamic
+  MSBuild properties into an unbounded traversal.
+- Discovery stays lazy and cheap by construction: no scan on activation, work started off the critical path and
+  in bounded slices, cancellable when the user starts typing or the window loses focus, with explicit file,
+  depth, and time budgets. Metadata continues to be read without instantiating or executing control code.
+- Results are cached by path plus size and mtime, and refreshed incrementally through a watcher on the
+  directories that actually produced hits, so a rebuild re-reads one output rather than re-walking the tree.
+- The user can add and remove discovered entries, and a removal sticks: an item the user deleted does not
+  reappear on the next scan. Removals, additions, and custom tabs stay workspace state and survive reload; legacy
+  global curation is migrated once so upgrading to the workspace contract does not discard existing choices.
+- Auto-discovery is visible and switchable — a setting disables it entirely, diagnostics name which directories
+  were scanned and what was skipped by a budget, and the result list is never silently truncated.
+
+**Exit criterion — met in the repository automated and package corpus:** a control can be dropped at an exact
+position without weakening engine geometry authorization, and the owning project's controls appear without manual
+assembly configuration. Discovery does not run on activation, walks only the owning project plus explicit project
+references under bounded/cancellable budgets, and preserves workspace-scoped user additions, removals, and tabs
+across later scans. Real vendor/hardware interaction and Marketplace/Open VSX publication remain explicit external
+gates outside this repository-side milestone.
+
+### Also in this milestone — design-time safety: opening a form stops running your application
+
+Taken from three reports on one real DevExpress solution during the 1.8 cycle: opening a form opened the
+application's own windows, an open designer made the project unbuildable, and the preview quietly ran code that a
+designer has no business running.
+
+- **The Visual Studio route, for real files.** VS never constructs the class being edited; it instantiates the
+  declared base type and replays the designer statements onto it. Three shapes common in hand-written designer files
+  used to defeat that and force the compiled fallback — an unqualified type name resolved through the file's own
+  `using` scope, a non-public constructor, and a vendor collection that is not an `IList`. All three now interpret.
+  Measured on the reporting project: 8 of 10 forms, including the one whose `Load` opened two windows.
+- **The build output is no longer held.** The modern engine loads user assemblies from a private in-memory copy, so
+  it pins nothing at any time; the net48 engine, which must load in place, detects a build started outside VS Code
+  and hands the output back before MSBuild's copy needs it.
+- **Windows cannot reach the screen.** The net48 engine runs on a private desktop that is never displayed, so a
+  form's own design-time windows — splash screens, docking panels, dialogs — are contained and named in the log
+  instead of appearing next to the editor. A modal one is closed after a bounded wait so a preview cannot wedge.
+- **Optional metadata never costs a construction.** The vendor "Tasks" menu is read from a compiled instance that
+  already exists, and never causes one to be built.
+
+**Exit criterion — met in the repository automated corpus:** a form whose designer file uses an unqualified vendor
+type, an internal constructor and a non-IList collection interprets without its own class being constructed (proved
+by a marker window that must not appear); a real MSBuild rebuild of a rendered project succeeds; a self-maximizing
+form that opens a window from `Load` renders at its designed size with nothing on the interactive desktop; and the
+vendor-task query leaves nothing loaded. Static reads off user/vendor types remain refused by the value allowlists
+and therefore still disclose a compiled fallback. Real vendor/hardware interaction and Marketplace/Open VSX
+publication remain explicit external gates.
+
+## 1.9.0 — The daily loop: naming, navigation, default events
+
+The cheapest remaining VS reflexes. Each is a gesture a WinForms developer performs dozens of times an hour and
+currently cannot perform here at all.
+
+- **Rename a control.** `(Name)` becomes an editable design-time row in the property grid, with F2 on the canvas
+  and in the outline. The engine's rename path already exists and is proven — today it is reachable only from the
+  component tray, so a visible control cannot be renamed at all. Code-behind references keep refusing as they do
+  for tray components.
+- **Double-click creates the default event.** Resolve the control's real `DefaultEventAttribute` (Button → Click,
+  TextBox → TextChanged, Form → Load), reuse the existing handler-stub generator, and navigate to the body —
+  generating nothing when a handler is already wired.
+- **`F7` / `Shift+F7`** for View Code / View Designer, matching the VS muscle memory. Only `F4` and `Ctrl+Shift+B`
+  are bound today.
+- **Keyboard selection traversal:** `Tab` / `Shift+Tab` walk siblings, `Esc` selects the parent container, and
+  `Ctrl+A` selects everything in the current design scope. None of these exist yet; only nudging does.
+- **Live position/size readout** during a move or resize, so the canvas states the value being chosen instead of
+  leaving the user to read it back from the grid afterwards.
+
+**Exit criterion:** a control can be renamed, given its default handler, and navigated to and from code without
+touching the mouse or the property grid, on both engines — and a rename that code-behind would break, or a
+handler that already exists, changes no source.
+
+## 1.10.0 — Multi-object properties
+
+- Editing a property once for a multi-selection: intersect the browsable, writable, type-compatible properties of
+  every selected component instead of showing only the primary selection.
+- Mixed values are displayed as mixed and never silently propagate the first control's value to the rest.
+- One prevalidated, revision-checked transaction covers all targets and undoes as a single unit; a stale
+  revision, inherited/read-only member, or unrepresentable target writes nothing at all.
+- Multi-object Reset only where every target has a representable reset.
+- Categorized / Alphabetical toggle, with search behaving identically in both modes.
+
+**Exit criterion:** editing or resetting a shared property across heterogeneous controls produces exactly the
+per-control source splices, one undo step restores all of them, and a single ineligible target causes zero
+partial writes.
+
+## 1.11.0 — Precision layout
+
+- Layout modes — `SnapLines`, `SnapToGrid`, `None` — with configurable grid size and an optional visible grid.
+  **Align to Grid** stops being a permanently disabled menu entry. The 1.8.0 per-gesture Alt suppression stays.
+- Snaplines become Margin/Padding-aware, so a control snaps at its declared margin distance the way VS does,
+  instead of only edge-to-edge and center-to-center.
+- Text-baseline snaplines for label/textbox-class controls, measured by the engine so font, DPI, and zoom cannot
+  drift the guide away from the rendered text.
+- Horizontal/vertical spacing **Increase**, **Decrease**, and **Remove** alongside the existing Make Equal.
+- `Ctrl` + drag duplicates a control in place of moving it, reusing the proven copy/paste transaction.
+
+**Exit criterion:** move, resize, spacing, and grid operations are deterministic across nested containers, zoom
+levels, and DPI scales on both engines; repeated gestures round-trip without accumulating coordinate drift.
+
+## 1.12.0 — Creating and placing
+
+- **Add Windows Form** and **Add UserControl**: collision-safe names, correct namespace, the partial-class pair,
+  and the matching `.resx`, opened in the designer with the new root selected.
+- SDK-style projects rely on implicit inclusion; legacy project files get an explicit item added without
+  reformatting anything else. An ambiguous or unrecognized project shape is refused before any file is created.
+- Toolbox double-click inserts a default-sized control into the active container.
+- Dragging a rectangle from a selected toolbox item creates the control at exactly that size, instead of always
+  dropping a default-sized control at a point.
+
+**Exit criterion:** a scaffolded form and user control compile and reopen in representative modern and net48
+projects, and a refused project shape leaves no partial file set behind.
+
+## 1.13.0 — Assets and menu/toolbar productivity
+
+- Resource-valued properties (`Image`, `BackgroundImage`, `Icon`, …) can pick an existing project resource, not
+  only import a file into the form's own `.resx`. Only losslessly representable resource forms are offered.
+- On-canvas drag to reorder and reparent `ToolStrip` / `MenuStrip` items, complementing the existing add, rename,
+  delete, and type-picker gestures.
+- Separators and **Insert Standard Items** for the standard menu and toolbar skeletons.
+- Unknown item statements and unknown `.resx` entries stay byte-identical; an operation that cannot be
+  represented is the only thing disabled.
+
+**Exit criterion:** assets and strip structures survive save, reopen, build, undo, and redo with only the
+intended regions changed, and a binary or structurally unknown resource fails before any mutation.
+
+## 1.14.0 — Visual inheritance overrides
+
+- Classify inherited members by ownership **and effective accessibility** instead of one blanket read-only rule,
+  so `public`/`protected` inherited controls can take allowlisted property and layout overrides.
+- Overrides are emitted only in the derived class; the base form is never modified as a side effect.
+- Private, unresolved, vendor-dependent, and last-build-mismatched nodes stay visibly inherited and read-only.
+- Reconcile derived overrides when a rebuilt base changes identity, type, accessibility, or available properties.
+
+**Exit criterion:** a derived-form matrix proves accessible inherited controls can be overridden and inaccessible
+ones cannot, the base source stays untouched, and a base-version mismatch fails closed rather than guessing.
+
+## 1.15.0 — Bounded data-binding productivity
+
+- A Data Sources pane for recognized object/list types and the binding components already in the form.
+- Drag-to-generate a curated set of detail and tabular controls with their `BindingSource` and `BindingNavigator`
+  wiring, from allowlisted source patterns only.
+- `DataGridView` column generation from known schema metadata that preserves hand-written columns.
+- Application-settings binding for recognized project/settings formats.
+- Unsupported providers, custom generators, and runtime-only schemas are named as unsupported rather than guessed.
+
+**Exit criterion:** representative list, detail, navigation, grid, and settings samples build and reproduce their
+designer state after reopening; an unsupported schema changes no files.
+
+## 2.0.0 — Visual Studio-class extensible design-time platform
+
+**Status: implementation blueprint ready; Phase 0 architecture, legal, hosting, round-trip, and bitness gates are not yet passed**
+
+The v2 target is deliberately larger than the old five-item host sketch: reach workflow and compatibility parity with
+the **Visual Studio WinForms Designer** for the advertised support tiers, keep the UI native to VS Code, and be better in
+the areas this project already owns — source safety, diagnostics, cross-runtime transparency, reproducible validation,
+and recovery. It is not a plan to rebuild the Visual Studio code editor, Roslyn, debugger, Test Explorer, Git, or NuGet;
+those remain integrations with the VS Code/C# toolchain.
+
+The complete execution contract is
+[docs/roadmap-v2.0.0-implementation-plan.md](docs/roadmap-v2.0.0-implementation-plan.md). It contains the
+capability matrix, exact current code seams, target modules, phase IDs, dependencies, corpus, performance objectives,
+risk/cut rules, Definition of Ready/Done, and the conjunctive GA gates.
+
+### What “Visual Studio parity” means
+
+- **Exact parity** for core designer results: component graph, layout, persisted semantics, keyboard/mouse gesture outcome,
+  and undo boundary match the reference workflow even though the chrome remains VS Code-native.
+- **Workflow parity** where platform UI differs: the task completes without a manual source edit or an unexplained extra
+  recovery step.
+- **Compatible parity** on disk: representative forms round-trip extension → Visual Studio → extension without semantic
+  drift or unrelated source/resource/project changes.
+- **Superior workflow** where this extension can safely do more: capability inspection, human-readable patch preview,
+  headless CI validation, accessibility/DPI/localization advice, redacted diagnostics, and recovery history.
+- A partial, stale, silently degraded, or data-losing imitation never counts. Unsupported work is disabled before mutation
+  with a stable reason, target, support tier, and recovery action.
+
+### GA product surface
+
+- **Documents and projects:** Form/UserControl creation, partial/base/project resolution, SDK/classic project inclusion,
+  save/hot-exit/external-change safety, and atomic multi-artifact undo/redo.
+- **Design surface:** real framework/project/vendor controls; mouse and keyboard selection; move/resize/reparent/z-order;
+  clipboard/duplicate; grid/snapline/Alt modes; margin, padding and baseline guides; complete standard layout-container,
+  tab, menu, toolbar, outline, and component-tray workflows.
+- **Properties and events:** categorized/alphabetical/search and multi-object property grid; mixed/default/reset values;
+  bounded converters; supported framework/vendor modal/dropdown editors; collections; events/default-event double-click;
+  code/designer navigation and semantic-rename integration.
+- **Resources, localization and data:** project/form resources, images/icons/ImageList, neutral/culture overlays, RTL,
+  Data Sources, bindings, generated detail/grid/navigation controls, settings, and bounded visual inheritance overrides.
+- **Extensibility:** a real, contract-tested design-time service kernel for supported ControlDesigner behavior, adorners,
+  verbs, DesignerActionList, toolbox, converters/editors, plus a versioned vendor adapter SDK. A service whose invariants
+  are incomplete is reported unavailable instead of being faked.
+- **Runtime and vendor tiers:** modern .NET x64/ARM64 plus net48 x64; x86/COM/ActiveX only if the explicit Phase 0
+  feasibility, security, redistribution and packaging gates pass. Certified vendor versions are named from archived
+  manifests; untested vendors remain best-effort generic support.
+- **Product quality:** keyboard and assistive-technology operation, high contrast, all shipped locales, native RTL/culture
+  acceptance, bounded worker resources, crash recovery, migration/self-repair, clean-machine packages, and exact evidence.
+
+### Architecture contract
+
+- Decompose the current session, render, RPC, webview and net48 coordination concentrations behind characterization tests
+  before adding the hosted platform. v2 must not place a second architecture inside today’s largest files.
+- Route every UI, smart-tag, vendor-editor, quick-fix and automation mutation through one typed command lifecycle:
+  capture revisions → plan a PatchSet → authorize → atomically commit → one undo unit → reconcile → independently verify.
+- Generate TypeScript/C# protocol bindings from one versioned schema. Every request carries session/document/request,
+  revision/generation, capability, deadline/cancellation and source/resource fingerprints; stale replies cannot win.
+- Supervise disposable workers by runtime × architecture × project × trust tier, with STA/message-pump ownership,
+  dependency isolation, deadlines, memory/GDI/USER-handle budgets, crash-loop limits, unload and rebuild coordination.
+- Preserve two persistence lanes: the existing minimal source adapters by default, plus a designer-owned-region serializer
+  only where ownership and semantic preservation are independently proven. Workers never write workspace files directly.
+- Treat compiled project/vendor design-time code as **trusted to execute**, not sandboxed. Hosted vendor services require a
+  trusted workspace, explicit per-workspace enablement and provenance; process/AppDomain/ALC isolation is for lifecycle
+  and recovery unless a separately verified OS sandbox exists.
+
+### Delivery waves
+
+0. **Definition and kill spikes:** freeze at least 100 reference scenarios; approve ADR 0003; prove modern/net48 hosted
+   Form/UserControl, designer/editor broker, dual-lane Visual Studio round-trip, worker recovery, performance, and the
+   legal/dependency route. Remove x86/COM or generic vendor claims if their spikes fail.
+1. **Architecture runway:** characterize v1.x; split modules; introduce the schema-generated protocol, document store,
+   PatchSet/journal, worker supervisor, capabilities, N/N−1 compatibility, migration and self-repair with zero behavior
+   or source-output regression.
+2. **First-party parity:** finish the standard-control layout, properties, events, toolbox, resources, scaffolding,
+   containers and the surviving 1.8–1.15 scope on modern and net48 live-source tiers.
+3. **Hosted extensibility:** land the service kernel, designers/verbs/action lists, converter/editor broker, approved
+   designer-owned serialization, adapter SDK, and hostile design-time component corpus.
+4. **Runtime/vendor certification:** complete the advertised runtime/bitness matrix and certify named vendor cohorts with
+   Visual Studio references, exact diffs, fallback reasons, timings, licenses and lifecycle evidence.
+5. **Beyond-VS strengths:** capability inspector, patch preview, headless designer validation, design-time advisor,
+   reproducible diagnostics and recovery timeline — all opt-in/previewed where they mutate.
+6. **Beta hardening:** independent security review; 8-hour soak; 500 open/edit/close cycles; crash/build/disk conflicts;
+   memory/handle/performance budgets; keyboard, screen-reader, high-contrast, locale and native RTL/culture acceptance.
+7. **RC/GA:** freeze contracts, run the clean-machine/package/runtime/corpus/migration/rollback matrix from immutable
+   artifacts, archive exact evidence, and obtain explicit product/legal/vendor/hardware/publication decisions.
+
+With a stable 6–9 person cross-functional core, the detailed plan treats this as an approximately **18–30 month**
+program, not a normal minor release; one maintainer should plan it as multi-year. These are capacity ranges, not calendar
+commitments. Reduce advertised tiers or cohorts when capacity/evidence is absent — never safety, integrity, accessibility,
+or truthfulness gates.
+
+### Release-claim gates
+
+- Tier A (Microsoft framework scenarios): **100%** required workflows on every advertised runtime/architecture.
+- Tier B (custom managed controls): at least **98%** of the declared scenario corpus, every miss classified and
+  non-mutating.
+- Tier C (named certified vendors): at least **95% per advertised cohort**, zero silent mismatch/data loss, archived
+  redacted certification manifest.
+- Tier D (x86/COM/ActiveX): **100% of the advertised conditional matrix** or it is excluded by name from v2 GA.
+- Percentages never waive a single silent mutation, unrelated diff, arbitrary-source execution, cross-document overwrite,
+  undisclosed stale canvas, partial transaction, or misleading capability claim.
+
+**Exit criterion:** all advertised parity tiers clear their exact scenario, integrity, security, cross-tool, protocol,
+migration, reliability, performance, accessibility/localization, package and independent-review gates. Publication,
+licensed-vendor access, physical hardware, legal approval and credentials remain explicit external PASS/GATED/NOT
+EXECUTED decisions; repository-side evidence cannot stand in for them.
 
 ## Release rules
 
 - The fail-closed safety boundary is permanent; a roadmap feature never ships by bypassing it.
-- Every source-writing feature needs byte-local or round-trip proof, undo/redo coverage, and conflict handling.
-- Features that touch both engines require modern/.NET Framework parity tests or a documented, visible
-  capability difference.
-- 1.x releases preserve project files, user settings, and the public extension workflow. Any unavoidable
-  compatibility break belongs in 2.0.0 with a migration path.
+- Every source/resource/project writer needs a bounded patch plan, exact-baseline conflict handling, one undo unit,
+  rollback/compensation, and an independent proof that only the intended semantic change occurred.
+- Features that touch multiple engines, runtimes, architectures or trust tiers require parity tests or a visible,
+  documented capability difference. A skip, fallback, timeout or unavailable external cohort is not silently green.
+- Compiled project/vendor code is trusted-to-execute. Workspace Trust and explicit design-time enablement gate loading;
+  lifecycle isolation is never marketed as a security sandbox without a verified OS boundary.
+- Protocol, configuration, cache, adapter and persistence-contract changes are versioned and ship migration, rollback and
+  partial-update self-repair evidence.
+- 1.x preserves project files, user settings, public workflows and the source-first safety contract. Any unavoidable
+  compatibility break belongs in 2.0.0 with a documented migration path and rollback.
+- “Visual Studio parity” is an evidence-backed release claim tied to the declared support tiers, not an aspirational label.

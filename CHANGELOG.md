@@ -9,7 +9,155 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
-## [1.7.0] — 2026-08-09
+## [1.8.0] - 2026-08-13
+
+**Exact free placement, a self-maintaining workspace toolbox — and a designer that no longer runs your application,
+blocks your build, or puts windows on your screen.** Placement stays aligned and source-safe unless the override
+modifier is held, and toolbox discovery follows only the open form's related project graph. Alongside that, real
+`net4x` forms now take the Visual Studio route — the declared base type plus the replayed designer statements —
+instead of falling back to constructing your own class; the modern engine stopped holding your build output open at
+all; and the .NET Framework preview both hands that output back for an external build and confines every window it
+realizes to a desktop that is never displayed.
+
+### Added
+
+- **Deleting a form deletes the whole form** ([#3](https://github.com/SkivHisink/winforms-designer-vscode/issues/3)).
+  `Form1.cs` is only part of a form: `Form1.Designer.cs` and `Form1.resx` (plus any `Form1.<culture>.resx` the
+  localization workflow wrote) exist solely for it, and this extension already shows them nested under it — but
+  nesting is display only, so deleting the form left its resources behind as orphans. They now go in the **same
+  operation**, which means one confirmation and one undo, and it applies to whatever performs the delete (the
+  Explorer, a command, another extension) rather than to one gesture. Only files generated for that form are taken:
+  a `.resx` whose middle segment is not a culture, and a same-prefix neighbour like `Form10.resx`, are never touched.
+  Set `winformsDesigner.deleteFormSiblings` to false to delete only the file you selected.
+- **Alt placement override.** Holding Alt during one move or resize suppresses alignment snaplines and shows the live
+  `x`, `y`, width, and height values. The binding can be changed to Control or Shift, or disabled entirely. The final
+  operation still uses the existing engine geometry authorization/correction path, so docked, locked, inherited,
+  layout-managed, stale, and read-only controls do not become movable through the override.
+- **Self-maintaining project toolbox.** Opening a designer schedules a bounded, off-critical-path scan of the owning
+  `.csproj` and its explicit `ProjectReference` graph. Conventional `bin` roots and concrete custom
+  `BaseOutputPath` / `OutputPath` / `OutDir` values are recognized without evaluating untrusted MSBuild properties.
+  Assembly metadata is cached by path plus size/mtime, successful output directories receive incremental DLL watchers,
+  and file/directory/depth/time/project/reflection budgets plus cancellation and skipped-work reporting keep discovery
+  visible and bounded.
+- **Workspace curation.** Auto-discovered rows are available in **Choose Toolbox Items** so users can hide and restore
+  them. Chosen entries, hidden entries, browsed assemblies, and custom tabs persist in workspace state and are not
+  overwritten by a later full scan or incremental rebuild refresh. Existing pre-1.8 global curation seeds workspace
+  state once during upgrade instead of disappearing.
+
+
+- **Real-world `net4x` forms now render the way Visual Studio does — without running your code.** VS never constructs
+  the form you are editing: it instantiates the declared base type and replays the designer statements onto it. Our
+  interpreted preview is that model, but three shapes that appear in hand-written designer files (and never in
+  VS-generated ones) used to defeat it and drop the form to the compiled fallback — the one path that constructs your
+  real class and runs its constructor, field initializers and `Load`:
+  - **an unqualified type name.** `namespace X { using Vendor.Controls; … new VelModelControl(); }` is ordinary C#,
+    but no `Assembly.GetType` call can resolve a name with no namespace. The parsed document now carries the file's
+    own scope — its enclosing namespace chain and `using` directives, in the order C# itself binds them: a namespace's
+    own members before the imports written in that scope, innermost scope first, covering file-scoped (`namespace X;`)
+    and nested declarations. So a control declared in the form's own namespace wins over an identically named one
+    reached through a `using`, exactly as the compiled source would. Alias and `static` usings are deliberately
+    skipped rather than half-resolved.
+  - **an assembly-visible constructor.** `internal MyControl()` compiles because `InitializeComponent` is in the same
+    assembly; a designer that only calls public constructors declared such a form unrenderable over an access
+    modifier. Constructors are now chosen the way C# would from the designed assembly — `public`, plus `internal` /
+    `protected internal` declared in an assembly the designer file belongs to, and an all-optional parameter list
+    with the author's own defaults. A `private` or `protected` constructor stays refused: no designer file could have
+    called it, so the interpreter must not either.
+  - **a vendor collection that is not an `IList`.** Measured on a real project: `TreeListColumnCollection` implements
+    only `ICollection` plus a typed `Add`. Items now go in through that method — the *most specific* applicable
+    overload, as C# would bind it, so a collection offering both `Add(object)` and `Add(Control)` gets the typed one
+    rather than whichever reflection happened to return first, and the vendor's no-argument `Add()` overload (which
+    *creates* an element) is never chosen.
+
+  Measured on the project that prompted this: 8 of its 10 forms now interpret, including the one whose `Load` opened
+  two windows. That form's own code no longer runs at all when you open the designer.
+- When neither path can draw a form, the error now names **why the interpreted path bailed** as well as what the
+  compiled fallback threw — previously only the second half survived, which hid the gap actually worth closing.
+
+### Changed
+
+
+- **Selecting a control on a `net4x` form no longer runs your form's code.** The vendor "Tasks" menu (the DevExpress
+  smart tags) can only be read from a real compiled instance — and asking for it used to CREATE one, so clicking a
+  control on a preview that was drawn by interpreting your source constructed your actual form and ran its
+  constructor and `Load`. Both sides now refuse to build for it: the engine answers only from an instance that
+  already exists (a peek, never a load), and the designer only asks when the preview *is* that compiled instance.
+  The consequence to know about: on an interpreted preview the vendor section of the smart-tag flyout is simply
+  absent instead of being paid for with a full form construction; everything the designer offers itself is
+  unchanged, and on a compiled preview — including after a live edit re-renders that instance — the vendor menu is
+  exactly as before.
+
+### Fixed
+
+
+- **A designer no longer puts windows on your screen.** Opening a `net4x` form could pop real WinForms windows next to
+  VS Code — the form itself, and whatever its own code opened. The compiled preview realizes the REAL type, so
+  `Form.Show()` runs the form's `Load`/`Shown` handlers and the vendor's: a splash screen, a docking panel or a
+  dialog opened there appeared on the desktop, and a form that is `WindowState = Maximized` ignored the preview's
+  off-screen placement entirely — it was realized full-screen (and captured at monitor size instead of its designed
+  size). Now the net48 engine runs on a **private desktop that is never displayed** — a desktop belongs to the
+  process, so every window the engine, your form or its vendor controls open in the ordinary way is created there and
+  never composited to your screen (it also stops the preview stealing keyboard focus). The root window's state is
+  normalized before and after `Show`, so the picture is the size you designed rather than the size of your monitor.
+  Rendering is unchanged (verified byte-identical), the isolated engine is held in a kill-on-close job so it can
+  never outlive the process the editor is watching, and any window your form opened is named in the WinForms Designer
+  output. A window that opened *modally* — a message box or licence dialog from `Load` — would block the preview
+  where nobody can click it, so it is asked to close after ten seconds and the render continues. If the desktop
+  cannot be created at all (a locked-down window station), the log says so plainly and previews behave as they did
+  before. New setting `winformsDesigner.net48.isolateRenderWindows` (default on) turns it off for diagnosing a
+  vendor control. Note this is containment, not a sandbox: a compiled preview still runs your form's own code with
+  your own permissions.
+
+- **An open designer no longer blocks your own build.** Building the project in Visual Studio (or any `msbuild`
+  outside VS Code) failed with `MSB3027 … The file is locked by: "WinFormsDesigner.Engine",
+  "WinFormsDesigner.Engine.Net48"`. Both halves are addressed:
+  - The **modern engine never pins a file again.** It loaded every user assembly with
+    `LoadFromAssemblyPath`, which maps the file and holds an OS handle until the load context is collected — and
+    nothing collected it: the render path never unloaded its context at all (a fresh one leaked on *every* render,
+    describe, serialize and preview-save), and the toolbox path only *started* an unload. A **.NET Framework**
+    project was hit hardest: loading a `net48` output into the .NET engine SUCCEEDS (only its types fail to
+    resolve), so opening a `net48` form pinned that project's `.exe` in the engine that can never render it, with
+    no command anywhere in the product able to release it. Assemblies now load from a private in-memory copy, so
+    the file is free to overwrite at all times, and one load context is kept per output and reused until that
+    output actually changes instead of one leaking per call. Two consequences worth knowing: an assembly loaded
+    this way reports an empty `Assembly.Location` (the Choose Toolbox Items path directory is tracked separately,
+    but design-time code that locates files through its own `Assembly.Location` sees the change), and a
+    project-local **native** dll a control P/Invokes is still mapped in place — replacing that one file still needs
+    **Restart the Designer Preview Engine**.
+  - **The `net48` preview hands its output back for an external build.** It must load your assemblies in place
+    (shadow-copying breaks delay-signed vendor graphs), so it still pins them while rendering — but a build
+    started outside VS Code is now detected as it compiles, and the compiled domains are unloaded before MSBuild's
+    copy needs the file. The previews go view-only while the build runs and re-render from the new output when it
+    lands. New setting `winformsDesigner.net48.releaseOnExternalBuild` (default on); the in-VS-Code task
+    coordination, the opt-in focus-loss release and the manual **Release .NET Framework Assembly (for Rebuild)**
+    command are unchanged.
+
+
+- The redistributable vendor corpus now exercises a reflected `TabPages` / `SelectedTabPage` control that does not
+  inherit `TabControl`. Interpreted selected-page state, hit testing, source-first ordering, and compiled-fallback
+  live moves preserve exact page identity and reject foreign view-state targets.
+- Incremental toolbox watchers now honor the same focus cancellation boundary as a full discovery pass; a DLL event
+  received while VS Code is unfocused waits for the bounded refresh scheduled when focus returns.
+
+### Safety and release policy
+
+- The interpreted path widened where a type NAME may be looked up and how a component is CONSTRUCTED; it did not
+  widen what may be executed. The value allowlists (`DesignerAllowlists`) are untouched, so a static read off a
+  user/vendor type is still refused and still falls back with a named reason — one shape (`Resources.Icon16`-style
+  reads) therefore remains on the compiled path by design.
+- The IR is a versioned contract: carrying the file's namespace scope bumps its schema to 4, so a producer and an
+  executor from different builds refuse each other loudly instead of half-reading a document. The new field is
+  validated exactly like every other type name, with its own bound.
+- Desktop isolation is containment, not a security sandbox: a compiled preview still executes project and vendor code
+  with the user's own token, under Workspace Trust as before. It fails open with an explicit log line rather than
+  refusing to render, and the isolated process is confined to a kill-on-close job so it cannot outlive its parent.
+- Automatic discovery never scans every sibling project in a workspace: only the form's owning project and explicit
+  project-reference graph can contribute build-output roots. Typing or losing window focus cancels an in-flight pass.
+- This repository-side close does not create a commit, tag, push, Marketplace/Open VSX publication, or external
+  credential operation. Real ARM64 hardware, multi-monitor/DPI, native RTL/culture UX, licensed vendor acceptance,
+  and publication remain explicit external gates.
+
+## [1.7.0] - 2026-08-09
 
 **Tab order is now a safe, source-first part of the standard tab workflow on both engines.** An active field-backed
 page can move one position left or right without regenerating the form, rewriting its property block, or persisting
@@ -1370,7 +1518,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.4.0...v1.5.0

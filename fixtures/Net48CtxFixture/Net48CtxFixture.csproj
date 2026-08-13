@@ -43,6 +43,10 @@
     <!-- TABCONTROL (M4 Slice 5): TabControl + TabPages via Controls.Add + SelectedIndex — for interpreted tab view-state. -->
     <Compile Include="..\..\engine\samples\TabForm.Designer.cs" Link="TabForm.Designer.cs" />
     <Compile Include="..\..\engine\samples\TabForm.cs" Link="TabForm.cs" />
+    <!-- OFF-SCREEN CONTAINMENT: HostileForm.Designer.cs + HostileForm.cs live in THIS directory (the SDK compiles
+         them implicitly, like the other local fixtures here) — a form that maximizes itself AND opens another window
+         from Load, the two ways a real application's form used to put windows on the user's screen when the preview
+         realized it. Not in engine/samples because only the compiled (net48) engine instantiates the real type. -->
   </ItemGroup>
 
 </Project>

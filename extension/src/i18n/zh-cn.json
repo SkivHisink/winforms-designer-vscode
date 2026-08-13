@@ -122,6 +122,7 @@
   "designer.status.moveGroup": "移动 {count} → Δ({dx}, {dy})",
   "designer.status.moveSingle": "移动 → ({x}, {y})",
   "designer.status.resize": "调整大小 → {w} × {h}",
+  "designer.status.freePlacement": "自由放置 → x={x}, y={y}, w={w}, h={h}",
   "designer.status.committing": "正在提交…",
   "designer.status.error": "错误：{message}",
   "designer.menu.viewCode": "查看代码",
@@ -295,6 +296,7 @@
   "host.loading.rendering": "正在渲染…",
   "host.buildTask.running": "“{name}”正在运行。在任务完成前，上次成功的预览为只读。",
   "host.buildTask.generic": "生成或测试任务",
+  "host.buildTask.external": "外部生成（Visual Studio / MSBuild）",
   "host.buildTask.cause": ".NET Framework 预览已释放编译程序集，以便任务替换输出。",
   "host.task.none": "此工作区中没有可用的 {group} 任务。",
   "host.task.scope.global": "全局任务",
@@ -312,6 +314,8 @@
   "status.docChangedImport": "导入期间文档已更改 — 请重试",
   "status.docChangedShort": "文档已更改 — 请重试",
   "status.toolboxUpdated": "工具箱已更新(添加 {added}，隐藏 {hidden})",
+  "status.toolboxDiscovery": "工具箱发现：{controls} 个控件；{directories} 个目录；跳过 {skipped} 项{limit}。详情请查看 WinForms Designer 输出。",
+  "status.toolboxDiscoveryBudget": "（已达到预算）",
   "status.nothingMoved": "未移动任何内容(受布局管理?)",
   "status.moved": {
     "other": "已移动 {n} 个控件 — 未保存"

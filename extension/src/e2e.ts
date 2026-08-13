@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, moveCompiledTab, hitTestCompiledTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, setLocalizationCulture, setLocalizedResources } from './engineClient';
+import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, moveCompiledTab, hitTestCompiledTab, hitTestInterpretedTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, listCompiledVendorSmartTags, setLocalizationCulture, setLocalizedResources } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { hitTestTab } from './engineClient';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
@@ -1629,8 +1629,84 @@ async function main(): Promise<void> {
         console.log(`e2e: SKIPPED ${message}`);
       }
       if (net48FixtureReady) {
-        const n48 = await startEngine(net48Exe, { onLog: (l) => console.error(l) });
+        // Keep the engine's own log: the off-screen containment leg below asserts on what the engine REPORTS about
+        // its render desktop and about the windows a form's design-time code opened.
+        const n48Log: string[] = [];
+        const n48 = await startEngine(net48Exe, { onLog: (l) => { n48Log.push(l); console.error(l); } });
         try {
+          // ---- 1.8.0: a preview must never put a window on the user's screen ----
+          // This engine renders the REAL compiled type, so Show() runs the form's own Load — and a real application's
+          // main form maximizes itself and opens things (splash, docking panel, dialog). Measured before the fix on a
+          // form exactly like this fixture: the root was realized FULL-SCREEN at (-8,-8) despite being placed at
+          // (-20000,-20000) (a maximized window ignores Location AND the requested ClientSize), and the window its
+          // Load opened was visible on the interactive desktop too. Both are asserted here:
+          //   (1) the picture is the DESIGNED size, not the monitor — proves the window-state hardening;
+          //   (2) the engine entered its private render desktop, and the form's stray window was found THERE —
+          //       windows on that desktop are never composited to the screen, which is the containment itself.
+          {
+            const hostileForm = path.join(repo, 'fixtures', 'Net48CtxFixture', 'HostileForm.Designer.cs');
+            const hostile = await renderCompiledWithLayout(n48, hostileForm, ctxFixtureDll, 'SampleApp.HostileForm');
+            if (hostile.clientWidth !== 420 || hostile.clientHeight !== 260)
+              throw new Error(`1.8.0 off-screen: a maximized form must still render at its DESIGNED client size 420x260, got ${hostile.clientWidth}x${hostile.clientHeight} (a monitor-sized capture means the window state hardening regressed)`);
+            if (!hostile.controls.some((c) => c.id === 'okButton'))
+              throw new Error(`1.8.0 off-screen: the hostile fixture must actually render its controls — got [${hostile.controls.map((c) => c.id).join(', ')}]`);
+            const log = n48Log.join('\n');
+            // The desktop must be a PRIVATE one, asserted by name: a stale marker in the environment could otherwise
+            // make the engine claim isolation while rendering on the visible desktop, and this leg would bless it.
+            if (!/render desktop: active \('WinFormsDesignerRender-\d+'\)/.test(log))
+              throw new Error(`1.8.0 off-screen: the engine did NOT enter its private render desktop, so a preview's windows can reach the screen. Engine log: ${log.slice(-600)}`);
+            if (/render desktop: active \('Default'\)/.test(log))
+              throw new Error('1.8.0 off-screen: the engine claimed isolation while on the INTERACTIVE desktop');
+            if (!log.includes('WFD-DESIGNTIME-POPUP'))
+              throw new Error(`1.8.0 off-screen: the window the form's Load opened was not found on the render desktop — either it was not created (fixture rotted) or it landed somewhere else. Engine log: ${log.slice(-600)}`);
+            console.log('e2e: 1.8.0 off-screen containment verified — a self-maximizing form that opens a window from Load renders at its designed 420x260 and its stray window is confined to the engine\'s private render desktop');
+          }
+
+          // ---- 1.8.0: a REAL-WORLD-shaped vendor form interprets instead of constructing the user's class ----
+          // Visual Studio never runs the edited form's own code: it instantiates the declared BASE type and replays
+          // the designer statements. Our interpreted path is that model — but three shapes that no VS-generated file
+          // contains used to defeat it and drop the form to the compiled fallback, which DOES construct the user's
+          // class: an unqualified type name resolved through the file's `using`, a component whose constructor is
+          // internal, and a vendor collection that is not an IList. All three are in this fixture (measured on a real
+          // DevExpress project first). The proof that the leaf never ran is its marker window's absence.
+          {
+            const vendorShaped = path.join(repo, 'fixtures', 'Net48CtxFixture', 'VendorShapedForm.Designer.cs');
+            const logBefore = n48Log.length;
+            const ir = await renderInterpretedWithLayout(n48, vendorShaped, ctxFixtureDll, fs.readFileSync(vendorShaped, 'utf8'),
+              'SampleApp.VendorShapedForm');
+            if (ir.renderMode !== 'interpreted')
+              throw new Error(`1.8.0 vendor-shaped form: must INTERPRET (unqualified type via using + internal ctor + non-IList collection), got ${ir.renderMode}/${ir.fallbackReason} — falling back constructs the user's own class`);
+            const ids = ir.controls.map((c) => c.id);
+            if (!ids.includes('vendorWidget') || !ids.includes('okButton'))
+              throw new Error(`1.8.0 vendor-shaped form: interpreted, but the controls are missing — got [${ids.join(', ')}]`);
+            if (n48Log.slice(logBefore).join('\n').includes('WFD-VENDORSHAPED-MUSTNOTRUN'))
+              throw new Error("1.8.0 vendor-shaped form: the form's own class WAS constructed (its marker window appeared) — the interpreted path did not stay on the base type");
+            console.log('e2e: 1.8.0 vendor-shaped form verified — unqualified type name, internal constructor and a non-IList vendor collection all interpret, and the form\'s own class is never constructed');
+          }
+
+          // ---- 1.8.0: asking for the vendor "Tasks" menu must never CONSTRUCT the user's form ----
+          // Reading those verbs needs a compiled instance, and the query used to build one on demand — so merely
+          // SELECTING a control on an interpreted preview ran the user's constructor and Load (which is exactly how
+          // a real application opens splash screens and dialogs). Now both sides peek: the host does not ask unless
+          // the preview already IS the compiled instance, and the engine answers only from an instance that exists.
+          // Proof without needing a licensed vendor control: with nothing loaded, the query must answer AND leave
+          // nothing loaded — release reports Attempted 0. Before the fix it reported a domain it had just created.
+          {
+            await releaseCompiledAssembly(n48, ctxFixtureDll); // clean slate: whatever earlier legs loaded is dropped
+            const tagsWithNothingLoaded = await listCompiledVendorSmartTags(n48, ctxForm, ctxFixtureDll, 'menuStrip1');
+            if (tagsWithNothingLoaded.length !== 0)
+              throw new Error(`1.8.0 vendor tasks: a framework control has no vendor tasks; got ${JSON.stringify(tagsWithNothingLoaded)}`);
+            const afterQuery = await releaseCompiledAssembly(n48, ctxFixtureDll);
+            if (afterQuery.attempted !== 0)
+              throw new Error(`1.8.0 vendor tasks: the smart-tag query BUILT a compiled instance (release found ${JSON.stringify(afterQuery)}) — selecting a control must never run the user's form`);
+            // …and it still answers from an instance that already exists, so the menu is not lost on a compiled preview.
+            await renderCompiledWithLayout(n48, ctxForm, ctxFixtureDll);
+            const tagsWithInstance = await listCompiledVendorSmartTags(n48, ctxForm, ctxFixtureDll, 'menuStrip1');
+            if (!Array.isArray(tagsWithInstance))
+              throw new Error('1.8.0 vendor tasks: the query must still answer when the compiled instance exists');
+            console.log('e2e: 1.8.0 vendor-task query verified — it answers without ever constructing the form (release reports nothing loaded), and still answers from an existing compiled instance');
+          }
+
           // ---- 0.10.0 S2 cross-runtime: net48 renders the inherited form CORRECTLY (no banner) ----
           // net48 instantiates the real compiled DerivedForm, so the base ctor runs and baseButton is present
           // ALONGSIDE derivedButton — the very control net9 silently drops. This is why S2's banner is net9-only:
@@ -1854,13 +1930,52 @@ async function main(): Promise<void> {
             if (fvI.renderMode !== 'interpreted') throw new Error(`FakeVendor: vendor-pattern form must render INTERPRETED — got ${fvI.renderMode} (${fvI.fallbackReason})`);
             const fvIds = fvI.controls.filter((c) => !c.isRoot).map((c) => c.id).sort();
             if (!fvIds.includes('fancyButton1') || !fvIds.includes('dataPanel1')) throw new Error(`FakeVendor: both vendor controls must render — got [${fvIds.join(', ')}]`);
+            const fvTabHost = fvI.controls.find((c) => c.id === 'fakeTabControl1');
+            if (!fvTabHost?.isTabHost) throw new Error('FakeVendor: reflected TabPages + SelectedTabPage host must be marked isTabHost');
+            if (!fvIds.includes('fakeTabLabel1') || fvIds.includes('fakeTabLabel2')) {
+              throw new Error(`FakeVendor: source-selected vendor page one must be the only visible tab content — got [${fvIds.join(', ')}]`);
+            }
+            const fvPage2 = await renderInterpretedWithLayout(
+              n48, fakeVendorSrc, fakeVendorDll, fvSrc, fvType, undefined, 0, 0, ['fakeTabControl1=fakeTabPage2']);
+            if (fvPage2.renderMode !== 'interpreted'
+              || !fvPage2.controls.some((c) => c.id === 'fakeTabLabel2')
+              || fvPage2.controls.some((c) => c.id === 'fakeTabLabel1')) {
+              throw new Error('FakeVendor: exact vendor selected-page view state must stay interpreted and expose only page two');
+            }
+            const fvForeign = await renderInterpretedWithLayout(
+              n48, fakeVendorSrc, fakeVendorDll, fvSrc, fvType, undefined, 0, 0, ['fakeTabControl1=fancyButton1']);
+            if (!fvForeign.controls.some((c) => c.id === 'fakeTabLabel1') || fvForeign.controls.some((c) => c.id === 'fakeTabLabel2')) {
+              throw new Error('FakeVendor: a foreign nonmember selected-page override must be a harmless no-op');
+            }
+            const fvSecondHeader = await hitTestInterpretedTab(
+              n48, fakeVendorSrc, fakeVendorDll, fvSrc, 'fakeTabControl1', fvTabHost.x + 90, fvTabHost.y + 10,
+              ['fakeTabControl1=fakeTabPage2'], fvType);
+            if (fvSecondHeader.pageId !== 'fakeTabPage2') {
+              throw new Error(`FakeVendor: reflected CalcHitInfo must resolve the second header, got ${fvSecondHeader.pageId}`);
+            }
+            const fvMovedSource = await moveTabPage(engine, fakeVendorSrc, 'fakeTabControl1', 'fakeTabPage2', true, fvSrc);
+            if (!fvMovedSource.safe || fvMovedSource.newText === null
+              || fvMovedSource.newText.indexOf('this.fakeTabPage2,') > fvMovedSource.newText.indexOf('this.fakeTabPage1}')) {
+              throw new Error('FakeVendor: source-first vendor AddRange move-left did not produce page2,page1');
+            }
             const fvC = await renderCompiledWithLayout(n48, fakeVendorSrc, fakeVendorDll, fvType);
             for (const c of fvC.controls.filter((x) => !x.isRoot && fvIds.includes(x.id))) {
               const b = fvI.controls.find((x) => x.id === c.id)!;
               if (Math.abs(c.x - b.x) > 2 || Math.abs(c.y - b.y) > 2 || Math.abs(c.width - b.width) > 2 || Math.abs(c.height - b.height) > 2)
                 throw new Error(`FakeVendor: interpreted geometry diverges for ${c.id} — compiled (${c.x},${c.y},${c.width}x${c.height}) vs interpreted (${b.x},${b.y},${b.width}x${b.height})`);
             }
-            console.log('e2e: FakeVendor corpus verified — a DevExpress-like form (Appearance sub-object property-chain + ISupportInitialize control) renders INTERPRETED with geometry parity to compiled, proving vendor-pattern interpretation without a real vendor install');
+            const fvCompiledMoved = await moveCompiledTab(
+              n48, fakeVendorSrc, fakeVendorDll, 'fakeTabControl1', 'fakeTabPage2', true, fvType);
+            if (!fvCompiledMoved.applied) throw new Error('FakeVendor: compiled vendor Move Left was not applied: ' + (fvCompiledMoved.diagnostics || 'no diagnostics'));
+            const fvCompiledHost = fvCompiledMoved.controls.find((c) => c.id === 'fakeTabControl1');
+            if (!fvCompiledHost) throw new Error('FakeVendor: compiled vendor move lost the host');
+            const fvCompiledFirst = await hitTestCompiledTab(
+              n48, fakeVendorSrc, fakeVendorDll, 'fakeTabControl1', fvCompiledHost.x + 10, fvCompiledHost.y + 10, fvType);
+            if (fvCompiledFirst.pageId !== 'fakeTabPage2') throw new Error('FakeVendor: compiled vendor move did not put page two under the first header');
+            const fvCompiledRestored = await moveCompiledTab(
+              n48, fakeVendorSrc, fakeVendorDll, 'fakeTabControl1', 'fakeTabPage2', false, fvType);
+            if (!fvCompiledRestored.applied) throw new Error('FakeVendor: compiled vendor Move Right did not restore the order');
+            console.log('e2e: FakeVendor corpus verified — vendor-shaped tabs keep selected-page view state on interpreted renders, foreign state is ignored, reflected hit-test/source move/compiled live move preserve exact page identity, and the whole vendor-pattern form retains compiled geometry parity');
           } else {
             console.log('e2e: SKIPPED FakeVendor (fixture not built; set WFD_REQUIRE_NET48=1 to require it)');
           }
@@ -5263,6 +5378,33 @@ namespace Product.CustomForms
         throw new Error(`ResolveAssembly: expected ${complexDll}, got ${resolved}`);
       }
       console.log(`e2e: MSBuild resolver verified — multi-target/custom-output fixture → ${resolved} (bin-search alone could not)`);
+
+      // ---- 1.8.0: the MODERN engine must not pin the user's build output ----
+      // It loaded every user assembly with LoadFromAssemblyPath, which maps the file and holds an OS handle until the
+      // context is collected — and the render path never unloaded its context at all. So an open designer made the
+      // user's own build fail with MSB3027 "The file is locked by: WinFormsDesigner.Engine", with no release RPC in
+      // this engine to give it back. Prove it against a REAL MSBuild (a mocked handle proves nothing about a lock):
+      // exercise BOTH pinning paths against the live engine — the render graph (which also loads every sibling dll in
+      // the output dir) and the project-control enumeration the toolbox does — then rebuild the very project we just
+      // loaded. It must SUCCEED, and the engine must keep rendering the fresh output afterwards.
+      await renderWithLayout(engine, complexFixture, complexDll);
+      await listToolboxItems(engine, complexFixture, complexDll);
+      const complexProj = path.join(repo, 'samples', 'ComplexProject', 'ComplexProject.csproj');
+      const loadedRebuild = spawnSync(
+        'dotnet',
+        ['build', complexProj, '-c', 'Debug', '-t:Rebuild', '-p:TargetFrameworks=net10.0-windows', '--nologo', '-v:quiet'],
+        { encoding: 'utf8', shell: true },
+      );
+      const rebuildOut = (loadedRebuild.stdout || '') + (loadedRebuild.stderr || '');
+      if (loadedRebuild.status !== 0) {
+        const locked = /MSB3027|MSB3021|being used by another process|locked by/i.test(rebuildOut);
+        throw new Error(locked
+          ? `1.8.0 modern no-pin: the engine is holding the user's build output open again — their own rebuild failed with a file lock. Output: ${rebuildOut.slice(-600)}`
+          : `1.8.0 modern no-pin: the rebuild failed for an unrelated reason, so this leg proved nothing. Output: ${rebuildOut.slice(-600)}`);
+      }
+      const afterUserRebuild = await renderWithLayout(engine, complexFixture, complexDll);
+      if (!afterUserRebuild.controls.length) throw new Error('1.8.0 modern no-pin: the designer must still render after the user rebuilt the project');
+      console.log('e2e: 1.8.0 modern engine no-pin verified — with the form rendered AND its project controls enumerated, a real MSBuild `-t:Rebuild` of that project SUCCEEDS (no MSB3027) and the next render still works');
     } else {
       console.log('e2e: MSBuild resolver SKIPPED — build samples/ComplexProject (-f net10.0-windows -c Debug -p:TargetFrameworks=net10.0-windows) to exercise it');
     }

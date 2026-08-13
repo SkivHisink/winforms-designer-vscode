@@ -21,8 +21,8 @@ It complements the dev/test commands in
 
 - **Engine unit tests** — `dotnet test tests/Engine.UnitTests -c Release` directly covers safe-save minimality,
   syntax equivalence, identifier injection guards, interpreter allowlists, value conversion, and TFM selection.
-- **Extension unit tests** — `npm test` runs Vitest over C# expression conversion helpers and the bounded,
-  per-engine crash-recovery policy.
+- **Extension unit tests** - `npm test` runs Vitest over C# expression conversion helpers, bounded project/toolbox
+  discovery, and the per-engine crash-recovery policy.
 - **E2E harness** — [`extension/src/e2e.ts`](../extension/src/e2e.ts) (`npm run e2e`) spins up the modern and net48 engines and runs the full cross-runtime pipeline. Release CI sets `WFD_REQUIRE_NET48=1`, so missing net48 coverage is a failure rather than a skip. The multi-target fixture is also compiled separately for `net8.0-windows`, `net9.0-windows`, and `net10.0-windows`, preventing the advertised modern-project range from drifting unnoticed.
 - **Data-bound release corpus** — `DataBoundForm.Designer.cs` plus focused engine tests cover canonical
   `DataBindings`, supported `DataSource` choices, bound DataGridView column styles, common extender providers,
@@ -43,10 +43,32 @@ It complements the dev/test commands in
   apply bounded transient selected-page overrides, hit-test real tab headers, and prove unknown/removed mappings are
   no-ops. Named-pipe and live-webview cases pin click/rename/add/delete routing, persisted view-state sanitation, and
   the rule that unsupported COM/WPF Choose Items pages cannot browse or apply hidden `.NET` rows.
-- **1.7 tab-order corpus** — pure engine tests cover adjacent moves in canonical `Controls.Add`, `TabPages.Add`,
+- **1.7 tab-order corpus** - pure engine tests cover adjacent moves in canonical `Controls.Add`, `TabPages.Add`,
   `AddRange`, and mixed `AddRange + Add` sequences, edge no-ops, exact-permutation gating, and duplicate/non-trivial
   refusal. Named-pipe E2E verifies modern and net48 live-source replay plus compiled-fallback live mirroring; the
   webview suite pins localized Move Left/Right routing with the active page identity.
+- **1.8 placement/toolbox corpus** - the live-webview suite compares snapped and Alt-raw move/resize gestures,
+  configurable/disabled override behavior, guide suppression, and exact live-bounds status. Pure Vitest cases prove
+  that discovery follows only the owning `ProjectReference` graph, excludes unrelated sibling projects, recognizes a
+  concrete redirected `BaseOutputPath`, respects project/file/directory/depth/time budgets, yields, cancels,
+  deduplicates cycles, and keys assemblies by path plus size/mtime. The cross-runtime FakeVendor fixture pins
+  reflected vendor-tab selection/hit-test/move identity.
+- **1.8 design-time safety corpus** - engine tests pin the three real-world shapes that used to force the compiled
+  fallback (an unqualified type name resolved through the file's `using`/namespace scope, a non-public constructor,
+  and a vendor collection that is `ICollection` + typed `Add` rather than `IList`), plus the IR schema-4 validation of
+  the new namespace context. The `VendorShapedForm` fixture carries all three at once and opens a marker window from
+  its `Load`: the named-pipe E2E asserts the form interprets AND that the marker never appears, which is the proof the
+  user's own class was not constructed. Further E2E legs prove a real MSBuild rebuild of a rendered project succeeds
+  (no `MSB3027`), that a self-maximizing form that opens a window from `Load` still renders at its designed size with
+  nothing on the interactive desktop, and that a vendor smart-tag query leaves nothing loaded. Pure Vitest cases pin
+  the external-build release state machine (release before re-render, bounded waiting, one release per build) and the
+  rule that vendor tasks are only requested for a preview that already is a compiled instance.
+- **Form-deletion corpus** - pure Vitest cases pin which files belong to a form (its `.Designer.cs`, its `.resx` and
+  every `.<culture>.resx`) and which only look like they do (a non-culture middle segment, a same-prefix neighbour
+  such as `Form10.resx`, the generated half deleted on its own). Because the behaviour is contributed to VS Code's
+  own delete operation via `onWillDeleteFiles`, the Extension Host smoke performs a real workbench delete in a scratch
+  directory and asserts both halves: the generated files are gone, the bystanders are still there. `workspace.fs`
+  deliberately does not raise file-operation events, so no headless tier can stand in for this.
 - **Resource-set transaction tests** — pure Vitest cases cover create/update/delete across forward, undo, and redo;
   exact-state preflight; duplicate-target rejection; partial-write compensation; and the rule that compensation must
   never overwrite a concurrent external edit.

@@ -21,6 +21,15 @@ namespace WinFormsDesigner.Engine.Net48
     {
         private static async Task<int> Main(string[] args)
         {
+            // BEFORE anything creates a window: put this engine on a desktop that is never displayed, by relaunching
+            // ourselves there once. A preview realizes a REAL compiled form, so its own Load/Shown code runs and can
+            // open windows of its own — on the interactive desktop those appeared on the user's screen. A desktop is a
+            // property of the PROCESS (threads inherit it and an STA thread cannot switch), so this is the only place
+            // it can be done. Returns non-null only in the supervisor instance; see RenderDesktop.
+            int? supervised = RenderDesktop.RelaunchOnPrivateDesktop(args);
+            if (supervised.HasValue) return supervised.Value;
+            await Console.Error.WriteLineAsync("[engine:net48] " + RenderDesktop.Describe());
+
             if (Has(args, "--pipe", out string? pipeName) && pipeName != null)
             {
                 await Console.Error.WriteLineAsync("[engine-net48] listening on pipe: " + pipeName);
@@ -900,15 +909,22 @@ namespace WinFormsDesigner.Engine.Net48
 
         /// <summary>The vendor smart-tag menu a control's compiled type declares (the DevExpress "Tasks" panel:
         /// "Add Tab Page", "Tab Pages", …). Metadata only — the vendor's action is never invoked; the host maps the
-        /// verbs it can express onto its own source-first edits and shows the rest disabled. [] on any failure.</summary>
+        /// verbs it can express onto its own source-first edits and shows the rest disabled. [] on any failure.
+        ///
+        /// Answers only from an ALREADY-LOADED output: PeekWorker, not GetWorker, and the worker itself peeks its
+        /// live instance rather than building one. Selecting a control on an INTERPRETED preview would otherwise
+        /// construct and realize the user's real compiled form — running their constructor and Load handler — purely
+        /// to populate an optional menu. So the rule is: vendor tasks are offered when a compiled instance already
+        /// exists, and silently absent when it does not.</summary>
         public VendorSmartTag[] ListCompiledVendorSmartTags(string designerFilePath, string assemblyPath, string componentId,
             string? rootTypeName = null, string[]? probeDirs = null)
         {
             if (string.IsNullOrWhiteSpace(assemblyPath) || !File.Exists(assemblyPath)) return Array.Empty<VendorSmartTag>();
             try
             {
+                var worker = _domains.PeekWorker(assemblyPath);
+                if (worker == null) return Array.Empty<VendorSmartTag>(); // nothing loaded → nothing to read, and we do not load
                 string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-                var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
                 return worker.ListVendorSmartTags(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId);
             }
             catch { return Array.Empty<VendorSmartTag>(); }

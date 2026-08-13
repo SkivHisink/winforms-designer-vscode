@@ -11,6 +11,11 @@ namespace FakeVendor
         private FakeVendor.DataPanel dataPanel1;
         private FakeVendor.VendorEdit vendorEdit1;
         private FakeVendor.VendorPanel vendorPanel1;
+        private FakeVendor.FakeTabControl fakeTabControl1;
+        private FakeVendor.FakeTabPage fakeTabPage1;
+        private FakeVendor.FakeTabPage fakeTabPage2;
+        private System.Windows.Forms.Label fakeTabLabel1;
+        private System.Windows.Forms.Label fakeTabLabel2;
 
         private void InitializeComponent()
         {
@@ -18,6 +23,11 @@ namespace FakeVendor
             this.dataPanel1 = new FakeVendor.DataPanel();
             this.vendorEdit1 = new FakeVendor.VendorEdit();
             this.vendorPanel1 = new FakeVendor.VendorPanel();
+            this.fakeTabControl1 = new FakeVendor.FakeTabControl();
+            this.fakeTabPage1 = new FakeVendor.FakeTabPage();
+            this.fakeTabPage2 = new FakeVendor.FakeTabPage();
+            this.fakeTabLabel1 = new System.Windows.Forms.Label();
+            this.fakeTabLabel2 = new System.Windows.Forms.Label();
             ((System.ComponentModel.ISupportInitialize)(this.dataPanel1)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.vendorEdit1.Properties)).BeginInit();
             this.SuspendLayout();
@@ -42,13 +52,33 @@ namespace FakeVendor
             // ends at x=17, and an interpreted replay that called Control.SuspendLayout would sit at x=12.
             this.vendorPanel1.SuspendLayout();
             this.vendorPanel1.ResumeLayout(false);
+            this.fakeTabControl1.Location = new System.Drawing.Point(280, 12);
+            this.fakeTabControl1.Name = "fakeTabControl1";
+            this.fakeTabControl1.SelectedTabPage = this.fakeTabPage1;
+            this.fakeTabControl1.Size = new System.Drawing.Size(260, 220);
+            this.fakeTabControl1.TabPages.AddRange(new FakeVendor.FakeTabPage[] {
+            this.fakeTabPage1,
+            this.fakeTabPage2});
+            this.fakeTabPage1.Controls.Add(this.fakeTabLabel1);
+            this.fakeTabPage1.Name = "fakeTabPage1";
+            this.fakeTabPage1.Text = "General";
+            this.fakeTabPage2.Controls.Add(this.fakeTabLabel2);
+            this.fakeTabPage2.Name = "fakeTabPage2";
+            this.fakeTabPage2.Text = "Details";
+            this.fakeTabLabel1.Location = new System.Drawing.Point(12, 12);
+            this.fakeTabLabel1.Name = "fakeTabLabel1";
+            this.fakeTabLabel1.Text = "Vendor page one";
+            this.fakeTabLabel2.Location = new System.Drawing.Point(12, 12);
+            this.fakeTabLabel2.Name = "fakeTabLabel2";
+            this.fakeTabLabel2.Text = "Vendor page two";
             this.Controls.Add(this.fancyButton1);
             this.Controls.Add(this.dataPanel1);
             this.Controls.Add(this.vendorEdit1);
             this.Controls.Add(this.vendorPanel1);
+            this.Controls.Add(this.fakeTabControl1);
             ((System.ComponentModel.ISupportInitialize)(this.dataPanel1)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.vendorEdit1.Properties)).EndInit();
-            this.ClientSize = new System.Drawing.Size(280, 200);
+            this.ClientSize = new System.Drawing.Size(560, 260);
             this.ResumeLayout(false);
         }
     }

@@ -147,6 +147,30 @@
   var NUDGE_GRID = 8;      // Ctrl+Arrow step (VS default designer grid); plain Arrow = 1px
   var NUDGE_COMMIT_MS = 250; // idle after the last arrow key before the accumulated nudge is committed
   var suppressClick = false; // swallow the click that ENDS a drag/band so it doesn't re-select
+  var placementSnapOverrideModifier = 'alt';
+  function sanitizePlacementSnapOverrideModifier(raw) {
+    return raw === 'control' || raw === 'shift' || raw === 'disabled' ? raw : 'alt';
+  }
+  function placementSnapOverrideActive(e) {
+    if (placementSnapOverrideModifier === 'disabled') return false;
+    if (placementSnapOverrideModifier === 'control') return !!(e && e.ctrlKey);
+    if (placementSnapOverrideModifier === 'shift') return !!(e && e.shiftKey);
+    return !!(e && e.altKey);
+  }
+  function rawPlacementStatus(r) {
+    return T('designer.status.freePlacement', {
+      x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h)
+    });
+  }
+  // Inline editors are not VS Code TextDocuments, so explicitly tell the host when typing should preempt a lazy
+  // toolbox metadata pass. Navigation and command shortcuts do not count as text entry.
+  document.addEventListener('keydown', function (e) {
+    var target = e.target;
+    if (!target || !target.matches || !target.matches('input, textarea, [contenteditable="true"]')) return;
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete')) {
+      vscode.postMessage({ type: 'toolboxInteraction' });
+    }
+  });
   // ---- Lock Controls (VS): a locked control can't be moved/resized/nudged by mouse. The state is view metadata:
   // reported to the extension host and persisted per form in workspaceState, never written into .Designer.cs/.resx.
   var lockedIds = {};      // { id: true } for locked controls
@@ -1693,12 +1717,13 @@
       var dx = (e.clientX - drag.startX) / zoom, dy = (e.clientY - drag.startY) / zoom;
       if (drag.mode === 'move') {
         var nx = drag.orig.x + dx, ny = drag.orig.y + dy;
-        var snap = computeSnap(nx, ny, drag.orig.w, drag.orig.h, drag.primaryId);
+        var snapOverride = placementSnapOverrideActive(e);
+        var snap = snapOverride ? { x: nx, y: ny, guides: [] } : computeSnap(nx, ny, drag.orig.w, drag.orig.h, drag.primaryId);
         nx = snap.x; ny = snap.y;
         var sdx = nx - drag.orig.x, sdy = ny - drag.orig.y;
         drag.delta = { dx: sdx, dy: sdy };
         drag.cur = { x: nx, y: ny, w: drag.orig.w, h: drag.orig.h };
-        drawGuides(snap.guides);
+        if (snapOverride) clearGuides(); else drawGuides(snap.guides);
         updateRulerMarks(drag.cur); // keep the ruler bounds-markers tracking the object as it moves
         // ghost: translate the primary box and every secondary box by the snapped delta
         selBox.style.left = (nx * zoom) + 'px'; selBox.style.top = (ny * zoom) + 'px';
@@ -1709,7 +1734,8 @@
           b.style.left = ((it.x + sdx) * zoom) + 'px'; b.style.top = ((it.y + sdy) * zoom) + 'px';
           b.style.width = Math.max(0, it.w * zoom - 2) + 'px'; b.style.height = Math.max(0, it.h * zoom - 2) + 'px';
         }
-        setStatus(drag.group ? T('designer.status.moveGroup', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) })
+        setStatus(snapOverride ? rawPlacementStatus(drag.cur)
+                             : drag.group ? T('designer.status.moveGroup', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) })
                              : T('designer.status.moveSingle', { x: Math.round(nx), y: Math.round(ny) }));
       } else {
         var o = drag.orig, dir = drag.dir || 'se';
@@ -1718,14 +1744,15 @@
         if (dir.indexOf('s') >= 0) rh = Math.max(4, o.h + dy);
         if (dir.indexOf('w') >= 0) { rw = Math.max(4, o.w - dx); rx = o.x + (o.w - rw); }
         if (dir.indexOf('n') >= 0) { rh = Math.max(4, o.h - dy); ry = o.y + (o.h - rh); }
-        var rsnap = computeResizeSnap({ x: rx, y: ry, w: rw, h: rh }, dir, current);
+        var resizeSnapOverride = placementSnapOverrideActive(e);
+        var rsnap = resizeSnapOverride ? { x: rx, y: ry, w: rw, h: rh, guides: [] } : computeResizeSnap({ x: rx, y: ry, w: rw, h: rh }, dir, current);
         rx = rsnap.x; ry = rsnap.y; rw = rsnap.w; rh = rsnap.h;
-        drawGuides(rsnap.guides);
+        if (resizeSnapOverride) clearGuides(); else drawGuides(rsnap.guides);
         drag.cur = { x: rx, y: ry, w: rw, h: rh };
         selBox.style.left = (rx * zoom) + 'px'; selBox.style.top = (ry * zoom) + 'px';
         selBox.style.width = Math.max(0, rw * zoom - 2) + 'px'; selBox.style.height = Math.max(0, rh * zoom - 2) + 'px';
         updateRulerMarks(drag.cur); // track bounds on the ruler during resize too
-        setStatus(T('designer.status.resize', { w: Math.round(rw), h: Math.round(rh) }));
+        setStatus(resizeSnapOverride ? rawPlacementStatus(drag.cur) : T('designer.status.resize', { w: Math.round(rw), h: Math.round(rh) }));
       }
       return;
     }
@@ -2074,6 +2101,8 @@
       lockedIds = {};
       (vs.lockedIds || []).forEach(function (id) { if (typeof id === 'string' && id) lockedIds[id] = true; });
       applyZoomStyles();
+    } else if (m.type === 'placementSettings') {
+      placementSnapOverrideModifier = sanitizePlacementSnapOverrideModifier(m.snapOverrideModifier);
     } else if (m.type === 'render') {
       hasRendered = true; hideOverlay();
       drawPng(m.png, 0, 0, m.width, m.height, true, m.gen);

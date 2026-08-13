@@ -57,6 +57,28 @@ public sealed class TabPageReorderTests
         }
         """;
 
+    private const string VendorAddRange = """
+        namespace Demo;
+        partial class Form1
+        {
+            private DevExpress.XtraTab.XtraTabControl tabs;
+            private DevExpress.XtraTab.XtraTabPage pageA;
+            private DevExpress.XtraTab.XtraTabPage pageB;
+
+            private void InitializeComponent()
+            {
+                this.tabs = new DevExpress.XtraTab.XtraTabControl();
+                this.pageA = new DevExpress.XtraTab.XtraTabPage();
+                this.pageB = new DevExpress.XtraTab.XtraTabPage();
+                this.tabs.SelectedTabPage = this.pageA;
+                this.tabs.TabPages.AddRange(new DevExpress.XtraTab.XtraTabPage[] {
+                    this.pageA,
+                    this.pageB});
+                this.Controls.Add(this.tabs);
+            }
+        }
+        """;
+
     [Fact]
     public void SeparateAdds_MoveRight_SwapsOnlyTheAdjacentPageReferences()
     {
@@ -95,6 +117,19 @@ public sealed class TabPageReorderTests
         AssertOrder(result.NewText!, "this.pageA,", "this.pageB,", "this.pageD}");
         Assert.Contains("this.tabs.TabPages.Add(this.pageC);", result.NewText);
         Assert.True(DesignerControlEditor.OnlyTabPageMoved(AddRange, result.NewText!, "tabs", "pageD", left: true));
+    }
+
+    [Fact]
+    public void VendorAddRange_MoveLeft_PreservesSelectedPageStatementAndCollectionShape()
+    {
+        var result = DesignerControlEditor.MoveTabPage(VendorAddRange, "tabs", "pageB", left: true);
+
+        Assert.True(result.Safe, result.Reason);
+        Assert.NotNull(result.NewText);
+        AssertOrder(result.NewText!, "this.pageB,", "this.pageA}");
+        Assert.Contains("this.tabs.SelectedTabPage = this.pageA;", result.NewText);
+        Assert.Single(result.NewText!.Split("TabPages.AddRange", StringSplitOptions.None).Skip(1));
+        Assert.True(DesignerControlEditor.OnlyTabPageMoved(VendorAddRange, result.NewText!, "tabs", "pageB", left: true));
     }
 
     [Fact]

@@ -264,11 +264,18 @@ namespace WinFormsDesigner.Engine
                             owner = mid.GetValue(owner);
                             if (owner == null) return "null collection at " + it.PropertyPath[i];
                         }
-                        if (owner is not IList list) return "collection target is not an IList";
                         // element type: try the collection's indexer type for materialization context, else object
                         Type elemType = CollectionElementType(owner.GetType());
                         if (!TryMaterialize(it.Item, elemType, inst, host, out var item, out var ierr)) return ierr;
-                        list.Add(item);
+                        if (owner is IList list) { list.Add(item); return null; }
+                        // A designer collection that is NOT IList. Vendor collections routinely are: measured on a real
+                        // project, PGMUI/DevExpress's TreeListColumnCollection implements only ICollection + IEnumerable
+                        // and a TYPED Add(TreeListColumn). Refusing those dropped the whole form to the compiled
+                        // fallback — the one path that constructs the user's real form and runs their code — over a
+                        // collection this IR already models. Adding through the typed method is the same operation.
+                        var add = SingleArgAdd(owner.GetType(), item);
+                        if (add == null) return "collection target is neither an IList nor has an Add(item) method";
+                        add.Invoke(owner, new[] { item });
                         return null;
                     }
 
@@ -745,7 +752,45 @@ namespace WinFormsDesigner.Engine
             if (indexer != null && indexer.PropertyType != typeof(object)) return indexer.PropertyType;
             foreach (var i in collType.GetInterfaces())
                 if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IList<>)) return i.GetGenericArguments()[0];
+            foreach (var i in collType.GetInterfaces())
+                if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>)) return i.GetGenericArguments()[0];
             return typeof(object);
+        }
+
+        /// <summary>The collection's own single-argument <c>Add</c> for this item — how a non-IList designer collection
+        /// takes one. Deliberately narrow: exactly one parameter, and the item must fit it, so the no-argument
+        /// <c>Add()</c> overload vendors provide (which CREATES an element rather than adding one) can never be
+        /// chosen, and neither can an unrelated multi-argument overload.</summary>
+        private static MethodInfo? SingleArgAdd(Type collType, object? item)
+        {
+            MethodInfo? best = null;
+            Type? bestParam = null;
+            foreach (var m in collType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (m.Name != "Add") continue;
+                var ps = m.GetParameters();
+                if (ps.Length != 1) continue;
+                Type p = ps[0].ParameterType;
+                if (item == null ? p.IsValueType : !p.IsInstanceOfType(item)) continue; // not applicable
+
+                // MOST SPECIFIC applicable parameter wins, as C# overload resolution would: a collection that
+                // declares both `Add(object)` and `Add(Control)` must get `Add(Control)` for a control. Reflection
+                // returns methods in no defined order, so "first applicable" would pick either one from run to run —
+                // and a vendor's object-typed overload can behave differently from its typed one.
+                if (bestParam == null || (bestParam.IsAssignableFrom(p) && bestParam != p))
+                {
+                    best = m;
+                    bestParam = p;
+                }
+                else if (!p.IsAssignableFrom(bestParam) && string.CompareOrdinal(p.FullName, bestParam.FullName) < 0)
+                {
+                    // Unrelated applicable parameter types (an interface each, say): neither is more specific, so
+                    // pick deterministically by name rather than by whatever order reflection happened to return.
+                    best = m;
+                    bestParam = p;
+                }
+            }
+            return best;
         }
 
         private static string Describe(IrStatement s) => s.GetType().Name;

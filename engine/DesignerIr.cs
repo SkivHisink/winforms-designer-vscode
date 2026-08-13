@@ -41,7 +41,13 @@ namespace WinFormsDesigner.Engine
         // 3: IrApplyResources carries ComponentResourceManager.ApplyResources as a closed host capability. Bumped per
         //    the vocabulary rule on IrValidate.Closed — a producer and an executor built from different revisions must
         //    refuse each other loudly rather than replay a capability one side cannot see.
-        public const int SchemaVersion = 3;
+        // 4: IrDocument.NamespaceContext — the file's own `using`/namespace scope, so an UNQUALIFIED type name (legal
+        //    C#, common in hand-written designer files) resolves instead of dropping the whole form to the compiled
+        //    fallback. Same rule: a mismatched producer/executor pair must refuse each other, not half-read a document.
+        public const int SchemaVersion = 4;
+        /// <summary>Max namespace candidates carried for unqualified type names (usings + enclosing namespace chain).
+        /// Generous for real files, bounded so a forged document cannot make resolution quadratic.</summary>
+        public const int MaxNamespaceContext = 128;
         public const int MaxStatements = 20000;
         /// <summary>Max nesting depth of IrValue trees (arrays of casts of ctors …).</summary>
         public const int MaxValueDepth = 16;
@@ -355,6 +361,22 @@ namespace WinFormsDesigner.Engine
         /// <summary>The base type exactly as the source declares it (syntax name); the executor resolves it against
         /// the compiled assembly and refuses on mismatch (`baseTypeChangedRebuildRequired` — stale-type handshake).</summary>
         public string BaseTypeSyntaxName { get; set; } = "";
+        /// <summary>
+        /// Namespaces an UNQUALIFIED type name in this file may live in, most likely first: the file's `using`
+        /// directives (both above and inside the namespace, in source order), then the enclosing namespace and each
+        /// of its ancestors.
+        ///
+        /// Visual Studio's own generator always writes fully-qualified names, so the interpreter used to need none of
+        /// this. Hand-written and reformatted designer files are not bound by that: a real project file reads
+        ///   namespace X.Y.Forms { using Vendor.Controls;  … this.velModelControl = new VelModelControl(); }
+        /// and `Assembly.GetType("VelModelControl")` cannot find that type from any assembly — so the whole form fell
+        /// back to constructing the user's REAL compiled class, which is the one path that runs their code. Carrying
+        /// the file's own resolution context is what keeps such forms on the safe interpreted path.
+        ///
+        /// Names only: the executor still gates every value and every construction exactly as before — this widens
+        /// where a NAME may be looked up, never what may be executed.
+        /// </summary>
+        public List<string> NamespaceContext { get; set; } = new List<string>();
         public List<IrStatement> Statements { get; set; } = new List<IrStatement>();
         public int TotalSourceStatements { get; set; }
         public int RepresentedStatements { get; set; }
@@ -397,6 +419,12 @@ namespace WinFormsDesigner.Engine
             // type; a non-empty name is only a hint for the stale-base handshake. Validate it only when present.
             if (doc.BaseTypeSyntaxName == null) return "BaseTypeSyntaxName is null";
             if (doc.BaseTypeSyntaxName.Length != 0 && !ValidTypeName(doc.BaseTypeSyntaxName)) return "invalid BaseTypeSyntaxName";
+            // NamespaceContext is names-only resolution scope; validate it exactly as strictly as any other type name
+            // so a forged document cannot smuggle an unbounded or malformed probe list past the consumer.
+            if (doc.NamespaceContext == null) return "NamespaceContext is null";
+            if (doc.NamespaceContext.Count > IrLimits.MaxNamespaceContext) return "too many namespace candidates";
+            foreach (var ns in doc.NamespaceContext)
+                if (!ValidTypeName(ns)) return "invalid namespace candidate";
             if (doc.Statements == null) return "Statements is null";
             if (doc.Statements.Count > IrLimits.MaxStatements) return "too many statements";
             if (doc.TotalSourceStatements < 0 || doc.RepresentedStatements < 0

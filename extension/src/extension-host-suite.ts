@@ -1,5 +1,6 @@
 import * as assert from 'node:assert';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 
@@ -87,4 +88,36 @@ export async function run(): Promise<void> {
     'the diff should still be showing the form .cs as its modified side');
 
   await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+  // Deleting a form deletes the whole form (issue #3). This has to run in a real Extension Host too: the behaviour is
+  // contributed to VS Code's own delete operation through onWillDeleteFiles, so nothing headless can prove that the
+  // generated files actually go with it — or, just as important, that a file which merely looks similar stays.
+  const scratch = path.join(os.tmpdir(), 'wfd-delete-form-' + Date.now());
+  fs.mkdirSync(scratch, { recursive: true });
+  const written = (name: string, body: string): string => {
+    const file = path.join(scratch, name);
+    fs.writeFileSync(file, body, 'utf8');
+    return file;
+  };
+  const form = written('DeleteMe.cs', 'namespace S { public partial class DeleteMe : System.Windows.Forms.Form { } }');
+  const generated = written('DeleteMe.Designer.cs', 'namespace S { partial class DeleteMe { private void InitializeComponent() { } } }');
+  const resx = written('DeleteMe.resx', '<root />');
+  const localized = written('DeleteMe.ru.resx', '<root />');
+  const bystander = written('DeleteMe.Backup.resx', '<root />');   // not culture-shaped: not ours to delete
+  const otherForm = written('DeleteMe2.cs', 'namespace S { }');    // shares the prefix, different form
+
+  // A workbench delete — what the Explorer and any refactoring do. (`workspace.fs.delete` deliberately does NOT
+  // raise the file-operation events, so it could never exercise this.)
+  const deletion = new vscode.WorkspaceEdit();
+  deletion.deleteFile(vscode.Uri.file(form), { ignoreIfNotExists: false });
+  assert.ok(await vscode.workspace.applyEdit(deletion), 'the form delete itself did not apply');
+  await new Promise((resolve) => setTimeout(resolve, 1000)); // the contributed edit applies with the operation
+
+  for (const gone of [form, generated, resx, localized]) {
+    assert.ok(!fs.existsSync(gone), `deleting the form should have taken ${path.basename(gone)} with it`);
+  }
+  for (const kept of [bystander, otherForm]) {
+    assert.ok(fs.existsSync(kept), `deleting the form must NOT touch ${path.basename(kept)}`);
+  }
+  fs.rmSync(scratch, { recursive: true, force: true });
 }

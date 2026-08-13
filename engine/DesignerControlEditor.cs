@@ -403,7 +403,10 @@ namespace WinFormsDesigner.Engine
             string dir = "";
             try
             {
-                location = t.Assembly.Location ?? "";
+                // OriginOf, not Assembly.Location: a scanned user assembly is loaded from a private in-memory copy so
+                // it never pins the user's build output, and such an assembly reports an EMPTY Location — which would
+                // blank out this dialog's path/Directory columns. Framework assemblies still answer with Location.
+                location = ControlLoadContext.OriginOf(t.Assembly);
                 dir = string.IsNullOrEmpty(location) ? "" : (System.IO.Path.GetDirectoryName(location) ?? "");
             }
             catch { /* dynamic / no location */ }

@@ -246,7 +246,7 @@ namespace WinFormsDesigner.Engine.Net48
                 // fallback, never a hard RPC error: the method's contract is "always return a picture; RenderMode +
                 // FallbackReason say which".
                 var container = new DesignTimeContainer();
-                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName));
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName), doc?.NamespaceContext);
                 Form? builtForm = null;
                 InterpretedRenderPlan? plan = null;
                 bool keepAlive = false; // set once the graph is cached for reuse — then `finally` must NOT tear it down
@@ -280,6 +280,9 @@ namespace WinFormsDesigner.Engine.Net48
                     ApplyTabViewState(plan.Execution!, selectedTabs); // transient selected-tab override
                     builtForm = HostOffscreen(rootCtl, reqWidth, reqHeight);
                     for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    // …and again AFTER the pump: a form can re-stage itself from a posted message (BeginInvoke, Shown,
+                    // a vendor layout continuation), which lands here rather than inside Show.
+                    ReassertRootWindow(builtForm, reqWidth, reqHeight);
                     rootCtl.PerformLayout();
                     Application.DoEvents();
 
@@ -337,6 +340,12 @@ namespace WinFormsDesigner.Engine.Net48
                         keepAlive = true;
                     }
                     return shot;
+                }
+                catch (BothRenderPathsFailedException)
+                {
+                    // Already the "neither path worked" report from an inner CompiledFallback — re-wrapping it would
+                    // nest the same sentence inside itself and bury the one useful line.
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -640,7 +649,19 @@ namespace WinFormsDesigner.Engine.Net48
         /// cover this form). Reuses the exact compiled path so a fallback is byte-identical to a plain compiled render.</summary>
         private RenderLayoutResult CompiledFallback(string assemblyPath, string rootTypeName, int w, int h, string reason, string detail)
         {
-            var r = Snapshot(GetOrCreate(assemblyPath, rootTypeName, w, h));
+            RenderLayoutResult r;
+            try { r = Snapshot(GetOrCreate(assemblyPath, rootTypeName, w, h)); }
+            catch (Exception ex)
+            {
+                // BOTH paths failed: the safe interpreted one bailed for `reason`, and constructing the user's real
+                // form then threw too (a constructor that needs runtime services, say). Reporting only the second
+                // exception hides WHY the safe path was abandoned — which is the actionable half, because that is the
+                // gap to close for this form. Carry it into the message the user actually sees.
+                throw new BothRenderPathsFailedException(
+                    "the source could not be interpreted (" + reason
+                    + (string.IsNullOrEmpty(detail) ? "" : ": " + detail)
+                    + ") and the compiled fallback could not be built either — " + ex.GetBaseException().Message, ex);
+            }
             r.RenderMode = "compiledFallback";
             r.FallbackReason = reason ?? "";
             if (!string.IsNullOrEmpty(detail)) r.Diagnostics = detail;
@@ -686,7 +707,7 @@ namespace WinFormsDesigner.Engine.Net48
                 Assembly asm;
                 try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); } catch { return (ComponentDesc?)null; }
                 var container = new DesignTimeContainer();
-                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName));
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName), doc?.NamespaceContext);
                 Form? builtForm = null;
                 InterpretedRenderPlan? plan = null;
                 try
@@ -704,6 +725,9 @@ namespace WinFormsDesigner.Engine.Net48
                     var rootCtl = (Control)plan.Root!;
                     builtForm = HostOffscreen(rootCtl, reqWidth, reqHeight);
                     for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    // …and again AFTER the pump: a form can re-stage itself from a posted message (BeginInvoke, Shown,
+                    // a vendor layout continuation), which lands here rather than inside Show.
+                    ReassertRootWindow(builtForm, reqWidth, reqHeight);
                     rootCtl.PerformLayout();
                     Application.DoEvents();
                     return DescribeInterpretedOn(plan, rootCtl, componentId ?? "");
@@ -806,7 +830,7 @@ namespace WinFormsDesigner.Engine.Net48
                 Assembly asm;
                 try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); } catch { return new TabHit(); }
                 var container = new DesignTimeContainer();
-                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName));
+                var host = new AssemblyIrHost(ProbeAssembliesFor(asm), container, LoadSiblingResx(designerFilePath, cultureName), doc?.NamespaceContext);
                 Form? builtForm = null;
                 InterpretedRenderPlan? plan = null;
                 try
@@ -818,6 +842,7 @@ namespace WinFormsDesigner.Engine.Net48
                     ApplyTabViewState(plan.Execution, selectedTabs);
                     builtForm = HostOffscreen(rootCtl, 0, 0);
                     for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    ReassertRootWindow(builtForm, 0, 0); // a form can re-stage itself from a posted message — see above
                     rootCtl.PerformLayout();
                     Application.DoEvents();
                     Control? hostCtl = (hostId == "this" || hostId.Length == 0)
@@ -853,25 +878,63 @@ namespace WinFormsDesigner.Engine.Net48
             return SafeResxResolver.Parse(MergedSiblingResxXml(designerFilePath, cultureName));
         }
 
-        /// <summary>apply transient tab VIEW STATE: set each named TabControl's SelectedTab to the
-        /// named TabPage so a tab-click stays interpreted (the source's SelectedIndex is overridden by the user's
-        /// navigation, re-supplied on every render since the interpreted graph is uncached). NARROW, allowlisted adapter:
-        /// ONLY System.Windows.Forms.TabControl + TabPage resolved from the executor's identity model — a vendor tab type
-        /// or an unresolvable/foreign page is a NO-OP (interpreted tab-nav for those is disabled, never guessed). Each
-        /// entry is "hostFieldName=pageFieldName".</summary>
+        /// <summary>Apply transient tab VIEW STATE so a tab click survives the next interpreted render. Standard
+        /// WinForms tabs use the typed path; vendor-shaped hosts use the same narrow public surface already required by
+        /// layout/hit-test/live-move: a <c>TabPages</c> enumerable and a writable
+        /// <c>SelectedTabPage</c>/<c>SelectedPage</c>/<c>SelectedTab</c> property. Both objects must be exact identities
+        /// from the executor, and the page must be a reference-identical collection member. Invalid, foreign, oversized,
+        /// throwing, or read-only shapes are harmless no-ops. Each entry is "hostFieldName=pageFieldName".</summary>
         private static void ApplyTabViewState(IrExecutionResult exec, string[]? selectedTabs)
         {
             if (selectedTabs == null) return;
-            foreach (var pair in selectedTabs)
+            for (int i = 0; i < selectedTabs.Length && i < 128; i++)
             {
-                int eq = pair?.IndexOf('=') ?? -1;
-                if (eq <= 0) continue;
-                string hostName = pair!.Substring(0, eq);
+                string? pair = selectedTabs[i];
+                if (string.IsNullOrEmpty(pair) || pair.Length > 513) continue;
+                int eq = pair.IndexOf('=');
+                if (eq <= 0 || eq != pair.LastIndexOf('=') || eq > 256 || pair.Length - eq - 1 > 256) continue;
+                string hostName = pair.Substring(0, eq);
                 string pageName = pair.Substring(eq + 1);
-                if (exec.Instances.TryGetValue(hostName, out var h) && h is TabControl tc
-                    && exec.Instances.TryGetValue(pageName, out var p) && p is TabPage tp && tc.TabPages.Contains(tp))
-                    try { tc.SelectedTab = tp; } catch { /* a bad view-state is a no-op, never a throw */ }
+                if (exec.Instances.TryGetValue(hostName, out var h) && h is Control host
+                    && exec.Instances.TryGetValue(pageName, out var p) && p is Control page)
+                    TryApplyTabViewState(host, page);
             }
+        }
+
+        private static bool TryApplyTabViewState(Control host, Control page)
+        {
+            if (host is TabControl standardHost && page is TabPage standardPage)
+            {
+                if (!standardHost.TabPages.Contains(standardPage)) return false;
+                try
+                {
+                    standardHost.SelectedTab = standardPage;
+                    return ReferenceEquals(standardHost.SelectedTab, standardPage);
+                }
+                catch { return false; }
+            }
+
+            try
+            {
+                var pagesProp = FindTabProp(host.GetType(), "TabPages");
+                var selectedProp = FindTabProp(host.GetType(), "SelectedTabPage", "SelectedPage", "SelectedTab");
+                if (pagesProp == null || selectedProp?.GetSetMethod(nonPublic: false) == null
+                    || !selectedProp.PropertyType.IsInstanceOfType(page)
+                    || pagesProp.GetValue(host) is not System.Collections.IEnumerable pages) return false;
+
+                bool member = false;
+                int inspected = 0;
+                foreach (var candidate in pages)
+                {
+                    if (inspected++ >= 512) return false;
+                    if (ReferenceEquals(candidate, page)) { member = true; break; }
+                }
+                if (!member) return false;
+
+                selectedProp.SetValue(host, page);
+                return ReferenceEquals(selectedProp.GetValue(host), page);
+            }
+            catch { return false; }
         }
 
         /// <summary>Realize a root control off-screen so its handle tree (and vendor skinning) initializes exactly as
@@ -881,9 +944,7 @@ namespace WinFormsDesigner.Engine.Net48
             Form form;
             if (rootCtl is Form rootForm)
             {
-                rootForm.StartPosition = FormStartPosition.Manual;
-                rootForm.ShowInTaskbar = false;
-                rootForm.Location = new Point(-20000, -20000);
+                HardenRootWindow(rootForm);
                 if (reqWidth > 0 && reqHeight > 0) rootForm.ClientSize = new Size(reqWidth, reqHeight);
                 form = rootForm;
             }
@@ -906,9 +967,131 @@ namespace WinFormsDesigner.Engine.Net48
             // Show realizes the handle tree; if a vendor OnHandleCreated/OnLayout throws, dispose the WRAPPER Form we own
             // (the Form-root case disposes via the caller's plan.Root) so a throwing control can't leak a Form/HWND per
             // render/describe call lost the wrapper on throw).
-            try { form.Show(); }
+            try { ShowRealizing(form); }
             catch { if (!ReferenceEquals(form, rootCtl)) { try { form.Dispose(); } catch { } } throw; }
+            ReassertRootWindow(form, reqWidth, reqHeight); // Show ran the form's own Load — it may have re-staged itself
+            RegisterHostWindow(form);
             return form;
+        }
+
+        /// <summary>Remember a preview window as OURS, so the stray-window diagnostic never reports it as something a
+        /// form opened. Every realized design stays alive on the render desktop for as long as it is cached.</summary>
+        private static void RegisterHostWindow(Form form)
+        {
+            try
+            {
+                // Drop handles of previews that are gone. Without this the set only grows, and Windows RECYCLES window
+                // handles — a reused HWND would then silently exclude a genuinely stray window from the diagnostic.
+                IntPtr handle = form.Handle;
+                lock (_hostWindowsGate)
+                {
+                    // Prune on EVERY registration, not past a threshold: Windows recycles window handles, and a dead
+                    // entry that is later reused would make the diagnostics — and the rescue — treat a genuinely
+                    // stray window as one of ours. The set is a handful of entries, so this costs nothing.
+                    _hostWindows.RemoveWhere(h => !RenderDesktop.IsWindowAlive(h));
+                    _hostWindows.Add(handle);
+                }
+            }
+            catch { /* a form whose handle can't be read simply isn't excluded */ }
+        }
+
+        /// <summary>
+        /// Neutralize the window states that make a real form escape the preview's off-screen placement — and that
+        /// silently make it render at the WRONG size.
+        ///
+        /// A Maximized (or Minimized) form ignores Location and ClientSize outright: Windows sizes it to the monitor,
+        /// so "off-screen at (-20000,-20000)" became a full-screen window at (-8,-8) and the captured picture was the
+        /// SCREEN rather than the form the user designed (measured: 1936x1048 for a form asked to be 420x260). Visual
+        /// Studio likewise draws the design size regardless of WindowState, so normalizing is also the faithful thing.
+        /// TopMost would put the window above everything if it ever did reach a visible desktop.
+        ///
+        /// Each assignment is guarded on its own: a vendor form base can throw from a property setter, and one that
+        /// does must not cost the rest of the hardening.
+        /// </summary>
+        private static void HardenRootWindow(Form form)
+        {
+            try { if (form.WindowState != FormWindowState.Normal) form.WindowState = FormWindowState.Normal; } catch { }
+            try { if (form.TopMost) form.TopMost = false; } catch { }
+            try { form.StartPosition = FormStartPosition.Manual; } catch { }
+            try { form.ShowInTaskbar = false; } catch { }
+            try { form.Location = new Point(-20000, -20000); } catch { }
+        }
+
+        /// <summary>Handles of the preview windows THIS engine hosts (one per realized design). Kept so the stray-window
+        /// diagnostic can tell "a window the form opened" from "a preview we are hosting" — every previously rendered
+        /// form is still alive on the render desktop, and without this the log accused each new form of opening them.</summary>
+        private static readonly HashSet<IntPtr> _hostWindows = new HashSet<IntPtr>();
+        /// <summary>Guards _hostWindows: the modal rescue below reads it from a pool thread while the render thread
+        /// is blocked inside Show.</summary>
+        private static readonly object _hostWindowsGate = new object();
+        /// <summary>How long a realize may take before we assume a design-time window is waiting for an answer that
+        /// can never come. Comfortably inside the host's 20s render timeout, so a rescued render still lands.</summary>
+        private const int ModalRescueMs = 10000;
+
+        /// <summary>
+        /// Realize the window, and rescue this thread if the form's own design-time code blocks it.
+        ///
+        /// Show() runs the form's Load/Shown — and a MODAL window opened there waits for a click on a desktop that is
+        /// never displayed, so Show would never return and the engine would be wedged for every later render too.
+        /// The timer runs on a pool thread (this one is stuck by definition) and only ever asks windows this engine
+        /// does NOT host to close.
+        /// </summary>
+        private static void ShowRealizing(Form form)
+        {
+            int renderThreadId = RenderDesktop.CurrentThreadId(); // captured HERE: the rescue runs on a pool thread
+            // Register THIS preview BEFORE showing it. The rescue below closes every visible window on the render
+            // thread that is not ours, and a modal opened from Shown (not Load) appears while Show is still blocked —
+            // so a preview registered only after Show returned would be missing from the rescue's snapshot and be
+            // closed as if it were the stray window. Touching Handle realizes the window without making it visible.
+            RegisterHostWindow(form);
+            using (var rescue = new System.Threading.Timer(_ =>
+            {
+                IntPtr[] ours;
+                lock (_hostWindowsGate) { ours = new IntPtr[_hostWindows.Count]; _hostWindows.CopyTo(ours); }
+                var closed = RenderDesktop.CloseStrayWindows(ours, renderThreadId);
+                if (closed.Count > 0)
+                    Console.Error.WriteLine("[engine:net48] a window the form opened at design time was blocking the preview — asked it to close: "
+                        + string.Join(", ", closed.ToArray()));
+            }, null, ModalRescueMs, System.Threading.Timeout.Infinite))
+            {
+                form.Show();
+            }
+        }
+
+        /// <summary>Name the windows the form's design-time code opened for itself (a splash screen, a docking panel,
+        /// a dialog). They are confined to the render desktop and never reach the screen, so the log is the only place
+        /// they can be seen — and a modal one among them is exactly why a render would appear to hang. Diagnostics
+        /// only; the host surfaces engine stderr in its output channel.</summary>
+        private static void LogStrayWindows(Form host)
+        {
+            try
+            {
+                RegisterHostWindow(host);
+                IntPtr[] ours;
+                lock (_hostWindowsGate) { ours = new IntPtr[_hostWindows.Count]; _hostWindows.CopyTo(ours); }
+                var titles = RenderDesktop.StrayWindows(ours, RenderDesktop.CurrentThreadId()); // called ON the render thread
+                if (titles.Count == 0) return;
+                Console.Error.WriteLine("[engine:net48] the form's design-time code opened "
+                    + titles.Count + " window(s) — kept off-screen: " + string.Join(", ", titles.ToArray()));
+            }
+            catch { /* diagnostics must never affect a render */ }
+        }
+
+        /// <summary>Re-apply the hardening AFTER Show: Show is where the form's own Load/Shown code runs, and that code
+        /// routinely maximizes, centers or re-stages the window (this engine renders the real type, so it really does
+        /// run). Restores the requested client size, which a WindowState change would otherwise have discarded.</summary>
+        private static void ReassertRootWindow(Form form, int reqWidth, int reqHeight)
+        {
+            try
+            {
+                // Re-applied UNCONDITIONALLY. A "looks untouched" shortcut (Normal + still off-screen) misses the
+                // properties that leave no trace in those two: a ClientSize the form changed in Load, a TopMost it
+                // set, a taskbar button it asked for. Each assignment is already a no-op when nothing changed.
+                HardenRootWindow(form);
+                if (reqWidth > 0 && reqHeight > 0 && form.ClientSize != new Size(reqWidth, reqHeight))
+                    form.ClientSize = new Size(reqWidth, reqHeight);
+            }
+            catch { /* best-effort: a vendor form that refuses is still confined to the render desktop */ }
         }
 
         /// <summary>Whether the source's declared base name refers to the same type as the compiled base. A QUALIFIED
@@ -933,14 +1116,22 @@ namespace WinFormsDesigner.Engine.Net48
 
         /// <summary>The vendor smart-tag menu a component's compiled type DECLARES (DevExpress "Tasks") — read
         /// only, never invoked; see VendorSmartTags for why. [] for a plain framework control, an unknown id, or any
-        /// failure, so the host simply shows no vendor section.</summary>
+        /// failure, so the host simply shows no vendor section.
+        ///
+        /// PEEKS the live instance, never builds one. This is optional metadata for a menu, and building the instance
+        /// means constructing the user's REAL compiled form and realizing it — which runs their constructor, their
+        /// field initializers and their Load handler. That is a heavy, side-effecting act (their Load legitimately
+        /// opens splash screens and dialogs), and it must never be triggered by merely SELECTING a control on a
+        /// preview that was drawn by interpreting the source. When a compiled instance already exists — the canvas
+        /// IS that instance — answering costs nothing and the menu appears as before.</summary>
         public VendorSmartTag[] ListVendorSmartTags(string assemblyPath, string rootTypeName, string componentId)
         {
             return _sta.Invoke(() =>
             {
                 try
                 {
-                    var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                    var live = PeekLive(assemblyPath, rootTypeName);
+                    if (live == null) return Array.Empty<VendorSmartTag>();
                     var target = ResolveLiveTarget(live, componentId);
                     return target == null ? Array.Empty<VendorSmartTag>() : VendorSmartTags.Read(target);
                 }
@@ -2149,6 +2340,17 @@ namespace WinFormsDesigner.Engine.Net48
             }
         }
 
+        /// <summary>The cached live design for (assembly, type) IF one already exists — never builds. For callers that
+        /// want to READ from a compiled instance the preview already has, without being the reason one gets built:
+        /// building means running the user's real form (see ListVendorSmartTags). Must be called on the STA, like
+        /// every other read of the cache.</summary>
+        private LiveDesign? PeekLive(string assemblyPath, string rootTypeName)
+        {
+            string key;
+            try { key = Path.GetFullPath(assemblyPath) + "|" + rootTypeName; } catch { return null; }
+            return _cache.TryGetValue(key, out var live) ? live : null;
+        }
+
         private LiveDesign GetOrCreate(string assemblyPath, string rootTypeName, int reqWidth, int reqHeight)
         {
             string key = Path.GetFullPath(assemblyPath) + "|" + rootTypeName;
@@ -2317,12 +2519,13 @@ namespace WinFormsDesigner.Engine.Net48
                 // whole window. This mirrors the net9 engine, whose RootComponent for a form-based .Designer.cs
                 // IS the Form itself (it draws root.DrawToBitmap on the form), and ComputeWindowOffset already
                 // accounts for a form's chrome (window-vs-client size), so child rects line up either way.
-                rootForm.StartPosition = FormStartPosition.Manual;
-                rootForm.ShowInTaskbar = false;
-                rootForm.Location = new Point(-20000, -20000); // off-screen, no visible flash
+                // …and normalize the window state first: a Maximized form ignores both the off-screen Location and the
+                // requested ClientSize, so it used to be realized full-screen — visible to the user AND captured at
+                // monitor size instead of the designed size. See HardenRootWindow.
+                HardenRootWindow(rootForm);
                 if (reqWidth > 0 && reqHeight > 0) rootForm.ClientSize = new Size(reqWidth, reqHeight);
                 form = rootForm;
-                form.Show(); // realizes the whole control tree's handles, off-screen
+                ShowRealizing(form); // realizes the whole control tree's handles, off-screen (with a modal rescue)
             }
             else
             {
@@ -2341,10 +2544,16 @@ namespace WinFormsDesigner.Engine.Net48
                 rootCtl.Size = sz;
                 form.ClientSize = sz;
                 form.Controls.Add(rootCtl);
-                form.Show(); // realizes the whole control tree's handles, off-screen
+                ShowRealizing(form); // realizes the whole control tree's handles, off-screen (with a modal rescue)
             }
 
             for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+            // The form's own Load/Shown ran during Show + this pump. If it re-staged the window (maximize, centre,
+            // TopMost — all common in a real application's main form), put it back before anything measures or
+            // captures it. Any window that code opened of its own is confined to the render desktop; name them in the
+            // log, because such a form can also be the reason a render blocks.
+            ReassertRootWindow(form, reqWidth, reqHeight);
+            LogStrayWindows(form);
             rootCtl.PerformLayout();
             Application.DoEvents();
 
@@ -3410,6 +3619,17 @@ namespace WinFormsDesigner.Engine.Net48
         }
     }
 
+    /// <summary>Neither render path could produce a picture: the source did not interpret AND the user's compiled form
+    /// could not be constructed. Its own type so the outer handler can re-throw it untouched instead of wrapping the
+    /// same sentence around itself.</summary>
+    [Serializable]
+    public sealed class BothRenderPathsFailedException : InvalidOperationException
+    {
+        public BothRenderPathsFailedException(string message, Exception inner) : base(message, inner) { }
+        private BothRenderPathsFailedException(System.Runtime.Serialization.SerializationInfo info,
+            System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
+    }
+
     /// <summary>Runs all WinForms work on one persistent STA thread inside the child domain. Mirrors the net9
     /// engine's StaDispatcher.</summary>
     public sealed class StaDispatcher
@@ -3426,8 +3646,16 @@ namespace WinFormsDesigner.Engine.Net48
 
         private void Loop()
         {
+            // NOTE: this thread does NOT choose its desktop — a thread inherits the PROCESS's, and an STA thread
+            // cannot switch (COM's hidden window makes SetThreadDesktop refuse with ERROR_BUSY; measured). The whole
+            // process is placed on the private render desktop at startup instead — see RenderDesktop.
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            // Never let WinForms answer an exception with its modal ThreadExceptionDialog. A vendor control that
+            // throws inside a WndProc while we pump would otherwise open "Unhandled exception has occurred in your
+            // application" — a MODAL window, so on the render desktop it would block this thread invisibly and wedge
+            // the engine. Letting the exception travel instead surfaces it as a render failure the host can report.
+            try { Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException); } catch { /* already set */ }
             foreach (var action in _queue.GetConsumingEnumerable()) action();
         }
 

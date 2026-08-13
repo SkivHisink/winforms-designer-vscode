@@ -33,6 +33,13 @@ export interface StartOptions {
    */
   probeDirs?: string[];
   /**
+   * net48 only: run the engine on the interactive desktop instead of the private render desktop it isolates itself
+   * onto. Off-desktop is the default because a compiled preview realizes the REAL form, so the form's own
+   * design-time code can open windows the user never asked for; this exists to diagnose a vendor control that
+   * misbehaves there, at the cost of those windows becoming visible again.
+   */
+  visibleRenderWindows?: boolean;
+  /**
    * Called synchronously the instant the child is spawned — BEFORE the (up-to-10s) pipe-connect wait below, and
    * therefore before any disposable EngineHandle exists. Lets the host take ownership of the raw process for
    * shutdown/cancellation while startEngine() is still connecting: a start can sit in that wait when the host
@@ -41,6 +48,10 @@ export interface StartOptions {
    */
   onSpawn?: (proc: ChildProcess) => void;
 }
+
+/** Env var that turns OFF the net48 engine's private render desktop — mirrors RenderDesktop.DisableVar
+ * (engine-net48). Unset means isolated, which is the default and the safe state. */
+export const DESKTOP_ISOLATION_ENV = 'WFD_NET48_DESKTOP_ISOLATION';
 
 /** Env var the net48 engine reads extra probe dirs from — mirrors Program.ProbeDirsEnvVar (engine-net48). */
 export const PROBE_DIRS_ENV = 'WINFORMS_DESIGNER_PROBE_DIRS';
@@ -72,7 +83,11 @@ export async function startEngine(engineDllPath: string, opts: StartOptions = {}
   // Probe dirs ride in on the environment (PATH-style) rather than argv: the engine also has a --render CLI, and an
   // env var keeps both entry points fed without widening the CLI contract. Absent/empty → inherit env unchanged.
   const probeDirs = (opts.probeDirs ?? []).map((d) => d.trim()).filter((d) => d.length > 0);
-  const env = probeDirs.length ? { ...process.env, [PROBE_DIRS_ENV]: probeDirs.join(path.delimiter) } : process.env;
+  let env: NodeJS.ProcessEnv = process.env;
+  if (probeDirs.length) env = { ...env, [PROBE_DIRS_ENV]: probeDirs.join(path.delimiter) };
+  // Opt OUT of the net48 engine's window isolation (it defaults ON inside the engine, so an unset variable is the
+  // safe state — the engine relaunches itself onto a desktop that is never displayed).
+  if (opts.visibleRenderWindows) env = { ...env, [DESKTOP_ISOLATION_ENV]: '0' };
   const proc = spawn(
     isExe ? engineDllPath : dotnet,
     isExe ? ['--pipe', pipeName] : [engineDllPath, '--pipe', pipeName],

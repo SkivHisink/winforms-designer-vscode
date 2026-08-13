@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "preview": false,
   "license": "MIT",
   "author": {
@@ -231,6 +231,30 @@
           "scope": "resource",
           "markdownDescription": "%config.assemblyPath.description%"
         },
+        "winformsDesigner.placementSnapOverrideModifier": {
+          "type": "string",
+          "default": "alt",
+          "scope": "resource",
+          "enum": [
+            "alt",
+            "control",
+            "shift",
+            "disabled"
+          ],
+          "enumItemLabels": [
+            "Alt",
+            "Control",
+            "Shift",
+            "Disabled"
+          ],
+          "markdownDescription": "%config.placementSnapOverrideModifier.description%"
+        },
+        "winformsDesigner.toolbox.autoDiscoverProjectControls": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%config.toolbox.autoDiscoverProjectControls.description%"
+        },
         "winformsDesigner.net48.probeDirectories": {
           "type": "array",
           "items": {
@@ -244,6 +268,24 @@
           "type": "boolean",
           "default": false,
           "description": "%config.net48.releaseOnFocusLoss.description%",
+          "scope": "window"
+        },
+        "winformsDesigner.deleteFormSiblings": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "%config.deleteFormSiblings.description%"
+        },
+        "winformsDesigner.net48.isolateRenderWindows": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.net48.isolateRenderWindows.description%",
+          "scope": "window"
+        },
+        "winformsDesigner.net48.releaseOnExternalBuild": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.net48.releaseOnExternalBuild.description%",
           "scope": "window"
         },
         "winformsDesigner.language": {

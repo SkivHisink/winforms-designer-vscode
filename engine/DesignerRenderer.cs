@@ -1663,7 +1663,7 @@ namespace WinFormsDesigner.Engine
                 try
                 {
                     alc = new ControlLoadContext(full);
-                    var asm = alc.LoadFromAssemblyPath(full);
+                    var asm = alc.LoadNoLock(full);
                     Type[] types;
                     try { types = asm.GetTypes(); }
                     catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }
@@ -1729,8 +1729,9 @@ namespace WinFormsDesigner.Engine
                 if (_candidateCache.TryGetValue(cacheKey, out var c) && c.mtime == mtime) return c.result;
                 var result = ScanAssemblyCandidatesCore(full, simpleName, fromProject, probeDirectories, out var unloadReference);
                 // AssemblyLoadContext.Unload() only starts unloading. Run collection after the no-inline helper
-                // returns so no Assembly/Type locals remain JIT-live; this makes Browse scans release their DLLs
-                // before the RPC completes (important when users rebuild/replace a chosen library immediately).
+                // returns so no Assembly/Type locals remain JIT-live, which hands the scanned graph's MEMORY back
+                // promptly. Its files were never held (the scan byte-loads — see ControlLoadContext), so replacing a
+                // browsed library right after a scan no longer depends on this collection happening.
                 WaitForCollectibleUnload(unloadReference);
                 _candidateCache[cacheKey] = (mtime, result);
                 return result;
@@ -1747,7 +1748,7 @@ namespace WinFormsDesigner.Engine
             try
             {
                 alc = new ControlLoadContext(full, probeDirectories);
-                var asm = alc.LoadFromAssemblyPath(full);
+                var asm = alc.LoadNoLock(full);
                 string asmName = asm.GetName().Name ?? simpleName;
                 Type[] types; string? loadWarn = null;
                 try { types = asm.GetTypes(); }
@@ -2174,6 +2175,141 @@ namespace WinFormsDesigner.Engine
         /// DesignSurface for the detected root type, and interpret the representable
         /// InitializeComponent subset into a live graph. Shared by render and serialize.
         /// </summary>
+        // ---- the user's compiled graph: loaded WITHOUT pinning their build output, and reused across renders ----
+        //
+        // Two problems used to live in the block this replaces, both invisible until a user tried to rebuild:
+        //   • it loaded with LoadFromAssemblyPath, which holds an OS handle on every file until the context is
+        //     collected — so an open designer made the user's own build fail with MSB3027 ("the file is locked by
+        //     WinFormsDesigner.Engine"), for a .NET FRAMEWORK output too: that load SUCCEEDS here (only the types
+        //     fail to resolve), so a net48 project got its .exe pinned by the engine that can never render it.
+        //   • it built a FRESH ControlLoadContext on every LoadGraph — i.e. on every render, describe, serialize and
+        //     preview-save — and never unloaded any of them, so the whole output directory was re-mapped and leaked
+        //     per call.
+        // Now: no-lock (byte) loading, and one context per output, rebuilt only when that output actually changes —
+        // the same "reload when the build changes" rule the net48 engine's DomainManager uses for its child domains.
+        private static readonly object _userAsmLock = new();
+        private static readonly Dictionary<string, (long stamp, ControlLoadContext alc, List<Assembly> asms, long used)> _userAsmCache
+            = new(StringComparer.OrdinalIgnoreCase);
+        private static long _userAsmUse;
+        /// <summary>Distinct output directories kept loaded. Small on purpose: it exists to stop per-render reloads,
+        /// not to be a general cache — a user has one or two projects open at a time, and every extra entry keeps a
+        /// whole assembly graph in memory.</summary>
+        private const int UserAsmCacheLimit = 4;
+
+        /// <summary>
+        /// The user's resolved output plus its sibling (non-shared) assemblies, loaded into one collectible context
+        /// that takes NO handle on any of those files (see <see cref="ControlLoadContext.LoadNoLock"/>).
+        ///
+        /// Cached per output path and rebuilt when <see cref="OutputStamp"/> changes, so a rebuild is picked up on the
+        /// next render but an unchanged build is not re-read. Returns a COPY of the assembly list: callers own theirs
+        /// (the load-failure path clears it) and must not mutate the cached one.
+        ///
+        /// An unloadable resolved assembly (wrong runtime/bitness, corrupt PE) must not abort the whole render, so any
+        /// failure degrades to an empty list — a framework-only render, exactly as if nothing had resolved.
+        /// </summary>
+        private static List<Assembly> LoadUserAssemblies(string? asmPath)
+        {
+            if (string.IsNullOrEmpty(asmPath) || !File.Exists(asmPath)) return new List<Assembly>();
+            string full;
+            try { full = Path.GetFullPath(asmPath); } catch { return new List<Assembly>(); }
+            long stamp = OutputStamp(full);
+
+            lock (_userAsmLock)
+            {
+                if (_userAsmCache.TryGetValue(full, out var hit))
+                {
+                    if (hit.stamp == stamp)
+                    {
+                        _userAsmCache[full] = (hit.stamp, hit.alc, hit.asms, ++_userAsmUse);
+                        return new List<Assembly>(hit.asms);
+                    }
+                    // Rebuilt since we loaded it → this graph is stale. Drop it and load the new one.
+                    _userAsmCache.Remove(full);
+                    TryUnload(hit.alc);
+                }
+
+                var loaded = new List<Assembly>();
+                ControlLoadContext? alc = null;
+                try
+                {
+                    alc = new ControlLoadContext(full);
+                    loaded.Add(alc.LoadNoLock(full));
+                    // also load sibling (non-shared) assemblies so types across the project resolve
+                    string? outDir = Path.GetDirectoryName(full);
+                    if (outDir != null)
+                    {
+                        foreach (var dll in Directory.GetFiles(outDir, "*.dll"))
+                        {
+                            if (string.Equals(dll, full, StringComparison.OrdinalIgnoreCase)) continue;
+                            if (ControlLoadContext.IsSharedName(Path.GetFileNameWithoutExtension(dll))) continue;
+                            try { loaded.Add(alc.LoadNoLock(dll)); } catch { /* skip non-loadable */ }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[engine] could not load resolved assembly {full}: {ex.GetType().Name}: {ex.Message}");
+                    if (alc != null) TryUnload(alc);
+                    return new List<Assembly>();
+                }
+
+                while (_userAsmCache.Count >= UserAsmCacheLimit)
+                {
+                    string? oldest = null; long oldestUse = long.MaxValue;
+                    foreach (var kv in _userAsmCache)
+                        if (kv.Value.used < oldestUse) { oldestUse = kv.Value.used; oldest = kv.Key; }
+                    if (oldest == null) break;
+                    TryUnload(_userAsmCache[oldest].alc);
+                    _userAsmCache.Remove(oldest);
+                }
+                _userAsmCache[full] = (stamp, alc!, loaded, ++_userAsmUse);
+                return new List<Assembly>(loaded);
+            }
+        }
+
+        /// <summary>Unload a superseded context. Best-effort by nature: Unload only STARTS the unload, and a context
+        /// whose types reached a DesignSurface/TypeDescriptor may never be collected. That is a memory question only —
+        /// the user's FILES were never held (byte-loaded), which is what a rebuild cares about.</summary>
+        private static void TryUnload(ControlLoadContext alc)
+        {
+            try { alc.Unload(); } catch { /* already unloading / not collectible — nothing else to do */ }
+        }
+
+        /// <summary>Cheap fingerprint of a resolved output: the assembly's own write time AND length, the newest write
+        /// time across the sibling dlls loaded with it, and the dll count. Rebuilding ANY project in the output
+        /// directory moves it (a referenced library can be rebuilt while the host assembly is untouched), a REMOVED
+        /// dll moves the count even when no timestamp advanced, and the length catches a restored/copied build whose
+        /// timestamp went BACKWARDS — the case a newest-time-only stamp would read as unchanged.</summary>
+        private static long OutputStamp(string full)
+        {
+            long own = 0;
+            try
+            {
+                var info = new FileInfo(full);
+                own = unchecked(info.LastWriteTimeUtc.Ticks * 31 + info.Length);
+            }
+            catch { /* unreadable → 0, still a stable stamp */ }
+
+            long siblingNewest = 0;
+            int siblingCount = 0;
+            string? outDir = Path.GetDirectoryName(full);
+            if (outDir != null)
+            {
+                try
+                {
+                    foreach (var dll in Directory.EnumerateFiles(outDir, "*.dll"))
+                    {
+                        siblingCount++;
+                        long t;
+                        try { t = File.GetLastWriteTimeUtc(dll).Ticks; } catch { continue; }
+                        if (t > siblingNewest) siblingNewest = t;
+                    }
+                }
+                catch { /* unreadable directory → the assembly's own stamp still stands */ }
+            }
+            return unchecked((own * 31 + siblingNewest) * 31 + siblingCount);
+        }
+
         private static LoadedGraph LoadGraph(string designerFilePath, string? controlAssemblyPath, string? sourceText = null)
         {
             // sourceText != null → render the in-memory (unsaved) buffer for a VS-style dirty preview; the
@@ -2225,35 +2361,7 @@ namespace WinFormsDesigner.Engine
                 asmPath = ProjectResolver.ResolveOutputAssembly(designerFilePath, allowEval: false);
             }
 
-            var userAsms = new List<Assembly>();
-            if (!string.IsNullOrEmpty(asmPath) && File.Exists(asmPath))
-            {
-                string full = Path.GetFullPath(asmPath);
-                // An unloadable resolved assembly (wrong runtime/bitness, corrupt PE — e.g. a single-target
-                // net4x/higher-than-host output) must not abort the whole render: degrade to a framework-only
-                // render as if nothing resolved, rather than throwing out of LoadGraph.
-                try
-                {
-                    var alc = new ControlLoadContext(full);
-                    userAsms.Add(alc.LoadFromAssemblyPath(full));
-                    // also load sibling (non-shared) assemblies so types across the project resolve
-                    string? outDir = Path.GetDirectoryName(full);
-                    if (outDir != null)
-                    {
-                        foreach (var dll in Directory.GetFiles(outDir, "*.dll"))
-                        {
-                            if (string.Equals(dll, full, StringComparison.OrdinalIgnoreCase)) continue;
-                            if (ControlLoadContext.IsSharedName(Path.GetFileNameWithoutExtension(dll))) continue;
-                            try { userAsms.Add(alc.LoadFromAssemblyPath(dll)); } catch { /* skip non-loadable */ }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"[engine] could not load resolved assembly {full}: {ex.GetType().Name}: {ex.Message}");
-                    userAsms.Clear();
-                }
-            }
+            var userAsms = LoadUserAssemblies(asmPath);
 
             var rootInfo = DetectRootType(cls, designerFilePath, userAsms);
             Type rootType = rootInfo.Surface;
@@ -2326,7 +2434,7 @@ namespace WinFormsDesigner.Engine
         {
             string full = Path.GetFullPath(assemblyPath);
             var alc = new ControlLoadContext(full);
-            var asm = alc.LoadFromAssemblyPath(full);
+            var asm = alc.LoadNoLock(full);
             var ctlType = asm.GetType(typeName)
                 ?? throw new InvalidOperationException("type not found in assembly: " + typeName);
 

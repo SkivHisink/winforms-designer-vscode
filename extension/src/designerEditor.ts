@@ -111,7 +111,13 @@ import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
 import { findNearestCsproj, findOwningCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
 import { t, tn, injectL10nScript } from './i18n';
 import { categorizeUnrepresentable, RenderDiagItem } from './renderDiagnostics';
-import { discoverProbeAssemblies, discoverRegisteredAssemblies, uniqueAssemblyPaths } from './toolboxDiscovery';
+import {
+  discoverBuildOutputAssemblies,
+  discoverProjectBuildOutputRoots,
+  discoverProbeAssemblies,
+  discoverRegisteredAssemblies,
+  uniqueAssemblyPaths,
+} from './toolboxDiscovery';
 
 /** One entry of the vendor's declared Tasks menu as the CANVAS sees it: the vendor's label, plus the verb this
 * designer runs for it (null → shown disabled, because we have no source-first equivalent). See vendorTagsFor. */
@@ -122,6 +128,7 @@ interface VendorTagView {
   closesPanel: boolean;
 }
 import { isLocalizableDesigner } from './localizable';
+import { vendorTasksAvailable } from './vendorTasks';
 import { chooseFormNoticeKind, FormNoticeKind } from './formNotice';
 import { binaryResxCount } from './binaryResx';
 import { isByteLocalEdit } from './byteLocal';
@@ -200,6 +207,12 @@ const LOCALIZABLE_SOURCE_BLOCKED = new Set<string>(
     'importImage', 'clearImage', 'resetProperty', 'uiTypeEditor',
   ].includes(type)),
 );
+
+type PlacementSnapOverrideModifier = 'alt' | 'control' | 'shift' | 'disabled';
+function placementSnapOverrideModifier(resource?: vscode.Uri): PlacementSnapOverrideModifier {
+  const raw = vscode.workspace.getConfiguration('winformsDesigner', resource).get<string>('placementSnapOverrideModifier', 'alt');
+  return raw === 'control' || raw === 'shift' || raw === 'disabled' ? raw : 'alt';
+}
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
 * diffs these against the current toolbox membership to add/remove/hide items. */
 type ChooseRow = {
@@ -223,8 +236,8 @@ interface DesignerPanelState {
   outlineCollapsed?: string[];
 }
 
-/** User-wide toolbox chrome. Chosen items themselves remain in DesignerHub.chosenItems; this stores the custom
- * category order plus presentation preferences so a reload reconstructs the same toolbox. */
+/** Workspace toolbox chrome. Chosen items themselves remain in DesignerHub.chosenItems; this stores the custom
+ * category order plus presentation preferences so a reload reconstructs the same workspace-specific toolbox. */
 interface ToolboxUiState {
   customTabs: Array<{ name: string; items: string[] }>;
   listView: boolean;
@@ -468,7 +481,7 @@ export class DesignerHub {
   chosenItems: ToolboxItemInfo[] = [];
   /** Framework palette items the user UNCHECKED in "Choose Items" — filtered out of the toolbox. */
   private hidden = new Set<string>();
-  /** Global toolbox category/order preferences. Category collapse is per form and lives in DesignerViewState. */
+  /** Workspace toolbox category/order preferences. Category collapse is per form and lives in DesignerViewState. */
   toolboxUi: ToolboxUiState = { customTabs: [], listView: true, sortAlpha: false, showAll: false };
   /** Explicit Browse… assemblies and their reflection results survive reloads. Cache entries are invalidated by the
    * exact file size+mtime stamp, so rebuilding a control library never serves stale types. */
@@ -496,16 +509,26 @@ export class DesignerHub {
   isHidden(fqn: string): boolean { return this.hidden.has(fqn); }
   get hiddenFqns(): string[] { return [...this.hidden]; }
 
-  /** Wire up persistence (call once at activation). Toolbox customization is global like Visual Studio's toolbox;
-   * the view state itself is workspace-local and keyed by the form's normalized .Designer.cs path. */
+  /** Wire up persistence (call once at activation). User-curated toolbox membership and tabs are workspace-local;
+   * the metadata reflection cache stays global because its path plus size/mtime key is workspace-independent. */
   initState(memento: vscode.Memento, workspaceMemento?: vscode.Memento): void {
     this.memento = memento;
     this.workspaceMemento = workspaceMemento;
-    this.chosenItems = memento.get<ToolboxItemInfo[]>('chosenToolboxItems', []);
-    this.hidden = new Set(memento.get<string[]>('hiddenToolboxFqns', []));
-    this.toolboxUi = sanitizeToolboxUi(memento.get<unknown>('toolboxUiState'));
+    // v1.7 and earlier stored curation globally. Seed an unset workspace key once from that legacy value so the v1.8
+    // scope correction does not make an existing user's chosen/hidden controls and custom tabs appear to vanish.
+    const scopedValue = <T>(key: string, fallback: T): T => {
+      if (!workspaceMemento) return memento.get<T>(key, fallback);
+      const current = workspaceMemento.get<T>(key);
+      if (current !== undefined) return current;
+      const migrated = memento.get<T>(key, fallback);
+      void workspaceMemento.update(key, migrated);
+      return migrated;
+    };
+    this.chosenItems = scopedValue<ToolboxItemInfo[]>('chosenToolboxItems', []);
+    this.hidden = new Set(scopedValue<string[]>('hiddenToolboxFqns', []));
+    this.toolboxUi = sanitizeToolboxUi(scopedValue<unknown>('toolboxUiState', null));
     this.browsedToolboxAssemblies = uniqueAssemblyPaths(
-      memento.get<string[]>('browsedToolboxAssemblies', []));
+      scopedValue<string[]>('browsedToolboxAssemblies', []));
     const storedCache = memento.get<Record<string, ToolboxScanCacheEntry>>('toolboxScanCache', {});
     this.toolboxScanCache = storedCache && typeof storedCache === 'object' ? storedCache : {};
   }
@@ -513,20 +536,21 @@ export class DesignerHub {
   setToolboxCustomization(chosen: ToolboxItemInfo[], hidden: string[]): void {
     this.chosenItems = chosen;
     this.hidden = new Set(hidden);
-    void this.memento?.update('chosenToolboxItems', chosen);
-    void this.memento?.update('hiddenToolboxFqns', [...this.hidden]);
+    const toolboxState = this.workspaceMemento ?? this.memento;
+    void toolboxState?.update('chosenToolboxItems', chosen);
+    void toolboxState?.update('hiddenToolboxFqns', [...this.hidden]);
     void this.active?.refreshToolbox();
   }
 
-  /** Persist the user-wide custom toolbox tabs and presentation preferences reported by panel.js. */
+  /** Persist workspace-specific custom toolbox tabs and presentation preferences reported by panel.js. */
   setToolboxUi(state: unknown): void {
     this.toolboxUi = sanitizeToolboxUi(state);
-    void this.memento?.update('toolboxUiState', this.toolboxUi);
+    void (this.workspaceMemento ?? this.memento)?.update('toolboxUiState', this.toolboxUi);
   }
 
   addBrowsedToolboxAssembly(file: string): void {
     this.browsedToolboxAssemblies = uniqueAssemblyPaths([...this.browsedToolboxAssemblies, file]);
-    void this.memento?.update('browsedToolboxAssemblies', this.browsedToolboxAssemblies);
+    void (this.workspaceMemento ?? this.memento)?.update('browsedToolboxAssemblies', this.browsedToolboxAssemblies);
   }
 
   private assemblyStamp(file: string, probeDirectories: readonly string[] = []): string | undefined {
@@ -671,6 +695,37 @@ export class DesignerHub {
     for (const s of this.openSessions) {
       const asm = s.isCompiledPreview ? s.controlAssembly : undefined;
       if (asm) byDir.set(net48OutputKey(asm), asm);
+    }
+    return [...byDir.values()];
+  }
+
+  /**
+   * 1.8.0 — what the external-build watch has to look at for each pinned output: the output itself, plus the
+   * directory of the .csproj that owns the FORM.
+   *
+   * The project directory is not derivable from the output: with a custom `OutputPath` the build output can live
+   * anywhere, and the intermediate directory MSBuild compiles into (the early signal that a build is coming) is
+   * `<project>\obj` regardless. Guessing it from the output path only works for a conventional `bin\<Config>[\<Tfm>]`
+   * layout — and the fallback of "watch the output directory instead" cannot cover a blocked copy, because a copy
+   * MSBuild is refused never changes the destination and so never raises an event.
+   */
+  net48BuildWatchTargets(): { output: string; projectDir?: string }[] {
+    const byDir = new Map<string, { output: string; projectDir?: string }>();
+    for (const s of this.openSessions) {
+      const asm = s.isCompiledPreview ? s.controlAssembly : undefined;
+      if (!asm) continue;
+      const key = net48OutputKey(asm);
+      const known = byDir.get(key);
+      let projectDir: string | undefined;
+      const form = s.designerFilePath;
+      if (form) {
+        const csproj = findOwningCsproj(path.dirname(form), vscode.workspace.getWorkspaceFolder(vscode.Uri.file(form))?.uri.fsPath);
+        if (csproj) projectDir = path.dirname(csproj);
+      }
+      // Keep the first entry that actually resolved a project — two forms can share an output dir while only one of
+      // them sits under a findable .csproj (a shared project has none of its own).
+      if (!known) byDir.set(key, { output: asm, projectDir });
+      else if (!known.projectDir && projectDir) byDir.set(key, { output: known.output, projectDir });
     }
     return [...byDir.values()];
   }
@@ -1022,6 +1077,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         if (s?.refuseStaleRenderEdit(m?.type)) return; // 0.10.0 S5 — read-only while the last render failed (stale graph)
         if (m?.type === 'ready') { s?.refreshViews(); }
         else if (m?.type === 'panelViewStateChanged') { s?.updatePanelViewState(m.state, m.toolboxUi); }
+        else if (m?.type === 'toolboxInteraction') { s?.noteToolboxInteraction(); }
         else if (m?.type === 'pick' && m.id) { await s?.pick(m.id); }
         else if (m?.type === 'edit' && m.id && m.prop && m.propType !== undefined) {
           // an `ownerId` marks this as a ToolStripItem edit (the grid is showing item→Properties) → route to the
@@ -1210,6 +1266,13 @@ class DesignerSession {
   }
   /** Auto-populated toolbox palette — fetched once, then mirrored to the Toolbox view. */
   private toolboxItems: ToolboxItemInfo[] | undefined;
+  /** Lazily discovered project/vendor controls from bounded workspace build-output roots. This stays separate from
+   * the engine baseline so a truncated refresh cannot erase assemblies it did not revisit. */
+  private autoToolboxItems: ToolboxItemInfo[] = [];
+  private autoToolboxDiscoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  private autoToolboxDiscoveryGeneration = 0;
+  private readonly autoToolboxWatchers = new Map<string, vscode.Disposable>();
+  private readonly autoToolboxRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** One-shot latch: we prompt "select a control source" at most once per form (until it renders clean or the
    * user picks one), so a form with unresolved custom controls isn't nagging on every re-render. */
   private promptedForSource = false;
@@ -1297,11 +1360,23 @@ class DesignerSession {
     watcher.onDidDelete(onFs);
     this.disposables.push(watcher);
 
+    // Auto-discovery is session-triggered, never activation-triggered. Yield/cancel as soon as the user starts
+    // editing or leaves VS Code; returning focus schedules a fresh bounded pass after the interaction settles.
+    this.disposables.push(vscode.workspace.onDidChangeTextDocument(() => {
+      this.cancelAutoToolboxDiscovery();
+      this.scheduleAutoToolboxDiscovery(1200);
+    }));
+    this.disposables.push(vscode.window.onDidChangeWindowState((state) => {
+      if (!state.focused) this.cancelAutoToolboxDiscovery();
+      else this.scheduleAutoToolboxDiscovery(800);
+    }));
+
     panel.onDidDispose(() => this.dispose());
   }
 
   private dispose(): void {
     this.disposed = true;
+    this.cancelAutoToolboxDiscovery(true);
     if (this.doc.session === this) this.doc.session = undefined; // drop the back-reference on close
     this.chooseItemsPanel?.dispose();
     DesignerHub.instance.unregisterSession(this);
@@ -1502,6 +1577,298 @@ class DesignerSession {
     DesignerHub.instance.pushPanel(this, { type: 'select', id });
   }
 
+  private automaticToolboxItems(): ToolboxItemInfo[] {
+    const out: ToolboxItemInfo[] = [];
+    const seen = new Set<string>();
+    for (const item of [...(this.autoToolboxItems ?? []), ...(this.toolboxItems ?? [])]) {
+      if (!item.fqn || seen.has(item.fqn)) continue;
+      seen.add(item.fqn);
+      out.push(item);
+    }
+    return out;
+  }
+
+  /** All items known to this session, including hidden entries (needed by Choose Items and Add/Reference lookup).
+   * A user-chosen copy wins over an automatic copy so its custom-tab category remains authoritative. */
+  private availableToolboxItems(): ToolboxItemInfo[] {
+    const chosen = DesignerHub.instance.chosenItems;
+    const chosenFqns = new Set(chosen.map((item) => item.fqn));
+    return [...this.automaticToolboxItems().filter((item) => !chosenFqns.has(item.fqn)), ...chosen];
+  }
+
+  private visibleToolboxItems(): ToolboxItemInfo[] {
+    const hub = DesignerHub.instance;
+    return this.availableToolboxItems().filter((item) => !hub.isHidden(item.fqn));
+  }
+
+  private pushToolboxItems(direct = false): void {
+    const message = { type: 'toolbox', items: this.visibleToolboxItems() };
+    if (direct) DesignerHub.instance.toPanel(message);
+    else DesignerHub.instance.pushPanel(this, message);
+  }
+
+  private autoToolboxEnabled(): boolean {
+    return vscode.workspace.getConfiguration('winformsDesigner', this.documentUri)
+      .get<boolean>('toolbox.autoDiscoverProjectControls', true);
+  }
+
+  private cancelAutoToolboxDiscovery(disposeWatchers = false): void {
+    this.autoToolboxDiscoveryGeneration++;
+    if (this.autoToolboxDiscoveryTimer) clearTimeout(this.autoToolboxDiscoveryTimer);
+    this.autoToolboxDiscoveryTimer = undefined;
+    for (const timer of this.autoToolboxRefreshTimers.values()) clearTimeout(timer);
+    this.autoToolboxRefreshTimers.clear();
+    if (disposeWatchers) {
+      for (const watcher of this.autoToolboxWatchers.values()) watcher.dispose();
+      this.autoToolboxWatchers.clear();
+    }
+  }
+
+  private scheduleAutoToolboxDiscovery(delayMs = 400): void {
+    if (this.disposed || !this.designerFile) return;
+    if (!this.autoToolboxEnabled()) {
+      this.cancelAutoToolboxDiscovery(true);
+      if (this.autoToolboxItems.length) {
+        this.autoToolboxItems = [];
+        this.pushToolboxItems();
+      }
+      return;
+    }
+    if (!vscode.window.state.focused) return;
+    if (this.autoToolboxDiscoveryTimer) clearTimeout(this.autoToolboxDiscoveryTimer);
+    const generation = ++this.autoToolboxDiscoveryGeneration;
+    this.autoToolboxDiscoveryTimer = setTimeout(() => {
+      this.autoToolboxDiscoveryTimer = undefined;
+      void this.runAutoToolboxDiscovery(generation);
+    }, Math.max(0, delayMs));
+  }
+
+  /** Stop background toolbox discovery when the user starts typing, then retry after the interaction settles. */
+  public noteToolboxInteraction(): void {
+    this.cancelAutoToolboxDiscovery();
+    this.scheduleAutoToolboxDiscovery(1200);
+  }
+
+  private async workspaceBuildOutputRoots(generation: number): Promise<{
+    roots: string[];
+    projectBudgetReached: boolean;
+    projectScanSkipped: number;
+    cancelled: boolean;
+  }> {
+    const folder = vscode.workspace.getWorkspaceFolder(this.documentUri);
+    if (!folder || !this.designerFile || generation !== this.autoToolboxDiscoveryGeneration) {
+      return { roots: [], projectBudgetReached: false, projectScanSkipped: 0, cancelled: false };
+    }
+    const owningProject = findOwningCsproj(path.dirname(this.designerFile), folder.uri.fsPath);
+    if (!owningProject) return { roots: [], projectBudgetReached: false, projectScanSkipped: 1, cancelled: false };
+    const result = await discoverProjectBuildOutputRoots(owningProject, {
+      maxProjects: 64,
+      yieldEveryProjects: 8,
+      shouldCancel: () => this.disposed || generation !== this.autoToolboxDiscoveryGeneration
+        || !vscode.window.state.focused,
+    });
+    return {
+      roots: result.roots,
+      projectBudgetReached: result.projectBudgetReached,
+      projectScanSkipped: result.skippedProjects + result.skippedReferences + result.missingBuildOutputs,
+      cancelled: result.cancelled,
+    };
+  }
+
+  private toolboxItemFromCandidate(candidate: ToolboxCandidate, assemblyPath: string): ToolboxItemInfo | null {
+    const name = typeof candidate.name === 'string' ? candidate.name.trim() : '';
+    const ns = typeof candidate.namespace === 'string' ? candidate.namespace.trim() : '';
+    if (!name || name.length > 512 || ns.length > 1024) return null;
+    const fqn = ns ? `${ns}.${name}` : name;
+    return {
+      name,
+      fqn,
+      category: 'Project Controls',
+      fromProject: true,
+      assemblyPath,
+    };
+  }
+
+  private autoDiscoverySkippedCount(skipped: object): number {
+    let total = 0;
+    for (const value of Object.values(skipped)) if (typeof value === 'number' && Number.isFinite(value)) total += value;
+    return total;
+  }
+
+  private async runAutoToolboxDiscovery(generation: number): Promise<void> {
+    if (this.disposed || !this.designerFile || !this.autoToolboxEnabled()
+      || !vscode.window.state.focused || generation !== this.autoToolboxDiscoveryGeneration) return;
+
+    let rootsInfo: { roots: string[]; projectBudgetReached: boolean; projectScanSkipped: number; cancelled: boolean };
+    try { rootsInfo = await this.workspaceBuildOutputRoots(generation); }
+    catch (error) {
+      this.output.appendLine(`[toolbox auto-discovery] project enumeration failed: ${errMsg(error)}`);
+      return;
+    }
+    if (rootsInfo.cancelled || generation !== this.autoToolboxDiscoveryGeneration) return;
+    if (!rootsInfo.roots.length) {
+      this.output.appendLine(`[toolbox auto-discovery] no related build-output roots; skipped=${rootsInfo.projectScanSkipped}`);
+      return;
+    }
+
+    const discovery = await discoverBuildOutputAssemblies(rootsInfo.roots, {
+      maxFiles: 96,
+      maxDirectories: 128,
+      maxDepth: 3,
+      maxMilliseconds: 500,
+      yieldEveryDirectories: 8,
+      shouldCancel: () => this.disposed || generation !== this.autoToolboxDiscoveryGeneration
+        || !vscode.window.state.focused,
+    });
+    if (discovery.cancelled || generation !== this.autoToolboxDiscoveryGeneration) return;
+
+    const reflectionStarted = Date.now();
+    const reflectionLimit = 24;
+    const refreshedFiles = new Set<string>();
+    const newItems: ToolboxItemInfo[] = [];
+    let reflected = 0;
+    let reflectionSkipped = 0;
+    let reflectionErrors = 0;
+    for (const candidate of discovery.assemblies) {
+      if (generation !== this.autoToolboxDiscoveryGeneration || !vscode.window.state.focused) return;
+      if (reflected >= reflectionLimit || Date.now() - reflectionStarted >= 5000) {
+        reflectionSkipped++;
+        continue;
+      }
+      reflected++;
+      try {
+        const result = await this.withTimeout(
+          this.scanCandidateAssembly(candidate.path),
+          1600,
+          `toolbox metadata scan timed out: ${path.basename(candidate.path)}`,
+        );
+        if (generation !== this.autoToolboxDiscoveryGeneration) return;
+        if (result.error && !result.items.length) {
+          reflectionErrors++;
+          continue;
+        }
+        refreshedFiles.add(normalize(candidate.path));
+        for (const item of result.items) {
+          const mapped = this.toolboxItemFromCandidate(item, candidate.path);
+          if (mapped) newItems.push(mapped);
+        }
+      } catch {
+        reflectionErrors++;
+      }
+    }
+
+    // Replace results only for assemblies successfully revisited; a time/file budget or transient load failure must
+    // not erase still-valid controls from a prior scan. Duplicate FQNs are collapsed by automaticToolboxItems().
+    const retained = this.autoToolboxItems.filter((item) => {
+      const source = item.assemblyPath;
+      return !source || !refreshedFiles.has(normalize(source));
+    });
+    this.autoToolboxItems = [...retained, ...newItems];
+    this.syncAutoToolboxWatchers(this.autoToolboxItems
+      .map((item) => item.assemblyPath ? path.dirname(item.assemblyPath) : '')
+      .filter(Boolean));
+    this.pushToolboxItems();
+
+    const skipped = this.autoDiscoverySkippedCount(discovery.skipped)
+      + reflectionSkipped + reflectionErrors + rootsInfo.projectScanSkipped + (rootsInfo.projectBudgetReached ? 1 : 0);
+    const truncated = discovery.truncated || reflectionSkipped > 0 || rootsInfo.projectBudgetReached;
+    this.output.appendLine(
+      `[toolbox auto-discovery] roots=${rootsInfo.roots.length}; directories=${discovery.scannedDirectories.length}; `
+      + `assemblies=${discovery.assemblies.length}; reflected=${reflected}; controls=${this.autoToolboxItems.length}; `
+      + `skipped=${skipped}; truncated=${truncated}; cancelled=false`,
+    );
+    this.output.appendLine(`[toolbox auto-discovery] scanned directories: ${discovery.scannedDirectories.join('; ') || '<none>'}`);
+    if (skipped) this.output.appendLine(
+      `[toolbox auto-discovery] skipped detail: ${JSON.stringify({ ...discovery.skipped, reflectionSkipped, reflectionErrors, projectScanSkipped: rootsInfo.projectScanSkipped, projectBudgetReached: rootsInfo.projectBudgetReached })}`,
+    );
+    this.post({
+      type: 'status',
+      message: t('status.toolboxDiscovery', {
+        controls: this.autoToolboxItems.length,
+        directories: discovery.scannedDirectories.length,
+        skipped,
+        limit: truncated ? t('status.toolboxDiscoveryBudget') : '',
+      }),
+    });
+  }
+
+  private syncAutoToolboxWatchers(directories: string[]): void {
+    const desired = new Map<string, string>();
+    for (const directory of directories) {
+      const key = normalize(directory);
+      if (!key || desired.has(key) || desired.size >= 32 || !fs.existsSync(directory)) continue;
+      desired.set(key, directory);
+    }
+    for (const [key, watcher] of [...this.autoToolboxWatchers]) {
+      if (desired.has(key)) continue;
+      watcher.dispose();
+      this.autoToolboxWatchers.delete(key);
+    }
+    for (const [key, directory] of desired) {
+      if (this.autoToolboxWatchers.has(key)) continue;
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(directory, '*.dll'));
+      const enqueue = (uri: vscode.Uri) => this.scheduleAutoToolboxAssemblyRefresh(uri.fsPath);
+      const composite = vscode.Disposable.from(
+        watcher,
+        watcher.onDidCreate(enqueue),
+        watcher.onDidChange(enqueue),
+        watcher.onDidDelete(enqueue),
+      );
+      this.autoToolboxWatchers.set(key, composite);
+    }
+  }
+
+  private scheduleAutoToolboxAssemblyRefresh(file: string): void {
+    if (this.disposed || !this.autoToolboxEnabled() || !vscode.window.state.focused || !/\.dll$/i.test(file)) return;
+    const key = normalize(file);
+    const prior = this.autoToolboxRefreshTimers.get(key);
+    if (prior) clearTimeout(prior);
+    const timer = setTimeout(() => {
+      this.autoToolboxRefreshTimers.delete(key);
+      const generation = ++this.autoToolboxDiscoveryGeneration; // cancel a concurrent full traversal
+      if (this.autoToolboxDiscoveryTimer) clearTimeout(this.autoToolboxDiscoveryTimer);
+      this.autoToolboxDiscoveryTimer = undefined;
+      void this.refreshAutoToolboxAssembly(file, generation);
+    }, 250);
+    this.autoToolboxRefreshTimers.set(key, timer);
+  }
+
+  private async refreshAutoToolboxAssembly(file: string, generation: number): Promise<void> {
+    const key = normalize(file);
+    if (this.disposed || !this.autoToolboxEnabled() || !vscode.window.state.focused
+      || generation !== this.autoToolboxDiscoveryGeneration) return;
+    if (!fs.existsSync(file)) {
+      this.autoToolboxItems = this.autoToolboxItems.filter((item) => !item.assemblyPath || normalize(item.assemblyPath) !== key);
+      this.syncAutoToolboxWatchers(this.autoToolboxItems
+        .map((item) => item.assemblyPath ? path.dirname(item.assemblyPath) : '').filter(Boolean));
+      this.pushToolboxItems();
+      this.output.appendLine(`[toolbox auto-discovery] removed deleted assembly: ${file}`);
+      return;
+    }
+    try {
+      const result = await this.withTimeout(this.scanCandidateAssembly(file), 2000,
+        `toolbox metadata refresh timed out: ${path.basename(file)}`);
+      if (this.disposed || generation !== this.autoToolboxDiscoveryGeneration) return;
+      if (result.error && !result.items.length) {
+        this.output.appendLine(`[toolbox auto-discovery] refresh kept prior items for ${file}: ${result.error}`);
+        return;
+      }
+      const replacements = result.items
+        .map((item) => this.toolboxItemFromCandidate(item, file))
+        .filter((item): item is ToolboxItemInfo => item !== null);
+      this.autoToolboxItems = [
+        ...this.autoToolboxItems.filter((item) => !item.assemblyPath || normalize(item.assemblyPath) !== key),
+        ...replacements,
+      ];
+      this.syncAutoToolboxWatchers(this.autoToolboxItems
+        .map((item) => item.assemblyPath ? path.dirname(item.assemblyPath) : '').filter(Boolean));
+      this.pushToolboxItems();
+      this.output.appendLine(`[toolbox auto-discovery] incrementally refreshed ${path.basename(file)}: ${replacements.length} controls`);
+    } catch (error) {
+      this.output.appendLine(`[toolbox auto-discovery] refresh kept prior items for ${file}: ${errMsg(error)}`);
+    }
+  }
+
   /** Populate `toolboxItems` once. net9: framework + project controls in one enumeration. net48: framework controls
    * from the net9 enumerator (same FQNs → droppable on a net48 form) MERGED with the project/vendor (DevExpress)
    * controls from the net48 engine — the ones the net9 ALC can't load (DevExpress-add). Best-effort: a framework
@@ -1536,7 +1903,8 @@ class DesignerSession {
   async refreshToolbox(): Promise<void> {
     if (this.disposed || !this.designerFile) return;
     await this.loadToolboxItems();
-    DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
+    this.pushToolboxItems();
+    this.scheduleAutoToolboxDiscovery();
     await this.refreshPalette();
   }
 
@@ -1596,10 +1964,18 @@ class DesignerSession {
   }
 
   refreshViews(): void {
+    this.refreshPlacementSettings();
     this.pushPersistedViewState();
     void this.refreshToolbox();
     this.refreshProperties();
     this.pushClipboardState();
+  }
+
+  public refreshPlacementSettings(): void {
+    if (!this.disposed) this.post({
+      type: 'placementSettings',
+      snapOverrideModifier: placementSnapOverrideModifier(this.documentUri),
+    });
   }
 
   /** Re-emit this canvas's HTML with the current locale's injected catalog (live language switch). Reloading the
@@ -1880,10 +2256,13 @@ class DesignerSession {
         // successful fullRender then suppresses its identical trailing dirty via lastDirtyPosted.
         this.lastNoticeSig = undefined;
         this.lastDirtyPosted = this.doc.isDirty;
-    this.post({ type: 'dirty', dirty: this.doc.isDirty });
+        this.post({ type: 'dirty', dirty: this.doc.isDirty });
+        this.refreshPlacementSettings();
         this.pushPersistedViewState();
         this.output.appendLine('[designer] webview ready: ' + this.designerFile);
         await this.fullRender();
+      } else if (m.type === 'toolboxInteraction') {
+        this.noteToolboxInteraction();
       } else if (m.type === 'dprChanged') {
         const dpi = designerDpiScale(m.dpr);
         if (!displayDprChanged(this.displayDpr, dpi.displayDpr)) return;
@@ -2123,8 +2502,7 @@ class DesignerSession {
     // "chosen" sent to the dialog = the fqns CURRENTLY in the toolbox (framework-not-hidden + added) → so the
     // checkboxes start checked for everything already in the toolbox (matching VS), not all-off.
     const inToolbox = (): string[] => [
-      ...(this.toolboxItems ?? []).filter((c) => !hub.isHidden(c.fqn)).map((c) => c.fqn),
-      ...hub.chosenItems.map((c) => c.fqn),
+      ...this.visibleToolboxItems().map((c) => c.fqn),
     ];
     // `check` = fqns to auto-tick this round (a just-browsed assembly's items) so the user doesn't have to hand-
     // check every row after loading a library — like VS, which checks a browsed assembly's items on add.
@@ -2139,8 +2517,23 @@ class DesignerSession {
         this.engineKind === 'modern' ? this.asm() : undefined,
       );
       const discovered = await this.discoveredCandidates();
+      // Auto-discovered entries must also appear in Choose Items. That dialog is the add/remove surface; omitting
+      // these rows would make a workspace control impossible to hide or restore after automatic discovery.
+      const autoDiscovered = this.autoToolboxItems.map((item): ToolboxCandidate => {
+        const split = item.fqn.lastIndexOf('.');
+        const assemblyPath = item.assemblyPath;
+        return {
+          name: item.name,
+          namespace: split >= 0 ? item.fqn.slice(0, split) : '',
+          assemblyName: assemblyPath ? path.basename(assemblyPath, path.extname(assemblyPath)) : '',
+          version: '',
+          directory: assemblyPath ? path.dirname(assemblyPath) : '',
+          fromProject: true,
+          assemblyPath,
+        };
+      });
       const seen = new Set<string>();
-      const items = [...base, ...discovered].filter((item) => {
+      const items = [...base, ...autoDiscovered, ...discovered].filter((item) => {
         const fqn = item.namespace ? item.namespace + '.' + item.name : item.name;
         const key = fqn + '|' + item.assemblyName;
         if (seen.has(key)) return false;
@@ -2163,17 +2556,17 @@ class DesignerSession {
   private applyChosen(tab: string | undefined, rows: ChooseRow[]): void {
     const cat = tab || 'My Controls';
     const hub = DesignerHub.instance;
-    const baseline = new Set((this.toolboxItems ?? []).map((c) => c.fqn));
+    const automatic = new Set(this.automaticToolboxItems().map((c) => c.fqn));
     const hidden = new Set(hub.hiddenFqns);
     let chosen = hub.chosenItems.slice();
     for (const r of rows) {
       if (!r.fqn) continue;
-      const isFramework = baseline.has(r.fqn);
+      const isAutomatic = automatic.has(r.fqn);
       const inChosen = chosen.some((c) => c.fqn === r.fqn);
-      const inToolbox = (isFramework && !hidden.has(r.fqn)) || inChosen;
+      const inToolbox = !hidden.has(r.fqn) && (isAutomatic || inChosen);
       if (r.checked && !inToolbox) {
-        if (isFramework) hidden.delete(r.fqn);
-        else chosen.push({
+        hidden.delete(r.fqn);
+        if (!isAutomatic && !inChosen) chosen.push({
           name: r.name,
           fqn: r.fqn,
           category: cat,
@@ -2181,7 +2574,7 @@ class DesignerSession {
           assemblyPath: r.assemblyPath,
         });
       } else if (!r.checked && inToolbox) {
-        if (isFramework) hidden.add(r.fqn);
+        if (isAutomatic) hidden.add(r.fqn);
         else chosen = chosen.filter((c) => c.fqn !== r.fqn);
       }
     }
@@ -2189,7 +2582,7 @@ class DesignerSession {
     // setToolboxCustomization re-pushes via the ACTIVE session, but the Choose-Items dialog holds editor focus, so
     // that gated push can be dropped → the added items wouldn't show until a refocus. Push the merged toolbox
     // DIRECTLY (ungated) so they appear in the palette immediately, which is exactly the point of clicking OK.
-    hub.toPanel({ type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !hub.isHidden(it.fqn)), ...hub.chosenItems] });
+    this.pushToolboxItems(true);
     this.post({ type: 'status', message: t('status.toolboxUpdated', { added: chosen.length, hidden: hidden.size }) });
   }
 
@@ -2370,7 +2763,8 @@ class DesignerSession {
     // Toolbox: net9 shows framework + project controls (one enumeration); net48 merges net9 framework controls
     // with the project/vendor (DevExpress) controls the net48 engine enumerates (the net9 ALC can't load them).
     await this.loadToolboxItems();
-    DesignerHub.instance.pushPanel(this, { type: 'toolbox', items: [...(this.toolboxItems ?? []).filter((it) => !DesignerHub.instance.isHidden(it.fqn)), ...DesignerHub.instance.chosenItems] });
+    this.pushToolboxItems();
+    this.scheduleAutoToolboxDiscovery();
     void this.refreshPalette();
     this.post({ type: 'loading', message: t('host.loading.rendering') });
     // A full render IS the reconciliation, so drop any pending one. Left running, it fired mid-render, bumped the
@@ -2379,6 +2773,20 @@ class DesignerSession {
     if (this.interpretedReconcileTimer) { clearTimeout(this.interpretedReconcileTimer); this.interpretedReconcileTimer = undefined; }
     const renderRev = this.doc.rev; // the buffer revision this picture will represent (see renderedRev)
     const text = await this.currentText();
+    // LAST gate before the RPC leaves the host. The engine-kind/task check above happens BEFORE several awaits
+    // (engine start, localization, toolbox, buffer read), and a build can start inside that window: the release
+    // unloads the net48 domains, and this render — already past the earlier gate — would immediately recreate one and
+    // RE-PIN the output MSBuild is about to overwrite. The post-RPC sequence gate only discards the stale picture; by
+    // then the file is held again. Nothing awaits between here and the send, so this closes the window.
+    if (seq !== this.renderSeq || this.disposed) return false;
+    if (this.engineKind === 'net48' && DesignerHub.instance.net48TaskActive) {
+      this.postRenderFailure(
+        t('host.buildTask.running', { name: t('host.buildTask.generic') }),
+        this.currentId || 'this',
+        t('host.buildTask.cause'),
+      );
+      return false;
+    }
     let result: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
       if (this.engineKind === 'net48') {
@@ -2752,6 +3160,11 @@ class DesignerSession {
   private async vendorTagsFor(id: string): Promise<VendorTagView[]> {
     const asm = this.asm();
     if (!asm || !this.designerFile) return [];
+    // Never make SELECTING a control the reason the user's real form gets constructed and realized: on an
+    // interpreted preview no compiled instance exists, and asking for this optional menu used to build one — running
+    // their constructor and Load. See vendorTasksAvailable; the engine peeks rather than builds as well, so this gate
+    // and that one have to fail in the same direction.
+    if (!vendorTasksAvailable({ engineKind: this.engineKind, net48RenderMode: this.net48RenderMode })) return [];
     let tags: VendorSmartTag[] = [];
     try {
       tags = await listCompiledVendorSmartTags(await this.ensureEngine('net48'), this.designerFile, asm, id);
@@ -5697,7 +6110,7 @@ class DesignerSession {
       }
     }
     const asm = this.asm();
-    const toolboxItem = [...(this.toolboxItems ?? []), ...DesignerHub.instance.chosenItems]
+    const toolboxItem = this.availableToolboxItems()
       .find((item) => item.fqn === controlType || item.name === controlType);
     const sourceAssembly = toolboxItem?.assemblyPath && fs.existsSync(toolboxItem.assemblyPath)
       ? toolboxItem.assemblyPath : undefined;
@@ -5706,7 +6119,7 @@ class DesignerSession {
     // the pure-text splice emits `new <Fqn>()` and the net48 engine live-instantiates the control below.
     const addAsm = this.engineKind === 'net48' ? undefined : (sourceAssembly ?? asm);
     const projectFqns = this.engineKind === 'net48'
-      ? [...(this.toolboxItems ?? []), ...DesignerHub.instance.chosenItems]
+      ? this.availableToolboxItems()
         .filter((it) => it.fromProject).map((it) => it.fqn)
       : undefined;
     const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm, projectFqns);
@@ -5737,7 +6150,7 @@ class DesignerSession {
       if (!asm || !this.designerFile || !fs.existsSync(asm)) return;
       // Only controls that came FROM the override assembly (the "Project Controls") need a reference; a
       // framework control (fromProject false) is always resolvable, and an unknown key is nothing we added.
-      const item = [...(this.toolboxItems ?? []), ...DesignerHub.instance.chosenItems]
+      const item = this.availableToolboxItems()
         .find((it) => it.name === controlType || it.fqn === controlType);
       if (!item?.fromProject) return;
 

@@ -8,6 +8,8 @@ import { resolveFrameworkOutput } from './csprojRef';
 import { setLocale, t } from './i18n';
 import { EngineRecoveryPolicy } from './engineRecovery';
 import { isBuildOrTestTask, taskCoordinationKey } from './taskCoordination';
+import { BuildWriteOrigin, ExternalBuildRelease, intermediateDirCandidates, isAssemblyWrite } from './externalBuild';
+import { formSiblingsToDelete } from './formSiblings';
 import { shouldSuppressAutoOpen } from './autoOpen';
 
 // Two engine processes, started lazily and keyed by kind: 'modern' (the default WinForms/Roslyn engine) and
@@ -111,7 +113,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // ONLY by the setting — it never auto-follows the VS Code display language. Refreshed on config change below.
   setLocale();
 
-  // Persist the user's "Choose Items" toolbox additions across sessions (global, like VS toolbox customization).
+  // Persist toolbox additions/removals/custom tabs in workspace state. The reflection cache remains global because
+  // it is keyed by absolute assembly path plus file metadata and is safe to reuse across workspaces.
   DesignerHub.instance.initState(context.globalState, context.workspaceState);
 
   // 1.0.0 — teach the hub how to hand a .NET Framework build output back, so the LAST designer using one releases
@@ -239,6 +242,13 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(DesignerHub.instance.onDidChangeActive(() => updateControlStatus()));
   updateControlStatus();
 
+  // Keep the external-build watch in step with what the open designers actually pin. onDidChangeActive is the one
+  // signal that already fires for every relevant transition: a designer opened/closed/focused, a render decided the
+  // engine kind, or the control source changed (see DesignerHub.refreshStatus).
+  context.subscriptions.push(DesignerHub.instance.onDidChangeActive(() => syncExternalBuildWatch()));
+  context.subscriptions.push({ dispose: () => closeExternalBuildWatch() });
+  syncExternalBuildWatch();
+
   // 1.0.0 — release the net48 build-output lock when VS Code loses OS focus, so a build started in an EXTERNAL
   // Visual Studio is not blocked by the open designer, and re-render on return if that build produced a new output.
   //
@@ -320,6 +330,35 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // Deleting a form deletes the whole form (issue #3). `Form1.cs`, its generated `Form1.Designer.cs` and its
+  // `Form1.resx` / `Form1.<culture>.resx` are one thing to the user — this extension even nests them under one row —
+  // but nesting is display only, so deleting the form used to leave resources behind that no longer belong to
+  // anything. Contributed to the SAME operation through onWillDeleteFiles, so it is one confirmation, one undo, and
+  // it applies to whatever performs the delete (Explorer, a command, another extension) rather than to one gesture.
+  context.subscriptions.push(
+    vscode.workspace.onWillDeleteFiles((e) => {
+      if (!deleteFormSiblings()) return;
+      const covered = e.files.map((f) => f.fsPath);
+      const edit = new vscode.WorkspaceEdit();
+      let added = 0;
+      for (const file of e.files) {
+        // hasDesignerSibling is the "is this a form?" test the rest of the product uses: a .cs with a generated
+        // partner. A plain class file has no nest, so nothing is ever taken with it.
+        if (!hasDesignerSibling(file.fsPath)) continue;
+        let entries: string[];
+        try { entries = fs.readdirSync(path.dirname(file.fsPath)); } catch { continue; }
+        for (const sibling of formSiblingsToDelete(file.fsPath, entries, covered)) {
+          edit.deleteFile(vscode.Uri.file(sibling), { ignoreIfNotExists: true });
+          covered.push(sibling);
+          added++;
+        }
+      }
+      if (added === 0) return;
+      output.appendLine(`[delete] taking ${added} generated file(s) with the form(s) being deleted`);
+      e.waitUntil(Promise.resolve(edit));
+    }),
+  );
+
   // Auto-open the designer when a form .cs becomes the active editor (VS-style: open Form1.cs → designer).
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((e) => { updateContext(e); autoOpenIfDesigner(e); }),
@@ -345,6 +384,15 @@ export function activate(context: vscode.ExtensionContext): void {
         updateContext(ed);
         autoOpenIfDesigner(ed);
       }
+      if (e.affectsConfiguration('winformsDesigner.toolbox.autoDiscoverProjectControls')) {
+        void DesignerHub.instance.activeSession?.refreshToolbox();
+      }
+      if (e.affectsConfiguration('winformsDesigner.placementSnapOverrideModifier')) {
+        DesignerHub.instance.activeSession?.refreshPlacementSettings();
+      }
+      // Turning the external-build release off must stop watching immediately (and on → start), not at the next
+      // designer focus change.
+      if (e.affectsConfiguration('winformsDesigner.net48.releaseOnExternalBuild')) syncExternalBuildWatch();
       // Language: refresh the cached locale, then offer a window reload so all webviews (and the VS Code
       // display-language-driven chrome) pick up the new language consistently.
       if (e.affectsConfiguration('winformsDesigner.language')) {
@@ -579,6 +627,7 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
     start = startEngine(entry, {
       onLog: (l) => output.appendLine(l),
       probeDirs: kind === 'net48' ? getProbeDirectories() : undefined,
+      visibleRenderWindows: kind === 'net48' && !isolateRenderWindows(),
       // Own the child from the instant it spawns (before it becomes a handle) so deactivate() can kill it even if this
       // start is still connecting. Self-remove on 'close' AS WELL AS 'exit': an OS-level spawn
       // failure (ENOENT — dotnet/apphost missing) emits 'error' + 'close' but NEVER 'exit', so an exit-only listener
@@ -830,6 +879,137 @@ async function releaseNet48ForTask(taskName: string): Promise<boolean> {
     output.appendLine(`[release:task] ${taskName}: release failed/timed out; recycling engine: ${String(err)}`);
     return recycleNet48Engine(eng);
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 1.8.0 — release the .NET Framework output for a build started OUTSIDE VS Code (Visual Studio, an external
+// `msbuild`, another IDE).
+//
+// Why this exists. The net48 preview loads the user's dlls IN PLACE and pins them (ShadowCopyFiles must stay off for
+// delay-signed vendor graphs — see DomainManager). Everything that released that pin so far needed the build to be
+// visible to VS Code: the task coordination above only sees VS Code tasks, and the focus-loss release is opt-in and
+// charges every alt-tab. A user who edits in VS Code and builds in Visual Studio therefore hit
+//   MSB3027: ... The file is locked by: "WinFormsDesigner.Engine.Net48"
+// with nothing in the product releasing it for them.
+//
+// The trigger is the build itself, not the user's focus: watch the intermediate `obj` directory MSBuild compiles
+// into, plus the pinned output directory, and release the moment an assembly is written. The compiler writes
+// obj\…\App.exe seconds before MSBuild copies it over bin\…\App.exe, and the Copy task retries for ~10s even if we
+// are late, so the handles are gone before the copy needs them. Costs nothing when no build runs — unlike a
+// focus-loss release, the only reload it forces is one the new build made necessary anyway.
+//
+// The `obj` watch is the load-bearing one, and it is derived from the FORM's own project (DesignerHub
+// .net48BuildWatchTargets) rather than guessed from the output path. Watching only the output directory cannot work
+// on its own: if the copy is refused because we still pin the destination, the destination never changes, so no
+// event is ever raised — the signal has to come from something the build CAN write.
+const externalBuildWatchers = new Map<string, fs.FSWatcher>();
+let externalBuildResync: ReturnType<typeof setTimeout> | undefined;
+/** Retry cadence for a watch that could not be armed — a Clean deletes `obj`/`bin` and recreates it moments later,
+ * and without this the directory would stay unwatched until some unrelated editor event happened to re-sync. */
+const EXTERNAL_BUILD_REARM_MS = 5000;
+
+/** The release state machine (ordering + bounded waiting live in externalBuild.ts, where they are unit-tested);
+ * this file owns the watchers that feed it and the engine calls it makes. */
+const externalBuild = new ExternalBuildRelease({
+  outputsInUse: () => DesignerHub.instance.net48OutputsInUse(),
+  stamp: (file) => outputStamp(file),
+  begin: () => DesignerHub.instance.beginNet48Task(t('host.buildTask.external')),
+  release: () => releaseNet48ForTask('external build'),
+  end: async () => {
+    await DesignerHub.instance.endNet48Task();
+    syncExternalBuildWatch(); // outputs may have moved while the previews were view-only
+  },
+});
+
+function releaseOnExternalBuild(): boolean {
+  return vscode.workspace.getConfiguration('winformsDesigner').get<boolean>('net48.releaseOnExternalBuild', true);
+}
+
+/** Existing `obj` directories to watch for a target: the owning project's own (authoritative — it holds even for a
+ * custom OutputPath), else the conventional guess from a `bin\<Config>[\<Tfm>]` output. */
+function intermediateDirsFor(target: { output: string; projectDir?: string }): string[] {
+  const candidates = target.projectDir
+    ? [path.join(target.projectDir, 'obj'), ...intermediateDirCandidates(path.dirname(target.output))]
+    : intermediateDirCandidates(path.dirname(target.output));
+  const found: string[] = [];
+  for (const dir of candidates) {
+    if (found.includes(dir)) continue;
+    try { if (fs.statSync(dir).isDirectory()) found.push(dir); } catch { /* not there → nothing to watch */ }
+  }
+  return found;
+}
+
+/** (Re)build the watch set from the outputs open designers currently pin. Idempotent — safe to call on any signal
+ * that a designer opened, closed, switched control source or changed engine. */
+function syncExternalBuildWatch(): void {
+  if (externalBuildResync) { clearTimeout(externalBuildResync); externalBuildResync = undefined; }
+  const wanted = new Map<string, boolean>(); // dir → watch recursively
+  if (!shuttingDown && releaseOnExternalBuild()) {
+    for (const target of DesignerHub.instance.net48BuildWatchTargets()) {
+      wanted.set(path.dirname(target.output), false);
+      // recursive: the compiled assembly sits under obj\<Config>\<Tfm>\
+      for (const obj of intermediateDirsFor(target)) wanted.set(obj, true);
+    }
+  }
+  for (const [dir, watcher] of [...externalBuildWatchers]) {
+    if (wanted.has(dir)) continue;
+    try { watcher.close(); } catch { /* already closed */ }
+    externalBuildWatchers.delete(dir);
+  }
+  let armed = 0;
+  for (const [dir, recursive] of wanted) {
+    if (externalBuildWatchers.has(dir)) { armed++; continue; }
+    try {
+      const watcher = fs.watch(dir, { recursive, persistent: false },
+        (_event, name) => onExternalBuildWrite(name, recursive ? 'intermediate' : 'output'));
+      // A watch dies under us when its directory is deleted — exactly what a Clean does before recreating it. Drop
+      // it and schedule a re-arm; leaving it out until the next unrelated editor event is how a Clean+Rebuild would
+      // slip past the release entirely.
+      watcher.on('error', () => {
+        try { watcher.close(); } catch { /* already closed */ }
+        externalBuildWatchers.delete(dir);
+        scheduleExternalBuildRearm();
+      });
+      externalBuildWatchers.set(dir, watcher);
+      armed++;
+    } catch {
+      // Unwatchable right now (deleted mid-Clean, permissions, watch limits): retry, and meanwhile the manual
+      // release command and the task coordination still cover the user.
+    }
+  }
+  if (armed < wanted.size) scheduleExternalBuildRearm();
+}
+
+/** Try the watch set again shortly — for a directory that did not exist (or died) at sync time. Self-cancelling:
+ * syncExternalBuildWatch only re-arms while something is still missing. */
+function scheduleExternalBuildRearm(): void {
+  if (externalBuildResync || shuttingDown) return;
+  externalBuildResync = setTimeout(() => {
+    externalBuildResync = undefined;
+    syncExternalBuildWatch();
+  }, EXTERNAL_BUILD_REARM_MS);
+}
+
+function closeExternalBuildWatch(): void {
+  for (const [dir, watcher] of [...externalBuildWatchers]) {
+    try { watcher.close(); } catch { /* already closed */ }
+    externalBuildWatchers.delete(dir);
+  }
+  if (externalBuildResync) { clearTimeout(externalBuildResync); externalBuildResync = undefined; }
+  externalBuild.dispose();
+}
+
+function onExternalBuildWrite(name: string | Buffer | null, where: BuildWriteOrigin): void {
+  // In the INTERMEDIATE tree only a written assembly means a copy over our pinned output is coming — reacting to the
+  // rest (.cache / .AssemblyInfo.cs / .editorconfig, rewritten constantly by design-time builds) would unload the
+  // preview for nothing. The pinned OUTPUT directory is different: nothing but a build writes there, and fs.watch is
+  // documented not to guarantee a filename, so any event counts rather than being silently dropped.
+  if (where === 'intermediate' && !isAssemblyWrite(name)) return;
+  externalBuild.onWrite(where);
+}
+
+function outputStamp(file: string): number {
+  try { const st = fs.statSync(file); return st.mtimeMs + st.size; } catch { return -1; }
 }
 
 async function runCoordinatedTask(group: 'build' | 'test'): Promise<void> {
@@ -1113,6 +1293,28 @@ function getProbeDirectories(): string[] {
     .filter((d) => d.length > 0);
 }
 
+/**
+ * Whether deleting a form also deletes the generated files that only exist for it (default: yes) — its
+ * `.Designer.cs` and its `.resx` / `.<culture>.resx`. Off leaves them behind, which is what happened before this
+ * existed: the form was gone and its resources stayed as orphans (issue #3).
+ */
+function deleteFormSiblings(): boolean {
+  return vscode.workspace.getConfiguration('winformsDesigner').get<boolean>('deleteFormSiblings', true);
+}
+
+/**
+ * Whether the net48 engine confines its preview windows to a desktop that is never displayed (default: yes).
+ *
+ * A compiled preview realizes the REAL form, so the form's own Load/Shown code runs and can open windows of its own —
+ * a splash screen, a docking panel, a dialog — which used to appear on the user's screen next to VS Code. Turning
+ * this off makes them visible again, and exists only to diagnose a vendor control that misbehaves off-desktop.
+ * Read once per engine START (the desktop is chosen when the process is created), so a change needs the engine to be
+ * restarted — the setting description says so.
+ */
+function isolateRenderWindows(): boolean {
+  return vscode.workspace.getConfiguration('winformsDesigner').get<boolean>('net48.isolateRenderWindows', true);
+}
+
 /** One warning per missing path (config is read on every render — don't spam on each save/re-render). */
 function warnMissingAssembly(resolved: string): void {
   if (warnedAssemblyPaths.has(resolved)) {
@@ -1172,6 +1374,7 @@ function normalize(fsPath: string): string {
 
 export function deactivate(): void | Promise<void> {
   shuttingDown = true;
+  closeExternalBuildWatch(); // a watch that fires during teardown would only try to release engines already going away
   // dispose() already kills the mapped engines' processes; remember which so the pending-scan below does NOT signal them
   // a second time (a redundant failed kill on every normal shutdown). Startup children that never
   // became a handle aren't in this set, so they still get their one kill.

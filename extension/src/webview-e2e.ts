@@ -57,6 +57,18 @@ function setupSelected(h: Harness, ctrl: any, move = true, resize = true): void 
   h.send({ type: 'manip', id: ctrl.id, move, resize });
   h.resetPosted();
 }
+function setupSnapPair(h: Harness): void {
+  const moving = mkCtrl();
+  const sibling = mkCtrl({ id: 'button2', name: 'button2', x: 100, y: 20 });
+  h.send({ type: 'layout', controls: [moving, sibling] });
+  h.send({ type: 'select', id: moving.id });
+  h.send({ type: 'manip', id: moving.id, move: true, resize: true });
+  h.resetPosted();
+}
+function visibleSnapGuides(h: Harness): number {
+  return (Array.from(h.document.querySelectorAll('.snapguide')) as any[])
+    .filter((el) => el.style.display !== 'none').length;
+}
 /** Deterministically commit a pending keyboard-nudge series WITHOUT waiting out the 250ms debounce: a competing
  *  gesture force-flushes it (designer.js:876 runs flushNudge() on a left-button mousedown, before hit-test). A
  *  mousedown on an empty canvas point only starts a harmless rubber-band, so it commits the nudge and posts nothing
@@ -73,6 +85,17 @@ function flushNudge(h: Harness): void {
 test('smoke: designer loads and posts ready', () => {
   const h = loadDesigner();
   ok(only(h.posted, 'ready').length === 1, 'designer posted exactly one ready on load');
+  h.destroy();
+});
+
+test('toolbox discovery yields when the user starts filtering the toolbox', () => {
+  const h = loadPanel();
+  h.resetPosted();
+  const search = h.el('tbSearch');
+  search.value = 'Button';
+  search.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  eq(only(h.posted, 'toolboxInteraction'), [{ type: 'toolboxInteraction' }],
+    'toolbox filtering tells the host to cancel its background discovery pass');
   h.destroy();
 });
 
@@ -196,6 +219,72 @@ test('nudge: does NOT move when the host has not granted move (canMove=false)', 
   flushNudge(h); // a broken canMove gate would have started a nudge series → this flush would surface its commit
   eq(only(h.posted, 'manipulate').length, 0, 'no commit when not movable');
   h.destroy();
+});
+
+test('placement snap override: normal move snaps, Alt move stays raw and draws no guides', () => {
+  const h = loadDesigner();
+  setupSnapPair(h);
+  h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 24, clientY: 30 });
+  ok(visibleSnapGuides(h) > 0, 'normal move shows snap guides');
+  h.mouse('mouseup', { clientX: 24, clientY: 30 });
+  eq(only(h.posted, 'manipulate')[0]?.x, 20, 'normal move snapped right edge to sibling left');
+  h.destroy();
+
+  const raw = loadDesigner();
+  setupSnapPair(raw);
+  raw.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, raw.el('surface'));
+  raw.mouse('mousemove', { clientX: 24, clientY: 30, altKey: true });
+  eq(visibleSnapGuides(raw), 0, 'Alt move draws no snap guides');
+  eq(raw.el('status').textContent, 'designer.status.freePlacement', 'Alt move uses the localized raw x/y/w/h status');
+  raw.mouse('mouseup', { clientX: 24, clientY: 30, altKey: true });
+  eq(only(raw.posted, 'manipulate')[0]?.x, 14, 'Alt move commits the unsnapped raw x');
+  raw.destroy();
+});
+
+test('placement snap override: normal resize snaps, Alt resize stays raw and draws no guides', () => {
+  const h = loadDesigner();
+  setupSnapPair(h);
+  const east = h.el('sel').querySelector('.h-e');
+  h.mouse('mousedown', { button: 0, clientX: 90, clientY: 32 }, east);
+  h.mouse('mousemove', { clientX: 94, clientY: 32 });
+  ok(visibleSnapGuides(h) > 0, 'normal resize shows snap guides');
+  h.mouse('mouseup', { clientX: 94, clientY: 32 });
+  eq(only(h.posted, 'manipulate')[0]?.width, 90, 'normal resize snapped right edge to sibling left');
+  h.destroy();
+
+  const raw = loadDesigner();
+  setupSnapPair(raw);
+  const rawEast = raw.el('sel').querySelector('.h-e');
+  raw.mouse('mousedown', { button: 0, clientX: 90, clientY: 32 }, rawEast);
+  raw.mouse('mousemove', { clientX: 94, clientY: 32, altKey: true });
+  eq(visibleSnapGuides(raw), 0, 'Alt resize draws no snap guides');
+  eq(raw.el('status').textContent, 'designer.status.freePlacement', 'Alt resize uses the localized raw x/y/w/h status');
+  raw.mouse('mouseup', { clientX: 94, clientY: 32, altKey: true });
+  eq(only(raw.posted, 'manipulate')[0]?.width, 84, 'Alt resize commits the unsnapped raw width');
+  raw.destroy();
+});
+
+test('placement snap override: host setting can disable Alt override and invalid values fall back to Alt', () => {
+  const h = loadDesigner();
+  setupSnapPair(h);
+  h.send({ type: 'placementSettings', snapOverrideModifier: 'disabled' });
+  h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 24, clientY: 30, altKey: true });
+  ok(visibleSnapGuides(h) > 0, 'disabled setting keeps normal snap guides even with Alt held');
+  h.mouse('mouseup', { clientX: 24, clientY: 30, altKey: true });
+  eq(only(h.posted, 'manipulate')[0]?.x, 20, 'disabled setting keeps snapping enabled');
+  h.destroy();
+
+  const fallback = loadDesigner();
+  setupSnapPair(fallback);
+  fallback.send({ type: 'placementSettings', snapOverrideModifier: 'bogus' });
+  fallback.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, fallback.el('surface'));
+  fallback.mouse('mousemove', { clientX: 24, clientY: 30, altKey: true });
+  eq(visibleSnapGuides(fallback), 0, 'invalid setting is sanitized to default Alt override');
+  fallback.mouse('mouseup', { clientX: 24, clientY: 30, altKey: true });
+  eq(only(fallback.posted, 'manipulate')[0]?.x, 14, 'invalid setting falls back to unsnapped Alt behavior');
+  fallback.destroy();
 });
 
 test('nudge: ignored while typing in an input (arrow keys belong to the field)', () => {
@@ -2044,6 +2133,21 @@ test('tab-host context menu: Add / Move Left-Right / Delete are localized and po
   h.click(findMenuItem(h, 'ctxMenu', 'designer.menu.moveTabRight')!);
   eq(only(h.posted, 'moveTab'), [{ type: 'moveTab', hostId: 'tabControl1', pageId: 'tabPage1', direction: 'right' }],
     'Move Right uses the same bounded active-page route');
+  h.destroy();
+});
+
+test('vendor tab-host context menu: reflected host identity uses the same bounded move route', () => {
+  const h = loadDesigner();
+  h.send({ type: 'render', png: '', width: 360, height: 240, gen: 0 });
+  h.send({ type: 'layout', controls: [
+    mkCtrl({ id: 'xtraTabs', name: 'xtraTabs', type: 'DevExpress.XtraTab.XtraTabControl', x: 8, y: 8, width: 300, height: 200, isTabHost: true }),
+    mkCtrl({ id: 'detailsPage', name: 'detailsPage', type: 'DevExpress.XtraTab.XtraTabPage', parentId: 'xtraTabs', x: 12, y: 30, width: 290, height: 170 }),
+  ] });
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 40, clientY: 15, button: 2 }, h.el('surfaceWrap'));
+  h.click(findMenuItem(h, 'ctxMenu', 'designer.menu.moveTabLeft')!);
+  eq(only(h.posted, 'moveTab'), [{ type: 'moveTab', hostId: 'xtraTabs', pageId: 'detailsPage', direction: 'left' }],
+    'vendor-shaped hosts never invoke a vendor action; they post the same source-first host/page identity');
   h.destroy();
 });
 

@@ -236,7 +236,12 @@
     });
     return b;
   }
-  tbSearchEl.addEventListener('input', renderToolbox);
+  tbSearchEl.addEventListener('input', function () {
+    // Keep metadata discovery subordinate to interaction: the host cancels its current bounded pass and retries
+    // after the user pauses, so filtering never competes with a background assembly walk.
+    vscode.postMessage({ type: 'toolboxInteraction' });
+    renderToolbox();
+  });
   // Right-click anywhere in the toolbox body (empty area / between items) → the menu with no tab context
   // (Add Tab enabled; Delete/Rename/Move Tab disabled). Category headers stopPropagation, so this fires only
   // for non-header clicks. Matches VS, where the menu opens on right-click anywhere in the toolbox.
