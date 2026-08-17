@@ -71,7 +71,7 @@ namespace DemoApp
         var result = DesignerControlEditor.AddControl(ScaffoldedForm, "this", "Button", null, 124, 80);
         Assert.True(result.Safe, result.Reason);
 
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
             this.components = new System.ComponentModel.Container();
             this.button1 = new System.Windows.Forms.Button();
             this.SuspendLayout();
@@ -94,14 +94,14 @@ namespace DemoApp
             this.Text = "Form1";
             this.ResumeLayout(false);
         }
-""", Normalized(result.NewText!));
+"""), Normalized(result.NewText!));
 
         // The field goes below #endregion, where Visual Studio keeps control fields.
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
         #endregion
 
         private System.Windows.Forms.Button button1;
-""", Normalized(result.NewText!));
+"""), Normalized(result.NewText!));
     }
 
     [Fact]
@@ -110,10 +110,10 @@ namespace DemoApp
         // The value comes from the rendering engine's live form, so a net4x form records 6,13 and a modern one 7,15.
         var framework = DesignerControlEditor.AddControl(ScaffoldedForm, "this", "Button", null, 10, 10, "6F, 13F");
         Assert.True(framework.Safe, framework.Reason);
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-""", Normalized(framework.NewText!));
+"""), Normalized(framework.NewText!));
 
         var modern = DesignerControlEditor.AddControl(ScaffoldedForm, "this", "Button", null, 10, 10, "7F, 15F");
         Assert.True(modern.Safe, modern.Reason);
@@ -140,14 +140,14 @@ namespace DemoApp
     {
         var check = DesignerControlEditor.AddControl(ScaffoldedForm, "this", "CheckBox", null, 168, 143);
         Assert.True(check.Safe, check.Reason);
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
             this.checkBox1.AutoSize = true;
             this.checkBox1.Location = new System.Drawing.Point(168, 143);
-""", Normalized(check.NewText!));
-        Assert.Contains("""
+"""), Normalized(check.NewText!));
+        Assert.Contains(Normalized("""
             this.ResumeLayout(false);
             this.PerformLayout();
-""", Normalized(check.NewText!));
+"""), Normalized(check.NewText!));
 
         // A second text-sized control does not add a second PerformLayout.
         var label = DesignerControlEditor.AddControl(check.NewText!, "this", "Label", null, 10, 10);
@@ -171,15 +171,15 @@ namespace DemoApp
         string text = Normalized(second.NewText!);
 
         // Constructors stay one run; the newest Add comes FIRST so the new control is on top, as in VS.
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
             this.button1 = new System.Windows.Forms.Button();
             this.checkBox1 = new System.Windows.Forms.CheckBox();
             this.SuspendLayout();
-""", text);
-        Assert.Contains("""
+"""), text);
+        Assert.Contains(Normalized("""
             this.Controls.Add(this.checkBox1);
             this.Controls.Add(this.button1);
-""", text);
+"""), text);
         // Each control keeps its own header, and the form's block header is written once.
         Assert.Single(AllIndexesOf(text, "// checkBox1"));
         Assert.Single(AllIndexesOf(text, "// Form1"));
@@ -187,10 +187,10 @@ namespace DemoApp
         Assert.Single(AllIndexesOf(text, "this.SuspendLayout();"));
         Assert.Single(AllIndexesOf(text, "this.ResumeLayout(false);"));
         Assert.Single(AllIndexesOf(text, "this.Name = \"Form1\";"));
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
         private System.Windows.Forms.Button button1;
         private System.Windows.Forms.CheckBox checkBox1;
-""", text);
+"""), text);
     }
 
     /// <summary>A form Visual Studio itself generated must be added to in place, never rearranged.</summary>
@@ -242,23 +242,23 @@ namespace Sample
         Assert.True(result.Safe, result.Reason);
         string text = Normalized(result.NewText!);
 
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
             this.button1 = new System.Windows.Forms.Button();
             this.textBox1 = new System.Windows.Forms.TextBox();
             this.SuspendLayout();
-""", text);
-        Assert.Contains("""
+"""), text);
+        Assert.Contains(Normalized("""
             this.Controls.Add(this.textBox1);
             this.Controls.Add(this.button1);
             this.Name = "Form1";
-""", text);
+"""), text);
         // The new block lands above the form's block, under its own header.
-        Assert.Contains("""
+        Assert.Contains(Normalized("""
             //
             // textBox1
             //
             this.textBox1.Location = new System.Drawing.Point(30, 40);
-""", text);
+"""), text);
         // Nothing the form already had is duplicated or replaced.
         Assert.Single(AllIndexesOf(text, "this.SuspendLayout();"));
         Assert.Single(AllIndexesOf(text, "// Form1"));
