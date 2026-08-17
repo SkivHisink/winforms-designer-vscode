@@ -7,6 +7,7 @@ import {
   discoverProjectBuildOutputRoots,
   discoverProbeAssemblies,
   discoverRegisteredAssemblies,
+  isUserEditDocument,
   uniqueAssemblyPaths
 } from './toolboxDiscovery';
 
@@ -265,5 +266,15 @@ describe('project-scoped build-output roots', () => {
 
     expect(result.projects).toEqual([path.resolve(appProject)]);
     expect(result.cancelled).toBe(true);
+  });
+
+  it('reschedules discovery for user edits only, never for VS Code-owned documents', () => {
+    expect(isUserEditDocument('file')).toBe(true);
+    expect(isUserEditDocument('untitled')).toBe(true);
+    // 'output' is the one that mattered: discovery logs into an output channel, whose document change would
+    // otherwise reschedule discovery, which logs again — a loop that runs for as long as the log stays open.
+    for (const scheme of ['output', 'vscode-userdata', 'git', 'vscode', 'search-editor', 'debug']) {
+      expect(isUserEditDocument(scheme)).toBe(false);
+    }
   });
 });

@@ -80,6 +80,10 @@ namespace WinFormsDesigner.Engine
                 ["System.Drawing.ContentAlignment"] = (typeof(ContentAlignment), "System.Drawing.ContentAlignment, System.Drawing"),
             };
 
+        /// <summary>Whether a property type can round-trip through the .resx writer — the gate the localizable
+        /// conversion uses to decide what may move out of generated code and what has to stay in it.</summary>
+        public static bool SupportsScalarType(string typeFullName) => ScalarTypes.ContainsKey(typeFullName);
+
         public static LocalizedResourceEditResult ApplyEdits(string? resxText, IReadOnlyList<LocalizedResourceEdit> edits)
         {
             if (edits == null || edits.Count == 0) return Fail("no edits");

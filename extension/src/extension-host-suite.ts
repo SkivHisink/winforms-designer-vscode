@@ -27,6 +27,10 @@ export async function run(): Promise<void> {
   for (const command of [
     'winformsDesigner.open',
     'winformsDesigner.viewCode',
+    'winformsDesigner.addForm',
+    'winformsDesigner.addUserControl',
+    'winformsDesigner.addComponent',
+    'winformsDesigner.addClass',
     'winformsDesigner.showProperties',
     'winformsDesigner.exportDiagnostics',
     'winformsDesigner.selectControlAssembly',
@@ -39,6 +43,28 @@ export async function run(): Promise<void> {
   ]) {
     assert.ok(commands.has(command), `command ${command} was not registered`);
   }
+  const contributions = extension.packageJSON.contributes as {
+    submenus?: { id?: string }[];
+    menus?: Record<string, { command?: string; submenu?: string }[]>;
+  };
+  assert.ok(
+    contributions.submenus?.some((submenu) => submenu.id === 'winformsDesigner.add'),
+    'the Explorer Add submenu was not contributed',
+  );
+  assert.ok(
+    contributions.menus?.['explorer/context']?.some((item) => item.submenu === 'winformsDesigner.add'),
+    'the Explorer context menu does not expose the Add submenu',
+  );
+  assert.deepStrictEqual(
+    contributions.menus?.['winformsDesigner.add']?.map((item) => item.command),
+    [
+      'winformsDesigner.addForm',
+      'winformsDesigner.addUserControl',
+      'winformsDesigner.addComponent',
+      'winformsDesigner.addClass',
+    ],
+    'the Add submenu should expose Form, User Control, Component, and Class in that order',
+  );
 
   // This drives a real extension command through the real Extension Host and starts the bundled/development
   // .NET engine. It catches activation/API-floor regressions as well as broken engine path/apphost logic.

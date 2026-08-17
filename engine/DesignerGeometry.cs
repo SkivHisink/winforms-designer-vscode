@@ -118,7 +118,9 @@ namespace WinFormsDesigner.Engine
                 MaximumWidth = target.MaximumSize.Width,
                 MaximumHeight = target.MaximumSize.Height,
                 CanMove = canEdit && !ReferenceEquals(target, root),
-                CanResize = canEdit,
+                // An AutoSize control sizes itself from its content: Visual Studio offers no size grips for one,
+                // and a drag that "resized" it would write a Size the layout engine immediately discards.
+                CanResize = canEdit && !target.AutoSize,
             };
         }
 

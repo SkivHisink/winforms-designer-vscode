@@ -33,6 +33,8 @@
     <ProjectReference Include="..\..\engine-net48\Engine.Net48.csproj" ReferenceOutputAssembly="false" />
     <Compile Include="..\..\engine-net48\Dtos.cs" Link="ToolboxScan\Dtos.cs" />
     <Compile Include="..\..\engine-net48\ToolboxAssemblyScanner.cs" Link="ToolboxScan\ToolboxAssemblyScanner.cs" />
+    <Compile Include="..\..\engine-net48\CompiledDescriber.cs" Link="DailyLoop\CompiledDescriber.cs" />
+    <Compile Include="..\..\engine-net48\SourceMetadata.cs" Link="DailyLoop\SourceMetadata.cs" />
   </ItemGroup>
 
   <!-- The SAME shared sources the engines compile-link — proving they build and behave identically on net48. -->

@@ -725,7 +725,13 @@
     if (idx < 0) { for (var i = 0; i < nodes.length; i++) { if (nodes[i].classList.contains('sel')) { idx = i; break; } } }
     function focusAt(j) { var n = nodes[j]; if (!n) return; nodes.forEach(function (x) { x.tabIndex = -1; }); n.tabIndex = 0; n.focus(); }
     var aid = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.id : null;
-    if ((e.altKey || e.ctrlKey) && e.key === 'Home' && aid) { e.preventDefault(); postOutlineZOrder(aid, true); }
+    if (e.key === 'F2' && aid) {
+      var renameTarget = outlineControl(aid);
+      if (renameTarget && !renameTarget.isRoot && aid !== 'this' && !outlineFlagged(renameTarget)) {
+        e.preventDefault(); vscode.postMessage({ type: 'renameComponent', id: aid });
+      }
+    }
+    else if ((e.altKey || e.ctrlKey) && e.key === 'Home' && aid) { e.preventDefault(); postOutlineZOrder(aid, true); }
     else if ((e.altKey || e.ctrlKey) && e.key === 'End' && aid) { e.preventDefault(); postOutlineZOrder(aid, false); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); focusAt(idx < 0 ? 0 : Math.min(nodes.length - 1, idx + 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); focusAt(idx <= 0 ? 0 : idx - 1); }

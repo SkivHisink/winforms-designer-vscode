@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "preview": false,
   "license": "MIT",
   "author": {
@@ -108,11 +108,32 @@
     "commands": [
       {
         "command": "winformsDesigner.open",
-        "title": "%command.open.title%"
+        "title": "%command.open.title%",
+        "icon": {
+          "light": "media/designer-light.svg",
+          "dark": "media/designer-dark.svg"
+        }
       },
       {
         "command": "winformsDesigner.viewCode",
-        "title": "%command.viewCode.title%"
+        "title": "%command.viewCode.title%",
+        "icon": "$(code)"
+      },
+      {
+        "command": "winformsDesigner.addForm",
+        "title": "%command.addForm.title%"
+      },
+      {
+        "command": "winformsDesigner.addUserControl",
+        "title": "%command.addUserControl.title%"
+      },
+      {
+        "command": "winformsDesigner.addComponent",
+        "title": "%command.addComponent.title%"
+      },
+      {
+        "command": "winformsDesigner.addClass",
+        "title": "%command.addClass.title%"
       },
       {
         "command": "winformsDesigner.showProperties",
@@ -157,7 +178,23 @@
         "title": "%command.restartEngines.title%"
       }
     ],
+    "submenus": [
+      {
+        "id": "winformsDesigner.add",
+        "label": "%submenu.add.title%"
+      }
+    ],
     "keybindings": [
+      {
+        "command": "winformsDesigner.viewCode",
+        "key": "f7",
+        "when": "activeCustomEditorId == winformsDesigner.designer"
+      },
+      {
+        "command": "winformsDesigner.open",
+        "key": "shift+f7",
+        "when": "editorTextFocus && winformsDesigner.canOpen"
+      },
       {
         "command": "winformsDesigner.showProperties",
         "key": "f4",
@@ -191,6 +228,47 @@
         {
           "command": "winformsDesigner.editImageListImages",
           "when": "activeCustomEditorId == winformsDesigner.designer"
+        },
+        {
+          "command": "winformsDesigner.addForm",
+          "when": "false"
+        },
+        {
+          "command": "winformsDesigner.addUserControl",
+          "when": "false"
+        },
+        {
+          "command": "winformsDesigner.addComponent",
+          "when": "false"
+        },
+        {
+          "command": "winformsDesigner.addClass",
+          "when": "false"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "winformsDesigner.add",
+          "when": "resourceScheme == file",
+          "group": "1_modification@10"
+        }
+      ],
+      "winformsDesigner.add": [
+        {
+          "command": "winformsDesigner.addForm",
+          "group": "1_scaffold@10"
+        },
+        {
+          "command": "winformsDesigner.addUserControl",
+          "group": "1_scaffold@20"
+        },
+        {
+          "command": "winformsDesigner.addComponent",
+          "group": "1_scaffold@30"
+        },
+        {
+          "command": "winformsDesigner.addClass",
+          "group": "1_scaffold@40"
         }
       ],
       "editor/title": [
@@ -349,7 +427,7 @@
     "vscode-jsonrpc": "^9.0.0"
   },
   "overrides": {
-    "nanoid": "3.3.17",
+    "nanoid": "3.3.18",
     "postcss": "8.5.26",
     "undici": "7.29.0"
   },

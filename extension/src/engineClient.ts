@@ -587,6 +587,10 @@ export interface RenderLayout {
    * genuine rebuild — the only event that re-syncs the preview to edited-but-unbuilt source (saving alone does not).
    * Undefined for the modern engine. */
   liveBuildId?: string;
+  /** 1.9.0: the rendered root's live CurrentAutoScaleDimensions as the designer serializes it ("7F, 15F"), or ''
+   * when the root is not a container. Both engines report their OWN runtime's value, which is what lets the first
+   * control drop persist the pair the target actually scales by. */
+  autoScaleDimensions?: string;
 }
 
 /**
@@ -608,7 +612,7 @@ export async function renderWithLayout(
   const raw = await engine.connection.sendRequest<{
     png: string; width: number; height: number; clientWidth: number; clientHeight: number;
     rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; toolStripItems?: ToolStripItemBounds[]; unrepresentable?: string[];
-    inheritedBase?: boolean; baseTypeName?: string; unrenderableResxCount?: number;
+    inheritedBase?: boolean; baseTypeName?: string; unrenderableResxCount?: number; autoScaleDimensions?: string;
   }>('RenderWithLayout', designerFilePath, controlAssemblyPath ?? null, sourceText ?? null, scale ?? 1, selectedTabs ?? null);
   return {
     png: Buffer.from(raw.png ?? '', 'base64'),
@@ -629,7 +633,36 @@ export async function renderWithLayout(
     inheritedBase: raw.inheritedBase ?? false,
     baseTypeName: raw.baseTypeName ?? '',
     unrenderableResxCount: raw.unrenderableResxCount ?? 0, // pre-S3 engine → 0 (no banner), same version-skew default as inheritedBase
+    autoScaleDimensions: raw.autoScaleDimensions ?? '',
   };
+}
+
+/** The result of converting a plain form into a localizable one (Visual Studio's Localizable = true). */
+export interface LocalizeFormResult {
+  safe: boolean;
+  reason: string;
+  /** Resource-driven .Designer.cs; null when the conversion was refused. */
+  newText: string | null;
+  /** The neutral sibling .resx carrying every moved value; null when refused. */
+  resxText: string | null;
+  /** Resource keys written ("button1.Text", "$this.ClientSize", …). */
+  keys: string[];
+}
+
+/**
+* 1.9.0 — make a plain form localizable: lift every localizable property out of InitializeComponent into the
+* neutral .resx behind `resources.ApplyResources(...)`, exactly as Visual Studio's Localizable = true does. The
+* engine only COMPOSES the two texts; the caller applies them together so one undo reverts the whole conversion.
+*/
+export function makeLocalizable(
+  engine: EngineHandle,
+  designerFilePath: string,
+  controlAssemblyPath?: string,
+  sourceText?: string,
+  resxText?: string,
+): Promise<LocalizeFormResult> {
+  return engine.connection.sendRequest<LocalizeFormResult>(
+    'MakeLocalizable', designerFilePath, controlAssemblyPath ?? null, sourceText ?? null, resxText ?? null);
 }
 
 /** v1.5.0 localization preview/edit context. Empty cultureName means VS "(Default)" / neutral resources. */
@@ -691,6 +724,7 @@ interface CompiledRenderRaw {
   applied?: boolean; diagnostics?: string;
   liveInstanceId?: string; // 1.0.0 — RenderLayoutResult.LiveInstanceId (camelCased on the wire)
   liveBuildId?: string; // 1.0.0 — RenderLayoutResult.LiveBuildId
+  autoScaleDimensions?: string; // 1.9.0 — this runtime's live CurrentAutoScaleDimensions ("6F, 13F")
 }
 
 function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
@@ -716,6 +750,7 @@ function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
     // on a real rebuild. Left undefined on a version-skew dev build (new client + pre-1.0 engine).
     liveInstanceId: raw.liveInstanceId,
     liveBuildId: raw.liveBuildId,
+    autoScaleDimensions: raw.autoScaleDimensions ?? '',
     applied: raw.applied ?? true,
     diagnostics: raw.diagnostics ?? '',
   };
@@ -1158,6 +1193,8 @@ export interface ComponentDesc {
   type: string;
   parent: string | null;
   isRoot: boolean;
+  /** Browsable event selected by the component's real DefaultEventAttribute. */
+  defaultEvent?: string | null;
   ownership?: 'root' | 'currentSource' | 'inherited' | 'unresolved';
   editable?: boolean;
   readOnlyReason?: string | null;
@@ -1462,16 +1499,21 @@ export function addControl(
   /** For a net48/DevExpress form: the project-control FQNs the net48 engine enumerated. net9 can't load that
    * assembly, so it trusts these (validated engine-side) to emit `new <Fqn>()` as pure text. */
   projectControlFqns?: string[],
+  /** The rendered form's live CurrentAutoScaleDimensions ("6F, 13F"). The engine persists it on the first drop
+   * into a form that has no pair yet — the same moment Visual Studio does. */
+  autoScaleDimensions?: string,
 ): Promise<ControlAddResult> {
   // optional positional tail: each earlier slot must be filled (with null) once a later one is supplied.
   const hasLoc = locX !== undefined && locY !== undefined;
   const hasAsm = controlAssemblyPath !== undefined && controlAssemblyPath !== null;
   const hasFqns = projectControlFqns !== undefined && projectControlFqns !== null;
+  const hasScale = autoScaleDimensions !== undefined && autoScaleDimensions !== null && autoScaleDimensions !== '';
   const tail: (string | number | null | string[])[] = [];
-  if (sourceText !== undefined || hasLoc || hasAsm || hasFqns) tail.push(sourceText ?? null);
-  if (hasLoc || hasAsm || hasFqns) tail.push(hasLoc ? (locX as number) : null, hasLoc ? (locY as number) : null);
-  if (hasAsm || hasFqns) tail.push((controlAssemblyPath as string) ?? null);
-  if (hasFqns) tail.push(projectControlFqns as string[]);
+  if (sourceText !== undefined || hasLoc || hasAsm || hasFqns || hasScale) tail.push(sourceText ?? null);
+  if (hasLoc || hasAsm || hasFqns || hasScale) tail.push(hasLoc ? (locX as number) : null, hasLoc ? (locY as number) : null);
+  if (hasAsm || hasFqns || hasScale) tail.push((controlAssemblyPath as string) ?? null);
+  if (hasFqns || hasScale) tail.push((projectControlFqns as string[]) ?? null);
+  if (hasScale) tail.push(autoScaleDimensions as string);
   return engine.connection.sendRequest<ControlAddResult>('AddControl', designerFilePath, parentId, controlTypeKey, ...tail);
 }
 

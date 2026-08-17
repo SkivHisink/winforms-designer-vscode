@@ -2,7 +2,8 @@
 
 **Status:** implementation blueprint; Phase 0 decisions and evidence are required before the architecture is approved for production implementation.  
 **Last updated:** 2026-08-11.  
-**Baseline:** repository v1.8.0, with planned 1.9–1.15 workflow milestones in [ROADMAP.md](../ROADMAP.md).  
+**Baseline:** repository v1.9.0, including atomic Explorer Form/UserControl/Component/Class creation and real
+default-event double-click, with planned 1.10–1.15 workflow milestones in [ROADMAP.md](../ROADMAP.md).
 **Target:** the Visual Studio **WinForms Designer** workflow, hosted naturally inside VS Code — not a second copy of the entire Visual Studio IDE.
 
 This is the execution document behind the public roadmap. It turns “Visual Studio parity” into bounded behaviors, architectural contracts, ordered work, kill gates, verification evidence, and an honest release claim. A v2 feature is not complete until it is safe on source and resources, keyboard and assistive-technology accessible, measured on a representative corpus, recoverable after a worker failure, and covered on every runtime tier it claims to support.
@@ -65,7 +66,7 @@ The plan builds on the existing product instead of restarting it:
 
 As of this audit, the largest coordination files are approximately 7,497 lines (designerEditor.ts), 3,617 lines (DesignerRenderer.cs), 3,491 lines (RenderWorker.cs), 2,494 lines (panel.js), 2,290 lines (DesignerControlEditor.cs), 2,273 lines (engineClient.ts), and 2,229 lines (designer.js). v2 must not add a second architecture inside these files. Controlled decomposition with characterization tests is a release-enabling feature, not optional cleanup.
 
-The 1.8–1.15 milestones remain valid and should land as small compatible releases where practical. They become input to the v2 parity corpus; v2 does not postpone every daily-workflow improvement behind the new design-time host.
+The 1.10–1.15 milestones remain valid and should land as small compatible releases where practical. They become input to the v2 parity corpus; v2 does not postpone every daily-workflow improvement behind the new design-time host.
 
 ## 3. Capability and parity matrix
 
@@ -274,9 +275,11 @@ Effort bands assume a stable core team of roughly 6–9 people: lead/architect, 
 - complete layout modes, grid, baseline/margin/padding snaplines, spacing, live dimensions, and authoritative reconciliation;
 - complete first-party container and menu/toolstrip direct manipulation;
 - ship multi-object properties, mixed values, categorized/alphabetical/search, and atomic reset/edit;
-- complete default-event double-click, events parity, F7/Shift+F7, and safe refactoring integration;
+- harden the landed default-event double-click and F7/Shift+F7 routes through cross-tool round-trip, accessibility,
+  and safe refactoring integration while completing broader events parity;
 - complete toolbox auto-population, provenance/cache/budgets, favorites/search, and Choose Items;
-- ship atomic Form/UserControl scaffolding and SDK/classic project integration;
+- extend the landed atomic Form/UserControl/Component/Class scaffolding beyond its fail-closed standard static
+  SDK/classic boundary only with transaction-safe shared/imported/complex project integration;
 - complete resource picker, standard menu items, inheritance overrides, and unshipped 1.8–1.15 carry-in scope.
 
 **Exit:** Tier A passes end-to-end on modern and net48 live-source tiers. The standard-control workflow is complete with keyboard or mouse. Cross-tool round-trip is green and unsupported shapes refuse before mutation.

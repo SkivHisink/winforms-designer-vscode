@@ -5,7 +5,7 @@
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <mxCell id="h_title" value="WinForms Designer for VS Code — Release Roadmap   (current 1.8.0 → 2.0.0)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+        <mxCell id="h_title" value="WinForms Designer for VS Code — Release Roadmap   (current 1.9.0 → 2.0.0)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="40" y="0" width="1300" height="34" as="geometry" />
         </mxCell>
         <mxCell id="h_sub" value="1.0.0 established the fail-closed trust floor. The 1.x line grows through data-bound, editor, layout/platform, localization, and cross-engine workflow parity. 2.0.0 is reserved for an extensible design-time host and any intentional protocol break." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
@@ -65,7 +65,7 @@
           <mxGeometry x="1240" y="520" width="270" height="230" as="geometry" />
         </mxCell>
 
-        <mxCell id="h_beyond" value="✓  1.x THROUGH 1.8 REPOSITORY-SIDE COMPLETE · 1.9 → 1.15 PLANNED · 2.0.0 MAJOR BOUNDARY — outcome milestones, not calendar commitments" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#2E7D32;" vertex="1" parent="1">
+        <mxCell id="h_beyond" value="✓  1.x THROUGH 1.9 REPOSITORY-SIDE COMPLETE · 1.10 → 1.15 PLANNED · 2.0.0 MAJOR BOUNDARY — outcome milestones, not calendar commitments" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#2E7D32;" vertex="1" parent="1">
           <mxGeometry x="40" y="768" width="1200" height="24" as="geometry" />
         </mxCell>
 
@@ -95,13 +95,13 @@
           <mxGeometry x="40" y="1990" width="1470" height="250" as="geometry" />
         </mxCell>
 
-        <mxCell id="h_planned" value="🗓  PLANNED 1.x — remaining Visual Studio parity from 1.9.0, smallest useful releases first" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#8a6d00;" vertex="1" parent="1">
+        <mxCell id="h_planned" value="🗓  PLANNED 1.x — remaining Visual Studio parity from 1.10.0, smallest useful releases first" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#8a6d00;" vertex="1" parent="1">
           <mxGeometry x="40" y="1360" width="1200" height="24" as="geometry" />
         </mxCell>
         <mxCell id="n1_8" value="&lt;b&gt;✓ 1.8.0 — REPO-SIDE COMPLETE&lt;/b&gt;&lt;br&gt;&lt;i&gt;Placement override + self-maintaining toolbox&lt;/i&gt;&lt;br&gt;• Alt suppresses snapping for one gesture&lt;br&gt;• Lazy owning-project control discovery&lt;br&gt;• Cache + watcher + explicit budgets&lt;br&gt;• Workspace user add/remove survives a rescan&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#2e7d32&quot;&gt;exit met locally; hardware/vendor/publish gates remain&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="40" y="1390" width="350" height="240" as="geometry" />
         </mxCell>
-        <mxCell id="n1_9" value="&lt;b&gt;▶ 1.9.0 — NEXT ACTIVE&lt;/b&gt;&lt;br&gt;&lt;i&gt;The daily loop&lt;/i&gt;&lt;br&gt;• Rename a control — (Name) + F2&lt;br&gt;• Double-click → DefaultEvent handler&lt;br&gt;• F7 / Shift+F7 code ↔ designer&lt;br&gt;• Tab / Shift+Tab / Esc / Ctrl+A&lt;br&gt;• Live position + size readout&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;cheap wins; engine paths already exist&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=3;" vertex="1" parent="1">
+        <mxCell id="n1_9" value="&lt;b&gt;✓ 1.9.0 — REPO-SIDE COMPLETE&lt;/b&gt;&lt;br&gt;&lt;i&gt;Daily loop + project items&lt;/i&gt;&lt;br&gt;• Explorer Add: Form / UserControl / Component / Class (#4)&lt;br&gt;• Rename a control — (Name) + F2&lt;br&gt;• Double-click → real DefaultEvent (#5)&lt;br&gt;• F7 / Shift+F7 code ↔ designer&lt;br&gt;• Tab / Shift+Tab / Esc / Ctrl+A&lt;br&gt;• Live position + size readout&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#2e7d32&quot;&gt;exit met locally; hardware/vendor/publish gates remain&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="420" y="1390" width="350" height="240" as="geometry" />
         </mxCell>
         <mxCell id="n1_10" value="&lt;b&gt;1.10.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Multi-object properties&lt;/i&gt;&lt;br&gt;• Shared-property intersection&lt;br&gt;• Mixed values shown as mixed&lt;br&gt;• One transaction over all targets&lt;br&gt;• Multi-object Reset where representable&lt;br&gt;• Categorized / Alphabetical toggle&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;one ineligible target ⇒ zero partial writes&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;" vertex="1" parent="1">
@@ -110,7 +110,7 @@
         <mxCell id="n1_11" value="&lt;b&gt;1.11.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Precision layout&lt;/i&gt;&lt;br&gt;• SnapLines / SnapToGrid / None modes&lt;br&gt;• Align to Grid stops being disabled&lt;br&gt;• Margin/Padding-aware snaplines&lt;br&gt;• Text-baseline snaplines&lt;br&gt;• Spacing +/−/remove · Ctrl+drag copy&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;no coordinate drift across zoom and DPI&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="1180" y="1390" width="350" height="240" as="geometry" />
         </mxCell>
-        <mxCell id="n1_12" value="&lt;b&gt;1.12.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Creating and placing&lt;/i&gt;&lt;br&gt;• Add Windows Form / UserControl&lt;br&gt;• SDK-style and legacy project inclusion&lt;br&gt;• Toolbox double-click insert&lt;br&gt;• Draw-a-rectangle sizing on drop&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;refused project shape ⇒ no partial file set&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;" vertex="1" parent="1">
+        <mxCell id="n1_12" value="&lt;b&gt;1.12.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Toolbox creation and placing&lt;/i&gt;&lt;br&gt;• Toolbox double-click inserts a default-sized control&lt;br&gt;• Draw-a-rectangle creates at the exact requested size&lt;br&gt;• Preserve parent, position and selection on both engines&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;ineligible container or stale source ⇒ no change&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="40" y="1660" width="350" height="240" as="geometry" />
         </mxCell>
         <mxCell id="n1_13" value="&lt;b&gt;1.13.0&lt;/b&gt;&lt;br&gt;&lt;i&gt;Assets and menu productivity&lt;/i&gt;&lt;br&gt;• Pick an existing project resource&lt;br&gt;• On-canvas item drag-reorder / reparent&lt;br&gt;• Separators + Insert Standard Items&lt;br&gt;• Unknown statements stay byte-identical&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a6d00&quot;&gt;binary/unknown resources fail before mutation&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;" vertex="1" parent="1">

@@ -1628,6 +1628,16 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
+        /// <summary>Make a plain form localizable (Visual Studio's Localizable = true): returns the resource-driven
+        /// .Designer.cs plus the neutral .resx carrying every moved value. Writes nothing — the host applies both in
+        /// one undoable edit, or shows the refusal reason.</summary>
+        public LocalizeFormResult MakeLocalizable(string designerFilePath, string? controlAssemblyPath = null,
+            string? sourceText = null, string? resxText = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            return _sta.Invoke(() => DesignerRenderer.MakeLocalizable(designerFilePath, NullIfBlank(controlAssemblyPath), sourceText, resxText));
+        }
+
         /// <summary>Select the VS-style design culture for this form. Empty means the neutral resource set.</summary>
         public string SetLocalizationCulture(string designerFilePath, string cultureName)
         {
@@ -2028,12 +2038,12 @@ namespace WinFormsDesigner.Engine
         /// <summary>Toolbox add-control: insert a standard WinForms control (field decl + InitializeComponent
         /// statements) as a text edit. PURE TEXT — no graph load / STA (the generated statements are
         /// interpreted on the next render). The host applies the returned text as an unsaved edit.</summary>
-        public ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, List<string>? projectControlFqns = null)
+        public ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, List<string>? projectControlFqns = null, string? autoScaleDimensions = null)
         {
             // A net9 project-control key needs the resolved assembly enumerated; the net48 (DevExpress/
             // net4x) path instead supplies projectControlFqns (net9 can't load that assembly) → no prewarm needed.
             if (projectControlFqns == null) Prewarm(designerFilePath, controlAssemblyPath);
-            return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath), projectControlFqns);
+            return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath), projectControlFqns, NullIfBlank(autoScaleDimensions));
         }
 
         /// <summary>Add a new empty tab page to a tab host (pure text edit; pageTypeFqn is the page type). The host

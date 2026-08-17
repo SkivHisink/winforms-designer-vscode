@@ -9,6 +9,106 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-14
+
+**The daily design loop now matches the familiar Visual Studio gestures and project workflow.** Naming,
+default-event creation, code/designer navigation, keyboard selection traversal, live geometry, and Explorer item
+creation are available without leaving VS Code. All source-changing gestures retain the existing revision, ownership,
+localizable-form, stale-render, byte-local, collision, and fail-closed project-shape gates.
+
+### Added
+
+- **Create complete project items from Explorer** ([#4](https://github.com/SkivHisink/winforms-designer-vscode/issues/4)).
+  A new **Add** submenu creates a Windows Form, User Control, Component, or Class in the selected project folder.
+  Forms and user controls are generated as a compile-ready `.cs` / `.Designer.cs` pair — the Visual Studio item
+  template itself, down to the documented designer members, the generated-code region, the unqualified base type,
+  and the `using` block the project's implicit usings and `.editorconfig`
+  `csharp_using_directive_placement` decide the shape of. As in Visual Studio, no `.resx` is seeded on an SDK
+  project (the engine writes one when a resource first needs it) while classic projects get theirs, and the
+  template writes no constant `AutoScaleDimensions` — a fixed pair would rescale every form whose target font is
+  not the modern default. The new form opens directly
+  in the designer; components and classes are complete code items and open as source. Names are collision-safe,
+  namespaces follow the static project root plus folder path, SDK projects use implicit items, and classic or
+  default-item-disabled projects receive the exact `Compile` / `EmbeddedResource` entries in the **same undoable
+  workspace edit** as the files. Ambiguous projects, shared `.projitems`, dynamic/conditioned MSBuild properties,
+  unsupported wildcard item shapes, non-WinForms form targets, and any companion-file collision are refused before
+  writing, so a failed Add cannot leave half a form behind.
+- **Rename ordinary controls.** `(Name)` is an editable source-backed Design row for field-backed controls, and `F2`
+  invokes the same rename from both the canvas and Document Outline. The established minimal field/`this.field`/Name
+  rewrite is reused; invalid or duplicate identifiers, inherited/unresolved controls, localizable generated source,
+  unqualified designer references, stale revisions, and any code-behind reference are refused without changing source.
+- **Double-click creates or opens the real default event** ([#5](https://github.com/SkivHisink/winforms-designer-vscode/issues/5)). Both engines resolve the component's actual
+  `DefaultEventAttribute` through `TypeDescriptor`; Button → Click, TextBox → TextChanged, and Form → Load therefore
+  use the existing signature-aware handler generator. An already-wired handler only opens its body and changes no
+  source. Controls with no browsable default event remain unchanged.
+- **Visual Studio navigation keys.** `F7` opens code from the designer and `Shift+F7` opens the designer from a form
+  source file.
+- **Keyboard selection traversal.** `Tab` / `Shift+Tab` cycle siblings, `Esc` selects the parent container, and
+  `Ctrl+A` selects every sibling in the current design scope without crossing a container boundary.
+- **Live geometry for every placement gesture.** Normal snapped move/resize now shows `x`, `y`, width, and height as
+  the pointer moves; the existing per-gesture free-placement status keeps the same complete readout.
+
+- **Make a form localizable, from the designer** — the culture picker on a plain form now offers **Add
+  Localization** instead of only explaining why a culture would do nothing. The conversion is Visual Studio's
+  `Localizable = true`: every localizable value (text, position, size, tab order, fonts, anchoring) is lifted out
+  of `InitializeComponent` into the neutral `.resx` behind `resources.ApplyResources(...)`, while `Name`, event
+  wiring, `Controls.Add` and the rest of the structural code stay exactly where they are. Values are read from the
+  live rendered form, so the picture does not change — the engine e2e compares the rendered PNG byte-for-byte
+  across the conversion. Source and `.resx` are applied as ONE undoable edit, and the conversion is refused rather
+  than approximated when the form uses constructs this engine cannot interpret, when a value's type cannot
+  round-trip through the resource writer, or when the form is already localizable. After converting, the culture
+  picker opens on the form you asked for. The converted `.Designer.cs` is written to disk together with its
+  `.resx`: a localizable form must never be left dirty, because the save path refuses to flush that state (it
+  cannot tell it from a recovered pre-1.5 buffer that diverges from the resources) — leaving it dirty would have
+  meant the conversion produced a form the user could not save. Selecting a culture whose `.resx` does not exist
+  yet now says what to do next, instead of only stating that the file will appear.
+
+### Changed
+
+- **Dropping a control now writes what Visual Studio writes.** The generated code was correct but shaped
+  differently, and two of those differences were behavioral. Field names follow VS (`checkBox1`, not `checkbox1`).
+  Constructors form one leading run; each control gets its own `//`-header block; the form's block carries
+  `Controls.Add` **newest-first**, so a freshly dropped control lands on TOP of the z-order instead of underneath
+  its siblings. A form that has no layout scaffold gains `SuspendLayout()` / `ResumeLayout(false)` and its own
+  `Name` on the first drop, and `AutoScaleDimensions` is persisted **from the live rendered form** — 6,13 on .NET
+  Framework, 7,15 on modern .NET — where a constant would rescale the form on the wrong target. Text-sized
+  controls (Label, LinkLabel, CheckBox, RadioButton) arrive with `AutoSize = true` plus the `PerformLayout()` that
+  makes it take effect, button-family controls with `UseVisualStyleBackColor = true`, and control fields are
+  declared below `#endregion`. A designer file Visual Studio itself generated is added to in place — its
+  constructor run, blocks and existing members are located and reused, never rearranged — and a file with an
+  unfamiliar shape is still only appended to, as before.
+  - An AutoSize control now shows no size grips, matching Visual Studio: dragging one would have written a `Size`
+    the layout engine discards.
+  - Removing a control also removes its `//`-header block. Add-then-remove no longer restores the original bytes
+    exactly — the layout scaffold a first drop installs stays, exactly as it does in Visual Studio.
+
+### Fixed
+
+- **Editor toolbar icons.** *Open Designer* and *View Code* declared no icon, so VS Code drew its own placeholder
+  in the editor title bar. *Open Designer* now ships a themed 16×16 designer-surface glyph and *View Code* uses the
+  standard `$(code)` codicon.
+- **The form notice could not be got out of the way.** The persistent strip ("Localizable form — editing …",
+  the stale-compiled-preview and inherited-base disclosures) occupied two lines of canvas forever. It now
+  collapses to its icon with a click — the icon keeps the full text as its tooltip and expands again on click,
+  and the choice is remembered — so the disclosure is never removed, just no longer in the way. Its text is also
+  shorter now.
+- **The `.Designer.cs` disappearing on every save.** Saving replaced the designer file (and its sibling `.resx`)
+  through `vscode.workspace.fs.rename`, whose overwrite is a DELETE followed by a rename — so the form's designer
+  file really was removed from disk mid-save, the file watcher reported the deletion, and the Explorer showed it
+  vanish and reappear. The replacement now uses the platform's own primitive (`MoveFileEx(MOVEFILE_REPLACE_EXISTING)`
+  on Windows), which swaps the staged file over the target in place. The crash-safety guarantee is unchanged and
+  the target is never observably absent — pinned by a test that fails against the delete-then-rename sequence.
+- **Culture selection on a form that has no resources.** Choosing a localization culture for an ordinary form
+  changed nothing, wrote no file, and said nothing — the picker only selects *which* resource set a **localizable**
+  form reads and writes, and an ordinary form keeps every property in `InitializeComponent`. The command now
+  explains that instead of silently succeeding, and on a localizable form it names the `.resx` a culture will
+  produce with the first localized edit. A well-formed but non-existent culture such as `en-EN` is also refused
+  now: ICU accepted it, and the resulting file would never be loaded by any `ResourceManager`.
+- **Repeating toolbox auto-discovery log.** Background discovery reran on every text-document change — including
+  changes to VS Code's own output-channel documents, so an open extension log rescheduled the pass that wrote the
+  next line into it. Discovery now yields only for real user edits, an unchanged result is no longer reprinted, and
+  the "no related build-output roots" line names the actionable cause (projects that have not been built yet).
+
 ## [1.8.0] - 2026-08-13
 
 **Exact free placement, a self-maintaining workspace toolbox — and a designer that no longer runs your application,
@@ -108,9 +208,13 @@ realizes to a desktop that is never displayed.
   vendor control. Note this is containment, not a sandbox: a compiled preview still runs your form's own code with
   your own permissions.
 
-- **An open designer no longer blocks your own build.** Building the project in Visual Studio (or any `msbuild`
-  outside VS Code) failed with `MSB3027 … The file is locked by: "WinFormsDesigner.Engine",
-  "WinFormsDesigner.Engine.Net48"`. Both halves are addressed:
+- **An open designer no longer blocks your own build**
+  ([#2](https://github.com/SkivHisink/winforms-designer-vscode/issues/2)). Building the project — in Visual Studio, in
+  any `msbuild` outside VS Code, or with `dotnet build` on a plain modern project — failed with `MSB3026`/`MSB3027 …
+  The file is locked by: "WinFormsDesigner.Engine"` / `"WinFormsDesigner.Engine.Net48"`. Before this release no
+  setting could release the modern engine's handles at all: `net48.releaseOnFocusLoss` only ever applied to the
+  .NET Framework engine, so a `net8`/`net9`/`net10` project had nothing but **Restart the Designer Preview Engine**.
+  Both halves are addressed:
   - The **modern engine never pins a file again.** It loaded every user assembly with
     `LoadFromAssemblyPath`, which maps the file and holds an OS handle until the load context is collected — and
     nothing collected it: the render path never unloaded its context at all (a fresh one leaked on *every* render,

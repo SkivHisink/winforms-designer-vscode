@@ -377,6 +377,8 @@ namespace WinFormsDesigner.Engine.Net48
         public string Type { get; set; } = "";
         public string? Parent { get; set; }
         public bool IsRoot { get; set; }
+        /// <summary>The browsable event selected by the component's real DefaultEventAttribute.</summary>
+        public string? DefaultEvent { get; set; }
         /// <summary>Visual-inheritance ownership metadata. Unknown/missing ownership fails closed.</summary>
         public string Ownership { get; set; } = InheritedOwnershipPolicy.Unresolved;
         public bool Editable { get; set; }
@@ -441,6 +443,10 @@ namespace WinFormsDesigner.Engine.Net48
         public List<TrayComponent> Tray { get; set; } = new List<TrayComponent>();
         /// <summary>Per-item geometry for every top-level strip item + a trailing "Type Here" slot per strip.</summary>
         public List<ToolStripItemBounds> ToolStripItems { get; set; } = new List<ToolStripItemBounds>();
+        /// <summary>1.9.0 — the live root's CurrentAutoScaleDimensions as the designer serializes it ("6F, 13F").
+        /// The first control drop persists it into a form that carries no pair yet, as Visual Studio does; reading
+        /// it from THIS runtime's instance is what makes a net4x form get 6,13 instead of the modern 7,15.</summary>
+        public string AutoScaleDimensions { get; set; } = "";
         /// <summary>For a live property edit: true when the value was applied to the live instance (picture reflects
         /// it); false when it couldn't be (unconvertible/read-only) — the text edit still persisted, the picture will
         /// catch up on rebuild. Always true for a plain render.</summary>

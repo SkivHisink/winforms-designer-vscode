@@ -28,6 +28,7 @@ namespace WinFormsDesigner.Engine.Net48
                 Type = target.GetType().FullName ?? target.GetType().Name,
                 Parent = parent,
                 IsRoot = isRoot,
+                DefaultEvent = DescribeDefaultEvent(target),
                 IsToolStripItem = target is ToolStripItem,
                 Properties = DescribeProperties(target, siblings ?? System.Array.Empty<KeyValuePair<string, IComponent>>(), root),
                 Events = DescribeEvents(target),
@@ -50,6 +51,19 @@ namespace WinFormsDesigner.Engine.Net48
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return list;
+        }
+
+        private static string? DescribeDefaultEvent(IComponent c)
+        {
+            try
+            {
+                var descriptor = TypeDescriptor.GetDefaultEvent(c);
+                return descriptor != null && descriptor.IsBrowsable ? descriptor.Name : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static List<PropertyDesc> DescribeProperties(IComponent c,

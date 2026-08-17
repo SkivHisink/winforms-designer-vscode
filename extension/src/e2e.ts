@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, moveCompiledTab, hitTestCompiledTab, hitTestInterpretedTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, listCompiledVendorSmartTags, setLocalizationCulture, setLocalizedResources } from './engineClient';
+import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, moveCompiledTab, hitTestCompiledTab, hitTestInterpretedTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, listCompiledVendorSmartTags, setLocalizationCulture, setLocalizedResources, makeLocalizable } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
 import { hitTestTab } from './engineClient';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
@@ -14,6 +14,7 @@ import { isByteLocalEdit, diffLines, changedLines } from './byteLocal';
 import { refuseWhileRenderFailed } from './renderGate';
 import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
+import { createScaffoldPlan, ScaffoldKind } from './scaffolding';
 
 /** Build the net48 ctx fixture on demand (it compiles the SAME engine/samples/ContextMenuForm.Designer.cs the net9
 * ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
@@ -75,6 +76,81 @@ function pngWithDims(w: number, h: number): Buffer {
   const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
   return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.from([0, 0, 0, 0]))), chunk('IEND', Buffer.alloc(0))]);
+}
+
+/**
+ * GitHub #4 build proof: generate all four Explorer Add item kinds from the same pure planner used by the host,
+ * then compile them as both a modern WinForms project (implicit SDK items) and net48 (explicit items forced by
+ * disabling both defaults). This catches invalid C#, invalid .resx, and classic-item insertion drift.
+ */
+function verifyScaffoldBuilds(): void {
+  if (process.platform !== 'win32') {
+    console.log('e2e: issue #4 scaffold build proof skipped — WinForms targets require Windows');
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-scaffold-build-'));
+  const builds: { name: string; tfm: string; explicitItems: boolean }[] = [
+    { name: 'ModernScaffold', tfm: 'net10.0-windows', explicitItems: false },
+    { name: 'FrameworkScaffold', tfm: 'net48', explicitItems: true },
+  ];
+  const kinds: readonly ScaffoldKind[] = ['form', 'userControl', 'component', 'class'];
+  try {
+    for (const build of builds) {
+      const dir = path.join(root, build.name);
+      fs.mkdirSync(path.join(dir, 'Generated'), { recursive: true });
+      const projectPath = path.join(dir, `${build.name}.csproj`);
+      let projectText = [
+        '<Project Sdk="Microsoft.NET.Sdk">',
+        '  <PropertyGroup>',
+        '    <OutputType>Library</OutputType>',
+        `    <TargetFramework>${build.tfm}</TargetFramework>`,
+        '    <UseWindowsForms>true</UseWindowsForms>',
+        `    <RootNamespace>${build.name}</RootNamespace>`,
+        ...(build.explicitItems ? [
+          '    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>',
+          '    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>',
+        ] : []),
+        '  </PropertyGroup>',
+        '</Project>',
+        '',
+      ].join('\r\n');
+      fs.writeFileSync(projectPath, projectText, 'utf8');
+
+      for (const kind of kinds) {
+        const targetDir = path.join(dir, 'Generated');
+        const plan = createScaffoldPlan({
+          kind,
+          typeName: kind === 'form' ? 'GeneratedForm'
+            : kind === 'userControl' ? 'GeneratedUserControl'
+              : kind === 'component' ? 'GeneratedComponent' : 'GeneratedClass',
+          targetDir,
+          projectPath,
+          projectText,
+          existingEntries: fs.readdirSync(targetDir),
+        });
+        for (const file of plan.files) {
+          fs.writeFileSync(path.join(targetDir, file.name), file.content, 'utf8');
+        }
+        if (plan.projectInsertion) {
+          projectText = projectText.slice(0, plan.projectInsertion.offset)
+            + plan.projectInsertion.text
+            + projectText.slice(plan.projectInsertion.offset);
+          fs.writeFileSync(projectPath, projectText, 'utf8');
+        }
+      }
+
+      const result = spawnSync('dotnet', [
+        'build', projectPath, '-c', 'Release', '--nologo', '-v', 'q', '-p:RestoreIgnoreFailedSources=true',
+      ], { encoding: 'utf8' });
+      if (result.status !== 0) {
+        const diagnostics = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim().split(/\r?\n/).slice(-20).join('\n');
+        throw new Error(`issue #4 ${build.tfm} scaffold build failed:\n${diagnostics}`);
+      }
+    }
+    console.log('e2e: issue #4 scaffolding verified — Form/UserControl (.cs + .Designer.cs), Component and Class compile for net10.0-windows implicit SDK items and net48 explicit items');
+  } finally {
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
 }
 
 /**
@@ -548,6 +624,7 @@ async function main(): Promise<void> {
 
   // The auto-add-project-reference helpers are pure string/fs functions (no engine) — verify them up front.
   verifyCsprojHelpers(repo);
+  verifyScaffoldBuilds();
 
   // Startup diagnostics must fail immediately and retain the actionable OS/apphost error. This is the installed-user
   // path for a missing .NET 10 Desktop Runtime or a wrong-architecture package; a ten-second pipe timeout hides it.
@@ -568,6 +645,113 @@ async function main(): Promise<void> {
   try {
     const pong = await ping(engine);
     console.log('e2e: ping ->', pong);
+
+    // 1.9.0 Visual Studio template parity: the Add → Form output must RENDER, not merely compile. The template
+    // now declares the base type the way Visual Studio does — unqualified `Form` bound through a using block whose
+    // placement .editorconfig may move inside the namespace, or through the project's implicit usings with no block
+    // at all — and a base type the engine cannot resolve degrades the new form to a fallback the user cannot edit.
+    {
+      const scaffoldRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-scaffold-render-'));
+      try {
+        const variants: { name: string; implicitUsings: boolean; placement: 'inside' | 'outside' }[] = [
+          { name: 'Outside', implicitUsings: false, placement: 'outside' },
+          { name: 'Inside', implicitUsings: false, placement: 'inside' },
+          { name: 'Implicit', implicitUsings: true, placement: 'outside' },
+        ];
+        for (const variant of variants) {
+          const dir = path.join(scaffoldRoot, variant.name);
+          fs.mkdirSync(dir, { recursive: true });
+          const projectPath = path.join(dir, 'Probe.csproj');
+          const projectText = [
+            '<Project Sdk="Microsoft.NET.Sdk">',
+            '  <PropertyGroup>',
+            '    <TargetFramework>net10.0-windows</TargetFramework>',
+            '    <UseWindowsForms>true</UseWindowsForms>',
+            `    <ImplicitUsings>${variant.implicitUsings ? 'enable' : 'disable'}</ImplicitUsings>`,
+            '    <RootNamespace>Probe</RootNamespace>',
+            '  </PropertyGroup>',
+            '</Project>',
+            '',
+          ].join('\r\n');
+          fs.writeFileSync(projectPath, projectText, 'utf8');
+          const plan = createScaffoldPlan({
+            kind: 'form', typeName: 'Form1', targetDir: dir, projectPath, projectText,
+            existingEntries: fs.readdirSync(dir), usingPlacement: variant.placement,
+          });
+          if (plan.files.some((file) => file.name.toLowerCase().endsWith('.resx')))
+            throw new Error('scaffold render: an SDK project must not be seeded with a .resx (Visual Studio does not)');
+          for (const file of plan.files) fs.writeFileSync(path.join(dir, file.name), file.content, 'utf8');
+
+          const layout = await renderWithLayout(engine, path.join(dir, 'Form1.Designer.cs'));
+          if (layout.rootType !== 'System.Windows.Forms.Form')
+            throw new Error(`scaffold render (${variant.name}): root type resolved to ${layout.rootType} instead of the declared Form`);
+          if ((layout.unrepresentable?.length ?? 0) !== 0)
+            throw new Error(`scaffold render (${variant.name}): template statements are unrepresentable — ${JSON.stringify(layout.unrepresentable)}`);
+          if (layout.clientWidth !== 800 || layout.clientHeight !== 450)
+            throw new Error(`scaffold render (${variant.name}): client size ${layout.clientWidth}x${layout.clientHeight}, expected the template's 800x450`);
+          if (layout.png.length < 1000) throw new Error(`scaffold render (${variant.name}): blank PNG`);
+
+          const designerText = fs.readFileSync(path.join(dir, 'Form1.Designer.cs'), 'utf8');
+          // A constant AutoScaleDimensions would rescale the form on any target whose default font is not 9pt
+          // Segoe UI (.NET Framework's is 8.25pt Microsoft Sans Serif); Visual Studio's template writes none.
+          for (const absent of ['AutoScaleDimensions', 'SuspendLayout', 'ResumeLayout']) {
+            if (designerText.includes(absent))
+              throw new Error(`scaffold render (${variant.name}): template must not write ${absent}`);
+          }
+          if (!designerText.includes('#region Windows Form Designer generated code'))
+            throw new Error(`scaffold render (${variant.name}): the Visual Studio generated-code region is missing`);
+        }
+        console.log('e2e: 1.9.0 Add → Form template verified — Visual Studio-parity source (region + doc comments, no AutoScaleDimensions/SuspendLayout, no SDK .resx) renders 800x450 with the unqualified base type resolved for outside-namespace, inside-namespace, and implicit usings');
+      } finally {
+        try { fs.rmSync(scaffoldRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    }
+
+    // 1.9.0 "Add Localization": converting a plain form must produce a form the localization workflow accepts —
+    // and must not change what the user sees. The rendered PNG is compared byte-for-byte before and after, which
+    // is the whole safety claim of the conversion: values move from code into resources, nothing else changes.
+    {
+      const plainSource = fs.readFileSync(path.join(repo, 'engine', 'samples', 'SampleForm.Designer.cs'), 'utf8');
+      const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-localize-'));
+      try {
+        const designer = path.join(workDir, 'SampleForm.Designer.cs');
+        fs.writeFileSync(designer, plainSource, 'utf8');
+        const beforePng = (await renderWithLayout(engine, designer)).png;
+
+        const converted = await makeLocalizable(engine, designer, undefined, plainSource);
+        if (!converted.safe || converted.newText === null || converted.resxText === null)
+          throw new Error('makeLocalizable: refused a plain form — ' + converted.reason);
+        if (isLocalizableDesigner(plainSource) || !isLocalizableDesigner(converted.newText))
+          throw new Error('makeLocalizable: the converted source must be detected as localizable');
+        if (!converted.keys.some((k) => k.startsWith('$this.')) || !converted.keys.some((k) => k.includes('.Text')))
+          throw new Error(`makeLocalizable: expected form + Text resources, got ${JSON.stringify(converted.keys.slice(0, 8))}`);
+
+        // Write both halves the way the host applies them, then re-render from disk.
+        fs.writeFileSync(designer, converted.newText, 'utf8');
+        fs.writeFileSync(path.join(workDir, 'SampleForm.resx'), converted.resxText, 'utf8');
+        const afterPng = (await renderWithLayout(engine, designer)).png;
+        if (!beforePng.equals(afterPng))
+          throw new Error(`makeLocalizable: the conversion changed the rendered form (${beforePng.length}B → ${afterPng.length}B)`);
+
+        // A culture overlay now works on the converted form: an exact-culture .resx overrides a moved value.
+        const ruResx = converted.resxText.replace('</root>', `  <data name="okButton.Text" xml:space="preserve">\n    <value>Кнопка</value>\n  </data>\n</root>`);
+        fs.writeFileSync(path.join(workDir, 'SampleForm.ru-RU.resx'), ruResx, 'utf8');
+        if (await setLocalizationCulture(engine, designer, 'ru-RU') !== 'ru-RU')
+          throw new Error('makeLocalizable: ru-RU culture did not normalize');
+        const ruText = (await describeComponent(engine, designer, 'okButton'))?.properties?.find((p) => p.name === 'Text')?.value;
+        await setLocalizationCulture(engine, designer, '');
+        if (ruText !== 'Кнопка')
+          throw new Error(`makeLocalizable: the converted form ignored its ru-RU override (Text=${JSON.stringify(ruText)})`);
+
+        // Converting an already-converted form is refused, not applied twice.
+        const again = await makeLocalizable(engine, designer, undefined, converted.newText);
+        if (again.safe) throw new Error('makeLocalizable: converting an already-localizable form must be refused');
+
+        console.log(`e2e: 1.9.0 Add Localization verified — a plain form converts to ApplyResources + neutral .resx (${converted.keys.length} values), renders byte-identically (${beforePng.length}B), honors a ru-RU override, and refuses a second conversion`);
+      } finally {
+        try { fs.rmSync(workDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    }
 
     // v1.5.0 localization workflow: the same designer path renders/describes neutral, parent/exact and RTL culture
     // overlays; resource-only RPC edits preserve opaque nodes and RemoveOverride restores ResourceManager fallback.
@@ -5046,13 +5230,13 @@ namespace Product.CustomForms
       const beforeTb = await describeLayout(engine, designer);
       const addTv = await addControl(engine, designer, 'this', 'TreeView', diskTb);
       if (!addTv.safe || addTv.newText === null) throw new Error('AddControl(TreeView) rejected: ' + addTv.reason);
-      if (addTv.name !== 'treeview1') throw new Error('AddControl(TreeView) unexpected name: ' + addTv.name);
-      if (addTv.newText.indexOf('this.treeview1 = new System.Windows.Forms.TreeView();') < 0) throw new Error('AddControl(TreeView) missing ctor statement');
-      if (addTv.newText.indexOf('this.treeview1.Size') >= 0) throw new Error('AddControl(TreeView) should not emit an explicit Size (DefaultSize applies)');
+      if (addTv.name !== 'treeView1') throw new Error('AddControl(TreeView) unexpected name: ' + addTv.name);
+      if (addTv.newText.indexOf('this.treeView1 = new System.Windows.Forms.TreeView();') < 0) throw new Error('AddControl(TreeView) missing ctor statement');
+      if (addTv.newText.indexOf('this.treeView1.Size') >= 0) throw new Error('AddControl(TreeView) should not emit an explicit Size (DefaultSize applies)');
       const afterTv = await renderWithLayout(engine, designer, undefined, addTv.newText);
       if (!isPng(afterTv.png)) throw new Error('AddControl(TreeView): form did not render');
       if (afterTv.controls.length !== beforeTb.controls.length + 1) throw new Error('AddControl(TreeView): expected +1 control');
-      if (!afterTv.controls.some((c) => c.id === 'treeview1')) throw new Error('AddControl(TreeView): treeview1 not in layout');
+      if (!afterTv.controls.some((c) => c.id === 'treeView1')) throw new Error('AddControl(TreeView): treeView1 not in layout');
       if (fs.readFileSync(designer, 'utf8') !== diskTb) throw new Error('AddControl(TreeView) must NOT modify disk');
       // regression guard: a control whose type name ENDS in "Container" (SplitContainer) must materialize —
       // not be swallowed by the `new System.ComponentModel.Container()` disposal-holder heuristic.

@@ -29,6 +29,14 @@ public sealed class DesignerResxLocalizationTests
 
         Assert.False(DesignerCultureSelection.TrySetCultureName(a, "not a culture!", out _, out reason));
         Assert.Contains("invalid culture", reason);
+
+        // A well-formed but non-existent tag is rejected too: ICU would happily manufacture "en-EN", and the
+        // resulting Form.en-EN.resx is a file no ResourceManager ever loads.
+        Assert.False(DesignerCultureSelection.TrySetCultureName(a, "en-EN", out _, out reason));
+        Assert.Contains("invalid culture", reason);
+        Assert.True(DesignerCultureSelection.TrySetCultureName(a, "en-US", out normalized, out reason), reason);
+        Assert.Equal("en-US", normalized);
+        Assert.True(DesignerCultureSelection.TrySetCultureName(a, "", out _, out reason), reason);
     }
 
     [Fact]

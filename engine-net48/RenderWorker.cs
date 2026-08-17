@@ -2634,7 +2634,20 @@ namespace WinFormsDesigner.Engine.Net48
                 Controls = controls,
                 Tray = tray,
                 ToolStripItems = toolStripItems,
+                AutoScaleDimensions = SerializedAutoScaleDimensions(root),
             };
+        }
+
+        /// <summary>The live root's CurrentAutoScaleDimensions as the designer serializes it ("6F, 13F"), or ""
+        /// when the root is not a ContainerControl. Read from the REAL .NET Framework instance, so a first control
+        /// drop on a net4x form persists that runtime's pair (6, 13 for its default font) and not net9's.</summary>
+        private static string SerializedAutoScaleDimensions(Control root)
+        {
+            var container = root as ContainerControl;
+            if (container == null) return "";
+            var size = container.CurrentAutoScaleDimensions;
+            if (size.Width <= 0 || size.Height <= 0) return "";
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}F, {1}F", size.Width, size.Height);
         }
 
         private ComponentDesc? DescribeOn(LiveDesign live, string componentId)

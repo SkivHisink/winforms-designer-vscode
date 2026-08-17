@@ -175,5 +175,10 @@ namespace WinFormsDesigner.Engine
         public List<TrayComponent> Tray { get; init; } = new();
         /// <summary>Per-item geometry for every top-level strip item + a trailing "Type Here" slot per strip.</summary>
         public List<ToolStripItemBounds> ToolStripItems { get; init; } = new();
+        /// <summary>1.9.0 — the rendered root's live <c>CurrentAutoScaleDimensions</c> as the designer serializes
+        /// it ("7F, 15F"). A first control drop writes it into a form that has no pair yet, exactly when Visual
+        /// Studio would; taking it from the LIVE instance is what keeps it right on every target font, where a
+        /// constant would silently rescale the form. Empty when the root is not a scalable container.</summary>
+        public string AutoScaleDimensions { get; init; } = "";
     }
 }

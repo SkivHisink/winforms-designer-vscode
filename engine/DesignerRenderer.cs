@@ -203,6 +203,53 @@ namespace WinFormsDesigner.Engine
         /// providers) are skipped — they have no on-screen rectangle. Ids match SetProperty/DescribeComponent
         /// ("this" = root, else Site.Name), so a hit-test result feeds straight into the property panel.
         /// </summary>
+        /// <summary>
+        /// Make a plain form localizable — Visual Studio's Localizable = true. Loads the graph so every value comes
+        /// from the LIVE component (the same value the preview shows), takes the inventory of localizable properties
+        /// the source assigns, and hands it to <see cref="DesignerLocalizeForm"/> to compose the rewritten source
+        /// and the neutral .resx. Nothing is written here: the host applies both in one undoable edit.
+        /// </summary>
+        public static LocalizeFormResult MakeLocalizable(string designerFilePath, string? controlAssemblyPath = null,
+            string? sourceText = null, string? resxText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
+            // A form the interpreter cannot fully represent must not be converted: the conversion reasons about the
+            // statements it sees, and an unrepresentable one may carry state this pass would silently strand.
+            if (g.Unrepresentable.Count != 0)
+                return new LocalizeFormResult { Safe = false, Reason = "the form contains constructs this engine cannot interpret: " + g.Unrepresentable[0] };
+
+            var root = (Control)g.Host.RootComponent;
+            var values = new List<LocalizableValue>();
+            foreach (var component in g.GraphComponents)
+            {
+                string id = ReferenceEquals(component, root) ? "this" : (component.Site?.Name ?? "");
+                if (id.Length == 0) continue;
+                foreach (PropertyDescriptor prop in TypeDescriptor.GetProperties(component))
+                {
+                    if (!prop.IsLocalizable || prop.IsReadOnly) continue;
+                    if (!DesignerLocalizedResxEditor.SupportsScalarType(prop.PropertyType.FullName ?? "")) continue;
+                    string? invariant;
+                    try
+                    {
+                        object? value = prop.GetValue(component);
+                        if (value == null) continue;
+                        invariant = TypeDescriptor.GetConverter(prop.PropertyType).ConvertToInvariantString(value);
+                    }
+                    catch { continue; } // a property that throws on read is left in code, untouched
+                    if (invariant == null) continue;
+                    values.Add(new LocalizableValue
+                    {
+                        ComponentId = id,
+                        PropertyName = prop.Name,
+                        ValueTypeName = prop.PropertyType.FullName ?? "",
+                        InvariantValue = invariant,
+                    });
+                }
+            }
+            return DesignerLocalizeForm.Apply(src, g.ClassName, values, resxText);
+        }
+
         public static LayoutResult DescribeLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null)
         {
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
@@ -368,7 +415,20 @@ namespace WinFormsDesigner.Engine
                 Controls = controls,
                 Tray = BuildTray(g, root),
                 ToolStripItems = toolStripItems,
+                AutoScaleDimensions = SerializedAutoScaleDimensions(root),
             };
+        }
+
+        /// <summary>The live root's <c>CurrentAutoScaleDimensions</c> in the designer's own literal form
+        /// ("6F, 13F"), or "" when the root is not a <see cref="ContainerControl"/>. This is the value Visual
+        /// Studio persists when it first serializes a form, and it depends on the target's default font — which
+        /// is why it is read from the rendered instance instead of assumed.</summary>
+        private static string SerializedAutoScaleDimensions(Control root)
+        {
+            if (root is not ContainerControl container) return "";
+            var size = container.CurrentAutoScaleDimensions;
+            if (size.Width <= 0 || size.Height <= 0) return "";
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}F, {1}F", size.Width, size.Height);
         }
 
         /// <summary>Resolve the standard WinForms tab page whose real header contains a window-space point. The
@@ -1566,7 +1626,7 @@ namespace WinFormsDesigner.Engine
         /// statements are interpreted by the existing engine on the next render, which creates the control via
         /// host.CreateComponent). parentId "this" = the root form. The host applies the returned text unsaved.
         /// </summary>
-        public static ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, IReadOnlyList<string>? projectControlFqns = null)
+        public static ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, IReadOnlyList<string>? projectControlFqns = null, string? autoScaleDimensions = null)
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             // Fast path (curated/framework): pure text, NO assembly load. Only a project-control key
@@ -1591,7 +1651,7 @@ namespace WinFormsDesigner.Engine
                     projectControls = EnumerateProjectControls(ResolveAsmForList(designerFilePath, controlAssemblyPath));
                 }
             }
-            return DesignerControlEditor.AddControl(src, parentId, controlTypeKey, projectControls, locX, locY);
+            return DesignerControlEditor.AddControl(src, parentId, controlTypeKey, projectControls, locX, locY, autoScaleDimensions);
         }
 
         /// <summary>Add a new empty tab page to a tab host (pure text edit; the caller supplies the page type,

@@ -11,6 +11,16 @@ import { isBuildOrTestTask, taskCoordinationKey } from './taskCoordination';
 import { BuildWriteOrigin, ExternalBuildRelease, intermediateDirCandidates, isAssemblyWrite } from './externalBuild';
 import { formSiblingsToDelete } from './formSiblings';
 import { shouldSuppressAutoOpen } from './autoOpen';
+import {
+  createScaffoldPlan,
+  detectUsingPlacement,
+  normalizeScaffoldTypeName,
+  resolveScaffoldProject,
+  ScaffoldError,
+  ScaffoldErrorCode,
+  ScaffoldKind,
+  suggestScaffoldTypeName,
+} from './scaffolding';
 
 // Two engine processes, started lazily and keyed by kind: 'modern' (the default WinForms/Roslyn engine) and
 // 'net48' (the .NET Framework compiled-render engine for DevExpress/Framework projects). A form routes to one
@@ -179,6 +189,23 @@ export function activate(context: vscode.ExtensionContext): void {
       if (uri) doViewCode(uri);
     }),
   );
+
+  // GitHub #4 — VS-style Explorer `Add` submenu. Each command resolves one unambiguous owning project, plans every
+  // companion file before writing, and submits file creation plus any classic-project items as ONE WorkspaceEdit.
+  // That makes the operation undoable and, more importantly, prevents a failed Form/UserControl create from leaving
+  // just Foo.cs (or just Foo.resx) behind. Components are complete code components; the extension deliberately does
+  // not advertise Visual Studio's separate non-visual ComponentDesigner surface, which it cannot render.
+  const scaffoldCommands: readonly [string, ScaffoldKind][] = [
+    ['winformsDesigner.addForm', 'form'],
+    ['winformsDesigner.addUserControl', 'userControl'],
+    ['winformsDesigner.addComponent', 'component'],
+    ['winformsDesigner.addClass', 'class'],
+  ];
+  for (const [command, kind] of scaffoldCommands) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(command, (resource?: vscode.Uri) => addScaffoldFromExplorer(kind, resource)),
+    );
+  }
 
   // Export Diagnostics: gather engine/environment/active-document/settings info into a new
   // untitled Markdown document (no file written — the user saves it where they want, no permission prompt).
@@ -431,6 +458,133 @@ function doViewCode(uri: vscode.Uri, position?: vscode.Position): void {
       ed.selection = new vscode.Selection(position, position);
       ed.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
     }));
+}
+
+function scaffoldKindLabel(kind: ScaffoldKind): string {
+  return t(`host.scaffold.kind.${kind}`);
+}
+
+const scaffoldErrorKeys: Record<ScaffoldErrorCode, string> = {
+  invalidName: 'host.scaffold.error.invalidName',
+  outsideWorkspace: 'host.scaffold.error.projectUnsupported',
+  noProject: 'host.scaffold.error.projectUnsupported',
+  ambiguousProject: 'host.scaffold.error.projectUnsupported',
+  sharedProjectUnsupported: 'host.scaffold.error.projectUnsupported',
+  outsideProject: 'host.scaffold.error.projectUnsupported',
+  malformedProject: 'host.scaffold.error.projectUnsupported',
+  dynamicProjectProperty: 'host.scaffold.error.projectUnsupported',
+  notWinFormsProject: 'host.scaffold.error.projectUnsupported',
+  unsupportedProjectItems: 'host.scaffold.error.projectUnsupported',
+  fileCollision: 'host.scaffold.error.fileCollision',
+};
+
+function showScaffoldError(error: unknown): void {
+  if (error instanceof ScaffoldError) {
+    void vscode.window.showErrorMessage(t(scaffoldErrorKeys[error.code], {
+      reason: error.code,
+      detail: error.detail,
+    }));
+    return;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  void vscode.window.showErrorMessage(t('host.scaffold.error.unexpected', { error: message }));
+}
+
+/** Create one issue-#4 item from an Explorer resource without ever guessing between projects. */
+async function addScaffoldFromExplorer(kind: ScaffoldKind, resource?: vscode.Uri): Promise<void> {
+  try {
+    if (!resource || resource.scheme !== 'file') {
+      void vscode.window.showErrorMessage(t('host.scaffold.error.noResource'));
+      return;
+    }
+
+    let stat: vscode.FileStat;
+    try { stat = await vscode.workspace.fs.stat(resource); }
+    catch { throw new ScaffoldError('noProject', resource.fsPath); }
+    const isDirectory = (stat.type & vscode.FileType.Directory) !== 0;
+    const targetDir = isDirectory ? resource.fsPath : path.dirname(resource.fsPath);
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(targetDir));
+    if (!workspaceFolder) throw new ScaffoldError('outsideWorkspace', targetDir);
+    const selectedProject = !isDirectory && /\.csproj$/i.test(resource.fsPath) ? resource.fsPath : undefined;
+    const projectPath = resolveScaffoldProject(targetDir, workspaceFolder.uri.fsPath, selectedProject);
+
+    let entries: string[];
+    try { entries = fs.readdirSync(targetDir); }
+    catch { throw new ScaffoldError('noProject', targetDir); }
+    const label = scaffoldKindLabel(kind);
+    const suggested = suggestScaffoldTypeName(kind, entries);
+    const input = await vscode.window.showInputBox({
+      title: t('host.scaffold.prompt.title', { kind: label }),
+      prompt: t('host.scaffold.prompt.description', { kind: label }),
+      value: suggested,
+      valueSelection: [0, suggested.length],
+      validateInput: (value) => {
+        try { normalizeScaffoldTypeName(value); return undefined; }
+        catch { return t('host.scaffold.error.invalidName'); }
+      },
+    });
+    if (input == null) return;
+
+    const projectUri = vscode.Uri.file(projectPath);
+    const projectDocument = await vscode.workspace.openTextDocument(projectUri);
+    const projectVersion = projectDocument.version;
+    const projectText = projectDocument.getText();
+    // Re-read immediately before planning: the prompt may have been open long enough for another process to create
+    // one of the companion files. The pure planner compares all names case-insensitively.
+    entries = fs.readdirSync(targetDir);
+    const plan = createScaffoldPlan({
+      kind,
+      typeName: input,
+      targetDir,
+      projectPath,
+      projectText,
+      existingEntries: entries,
+      usingPlacement: detectUsingPlacement(targetDir, workspaceFolder.uri.fsPath),
+    });
+
+    const edit = new vscode.WorkspaceEdit();
+    for (const file of plan.files) {
+      edit.createFile(vscode.Uri.file(path.join(plan.targetDir, file.name)), {
+        overwrite: false,
+        ignoreIfExists: false,
+        contents: Buffer.from(file.content, 'utf8'),
+      });
+    }
+    if (plan.projectInsertion) {
+      edit.insert(
+        projectUri,
+        projectDocument.positionAt(plan.projectInsertion.offset),
+        plan.projectInsertion.text,
+      );
+    }
+
+    // No await occurs between this final snapshot check and submitting the bulk edit. A project-buffer edit that
+    // landed while the prompt/planner was active therefore cannot shift the insertion point under us.
+    if (projectDocument.version !== projectVersion || projectDocument.getText() !== projectText) {
+      void vscode.window.showErrorMessage(t('host.scaffold.error.projectChanged'));
+      return;
+    }
+    if (!await vscode.workspace.applyEdit(edit)) {
+      void vscode.window.showErrorMessage(t('host.scaffold.error.applyFailed'));
+      return;
+    }
+
+    const mainUri = vscode.Uri.file(path.join(plan.targetDir, plan.mainFileName));
+    output.appendLine(
+      `[scaffold] ${plan.kind} ${plan.namespace}.${plan.typeName} — ${plan.files.length} file(s), project=${plan.projectPath}`,
+    );
+    void vscode.window.showInformationMessage(t('host.scaffold.created', { kind: label, name: plan.typeName }));
+    if (plan.openInDesigner) {
+      const key = normalize(mainUri.fsPath);
+      codeIntent.delete(key);
+      autoOpenedOnce.add(key);
+      await vscode.commands.executeCommand('vscode.openWith', mainUri, WinFormsDesignerProvider.viewType);
+    } else {
+      doViewCode(mainUri);
+    }
+  } catch (error) {
+    showScaffoldError(error);
+  }
 }
 
 /**

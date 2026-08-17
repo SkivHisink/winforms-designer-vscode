@@ -149,6 +149,9 @@ namespace WinFormsDesigner.Engine
         /// <summary>Parent component display name, or null for the root.</summary>
         public string? Parent { get; init; }
         public bool IsRoot { get; init; }
+        /// <summary>The browsable event selected by the component's real <see cref="DefaultEventAttribute"/>, or
+        /// null when the component has no safe default-event gesture.</summary>
+        public string? DefaultEvent { get; init; }
         public List<PropertyInfo> Properties { get; init; } = new();
         /// <summary>The component's events (name + category + wired handler) — the Events-tab data.</summary>
         public List<EventInfo> Events { get; init; } = new();
@@ -248,6 +251,7 @@ namespace WinFormsDesigner.Engine
                 ReadOnlyReason = source.ReadOnlyReason,
                 Parent = ParentName(c, root, rootName, ownership),
                 IsRoot = isRoot,
+                DefaultEvent = DescribeDefaultEvent(c),
                 Properties = props,
                 Events = DescribeEvents(c, wired),
             };
@@ -288,11 +292,27 @@ namespace WinFormsDesigner.Engine
             // property keeps the normal edit path; skip the pseudo entirely to avoid a duplicate/conflicting row (codex F6).
             bool hasRealModifiers = props.Any(p => p.Name == "Modifiers");
             bool hasRealGenerateMember = props.Any(p => p.Name == "GenerateMember");
+            bool hasRealDesignName = props.Any(p => p.Name == "(Name)");
 
             DesignerModifiers.FieldMod fm = default;
             bool hasField = fieldModifiers != null && fieldModifiers.TryGetValue(name, out fm);
             string modifier = hasField ? fm.Display : "Private";
             bool modifierEditable = hasField && fm.Editable;
+
+            if (!hasRealDesignName)
+            {
+                props.Add(new PropertyInfo
+                {
+                    Name = "(Name)",
+                    Type = "System.String",
+                    Value = name,
+                    ReadOnly = !hasField,
+                    IsEnum = false,
+                    Category = "Design",
+                    Description = "The generated member name. Renaming is refused when code-behind references the current name.",
+                    DesignTime = true,
+                });
+            }
 
             if (!hasRealGenerateMember)
             {
@@ -572,6 +592,19 @@ namespace WinFormsDesigner.Engine
             if (componentEditable) InjectExtenderProperties(list, c, siblings);
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return list;
+        }
+
+        private static string? DescribeDefaultEvent(IComponent c)
+        {
+            try
+            {
+                var descriptor = TypeDescriptor.GetDefaultEvent(c);
+                return descriptor != null && descriptor.IsBrowsable ? descriptor.Name : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private const int ExpandableMaxDepth = 4;

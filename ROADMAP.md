@@ -264,28 +264,33 @@ vendor-task query leaves nothing loaded. Static reads off user/vendor types rema
 and therefore still disclose a compiled fallback. Real vendor/hardware interaction and Marketplace/Open VSX
 publication remain explicit external gates.
 
-## 1.9.0 — The daily loop: naming, navigation, default events
+## 1.9.0 — The daily loop and project item creation
 
-The cheapest remaining VS reflexes. Each is a gesture a WinForms developer performs dozens of times an hour and
-currently cannot perform here at all.
+**Status: repository-side complete (2026-08-14).** These high-frequency Visual Studio reflexes and Explorer project
+operations now share source-first, revision-checked, ownership-aware, collision-safe, fail-closed boundaries. The
+terminal implementation and verification evidence is recorded in the
+[v1.9.0 completion record](docs/release-1.9.0-completion-plan.md).
 
-- **Rename a control.** `(Name)` becomes an editable design-time row in the property grid, with F2 on the canvas
-  and in the outline. The engine's rename path already exists and is proven — today it is reachable only from the
-  component tray, so a visible control cannot be renamed at all. Code-behind references keep refusing as they do
-  for tray components.
-- **Double-click creates the default event.** Resolve the control's real `DefaultEventAttribute` (Button → Click,
-  TextBox → TextChanged, Form → Load), reuse the existing handler-stub generator, and navigate to the body —
-  generating nothing when a handler is already wired.
-- **`F7` / `Shift+F7`** for View Code / View Designer, matching the VS muscle memory. Only `F4` and `Ctrl+Shift+B`
-  are bound today.
+- **Explorer Add creates complete project items** ([#4](https://github.com/SkivHisink/winforms-designer-vscode/issues/4)).
+  Windows Form and User Control produce a collision-checked `.cs` / `.Designer.cs` / `.resx` set and open in the
+  designer; Component and Class produce complete code items. Static SDK projects use implicit inclusion, while
+  classic/default-item-disabled projects receive exact item entries in the same undoable edit. Ambiguous, shared,
+  dynamic/conditioned, wildcard, non-WinForms, and colliding shapes are refused before any file is created.
+- **Rename a control.** `(Name)` is an editable design-time row in the property grid, with F2 on the canvas and in
+  the outline. Both gestures reuse the proven component-tray rename path; code-behind references remain fail-closed.
+- **Double-click creates the default event** ([#5](https://github.com/SkivHisink/winforms-designer-vscode/issues/5)). The control's real `DefaultEventAttribute` (Button → Click,
+  TextBox → TextChanged, Form → Load) feeds the existing handler-stub generator and code navigation path. An
+  already-wired event opens the body without changing source.
+- **`F7` / `Shift+F7`** provide View Code / View Designer with the familiar Visual Studio bindings.
 - **Keyboard selection traversal:** `Tab` / `Shift+Tab` walk siblings, `Esc` selects the parent container, and
-  `Ctrl+A` selects everything in the current design scope. None of these exist yet; only nudging does.
-- **Live position/size readout** during a move or resize, so the canvas states the value being chosen instead of
-  leaving the user to read it back from the grid afterwards.
+  `Ctrl+A` selects everything in the current design scope.
+- **Live position/size readout** reports complete `x`, `y`, width, and height values during every move or resize.
 
-**Exit criterion:** a control can be renamed, given its default handler, and navigated to and from code without
-touching the mouse or the property grid, on both engines — and a rename that code-behind would break, or a
-handler that already exists, changes no source.
+**Exit criterion — met in the repository automated corpus:** all four project items compile in representative modern
+and net48 projects; a refused project shape leaves no partial file set; and a control can be renamed, given its real
+default handler, and navigated to and from code without touching the mouse or property grid, on both engines. A rename
+that code-behind would break is refused, and an existing handler opens without changing source. Hands-on platform
+interaction, physical ARM64/DPI coverage, licensed-vendor acceptance, and publication remain external gates.
 
 ## 1.10.0 — Multi-object properties
 
@@ -315,18 +320,14 @@ partial writes.
 **Exit criterion:** move, resize, spacing, and grid operations are deterministic across nested containers, zoom
 levels, and DPI scales on both engines; repeated gestures round-trip without accumulating coordinate drift.
 
-## 1.12.0 — Creating and placing
+## 1.12.0 — Toolbox creation and placing
 
-- **Add Windows Form** and **Add UserControl**: collision-safe names, correct namespace, the partial-class pair,
-  and the matching `.resx`, opened in the designer with the new root selected.
-- SDK-style projects rely on implicit inclusion; legacy project files get an explicit item added without
-  reformatting anything else. An ambiguous or unrecognized project shape is refused before any file is created.
 - Toolbox double-click inserts a default-sized control into the active container.
 - Dragging a rectangle from a selected toolbox item creates the control at exactly that size, instead of always
   dropping a default-sized control at a point.
 
-**Exit criterion:** a scaffolded form and user control compile and reopen in representative modern and net48
-projects, and a refused project shape leaves no partial file set behind.
+**Exit criterion:** both creation gestures select the new control and round-trip the exact intended parent, size,
+and position on modern and net48 projects; an ineligible container or stale source leaves the document unchanged.
 
 ## 1.13.0 — Assets and menu/toolbar productivity
 

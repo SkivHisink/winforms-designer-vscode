@@ -71,6 +71,8 @@ import {
   setExtender,
   resetProperty,
   setImageResource,
+  makeLocalizable,
+  LocalizeFormResult,
   setLocalizationCulture,
   setLocalizedResources,
   setLocalizedImageResource,
@@ -116,6 +118,7 @@ import {
   discoverProjectBuildOutputRoots,
   discoverProbeAssemblies,
   discoverRegisteredAssemblies,
+  isUserEditDocument,
   uniqueAssemblyPaths,
 } from './toolboxDiscovery';
 
@@ -127,6 +130,7 @@ interface VendorTagView {
   verb: 'addTab' | 'deleteTab' | 'showProperties' | null;
   closesPanel: boolean;
 }
+import { atomicWriteLocalFile } from './atomicFile';
 import { isLocalizableDesigner } from './localizable';
 import { vendorTasksAvailable } from './vendorTasks';
 import { chooseFormNoticeKind, FormNoticeKind } from './formNotice';
@@ -193,7 +197,7 @@ const STALE_RENDER_BLOCKED = new Set<string>([
   'manipulate', 'manipulateGroup', 'edit', 'alignControls', 'centerInForm', 'resizeControls',
   'dropControl', 'removeControl', 'removeControls', 'cut', 'cutControls', 'paste', 'duplicate',
   'bringToFront', 'bringToFrontGroup', 'sendToBack', 'sendToBackGroup', 'tabRename',
-  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'addTab', 'deleteTab', 'moveTab',
+  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'renameComponent', 'createDefaultHandler', 'addTab', 'deleteTab', 'moveTab',
   // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
   'importImage', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
   'setGenericList', 'uiTypeEditor',
@@ -754,11 +758,6 @@ export class DesignerHub {
 
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 
-/** 0.11.0 write-safety — process-global monotonic suffix for atomic-write temp files. Module scope (not per
-* session) so two designer sessions in one host can't collide; combined with `process.pid` at the use site it
-* is also unique across VS Code windows sharing a sibling .resx. */
-let atomicWriteSeq = 0;
-
 /** True when `e` is a VS Code "file not found" filesystem error (a delete of an already-absent file). Used so a
 * resx-undo delete treats "already gone" as success but lets a real lock/permission failure propagate. */
 function isFileNotFound(e: unknown): boolean {
@@ -783,20 +782,15 @@ function isFileNotFound(e: unknown): boolean {
 * own disk provider declines atomic writes for symlinks for the same reason).
 */
 async function atomicWrite(uri: vscode.Uri, bytes: Uint8Array): Promise<void> {
-    let isSymlink = false;
-    try { isSymlink = ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.SymbolicLink) !== 0; }
-    catch { /* not found / unreadable → treat as a normal new file (the atomic temp+rename path) */ }
-    if (isSymlink) { await vscode.workspace.fs.writeFile(uri, bytes); return; }
-    const tmp = uri.with({ path: `${uri.path}.wfd-${process.pid}-${atomicWriteSeq++}.tmp` });
-  try {
-      await vscode.workspace.fs.writeFile(tmp, bytes);
-      await vscode.workspace.fs.rename(tmp, uri, { overwrite: true });
-  } catch (e) {
-    // clean up a partially-staged temp on EITHER a failed write or a failed rename (an interrupted stage would
-    // otherwise leak a `.wfd-…tmp` sibling).
-      try { await vscode.workspace.fs.delete(tmp); } catch { /* best effort */ }
-    throw e;
-  }
+  let isSymlink = false;
+  try { isSymlink = ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.SymbolicLink) !== 0; }
+  catch { /* not found / unreadable → treat as a normal new file (the atomic temp+rename path) */ }
+  if (isSymlink) { await vscode.workspace.fs.writeFile(uri, bytes); return; }
+  // A non-local provider (remote/virtual FS) offers no replace primitive to build on — write straight through.
+  if (uri.scheme !== 'file') { await vscode.workspace.fs.writeFile(uri, bytes); return; }
+  // Deliberately NOT vscode.workspace.fs.rename: its overwrite deletes the target first, so every save briefly
+  // removed the .Designer.cs from disk and the Explorer showed the form's designer file vanish and come back.
+  await atomicWriteLocalFile(uri.fsPath, bytes);
 }
 
 /** Read a file's bytes, stripping a leading UTF-8 BOM and remembering it (so a save can re-add it). */
@@ -891,6 +885,26 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // must revert the file (or hand-resolve the recovered content). A CLEAN localizable form is never dirty
     // (isDirty === false → this is a no-op), so this never spuriously fails an ordinary save.
     if (this.isDirty && isLocalizableDesigner(snapshot)) throw new Error(t('status.localizableSaveRefused'));
+    await this.flushToDisk(snapshot);
+  }
+
+  /**
+   * Persist the .Designer.cs the "Add Localization" conversion just produced.
+   *
+   * The refusal in {@link save} rests on an invariant: a localizable form is never dirty, because resource-first
+   * edits only touch the .resx. The conversion is the one legitimate generated-source edit on a form that ends up
+   * localizable, and it writes the .resx in the same transaction — so it restores that invariant itself by
+   * flushing immediately, exactly as the sibling .resx is written immediately. Without this, the conversion would
+   * leave the buffer in the one state the save path refuses to flush, and the user could not save their form.
+   */
+  async persistLocalizableConversion(): Promise<void> {
+    if (!this.designerFile) return;
+    await this.flushToDisk(this.designerText);
+  }
+
+  /** The write itself, with the on-disk conflict guards — shared by save() and the localizable conversion. */
+  private async flushToDisk(snapshot: string): Promise<void> {
+    if (!this.designerFile) return;
     // Never clobber a change someone else made since our on-disk baseline. `savedDesignerText` is what WE last
     // saw on disk; if the real file no longer matches it, an external writer (git checkout, Visual Studio, a
     // generator) got there first and blindly writing `snapshot` would silently destroy their revision — exactly
@@ -1125,6 +1139,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'addControl' && m.controlType) { await s?.addControlFromToolbox(m.controlType); }
         else if (m?.type === 'outlineReparent' && m.id && m.parentId) { await s?.reparentFromOutline(m.id, m.parentId); }
         else if (m?.type === 'outlineMoveZOrder' && m.id && typeof m.toFront === 'boolean') { await s?.zOrderFromOutline(m.id, m.toFront); }
+        else if (m?.type === 'renameComponent' && m.id) { await s?.promptComponentRename(m.id); }
         else if (m?.type === 'addComponent' && m.componentType) { await s?.addComponentFromToolbox(m.componentType); }
         else if (m?.type === 'deleteSelected') { s?.deleteSelectedFromPanel(); }
         else if (m?.type === 'chooseItems') { s?.openChooseItems(m.tab); }
@@ -1185,6 +1200,8 @@ class DesignerSession {
   /** Monotonic id per reloadFromDiskIfClean run; a read that resumes after a newer one started is discarded. */
   private reloadEpoch = 0;
   private toolStripItems: ToolStripItemBounds[] = []; // per-item geometry from the last render (on-canvas "Type Here")
+  /** Live CurrentAutoScaleDimensions of the last render ("6F, 13F"), reported by whichever engine drew it. */
+  private renderedAutoScale = '';
   private rootClient: { w: number; h: number } | null = null;
   private rootFrame: { w: number; h: number } | null = null;
   /** Which engine renders THIS form — detected per render from the resolved control assembly's runtime
@@ -1271,6 +1288,7 @@ class DesignerSession {
   private autoToolboxItems: ToolboxItemInfo[] = [];
   private autoToolboxDiscoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private autoToolboxDiscoveryGeneration = 0;
+  private lastAutoDiscoveryLog = '';
   private readonly autoToolboxWatchers = new Map<string, vscode.Disposable>();
   private readonly autoToolboxRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** One-shot latch: we prompt "select a control source" at most once per form (until it renders clean or the
@@ -1362,7 +1380,10 @@ class DesignerSession {
 
     // Auto-discovery is session-triggered, never activation-triggered. Yield/cancel as soon as the user starts
     // editing or leaves VS Code; returning focus schedules a fresh bounded pass after the interaction settles.
-    this.disposables.push(vscode.workspace.onDidChangeTextDocument(() => {
+    this.disposables.push(vscode.workspace.onDidChangeTextDocument((event) => {
+      // Only real editing yields: this event also fires for VS Code's own output-channel documents, so an open
+      // extension log would keep rescheduling discovery, whose every pass appends another line to that same log.
+      if (!isUserEditDocument(event.document.uri.scheme)) return;
       this.cancelAutoToolboxDiscovery();
       this.scheduleAutoToolboxDiscovery(1200);
     }));
@@ -1483,6 +1504,21 @@ class DesignerSession {
 
   async selectLocalizationCulture(): Promise<void> {
     if (!this.designerFile || this.disposed) return;
+    // A culture selects WHICH resource set the designer reads and writes, and only a localizable form has any:
+    // its generated source applies properties through a ComponentResourceManager. On an ordinary form every
+    // property lives in InitializeComponent, so a culture would silently change nothing and create no file —
+    // exactly the dead end this refusal replaces with an explanation.
+    if (!this.localizable) {
+      const form = path.basename(designerBasePath(this.designerFile));
+      // Offer the conversion itself rather than an explanation: what the user wants from a culture picker on a
+      // plain form is for the form to become localizable. Declining leaves the file untouched.
+      const add = t('localization.addAction');
+      const choice = await vscode.window.showWarningMessage(
+        t('localization.notLocalizable', { form }), { modal: false }, add);
+      if (choice !== add) return;
+      if (!await this.makeFormLocalizable()) return;
+      // Converted: fall through into the picker the user originally asked for.
+    }
     const current = this.localizationCulture;
     const picks: Array<vscode.QuickPickItem & { cultureName?: string; create?: boolean }> =
       discoverLocalizationCultures(this.designerFile).map((choice) => ({
@@ -1530,6 +1566,15 @@ class DesignerSession {
     this.lastNoticeSig = undefined;
     this.output.appendLine(`[designer] localization culture for ${this.designerFile}: ${normalized || '(Default)'}`);
     this.post({ type: 'status', message: t('status.localizationCultureSet', { culture: normalized || t('localization.default') }) });
+    // Selecting a culture never writes anything by itself (neither does Visual Studio's Language property): the
+    // .resx appears with the first localized edit. Say where it will be, so an empty folder is not a mystery.
+    const cultureResx = localizedResxPathForDesigner(this.designerFile, normalized);
+    if (normalized && !fs.existsSync(cultureResx)) {
+      void vscode.window.showInformationMessage(t('localization.resxPending', {
+        culture: normalized,
+        file: path.basename(cultureResx),
+      }));
+    }
     await this.fullRender();
     this.refreshViews();
   }
@@ -1653,14 +1698,17 @@ class DesignerSession {
     roots: string[];
     projectBudgetReached: boolean;
     projectScanSkipped: number;
+    missingBuildOutputs: number;
     cancelled: boolean;
   }> {
     const folder = vscode.workspace.getWorkspaceFolder(this.documentUri);
     if (!folder || !this.designerFile || generation !== this.autoToolboxDiscoveryGeneration) {
-      return { roots: [], projectBudgetReached: false, projectScanSkipped: 0, cancelled: false };
+      return { roots: [], projectBudgetReached: false, projectScanSkipped: 0, missingBuildOutputs: 0, cancelled: false };
     }
     const owningProject = findOwningCsproj(path.dirname(this.designerFile), folder.uri.fsPath);
-    if (!owningProject) return { roots: [], projectBudgetReached: false, projectScanSkipped: 1, cancelled: false };
+    if (!owningProject) {
+      return { roots: [], projectBudgetReached: false, projectScanSkipped: 1, missingBuildOutputs: 0, cancelled: false };
+    }
     const result = await discoverProjectBuildOutputRoots(owningProject, {
       maxProjects: 64,
       yieldEveryProjects: 8,
@@ -1671,6 +1719,7 @@ class DesignerSession {
       roots: result.roots,
       projectBudgetReached: result.projectBudgetReached,
       projectScanSkipped: result.skippedProjects + result.skippedReferences + result.missingBuildOutputs,
+      missingBuildOutputs: result.missingBuildOutputs,
       cancelled: result.cancelled,
     };
   }
@@ -1695,19 +1744,38 @@ class DesignerSession {
     return total;
   }
 
+  /**
+   * Report one auto-discovery pass, suppressing a verbatim repeat of the previous one. Discovery re-runs after
+   * every edit and every window focus, and on a settled workspace each pass reaches the same conclusion — logging
+   * it each time buries the entries that did change.
+   */
+  private logAutoDiscovery(...lines: string[]): void {
+    const signature = lines.join('\n');
+    if (signature === this.lastAutoDiscoveryLog) return;
+    this.lastAutoDiscoveryLog = signature;
+    for (const line of lines) this.output.appendLine(line);
+  }
+
   private async runAutoToolboxDiscovery(generation: number): Promise<void> {
     if (this.disposed || !this.designerFile || !this.autoToolboxEnabled()
       || !vscode.window.state.focused || generation !== this.autoToolboxDiscoveryGeneration) return;
 
-    let rootsInfo: { roots: string[]; projectBudgetReached: boolean; projectScanSkipped: number; cancelled: boolean };
+    let rootsInfo: {
+      roots: string[]; projectBudgetReached: boolean; projectScanSkipped: number;
+      missingBuildOutputs: number; cancelled: boolean;
+    };
     try { rootsInfo = await this.workspaceBuildOutputRoots(generation); }
     catch (error) {
-      this.output.appendLine(`[toolbox auto-discovery] project enumeration failed: ${errMsg(error)}`);
+      this.logAutoDiscovery(`[toolbox auto-discovery] project enumeration failed: ${errMsg(error)}`);
       return;
     }
     if (rootsInfo.cancelled || generation !== this.autoToolboxDiscoveryGeneration) return;
     if (!rootsInfo.roots.length) {
-      this.output.appendLine(`[toolbox auto-discovery] no related build-output roots; skipped=${rootsInfo.projectScanSkipped}`);
+      // An unbuilt project is the ordinary reason, and it is actionable — say so instead of only counting it.
+      const cause = rootsInfo.missingBuildOutputs
+        ? `; ${rootsInfo.missingBuildOutputs} project(s) have no build output yet — build them to populate Project Controls`
+        : '';
+      this.logAutoDiscovery(`[toolbox auto-discovery] no related build-output roots; skipped=${rootsInfo.projectScanSkipped}${cause}`);
       return;
     }
 
@@ -1772,14 +1840,14 @@ class DesignerSession {
     const skipped = this.autoDiscoverySkippedCount(discovery.skipped)
       + reflectionSkipped + reflectionErrors + rootsInfo.projectScanSkipped + (rootsInfo.projectBudgetReached ? 1 : 0);
     const truncated = discovery.truncated || reflectionSkipped > 0 || rootsInfo.projectBudgetReached;
-    this.output.appendLine(
+    this.logAutoDiscovery(
       `[toolbox auto-discovery] roots=${rootsInfo.roots.length}; directories=${discovery.scannedDirectories.length}; `
       + `assemblies=${discovery.assemblies.length}; reflected=${reflected}; controls=${this.autoToolboxItems.length}; `
       + `skipped=${skipped}; truncated=${truncated}; cancelled=false`,
-    );
-    this.output.appendLine(`[toolbox auto-discovery] scanned directories: ${discovery.scannedDirectories.join('; ') || '<none>'}`);
-    if (skipped) this.output.appendLine(
-      `[toolbox auto-discovery] skipped detail: ${JSON.stringify({ ...discovery.skipped, reflectionSkipped, reflectionErrors, projectScanSkipped: rootsInfo.projectScanSkipped, projectBudgetReached: rootsInfo.projectBudgetReached })}`,
+      `[toolbox auto-discovery] scanned directories: ${discovery.scannedDirectories.join('; ') || '<none>'}`,
+      ...(skipped ? [
+        `[toolbox auto-discovery] skipped detail: ${JSON.stringify({ ...discovery.skipped, reflectionSkipped, reflectionErrors, projectScanSkipped: rootsInfo.projectScanSkipped, projectBudgetReached: rootsInfo.projectBudgetReached })}`,
+      ] : []),
     );
     this.post({
       type: 'status',
@@ -2305,6 +2373,10 @@ class DesignerSession {
         await this.applyGroupRemove(m.ids);
       } else if (m.type === 'viewCode') {
         this.onViewCode(this.documentUri);
+      } else if (m.type === 'renameComponent' && m.id) {
+        await this.promptComponentRename(m.id);
+      } else if (m.type === 'createDefaultHandler' && m.id) {
+        await this.createDefaultHandler(m.id);
       } else if (m.type === 'copy' && m.id) {
         await this.applyCopy([m.id]);
       } else if (m.type === 'copyControls' && Array.isArray(m.ids)) {
@@ -2338,7 +2410,7 @@ class DesignerSession {
       } else if (m.type === 'stripDelete' && m.hostId && m.itemId) {
         await this.applyStripDelete(m.hostId, m.itemId);
       } else if (m.type === 'trayRename' && m.id && m.newName) {
-        await this.applyTrayRename(m.id, m.newName);
+        await this.applyComponentRename(m.id, m.newName);
       } else if (m.type === 'selectItem' && m.hostId && m.itemId) {
         // a top-level strip item was clicked on the canvas → describe THAT item into the Properties panel via a
         // dedicated channel that leaves the control selection (currentId / manip / smart-tag) untouched. Record it as
@@ -2827,6 +2899,9 @@ class DesignerSession {
     this.output.appendLine(`[designer] render #${seq} ok: ${result.png.length}B, ${result.controls.length} controls`);
 
     this.controls = result.controls;
+    // Kept from the LIVE render so a first control drop can persist the pair this runtime actually scales by —
+    // 6,13 on .NET Framework, 7,15 on modern .NET. See addControl's autoScaleDimensions.
+    this.renderedAutoScale = result.autoScaleDimensions ?? '';
     if (this.engineKind === 'modern' || this.net48RenderMode === 'interpreted') this.pruneSelectedTabs(result.controls);
     this.toolStripItems = result.toolStripItems ?? [];
     this.rootClient = { w: result.clientWidth, h: result.clientHeight };
@@ -3770,6 +3845,12 @@ class DesignerSession {
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
 
+    if (designTime && prop === '(Name)') {
+      if (this.refuseLocalizableMutation()) return;
+      await this.applyComponentRename(id, raw);
+      return;
+    }
+
     // v1.5.0: ApplyResources-backed properties live in the selected culture's .resx. Keep structural/reference and
     // design-time pseudo-properties source-locked, but route ordinary scalar edits entirely through the lossless
     // resource editor. Dock/Anchor remain mutually exclusive by removing the conjugate override in the same batch.
@@ -4393,6 +4474,66 @@ class DesignerSession {
     await this.fullRender();
     await this.loadProps(this.currentId);
     await this.postDirty();
+    return true;
+  }
+
+  /**
+   * Make this form localizable — Visual Studio's Localizable = true. The engine composes both halves (the
+   * resource-driven `.Designer.cs` and the neutral `.resx`); they are applied as ONE undoable edit, so Ctrl+Z
+   * takes the form back to plain generated code and removes the .resx this created.
+   */
+  async makeFormLocalizable(): Promise<boolean> {
+    if (!this.designerFile || this.disposed || this.localizable) return false;
+    if (this.refuseUnknownBaselineMutation()) return false;
+    if (this.refuseStaleRenderMutation()) return false;
+
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const resxUri = this.localizedResxUri(''); // the conversion always writes the NEUTRAL resource set
+    const resxRead = await this.readResx(resxUri);
+    let res: LocalizeFormResult;
+    try {
+      res = await makeLocalizable(
+        await this.ensureEngine('modern'), this.designerFile, this.asm(), before, resxRead?.text ?? undefined);
+    } catch (error) {
+      void vscode.window.showErrorMessage(t('status.localizeRejected', { reason: errMsg(error) }));
+      return false;
+    }
+    if (!res.safe || res.newText === null || res.resxText === null) {
+      void vscode.window.showWarningMessage(t('status.localizeRejected', { reason: res.reason || 'unsafe' }));
+      return false;
+    }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return false; }
+
+    const tx: ResxTx = {
+      uri: resxUri, before: resxRead?.text ?? null, after: res.resxText, bom: resxRead?.hadBom ?? false,
+    };
+    try {
+      await this.transitionResourceSet([tx], 'forward');
+    } catch (error) {
+      this.output.appendLine(`[designer] localizable conversion refused: ${errMsg(error)}`);
+      void vscode.window.showWarningMessage(t('status.localizeRejected', { reason: errMsg(error) }));
+      return false;
+    }
+    if (!this.commit(before, res.newText, 'Make localizable', [tx])) {
+      await this.transitionResourceSet([tx], 'undo');
+      return false;
+    }
+    // Flush the converted source right away, next to the .resx that was just written: a localizable form must not
+    // be left dirty, because the save path refuses to flush exactly that state (it cannot tell it from a recovered
+    // pre-1.5 buffer that diverges from the resources). If this write fails, Ctrl+Z reverts the whole conversion.
+    try {
+      await this.doc.persistLocalizableConversion();
+    } catch (error) {
+      this.output.appendLine(`[designer] localizable conversion could not be written: ${errMsg(error)}`);
+      void vscode.window.showWarningMessage(t('status.localizeNotWritten', { reason: errMsg(error) }));
+    }
+    this.lastNoticeSig = undefined;
+    this.output.appendLine(`[designer] made localizable: ${this.designerFile} (${res.keys.length} resource(s))`);
+    await this.fullRender();
+    await this.loadProps(this.currentId);
+    await this.postDirty();
+    this.post({ type: 'status', message: t('status.localizeDone', { count: res.keys.length }) });
     return true;
   }
 
@@ -6008,6 +6149,20 @@ class DesignerSession {
     await this.openHandlerAt(codePath, gen.handlerName);
   }
 
+  private async createDefaultHandler(id: string): Promise<void> {
+    const component = await this.describeFor(id);
+    if (!component || component.editable === false || component.ownership === 'inherited' || component.ownership === 'unresolved') {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: component?.readOnlyReason || 'component is read-only' }) });
+      return;
+    }
+    const eventName = component?.defaultEvent;
+    if (!eventName) {
+      this.post({ type: 'status', message: t('status.noDefaultEvent', { id }) });
+      return;
+    }
+    await this.createHandler(id, eventName);
+  }
+
   private async openHandlerAt(codePath: string | null, handler: string): Promise<void> {
     if (!codePath) { this.post({ type: 'status', message: t('status.noCodeBehindNav') }); return; }
     let doc: vscode.TextDocument;
@@ -6122,7 +6277,7 @@ class DesignerSession {
       ? this.availableToolboxItems()
         .filter((it) => it.fromProject).map((it) => it.fqn)
       : undefined;
-    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm, projectFqns);
+    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm, projectFqns, this.renderedAutoScale);
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, res.newText, `Add ${controlType}`)) return;
@@ -6250,7 +6405,24 @@ class DesignerSession {
     return word.test(text) ? path.basename(codePath) : null;
   }
 
-  private async applyTrayRename(oldId: string, newId: string): Promise<void> {
+  async promptComponentRename(id: string): Promise<void> {
+    if (!this.designerFile || this.disposed || id === 'this') return;
+    const component = await this.describeFor(id);
+    if (!component || component.editable === false || component.ownership === 'inherited' || component.ownership === 'unresolved') {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: component?.readOnlyReason || 'component is read-only' }) });
+      return;
+    }
+    const next = await vscode.window.showInputBox({
+      value: id,
+      valueSelection: [0, id.length],
+      prompt: t('host.renameComponent.prompt', { old: id }),
+      ignoreFocusOut: true,
+    });
+    if (next === undefined || next === id) return;
+    await this.applyComponentRename(id, next);
+  }
+
+  private async applyComponentRename(oldId: string, newId: string): Promise<void> {
     if (!this.designerFile || this.disposed || oldId === 'this') return;
     const referencedIn = await this.codeBehindReference(oldId);
     if (referencedIn) {
@@ -6291,7 +6463,7 @@ class DesignerSession {
     // doc.rev, so the revision check above cannot see it: without this guard a rename that lands after the user
     // clicked another control snaps the selection back and re-arms Delete on a target they no longer chose.
     if (this.currentId === oldId) this.currentId = res.name;
-    this.output.appendLine(`renamed tray component ${oldId} -> ${res.name} (unsaved)`);
+    this.output.appendLine(`renamed component ${oldId} -> ${res.name} (unsaved)`);
     await this.fullRender();
     this.post({ type: 'status', message: t('status.trayRenamed', { old: oldId, new: res.name }) });
   }
@@ -7047,6 +7219,15 @@ ${cspMeta(webview, nonce)}
      full text stays reachable via the element's title (hover) tooltip, set alongside its text in designer.js. */
   #formNoticeMsg { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
     line-clamp: 2; overflow: hidden; }
+  /* Collapsing keeps the disclosure ON SCREEN but out of the way: the strip shrinks to its icon, which still
+     carries the full text as its tooltip and expands again on click. The notice is never removed — a form whose
+     edits are resource-routed or whose preview is a stale build must not look like an ordinary one. */
+  #formNoticeCollapse { flex: 0 0 auto; background: transparent; border: none; color: inherit; cursor: pointer;
+    font-size: 11px; line-height: 1; padding: 0 4px; opacity: .75; }
+  #formNoticeCollapse:hover { opacity: 1; }
+  #formNotice.collapsed { padding: 2px 8px; cursor: pointer; }
+  #formNotice.collapsed #formNoticeMsg { display: none; }
+  #formNotice.collapsed #formNoticeCollapse { margin-left: auto; }
   #diagHead { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
   #diagIcon { flex: 0 0 auto; }
   #diagToggle { cursor: pointer; text-decoration: underline; color: var(--vscode-textLink-foreground, #4ea1ff); }
@@ -7209,7 +7390,7 @@ ${cspMeta(webview, nonce)}
   .taskfly .tfLink:hover { background: var(--vscode-menu-selectionBackground, #04395e); color: #fff; }
 </style></head>
 <body>
-  <div id="formNotice" style="display:none"><span id="formNoticeIcon">🔒</span><span id="formNoticeMsg"></span></div>
+  <div id="formNotice" style="display:none"><span id="formNoticeIcon">🔒</span><span id="formNoticeMsg"></span><button id="formNoticeCollapse" type="button" title=""></button></div>
   <div id="diag" style="display:none">
     <div id="diagHead"><span id="diagIcon">⚠</span><span id="diagMsg"></span><span id="diagToggle"></span><span id="diagSpacer"></span><button id="diagDismiss" title="${t('designer.diag.dismiss')}">×</button></div>
     <ul id="diagList" style="display:none"></ul>

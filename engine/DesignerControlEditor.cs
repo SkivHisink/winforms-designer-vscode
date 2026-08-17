@@ -346,7 +346,7 @@ namespace WinFormsDesigner.Engine
                 return new ControlAddResult { Safe = false, Reason = "InitializeComponent not found" };
 
             var names = GatherFieldNames(cls);
-            string name = UniqueName(ShortName(info.Fqn).ToLowerInvariant(), names);
+            string name = UniqueName(VsBaseName(info.Fqn), names);
             if (!IsValidIdentifier(name))
                 return new ControlAddResult { Safe = false, Reason = "could not generate a valid component name" };
 
@@ -528,8 +528,12 @@ namespace WinFormsDesigner.Engine
         /// skip the (assembly-loading) project enumeration on the fast path.</summary>
         public static bool CanResolveWithoutProject(string key) => ResolveSpec(key, null) != null;
 
+        /// <param name="autoScaleDimensions">The rendered form's live CurrentAutoScaleDimensions as "6F, 13F".
+        /// Written into the form's block on the first drop when the designer file carries no pair yet — the same
+        /// moment Visual Studio writes it. Ignored unless it matches the exact literal shape.</param>
         public static ControlAddResult AddControl(string src, string parentId, string controlTypeKey,
-            IReadOnlyList<ToolboxItemInfo>? projectControls = null, int? locX = null, int? locY = null)
+            IReadOnlyList<ToolboxItemInfo>? projectControls = null, int? locX = null, int? locY = null,
+            string? autoScaleDimensions = null)
         {
             var spec = ResolveSpec(controlTypeKey, projectControls);
             if (spec == null)
@@ -549,7 +553,7 @@ namespace WinFormsDesigner.Engine
             if (!parentRoot && !names.Contains(parentId))
                 return new ControlAddResult { Safe = false, Reason = "unknown parent: " + parentId };
 
-            string baseName = ShortName(spec.Fqn).ToLowerInvariant();
+            string baseName = VsBaseName(spec.Fqn);
             string name = UniqueName(baseName, names);
             if (!IsValidIdentifier(name))
                 return new ControlAddResult { Safe = false, Reason = "could not generate a valid control name" };
@@ -564,18 +568,69 @@ namespace WinFormsDesigner.Engine
             string indent = BodyIndent(src, init);
             string addTarget = parentRoot ? "this" : "this." + parentId;
 
-            var sb = new StringBuilder();
-            void S(string s) { sb.Append(indent).Append(s).Append(nl); }
-            S($"this.{name} = new {spec.Fqn}();");
-            S($"this.{name}.Location = new System.Drawing.Point({x}, {y});");
-            S($"this.{name}.Name = \"{name}\";");
-            if (spec.W > 0 && spec.H > 0) S($"this.{name}.Size = new System.Drawing.Size({spec.W}, {spec.H});");
-            S($"this.{name}.TabIndex = {childCount};");
-            if (spec.SetText) S($"this.{name}.Text = \"{name}\";");
-            S($"{addTarget}.Controls.Add(this.{name});");
+            // Emit into Visual Studio's own shape: constructors as one leading run, then a commented property block
+            // per component (children before their parent), then the parent's block carrying Controls.Add — newest
+            // FIRST, which is what puts a freshly dropped control on top of the z-order instead of underneath.
+            var properties = new StringBuilder();
+            void P(string s) { properties.Append(indent).Append(s).Append(nl); }
+            P("// ");
+            P("// " + name);
+            P("// ");
+            bool autoSize = AutoSizedByDesigner(spec.Fqn);
+            if (autoSize) P($"this.{name}.AutoSize = true;");
+            P($"this.{name}.Location = new System.Drawing.Point({x}, {y});");
+            P($"this.{name}.Name = \"{name}\";");
+            if (spec.W > 0 && spec.H > 0) P($"this.{name}.Size = new System.Drawing.Size({spec.W}, {spec.H});");
+            P($"this.{name}.TabIndex = {childCount};");
+            if (spec.SetText) P($"this.{name}.Text = \"{name}\";");
+            if (HasVisualStyleBackColor(spec.Fqn)) P($"this.{name}.UseVisualStyleBackColor = true;");
 
-            int insertPos = InitInsertPos(src, init);
-            string withStmts = src.Substring(0, insertPos) + sb.ToString() + src.Substring(insertPos);
+            var layout = InitLayout(src, init, cls, names, parentId, parentRoot);
+            var inserts = new List<(int Pos, int Seq, string Text)>
+            {
+                (layout.CtorPos, 0, indent + $"this.{name} = new {spec.Fqn}();" + nl),
+                (layout.PropertiesPos, 2, properties.ToString()),
+                (layout.AddPos, 3, indent + $"{addTarget}.Controls.Add(this.{name});" + nl),
+            };
+            // A form that has never carried a control yet (this extension's own Add → Form output) gains the layout
+            // scaffold and the form's own block header on this first drop, exactly as Visual Studio would write it.
+            var extras = new List<string>();
+            if (!layout.HasSuspendLayout)
+            {
+                extras.Add("this.SuspendLayout();");
+                extras.Add("this.ResumeLayout(false);");
+                inserts.Add((layout.CtorPos, 1, indent + "this.SuspendLayout();" + nl)); // after the ctor run
+                inserts.Add((layout.ResumePos, 4, indent + "this.ResumeLayout(false);" + nl));
+                if (layout.RootBlockPos >= 0)
+                {
+                    inserts.Add((layout.RootBlockPos, 5,
+                        indent + "// " + nl + indent + "// " + cls.Identifier.Text + nl + indent + "// " + nl));
+                }
+            }
+            // ResumeLayout(false) performs no layout pass, so Visual Studio follows it with PerformLayout() as soon
+            // as the form holds a control that sizes itself. Added once, whenever the first such control arrives.
+            if (autoSize && !init.Body.Statements.Any(st => IsLayoutCall(st) && st.ToString().Contains("PerformLayout")))
+            {
+                extras.Add("this.PerformLayout();");
+                inserts.Add((layout.ResumePos, 8, indent + "this.PerformLayout();" + nl));
+            }
+            // The form's own serialized members, which Visual Studio writes as soon as it serializes a form and
+            // this splice has no other occasion to add. `Name` is the class name; the scale pair comes from the
+            // LIVE form the caller just rendered — never a constant, which would be wrong on any target whose
+            // default font is not the one this engine runs with.
+            if (parentRoot && !layout.RootAssigns("Name"))
+            {
+                string stmt = $"this.Name = \"{cls.Identifier.Text}\";";
+                extras.Add(stmt);
+                inserts.Add((BlockOrderPos(src, layout.RootBlock, "Name", layout.BodyEnd), 6, indent + stmt + nl));
+            }
+            if (parentRoot && !layout.RootAssigns("AutoScaleDimensions") && IsAutoScalePair(autoScaleDimensions))
+            {
+                string stmt = $"this.AutoScaleDimensions = new System.Drawing.SizeF({autoScaleDimensions});";
+                extras.Add(stmt);
+                inserts.Add((BlockOrderPos(src, layout.RootBlock, "AutoScaleDimensions", layout.BodyEnd), 7, indent + stmt + nl));
+            }
+            string withStmts = ApplyInserts(src, inserts);
 
             string fieldLine = FieldIndent(src, cls) + $"private {spec.Fqn} {name};" + nl;
             string? finalText = InsertField(withStmts, fieldLine);
@@ -583,7 +638,7 @@ namespace WinFormsDesigner.Engine
                 return new ControlAddResult { Safe = false, Reason = "could not place the field declaration" };
 
             bool parseOk = !CSharpSyntaxTree.ParseText(finalText).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
-            bool gateOk = OnlyControlAdded(src, finalText, name);
+            bool gateOk = OnlyControlAdded(src, finalText, name, extras);
             if (!parseOk || !gateOk)
             {
                 return new ControlAddResult
@@ -617,7 +672,7 @@ namespace WinFormsDesigner.Engine
             var names = GatherFieldNames(cls);
             if (!names.Contains(hostId)) return new ControlAddResult { Safe = false, Reason = "unknown tab host: " + hostId };
 
-            string baseName = ShortName(pageTypeFqn).ToLowerInvariant();
+            string baseName = VsBaseName(pageTypeFqn);
             if (!IsValidIdentifier(baseName)) baseName = "tabPage";
             string name = UniqueName(baseName, names);
             if (!IsValidIdentifier(name)) return new ControlAddResult { Safe = false, Reason = "could not generate a valid tab name" };
@@ -648,7 +703,12 @@ namespace WinFormsDesigner.Engine
         /// <summary>safe-save gate: every ORIGINAL InitializeComponent statement is preserved unchanged, every EXTRA
         /// statement references only the new control, exactly ONE field declaration was added (the new one),
         /// and all original fields are preserved.</summary>
-        public static bool OnlyControlAdded(string original, string edited, string name)
+        /// <param name="plannedExtras">Statements the caller intends to add that do NOT mention the new control —
+        /// the layout scaffold and the form's own `Name` / `AutoScaleDimensions`. Each is matched by exact
+        /// (whitespace-free) text and admitted at most once, so this widens the gate by precisely the lines the
+        /// engine itself composed and by nothing else.</param>
+        public static bool OnlyControlAdded(string original, string edited, string name,
+            IReadOnlyCollection<string>? plannedExtras = null)
         {
             var oRoot = CSharpSyntaxTree.ParseText(original).GetRoot();
             var eRoot = CSharpSyntaxTree.ParseText(edited).GetRoot();
@@ -661,9 +721,20 @@ namespace WinFormsDesigner.Engine
             foreach (var kv in oMul)
                 if (!eMul.TryGetValue(kv.Key, out var n) || n < kv.Value) return false;
             // every statement the edit ADDED must reference the new control (token-boundary, like
-            // OnlyControlRemoved — so a hand-injected "this.<name>_extra.X" can't slip past a substring match)
+            // OnlyControlRemoved — so a hand-injected "this.<name>_extra.X" can't slip past a substring match).
+            // The ONE exception is the layout scaffold a first drop adds to a form that has none: an exact-text
+            // match against three fixed statements, each allowed at most once, referencing nothing at all.
+            var allowed = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var planned in plannedExtras ?? Array.Empty<string>()) allowed.Add(NormalizeStmt(planned));
+            var admitted = new HashSet<string>(StringComparer.Ordinal);
             foreach (var extra in MultisetSubtract(eInit, oInit))
-                if (!RefsIdToken(extra, name)) return false;
+            {
+                if (RefsIdToken(extra, name)) continue;
+                if (allowed.Contains(extra) && admitted.Add(extra)) continue; // each at most once
+                return false;
+            }
+            // Those statements only ever appear on a form that lacked them: never a second scaffold, Name, or scale.
+            if (admitted.Any(a => oInit.Contains(a))) return false;
 
             var oF = FieldDeclNames(oRoot);
             var eF = FieldDeclNames(eRoot);
@@ -716,6 +787,10 @@ namespace WinFormsDesigner.Engine
 
             var ranges = new List<(int s, int e)>();
             foreach (var st in removeStmts) ranges.Add(LineRange(src, st.SpanStart, st.Span.End));
+            // The control's `//`-`// name`-`//` block header goes with it; leaving it behind would litter the file
+            // with headers naming controls that no longer exist (Visual Studio regenerates the method, so it has none).
+            var headerRange = BlockHeaderRange(src, removeStmts, controlId);
+            if (headerRange != null) ranges.Add(headerRange.Value);
             ranges.Add(LineRange(src, fieldDecl.SpanStart, fieldDecl.Span.End));
             ranges.Sort((a, b) => b.s.CompareTo(a.s)); // descending so earlier splices don't shift later offsets
             string text = src;
@@ -1520,7 +1595,7 @@ namespace WinFormsDesigner.Engine
                     MissingDependencies = missingDependencies,
                 };
 
-            string baseName = ShortName(clip.Fqn).ToLowerInvariant();
+            string baseName = VsBaseName(clip.Fqn);
             if (!IsValidIdentifier(baseName)) baseName = "control"; // guard against an odd clipboard Fqn short name
             string newName = UniqueName(baseName, names);
             if (!IsValidIdentifier(newName)) return new ControlPasteResult { Safe = false, Reason = "could not generate a control name" };
@@ -2089,6 +2164,36 @@ namespace WinFormsDesigner.Engine
         // first class in the file declaring InitializeComponent BY NAME; every editor had its own. They agreed only by
         // luck, and a disagreement splices one class's body into another's. Null (no single designer class) is what
         // every caller already turns into a refusal.
+        // ---- shared with DesignerLocalizeForm: the same parsing/splicing primitives every source rewrite uses,
+        // so the localizable conversion cannot drift from what add/remove/rename already agree on. ----
+
+        internal static ClassDeclarationSyntax? FindClassWithICShared(SyntaxNode root) => FindClassWithIC(root);
+
+        internal static List<string> FlattenChain(ExpressionSyntax expr) => Flatten(expr);
+
+        internal static string Normalize(string statementText) => NormalizeStmt(statementText);
+
+        internal static List<string> InitStatementTexts(string src) =>
+            InitStatements(CSharpSyntaxTree.ParseText(src).GetRoot());
+
+        internal static (int Start, int End) StatementLineRange(string src, SyntaxNode statement) =>
+            LineRange(src, statement.SpanStart, statement.Span.End);
+
+        /// <summary>Indentation of InitializeComponent's own statements.</summary>
+        internal static string StatementIndent(string src, MethodDeclarationSyntax init) => BodyIndent(src, init);
+
+        /// <summary>Start of the line holding InitializeComponent's first statement — where a declaration the whole
+        /// method depends on (the ComponentResourceManager) goes. -1 when the method has no body.</summary>
+        internal static int FirstStatementLinePos(string src, string className)
+        {
+            var cls = FindClassWithIC(CSharpSyntaxTree.ParseText(src).GetRoot());
+            var init = FormClassResolver.InitMethodOf(cls);
+            if (cls == null || init?.Body == null) return -1;
+            if (!string.Equals(cls.Identifier.Text, className, StringComparison.Ordinal)) return -1;
+            var first = init.Body.Statements.FirstOrDefault();
+            return first == null ? FirstBodyLinePos(src, init) : LineStartOfStatement(src, first);
+        }
+
         private static ClassDeclarationSyntax? FindClassWithIC(SyntaxNode root) =>
             FormClassResolver.FormClass(root);
 
@@ -2135,6 +2240,17 @@ namespace WinFormsDesigner.Engine
             return i < 0 ? fqn : fqn.Substring(i + 1);
         }
 
+        /// <summary>
+        /// The base field name Visual Studio's designer generates for a type: the short type name with only its
+        /// FIRST letter lowered (CheckBox → checkBox, DataGridView → dataGridView). Lowercasing the whole name
+        /// produced `checkbox1` where every VS-generated form has `checkBox1`.
+        /// </summary>
+        private static string VsBaseName(string fqn)
+        {
+            string s = ShortName(fqn);
+            return s.Length == 0 ? s : char.ToLowerInvariant(s[0]) + s.Substring(1);
+        }
+
         private static string UniqueName(string baseName, HashSet<string> names)
         {
             // C# identifiers are case-sensitive, but the WinForms component container is not: adding `tabpage1`
@@ -2164,6 +2280,246 @@ namespace WinFormsDesigner.Engine
                 }
             }
             return n;
+        }
+
+        /// <summary>The `this.&lt;field&gt; = new T(…);` statements Visual Studio keeps as one run at the very top of
+        /// InitializeComponent. A leading assignment counts only while its target is a FIELD of the class — that is
+        /// what separates `this.button1 = new Button()` from `this.ClientSize = new Size(800, 450)`.</summary>
+        private static List<StatementSyntax> LeadingCtorRun(MethodDeclarationSyntax init, HashSet<string> fieldNames)
+        {
+            var run = new List<StatementSyntax>();
+            foreach (var st in init.Body!.Statements)
+            {
+                if (st is not ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax assign }) break;
+                if (assign.Right is not ObjectCreationExpressionSyntax) break;
+                var chain = Flatten(assign.Left);
+                if (chain.Count != 1 || !fieldNames.Contains(chain[0])) break;
+                run.Add(st);
+            }
+            return run;
+        }
+
+        /// <summary>The `this.&lt;owner&gt;.…` / `&lt;owner&gt;.Controls.Add(…)` statements that make up one component's
+        /// property block. For the root these are the bare `this.&lt;Prop&gt; = …` and `this.Controls.Add(…)` statements
+        /// of the form's own block — constructors excluded, since those live in the leading run.</summary>
+        private static List<StatementSyntax> BlockOf(MethodDeclarationSyntax init, string owner, bool ownerRoot,
+            HashSet<string> fieldNames)
+        {
+            var ctors = new HashSet<StatementSyntax>(LeadingCtorRun(init, fieldNames));
+            var block = new List<StatementSyntax>();
+            foreach (var st in init.Body!.Statements)
+            {
+                if (ctors.Contains(st) || IsLayoutCall(st)) continue;
+                List<string> chain = st switch
+                {
+                    ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax a } => Flatten(a.Left),
+                    ExpressionStatementSyntax { Expression: InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax ma } }
+                        => Flatten(ma.Expression),
+                    _ => new List<string>(),
+                };
+                if (chain.Count == 0) continue;
+                bool mine = ownerRoot
+                    // `this.Text = …` / `this.Controls.Add(…)`: a root member, and never a field (that is a ctor).
+                    ? !fieldNames.Contains(chain[0])
+                    : chain[0] == owner;
+                if (mine) block.Add(st);
+            }
+            return block;
+        }
+
+        /// <summary>Where each part of a new control's generated code belongs in an existing InitializeComponent.</summary>
+        private sealed class InitLayoutPlan
+        {
+            public int CtorPos;            // end of the leading `this.X = new T();` run
+            public int PropertiesPos;      // before the parent's own block (children serialize before their parent)
+            public int AddPos;             // before the parent's first existing Controls.Add, else in block order
+            public int ResumePos;          // end of the method body
+            public int RootBlockPos = -1;  // start of the form's block, when it has no `// Form1` header yet
+            public int BodyEnd;            // append position, for a form whose block is empty
+            public bool HasSuspendLayout;
+            public List<StatementSyntax> RootBlock = new();
+
+            /// <summary>True when the form's own block already assigns this property.</summary>
+            public bool RootAssigns(string member) =>
+                RootBlock.Any(st => string.Equals(AssignedMemberName(st, true), member, StringComparison.Ordinal));
+        }
+
+        private static bool IsSuspendCall(StatementSyntax st) =>
+            IsLayoutCall(st) && st.ToString().Contains("SuspendLayout");
+
+        /// <summary>An AutoScaleDimensions pair as the designer serializes it — two float literals, nothing else.
+        /// The value crosses an RPC boundary, so it is validated before it reaches generated source.</summary>
+        private static bool IsAutoScalePair(string? value) =>
+            value != null && System.Text.RegularExpressions.Regex.IsMatch(value, @"^\d{1,4}(\.\d{1,4})?F,\s\d{1,4}(\.\d{1,4})?F$");
+
+        /// <summary>Locate every anchor a Visual-Studio-shaped insert needs. Anything missing degrades to appending
+        /// at the end of the method — the pre-1.9 behavior — so a designer file with an unfamiliar shape is never
+        /// rearranged, only added to.</summary>
+        private static InitLayoutPlan InitLayout(string src, MethodDeclarationSyntax init, ClassDeclarationSyntax cls,
+            HashSet<string> fieldNames, string parentId, bool parentRoot)
+        {
+            var plan = new InitLayoutPlan();
+            var statements = init.Body!.Statements;
+            var ctorRun = LeadingCtorRun(init, fieldNames);
+            int bodyEnd = InitInsertPos(src, init);
+
+            plan.HasSuspendLayout = statements.Any(IsSuspendCall);
+            plan.CtorPos = ctorRun.Count > 0 ? LineEndOf(src, ctorRun[ctorRun.Count - 1]) : FirstBodyLinePos(src, init);
+            plan.ResumePos = LineStartOfPos(src, init.Body.CloseBraceToken.SpanStart);
+
+            var rootBlock = BlockOf(init, "", true, fieldNames);
+            var parentBlock = parentRoot ? rootBlock : BlockOf(init, parentId, false, fieldNames);
+            if (rootBlock.Count > 0 && !HasBlockHeader(src, rootBlock[0])) plan.RootBlockPos = LineStartOfBlock(src, rootBlock[0]);
+            plan.RootBlock = rootBlock;
+            plan.BodyEnd = bodyEnd;
+
+            plan.PropertiesPos = parentBlock.Count > 0 ? LineStartOfBlock(src, parentBlock[0])
+                : rootBlock.Count > 0 ? LineStartOfBlock(src, rootBlock[0])
+                : bodyEnd;
+
+            var existingAdds = parentBlock.Where(st => AssignedMemberName(st, parentRoot) == "Controls").ToList();
+            plan.AddPos = existingAdds.Count > 0
+                ? LineStartOfStatement(src, existingAdds[0]) // newest first == on top, like VS
+                : BlockOrderPos(src, parentBlock, "Controls", plan.PropertiesPos);
+            return plan;
+        }
+
+        /// <summary>Where a member belongs inside one already-serialized block: Visual Studio writes a block's
+        /// members alphabetically, so the insert goes above the first member that sorts after it.</summary>
+        private static int BlockOrderPos(string src, List<StatementSyntax> block, string member, int fallback)
+        {
+            var after = block.FirstOrDefault(st =>
+                string.Compare(AssignedMemberName(st, true), member, StringComparison.OrdinalIgnoreCase) > 0);
+            if (after != null) return LineStartOfStatement(src, after);
+            return block.Count > 0 ? LineEndOf(src, block[block.Count - 1]) : fallback;
+        }
+
+        /// <summary>The line range of the `//`-`// name`-`//` header directly above a control's first statement,
+        /// or null when the statements carry no such header. Only a header naming THIS control is matched, so a
+        /// hand-written comment above the block is left untouched.</summary>
+        private static (int s, int e)? BlockHeaderRange(string src, List<StatementSyntax> removed, string controlId)
+        {
+            // The header sits above the control's PROPERTY block, not above its constructor (which lives in the
+            // leading run), so every removed statement is a candidate.
+            foreach (var st in removed)
+            {
+                var range = HeaderAbove(src, st, controlId);
+                if (range != null) return range;
+            }
+            return null;
+        }
+
+        private static (int s, int e)? HeaderAbove(string src, StatementSyntax statement, string controlId)
+        {
+            int firstLine = LineStartOfStatement(src, statement);
+            int start = firstLine;
+            var lines = new List<string>();
+            while (start > 0)
+            {
+                int prev = src.LastIndexOf('\n', Math.Max(0, start - 2)) + 1;
+                if (prev == start) break;
+                string line = src.Substring(prev, start - prev).Trim();
+                if (!line.StartsWith("//", StringComparison.Ordinal) || line.StartsWith("///", StringComparison.Ordinal)) break;
+                lines.Insert(0, line);
+                start = prev;
+            }
+            // Exactly Visual Studio's three-line header for this control, nothing more.
+            if (lines.Count != 3 || lines[0] != "//" || lines[2] != "//") return null;
+            return lines[1] == "// " + controlId ? (start, firstLine) : null;
+        }
+
+        /// <summary>True when a statement already carries Visual Studio's `//`-`// name`-`//` block header.</summary>
+        private static bool HasBlockHeader(string src, StatementSyntax first)
+        {
+            int lineStart = LineStartOfStatement(src, first);
+            int prevStart = src.LastIndexOf('\n', Math.Max(0, lineStart - 2)) + 1;
+            return src.Substring(prevStart, Math.Max(0, lineStart - prevStart)).TrimStart().StartsWith("//", StringComparison.Ordinal);
+        }
+
+        private static int FirstBodyLinePos(string src, MethodDeclarationSyntax init)
+        {
+            int ob = init.Body!.OpenBraceToken.Span.End;
+            int nl = src.IndexOf('\n', ob);
+            return nl < 0 ? ob : nl + 1;
+        }
+
+        private static int LineStartOfPos(string src, int pos) => src.LastIndexOf('\n', Math.Max(0, pos - 1)) + 1;
+
+        /// <summary>Apply (position, text) inserts to one source string. Groups sharing a position keep their Seq
+        /// order; groups are applied back-to-front so earlier positions stay valid.</summary>
+        private static string ApplyInserts(string src, List<(int Pos, int Seq, string Text)> inserts)
+        {
+            foreach (var group in inserts.GroupBy(i => i.Pos).OrderByDescending(g => g.Key))
+            {
+                string text = string.Concat(group.OrderBy(i => i.Seq).Select(i => i.Text));
+                src = src.Substring(0, group.Key) + text + src.Substring(group.Key);
+            }
+            return src;
+        }
+
+        /// <summary>Controls whose Visual Studio designer turns AutoSize on when it creates them — the text-sized
+        /// ones, which then fit themselves to their caption instead of keeping a designed Size.</summary>
+        private static readonly HashSet<string> DesignerAutoSized = new(StringComparer.Ordinal)
+        {
+            "System.Windows.Forms.Label", "System.Windows.Forms.LinkLabel",
+            "System.Windows.Forms.CheckBox", "System.Windows.Forms.RadioButton",
+        };
+
+        private static bool AutoSizedByDesigner(string fqn) => DesignerAutoSized.Contains(fqn);
+
+        /// <summary>True for the ButtonBase family, whose designer writes `UseVisualStyleBackColor = true` on every
+        /// control it creates. Framework types only — a project control is emitted exactly as before.</summary>
+        private static bool HasVisualStyleBackColor(string fqn)
+        {
+            var t = typeof(System.Windows.Forms.Control).Assembly.GetType(fqn);
+            var p = t?.GetProperty("UseVisualStyleBackColor",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            return p != null && p.PropertyType == typeof(bool) && p.CanWrite;
+        }
+
+        /// <summary>Start-of-line position for a statement — where an insert lands to sit directly above it.</summary>
+        private static int LineStartOfStatement(string src, SyntaxNode node) =>
+            src.LastIndexOf('\n', Math.Max(0, node.SpanStart - 1)) + 1;
+
+        /// <summary>Start of a whole BLOCK: like <see cref="LineStartOfStatement"/>, but walking above any `//`
+        /// header lines that belong to the statement — otherwise a new block would be inserted BETWEEN a header
+        /// and the block it names.</summary>
+        private static int LineStartOfBlock(string src, SyntaxNode node)
+        {
+            int pos = LineStartOfStatement(src, node);
+            while (pos > 0)
+            {
+                int prev = src.LastIndexOf('\n', Math.Max(0, pos - 2)) + 1;
+                if (prev == pos) break;
+                string line = src.Substring(prev, pos - prev).Trim();
+                if (!line.StartsWith("//", StringComparison.Ordinal) || line.StartsWith("///", StringComparison.Ordinal)) break;
+                pos = prev;
+            }
+            return pos;
+        }
+
+        /// <summary>Position just after a statement's line (where the next statement would begin).</summary>
+        private static int LineEndOf(string src, SyntaxNode node)
+        {
+            int nl = src.IndexOf('\n', node.Span.End);
+            return nl < 0 ? src.Length : nl + 1;
+        }
+
+        /// <summary>The property name a `this.X.Prop = …` / `this.Prop = …` statement assigns, for the alphabetical
+        /// order Visual Studio's serializer emits within one block ("Controls" sorts between ClientSize and Name).</summary>
+        private static string AssignedMemberName(StatementSyntax st, bool ownerRoot)
+        {
+            if (st is ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax a })
+            {
+                var chain = Flatten(a.Left);
+                return chain.Count == 0 ? "" : chain[chain.Count - 1];
+            }
+            if (st is ExpressionStatementSyntax { Expression: InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax ma } })
+            {
+                var chain = Flatten(ma.Expression);
+                return chain.Count == 0 ? "" : chain[chain.Count - 1]; // "Controls" of `Controls.Add`
+            }
+            return "";
         }
 
         private static int InitInsertPos(string src, MethodDeclarationSyntax init)
@@ -2201,7 +2557,26 @@ namespace WinFormsDesigner.Engine
             if (cls == null) return null;
             var fields = cls.Members.OfType<FieldDeclarationSyntax>().ToList();
             int pos;
-            if (fields.Count > 0)
+            // Visual Studio keeps control fields BELOW the generated-code region, after `#endregion` — only the
+            // designer's own `components` sits at the top. Follow the last field when one is already down there;
+            // otherwise place the first control field just after the region, and fall back to the previous
+            // after-the-last-field behavior on a designer file that has no region at all.
+            int regionEnd = EndRegionLinePos(text, cls);
+            var below = regionEnd >= 0 ? fields.Where(f => f.SpanStart >= regionEnd).ToList() : fields;
+            if (below.Count > 0)
+            {
+                int afterSemi = below[below.Count - 1].Span.End;
+                int nlIdx = text.IndexOf('\n', afterSemi);
+                pos = nlIdx < 0 ? text.Length : nlIdx + 1;
+            }
+            else if (regionEnd >= 0)
+            {
+                // First control field after the region: Visual Studio separates it from `#endregion` by a blank line.
+                pos = regionEnd;
+                string nl = text.Contains("\r\n") ? "\r\n" : "\n";
+                if (!text.Substring(pos).StartsWith(nl, StringComparison.Ordinal)) fieldLine = nl + fieldLine;
+            }
+            else if (fields.Count > 0)
             {
                 int afterSemi = fields[fields.Count - 1].Span.End;
                 int nlIdx = text.IndexOf('\n', afterSemi);
@@ -2213,6 +2588,19 @@ namespace WinFormsDesigner.Engine
                 pos = text.LastIndexOf('\n', Math.Max(0, cb - 1)) + 1;
             }
             return text.Substring(0, pos) + fieldLine + text.Substring(pos);
+        }
+
+        /// <summary>Position just after the line holding the class's `#endregion` (the end of the designer's
+        /// generated-code region), or -1 when the file has none.</summary>
+        private static int EndRegionLinePos(string text, ClassDeclarationSyntax cls)
+        {
+            var directive = cls.DescendantTrivia(descendIntoTrivia: true)
+                .Where(t => t.IsKind(SyntaxKind.EndRegionDirectiveTrivia))
+                .Select(t => (SyntaxTrivia?)t)
+                .LastOrDefault();
+            if (directive == null) return -1;
+            int nl = text.IndexOf('\n', directive.Value.Span.End);
+            return nl < 0 ? text.Length : nl + 1;
         }
 
         private static string BodyIndent(string src, MethodDeclarationSyntax init)

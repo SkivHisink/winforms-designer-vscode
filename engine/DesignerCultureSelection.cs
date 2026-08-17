@@ -55,7 +55,9 @@ namespace WinFormsDesigner.Engine
             }
             try
             {
-                var culture = CultureInfo.GetCultureInfo(value);
+                // predefinedOnly: ICU accepts any well-formed tag, so a typo like "en-EN" would otherwise pass and
+                // seed a Form.en-EN.resx that no ResourceManager ever loads. Visual Studio only offers real cultures.
+                var culture = CultureInfo.GetCultureInfo(value, predefinedOnly: true);
                 if (culture.Equals(CultureInfo.InvariantCulture))
                 {
                     normalized = NeutralCultureName;

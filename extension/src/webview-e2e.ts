@@ -158,6 +158,68 @@ test('HiDPI 1.4: reports fractional monitor changes exactly and keeps canvas hit
   h.destroy();
 });
 
+test('daily loop 1.9: double-click invokes a control default event while tab headers keep rename priority', () => {
+  const h = loadDesigner();
+  h.send({ type: 'layout', controls: [mkCtrl()] });
+  h.resetPosted();
+  h.mouse('dblclick', { offsetX: 20, offsetY: 30 }, h.el('surface'));
+  eq(only(h.posted, 'createDefaultHandler'), [{ type: 'createDefaultHandler', id: 'button1' }],
+    'ordinary control double-click asks the host for the real default event');
+  h.destroy();
+
+  const tab = loadDesigner();
+  tab.send({ type: 'layout', controls: [mkCtrl({ id: 'tabs', isTabHost: true })] });
+  tab.resetPosted();
+  tab.mouse('dblclick', { offsetX: 20, offsetY: 30 }, tab.el('surface'));
+  eq(only(tab.posted, 'tabRename').length, 1, 'tab host keeps its header rename gesture');
+  eq(only(tab.posted, 'createDefaultHandler').length, 0, 'tab rename does not also create a default handler');
+  tab.destroy();
+});
+
+test('daily loop 1.9: F2 renames an ordinary selected component and respects read-only ownership', () => {
+  const h = loadDesigner();
+  setupSelected(h, mkCtrl());
+  h.key('keydown', { key: 'F2' });
+  eq(only(h.posted, 'renameComponent'), [{ type: 'renameComponent', id: 'button1' }],
+    'F2 routes a visible control to the host rename transaction');
+  h.destroy();
+
+  const blocked = loadDesigner();
+  setupSelected(blocked, mkCtrl({ editable: false, ownership: 'inherited' }));
+  blocked.key('keydown', { key: 'F2' });
+  eq(only(blocked.posted, 'renameComponent').length, 0, 'inherited/read-only controls expose no rename gesture');
+  blocked.destroy();
+});
+
+test('daily loop 1.9: Tab traversal, Esc parent selection, and Ctrl+A stay inside the current sibling scope', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', x: 0, y: 0, width: 400, height: 300, parentId: null, isRoot: true });
+  const panel = mkCtrl({ id: 'panel1', name: 'panel1', type: 'System.Windows.Forms.Panel', x: 5, y: 5, width: 200, height: 150, parentId: 'this' });
+  const first = mkCtrl({ id: 'button1', parentId: 'panel1' });
+  const second = mkCtrl({ id: 'button2', name: 'button2', x: 10, y: 60, parentId: 'panel1' });
+  const outside = mkCtrl({ id: 'outside', name: 'outside', x: 250, y: 20, parentId: 'this' });
+  h.send({ type: 'layout', controls: [root, panel, first, second, outside] });
+  h.send({ type: 'select', id: 'button1' });
+  h.resetPosted();
+
+  h.key('keydown', { key: 'Tab' });
+  eq(only(h.posted, 'pick').map((m) => m.id), ['button2'], 'Tab selects the next sibling');
+  h.resetPosted();
+  h.key('keydown', { key: 'Tab', shiftKey: true });
+  eq(only(h.posted, 'pick').map((m) => m.id), ['button1'], 'Shift+Tab selects the previous sibling');
+  h.resetPosted();
+  h.key('keydown', { key: 'Escape' });
+  eq(only(h.posted, 'pick').map((m) => m.id), ['panel1'], 'Escape selects the parent container');
+
+  h.send({ type: 'select', id: 'button1' });
+  h.resetPosted();
+  h.key('keydown', { key: 'a', ctrlKey: true });
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControls')[0]?.ids, ['button1', 'button2'],
+    'Ctrl+A selects only siblings in the current container, excluding the parent and outside controls');
+  h.destroy();
+});
+
 test('nudge: Arrow moves 1px and commits exactly one manipulate after the idle debounce', async () => {
   // This is the SOLE test that waits out the real 250ms debounce (to prove the idle-commit actually fires). The
   // margin is deliberately generous so a loaded CI runner / GC pause can't make it flaky; every OTHER nudge test
@@ -227,6 +289,7 @@ test('placement snap override: normal move snaps, Alt move stays raw and draws n
   h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, h.el('surface'));
   h.mouse('mousemove', { clientX: 24, clientY: 30 });
   ok(visibleSnapGuides(h) > 0, 'normal move shows snap guides');
+  eq(h.el('status').textContent, 'designer.status.geometry', 'normal move shows live x/y/w/h');
   h.mouse('mouseup', { clientX: 24, clientY: 30 });
   eq(only(h.posted, 'manipulate')[0]?.x, 20, 'normal move snapped right edge to sibling left');
   h.destroy();
@@ -249,6 +312,7 @@ test('placement snap override: normal resize snaps, Alt resize stays raw and dra
   h.mouse('mousedown', { button: 0, clientX: 90, clientY: 32 }, east);
   h.mouse('mousemove', { clientX: 94, clientY: 32 });
   ok(visibleSnapGuides(h) > 0, 'normal resize shows snap guides');
+  eq(h.el('status').textContent, 'designer.status.geometry', 'normal resize shows live x/y/w/h');
   h.mouse('mouseup', { clientX: 94, clientY: 32 });
   eq(only(h.posted, 'manipulate')[0]?.width, 90, 'normal resize snapped right edge to sibling left');
   h.destroy();
@@ -2469,6 +2533,23 @@ test('panel outline reorder: keyboard and context menu post outlineMoveZOrder', 
   h.destroy();
 });
 
+test('daily loop 1.9: F2 in the outline routes editable controls to component rename', () => {
+  const h = loadPanel();
+  setupOutline(h);
+  const button = outlineNode(h, 'button1');
+  button.focus();
+  h.key('keydown', { key: 'F2' }, h.el('outlineTree'));
+  eq(only(h.posted, 'renameComponent'), [{ type: 'renameComponent', id: 'button1' }],
+    'outline F2 uses the shared component rename transaction');
+
+  h.resetPosted();
+  const blocked = outlineNode(h, 'lockedButton');
+  blocked.focus();
+  h.key('keydown', { key: 'F2' }, h.el('outlineTree'));
+  eq(only(h.posted, 'renameComponent').length, 0, 'read-only outline nodes cannot be renamed');
+  h.destroy();
+});
+
 test('panel value edit: committing a text field posts an edit with the new value', () => {
   const h = loadPanel();
   setupComponent(h, {
@@ -2628,6 +2709,25 @@ test('panel generic IList editor: routes the metadata item type through list + o
   eq(set.length, 1, 'OK posts exactly one generic collection edit');
   eq([set[0].id, set[0].prop, set[0].itemType], ['settings1', 'Thresholds', 'System.Int32'], 'the write retains the exact metadata item type');
   eq(set[0].items, ['3', '5'], 'the line editor commits invariant item strings');
+  h.destroy();
+});
+
+test('daily loop 1.9: the (Name) design row is editable and tagged for the source rename route', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button1',
+    name: 'button1',
+    type: 'System.Windows.Forms.Button',
+    properties: [prop('(Name)', { value: 'button1', category: 'Design', designTime: true })],
+    events: [],
+  });
+  const input = findPropRow(h, '(Name)').querySelector('input');
+  ok(!!input, '(Name) renders as an editable string row');
+  input.value = 'saveButton';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const edit = only(h.posted, 'edit')[0];
+  eq([edit.id, edit.prop, edit.value, edit.designTime], ['button1', '(Name)', 'saveButton', true],
+    '(Name) commits through the design-time source route, not SetProperty');
   h.destroy();
 });
 

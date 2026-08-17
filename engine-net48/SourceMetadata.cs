@@ -55,8 +55,26 @@ namespace WinFormsDesigner.Engine.Net48
             if (desc.IsRoot || desc.IsToolStripItem || string.IsNullOrEmpty(desc.Id) || desc.Properties == null) return;
             bool hasRealModifiers = desc.Properties.Any(p => p != null && p.Name == "Modifiers");
             bool hasRealGenerateMember = desc.Properties.Any(p => p != null && p.Name == "GenerateMember");
+            bool hasRealDesignName = desc.Properties.Any(p => p != null && p.Name == "(Name)");
             var fields = DesignerModifiers.ParseFieldModifiers(code);
             bool hasField = fields.TryGetValue(desc.Id, out var field);
+
+            if (!hasRealDesignName)
+            {
+                desc.Properties.Add(new PropertyDesc
+                {
+                    Name = "(Name)",
+                    Type = "System.String",
+                    Value = desc.Id,
+                    // Component rename rewrites one declarator plus its exact this.<field>/Name references and has
+                    // its own reversibility gate. Unlike the shared Modifiers keyword, it is safe for a field that
+                    // belongs to a multi-declarator declaration, so do not inherit FieldMod.Editable here.
+                    ReadOnly = !hasField,
+                    Category = "Design",
+                    Description = "The generated member name. Renaming is refused when code-behind references the current name.",
+                    DesignTime = true,
+                });
+            }
 
             if (!hasRealGenerateMember)
             {

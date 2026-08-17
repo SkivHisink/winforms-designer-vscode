@@ -162,6 +162,11 @@
       x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h)
     });
   }
+  function geometryStatus(r) {
+    return T('designer.status.geometry', {
+      x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h)
+    });
+  }
   // Inline editors are not VS Code TextDocuments, so explicitly tell the host when typing should preempt a lazy
   // toolbox metadata pass. Navigation and command shortcuts do not count as text entry.
   document.addEventListener('keydown', function (e) {
@@ -947,6 +952,30 @@
   var stageEl = document.getElementById('stage');
   var _persisted = {};
   try { _persisted = (vscode.getState && vscode.getState()) || {}; } catch (_e) {}
+  // The form notice is a permanent disclosure, but it does not have to occupy a strip forever: collapsing leaves
+  // the icon (with the full text as its tooltip) and remembers the choice for this editor, like zoom and the ruler.
+  var noticeCollapsed = _persisted.noticeCollapsed === true;
+  var formNoticeCollapseEl = document.getElementById('formNoticeCollapse');
+  function applyNoticeCollapsed() {
+    if (!formNoticeEl) return;
+    formNoticeEl.classList.toggle('collapsed', noticeCollapsed);
+    if (formNoticeCollapseEl) {
+      formNoticeCollapseEl.textContent = noticeCollapsed ? '▸' : '▾';
+      formNoticeCollapseEl.title = T(noticeCollapsed ? 'designer.notice.expand' : 'designer.notice.collapse');
+    }
+  }
+  function setNoticeCollapsed(value) {
+    noticeCollapsed = value;
+    try { var s = (vscode.getState && vscode.getState()) || {}; s.noticeCollapsed = value; if (vscode.setState) vscode.setState(s); } catch (_e) {}
+    applyNoticeCollapsed();
+  }
+  if (formNoticeCollapseEl) {
+    formNoticeCollapseEl.addEventListener('click', function (e) { e.stopPropagation(); setNoticeCollapsed(!noticeCollapsed); });
+  }
+  if (formNoticeEl) {
+    formNoticeEl.addEventListener('click', function () { if (noticeCollapsed) setNoticeCollapsed(false); });
+  }
+
   function clampZoom(z) { return Math.max(0.1, Math.min(8, z)); }
   if (typeof _persisted.zoom === 'number') zoom = clampZoom(_persisted.zoom);
   function applyZoomStyles() {
@@ -1636,8 +1665,8 @@
     else if (id !== current || selection.length > 1) { selectSingle(id); }
   });
 
-  // double-click a tab header → rename that tab (the host hit-tests the page under the point and prompts). Only a
-  // tab host reacts; other double-clicks are ignored here (no default dblclick behavior on the surface).
+  // Double-click keeps tab-header/item rename priority; an ordinary component invokes its real DefaultEvent through
+  // the host's existing signature-aware handler pipeline.
   canvas.addEventListener('dblclick', function (e) {
     if (!controls.length) return;
     var px = e.offsetX / zoom, py = e.offsetY / zoom;
@@ -1650,7 +1679,9 @@
     var hc = findControl(id);
     if (hc && hc.isTabHost) {
       vscode.postMessage({ type: 'tabRename', hostId: id, x: Math.round(px), y: Math.round(py) });
+      return;
     }
+    vscode.postMessage({ type: 'createDefaultHandler', id: id });
   });
 
   // cross-webview drop: a control dragged from the toolbox webview (custom MIME) lands here → add at cursor
@@ -1735,8 +1766,8 @@
           b.style.width = Math.max(0, it.w * zoom - 2) + 'px'; b.style.height = Math.max(0, it.h * zoom - 2) + 'px';
         }
         setStatus(snapOverride ? rawPlacementStatus(drag.cur)
-                             : drag.group ? T('designer.status.moveGroup', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) })
-                             : T('designer.status.moveSingle', { x: Math.round(nx), y: Math.round(ny) }));
+                             : drag.group ? T('designer.status.moveGroup', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) }) + ' · ' + geometryStatus(drag.cur)
+                             : geometryStatus(drag.cur));
       } else {
         var o = drag.orig, dir = drag.dir || 'se';
         var rx = o.x, ry = o.y, rw = o.w, rh = o.h;
@@ -1752,7 +1783,7 @@
         selBox.style.left = (rx * zoom) + 'px'; selBox.style.top = (ry * zoom) + 'px';
         selBox.style.width = Math.max(0, rw * zoom - 2) + 'px'; selBox.style.height = Math.max(0, rh * zoom - 2) + 'px';
         updateRulerMarks(drag.cur); // track bounds on the ruler during resize too
-        setStatus(resizeSnapOverride ? rawPlacementStatus(drag.cur) : T('designer.status.resize', { w: Math.round(rw), h: Math.round(rh) }));
+        setStatus(resizeSnapOverride ? rawPlacementStatus(drag.cur) : geometryStatus(drag.cur));
       }
       return;
     }
@@ -1842,7 +1873,8 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'F7') { e.preventDefault(); vscode.postMessage({ type: 'viewCode' }); return; } // VS: F7 = designer → code
     // F2 renames the selected on-canvas strip item (VS: F2 = rename). Same inline editor as the double-click path;
-    // a separator has no Text so it isn't renamable. No strip-item selected → let F2 fall through (no default action).
+    // a separator has no Text so it isn't renamable. With no item selected, F2 routes the current ordinary component
+    // through the same source-first rename path used by the tray and `(Name)` property.
     if (e.key === 'F2') {
       var af2 = document.activeElement;
       if (af2 && /^(INPUT|SELECT|TEXTAREA)$/.test(af2.tagName)) return;
@@ -1850,8 +1882,17 @@
         if (!(drag || band || tabOrderMode || isSeparatorType(submenuSel.itemType))) { e.preventDefault(); renameSubmenuSel(); }
         return;
       }
-      if (!selectedItem || drag || band || tabOrderMode || isSeparatorType(selectedItem.itemType)) return;
-      e.preventDefault(); openItemRenameEditor(selectedItem);
+      if (selectedItem) {
+        if (drag || band || tabOrderMode || isSeparatorType(selectedItem.itemType)) return;
+        e.preventDefault(); openItemRenameEditor(selectedItem);
+        return;
+      }
+      if (drag || band || tabOrderMode || !current || current === 'this') return;
+      var renameTarget = findControl(current) || findTray(current);
+      if (!renameTarget || renameTarget.readOnly || renameTarget.editable === false
+          || renameTarget.inherited || renameTarget.isInherited
+          || renameTarget.ownership === 'inherited' || renameTarget.ownership === 'unresolved') return;
+      e.preventDefault(); vscode.postMessage({ type: 'renameComponent', id: current });
       return;
     }
     if (e.key !== 'Delete' && e.key !== 'Del') return;
@@ -1863,6 +1904,50 @@
   // ---- keyboard nudge (VS: Arrow=move 1px, Ctrl+Arrow=grid step, Shift+Arrow=resize) ----
   // The most-used designer gesture. Moves/resizes optimistically (selection box follows) and commits the WHOLE
   // key series as ONE edit through the existing manipulate/manipulateGroup paths → one undo, one re-render.
+  // VS selection traversal: Tab/Shift+Tab cycle siblings, Esc selects the parent container, and Ctrl+A selects
+  // every sibling in the current design scope. These are selection-only gestures; source is untouched.
+  document.addEventListener('keydown', function (e) {
+    var ae = document.activeElement;
+    if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
+    if (drag || band || tabOrderMode || slotEditEl) return;
+
+    var c = current ? findControl(current) : null;
+    if (!c) return;
+
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && String(e.key).toLowerCase() === 'a') {
+      var scopeParent = c.isRoot || c.id === 'this' ? c.id : c.parentId;
+      var scoped = controls.filter(function (candidate) {
+        return !candidate.isRoot && candidate.id !== 'this' && candidate.parentId === scopeParent;
+      });
+      if (!scoped.length) return;
+      e.preventDefault(); flushNudge(); selectedItem = null;
+      selection = scoped.map(function (candidate) { return candidate.id; });
+      if (selection.indexOf(current) < 0) current = selection[selection.length - 1];
+      canMove = false; canResize = false; renderSelection(); postPick(current);
+      return;
+    }
+
+    if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      var parentId = c.isRoot || c.id === 'this' ? c.id : c.parentId;
+      var siblings = controls.filter(function (candidate) {
+        return !candidate.isRoot && candidate.id !== 'this' && candidate.parentId === parentId;
+      });
+      if (!siblings.length) return;
+      var index = siblings.findIndex(function (candidate) { return candidate.id === current; });
+      var nextIndex = index < 0 ? (e.shiftKey ? siblings.length - 1 : 0)
+        : (index + (e.shiftKey ? -1 : 1) + siblings.length) % siblings.length;
+      e.preventDefault(); flushNudge(); selectSingle(siblings[nextIndex].id);
+      return;
+    }
+
+    if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      if ((ctxEl && ctxEl.classList.contains('open')) || submenuLevels.length) return;
+      var parent = c.parentId ? findControl(c.parentId) : null;
+      if (!parent) return;
+      e.preventDefault(); flushNudge(); selectSingle(parent.id);
+    }
+  });
+
   function flushNudge() {
     if (!nudge) return;
     var n = nudge; nudge = null;
@@ -2191,7 +2276,9 @@
           formNoticeMsgEl.textContent = m.text || '';
           // The strip is line-clamped to two lines (see #formNoticeMsg CSS); expose the full disclosure on hover.
           formNoticeMsgEl.title = m.text || '';
+          formNoticeEl.title = m.text || ''; // collapsed: the icon alone still carries the whole disclosure
           formNoticeEl.style.display = '';
+          applyNoticeCollapsed();
         } else {
           formNoticeEl.style.display = 'none';
         }

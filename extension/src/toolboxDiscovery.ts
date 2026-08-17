@@ -152,6 +152,15 @@ function defaultYieldNow(): Promise<void> {
  * graph. This prevents a default-on toolbox refresh from walking unrelated sibling projects in a monorepo while
  * still finding controls produced by the projects the form can actually reference.
  */
+/**
+ * Whether a changed text document represents the user editing their code. VS Code raises the same
+ * onDidChangeTextDocument for its OWN output channels, so a visible extension log would otherwise retrigger
+ * background discovery on every line it prints — and each pass prints another line.
+ */
+export function isUserEditDocument(scheme: string): boolean {
+  return scheme === 'file' || scheme === 'untitled';
+}
+
 export async function discoverProjectBuildOutputRoots(
   owningProject: string,
   options: ProjectBuildOutputRootOptions = {}

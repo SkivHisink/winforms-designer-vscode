@@ -41,8 +41,14 @@ public sealed class SaveSafetyTests
         Assert.False(DesignerEventEditor.OnlyWiringAdded(BaseSource, extra, "button1", "Click"));
     }
 
+    /// <summary>
+    /// Adding then removing a control restores the original bytes EXCEPT for the layout scaffold a first drop
+    /// installs on a form that had none (1.9.0's Visual-Studio-shaped emit). Visual Studio keeps that scaffold
+    /// after a delete too, so the invariant is now "nothing but the scaffold survives" — still byte-exact, and
+    /// still enough to catch any stray edit the add/remove pair might leave behind.
+    /// </summary>
     [Fact]
-    public void AddThenRemove_LeafControl_RestoresOriginalBytes()
+    public void AddThenRemove_LeafControl_RestoresOriginalBytesApartFromTheLayoutScaffold()
     {
         var add = DesignerControlEditor.AddControl(BaseSource, "this", "Label", locX: 12, locY: 18);
         Assert.True(add.Safe, add.Reason);
@@ -50,7 +56,18 @@ public sealed class SaveSafetyTests
 
         var remove = DesignerControlEditor.RemoveControl(add.NewText!, add.Name);
         Assert.True(remove.Safe, remove.Reason);
-        Assert.Equal(BaseSource, remove.NewText);
+
+        string stripped = string.Join("\n", remove.NewText!.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.Trim() is not ("this.SuspendLayout();" or "this.ResumeLayout(false);"
+                or "this.PerformLayout();" or "this.Name = \"Form1\";" or "//" or "// Form1")));
+        Assert.Equal(BaseSource.Replace("\r\n", "\n"), stripped);
+
+        // A SECOND add/remove cycle changes nothing at all: the scaffold is installed once.
+        var again = DesignerControlEditor.AddControl(remove.NewText!, "this", "Label", locX: 12, locY: 18);
+        Assert.True(again.Safe, again.Reason);
+        var removedAgain = DesignerControlEditor.RemoveControl(again.NewText!, again.Name);
+        Assert.True(removedAgain.Safe, removedAgain.Reason);
+        Assert.Equal(remove.NewText, removedAgain.NewText);
     }
 
     [Fact]
