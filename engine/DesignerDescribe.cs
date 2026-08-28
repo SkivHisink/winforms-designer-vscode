@@ -1196,6 +1196,10 @@ namespace WinFormsDesigner.Engine
         private const int ExpandableMaxDescriptionChars = 1024;
         private const int ExpandableMaxCategoryChars = 128;
         private static readonly TimeSpan ConverterQueryTimeout = TimeSpan.FromMilliseconds(200);
+        /// <summary>How long a converter query may wait to be SCHEDULED before its own budget starts. Queueing delay
+        /// is the machine's fault, not the converter's, and charging it to the converter drops good metadata on a
+        /// small or busy runner.</summary>
+        private static readonly TimeSpan ConverterStartBudget = TimeSpan.FromSeconds(2);
 
         private static (List<ExpandablePropertyInfo>? properties, bool truncated) ExpandablePropertiesOf(
             PropertyDescriptor pd, object owner, object? raw, string path, bool suppressForBespokeEditor)
@@ -1806,9 +1810,12 @@ namespace WinFormsDesigner.Engine
         {
             timedOut = false;
             Task<T> task;
+            // NOT disposed and NOT a `using`: a query we abandon still sets this from its own thread long after we
+            // have returned, and ManualResetEventSlim.Set() on a disposed instance throws on a pool thread.
+            var started = new System.Threading.ManualResetEventSlim(false);
             try
             {
-                task = Task.Run(query);
+                task = Task.Run(() => { started.Set(); return query(); });
             }
             catch
             {
@@ -1818,6 +1825,11 @@ namespace WinFormsDesigner.Engine
 
             try
             {
+                // The budget bounds the CONVERTER, not the queue — see the matching comment in
+                // engine-net48/CompiledDescriber.cs. A stalled converter leaves its thread sleeping and .NET injects
+                // replacement pool threads slowly, so on a small or busy machine the budget can be spent before the
+                // next converter runs at all, costing a property its VALUE rather than just its dropdown.
+                started.Wait(ConverterStartBudget);
                 if (task.Wait(ConverterQueryTimeout))
                 {
                     result = task.GetAwaiter().GetResult();
