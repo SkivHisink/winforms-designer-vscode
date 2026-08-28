@@ -30,7 +30,7 @@ namespace Engine.Net48.UnitTests
         [InlineData(InheritedOwnershipPolicy.Unresolved, false)]
         [InlineData("futureValue", false)]
         [InlineData(null, false)]
-        public void IsEditable_FailsClosedOutsideRootAndCurrentSource(string ownership, bool expected)
+        public void IsEditable_FailsClosedOutsideRootAndCurrentSource(string? ownership, bool expected)
         {
             Assert.Equal(expected, InheritedOwnershipPolicy.IsEditable(ownership));
         }

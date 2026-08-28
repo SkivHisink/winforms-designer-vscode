@@ -120,6 +120,16 @@ namespace WinFormsDesigner.Engine
         public static bool SupportsItemType(string itemTypeName) =>
             !string.IsNullOrWhiteSpace(itemTypeName) && TryResolveItemType(itemTypeName, out _);
 
+        /// <summary>Shared broker/worker gate for a bounded invariant item payload. Every item must be accepted by
+        /// the same expression builder used by the source-first collection writer.</summary>
+        public static bool AreItemsSupported(string itemTypeName, IReadOnlyList<string> items)
+        {
+            if (!TryResolveItemType(itemTypeName, out var spec) || !TryValidateItems(items, out _)) return false;
+            foreach (string item in items)
+                if (!TryBuildItemExpression(spec, item, out _, out _)) return false;
+            return true;
+        }
+
         public static DesignerGenericListItemsResult ListItems(
             string sourceText,
             string ownerId,

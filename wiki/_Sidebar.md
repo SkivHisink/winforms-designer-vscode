@@ -1,6 +1,19 @@
 **WinForms Designer**
 
 - [Home](Home)
+
+**Using the designer**
+
+- [Getting started](Getting-started)
+- [Creating forms and controls](Creating-forms-and-controls)
+- [Designing on the canvas](Designing-on-the-canvas)
+- [Property grid](Property-grid)
+- [Events and code](Events-and-code)
+- [Menus, toolbars and tabs](Menus-toolbars-and-tabs)
+- [Commands and settings](Commands-and-settings)
+
+**How it works**
+
 - [Architecture](Architecture)
 - [Editing model and safety gates](Editing-model-and-safety-gates)
 - [Code generation](Code-generation)

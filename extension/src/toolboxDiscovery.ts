@@ -78,9 +78,278 @@ export interface ProjectBuildOutputRootResult {
   cancelled: boolean;
 }
 
+export type ToolboxProvenanceKind = 'framework' | 'project' | 'choose-items';
+export type TierDToolboxKind = 'registered-activex' | 'unsigned-activex' | 'activex-rollback' | 'com-toolbox';
+export type ToolboxRefusalCode =
+  | 'UNTRUSTED_ASSEMBLY'
+  | 'X86_WORKER_UNAVAILABLE'
+  | 'COM_ACTIVE_X_UNSUPPORTED'
+  | 'TIER_D_NOT_APPROVED';
+
+export interface ToolboxPaletteInputItem {
+  name: string;
+  fqn: string;
+  category?: string;
+  fromProject?: boolean;
+  assemblyPath?: string;
+  iconPng?: string | null;
+  isComponent?: boolean;
+}
+
+export interface ToolboxChooseCandidate {
+  name: string;
+  namespace: string;
+  assemblyName: string;
+  version?: string;
+  directory?: string;
+  fromProject?: boolean;
+  assemblyPath?: string;
+  checked: boolean;
+}
+
+export interface WorkspaceToolboxCuration {
+  chosenItems: ToolboxPaletteInputItem[];
+  hiddenFqns: string[];
+  favoriteFqns: string[];
+}
+
+export interface V2ToolboxPaletteItem extends ToolboxPaletteInputItem {
+  category: string;
+  provenance: {
+    kind: ToolboxProvenanceKind;
+    assemblyName: string;
+    assemblyPath?: string;
+  };
+  favorite: boolean;
+  suppressed: boolean;
+}
+
+export interface V2ToolboxPaletteResult {
+  items: V2ToolboxPaletteItem[];
+  suppressed: V2ToolboxPaletteItem[];
+  curation: WorkspaceToolboxCuration;
+}
+
+export interface ToolboxAssemblyTrustInput {
+  assemblyPath: string;
+  workspaceRoots: readonly string[];
+  allowlistedAssemblyPaths?: readonly string[];
+  workspaceTrusted: boolean;
+  designTimeCodeEnabled: boolean;
+}
+
+export interface ToolboxAssemblyTrustDecision {
+  ok: boolean;
+  reasonCode?: ToolboxRefusalCode;
+  reason: string;
+  normalizedAssemblyPath?: string;
+}
+
+export interface TierDToolboxRefusal {
+  ok: false;
+  reasonCode: ToolboxRefusalCode;
+  reason: string;
+  mutationAllowed: false;
+  generatedFiles: readonly string[];
+}
+
 function normalized(value: string): string {
   const full = path.normalize(value);
   return process.platform === 'win32' ? full.toLowerCase() : full;
+}
+
+function stableFqn(item: ToolboxPaletteInputItem): string {
+  return item.fqn || (item.name ? item.name : '');
+}
+
+function assemblyNameFromPath(value: string | undefined): string {
+  if (!value) return 'System.Windows.Forms';
+  return path.basename(value, path.extname(value));
+}
+
+function dedupeToolboxItems(items: readonly ToolboxPaletteInputItem[]): ToolboxPaletteInputItem[] {
+  const out: ToolboxPaletteInputItem[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const fqn = stableFqn(item);
+    if (!fqn) continue;
+    const key = normalized(fqn);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...item, fqn });
+  }
+  return out;
+}
+
+function emptyCuration(): WorkspaceToolboxCuration {
+  return { chosenItems: [], hiddenFqns: [], favoriteFqns: [] };
+}
+
+/**
+ * Pure v2 toolbox palette merger. It is intentionally separate from VS Code mementos and webview state so scenario
+ * tests can prove provenance, categories, favorites, and suppression without opening the designer.
+ */
+export function buildV2ToolboxPalette(
+  frameworkItems: readonly ToolboxPaletteInputItem[],
+  projectItems: readonly ToolboxPaletteInputItem[],
+  curation: WorkspaceToolboxCuration = emptyCuration()
+): V2ToolboxPaletteResult {
+  const favorite = new Set((curation.favoriteFqns ?? []).map(normalized));
+  const hidden = new Set((curation.hiddenFqns ?? []).map(normalized));
+  const source: Array<{ item: ToolboxPaletteInputItem; kind: ToolboxProvenanceKind }> = [
+    ...dedupeToolboxItems(frameworkItems).map((item) => ({ item, kind: 'framework' as const })),
+    ...dedupeToolboxItems(projectItems).map((item) => ({ item, kind: 'project' as const })),
+    ...dedupeToolboxItems(curation.chosenItems ?? []).map((item) => ({ item, kind: 'choose-items' as const })),
+  ];
+
+  const all: V2ToolboxPaletteItem[] = [];
+  const seen = new Set<string>();
+  for (const entry of source) {
+    const fqn = stableFqn(entry.item);
+    const key = normalized(fqn);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const fromProject = entry.kind !== 'framework' || !!entry.item.fromProject;
+    const assemblyPath = entry.item.assemblyPath;
+    const category = entry.item.category || (fromProject ? 'Project Controls' : 'All Windows Forms');
+    all.push({
+      ...entry.item,
+      fqn,
+      category,
+      fromProject,
+      provenance: {
+        kind: entry.kind,
+        assemblyName: entry.kind === 'framework' ? 'System.Windows.Forms' : assemblyNameFromPath(assemblyPath),
+        ...(assemblyPath ? { assemblyPath: path.resolve(assemblyPath) } : {}),
+      },
+      favorite: favorite.has(key),
+      suppressed: hidden.has(key),
+    });
+  }
+
+  return {
+    items: all.filter((item) => !item.suppressed),
+    suppressed: all.filter((item) => item.suppressed),
+    curation: {
+      chosenItems: dedupeToolboxItems(curation.chosenItems ?? []),
+      hiddenFqns: Array.from(hidden),
+      favoriteFqns: Array.from(favorite),
+    },
+  };
+}
+
+export function applyV2ChooseItems(
+  prior: WorkspaceToolboxCuration,
+  automaticItems: readonly ToolboxPaletteInputItem[],
+  rows: readonly ToolboxChooseCandidate[],
+  targetCategory = 'Project Controls'
+): WorkspaceToolboxCuration {
+  const automatic = new Set(dedupeToolboxItems(automaticItems).map((item) => normalized(stableFqn(item))));
+  const chosen = new Map<string, ToolboxPaletteInputItem>(
+    dedupeToolboxItems(prior.chosenItems ?? []).map((item) => [normalized(stableFqn(item)), item]));
+  const hidden = new Set((prior.hiddenFqns ?? []).map(normalized));
+
+  for (const row of rows) {
+    const fqn = `${row.namespace}.${row.name}`;
+    const key = normalized(fqn);
+    if (row.checked) {
+      hidden.delete(key);
+      if (!automatic.has(key)) {
+        chosen.set(key, {
+          name: row.name,
+          fqn,
+          category: targetCategory || 'Project Controls',
+          fromProject: true,
+          assemblyPath: row.assemblyPath,
+        });
+      }
+    } else {
+      if (automatic.has(key)) hidden.add(key);
+      chosen.delete(key);
+    }
+  }
+
+  return {
+    chosenItems: Array.from(chosen.values()).sort((a, b) => stableFqn(a).localeCompare(stableFqn(b))),
+    hiddenFqns: Array.from(hidden).sort(),
+    favoriteFqns: Array.from(new Set((prior.favoriteFqns ?? []).map(normalized))).sort(),
+  };
+}
+
+function realPathIfExists(value: string): string | undefined {
+  try {
+    const resolved = path.resolve(value);
+    if (!fs.existsSync(resolved)) return undefined;
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return undefined;
+  }
+}
+
+function isSameOrBelow(child: string, parent: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+export function authorizeV2ToolboxAssembly(input: ToolboxAssemblyTrustInput): ToolboxAssemblyTrustDecision {
+  const assemblyPath = realPathIfExists(input.assemblyPath);
+  if (!assemblyPath || !/\.dll$/i.test(assemblyPath)) {
+    return { ok: false, reasonCode: 'UNTRUSTED_ASSEMBLY', reason: 'Toolbox assembly must be an existing .dll.' };
+  }
+
+  const roots = input.workspaceRoots
+    .map(realPathIfExists)
+    .filter((root): root is string => !!root);
+  const allowlisted = (input.allowlistedAssemblyPaths ?? [])
+    .map(realPathIfExists)
+    .filter((allowed): allowed is string => !!allowed);
+  const inWorkspace = roots.some((root) => isSameOrBelow(assemblyPath, root));
+  const allowed = allowlisted.some((allowedPath) => normalized(allowedPath) === normalized(assemblyPath));
+
+  if (!input.workspaceTrusted || !input.designTimeCodeEnabled || (!inWorkspace && !allowed)) {
+    return {
+      ok: false,
+      reasonCode: 'UNTRUSTED_ASSEMBLY',
+      reason: 'Choose Items can scan managed assemblies only from a trusted workspace root or an explicit allowlist.',
+      normalizedAssemblyPath: assemblyPath,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: allowed ? 'assembly is explicitly allowlisted for managed toolbox scanning' : 'assembly is inside a trusted workspace root',
+    normalizedAssemblyPath: assemblyPath,
+  };
+}
+
+export function refuseTierDToolboxRequest(kind: TierDToolboxKind): TierDToolboxRefusal {
+  if (kind === 'registered-activex') {
+    return {
+      ok: false,
+      reasonCode: 'X86_WORKER_UNAVAILABLE',
+      reason: 'v2.0.0 has no x86 worker, so registered 32-bit ActiveX wrapper generation is excluded before mutation.',
+      mutationAllowed: false,
+      generatedFiles: [],
+    };
+  }
+  if (kind === 'com-toolbox') {
+    return {
+      ok: false,
+      reasonCode: 'TIER_D_NOT_APPROVED',
+      reason: 'COM toolbox pages are outside the v2.0.0 GA claim and remain hidden or explicitly excluded.',
+      mutationAllowed: false,
+      generatedFiles: [],
+    };
+  }
+  return {
+    ok: false,
+    reasonCode: 'COM_ACTIVE_X_UNSUPPORTED',
+    reason: kind === 'unsigned-activex'
+      ? 'Unsigned ActiveX controls require the excluded COM/ActiveX route; no wrapper, license, resource, or project file is generated.'
+      : 'ActiveX resource rollback is not attempted because COM/ActiveX generation is excluded from v2.0.0 before any mutation.',
+    mutationAllowed: false,
+    generatedFiles: [],
+  };
 }
 
 /**
@@ -464,4 +733,30 @@ export async function discoverBuildOutputAssemblies(
     truncated,
     cancelled
   };
+}
+
+/** How the palette decides whether to offer .NET Framework-only types. Mirrors `winformsDesigner.toolbox.runtimeFilter`. */
+export type ToolboxRuntimeFilter = 'auto' | 'all' | 'modern' | 'net48';
+
+/**
+ * Drop palette entries that cannot work on the runtime the OPEN FORM uses.
+ *
+ * The framework palette always comes from the modern engine — the net48 engine has no toolbox verb — so it always
+ * contains the .NET Framework binary-compatibility types (DataGrid, ToolBar, StatusBar, MainMenu, ContextMenu,
+ * DataGrid*Column). Those are real, working controls for a `net4x` form, and Visual Studio offers them there; on the
+ * modern route their constructor throws `PlatformNotSupportedException`, so dropping one on a form would leave it
+ * rendering permanently short a control. Which set is correct is therefore a property of the FORM, not of the engine
+ * that happened to enumerate it — and the host already knows it, because every document is routed by its project TFM.
+ *
+ * `auto` follows that routing. `modern` / `net48` pin the answer for a mixed workspace, and `all` shows everything
+ * (useful when authoring a form whose project is not resolvable yet).
+ */
+export function filterToolboxByRuntime<T extends { frameworkOnly?: boolean }>(
+  items: readonly T[],
+  engineKind: 'modern' | 'net48',
+  mode: ToolboxRuntimeFilter = 'auto',
+): T[] {
+  if (mode === 'all') return [...items];
+  const frameworkRoute = mode === 'net48' || (mode === 'auto' && engineKind === 'net48');
+  return frameworkRoute ? [...items] : items.filter((item) => item.frameworkOnly !== true);
 }

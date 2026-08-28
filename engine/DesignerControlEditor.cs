@@ -17,6 +17,10 @@ namespace WinFormsDesigner.Engine
         public string Reason { get; init; } = "";
         public string? NewText { get; init; }
         public string Name { get; init; } = "";
+        /// <summary>For an ApplyResources-backed add, the updated neutral .resx. Null for ordinary source-only adds.</summary>
+        public string? ResxText { get; init; }
+        /// <summary>Resource keys added by an ApplyResources-backed add.</summary>
+        public List<string> ResourceKeys { get; init; } = new();
     }
 
     /// <summary>Result of <see cref="DesignerControlEditor.RemoveControl"/>: the new .Designer.cs text with a
@@ -69,6 +73,16 @@ namespace WinFormsDesigner.Engine
         public string? NewText { get; init; }
     }
 
+    /// <summary>Read-side result for the typed <c>TabControl.TabPages</c> collection editor. <see cref="Pages"/>
+    /// contains the field-backed page ids in canonical source execution order. <see cref="Ok"/> is false when the
+    /// collection is ambiguous, so the UI presents it as read-only instead of risking a lossy reorder.</summary>
+    public sealed class TabPageItemsResult
+    {
+        public bool Ok { get; init; }
+        public string Reason { get; init; } = "";
+        public List<string> Pages { get; init; } = new();
+    }
+
     /// <summary>One toolbox-eligible control type surfaced to the palette (auto-population): its short
     /// key (used as the AddControl <c>controlTypeKey</c>), assembly-qualified-ish full name (display/grouping
     /// only — never trusted to reach <c>new</c>; AddControl re-resolves the key against the enumerated set),
@@ -83,6 +97,16 @@ namespace WinFormsDesigner.Engine
         /// null when none is embedded / extraction failed. Sourced from the type's own <c>[ToolboxBitmap]</c>
         /// (the framework's shipped icon for that control) — no external asset. Display only.</summary>
         public string? IconPng { get; init; }
+        /// <summary>
+        /// True for a type that only works on .NET Framework: it is present in the modern reference assembly (so the
+        /// generated line compiles) but its constructor throws <see cref="PlatformNotSupportedException"/> on .NET
+        /// Core and later — DataGrid, ToolBar, StatusBar, MainMenu, ContextMenu and the DataGrid*Column pair.
+        /// <para/>
+        /// Listing them is correct for a <c>net4x</c> project, where they are real controls and Visual Studio offers
+        /// them; offering them on the modern route is a trap that renders the form permanently short a control. The
+        /// palette therefore reports the flag and lets the host filter by the runtime the open form actually uses.
+        /// </summary>
+        public bool FrameworkOnly { get; init; }
         /// <summary>True for a NON-visual component (Timer/ToolTip/ErrorProvider/dialogs…) — added via AddComponent
         /// (a bare <c>new T()</c> that lands in the component tray) rather than AddControl (which also emits
         /// Location/Size/Controls.Add). Lets the palette route the add to the right safe-save path.</summary>
@@ -197,10 +221,54 @@ namespace WinFormsDesigner.Engine
             // Data / Printing
             ["DataGridView"] = "Data",
             ["BindingNavigator"] = "Data",
+            // Visual Studio does not file these by shape: NotifyIcon and ToolTip are Common Controls even though they
+            // are tray components, BindingSource is Data, and the print dialogs are Printing rather than Dialogs.
+            ["NotifyIcon"] = "Common Controls",
+            ["ToolTip"] = "Common Controls",
+            ["BindingSource"] = "Data",
+            ["PageSetupDialog"] = "Printing",
+            ["PrintDialog"] = "Printing",
             ["PrintPreviewControl"] = "Printing",
         };
 
         private static string CategoryFor(string name) => Category.TryGetValue(name, out var c) ? c : DefaultCategory;
+
+        /// <summary>
+        /// Toolbox components that <see cref="DiscoverComponents"/> cannot reach by reflecting System.Windows.Forms:
+        /// they live in a sibling assembly, or the Control/Form guard excludes them. Mirrors the Visual Studio
+        /// Components / Printing / Data tabs.
+        /// <para/>
+        /// Curated rather than discovered on purpose. Scanning every loaded assembly would offer types the user's
+        /// project cannot compile against — the same class of trap as the binary-compatibility shims — and Visual
+        /// Studio's own list is curated too. Every entry here was verified to compile in a bare
+        /// <c>UseWindowsForms</c> project on BOTH <c>net10.0-windows</c> and <c>net48</c>, and to construct on the
+        /// engine's runtime.
+        /// <para/>
+        /// Deliberately absent: <c>DirectoryEntry</c> and <c>DirectorySearcher</c>. They compile on modern .NET but
+        /// need an explicit <c>System.DirectoryServices</c> reference on <c>net48</c>, which the designer does not
+        /// add — offering them would emit source a classic project cannot build.
+        /// </summary>
+        private static readonly (string TypeName, string Assembly, string Category)[] ExternalComponents =
+        {
+            // Excluded by the Form guard in IsEligibleToolboxControl, yet marked [ToolboxItem(true)] by the framework
+            // and hosted in the tray by Visual Studio.
+            ("System.Windows.Forms.PrintPreviewDialog", "System.Windows.Forms", "Printing"),
+            ("System.Drawing.Printing.PrintDocument", "System.Drawing.Common", "Printing"),
+            ("System.ComponentModel.BackgroundWorker", "System.ComponentModel.EventBasedAsync", "Components"),
+            ("System.IO.FileSystemWatcher", "System.IO.FileSystem.Watcher", "Components"),
+            ("System.Diagnostics.Process", "System.Diagnostics.Process", "Components"),
+            ("System.Diagnostics.EventLog", "System.Diagnostics.EventLog", "Components"),
+            ("System.Diagnostics.PerformanceCounter", "System.Diagnostics.PerformanceCounter", "Components"),
+            ("System.Data.DataSet", "System.Data.Common", "Data"),
+        };
+
+        /// <summary>Resolve a curated external component, or null when its assembly is not loadable here. Absence
+        /// degrades to "not offered" rather than throwing: the palette must survive a trimmed or unusual runtime.</summary>
+        private static Type? ResolveExternalComponent(string typeName, string assembly)
+        {
+            try { return Type.GetType(typeName + ", " + assembly, throwOnError: false) ?? Type.GetType(typeName, throwOnError: false); }
+            catch { return null; }
+        }
 
         // Lazily-discovered, process-stable framework toolbox controls (strings only — never live Type objects,
         // per reload-safety; the set is re-derivable and AddControl re-resolves the key against it).
@@ -219,7 +287,7 @@ namespace WinFormsDesigner.Engine
             foreach (var t in types)
             {
                 if (t == null || !IsEligibleToolboxControl(t)) continue;
-                list.Add(new ToolboxItemInfo { Name = t.Name, Fqn = t.FullName!, Category = CategoryFor(t.Name), FromProject = false, IconPng = ToolboxIconPng(t) });
+                list.Add(new ToolboxItemInfo { Name = t.Name, Fqn = t.FullName!, Category = CategoryFor(t.Name), FromProject = false, IconPng = ToolboxIconPng(t), FrameworkOnly = IsBinaryCompatShim(t) });
             }
             // dedup with the SAME comparer ResolveSpec matches with (OrdinalIgnoreCase) so resolution is
             // deterministic even if the framework ever ships two control types differing only in case.
@@ -289,16 +357,41 @@ namespace WinFormsDesigner.Engine
             {
                 if (t == null || !IsEligibleToolboxComponent(t)) continue;
                 bool isDialog = typeof(System.Windows.Forms.CommonDialog).IsAssignableFrom(t);
+                bool isMenu = typeof(System.Windows.Forms.ToolStripDropDown).IsAssignableFrom(t);
+                // The shape-derived tab is only a fallback: an explicit entry in the Category map wins, because
+                // Visual Studio does not group purely by shape (NotifyIcon and ToolTip sit in Common Controls,
+                // BindingSource in Data, the print dialogs in Printing rather than Dialogs). Tray-hosted menus land
+                // beside MenuStrip/ToolStrip.
+                string category = Category.TryGetValue(t.Name, out var mapped) ? mapped
+                    : isDialog ? "Dialogs" : isMenu ? "Menus & Toolbars" : "Components";
                 list.Add(new ToolboxItemInfo
                 {
                     Name = t.Name,
                     Fqn = t.FullName!,
-                    Category = isDialog ? "Dialogs" : "Components",
+                    Category = category,
                     FromProject = false,
                     IconPng = ToolboxIconPng(t),
+                    FrameworkOnly = IsBinaryCompatShim(t),
                     IsComponent = true,
                 });
             }
+            foreach (var (typeName, assembly, category) in ExternalComponents)
+            {
+                var external = ResolveExternalComponent(typeName, assembly);
+                if (external == null) continue; // assembly not available here — offer nothing rather than guess
+                if (external.GetConstructor(Type.EmptyTypes) == null) continue;
+                if (!typeof(System.ComponentModel.IComponent).IsAssignableFrom(external)) continue;
+                list.Add(new ToolboxItemInfo
+                {
+                    Name = external.Name,
+                    Fqn = external.FullName!,
+                    Category = category,
+                    FromProject = false,
+                    IconPng = ToolboxIconPng(external),
+                    IsComponent = true,
+                });
+            }
+
             _components = list.GroupBy(i => i.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
                               .OrderBy(i => i.Name, StringComparer.Ordinal).ToList();
             return _components;
@@ -311,7 +404,13 @@ namespace WinFormsDesigner.Engine
         {
             if (!t.IsPublic || !t.IsClass || t.IsAbstract || t.IsGenericTypeDefinition || t.IsNested) return false;
             if (!typeof(System.ComponentModel.IComponent).IsAssignableFrom(t)) return false;
-            if (typeof(System.Windows.Forms.Control).IsAssignableFrom(t)) return false; // visual controls go the AddControl path
+            // Visual controls go the AddControl path — EXCEPT the ToolStripDropDown menus. ContextMenuStrip is a
+            // Control by inheritance but is never parented, which is exactly why IsEligibleToolboxControl drops it;
+            // without this exemption it falls between the two filters and cannot be created at all, even though the
+            // designer already renders and edits one. Visual Studio offers it and hosts it in the component tray —
+            // which is precisely what AddComponent's bare `new T()` produces.
+            if (typeof(System.Windows.Forms.Control).IsAssignableFrom(t)
+                && !typeof(System.Windows.Forms.ToolStripDropDown).IsAssignableFrom(t)) return false;
             // collection sub-items belong to a parent's collection editor (ToolStrip.Items, DataGridView.Columns), NOT
             // the form/tray — they aren't standalone toolbox components, so drop them.
             if (typeof(System.Windows.Forms.ToolStripItem).IsAssignableFrom(t)) return false;
@@ -472,7 +571,39 @@ namespace WinFormsDesigner.Engine
         /// reflection filter) but VS never lists in the toolbox. The DataGridView*EditingControl helpers are
         /// excluded by name suffix instead.</summary>
         private static readonly HashSet<string> BaseClassDenylist = new(StringComparer.Ordinal)
-        { "Control", "ContainerControl", "ScrollableControl", "UserControl" };
+        { "Control", "ContainerControl", "ScrollableControl", "UserControl",
+          // The two bases under ContextMenuStrip. Once the tray path admits ToolStripDropDown-derived menus these
+          // become public+concrete+constructible and slip through, but VS lists only ContextMenuStrip.
+          "ToolStripDropDown", "ToolStripDropDownMenu" };
+
+        /// <summary>
+        /// True for a .NET Framework binary-compatibility shim — a type Microsoft kept public in
+        /// <c>System.Windows.Forms</c> purely so old assemblies still load, whose constructor throws
+        /// <see cref="PlatformNotSupportedException"/> on .NET Core and later. DataGrid, ToolBar, StatusBar,
+        /// MainMenu, ContextMenu and the DataGrid*Column pair are all of this shape.
+        /// <para/>
+        /// They pass every other toolbox gate — public, concrete, parameterless ctor, present in the reference
+        /// assembly so the generated line even compiles — and are marked only <c>[Obsolete]</c>, never
+        /// <c>[ToolboxItem(false)]</c>. Offering one is a trap: the emitted <c>new DataGrid()</c> throws at
+        /// interpret time, the control never enters the graph, and the form renders permanently short a control.
+        /// Visual Studio does not list them for a .NET project either, so excluding them is parity, not a loss.
+        /// <para/>
+        /// Keyed off the framework's own uniform wording rather than a name list, so a shim added later is caught
+        /// without an edit here.
+        /// </summary>
+        private static bool IsBinaryCompatShim(Type t)
+        {
+            foreach (var a in t.GetCustomAttributesData())
+            {
+                if (a.AttributeType.Name != "ObsoleteAttribute") continue;
+                foreach (var arg in a.ConstructorArguments)
+                {
+                    if (arg.Value is string m
+                        && m.IndexOf("binary compatibility", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                }
+            }
+            return false;
+        }
 
         /// <summary>True when the type carries <c>[ToolboxItem(false)]</c>. Read via CustomAttributeData so we
         /// don't depend on which assembly defines ToolboxItemAttribute, and only the bool-ctor form disables.</summary>
@@ -533,15 +664,13 @@ namespace WinFormsDesigner.Engine
         /// moment Visual Studio writes it. Ignored unless it matches the exact literal shape.</param>
         public static ControlAddResult AddControl(string src, string parentId, string controlTypeKey,
             IReadOnlyList<ToolboxItemInfo>? projectControls = null, int? locX = null, int? locY = null,
-            string? autoScaleDimensions = null)
+            string? autoScaleDimensions = null, int? width = null, int? height = null)
         {
             var spec = ResolveSpec(controlTypeKey, projectControls);
             if (spec == null)
                 return new ControlAddResult { Safe = false, Reason = "unknown control type: " + controlTypeKey };
 
             bool parentRoot = parentId is "this" or "";
-            if (!parentRoot && !IsValidIdentifier(parentId))
-                return new ControlAddResult { Safe = false, Reason = "invalid parent id: " + parentId };
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
             var cls = FindClassWithIC(root);
@@ -550,13 +679,20 @@ namespace WinFormsDesigner.Engine
                 return new ControlAddResult { Safe = false, Reason = "InitializeComponent not found" };
 
             var names = GatherFieldNames(cls);
-            if (!parentRoot && !names.Contains(parentId))
-                return new ControlAddResult { Safe = false, Reason = "unknown parent: " + parentId };
+            if (!TryResolveReparentTarget(cls, names, parentId, out string addReceiver,
+                    out var parentChain, out string parentReason))
+                return new ControlAddResult { Safe = false, Reason = parentReason };
+            // InitLayout groups statements by the owning FIELD. A SplitterPanel is a stable synthetic path rather
+            // than a field, so its property/add block belongs to the SplitContainer field's block.
+            string layoutOwnerId = parentChain.Count > 0 ? parentChain[0] : parentId;
 
             string baseName = VsBaseName(spec.Fqn);
             string name = UniqueName(baseName, names);
             if (!IsValidIdentifier(name))
                 return new ControlAddResult { Safe = false, Reason = "could not generate a valid control name" };
+            if (!TryValidateRequestedSize(width, height, out int requestedWidth, out int requestedHeight, out string sizeReason))
+                return new ControlAddResult { Safe = false, Name = name, Reason = sizeReason };
+            bool hasRequestedSize = requestedWidth > 0 && requestedHeight > 0;
 
             int childCount = CountAddTo(init, parentId, parentRoot);
             int off = (childCount % 10) * 8;
@@ -566,7 +702,6 @@ namespace WinFormsDesigner.Engine
 
             string nl = src.Contains("\r\n") ? "\r\n" : "\n";
             string indent = BodyIndent(src, init);
-            string addTarget = parentRoot ? "this" : "this." + parentId;
 
             // Emit into Visual Studio's own shape: constructors as one leading run, then a commented property block
             // per component (children before their parent), then the parent's block carrying Controls.Add — newest
@@ -577,20 +712,22 @@ namespace WinFormsDesigner.Engine
             P("// " + name);
             P("// ");
             bool autoSize = AutoSizedByDesigner(spec.Fqn);
-            if (autoSize) P($"this.{name}.AutoSize = true;");
+            if (autoSize) P($"this.{name}.AutoSize = {(hasRequestedSize ? "false" : "true")};");
             P($"this.{name}.Location = new System.Drawing.Point({x}, {y});");
             P($"this.{name}.Name = \"{name}\";");
-            if (spec.W > 0 && spec.H > 0) P($"this.{name}.Size = new System.Drawing.Size({spec.W}, {spec.H});");
+            int emitWidth = hasRequestedSize ? requestedWidth : spec.W;
+            int emitHeight = hasRequestedSize ? requestedHeight : spec.H;
+            if (emitWidth > 0 && emitHeight > 0) P($"this.{name}.Size = new System.Drawing.Size({emitWidth}, {emitHeight});");
             P($"this.{name}.TabIndex = {childCount};");
             if (spec.SetText) P($"this.{name}.Text = \"{name}\";");
             if (HasVisualStyleBackColor(spec.Fqn)) P($"this.{name}.UseVisualStyleBackColor = true;");
 
-            var layout = InitLayout(src, init, cls, names, parentId, parentRoot);
+            var layout = InitLayout(src, init, cls, names, layoutOwnerId, parentRoot);
             var inserts = new List<(int Pos, int Seq, string Text)>
             {
                 (layout.CtorPos, 0, indent + $"this.{name} = new {spec.Fqn}();" + nl),
                 (layout.PropertiesPos, 2, properties.ToString()),
-                (layout.AddPos, 3, indent + $"{addTarget}.Controls.Add(this.{name});" + nl),
+                (layout.AddPos, 3, indent + $"{addReceiver}.Add(this.{name});" + nl),
             };
             // A form that has never carried a control yet (this extension's own Add → Form output) gains the layout
             // scaffold and the form's own block header on this first drop, exactly as Visual Studio would write it.
@@ -609,7 +746,7 @@ namespace WinFormsDesigner.Engine
             }
             // ResumeLayout(false) performs no layout pass, so Visual Studio follows it with PerformLayout() as soon
             // as the form holds a control that sizes itself. Added once, whenever the first such control arrives.
-            if (autoSize && !init.Body.Statements.Any(st => IsLayoutCall(st) && st.ToString().Contains("PerformLayout")))
+            if (autoSize && !hasRequestedSize && !init.Body.Statements.Any(st => IsLayoutCall(st) && st.ToString().Contains("PerformLayout")))
             {
                 extras.Add("this.PerformLayout();");
                 inserts.Add((layout.ResumePos, 8, indent + "this.PerformLayout();" + nl));
@@ -831,6 +968,12 @@ namespace WinFormsDesigner.Engine
                     bool argHasId = inv.ArgumentList.Arguments.Any(a => ReferencesThisId(a.Expression, id));
                     if (argHasId)
                     {
+                        // Visual Studio's Localizable=true shape owns this statement exactly as it owns direct
+                        // this.<id>.Property assignments. Keep the exception deliberately narrow: the canonical local
+                        // ComponentResourceManager variable, this exact component as arg0, and the exact identity key
+                        // as arg1. Any extender/vendor/arbitrary invocation that merely receives the control remains a
+                        // dangling-reference refusal below.
+                        if (IsCanonicalApplyResourcesFor(inv, ma, id)) return true;
                         bool isParenting = method == "Add" && inv.ArgumentList.Arguments.Count == 1
                             && receiver.Count >= 1 && receiver[receiver.Count - 1] == "Controls"
                             && Flatten(inv.ArgumentList.Arguments[0].Expression) is { Count: 1 } ac && ac[0] == id;
@@ -1034,7 +1177,8 @@ namespace WinFormsDesigner.Engine
 
             var mine = pages[index].PageExpression;
             var other = pages[adjacent].PageExpression;
-            if (HasCommentTrivia(mine) || HasCommentTrivia(other))
+            if (HasUnsafeTabAttachmentComment(pages[index].Statement, hostId)
+                || HasUnsafeTabAttachmentComment(pages[adjacent].Statement, hostId))
                 return new ControlReorderResult { Safe = false, Reason = "tab attachment has a comment on the page expression — reformat first" };
 
             string mineText = src.Substring(mine.SpanStart, mine.Span.Length);
@@ -1053,6 +1197,86 @@ namespace WinFormsDesigner.Engine
             bool gateOk = parseOk && OnlyTabPageMoved(src, text, hostId, pageId, left);
             if (!parseOk || !gateOk)
                 return new ControlReorderResult { Safe = false, Reason = !parseOk ? "reordered text has syntax errors" : "edit changed more than the adjacent tab order" };
+            return new ControlReorderResult { Safe = true, NewText = text };
+        }
+
+        /// <summary>Read the complete field-backed page order for the VS-style <c>TabPages</c> collection editor.
+        /// This uses the same canonical Add/AddRange parser and ambiguity gates as <see cref="MoveTabPage"/>.</summary>
+        public static TabPageItemsResult ListTabPages(string src, string hostId)
+        {
+            if (!IsValidIdentifier(hostId))
+                return new TabPageItemsResult { Ok = false, Reason = "invalid tab host id: " + hostId };
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = FindClassWithIC(root);
+            if (cls == null || FormClassResolver.InitMethodOf(cls)?.Body == null)
+                return new TabPageItemsResult { Ok = false, Reason = "InitializeComponent not found" };
+            if (!GatherFieldNames(cls).Contains(hostId))
+                return new TabPageItemsResult { Ok = false, Reason = "unknown tab host: " + hostId };
+            if (!TryCollectTabAttachments(root, hostId, out var pages, out _, out _, out string? why))
+                return new TabPageItemsResult { Ok = false, Reason = why ?? "tab attachment order is not safely representable" };
+            if (pages.Select(p => p.PageId).Distinct(StringComparer.Ordinal).Count() != pages.Count)
+                return new TabPageItemsResult { Ok = false, Reason = "tab collection contains a duplicate page attachment" };
+            if (pages.Any(p => HasUnsafeTabAttachmentComment(p.Statement, hostId)))
+                return new TabPageItemsResult { Ok = false, Reason = "tab attachment has a comment on a page expression - reformat first" };
+            return new TabPageItemsResult { Ok = true, Pages = pages.Select(p => p.PageId).ToList() };
+        }
+
+        /// <summary>Atomically reorder the complete <c>TabPages</c> collection to <paramref name="desiredOrder"/>.
+        /// The requested ids must be an exact permutation of the current field-backed pages. Only page-reference
+        /// expressions inside the existing Add/AddRange statements are rewritten; statement shape, trivia, fields,
+        /// page initialization, properties, and every non-tab statement remain unchanged. One host commit therefore
+        /// produces one native undo unit even when a page crosses several positions.</summary>
+        public static ControlReorderResult SetTabPageOrder(string src, string hostId, IReadOnlyList<string> desiredOrder)
+        {
+            if (!IsValidIdentifier(hostId))
+                return new ControlReorderResult { Safe = false, Reason = "invalid tab host id: " + hostId };
+            if (desiredOrder == null)
+                return new ControlReorderResult { Safe = false, Reason = "tab page order is missing" };
+            if (desiredOrder.Any(id => !IsValidIdentifier(id)))
+                return new ControlReorderResult { Safe = false, Reason = "tab page order contains an invalid field id" };
+            if (desiredOrder.Distinct(StringComparer.Ordinal).Count() != desiredOrder.Count)
+                return new ControlReorderResult { Safe = false, Reason = "tab page order contains a duplicate page" };
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = FindClassWithIC(root);
+            if (cls == null || FormClassResolver.InitMethodOf(cls)?.Body == null)
+                return new ControlReorderResult { Safe = false, Reason = "InitializeComponent not found" };
+            var names = GatherFieldNames(cls);
+            if (!names.Contains(hostId))
+                return new ControlReorderResult { Safe = false, Reason = "unknown tab host: " + hostId };
+            if (!TryCollectTabAttachments(root, hostId, out var pages, out _, out _, out string? why))
+                return new ControlReorderResult { Safe = false, Reason = why ?? "tab attachment order is not safely representable" };
+            if (pages.Select(p => p.PageId).Distinct(StringComparer.Ordinal).Count() != pages.Count)
+                return new ControlReorderResult { Safe = false, Reason = "tab collection contains a duplicate page attachment" };
+
+            var currentOrder = pages.Select(p => p.PageId).ToList();
+            if (currentOrder.Count != desiredOrder.Count
+                || !new HashSet<string>(currentOrder, StringComparer.Ordinal).SetEquals(desiredOrder))
+                return new ControlReorderResult { Safe = false, Reason = "requested tab page order is not an exact permutation of the current collection" };
+            if (currentOrder.SequenceEqual(desiredOrder, StringComparer.Ordinal))
+                return new ControlReorderResult { Safe = true, NewText = src };
+            if (pages.Any(p => HasUnsafeTabAttachmentComment(p.Statement, hostId)))
+                return new ControlReorderResult { Safe = false, Reason = "tab attachment has a comment on a page expression - reformat first" };
+
+            var edits = new List<(int start, int end, string replacement)>();
+            for (int i = 0; i < pages.Count; i++)
+            {
+                if (pages[i].PageId == desiredOrder[i]) continue;
+                string replacement = pages[i].PageExpression is MemberAccessExpressionSyntax
+                    ? "this." + desiredOrder[i]
+                    : desiredOrder[i];
+                edits.Add((pages[i].PageExpression.SpanStart, pages[i].PageExpression.Span.End, replacement));
+            }
+            edits.Sort((a, b) => b.start.CompareTo(a.start));
+            string text = src;
+            foreach (var edit in edits)
+                text = text.Substring(0, edit.start) + edit.replacement + text.Substring(edit.end);
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(text).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool gateOk = parseOk && OnlyTabPageOrderChanged(src, text, hostId, desiredOrder);
+            if (!parseOk || !gateOk)
+                return new ControlReorderResult { Safe = false, Reason = !parseOk ? "reordered text has syntax errors" : "edit changed more than the requested tab order" };
             return new ControlReorderResult { Safe = true, NewText = text };
         }
 
@@ -1162,11 +1386,33 @@ namespace WinFormsDesigner.Engine
             return NormalizeStmt(replaced.ToString());
         }
 
-        private static bool HasCommentTrivia(SyntaxNode node) => node.DescendantTrivia(descendIntoTrivia: true).Any(t =>
-            t.IsKind(SyntaxKind.SingleLineCommentTrivia)
-            || t.IsKind(SyntaxKind.MultiLineCommentTrivia)
-            || t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
-            || t.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia));
+        /// <summary>Reject comments whose meaning could move to a different page when only the page expression is
+        /// rewritten. The WinForms serializer's canonical three-line section banner belongs to the host control,
+        /// not to the first attached page, so it is safe to retain verbatim.</summary>
+        private static bool HasUnsafeTabAttachmentComment(StatementSyntax statement, string hostId)
+        {
+            if (HasCommentTrivia(statement.WithoutLeadingTrivia())) return true;
+
+            var leadingComments = statement.GetLeadingTrivia().Where(IsCommentTrivia).ToList();
+            if (leadingComments.Count == 0) return false;
+            if (leadingComments.Count != 3
+                || leadingComments.Any(t => !t.IsKind(SyntaxKind.SingleLineCommentTrivia))) return true;
+
+            return leadingComments[0].ToString().Trim() != "//"
+                || leadingComments[1].ToString().Trim() != "// " + hostId
+                || leadingComments[2].ToString().Trim() != "//";
+        }
+
+        private static bool HasCommentTrivia(SyntaxNode node) => node.GetLeadingTrivia()
+            .Concat(node.GetTrailingTrivia())
+            .Concat(node.DescendantTrivia(descendIntoTrivia: true))
+            .Any(IsCommentTrivia);
+
+        private static bool IsCommentTrivia(SyntaxTrivia trivia) =>
+            trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)
+            || trivia.IsKind(SyntaxKind.MultiLineCommentTrivia)
+            || trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
+            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia);
 
         /// <summary>Independent safety gate for a one-step tab move: non-tab statements, tab attachment shapes,
         /// fields, and class member count must be unchanged; the host's flattened page sequence must be exactly the
@@ -1189,6 +1435,26 @@ namespace WinFormsDesigner.Engine
             if (index < 0 || adjacent < 0 || adjacent >= before.Count) return false;
             (before[index], before[adjacent]) = (before[adjacent], before[index]);
             return before.SequenceEqual(after, StringComparer.Ordinal);
+        }
+
+        /// <summary>Independent safety gate for an atomic collection reorder: non-tab statements, attachment shapes,
+        /// fields, and class member count are unchanged; the final page sequence is the requested exact permutation.</summary>
+        public static bool OnlyTabPageOrderChanged(string original, string edited, string hostId, IReadOnlyList<string> desiredOrder)
+        {
+            var oRoot = CSharpSyntaxTree.ParseText(original).GetRoot();
+            var eRoot = CSharpSyntaxTree.ParseText(edited).GetRoot();
+            if (!TryCollectTabAttachments(oRoot, hostId, out var oPages, out var oNon, out var oShapes, out _)
+                || !TryCollectTabAttachments(eRoot, hostId, out var ePages, out var eNon, out var eShapes, out _)) return false;
+            if (!oNon.SequenceEqual(eNon, StringComparer.Ordinal) || !oShapes.SequenceEqual(eShapes, StringComparer.Ordinal)) return false;
+            if (ClassMemberCount(oRoot) != ClassMemberCount(eRoot)) return false;
+            if (!MultisetEqual(FieldDeclNames(oRoot), FieldDeclNames(eRoot))) return false;
+
+            var before = oPages.Select(p => p.PageId).ToList();
+            var after = ePages.Select(p => p.PageId).ToList();
+            if (before.Count != desiredOrder.Count || after.Count != desiredOrder.Count) return false;
+            if (before.Distinct(StringComparer.Ordinal).Count() != before.Count) return false;
+            if (!new HashSet<string>(before, StringComparer.Ordinal).SetEquals(desiredOrder)) return false;
+            return after.SequenceEqual(desiredOrder, StringComparer.Ordinal);
         }
 
         /// <summary>True when <paramref name="st"/> is <c>this.&lt;host&gt;.(Controls|TabPages).Add(this.&lt;page&gt;)</c>
@@ -1541,6 +1807,7 @@ namespace WinFormsDesigner.Engine
         /// <summary>How far a pasted control is nudged from the original so it doesn't perfectly overlap (VS does
         /// the same). Only applied to a representable integer Location.</summary>
         private const int PasteOffset = 8;
+        private const int MaximumPasteOffset = 100000;
 
         /// <summary>
         /// Paste a clipboard blob (from <see cref="CopyControl"/>) into <paramref name="parentId"/> ("this" = root):
@@ -1549,6 +1816,19 @@ namespace WinFormsDesigner.Engine
         /// the target. Same safe-save <see cref="OnlyControlAdded"/> gate as AddControl (only the new control was added).
         /// </summary>
         public static ControlPasteResult PasteControl(string src, string clipJson, string parentId)
+            => PasteControlCore(src, clipJson, parentId, PasteOffset, PasteOffset);
+
+        /// <summary>Paste a clone at an exact offset from the copied Location. Used by Ctrl+drag so the
+        /// committed clone lands at the previewed coordinates without a second, drift-prone source edit.</summary>
+        public static ControlPasteResult PasteControlAtOffset(string src, string clipJson, string parentId, int offsetX, int offsetY)
+        {
+            if (offsetX < -MaximumPasteOffset || offsetX > MaximumPasteOffset
+                || offsetY < -MaximumPasteOffset || offsetY > MaximumPasteOffset)
+                return new ControlPasteResult { Safe = false, Reason = "paste offset is outside the supported range" };
+            return PasteControlCore(src, clipJson, parentId, offsetX, offsetY);
+        }
+
+        private static ControlPasteResult PasteControlCore(string src, string clipJson, string parentId, int offsetX, int offsetY)
         {
             ClipData? clip;
             try { clip = System.Text.Json.JsonSerializer.Deserialize<ClipData>(clipJson); }
@@ -1622,7 +1902,7 @@ namespace WinFormsDesigner.Engine
                 // assignment/layout-call on the control with designer-representable values (this is the second line of
                 // defense against a crafted clip injecting a side-effecting RHS), then rename the receiver on the tree
                 // (string literals untouched), sync Name, and offset Location.
-                string? processed = ProcessPastedStatement(raw, clip.Name, newName, clip.Fqn, dependencyTypes);
+                string? processed = ProcessPastedStatement(raw, clip.Name, newName, clip.Fqn, dependencyTypes, offsetX, offsetY);
                 if (processed == null) return new ControlPasteResult { Safe = false, Reason = "clipboard contains an unsupported statement" };
                 S(processed);
             }
@@ -1641,7 +1921,7 @@ namespace WinFormsDesigner.Engine
                 return new ControlPasteResult { Safe = false, Name = newName, Reason = !parseOk ? "pasted text has syntax errors" : "paste changed more than the new control" };
             // Surface the clone's type + nudged Location so the net48 compiled-preview host can live-instantiate it
             // (the text splice above is enough for the net9 renderer, but the compiled instance is mutated directly).
-            (int px, int py) = PastedLocation(clip.Statements);
+            (int px, int py) = PastedLocation(clip.Statements, offsetX, offsetY);
             return new ControlPasteResult { Safe = true, Name = newName, NewText = finalText, TypeName = clip.Fqn, X = px, Y = py };
         }
 
@@ -1649,7 +1929,7 @@ namespace WinFormsDesigner.Engine
         /// <see cref="PasteOffset"/> nudge <see cref="ProcessPastedStatement"/> emits, so the net48 host places the
         /// live clone where the pasted text puts it. Returns (-1,-1) when there is no representable Location
         /// (the net48 AddControl then leaves the control at its default position).</summary>
-        private static (int, int) PastedLocation(List<string> statements)
+        private static (int, int) PastedLocation(List<string> statements, int offsetX, int offsetY)
         {
             foreach (var raw in statements)
             {
@@ -1659,7 +1939,7 @@ namespace WinFormsDesigner.Engine
                     && asg.Right is ObjectCreationExpressionSyntax oce && oce.ArgumentList?.Arguments.Count == 2
                     && TryConstInt(oce.ArgumentList.Arguments[0].Expression, out int x)
                     && TryConstInt(oce.ArgumentList.Arguments[1].Expression, out int y))
-                    return (Math.Max(0, x + PasteOffset), Math.Max(0, y + PasteOffset));
+                    return (Math.Max(0, x + offsetX), Math.Max(0, y + offsetY));
             }
             return (-1, -1);
         }
@@ -1672,7 +1952,7 @@ namespace WinFormsDesigner.Engine
         /// name, and an
         /// integer <c>Location</c> is nudged by <see cref="PasteOffset"/>.</summary>
         private static string? ProcessPastedStatement(string rawStmt, string oldId, string newName, string fqn,
-            IReadOnlyDictionary<string, string> dependencyTypes)
+            IReadOnlyDictionary<string, string> dependencyTypes, int offsetX, int offsetY)
         {
             var parsed = SyntaxFactory.ParseStatement(rawStmt);
             if (parsed.ContainsDiagnostics || parsed is not ExpressionStatementSyntax es) return null;
@@ -1690,7 +1970,7 @@ namespace WinFormsDesigner.Engine
                 else if (member == "Location" && asg.Right is ObjectCreationExpressionSyntax oce && oce.ArgumentList?.Arguments.Count == 2
                     && TryConstInt(oce.ArgumentList.Arguments[0].Expression, out int x) && TryConstInt(oce.ArgumentList.Arguments[1].Expression, out int y))
                 {
-                    var pt = SyntaxFactory.ParseExpression($"new {oce.Type}({Math.Max(0, x + PasteOffset)}, {Math.Max(0, y + PasteOffset)})").WithTriviaFrom(oce);
+                    var pt = SyntaxFactory.ParseExpression($"new {oce.Type}({Math.Max(0, x + offsetX)}, {Math.Max(0, y + offsetY)})").WithTriviaFrom(oce);
                     renamed = renamed.ReplaceNode(oce, pt);
                 }
             }
@@ -1983,20 +2263,22 @@ namespace WinFormsDesigner.Engine
         // ---- reparent (move a control into a different container / the root) ----
 
         /// <summary>
-        /// Reparent a LEAF control into a different container (or the root form). Rewrites ONLY the receiver of the
-        /// child's single 1-arg <c>&lt;oldParent&gt;.Controls.Add(this.&lt;child&gt;)</c> to
-        /// <c>&lt;newParent&gt;.Controls.Add(...)</c> (newParent "this"/"" = root). A minimal, byte-local text edit — the
-        /// child keeps its Location value (now interpreted relative to the new parent). Refuses the root, a child sitting
+        /// Reparent a LEAF control into a different container (or the root form). Rewrites the receiver of the child's
+        /// single 1-arg <c>&lt;oldParent&gt;.Controls.Add(this.&lt;child&gt;)</c> to
+        /// <c>&lt;newParent&gt;.Controls.Add(...)</c> (newParent "this"/"" = root). When the drag planner supplies
+        /// <paramref name="locX"/>/<paramref name="locY"/>, the child's canonical Location assignment is rewritten in
+        /// the same source transaction to the already-converted parent-relative point. Refuses the root, a child sitting
         /// in a TableLayoutPanel cell (3-arg Add — reparent via the grid), a container WITH children (leaf-only v1, so
         /// no parent cycle is possible), a missing/self new parent, or a no-op (already there). The edit is verified by
-        /// <see cref="OnlyReparented"/> (only that one Add's parent changed).
+        /// <see cref="OnlyReparented"/> (only that one Add's parent and, optionally, Location changed).
         /// </summary>
-        public static ControlReorderResult Reparent(string src, string childId, string newParentId)
+        public static ControlReorderResult Reparent(string src, string childId, string newParentId, int? locX = null, int? locY = null)
         {
             if (childId is "this" or "") return new ControlReorderResult { Safe = false, Reason = "cannot reparent the root form" };
             if (!IsValidIdentifier(childId)) return new ControlReorderResult { Safe = false, Reason = "invalid control id: " + childId };
+            if (!ValidateOptionalLocation(locX, locY, out string locationReason)) return new ControlReorderResult { Safe = false, Reason = locationReason };
+            bool rewriteLocation = locX != null;
             bool toRoot = newParentId is "this" or "";
-            if (!toRoot && !IsValidIdentifier(newParentId)) return new ControlReorderResult { Safe = false, Reason = "invalid parent id: " + newParentId };
             if (!toRoot && newParentId == childId) return new ControlReorderResult { Safe = false, Reason = "cannot reparent a control into itself" };
 
             var root = CSharpSyntaxTree.ParseText(src).GetRoot();
@@ -2005,7 +2287,9 @@ namespace WinFormsDesigner.Engine
             if (cls == null || init?.Body == null) return new ControlReorderResult { Safe = false, Reason = "InitializeComponent not found" };
             var names = GatherFieldNames(cls);
             if (!names.Contains(childId)) return new ControlReorderResult { Safe = false, Reason = "unknown control: " + childId };
-            if (!toRoot && !names.Contains(newParentId)) return new ControlReorderResult { Safe = false, Reason = "unknown parent: " + newParentId };
+
+            if (!toRoot && names.Contains(newParentId) && IsDescendantTarget(init, childId, newParentId))
+                return new ControlReorderResult { Safe = false, Reason = "CONTAINMENT_CYCLE" };
 
             // The new parent must be a WinForms container that accepts a DIRECT Controls.Add(child), validated by its
             // DECLARED TYPE (this editor is pure-text — no type resolution). Rejects a non-Control field (ToolTip/Timer/
@@ -2013,11 +2297,9 @@ namespace WinFormsDesigner.Engine
             // (SplitContainer→Panel1/2, TableLayoutPanel→3-arg cell, TabControl→TabPages, ToolStrip→Items → whose
             // Controls throws at load and silently detaches the child). A CUSTOM container subclass is not recognized
             // here (declined, never corrupted) — the host, which knows resolved types, can offer richer drop targets.
-            if (!toRoot)
+            if (!TryResolveReparentTarget(cls, names, newParentId, out string newRecv, out List<string> expectedParentChain, out string targetReason))
             {
-                string? ptype = FieldTypeShortName(cls, newParentId);
-                if (ptype == null || !DirectAddContainers.Contains(ptype))
-                    return new ControlReorderResult { Safe = false, Reason = "target is not a container that accepts a direct child (use Panel/GroupBox/FlowLayoutPanel/…) — cannot reparent here" };
+                return new ControlReorderResult { Safe = false, Reason = targetReason };
             }
 
             // the child's single parenting Add (1-arg) — a 3-arg TableLayoutPanel cell child does not match → declined
@@ -2035,35 +2317,157 @@ namespace WinFormsDesigner.Engine
                 if (ParentsAChild(st, childId))
                     return new ControlReorderResult { Safe = false, Reason = "control is a container with children — reparent them first (leaf-only)" };
 
-            bool sameParent = toRoot ? curParent.Count == 0 : (curParent.Count == 1 && curParent[0] == newParentId);
-            if (sameParent) return new ControlReorderResult { Safe = true, NewText = src }; // already there → no-op
+            bool sameParent = SameChain(curParent, expectedParentChain);
+            if (sameParent && !rewriteLocation) return new ControlReorderResult { Safe = true, NewText = src }; // already there → no-op
 
             var inv = (InvocationExpressionSyntax)((ExpressionStatementSyntax)add).Expression;
             var recv = ((MemberAccessExpressionSyntax)inv.Expression).Expression; // the "<X>.Controls" before ".Add"
-            string newRecv = toRoot ? "this.Controls" : "this." + newParentId + ".Controls";
             string text = src.Substring(0, recv.SpanStart) + newRecv + src.Substring(recv.Span.End);
+            if (rewriteLocation)
+            {
+                var location = FindLocationAssignment(CSharpSyntaxTree.ParseText(text).GetRoot(), childId);
+                if (location == null)
+                    return new ControlReorderResult { Safe = false, Reason = "control has no canonical Location assignment to convert" };
+                string point = $"new System.Drawing.Point({locX!.Value}, {locY!.Value})";
+                text = text.Substring(0, location.Right.SpanStart) + point + text.Substring(location.Right.Span.End);
+            }
 
             bool parseOk = !CSharpSyntaxTree.ParseText(text).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
-            if (!parseOk || !OnlyReparented(src, text, childId, newParentId))
-                return new ControlReorderResult { Safe = false, Reason = !parseOk ? "reparented text has syntax errors" : "edit changed more than the control's parent" };
+            if (!parseOk || !OnlyReparented(src, text, childId, newParentId, locX, locY))
+                return new ControlReorderResult { Safe = false, Reason = !parseOk ? "reparented text has syntax errors" : "edit changed more than the control's parent/location" };
             return new ControlReorderResult { Safe = true, NewText = text };
         }
 
         /// <summary>safe-save gate for a reparent: every statement EXCEPT the child's single Controls.Add is byte-identical
-        /// (multiset), the child is parented by exactly one 1-arg Controls.Add before and after, that Add now targets
-        /// <paramref name="newParentId"/> ("this"/"" = root), and the field declarations are unchanged.</summary>
-        public static bool OnlyReparented(string original, string edited, string childId, string newParentId)
+        /// (multiset), except the optional child Location rewrite when coordinates are supplied. The child is parented
+        /// by exactly one 1-arg Controls.Add before and after, that Add now targets <paramref name="newParentId"/>
+        /// ("this"/"" = root, or a source-spellable SplitContainer Panel1/Panel2 path), and the field declarations
+        /// are unchanged.</summary>
+        public static bool OnlyReparented(string original, string edited, string childId, string newParentId, int? locX = null, int? locY = null)
         {
-            bool toRoot = newParentId is "this" or "";
-            var (oNon, oTgts) = ClassifyReparent(original, childId);
-            var (eNon, eTgts) = ClassifyReparent(edited, childId);
+            if (!ValidateOptionalLocation(locX, locY, out _)) return false;
+            bool expectLocation = locX != null;
+            var expectedChain = ParentTargetChainForGate(newParentId);
+            if (expectedChain == null) return false;
+            var (oNon, oTgts, oLocs) = ClassifyReparent(original, childId, expectLocation);
+            var (eNon, eTgts, eLocs) = ClassifyReparent(edited, childId, expectLocation);
             if (oTgts.Count != 1 || eTgts.Count != 1) return false;
             if (!MultisetEqual(oNon, eNon)) return false;
             if (!IsControlsAddOf(eTgts[0], out var chain, out var child) || child != childId) return false;
-            bool chainOk = toRoot ? chain.Count == 0 : (chain.Count == 1 && chain[0] == newParentId);
-            if (!chainOk) return false;
+            if (!SameChain(chain, expectedChain)) return false;
+            if (expectLocation)
+            {
+                if (oLocs.Count != 1 || eLocs.Count != 1) return false;
+                if (!IsLocationAssignment(eLocs[0], childId, out var right) || !IsPointLiteral(right, locX!.Value, locY!.Value)) return false;
+            }
             return MultisetEqual(FieldDeclNames(CSharpSyntaxTree.ParseText(original).GetRoot()),
                                  FieldDeclNames(CSharpSyntaxTree.ParseText(edited).GetRoot()));
+        }
+
+        private const string MissingContainerReason = "MISSING_CONTAINER";
+        private const int MaxReparentLocation = 100000;
+
+        private static bool ValidateOptionalLocation(int? locX, int? locY, out string reason)
+        {
+            reason = "";
+            if (locX == null && locY == null) return true;
+            if (locX == null || locY == null) { reason = "parent-relative location requires both X and Y"; return false; }
+            if (locX < 0 || locY < 0 || locX > MaxReparentLocation || locY > MaxReparentLocation)
+            {
+                reason = "parent-relative location is outside the supported range";
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryResolveReparentTarget(ClassDeclarationSyntax cls, HashSet<string> names, string newParentId,
+            out string receiver, out List<string> parentChain, out string reason)
+        {
+            receiver = "";
+            parentChain = new List<string>();
+            reason = "";
+
+            if (newParentId is "this" or "")
+            {
+                receiver = "this.Controls";
+                return true;
+            }
+
+            if (TrySplitContainerPanelTarget(newParentId, out var splitId, out var panelName))
+            {
+                if (!names.Contains(splitId)) { reason = MissingContainerReason; return false; }
+                string? splitType = FieldTypeShortName(cls, splitId);
+                if (splitType != "SplitContainer") { reason = MissingContainerReason; return false; }
+                receiver = "this." + splitId + "." + panelName + ".Controls";
+                parentChain = new List<string> { splitId, panelName };
+                return true;
+            }
+
+            if (!IsValidIdentifier(newParentId)) { reason = MissingContainerReason; return false; }
+            if (!names.Contains(newParentId)) { reason = "unknown parent: " + newParentId; return false; }
+
+            string? ptype = FieldTypeShortName(cls, newParentId);
+            if (ptype == null || !DirectAddContainers.Contains(ptype))
+            {
+                reason = "target is not a container that accepts a direct child (use Panel/GroupBox/FlowLayoutPanel/…) — cannot reparent here";
+                return false;
+            }
+            receiver = "this." + newParentId + ".Controls";
+            parentChain = new List<string> { newParentId };
+            return true;
+        }
+
+        private static bool TrySplitContainerPanelTarget(string id, out string splitId, out string panelName)
+        {
+            splitId = "";
+            panelName = "";
+            var parts = id.Split('.');
+            if (parts.Length != 2) return false;
+            if (!IsValidIdentifier(parts[0])) return false;
+            if (parts[1] != "Panel1" && parts[1] != "Panel2") return false;
+            splitId = parts[0];
+            panelName = parts[1];
+            return true;
+        }
+
+        private static List<string>? ParentTargetChainForGate(string newParentId)
+        {
+            if (newParentId is "this" or "") return new List<string>();
+            if (TrySplitContainerPanelTarget(newParentId, out var splitId, out var panelName))
+                return new List<string> { splitId, panelName };
+            return IsValidIdentifier(newParentId) ? new List<string> { newParentId } : null;
+        }
+
+        private static AssignmentExpressionSyntax? FindLocationAssignment(SyntaxNode root, string childId)
+        {
+            var cls = FindClassWithIC(root);
+            var init = FormClassResolver.InitMethodOf(cls);
+            if (init?.Body == null) return null;
+            AssignmentExpressionSyntax? found = null;
+            foreach (var st in init.Body.Statements)
+                if (IsLocationAssignment(st, childId, out _))
+                    found = ((ExpressionStatementSyntax)st).Expression as AssignmentExpressionSyntax;
+            return found;
+        }
+
+        private static bool IsLocationAssignment(StatementSyntax st, string childId, out ExpressionSyntax right)
+        {
+            right = SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression);
+            if (st is not ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax asg }) return false;
+            var lhs = Flatten(asg.Left);
+            if (lhs.Count != 2 || lhs[0] != childId || lhs[1] != "Location") return false;
+            right = asg.Right;
+            return true;
+        }
+
+        private static bool IsPointLiteral(ExpressionSyntax expr, int x, int y)
+        {
+            if (expr is not ObjectCreationExpressionSyntax oce || oce.ArgumentList?.Arguments.Count != 2) return false;
+            string type = oce.Type.ToString();
+            if (type != "System.Drawing.Point" && type != "Point") return false;
+            return TryConstInt(oce.ArgumentList.Arguments[0].Expression, out var actualX)
+                && TryConstInt(oce.ArgumentList.Arguments[1].Expression, out var actualY)
+                && actualX == x && actualY == y;
         }
 
         /// <summary>WinForms container types whose <c>Controls.Add(child)</c> accepts a plain Control DIRECTLY (the
@@ -2104,20 +2508,56 @@ namespace WinFormsDesigner.Engine
             return chain.Count >= 1 && chain[0] == id && chain.Contains("Controls");
         }
 
-        /// <summary>Split InitializeComponent into (non-target statements, the child's 1-arg Controls.Add calls).</summary>
-        private static (List<string> non, List<StatementSyntax> tgts) ClassifyReparent(string code, string childId)
+        private static bool IsDescendantTarget(MethodDeclarationSyntax init, string ancestorId, string candidateId)
+        {
+            var parentByChild = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var st in init.Body!.Statements)
+                if (IsControlsAddOf(st, out var parentChain, out var child) && child != null && parentChain.Count > 0)
+                    parentByChild[child] = parentChain[0];
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (var current = candidateId; parentByChild.TryGetValue(current, out var parent); current = parent)
+            {
+                if (!seen.Add(current)) return true;
+                if (parent == ancestorId) return true;
+            }
+            return false;
+        }
+
+        private static bool IsCanonicalApplyResourcesFor(
+            InvocationExpressionSyntax invocation,
+            MemberAccessExpressionSyntax memberAccess,
+            string id)
+        {
+            if (memberAccess.Name.Identifier.ValueText != "ApplyResources"
+                || memberAccess.Expression is not IdentifierNameSyntax receiver
+                || receiver.Identifier.ValueText != "resources"
+                || invocation.ArgumentList.Arguments.Count != 2)
+                return false;
+            if (Flatten(invocation.ArgumentList.Arguments[0].Expression) is not { Count: 1 } component
+                || component[0] != id)
+                return false;
+            return invocation.ArgumentList.Arguments[1].Expression is LiteralExpressionSyntax literal
+                && literal.IsKind(SyntaxKind.StringLiteralExpression)
+                && literal.Token.ValueText == id;
+        }
+
+        /// <summary>Split InitializeComponent into non-target statements, the child's 1-arg Controls.Add calls, and
+        /// optionally the child's canonical Location assignment.</summary>
+        private static (List<string> non, List<StatementSyntax> tgts, List<StatementSyntax> locs) ClassifyReparent(string code, string childId, bool classifyLocation)
         {
             var root = CSharpSyntaxTree.ParseText(code).GetRoot();
             var cls = FindClassWithIC(root);
             var init = FormClassResolver.InitMethodOf(cls);
-            var non = new List<string>(); var tgts = new List<StatementSyntax>();
+            var non = new List<string>(); var tgts = new List<StatementSyntax>(); var locs = new List<StatementSyntax>();
             if (init?.Body != null)
                 foreach (var st in init.Body.Statements)
                 {
                     if (IsControlsAddOf(st, out _, out var c) && c == childId) tgts.Add(st);
+                    else if (classifyLocation && IsLocationAssignment(st, childId, out _)) locs.Add(st);
                     else non.Add(NormalizeStmt(st.ToString()));
                 }
-            return (non, tgts);
+            return (non, tgts, locs);
         }
 
         private static bool MultisetEqual(List<string> a, List<string> b)
@@ -2268,6 +2708,9 @@ namespace WinFormsDesigner.Engine
         private static int CountAddTo(MethodDeclarationSyntax init, string parent, bool isRoot)
         {
             int n = 0;
+            var parentSegments = isRoot
+                ? new List<string>()
+                : parent.Split('.', StringSplitOptions.RemoveEmptyEntries).ToList();
             foreach (var st in init.Body!.Statements)
             {
                 if (st is ExpressionStatementSyntax { Expression: InvocationExpressionSyntax inv }
@@ -2275,7 +2718,9 @@ namespace WinFormsDesigner.Engine
                 {
                     var chain = Flatten(ma.Expression); // the `X.Controls` before `.Add`
                     bool match = isRoot ? (chain.Count == 1 && chain[0] == "Controls")
-                                        : (chain.Count == 2 && chain[0] == parent && chain[1] == "Controls");
+                        : chain.Count == parentSegments.Count + 1
+                            && chain.Take(parentSegments.Count).SequenceEqual(parentSegments, StringComparer.Ordinal)
+                            && chain[chain.Count - 1] == "Controls";
                     if (match) n++;
                 }
             }
@@ -2466,6 +2911,34 @@ namespace WinFormsDesigner.Engine
         };
 
         private static bool AutoSizedByDesigner(string fqn) => DesignerAutoSized.Contains(fqn);
+
+        private const int MaximumDesignedControlSize = 100000;
+
+        private static bool TryValidateRequestedSize(int? width, int? height, out int validWidth, out int validHeight, out string reason)
+        {
+            validWidth = 0;
+            validHeight = 0;
+            reason = "";
+            if (!width.HasValue && !height.HasValue) return true;
+            if (!width.HasValue || !height.HasValue)
+            {
+                reason = "explicit control size requires both width and height";
+                return false;
+            }
+            if (width.Value <= 0 || height.Value <= 0)
+            {
+                reason = "explicit control size must be positive";
+                return false;
+            }
+            if (width.Value > MaximumDesignedControlSize || height.Value > MaximumDesignedControlSize)
+            {
+                reason = "explicit control size exceeds the supported range";
+                return false;
+            }
+            validWidth = width.Value;
+            validHeight = height.Value;
+            return true;
+        }
 
         /// <summary>True for the ButtonBase family, whose designer writes `UseVisualStyleBackColor = true` on every
         /// control it creates. Framework types only — a project control is emitted exactly as before.</summary>

@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260824T062506Z-S026",
+  "scenarioId": "V2-FND-001-S026",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "A net10.0-windows Form contains an AutoSize Label at off-grid Location (13,25), a reference Button, and the installed Visual Studio designer is temporarily set to SnapToGrid with its effective 8x8 grid.",
+  "actionLog": [
+    "Save the exact WindowsFormsDesigner LayoutMode, ShowGrid, and SnapToGrid user options",
+    "Set LayoutMode=1, ShowGrid=true, and SnapToGrid=true for this isolated trace",
+    "Open S026GridSnapForm.cs in the actual WinForms Designer",
+    "Select gridLabel through its real designer input HWND",
+    "Begin a designer drag and move the pointer by +20,0 to raw source Location (33,25)",
+    "Release the drag, Save All, and inspect the persisted Designer source",
+    "Require exact 8x8 grid Location (32,24), unchanged Label size, exact reference Button/source/project, and a standard empty neutral resx",
+    "Restore the exact original LayoutMode, ShowGrid, and SnapToGrid options in finally"
+  ],
+  "expected": "Visual Studio rounds the raw off-grid drag target (33,25) to exact Location (32,24) on the effective 8x8 parent grid, preserves unrelated data, and the capture restores all changed designer options.",
+  "runtimeArchitecture": "actual Visual Studio x64 modern SDK reference",
+  "before": {
+    "sourceSha256": "4d4518a33f43d2c8e07da326746c8e4dce362added61295063022e552bd90285",
+    "designerSha256": "493c235b835c297c4d58329551cd39512fd65a79b40d9417d2e872a9965ed271",
+    "projectSha256": "9ce8972329bb58a7beeaf6f6a67b1071a4f335ba7d231ca42f9eb88322fb86c1",
+    "shape": {
+      "gridLabel": {
+        "location": {
+          "x": 13,
+          "y": 25
+        },
+        "size": {
+          "width": 57,
+          "height": 15
+        }
+      },
+      "referenceButton": {
+        "location": {
+          "x": 190,
+          "y": 96
+        },
+        "size": {
+          "width": 110,
+          "height": 30
+        }
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "4d4518a33f43d2c8e07da326746c8e4dce362added61295063022e552bd90285",
+    "designerSha256": "fe834b958e3385dd4b4bcd3e9c81a45d3cb9e1a9c227c67084a330be275012cf",
+    "projectSha256": "9ce8972329bb58a7beeaf6f6a67b1071a4f335ba7d231ca42f9eb88322fb86c1",
+    "shape": {
+      "gridLabel": {
+        "location": {
+          "x": 32,
+          "y": 24
+        },
+        "size": {
+          "width": 57,
+          "height": 15
+        }
+      },
+      "referenceButton": {
+        "location": {
+          "x": 190,
+          "y": 96
+        },
+        "size": {
+          "width": 110,
+          "height": 30
+        }
+      }
+    }
+  },
+  "rawTarget": {
+    "x": 33,
+    "y": 25
+  },
+  "expectedGridTarget": {
+    "x": 32,
+    "y": 24
+  },
+  "effectiveOptions": {
+    "layoutMode": 1,
+    "showGrid": true,
+    "snapToGrid": true,
+    "gridSizeAutomationValue": null,
+    "expectedEffectiveGrid": {
+      "width": 8,
+      "height": 8
+    }
+  },
+  "originalOptions": {
+    "layoutMode": 0,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "restoredOptions": {
+    "layoutMode": 0,
+    "showGrid": true,
+    "snapToGrid": true
+  },
+  "optionsRestoredExact": true,
+  "sourceAndProjectExact": true,
+  "referenceControlExact": true,
+  "gridSnapExact": true,
+  "resource": {
+    "exists": true,
+    "root": "root",
+    "dataCount": 0,
+    "metadataCount": 0,
+    "sha256": "d679c8de86ccb99ed1f69895706946ec8b2e9eed458dd6d7b8d5144cb3bb3cf5",
+    "standardEmptyResource": true,
+    "artifact": "S026GridSnapForm.resx"
+  },
+  "exactAfterArtifact": "S026GridSnapForm.Designer.after.cs.gz",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\2904c76520254c50ad2c251ceb84dcaf\\Modern\\S026GridSnapForm.cs",
+    "movingAutomationId": "gridLabel",
+    "referenceAutomationId": "referenceButton",
+    "input": {
+      "clickedWindow": 16190322,
+      "captureWindow": 527630,
+      "mode": "cursor-relative-capture-owned-window-offset",
+      "deltaX": 20,
+      "deltaY": 0,
+      "start": {
+        "x": 1410,
+        "y": 174
+      },
+      "end": {
+        "x": 1430,
+        "y": 174
+      },
+      "cursor": {
+        "x": 0,
+        "y": 0
+      },
+      "cursorReadAvailable": false,
+      "traceWindowShift": {
+        "x": -1430,
+        "y": -174,
+        "originalWindow": {
+          "x": 641,
+          "y": 2,
+          "width": 1279,
+          "height": 687
+        },
+        "syntheticStart": {
+          "x": -20,
+          "y": 0
+        },
+        "syntheticButtonCenter": {
+          "x": -20,
+          "y": 0
+        },
+        "syntheticButtonBounds": {
+          "x": -48.0,
+          "y": -7.0,
+          "width": 57.0,
+          "height": 15.0
+        }
+      }
+    },
+    "movingBeforeBounds": {
+      "x": 1381.0,
+      "y": 166.0,
+      "width": 57.0,
+      "height": 15.0
+    },
+    "movingAfterBounds": {
+      "x": 1400.0,
+      "y": 165.0,
+      "width": 57.0,
+      "height": 15.0
+    },
+    "referenceBeforeBounds": {
+      "x": 1558.0,
+      "y": 237.0,
+      "width": 110.0,
+      "height": 30.0
+    },
+    "referenceAfterBounds": {
+      "x": 1558.0,
+      "y": 237.0,
+      "width": 110.0,
+      "height": 30.0
+    },
+    "activeDragCapture": {
+      "hwnd": 15991510,
+      "x": -789,
+      "y": -172,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "35dd8944411fce715453eebf4a63f2194370a8cf444cd6463cd43d8200415c66"
+    },
+    "capture": {
+      "hwnd": 15991510,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "fc06ae80cdb284bd748db80407272b2fbdbcfbc33770193b6463f2069580ba6b"
+    }
+  }
+}

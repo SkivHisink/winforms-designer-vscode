@@ -41,6 +41,7 @@
   <ItemGroup>
     <Compile Include="..\..\engine\FormClassResolver.cs" Link="Shared\FormClassResolver.cs" />
     <Compile Include="..\..\engine\DesignerModifiers.cs" Link="Shared\DesignerModifiers.cs" />
+    <Compile Include="..\..\engine\SaveSafety.cs" Link="Shared\SaveSafety.cs" />
     <Compile Include="..\..\engine\DesignerIr.cs" Link="Shared\DesignerIr.cs" />
     <Compile Include="..\..\engine\DesignerAllowlists.cs" Link="Shared\DesignerAllowlists.cs" />
     <Compile Include="..\..\engine\DesignerIrBuilder.cs" Link="Shared\DesignerIrBuilder.cs" />
@@ -50,6 +51,15 @@
     <Compile Include="..\..\engine\DesignTimeSite.cs" Link="Shared\DesignTimeSite.cs" />
     <Compile Include="..\..\engine\InterpretedDescribeResolver.cs" Link="Shared\InterpretedDescribeResolver.cs" />
     <Compile Include="..\..\engine-net48\IsExternalInit.cs" Link="Shared\IsExternalInit.cs" />
+    <Compile Include="..\..\engine\DesignerAdornerInfo.cs" Link="Shared\DesignerAdornerInfo.cs" />
+    <Compile Include="..\..\engine\HostedDesignerAdornerContract.cs" Link="Shared\HostedDesignerAdornerContract.cs" />
+    <Compile Include="..\..\engine\VsNameCreationService.cs" Link="Shared\VsNameCreationService.cs" />
+    <Compile Include="..\..\engine\DesignerServiceKernel.cs" Link="Shared\DesignerServiceKernel.cs" />
+    <Compile Include="..\..\engine\HostedServiceKernelProductContract.cs" Link="Shared\HostedServiceKernelProductContract.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Design" />
   </ItemGroup>
 
 </Project>

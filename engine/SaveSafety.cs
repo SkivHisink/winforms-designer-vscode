@@ -63,6 +63,25 @@ namespace WinFormsDesigner.Engine
             return SaveSafetyReason.Safe;
         }
 
+        /// <summary>True when the interpret signals prove a DECLARED CONTROL never reached the rendered tree: a
+        /// <c>Controls.Add</c> named an object that was never created (an unresolvable ActiveX / vendor / x86 type).
+        /// Deliberately narrower than <see cref="Classify"/>'s UnresolvedType bucket, which also fires on an
+        /// unresolvable PROPERTY VALUE (<c>new decimal(…)</c>) — that costs a property, not a control. It also does
+        /// NOT match the generic "AddRange: unknown element", which the interpreter emits for non-control collections
+        /// (ComboBox/ListBox Items, ListView Columns, ToolStrip Items, TabPages). The interpreter emits the distinct
+        /// "Controls.AddRange unknown element" signal for a root/container control collection, which is a lost control
+        /// and therefore does fail this gate. The render CLIs gate their RESULT line on this so a canvas that silently
+        /// disagrees with its source can never be reported as a pass.</summary>
+        public static bool DropsControls(IReadOnlyList<string> unrepresentable)
+        {
+            foreach (var u in unrepresentable)
+            {
+                if (u.Contains("Controls.Add unknown child") || u.Contains("Controls.AddRange unknown element"))
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>camelCase category token (stable wire/diagnostic id, shared by CLI, the PreviewSave RPC and the
         /// golden-corpus test).</summary>
         public static string CategoryName(SaveSafetyReason r) => r switch

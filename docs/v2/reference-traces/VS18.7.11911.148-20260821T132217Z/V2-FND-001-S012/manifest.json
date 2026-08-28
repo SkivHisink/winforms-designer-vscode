@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260821T132217Z-S012",
+  "scenarioId": "V2-FND-001-S012",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "reviewedAtUtc": "2026-08-21T13:37:42.6619316Z",
+  "setup": "Buildable net10.0-windows partial Form has an empty Designer sidecar but no constructor, InitializeComponent method, or neutral resx.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S012MissingInitializeForm.cs",
+    "Invoke View.ViewDesigner",
+    "Execute File.SaveAll",
+    "Capture the active Visual Studio document window",
+    "Hash source/project and record whether Visual Studio created sidecars"
+  ],
+  "expected": "Observe the actual Visual Studio behavior for a Form whose InitializeComponent target is missing, without assuming refusal or synthesis.",
+  "before": {
+    "sourceSha256": "d964762af00158b190bcb26686738920d0df15b9f1522819a4db3ce26b5d083e",
+    "projectSha256": "10303466ab79ae51fbb8b75bbc60af0465555c61d2a1112c7d236ee98de7d78d",
+    "designerExists": true,
+    "designerSha256": "b0003206eb085dd43b01787942e4a2b17671385478b4cbf3703d3debb6e2c4a6",
+    "resourceExists": false
+  },
+  "after": {
+    "sourceSha256": "d964762af00158b190bcb26686738920d0df15b9f1522819a4db3ce26b5d083e",
+    "projectSha256": "10303466ab79ae51fbb8b75bbc60af0465555c61d2a1112c7d236ee98de7d78d",
+    "designerExists": true,
+    "designerSha256": "b0003206eb085dd43b01787942e4a2b17671385478b4cbf3703d3debb6e2c4a6",
+    "resourceExists": true,
+    "resourceSha256": "4363cd7d5b8671c72442ce1a1bfc10d64ebd24b2d718b54bd4fcd025e4967298"
+  },
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "reviewOutcome": "Visual Studio opened a blank design surface without synthesizing or changing either source partial or the project. Save All created a neutral resx; that resource-side effect is recorded separately from the bounded open-surface result.",
+  "claimBoundary": "REFERENCE_OPEN_SURFACE_AND_SAVE_OBSERVATION_ONLY",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\3d9ea80b5f904bb29f605e510b54b6e1\\Modern\\S012MissingInitializeForm.cs",
+    "caption": "",
+    "capture": {
+      "hwnd": 38543216,
+      "x": 1912,
+      "y": -8,
+      "width": 1936,
+      "height": 1048,
+      "dpi": 96,
+      "sha256": "52cb8bd5a1566ebfce28cdba2ae7d25b45bb4aafde53b1cf9a65508b5ec5b94a"
+    }
+  }
+}

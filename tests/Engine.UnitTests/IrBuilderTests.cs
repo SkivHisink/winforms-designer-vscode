@@ -108,6 +108,20 @@ namespace Demo {
     }
 
     [Fact]
+    public void SystemIconToBitmap_ClassifiesAsClosedAllowlistedFactory()
+    {
+        var doc = BuildOk(RepresentableForm.Replace(
+            "this.button1.Text = \"Click me\";",
+            "this.button1.Text = \"Click me\"; this.button1.Image = System.Drawing.SystemIcons.Information.ToBitmap();"));
+        Assert.True(doc.FullCoverage, string.Join(" | ", doc.UnrepresentableReasons));
+        var image = doc.Statements.OfType<IrSetProperty>().Single(s => s.TargetName == "button1" && s.PropertyPath.Single() == "Image");
+        var factory = Assert.IsType<IrStaticFactory>(image.Value);
+        Assert.Equal("System.Drawing.SystemIcons", factory.TypeName);
+        Assert.Equal("InformationToBitmap", factory.Method);
+        Assert.Empty(factory.Args);
+    }
+
+    [Fact]
     public void ComponentReference_RhsEmitsComponentRef()
     {
         var doc = BuildOk(RepresentableForm);

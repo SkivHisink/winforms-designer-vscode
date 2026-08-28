@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T204633Z-S049",
+  "scenarioId": "V2-FND-001-S049",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains one top-level Button named button1 with no Click subscription or handler method.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S049DefaultEventForm.cs with the WinForms Designer",
+    "Locate button1 through the real designer automation tree",
+    "Send a physical-window double-click sequence through the real designer input HWND",
+    "Wait for Visual Studio to navigate to code and execute File.SaveAll",
+    "Verify exactly one Click subscription, exactly one button1_Click method, cursor placement, and project byte identity"
+  ],
+  "expected": "Visual Studio adds one button1.Click subscription in generated source, adds one button1_Click(object, EventArgs) method in code-behind, navigates the cursor into that method, preserves the form constructor/control membership, and leaves the project byte-identical.",
+  "before": {
+    "sourceSha256": "44e7bdad68610e78705233b4d6c4eed43d3a4e2374d24b8a75362adbd51634fa",
+    "designerSha256": "63968b3252106a01eb6af9936c3e771477e493a747d5c765378da5e3979857ee",
+    "projectSha256": "201b8018840e2fd6016fce148cd0fdb0945943fdf4454aead4135722c669f466"
+  },
+  "after": {
+    "sourceSha256": "416765ca0860d2b2838e89581b713105bb79c3ecfc0d4bb57d54c2ef8464d863",
+    "designerSha256": "f9dfb6533d46af05357d92113fd5280e1b04503f6a80533aee14f29d17423b3b",
+    "projectSha256": "201b8018840e2fd6016fce148cd0fdb0945943fdf4454aead4135722c669f466"
+  },
+  "handlerCount": 1,
+  "subscriptionCount": 1,
+  "sourceBeforeArtifact": "S049DefaultEventForm.before.cs",
+  "sourceAfterArtifact": "S049DefaultEventForm.after.cs.gz",
+  "designerBeforeArtifact": "S049DefaultEventForm.Designer.before.cs",
+  "designerAfterArtifact": "S049DefaultEventForm.Designer.after.cs.gz",
+  "projectByteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\c99fc5e4aa3e491b8280c177bcc49eaf\\Modern\\S049DefaultEventForm.cs",
+    "automationLocator": "AutomationId=button1",
+    "inputWindow": 132322702,
+    "bounds": {
+      "x": 765.0,
+      "y": 188.0,
+      "width": 152.0,
+      "height": 38.0
+    },
+    "activeDocument": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\c99fc5e4aa3e491b8280c177bcc49eaf\\Modern\\S049DefaultEventForm.cs",
+    "handlerCreated": true,
+    "subscriptionCreated": true,
+    "lineEndingDialog": {
+      "title": "Inconsistent Line Endings",
+      "choice": "No",
+      "observed": true,
+      "clickPosted": true,
+      "dismissed": true
+    },
+    "cursor": {
+      "line": 12,
+      "column": 1,
+      "handlerLine": 10,
+      "insideHandler": true
+    },
+    "capture": {
+      "hwnd": 209720518,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "c5ca845d44ff4c369d792f174793cf2b85f84f7595a3bd3055d2dedaa32be9b4"
+    }
+  }
+}

@@ -78,10 +78,12 @@ This is **not** the WinForms model, and the designer treats it as your code, not
 **What works.** The form opens and renders. Layout, sizes, containment, adding and deleting controls, editing
 other properties — all normal, and all byte-local: your localization calls are not touched.
 
-**What you will notice.** The modern (.NET 9/10) engine cannot evaluate a call into your assembly — it never
-executes project code when opening a designer — so that statement is reported as skipped and the control renders
-**without its text**. The banner tells you how many constructs were skipped. On a `net4x`/DevExpress project the
-picture comes from your compiled build instead, so the real localized text *is* visible.
+**What you will notice.** The modern engine (.NET 10, serving `net8.0-windows` / `net9.0-windows` /
+`net10.0-windows` projects) cannot evaluate a call into your assembly — it never executes project code when opening
+a designer — so that statement is reported as skipped and the control renders **without its text**. The banner
+tells you how many constructs were skipped. On a `net4x`/DevExpress project such a call is a construct the
+interpreter cannot represent, so that form drops to its **disclosed compiled fallback** — the last build — and the
+real localized text *is* visible.
 
 **What to avoid.** Editing the very property that the call assigns (usually `Text`) replaces the call with a
 literal:
@@ -96,8 +98,9 @@ Change such text in code, not in the property grid.
 **Why the engine does not just call your method.** Executing project code to resolve a string would mean running
 arbitrary user code — static constructors, file and network access, process launches — during "open the
 designer". Neither `static`, nor `returns string`, nor "the assembly is already loaded" is a security boundary,
-and a timeout limits waiting, not side effects. The compiled `net4x` path is the explicit, opt-in place where
-your real code runs; the live-source interpreter deliberately stays out of it.
+and a timeout limits waiting, not side effects. The compiled `net4x` fallback is the explicit, disclosed place
+where your real code runs — it is entered automatically with a named reason, not opted into — while the
+live-source interpreter deliberately stays out of it.
 
 **Add Localization and your scheme do not collide.** The conversion refuses any form containing constructs it
 cannot interpret, which includes these calls — so it will not try to migrate your shared localization into

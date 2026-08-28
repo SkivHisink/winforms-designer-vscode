@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260823T044854Z-S025",
+  "scenarioId": "V2-FND-001-S025",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "A net10.0-windows Form contains snapButton at (32,80), Size 100x30, and referenceTextBox at (180,40), Size 120x23, both with the default 96-DPI font.",
+  "actionLog": [
+    "Open S025BaselineSnapForm.cs in the actual WinForms Designer",
+    "Select snapButton through its real designer input HWND",
+    "Begin a real designer drag and move the pointer vertically by -44 pixels to raw source Y=36",
+    "Capture the native designer during the active drag and again after the persisted move",
+    "Release the drag, Save All, and inspect the persisted Designer source",
+    "Require the Button baseline offset 21 to align to the TextBox baseline offset 16 at exact source Y=35",
+    "Require the reference TextBox, source file, project file, and Button size/X to remain exact",
+    "Archive the standard empty neutral resx that Visual Studio creates on Save All for this Form"
+  ],
+  "expected": "Visual Studio applies a one-pixel baseline correction to the raw drag target and persists snapButton.Location=(32,35), aligns its text baseline with referenceTextBox, preserves unrelated source/project/control data, and creates one standard empty neutral Form resx.",
+  "runtimeArchitecture": "actual Visual Studio x64 modern SDK reference",
+  "before": {
+    "sourceSha256": "3ce61516f9d4222b4b5a4017af68a09b17dac5942d6d2cb127743e07bf6d2583",
+    "designerSha256": "7d5f539c5b638406c829901364794e26f1f7a7bd245d630889c687e4ca006c29",
+    "projectSha256": "61c7aa082a6e484e44ff45999c5bfd54988fb63d5a2a72b894e2fb373192ee5e",
+    "shape": {
+      "snapButton": {
+        "location": {
+          "x": 32,
+          "y": 80
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      },
+      "referenceTextBox": {
+        "location": {
+          "x": 180,
+          "y": 40
+        },
+        "size": {
+          "width": 120,
+          "height": 23
+        }
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "3ce61516f9d4222b4b5a4017af68a09b17dac5942d6d2cb127743e07bf6d2583",
+    "designerSha256": "228071b8a04a4c7fa8cb1057c3830779bd90a696f8193e7e3f69b9b72ec9c698",
+    "projectSha256": "61c7aa082a6e484e44ff45999c5bfd54988fb63d5a2a72b894e2fb373192ee5e",
+    "shape": {
+      "snapButton": {
+        "location": {
+          "x": 32,
+          "y": 35
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      },
+      "referenceTextBox": {
+        "location": {
+          "x": 180,
+          "y": 40
+        },
+        "size": {
+          "width": 120,
+          "height": 23
+        }
+      }
+    }
+  },
+  "rawTarget": {
+    "x": 32,
+    "y": 36
+  },
+  "expectedBaselineTarget": {
+    "x": 32,
+    "y": 35
+  },
+  "baselineOffsets": {
+    "snapButton": 21,
+    "referenceTextBox": 16
+  },
+  "sourceAndProjectExact": true,
+  "referenceControlExact": true,
+  "baselineSnapExact": true,
+  "resource": {
+    "exists": true,
+    "root": "root",
+    "dataCount": 0,
+    "metadataCount": 0,
+    "sha256": "d679c8de86ccb99ed1f69895706946ec8b2e9eed458dd6d7b8d5144cb3bb3cf5",
+    "standardEmptyResource": true,
+    "artifact": "S025BaselineSnapForm.resx"
+  },
+  "exactAfterArtifact": "S025BaselineSnapForm.Designer.after.cs.gz",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\db5e60d78e404d6e95d891bea28f5e3d\\Modern\\S025BaselineSnapForm.cs",
+    "movingAutomationId": "snapButton",
+    "referenceAutomationId": "referenceTextBox",
+    "input": {
+      "clickedWindow": 28251288,
+      "captureWindow": 280956116,
+      "mode": "cursor-relative-capture-owned-window-offset",
+      "deltaY": -44,
+      "start": {
+        "x": 811,
+        "y": 241
+      },
+      "end": {
+        "x": 811,
+        "y": 197
+      },
+      "cursor": {
+        "x": 0,
+        "y": 0
+      },
+      "cursorReadAvailable": false,
+      "traceWindowShift": {
+        "x": -811,
+        "y": -197,
+        "originalWindow": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "syntheticStart": {
+          "x": 0,
+          "y": 44
+        },
+        "syntheticButtonCenter": {
+          "x": 1,
+          "y": 45
+        },
+        "syntheticButtonBounds": {
+          "x": -49.0,
+          "y": 30.0,
+          "width": 100.0,
+          "height": 30.0
+        }
+      }
+    },
+    "movingBeforeBounds": {
+      "x": 761.0,
+      "y": 226.0,
+      "width": 100.0,
+      "height": 30.0
+    },
+    "movingAfterBounds": {
+      "x": 761.0,
+      "y": 181.0,
+      "width": 100.0,
+      "height": 30.0
+    },
+    "referenceBeforeBounds": {
+      "x": 909.0,
+      "y": 186.0,
+      "width": 120.0,
+      "height": 23.0
+    },
+    "referenceAfterBounds": {
+      "x": 909.0,
+      "y": 186.0,
+      "width": 120.0,
+      "height": 23.0
+    },
+    "activeDragCapture": {
+      "hwnd": 41163864,
+      "x": -811,
+      "y": -197,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "221b53ecb4dd96016d4366ee5aa22fcaec21f08e202f9114e30053460e383ac3"
+    },
+    "capture": {
+      "hwnd": 41163864,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "83b4c3af6d2373e718d995c8aaaefe2b155b54847ac5f7fe2ad182aeecdbdc04"
+    }
+  }
+}

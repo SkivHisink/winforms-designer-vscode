@@ -52,6 +52,30 @@ namespace WinFormsDesigner.Engine.Net48
         public int Failed { get; set; }
     }
 
+    /// <summary>
+    /// Outcome of constructing one repository-certified ComponentDesigner in the short-lived hosted-designer
+    /// process. The long-lived net48 engine remains the authority for quarantine and always overwrites process facts
+    /// received from the child before this DTO crosses JSON-RPC.
+    /// </summary>
+    [Serializable]
+    public sealed class HostedDesignerProbeResult
+    {
+        public bool Ok { get; set; }
+        public string Status { get; set; } = "refused";
+        public string ErrorCode { get; set; } = "";
+        public string Reason { get; set; } = "";
+        public string ComponentType { get; set; } = "";
+        public string DesignerType { get; set; } = "";
+        public string CertificationId { get; set; } = "";
+        public string AssemblySha256 { get; set; } = "";
+        public int MainEnginePid { get; set; }
+        public int WorkerPid { get; set; }
+        public int ExitCode { get; set; }
+        public bool WorkerStarted { get; set; }
+        public bool Quarantined { get; set; }
+        public bool PrivateDesktop { get; set; }
+    }
+
     /// <summary>Engine self-description for the capability handshake — lets the host disable edit affordances
     /// and show an honest "compiled preview" badge for the net48 (render-first) engine.</summary>
     [Serializable]
@@ -131,6 +155,15 @@ namespace WinFormsDesigner.Engine.Net48
         public int DeclarationIndex { get; set; }
     }
 
+    [Serializable]
+    public sealed class LayoutSpacing
+    {
+        public int Left { get; set; }
+        public int Top { get; set; }
+        public int Right { get; set; }
+        public int Bottom { get; set; }
+    }
+
     /// <summary>One control's window-space placement + minimal tree info — the click-to-select hit-test unit.
     /// Mirrors WinFormsDesigner.Engine.LayoutControl.</summary>
     [Serializable]
@@ -147,10 +180,24 @@ namespace WinFormsDesigner.Engine.Net48
         public bool Editable { get; set; }
         /// <summary>Stable user-facing refusal reason when <see cref="Editable"/> is false; empty otherwise.</summary>
         public string ReadOnlyReason { get; set; } = InheritedOwnershipPolicy.ReadOnlyReason(InheritedOwnershipPolicy.Unresolved);
+        /// <summary>True only for the bounded derived-source property override channel on inherited framework controls.</summary>
+        public bool InheritedOverrideEditable { get; set; }
+        /// <summary>True only when geometry may be routed through Location/Size inherited override writes.</summary>
+        public bool InheritedGeometryOverrideEditable { get; set; }
+        /// <summary>Opaque engine-issued token bound to the compiled inherited field identity.</summary>
+        public string BaseIdentityToken { get; set; } = "";
         public int X { get; set; }
         public int Y { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
+        public int ClientX { get; set; }
+        public int ClientY { get; set; }
+        public int ClientWidth { get; set; }
+        public int ClientHeight { get; set; }
+        public LayoutSpacing Margin { get; set; } = new LayoutSpacing();
+        public LayoutSpacing Padding { get; set; } = new LayoutSpacing();
+        /// <summary>Absolute full-frame Y for Label/TextBox-class text, or -1 when unsupported.</summary>
+        public int TextBaseline { get; set; } = -1;
         public int Depth { get; set; }
         public int TabIndex { get; set; }
         public string Anchor { get; set; } = "None";
@@ -208,6 +255,8 @@ namespace WinFormsDesigner.Engine.Net48
         public string ComponentId { get; set; } = "this";
         public string PropName { get; set; } = "";
         public string RawValue { get; set; } = "";
+        /// <summary>True for a multi-object Reset operation; false for the existing value-set path.</summary>
+        public bool Reset { get; set; }
     }
 
     /// <summary>One item of a typed collection for the live reconstruction (T1.1b live picture on net48). A single
@@ -309,6 +358,8 @@ namespace WinFormsDesigner.Engine.Net48
         public string? Description { get; set; }
         public List<string>? StandardValues { get; set; }
         public bool StandardValuesExclusive { get; set; }
+        /// <summary>Stable, non-localized diagnostic for converter metadata that could not be obtained safely.</summary>
+        public string? MetadataDiagnosticCode { get; set; }
         public List<ExpandablePropertyDesc>? Properties { get; set; }
         public bool PropertiesTruncated { get; set; }
     }
@@ -322,10 +373,15 @@ namespace WinFormsDesigner.Engine.Net48
         public bool? IsDefault { get; set; }
         public bool SourceExplicit { get; set; }
         public bool ReadOnly { get; set; }
+        /// <summary>True only for an allowlisted property of an accessible inherited framework control.</summary>
+        public bool InheritedOverrideEditable { get; set; }
+        public bool InheritedOverrideResettable { get; set; }
         public bool IsEnum { get; set; }
         public string Category { get; set; } = "Misc";
         public List<string>? StandardValues { get; set; }
         public bool StandardValuesExclusive { get; set; }
+        /// <summary>Stable, non-localized diagnostic for converter metadata that could not be obtained safely.</summary>
+        public string? MetadataDiagnosticCode { get; set; }
         public List<string>? FlagsMembers { get; set; }
         public string? FlagsZero { get; set; }
         public bool TableCell { get; set; }
@@ -351,8 +407,15 @@ namespace WinFormsDesigner.Engine.Net48
         public bool DesignTime { get; set; }
         /// <summary>True when the shared source-first generic IList adapter owns this collection route.</summary>
         public bool GenericCollection { get; set; }
-        /// <summary>Closed framework editor metadata. Never populated from arbitrary EditorAttribute values.</summary>
+        /// <summary>Closed framework/certified editor metadata. Exact framework CollectionEditor attributes are
+        /// recognized; arbitrary EditorAttribute values remain non-executable.</summary>
         public string? UiTypeEditor { get; set; }
+        /// <summary>Absolute certified vendor editor assembly path; null for framework editors or unsupported vendors.</summary>
+        public string? UiTypeEditorAssemblyPath { get; set; }
+        /// <summary>SHA-256 of <see cref="UiTypeEditorAssemblyPath"/>; null for framework editors or unsupported vendors.</summary>
+        public string? UiTypeEditorAssemblySha256 { get; set; }
+        /// <summary>Stable allowlist certification id; null for framework editors or unsupported vendors.</summary>
+        public string? UiTypeEditorCertificationId { get; set; }
         /// <summary>Bounded recursive TypeConverter metadata for expandable objects.</summary>
         public List<ExpandablePropertyDesc>? Properties { get; set; }
         public bool PropertiesTruncated { get; set; }
@@ -366,6 +429,19 @@ namespace WinFormsDesigner.Engine.Net48
         public string Type { get; set; } = "";
         public string Category { get; set; } = "Misc";
         public string? Handler { get; set; }
+    }
+
+    /// <summary>One bounded DesignerActionList item. Command identity is published only for the exact
+    /// repository-certified hosted-service fixture and is revalidated in a disposable worker before invocation.</summary>
+    [Serializable]
+    public sealed class DesignerActionDesc
+    {
+        public string DisplayName { get; set; } = "";
+        public string PropertyName { get; set; } = "";
+        public string CommandId { get; set; } = "";
+        public string CertificationId { get; set; } = "";
+        public string Category { get; set; } = "";
+        public string? Description { get; set; }
     }
 
     /// <summary>One component's property-grid + events data. Mirrors WinFormsDesigner.Engine.ComponentInfo (→ TS ComponentDesc).</summary>
@@ -383,11 +459,17 @@ namespace WinFormsDesigner.Engine.Net48
         public string Ownership { get; set; } = InheritedOwnershipPolicy.Unresolved;
         public bool Editable { get; set; }
         public string ReadOnlyReason { get; set; } = InheritedOwnershipPolicy.ReadOnlyReason(InheritedOwnershipPolicy.Unresolved);
+        /// <summary>A narrow derived-source override capability; structural/component-level editability remains false.</summary>
+        public bool InheritedOverrideEditable { get; set; }
+        public string BaseIdentityToken { get; set; } = "";
+        public string InheritedFieldType { get; set; } = "";
+        public string EffectiveAccessibility { get; set; } = "";
         /// <summary>Host-only guard: ToolStripItem properties use the item edit channel and must not receive
         /// control-field Modifiers pseudo-properties.</summary>
         public bool IsToolStripItem { get; set; }
         public List<PropertyDesc> Properties { get; set; } = new List<PropertyDesc>();
         public List<EventDesc> Events { get; set; } = new List<EventDesc>();
+        public List<DesignerActionDesc> DesignerActions { get; set; } = new List<DesignerActionDesc>();
     }
 
     /// <summary>One non-visual component for the tray. Mirrors WinFormsDesigner.Engine.TrayComponent.</summary>
@@ -431,6 +513,15 @@ namespace WinFormsDesigner.Engine.Net48
         /// build; a new LiveBuildId is a genuine rebuild. See LiveDesign.</summary>
         public string LiveBuildId { get; set; } = "";
         public byte[] Png { get; set; } = Array.Empty<byte>();
+        /// <summary>True when Png contains only one unchanged-geometry control rather than the full frame.</summary>
+        public bool IsPatch { get; set; }
+        /// <summary>True when the dirty patch proved the previously published layout/tray/item model unchanged, so those
+        /// collections are intentionally omitted rather than rebuilt and serialized.</summary>
+        public bool LayoutUnchanged { get; set; }
+        public int PatchX { get; set; }
+        public int PatchY { get; set; }
+        public int PatchWidth { get; set; }
+        public int PatchHeight { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
         public int ClientWidth { get; set; }
@@ -443,6 +534,12 @@ namespace WinFormsDesigner.Engine.Net48
         public List<TrayComponent> Tray { get; set; } = new List<TrayComponent>();
         /// <summary>Per-item geometry for every top-level strip item + a trailing "Type Here" slot per strip.</summary>
         public List<ToolStripItemBounds> ToolStripItems { get; set; } = new List<ToolStripItemBounds>();
+        /// <summary>
+        /// For the bounded single-Text interpreted live edit, exact post-set metadata for the edited component from the
+        /// same cached graph that produced this picture. SourceMetadata is applied in the default AppDomain before the
+        /// DTO crosses JSON-RPC. Null for ordinary renders and broader/multi-property provisional edits.
+        /// </summary>
+        public ComponentDesc? Component { get; set; }
         /// <summary>1.9.0 — the live root's CurrentAutoScaleDimensions as the designer serializes it ("6F, 13F").
         /// The first control drop persists it into a form that carries no pair yet, as Visual Studio does; reading
         /// it from THIS runtime's instance is what makes a net4x form get 6,13 instead of the modern 7,15.</summary>
@@ -460,5 +557,36 @@ namespace WinFormsDesigner.Engine.Net48
         public string RenderMode { get; set; } = "compiled";
         /// <summary>A stable RenderFallbackReason code when RenderMode=="compiledFallback"; "" otherwise.</summary>
         public string FallbackReason { get; set; } = "";
+    }
+
+    [Serializable]
+    public sealed class EditPreview
+    {
+        public bool Safe { get; set; }
+        public string? Text { get; set; }
+        public string Reason { get; set; } = "";
+        public string Mode { get; set; } = "Failed";
+    }
+
+    [Serializable]
+    public sealed class InheritedOverrideTargetInfo
+    {
+        public bool Safe { get; set; }
+        public string Reason { get; set; } = "";
+        public string FieldId { get; set; } = "";
+        public string FieldTypeName { get; set; } = "";
+        public string EffectiveAccessibility { get; set; } = "";
+        public string PropertyName { get; set; } = "";
+        public string PropertyTypeName { get; set; } = "";
+        public string BaseIdentityToken { get; set; } = "";
+        public bool GeometryOverrideEditable { get; set; }
+    }
+
+    [Serializable]
+    public sealed class InheritedGeometryOverrideAuthorization
+    {
+        public bool Safe { get; set; }
+        public string Reason { get; set; } = "";
+        public string BaseIdentityToken { get; set; } = "";
     }
 }

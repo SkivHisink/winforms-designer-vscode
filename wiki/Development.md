@@ -27,8 +27,8 @@ These are load-bearing. If a change appears to require breaking one, that is the
    guarded by a gate that proves it changed only its target.
 2. **A gate is not advisory.** When it cannot prove the claim, the gesture is refused and the file is untouched.
    Widening a gate means naming the exact statements that may pass, not loosening the check.
-3. **The engine writes no files** — with the single deliberate exception of the `.resx`, which the host bundles
-   into the same undo entry.
+3. **The engine writes no files.** It returns composed text — including the new `.resx` XML — and the host performs
+   every disk write, bundling the resource write into the same undo entry as the source edit.
 4. **The user's code never executes on open.** No constructor, no field initializers, no `Load`, no calls into
    project code to resolve values. The `net4x` compiled path is the explicit, disclosed exception.
 5. **Disclosure over silence.** A partial render, a stale compiled preview, a resource-routed edit — each is

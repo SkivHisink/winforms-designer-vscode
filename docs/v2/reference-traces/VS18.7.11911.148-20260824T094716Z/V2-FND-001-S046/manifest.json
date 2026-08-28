@@ -1,0 +1,1086 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260824T094716Z-S046",
+  "scenarioId": "V2-FND-001-S046",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains button1 with explicit BackColor=Red and UseVisualStyleBackColor=false.",
+  "actionLog": [
+    "Build the fixture solution in Visual Studio",
+    "Open S046ColorEditorForm.cs with the installed WinForms Designer",
+    "Select button1 through its actual designer automation element",
+    "Open native Properties and activate the BackColor dropdown editor",
+    "Resolve the standard owner-drawn Color editor popup through its native System Pane and archived Custom/Web/System screenshot",
+    "Press Escape to cancel the editor",
+    "Verify BackColor and source, Designer, and project bytes remain exact"
+  ],
+  "expected": "Actual Visual Studio opens the standard framework Color editor for Button.BackColor, Escape cancels it, and no property or project input changes.",
+  "before": {
+    "sourceSha256": "5248dd97c92c8d351f6ceb245d2cb8ef29ee672976c34c23c75cdad01af81d2b",
+    "designerSha256": "1169e9c574f1f56c909e74bf9e1e5a443e29549f851a873361447378fd2e797f",
+    "projectSha256": "dc1fb28fe83288a677eba7e0081dd6385cd77cee1e02145bf40373bc599cf2b7"
+  },
+  "after": {
+    "sourceSha256": "5248dd97c92c8d351f6ceb245d2cb8ef29ee672976c34c23c75cdad01af81d2b",
+    "designerSha256": "1169e9c574f1f56c909e74bf9e1e5a443e29549f851a873361447378fd2e797f",
+    "projectSha256": "dc1fb28fe83288a677eba7e0081dd6385cd77cee1e02145bf40373bc599cf2b7"
+  },
+  "sourceByteIdentical": true,
+  "designerByteIdentical": true,
+  "projectByteIdentical": true,
+  "valueExact": true,
+  "editorExact": true,
+  "runtimeArchitecture": "actual Visual Studio x64 modern SDK reference; physical ARM64 remains an independent external gate",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\94a08535fd2d4965b6bf126f23c13857\\Modern\\S046ColorEditorForm.cs",
+    "controlAutomationId": "button1",
+    "propertyName": "BackColor",
+    "propertiesCommandAvailable": true,
+    "alphabeticalMethod": "InvokePattern.Invoke",
+    "homeNavigation": {
+      "row": "GenerateMember",
+      "x": 1655,
+      "y": 235,
+      "method": "PropertyGrid visible row + VK_HOME"
+    },
+    "beforeValue": "Red",
+    "afterValue": "Red",
+    "clickedWindow": 7607784,
+    "rowWindow": 2559602,
+    "dropdownWindow": 462668,
+    "editorOpenMethod": "Editor button PostClickUsingCapture",
+    "editorButtons": [
+      {
+        "name": "Open",
+        "automationId": "462668",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.BUTTON.app.0.360e033_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 462668,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1845.0,
+          "y": 340.0,
+          "width": 17.0,
+          "height": 18.0
+        },
+        "ancestors": [
+          {
+            "name": "BackColor",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      }
+    ],
+    "propertyBounds": {
+      "x": 1595.0,
+      "y": 340.0,
+      "width": 266.0,
+      "height": 18.0
+    },
+    "colorEditorTabNames": [],
+    "colorEditorHwnd": 12059722,
+    "colorEditorSystemPane": null,
+    "editorInventory": [
+      {
+        "name": "Save S046ColorEditorForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Save S046ColorEditorForm.cs (Ctrl+S)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 859.0,
+          "y": 36.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Standard",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S046ColorEditorForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S046ColorEditorForm.cs",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 513.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S046ColorEditorForm",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S046ColorEditorForm",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 537.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S046ColorEditorForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S046ColorEditorForm.Designer.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S046ColorEditorForm.Designer.cs",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 561.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S046ColorEditorForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S046ColorEditorForm.resx",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S046ColorEditorForm.resx",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 585.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S046ColorEditorForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S046ColorEditorForm.cs [Design]",
+        "automationId": "",
+        "controlType": "ControlType.TabItem",
+        "localizedControlType": "tab item",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TabItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1139.0,
+          "y": 69.0,
+          "width": 220.0,
+          "height": 26.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S046ColorEditorForm.cs [Design]",
+        "automationId": "D:0:0:{BCE7043E-E7D7-A278-1417-E91FBF1872ED}|Modern\\VisualStudioReference.Modern.csproj|d:\\data\\code\\csharpwinformextension\\.codex-tmp\\vs-reference-traces\\94a08535fd2d4965b6bf126f23c13857\\modern\\s046coloreditorform.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}|Form",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 95.0,
+          "width": 740.0,
+          "height": 199.0
+        },
+        "ancestors": [
+          {
+            "name": "S046ColorEditorForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S046ColorEditorForm.cs [Design]",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 3937752,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 95.0,
+          "width": 740.0,
+          "height": 199.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S046ColorEditorForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S046ColorEditorForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "(DataBindings)",
+        "automationId": "57852475",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "(ControlBindings)",
+        "helpText": "The data bindings for the control.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": false,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1595.0,
+          "y": 150.0,
+          "width": 266.0,
+          "height": 18.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "BackColor",
+        "automationId": "41098919",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "Red",
+        "helpText": "The background color of the component. ",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": true,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1595.0,
+          "y": 340.0,
+          "width": 266.0,
+          "height": 18.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "BackColor",
+        "automationId": "1052406",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "Red",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.EDIT.app.0.360e033_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 1052406,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1762.0,
+          "y": 341.0,
+          "width": 83.0,
+          "height": 17.0
+        },
+        "ancestors": [
+          {
+            "name": "BackColor",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "ForeColor",
+        "automationId": "66146859",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "ControlText",
+        "helpText": "The foreground color of this component, which is used to display text.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1595.0,
+          "y": 587.0,
+          "width": 266.0,
+          "height": 2.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "UseVisualStyleBackColor",
+        "automationId": "62769212",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "False",
+        "helpText": "Determines whether the background is drawn using visual styles, if visual styles are supported.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "BackColor",
+        "automationId": "6361584",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.STATIC.app.0.360e033_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 6361584,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1597.0,
+          "y": 596.0,
+          "width": 280.0,
+          "height": 18.0
+        },
+        "ancestors": [
+          {
+            "name": "Description",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "The background color of the component. ",
+        "automationId": "7409938",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.STATIC.app.0.360e033_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 7409938,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1597.0,
+          "y": 614.0,
+          "width": 280.0,
+          "height": 34.0
+        },
+        "ancestors": [
+          {
+            "name": "Description",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S046ColorEditorForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Web",
+        "automationId": "1445668",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Window.8.app.0.360e033_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 1445668,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": true,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1663.0,
+          "y": 384.0,
+          "width": 194.0,
+          "height": 197.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      }
+    ],
+    "popupCaptures": [
+      {
+        "hwnd": 12059722,
+        "artifact": "visual-studio-color-popup-1.png",
+        "capture": {
+          "hwnd": 12059722,
+          "x": 1658,
+          "y": 359,
+          "width": 204,
+          "height": 227,
+          "dpi": 96,
+          "sha256": "3ff8afa4201461916b09c16f00968871f6e2f73f27b997d4e1f418ae40a6cf91"
+        }
+      },
+      {
+        "hwnd": 6948946,
+        "artifact": "visual-studio-color-popup-2.png",
+        "capture": {
+          "hwnd": 6948946,
+          "x": 1658,
+          "y": 359,
+          "width": 209,
+          "height": 232,
+          "dpi": 96,
+          "sha256": "5f0e40446e3b629378b0a1b967cb984992053c78972d1a428c8ae9cd27d3dd62"
+        }
+      }
+    ],
+    "cancelledWithEscape": true,
+    "mainCapture": {
+      "hwnd": 6034456,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "dfcf3741b19533f5f6754b7611603f3475143767c294209d433a520730e5dbbc"
+    },
+    "capture": {
+      "hwnd": 6034456,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "captureMethod": "Graphics.CopyFromScreen",
+      "sha256": "b81819e5880ffed62ca88ba0cc571eae6970441bada2df52f164d4c1e35a48d6"
+    },
+    "afterCancelCapture": {
+      "hwnd": 6034456,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "205f182332e9da858b75638b44414eba3823104292b17086f0cddf0cc2d0a405"
+    }
+  }
+}

@@ -1,0 +1,393 @@
+{
+    "schemaVersion":  1,
+    "traceId":  "VS18.7.11911.148-20260824T122309Z-S051",
+    "scenarioId":  "V2-FND-001-S051",
+    "referenceTraceSource":  "VisualStudioWinFormsDesigner",
+    "authority":  {
+                      "product":  "Visual Studio Enterprise 2026",
+                      "dteVersion":  "18.0",
+                      "installationVersion":  "18.7.11911.148",
+                      "edition":  "Enterprise",
+                      "executable":  "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+                      "dteProgId":  "VisualStudio.DTE.18.0",
+                      "captureHost":  "Microsoft Windows NT 10.0.26100.0; AMD64"
+                  },
+    "status":  "PASS",
+    "setup":  "A net48 Form has textBox1.TextChanged wired once to textBox1_TextChanged and code-behind also contains one signature-compatible textBox1_TextChangedAlternate method.",
+    "actionLog":  [
+                      "Build the fixture solution in actual Visual Studio",
+                      "Open S051EventRevisionForm.cs in the installed classic WinForms Designer and select textBox1",
+                      "Open native Properties, activate Show Events, and require TextChanged=textBox1_TextChanged",
+                      "Commit textBox1_TextChangedAlternate through the real writable Events cell with UIAutomation ValuePattern and Enter",
+                      "Execute File.SaveAll and require exactly one subscription to the alternate compatible handler",
+                      "Require the same Visual Studio transaction to remove the now-unreferenced empty original method while preserving the existing alternate method",
+                      "Execute one native Undo and Save All to restore the original subscription/method and remove the then-unreferenced empty alternate method",
+                      "Execute one native Redo and Save All to reproduce the alternate subscription and removal of the original method",
+                      "Require project byte identity, exact per-phase handler-method transitions, and all unrelated Form/TextBox facts"
+                  ],
+    "expected":  "Actual Visual Studio rewires exactly one TextChanged subscription to the compatible alternate handler and retains only the currently referenced empty handler method: original+alternate becomes alternate, Undo becomes original, and Redo becomes alternate; project bytes and all unrelated source/designer facts remain intact.",
+    "runtimeArchitecture":  "actual Visual Studio x64 classic net48 reference",
+    "before":  {
+                   "sourceSha256":  "31003c55ca58189829522e99ccfdef3db6c9a239317dd96169fe06603c32892c",
+                   "designerSha256":  "220062d55a96aaf5a99052a5b27346d0089008774de374bb0ed5f8535ec71e7d",
+                   "projectSha256":  "668801c577fcf39ea894949a594f1ad45362a077a56d915f0d35f7564b8bda7f",
+                   "shape":  {
+                                 "textChangedSubscriptionCount":  1,
+                                 "originalHandlerSubscriptionCount":  1,
+                                 "alternateHandlerSubscriptionCount":  0,
+                                 "locationExact":  true,
+                                 "sizeExact":  true,
+                                 "textExact":  true,
+                                 "membershipExact":  true
+                             },
+                   "sourceShape":  {
+                                       "formClassCount":  1,
+                                       "constructorCount":  1,
+                                       "initializeComponentCallCount":  1,
+                                       "originalHandlerMethodCount":  1,
+                                       "alternateHandlerMethodCount":  1,
+                                       "originalEmptyHandlerMethodCount":  1,
+                                       "alternateEmptyHandlerMethodCount":  1,
+                                       "privateVoidMethodCount":  2
+                                   }
+               },
+    "afterRewire":  {
+                        "sourceSha256":  "a9b8871473c6d439bb80318d40268664f2a6d602e05dd578e92333acc68d5f06",
+                        "designerSha256":  "6874a16e7fd9a0ab8d0cb56f108de2065d2d691eb030093235548e85c9be309e",
+                        "projectSha256":  "668801c577fcf39ea894949a594f1ad45362a077a56d915f0d35f7564b8bda7f",
+                        "shape":  {
+                                      "textChangedSubscriptionCount":  1,
+                                      "originalHandlerSubscriptionCount":  0,
+                                      "alternateHandlerSubscriptionCount":  1,
+                                      "locationExact":  true,
+                                      "sizeExact":  true,
+                                      "textExact":  true,
+                                      "membershipExact":  true
+                                  },
+                        "sourceShape":  {
+                                            "formClassCount":  1,
+                                            "constructorCount":  1,
+                                            "initializeComponentCallCount":  1,
+                                            "originalHandlerMethodCount":  0,
+                                            "alternateHandlerMethodCount":  1,
+                                            "originalEmptyHandlerMethodCount":  0,
+                                            "alternateEmptyHandlerMethodCount":  1,
+                                            "privateVoidMethodCount":  1
+                                        }
+                    },
+    "afterUndo":  {
+                      "sourceSha256":  "3fbeba7b090ce71366634ec27b9716b7423a82ecbad00c989b6f235c66f7202f",
+                      "designerSha256":  "3e6d3c31b55e9608657271316737626967a546b39a1f878f486d5fe4cdb0b8e2",
+                      "projectSha256":  "668801c577fcf39ea894949a594f1ad45362a077a56d915f0d35f7564b8bda7f",
+                      "shape":  {
+                                    "textChangedSubscriptionCount":  1,
+                                    "originalHandlerSubscriptionCount":  1,
+                                    "alternateHandlerSubscriptionCount":  0,
+                                    "locationExact":  true,
+                                    "sizeExact":  true,
+                                    "textExact":  true,
+                                    "membershipExact":  true
+                                },
+                      "sourceShape":  {
+                                          "formClassCount":  1,
+                                          "constructorCount":  1,
+                                          "initializeComponentCallCount":  1,
+                                          "originalHandlerMethodCount":  1,
+                                          "alternateHandlerMethodCount":  0,
+                                          "originalEmptyHandlerMethodCount":  1,
+                                          "alternateEmptyHandlerMethodCount":  0,
+                                          "privateVoidMethodCount":  1
+                                      }
+                  },
+    "afterRedo":  {
+                      "sourceSha256":  "c2175f6418eff53a45583a50d29261a8cd9af759a279f0d1513be000e5e788a9",
+                      "designerSha256":  "6874a16e7fd9a0ab8d0cb56f108de2065d2d691eb030093235548e85c9be309e",
+                      "projectSha256":  "668801c577fcf39ea894949a594f1ad45362a077a56d915f0d35f7564b8bda7f",
+                      "shape":  {
+                                    "textChangedSubscriptionCount":  1,
+                                    "originalHandlerSubscriptionCount":  0,
+                                    "alternateHandlerSubscriptionCount":  1,
+                                    "locationExact":  true,
+                                    "sizeExact":  true,
+                                    "textExact":  true,
+                                    "membershipExact":  true
+                                },
+                      "sourceShape":  {
+                                          "formClassCount":  1,
+                                          "constructorCount":  1,
+                                          "initializeComponentCallCount":  1,
+                                          "originalHandlerMethodCount":  0,
+                                          "alternateHandlerMethodCount":  1,
+                                          "originalEmptyHandlerMethodCount":  0,
+                                          "alternateEmptyHandlerMethodCount":  1,
+                                          "privateVoidMethodCount":  1
+                                      }
+                  },
+    "projectByteIdentical":  true,
+    "sourceHandlerMethodTransitionsExact":  true,
+    "sourceSkeletonExactOutsideEmptyHandlers":  true,
+    "unrelatedSourceFactsExact":  true,
+    "initialSubscriptionExact":  true,
+    "rewireSubscriptionExact":  true,
+    "oneUndoRestoresOriginalSubscription":  true,
+    "oneRedoRestoresAlternateSubscription":  true,
+    "unrelatedTextBoxFactsExact":  true,
+    "designerRedoByteIdenticalToRewire":  true,
+    "sourceRedoByteIdenticalToRewire":  false,
+    "sourceRedoWhitespaceNormalizedIdenticalToRewire":  true,
+    "undoRedo":  {
+                     "undoAvailable":  true,
+                     "redoAvailable":  true
+                 },
+    "lineEndingDialogs":  [
+                              {
+                                  "title":  "Inconsistent Line Endings",
+                                  "choice":  "No",
+                                  "observed":  false,
+                                  "clickPosted":  false,
+                                  "dismissed":  false
+                              },
+                              {
+                                  "phase":  "undo-to-original-handler",
+                                  "title":  "Inconsistent Line Endings",
+                                  "choice":  "No",
+                                  "observed":  false,
+                                  "clickPosted":  false,
+                                  "dismissed":  false
+                              },
+                              {
+                                  "phase":  "redo-to-alternate-handler",
+                                  "title":  "Inconsistent Line Endings",
+                                  "choice":  "No",
+                                  "observed":  false,
+                                  "clickPosted":  false,
+                                  "dismissed":  false
+                              }
+                          ],
+    "designerBeforeArtifact":  "S051EventRevisionForm.Designer.before.cs",
+    "designerAfterRewireArtifact":  "S051EventRevisionForm.Designer.after-rewire.cs.gz",
+    "designerAfterUndoArtifact":  "S051EventRevisionForm.Designer.after-undo.cs.gz",
+    "designerAfterRedoArtifact":  "S051EventRevisionForm.Designer.after-redo.cs.gz",
+    "sourceBeforeArtifact":  "S051EventRevisionForm.before.cs",
+    "sourceAfterRewireArtifact":  "S051EventRevisionForm.after-rewire.cs.gz",
+    "sourceAfterUndoArtifact":  "S051EventRevisionForm.after-undo.cs.gz",
+    "sourceAfterRedoArtifact":  "S051EventRevisionForm.after-redo.cs.gz",
+    "visualStudioWindow":  {
+                               "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\08d58003b8c34ee7ad9c4530500b0994\\Net48\\S051EventRevisionForm.cs",
+                               "controlAutomationId":  "textBox1",
+                               "controlAutomationName":  "Event revision",
+                               "controlLocator":  "unique visible Name=Event revision",
+                               "outlineSelection":  {
+                                                        "route":  "native Document Outline second visible row",
+                                                        "expectedComponent":  "textBox1",
+                                                        "x":  1220,
+                                                        "y":  146,
+                                                        "treeHwnd":  4327048,
+                                                        "clickedWindow":  4327048,
+                                                        "chain":  "L0 hwnd=4327048 class=WindowsForms10.SysTreeView32.app.0.2cea0ca_r17_ad1 text= \u003c- L1 hwnd=10421918 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= \u003c- L2 hwnd=6361826 class=VsDocOutlineTool text= \u003c- L3 hwnd=7606518 class=GenericPane text=Document Outline - S051EventRevisionForm \u003c- L4 hwnd=6557410 class=HwndWrapper[DefaultDomain;;fe2c3d5c-7e34-4a01-99dd-1a4d95373fd4] text=VisualStudioReference - S051EventRevisionForm.cs [Design] - Microsoft Visual Studio (Administrator)"
+                                                    },
+                               "clickedWindow":  9638384,
+                               "eventsWindow":  0,
+                               "rowWindow":  4918842,
+                               "eventName":  "TextChanged",
+                               "originalHandlerName":  "textBox1_TextChanged",
+                               "desiredHandlerName":  "textBox1_TextChangedAlternate",
+                               "handlerCommitMethod":  "UIAutomation.ValuePattern.SetValue + Enter",
+                               "eventRow":  {
+                                                "name":  "TextChanged",
+                                                "automationId":  "45203079",
+                                                "controlType":  "ControlType.TreeItem",
+                                                "localizedControlType":  "tree item",
+                                                "value":  "textBox1_TextChanged",
+                                                "helpText":  "Event raised when the value of the Text property is changed on Control.",
+                                                "itemStatus":  "",
+                                                "accessKey":  "",
+                                                "className":  "",
+                                                "frameworkId":  "",
+                                                "nativeWindowHandle":  0,
+                                                "enabled":  true,
+                                                "focusable":  true,
+                                                "hasKeyboardFocus":  true,
+                                                "selectionItemSelected":  null,
+                                                "offscreen":  false,
+                                                "bounds":  {
+                                                               "x":  1595,
+                                                               "y":  568,
+                                                               "width":  266,
+                                                               "height":  18
+                                                           },
+                                                "ancestors":  [
+                                                                  {
+                                                                      "name":  "Properties Window",
+                                                                      "controlType":  "ControlType.Table"
+                                                                  },
+                                                                  {
+                                                                      "name":  "PropertyGrid",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "Property Browser",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "Properties",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "Properties",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "VisualStudioReference - S051EventRevisionForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                      "controlType":  "ControlType.Window"
+                                                                  }
+                                                              ]
+                                            },
+                               "handlerItems":  [
+                                                    {
+                                                        "name":  "TextChanged",
+                                                        "automationId":  "45203079",
+                                                        "controlType":  "ControlType.TreeItem",
+                                                        "localizedControlType":  "tree item",
+                                                        "value":  "textBox1_TextChanged",
+                                                        "helpText":  "Event raised when the value of the Text property is changed on Control.",
+                                                        "itemStatus":  "",
+                                                        "accessKey":  "",
+                                                        "className":  "",
+                                                        "frameworkId":  "",
+                                                        "nativeWindowHandle":  0,
+                                                        "enabled":  true,
+                                                        "focusable":  true,
+                                                        "hasKeyboardFocus":  true,
+                                                        "selectionItemSelected":  null,
+                                                        "offscreen":  false,
+                                                        "bounds":  {
+                                                                       "x":  1595,
+                                                                       "y":  568,
+                                                                       "width":  266,
+                                                                       "height":  18
+                                                                   },
+                                                        "ancestors":  [
+                                                                          {
+                                                                              "name":  "Properties Window",
+                                                                              "controlType":  "ControlType.Table"
+                                                                          },
+                                                                          {
+                                                                              "name":  "PropertyGrid",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Property Browser",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "VisualStudioReference - S051EventRevisionForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                              "controlType":  "ControlType.Window"
+                                                                          }
+                                                                      ]
+                                                    },
+                                                    {
+                                                        "name":  "TextChanged",
+                                                        "automationId":  "4918842",
+                                                        "controlType":  "ControlType.Edit",
+                                                        "localizedControlType":  "edit",
+                                                        "value":  "textBox1_TextChanged",
+                                                        "helpText":  "",
+                                                        "itemStatus":  "",
+                                                        "accessKey":  "",
+                                                        "className":  "WindowsForms10.EDIT.app.0.2cea0ca_r17_ad1",
+                                                        "frameworkId":  "WinForm",
+                                                        "nativeWindowHandle":  4918842,
+                                                        "enabled":  true,
+                                                        "focusable":  true,
+                                                        "hasKeyboardFocus":  false,
+                                                        "selectionItemSelected":  null,
+                                                        "offscreen":  false,
+                                                        "bounds":  {
+                                                                       "x":  1736,
+                                                                       "y":  569,
+                                                                       "width":  109,
+                                                                       "height":  17
+                                                                   },
+                                                        "ancestors":  [
+                                                                          {
+                                                                              "name":  "TextChanged",
+                                                                              "controlType":  "ControlType.TreeItem"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties Window",
+                                                                              "controlType":  "ControlType.Table"
+                                                                          },
+                                                                          {
+                                                                              "name":  "PropertyGrid",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Property Browser",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "VisualStudioReference - S051EventRevisionForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                              "controlType":  "ControlType.Window"
+                                                                          }
+                                                                      ]
+                                                    }
+                                                ],
+                               "lineEndingDialog":  {
+                                                        "title":  "Inconsistent Line Endings",
+                                                        "choice":  "No",
+                                                        "observed":  false,
+                                                        "clickPosted":  false,
+                                                        "dismissed":  false
+                                                    },
+                               "capture":  {
+                                               "hwnd":  6557410,
+                                               "x":  641,
+                                               "y":  2,
+                                               "width":  1279,
+                                               "height":  687,
+                                               "dpi":  96,
+                                               "sha256":  "2a69e4d1a06f061a29912a93cea6eb18d3be4c731b2e690a2da814e500403904"
+                                           }
+                           }
+}

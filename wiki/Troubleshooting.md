@@ -9,7 +9,8 @@ this.label1.Text = Loc.GetString("Azimuth") + ":";
 ```
 
 The banner reports it as a skipped construct. This is expected on the modern engine, which never executes project
-code when opening a designer; a `net4x` project shows the real text because it renders your compiled build. Do
+code when opening a designer; on a `net4x` project that statement is one the interpreter cannot represent, so the
+form falls back to a disclosed compiled render of your last build — which is why the real text appears there. Do
 not "fix" it by typing into the property grid — that replaces the call with a literal. See
 [Localization → Externally localized forms](Localization#externally-localized-forms).
 
@@ -28,10 +29,12 @@ reasons. Everything else on the form remains fully editable.
 
 ## Saving fails
 
-- *"changed on disk since the designer read it"* — an external writer (git checkout, another editor, a code
-  generator) got there first. Revert the file to adopt their version; the designer will not blindly overwrite it.
-- *"can't be saved for a localizable form"* — a dirty generated-source buffer on a localizable form, normally a
-  recovered hot-exit backup that no longer agrees with the `.resx`. Revert to discard it.
+- *"The .Designer.cs changed on disk since it was opened — saving would overwrite that change."* — an external
+  writer (git checkout, another editor, a code generator) got there first. Revert the file to take the version on
+  disk, or save a copy elsewhere first; the designer will not blindly overwrite it.
+- *"This recovered generated-source edit can't be saved for a localizable form because it would diverge from the
+  .resx."* — a dirty generated-source buffer on a localizable form, normally a recovered hot-exit backup that no
+  longer agrees with the `.resx`. Revert to discard it.
 
 ## The toolbox has no "Project Controls"
 
@@ -61,9 +64,13 @@ Nothing is written when it refuses.
 
 ## A property is greyed out
 
-Depending on the case: the form's preview failed (everything is read-only), the property is genuinely read-only
-on the type, the control is locked, or the form is localizable and the property is not resource-backed. The
-status bar states which.
+Depending on the case: the form's preview failed (everything is read-only), the property is genuinely read-only on
+the type (the row is marked `(read-only)`), the control is **inherited or unresolved**, the form is localizable and
+the property is not resource-backed, or you have a multi-selection and the row is not shared by every selected
+control. The status bar states which.
+
+Lock Controls does **not** grey anything out: it removes the grab handles and blocks mouse move/resize/nudge on the
+canvas, but `Location` and `Size` stay editable in the grid.
 
 ## Nothing happens when I drag a text-sized control's size grips
 
@@ -73,5 +80,6 @@ a fixed size.
 
 ## Reporting a problem
 
-**Export Diagnostics** (command palette) produces a Markdown report with engine state, environment, the active
-document and settings — attach it to the issue. It writes no files on its own; it opens an untitled document.
+**WinForms: Export Designer Diagnostics** (command palette) produces a Markdown report with engine state,
+environment, the active document and settings — attach it to the issue. It writes no files on its own; it opens an
+untitled document.

@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SkivHisink/winforms-designer-vscode/schemas/v2/adapter-manifest-v1.schema.json",
+  "title": "WinForms Designer v2 Adapter Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaId",
+    "schemaVersion",
+    "adapter",
+    "protocol",
+    "compatibility",
+    "capabilities",
+    "trust",
+    "bounds",
+    "unsupportedFeatures",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaId": { "const": "winforms-designer.v2.adapter-manifest" },
+    "schemaVersion": { "const": 1 },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "displayName", "publisher"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{2,95}$" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "publisher": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "displayName"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{2,95}$" },
+            "displayName": { "type": "string", "minLength": 1, "maxLength": 120 }
+          }
+        }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "supportedVersions", "requiredCapabilities"],
+      "properties": {
+        "id": { "const": "designer-protocol-v2" },
+        "supportedVersions": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 2 },
+          "allOf": [
+            { "contains": { "const": 1 } },
+            { "contains": { "const": 2 } }
+          ]
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "protocol.envelope-v2",
+              "protocol.outcome-v2",
+              "protocol.n-minus-one",
+              "document.source-fingerprint",
+              "document.resource-fingerprint",
+              "request.deadline",
+              "request.cancellation-token",
+              "payload.byte-limit",
+              "outcome.ok",
+              "outcome.partial",
+              "outcome.stale",
+              "outcome.cancelled",
+              "outcome.unsupported",
+              "outcome.refused",
+              "outcome.fault"
+            ]
+          }
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productId", "cohorts"],
+      "properties": {
+        "productId": { "const": "winforms-designer-vscode" },
+        "cohorts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/cohort" }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/adapterCapability" }
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signature", "workspaceTrust", "loadVendorCode", "mutationAuthority"],
+      "properties": {
+        "signature": { "enum": ["unsigned-local", "signed-vendor"] },
+        "workspaceTrust": { "const": "trusted" },
+        "loadVendorCode": { "type": "boolean" },
+        "mutationAuthority": { "enum": ["none", "sourceFirst", "hostedDesignTime"] }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxPayloadBytes", "maxPathLength", "allowAbsolutePaths", "allowParentDirectoryTraversal"],
+      "properties": {
+        "maxPayloadBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "maxPathLength": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "allowAbsolutePaths": { "const": false },
+        "allowParentDirectoryTraversal": { "const": false }
+      }
+    },
+    "unsupportedFeatures": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/unsupportedFeature" }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "deterministic"],
+      "properties": {
+        "format": { "const": "v2-adapter-diagnostics" },
+        "deterministic": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "cohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productId", "minProductVersion", "maxProductVersionExclusive", "runtimes", "architectures"],
+      "properties": {
+        "productId": { "const": "winforms-designer-vscode" },
+        "minProductVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+        "maxProductVersionExclusive": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+        "runtimes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["modern", "net48"] }
+        },
+        "architectures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["x64", "arm64"] }
+        }
+      }
+    },
+    "adapterCapability": {
+      "enum": [
+        "adapter.manifest-v1",
+        "adapter.compatibility-v1",
+        "diagnostics.machine-readable",
+        "toolbox.discovery",
+        "control.render-metadata",
+        "property-grid.metadata",
+        "property-editor.bounded",
+        "smart-tags.readonly",
+        "resource.readonly",
+        "source.mutation.source-first",
+        "hosted-intent.bounded"
+      ]
+    },
+    "unsupportedFeature": {
+      "enum": [
+        "vs-designer-sdk-rehost",
+        "vendor-smart-tag-actions",
+        "custom-uitypeeditor-hosting",
+        "licensed-designtime-code",
+        "com-activex",
+        "x86-worker"
+      ]
+    }
+  }
+}

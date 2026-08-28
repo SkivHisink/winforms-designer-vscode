@@ -44,7 +44,7 @@ namespace WinFormsDesigner.Engine
         /// </summary>
         public string CreateName(IContainer? container, Type dataType)
         {
-            ArgumentNullException.ThrowIfNull(dataType);
+            DesignerServiceKernelGuard.ThrowIfNull(dataType);
             return CamelCase(dataType.Name);
         }
 

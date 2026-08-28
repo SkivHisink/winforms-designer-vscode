@@ -79,6 +79,29 @@ public sealed class TabPageReorderTests
         }
         """;
 
+    private const string VisualStudioSectionHeader = """
+        namespace Demo;
+        partial class Form1
+        {
+            private System.Windows.Forms.TabControl tabs;
+            private System.Windows.Forms.TabPage pageA;
+            private System.Windows.Forms.TabPage pageB;
+
+            private void InitializeComponent()
+            {
+                this.tabs = new System.Windows.Forms.TabControl();
+                this.pageA = new System.Windows.Forms.TabPage();
+                this.pageB = new System.Windows.Forms.TabPage();
+                //
+                // tabs
+                //
+                this.tabs.Controls.Add(this.pageA);
+                this.tabs.Controls.Add(this.pageB);
+                this.Controls.Add(this.tabs);
+            }
+        }
+        """;
+
     [Fact]
     public void SeparateAdds_MoveRight_SwapsOnlyTheAdjacentPageReferences()
     {
@@ -133,6 +156,27 @@ public sealed class TabPageReorderTests
     }
 
     [Fact]
+    public void VisualStudioSectionHeader_IsHostMetadataAndDoesNotBlockCollectionReorder()
+    {
+        var listed = DesignerControlEditor.ListTabPages(VisualStudioSectionHeader, "tabs");
+        Assert.True(listed.Ok, listed.Reason);
+        Assert.Equal(new[] { "pageA", "pageB" }, listed.Pages);
+
+        var moved = DesignerControlEditor.MoveTabPage(VisualStudioSectionHeader, "tabs", "pageB", left: true);
+        Assert.True(moved.Safe, moved.Reason);
+        Assert.NotNull(moved.NewText);
+        AssertOrder(moved.NewText!,
+            "// tabs",
+            "this.tabs.Controls.Add(this.pageB);",
+            "this.tabs.Controls.Add(this.pageA);");
+
+        var reordered = DesignerControlEditor.SetTabPageOrder(
+            VisualStudioSectionHeader, "tabs", new[] { "pageB", "pageA" });
+        Assert.True(reordered.Safe, reordered.Reason);
+        Assert.Equal(moved.NewText, reordered.NewText);
+    }
+
+    [Fact]
     public void RequestedEdge_IsAnExplicitNoOp()
     {
         var first = DesignerControlEditor.MoveTabPage(SeparateAdds, "tabs", "pageA", left: true);
@@ -164,6 +208,61 @@ public sealed class TabPageReorderTests
         var tampered = moved.NewText!.Replace("this.pageC.TabIndex = 2;", "this.pageC.TabIndex = 99;");
 
         Assert.False(DesignerControlEditor.OnlyTabPageMoved(SeparateAdds, tampered, "tabs", "pageB", left: true));
+    }
+
+    [Fact]
+    public void CollectionOrder_ReadsAndAppliesACompletePermutationAtomically()
+    {
+        var listed = DesignerControlEditor.ListTabPages(AddRange, "tabs");
+        Assert.True(listed.Ok, listed.Reason);
+        Assert.Equal(new[] { "pageA", "pageB", "pageC", "pageD" }, listed.Pages);
+
+        var result = DesignerControlEditor.SetTabPageOrder(
+            AddRange, "tabs", new[] { "pageD", "pageA", "pageC", "pageB" });
+
+        Assert.True(result.Safe, result.Reason);
+        Assert.NotNull(result.NewText);
+        AssertOrder(result.NewText!, "this.pageD,", "this.pageA,", "this.pageC}", "this.tabs.TabPages.Add(this.pageB);");
+        Assert.True(DesignerControlEditor.OnlyTabPageOrderChanged(
+            AddRange, result.NewText!, "tabs", new[] { "pageD", "pageA", "pageC", "pageB" }));
+        Assert.Contains("this.pageA = new System.Windows.Forms.TabPage();", result.NewText);
+        Assert.Contains("this.Controls.Add(this.tabs);", result.NewText);
+    }
+
+    [Fact]
+    public void CollectionOrder_RefusesNonPermutationCommentedAndTamperedSource()
+    {
+        Assert.False(DesignerControlEditor.SetTabPageOrder(
+            SeparateAdds, "tabs", new[] { "pageA", "pageB" }).Safe);
+        Assert.False(DesignerControlEditor.SetTabPageOrder(
+            SeparateAdds, "tabs", new[] { "pageA", "pageA", "pageC" }).Safe);
+
+        var commented = SeparateAdds.Replace(
+            "this.tabs.Controls.Add(this.pageB);",
+            "this.tabs.Controls.Add(/* keep page note */ this.pageB);");
+        Assert.False(DesignerControlEditor.ListTabPages(commented, "tabs").Ok);
+        Assert.False(DesignerControlEditor.SetTabPageOrder(
+            commented, "tabs", new[] { "pageC", "pageA", "pageB" }).Safe);
+
+        var trailingComment = SeparateAdds.Replace(
+            "this.tabs.Controls.Add(this.pageB);",
+            "this.tabs.Controls.Add(this.pageB); // keep page note");
+        Assert.False(DesignerControlEditor.ListTabPages(trailingComment, "tabs").Ok);
+        Assert.False(DesignerControlEditor.MoveTabPage(trailingComment, "tabs", "pageB", left: true).Safe);
+
+        var itemLeadingComment = SeparateAdds.Replace(
+            "this.tabs.Controls.Add(this.pageB);",
+            "// keep pageB here\n                this.tabs.Controls.Add(this.pageB);");
+        Assert.False(DesignerControlEditor.ListTabPages(itemLeadingComment, "tabs").Ok);
+        Assert.False(DesignerControlEditor.SetTabPageOrder(
+            itemLeadingComment, "tabs", new[] { "pageC", "pageA", "pageB" }).Safe);
+
+        var reordered = DesignerControlEditor.SetTabPageOrder(
+            SeparateAdds, "tabs", new[] { "pageC", "pageA", "pageB" });
+        Assert.True(reordered.Safe, reordered.Reason);
+        var tampered = reordered.NewText!.Replace("this.pageC.TabIndex = 2;", "this.pageC.TabIndex = 99;");
+        Assert.False(DesignerControlEditor.OnlyTabPageOrderChanged(
+            SeparateAdds, tampered, "tabs", new[] { "pageC", "pageA", "pageB" }));
     }
 
     private static void AssertOrder(string text, params string[] fragments)

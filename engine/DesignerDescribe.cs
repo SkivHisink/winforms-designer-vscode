@@ -3,9 +3,14 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.Design;
 using System.ComponentModel.Design.Serialization;
+using System.Drawing;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.Loader;
+using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Windows.Forms.Design;
 
 namespace WinFormsDesigner.Engine
 {
@@ -25,6 +30,8 @@ namespace WinFormsDesigner.Engine
         public string? Description { get; init; }
         public List<string>? StandardValues { get; init; }
         public bool StandardValuesExclusive { get; init; }
+        /// <summary>Stable, non-localized diagnostic for converter metadata that could not be obtained safely.</summary>
+        public string? MetadataDiagnosticCode { get; init; }
         public List<ExpandablePropertyInfo>? Properties { get; init; }
         public bool PropertiesTruncated { get; init; }
     }
@@ -44,6 +51,13 @@ namespace WinFormsDesigner.Engine
         /// <summary>True when this property was explicitly assigned in the source .Designer.cs (grid bold signal).</summary>
         public bool SourceExplicit { get; init; }
         public bool ReadOnly { get; init; }
+        /// <summary>True only for an allowlisted property of an accessible inherited framework control. The
+        /// component remains generally read-only; the host must route this row through the token-checked derived
+        /// override RPC instead of the ordinary current-source SetProperty path.</summary>
+        public bool InheritedOverrideEditable { get; init; }
+        /// <summary>True when a canonical source-explicit inherited override may be removed through the token-checked
+        /// reset RPC. This remains true for a layout-managed geometry row that is intentionally read-only for writes.</summary>
+        public bool InheritedOverrideResettable { get; init; }
         /// <summary>Enum type — lets the editor build a fully-qualified `Type.Member` C# expression.</summary>
         public bool IsEnum { get; init; }
         public string Category { get; init; } = "Misc";
@@ -57,6 +71,8 @@ namespace WinFormsDesigner.Engine
         /// <summary>True when the standard-values set is closed (TypeConverter.GetStandardValuesExclusive) → the
         /// editor renders a &lt;select&gt;; false → an editable combobox (datalist) that also accepts free text.</summary>
         public bool StandardValuesExclusive { get; init; }
+        /// <summary>Stable, non-localized diagnostic for converter metadata that could not be obtained safely.</summary>
+        public string? MetadataDiagnosticCode { get; init; }
         /// <summary>For a [Flags] enum: the individual single-bit member names (e.g. Top/Bottom/Left/Right for
         /// AnchorStyles), so the grid can render a checkbox dropdown that composes "Top, Left". Null for
         /// non-flags enums / non-enums. Anchor keeps its dedicated visual editor; other flags enums use these.
@@ -103,8 +119,12 @@ namespace WinFormsDesigner.Engine
         public bool DesignTime { get; init; }
         /// <summary>True when the shared generic IList editor, rather than a bespoke collection editor, owns the route.</summary>
         public bool GenericCollection { get; init; }
-        /// <summary>Closed, engine-supported modal editor type. Never populated from arbitrary EditorAttribute metadata.</summary>
+        /// <summary>Closed, engine-supported editor type. Framework CollectionEditor is read from an exact
+        /// EditorAttribute; arbitrary project EditorAttribute metadata remains non-executable.</summary>
         public string? UiTypeEditor { get; init; }
+        public string? UiTypeEditorAssemblyPath { get; init; }
+        public string? UiTypeEditorAssemblySha256 { get; init; }
+        public string? UiTypeEditorCertificationId { get; init; }
         /// <summary>Bounded TypeConverter-provided nested property metadata for expandable objects. Supplemental
         /// read-side metadata only; existing scalar/collection/image/reference edit routes are unchanged.</summary>
         public List<ExpandablePropertyInfo>? Properties { get; init; }
@@ -124,6 +144,33 @@ namespace WinFormsDesigner.Engine
         public string? Handler { get; init; }
     }
 
+    /// <summary>A bounded entry surfaced by the component's real <see cref="DesignerActionList"/>. Ordinary property
+    /// items map to <see cref="PropertyName"/> and keep using the established property transaction. The one exact
+    /// repository-certified command carries <see cref="CommandId"/> plus <see cref="CertificationId"/> and must be
+    /// revalidated by the hosted-service broker before its proposals can enter the source planner.</summary>
+    public sealed class DesignerActionInfo
+    {
+        public string DisplayName { get; init; } = "";
+        public string PropertyName { get; init; } = "";
+        public string CommandId { get; init; } = "";
+        public string CertificationId { get; init; } = "";
+        public string Category { get; init; } = "";
+        public string? Description { get; init; }
+    }
+
+    /// <summary>Fail-closed result of confirming one control-local adorner hover in the live product graph.</summary>
+    public sealed class DesignerAdornerHitInfo
+    {
+        public bool Ok { get; init; }
+        public bool Hit { get; init; }
+        public string ComponentId { get; init; } = "";
+        public string AdornerId { get; init; } = "";
+        public string ComponentType { get; init; } = "";
+        public string DesignerType { get; init; } = "";
+        public string ErrorCode { get; init; } = "";
+        public string Reason { get; init; } = "";
+    }
+
     /// <summary>Renderer-supplied identity and source ownership for one live graph component.</summary>
     public sealed class ComponentOwnershipInfo
     {
@@ -132,6 +179,13 @@ namespace WinFormsDesigner.Engine
         public string Ownership { get; init; } = "unresolved";
         public bool Editable { get; init; }
         public string? ReadOnlyReason { get; init; }
+        public bool InheritedPropertyOverrideEditable { get; init; }
+        public bool InheritedGeometryOverrideEditable { get; init; }
+        public string BaseIdentityToken { get; init; } = "";
+        public string InheritedFieldType { get; init; } = "";
+        public string EffectiveAccessibility { get; init; } = "";
+        /// <summary>Live-only type evidence consumed by the inherited source writer; never copied to ComponentInfo.</summary>
+        public Type? InheritedResolvedFieldType { get; init; }
     }
 
     public sealed class ComponentInfo
@@ -146,6 +200,9 @@ namespace WinFormsDesigner.Engine
         /// <summary>True only when this component is addressable from the current designer source.</summary>
         public bool Editable { get; init; }
         public string? ReadOnlyReason { get; init; }
+        /// <summary>A narrow derived-source override capability; structural/component-level editability remains false.</summary>
+        public bool InheritedOverrideEditable { get; init; }
+        public string BaseIdentityToken { get; init; } = "";
         /// <summary>Parent component display name, or null for the root.</summary>
         public string? Parent { get; init; }
         public bool IsRoot { get; init; }
@@ -153,6 +210,10 @@ namespace WinFormsDesigner.Engine
         /// null when the component has no safe default-event gesture.</summary>
         public string? DefaultEvent { get; init; }
         public List<PropertyInfo> Properties { get; init; } = new();
+        /// <summary>VS-style smart-tag property rows supplied by the live component designer.</summary>
+        public List<DesignerActionInfo> DesignerActions { get; init; } = new();
+        /// <summary>VS-style control-local adorners supplied by the live component designer.</summary>
+        public List<DesignerAdornerInfo> DesignerAdorners { get; init; } = new();
         /// <summary>The component's events (name + category + wired handler) — the Events-tab data.</summary>
         public List<EventInfo> Events { get; init; } = new();
     }
@@ -186,7 +247,8 @@ namespace WinFormsDesigner.Engine
             Dictionary<string, Dictionary<string, string>>? eventWirings = null,
             Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null,
             IReadOnlyList<IComponent>? graphComponents = null,
-            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership = null)
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership = null,
+            string? controlAssemblyPath = null)
         {
             var root = host.RootComponent;
             var all = (graphComponents ?? host.Container.Components.Cast<IComponent>().ToList()).Distinct().ToList();
@@ -195,7 +257,7 @@ namespace WinFormsDesigner.Engine
             // so exclude it (matches the net48 side, whose FieldNames map holds no root entry).
             var siblings = all.Where(x => !ReferenceEquals(x, root) && OwnershipOf(x, root, rootName, ownership).Editable).ToList();
             var components = all
-                .Select(c => BuildComponentInfo(c, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers, ownership))
+                .Select(c => BuildComponentInfo(host, c, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers, ownership, controlAssemblyPath))
                 .OrderByDescending(c => c.IsRoot)
                 .ThenBy(c => c.Name, StringComparer.Ordinal)
                 .ToList();
@@ -216,30 +278,81 @@ namespace WinFormsDesigner.Engine
             Dictionary<string, Dictionary<string, string>>? eventWirings = null,
             Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers = null,
             IReadOnlyList<IComponent>? graphComponents = null,
-            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership = null)
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership = null,
+            string? controlAssemblyPath = null)
         {
             var root = host.RootComponent;
             var all = (graphComponents ?? host.Container.Components.Cast<IComponent>().ToList()).Distinct().ToList();
             var siblings = all.Where(x => !ReferenceEquals(x, root) && OwnershipOf(x, root, rootName, ownership).Editable).ToList(); // see Describe: root is never a `this.<field>` reference target
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? effectiveOwnership = ownership;
             IComponent? target = (componentId is "this" or "")
                 ? root
                 : all.FirstOrDefault(c => OwnershipOf(c, root, rootName, ownership).Id == componentId);
-            return target == null ? null : BuildComponentInfo(target, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers, ownership);
+            if (target == null && TryResolveSyntheticSplitterPanel(all, root, rootName, componentId, ownership,
+                out var panel, out var panelOwnership))
+            {
+                target = panel;
+                var expanded = ownership == null
+                    ? new Dictionary<IComponent, ComponentOwnershipInfo>()
+                    : ownership.ToDictionary(pair => pair.Key, pair => pair.Value);
+                expanded[target] = panelOwnership;
+                effectiveOwnership = expanded;
+            }
+            return target == null ? null : BuildComponentInfo(host, target, root, rootName, explicitMembers, eventWirings, siblings, fieldModifiers, effectiveOwnership, controlAssemblyPath);
         }
 
-        private static ComponentInfo BuildComponentInfo(IComponent c, IComponent root, string rootName,
+        private static bool TryResolveSyntheticSplitterPanel(
+            IReadOnlyList<IComponent> all,
+            IComponent root,
+            string rootName,
+            string componentId,
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership,
+            out SplitterPanel panel,
+            out ComponentOwnershipInfo panelOwnership)
+        {
+            panel = null!;
+            panelOwnership = null!;
+            int separator = componentId.LastIndexOf('.');
+            if (separator <= 0 || separator == componentId.Length - 1) return false;
+            string splitId = componentId.Substring(0, separator);
+            string panelName = componentId.Substring(separator + 1);
+            if (panelName != "Panel1" && panelName != "Panel2") return false;
+            var split = all.OfType<SplitContainer>().FirstOrDefault(candidate =>
+                OwnershipOf(candidate, root, rootName, ownership).Id == splitId);
+            if (split == null) return false;
+            var splitSource = OwnershipOf(split, root, rootName, ownership);
+            panel = panelName == "Panel1" ? split.Panel1 : split.Panel2;
+            panelOwnership = new ComponentOwnershipInfo
+            {
+                Id = componentId,
+                Name = panelName,
+                Ownership = splitSource.Ownership,
+                Editable = splitSource.Editable,
+                ReadOnlyReason = splitSource.ReadOnlyReason,
+                InheritedPropertyOverrideEditable = splitSource.InheritedPropertyOverrideEditable,
+                InheritedGeometryOverrideEditable = false,
+                BaseIdentityToken = splitSource.BaseIdentityToken,
+                InheritedFieldType = splitSource.InheritedFieldType,
+                EffectiveAccessibility = splitSource.EffectiveAccessibility,
+            };
+            return true;
+        }
+
+        private static ComponentInfo BuildComponentInfo(IDesignerHost host, IComponent c, IComponent root, string rootName,
             HashSet<(IComponent, string)> explicitMembers,
             Dictionary<string, Dictionary<string, string>>? eventWirings,
             IReadOnlyList<IComponent> siblings,
             Dictionary<string, DesignerModifiers.FieldMod>? fieldModifiers,
-            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership)
+            IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership,
+            string? controlAssemblyPath)
         {
             bool isRoot = ReferenceEquals(c, root);
             var source = OwnershipOf(c, root, rootName, ownership);
             string idKey = source.Id;
             Dictionary<string, string>? wired = null;
             eventWirings?.TryGetValue(idKey, out wired);
-            var props = DescribeProperties(c, explicitMembers, siblings, root, source.Editable);
+            var props = DescribeProperties(c, explicitMembers, siblings, root, source.Editable,
+                source.InheritedPropertyOverrideEditable, source.InheritedGeometryOverrideEditable, controlAssemblyPath);
             if (source.Editable) InjectDesignTimeProperties(props, c, root, fieldModifiers);
             return new ComponentInfo
             {
@@ -249,13 +362,380 @@ namespace WinFormsDesigner.Engine
                 Ownership = source.Ownership,
                 Editable = source.Editable,
                 ReadOnlyReason = source.ReadOnlyReason,
+                InheritedOverrideEditable = source.InheritedPropertyOverrideEditable,
+                BaseIdentityToken = source.BaseIdentityToken,
                 Parent = ParentName(c, root, rootName, ownership),
                 IsRoot = isRoot,
                 DefaultEvent = DescribeDefaultEvent(c),
                 Properties = props,
+                DesignerActions = DescribeDesignerActions(host, c, props, source.Editable),
+                DesignerAdorners = DescribeDesignerAdorners(host, c, source.Editable),
                 Events = DescribeEvents(c, wired),
             };
         }
+
+        private const int DesignerActionMaxLists = 8;
+        private const int DesignerActionMaxItems = 64;
+        private const int DesignerActionMaxNameChars = 256;
+        private const int DesignerActionMaxCategoryChars = 128;
+        private const int DesignerActionMaxDescriptionChars = 1024;
+
+        /// <summary>
+        /// Read the product DesignSurface's real ComponentDesigner action lists, but expose only property items that
+        /// map to an already-described ordinary editable property. No action-list setter or verb is invoked here;
+        /// the webview posts the mapped property through the existing source-first SetProperty transaction.
+        /// Third-party designer callbacks are bounded by list/item/string limits and fail closed on any exception.
+        /// </summary>
+        private static List<DesignerActionInfo> DescribeDesignerActions(
+            IDesignerHost host, IComponent component, IReadOnlyList<PropertyInfo> properties, bool componentEditable)
+        {
+            var result = new List<DesignerActionInfo>();
+            if (!componentEditable) return result;
+
+            var safeProperties = new Dictionary<string, PropertyInfo>(StringComparer.Ordinal);
+            foreach (var property in properties)
+            {
+                if (property.ReadOnly || property.DesignTime || property.TableCell || property.IsCollection
+                    || property.GenericCollection || property.IsImage || property.IsDataSource
+                    || property.ExtenderProvider != null || safeProperties.ContainsKey(property.Name))
+                    continue;
+                safeProperties[property.Name] = property;
+            }
+            if (safeProperties.Count == 0) return result;
+
+            ComponentDesigner? designer = null;
+            ComponentDesigner? fallbackDesigner = null;
+            DesignerActionListCollection? lists = null;
+            try
+            {
+                designer = host.GetDesigner(component) as ComponentDesigner;
+                lists = designer?.ActionLists;
+            }
+            catch { /* a broken host designer may still have a resolvable explicit DesignerAttribute */ }
+
+            // DesignSurface's stock TypeDescriptor.CreateDesigner cannot resolve a DesignerAttribute whose designer
+            // lives in the same collectible, byte-loaded user assembly: Type.GetType searches the default ALC. Resolve
+            // that exact attribute against the component's own ALC and initialize the designer on the already-sited
+            // component. Its Site services are still the product IDesignerHost/change/selection service composition.
+            if (lists == null || lists.Count == 0)
+            {
+                fallbackDesigner = CreateExplicitHostedDesigner(component, designer?.GetType());
+                if (fallbackDesigner != null)
+                {
+                    designer = fallbackDesigner;
+                    try { lists = designer.ActionLists; }
+                    catch { lists = null; }
+                }
+            }
+            if (designer == null || lists == null)
+            {
+                fallbackDesigner?.Dispose();
+                return result;
+            }
+
+            try
+            {
+                var seen = new HashSet<(string PropertyName, string DisplayName)>();
+                var seenCommands = new HashSet<(string CommandId, string DisplayName)>();
+                int listCount = 0;
+                int itemCount = 0;
+                foreach (DesignerActionList list in lists)
+                {
+                    if (listCount++ >= DesignerActionMaxLists || itemCount >= DesignerActionMaxItems) break;
+                    DesignerActionItemCollection items;
+                    try { items = list.GetSortedActionItems(); }
+                    catch { continue; }
+                    if (items == null) continue;
+
+                    foreach (DesignerActionItem item in items)
+                    {
+                        if (itemCount++ >= DesignerActionMaxItems) break;
+                        if (item is DesignerActionMethodItem methodItem)
+                        {
+                            DesignerActionInfo? command = DescribeCertifiedHostedServiceCommand(
+                                component, designer, list, methodItem);
+                            if (command != null && seenCommands.Add((command.CommandId, command.DisplayName)))
+                                result.Add(command);
+                            continue;
+                        }
+                        if (item is not DesignerActionPropertyItem propertyItem) continue;
+
+                        string memberName;
+                        try { memberName = propertyItem.MemberName ?? ""; }
+                        catch { continue; }
+                        if (memberName.Length == 0) continue;
+
+                        string propertyName = ResolveHostedDesignerPropertyTarget(list, memberName);
+                        if (propertyName.Length == 0 || !safeProperties.ContainsKey(propertyName)) continue;
+
+                        string displayName;
+                        string category;
+                        string? description;
+                        try
+                        {
+                            displayName = BoundDesignerActionString(propertyItem.DisplayName, DesignerActionMaxNameChars);
+                            category = BoundDesignerActionString(propertyItem.Category, DesignerActionMaxCategoryChars);
+                            description = BoundDesignerActionNullable(propertyItem.Description, DesignerActionMaxDescriptionChars);
+                        }
+                        catch { continue; }
+                        if (displayName.Length == 0) displayName = propertyName;
+                        if (!seen.Add((propertyName, displayName))) continue;
+
+                        result.Add(new DesignerActionInfo
+                        {
+                            DisplayName = displayName,
+                            PropertyName = propertyName,
+                            Category = category,
+                            Description = description,
+                        });
+                    }
+                }
+            }
+            finally { fallbackDesigner?.Dispose(); }
+            return result;
+        }
+
+        private static DesignerActionInfo? DescribeCertifiedHostedServiceCommand(
+            IComponent component,
+            ComponentDesigner designer,
+            DesignerActionList list,
+            DesignerActionMethodItem item)
+        {
+            if (!string.Equals(component.GetType().Assembly.GetName().Name, "FakeVendor", StringComparison.Ordinal)
+                || !string.Equals(component.GetType().FullName,
+                    HostedServiceKernelProductBroker.ComponentTypeName, StringComparison.Ordinal)
+                || !string.Equals(designer.GetType().FullName,
+                    HostedServiceKernelProductBroker.DesignerTypeName, StringComparison.Ordinal)
+                || !string.Equals(list.GetType().FullName,
+                    HostedServiceKernelProductBroker.ActionListTypeName, StringComparison.Ordinal))
+                return null;
+            string memberName;
+            try { memberName = item.MemberName ?? ""; }
+            catch { return null; }
+            bool preset = string.Equals(
+                memberName, HostedServiceKernelProductBroker.ActionMemberName, StringComparison.Ordinal);
+            bool reentrant = string.Equals(
+                memberName, HostedServiceKernelProductBroker.ReentrantActionMemberName, StringComparison.Ordinal);
+            if (!preset && !reentrant) return null;
+            string commandId = InvokeHostedDesignerStringAdapter(list, "GetHostedDesignerCommandId", memberName);
+            string certificationId = InvokeHostedDesignerStringAdapter(
+                list, "GetHostedDesignerCommandCertificationId", memberName);
+            string expectedCommand = reentrant
+                ? HostedServiceKernelProductBroker.ReentrantCommandId
+                : HostedServiceKernelProductBroker.CommandId;
+            if (!string.Equals(commandId, expectedCommand, StringComparison.Ordinal)
+                || !string.Equals(certificationId, HostedServiceKernelProductBroker.CertificationId,
+                    StringComparison.Ordinal))
+                return null;
+            try
+            {
+                return new DesignerActionInfo
+                {
+                    DisplayName = BoundDesignerActionString(item.DisplayName, DesignerActionMaxNameChars),
+                    CommandId = commandId,
+                    CertificationId = certificationId,
+                    Category = BoundDesignerActionString(item.Category, DesignerActionMaxCategoryChars),
+                    Description = BoundDesignerActionNullable(item.Description, DesignerActionMaxDescriptionChars),
+                };
+            }
+            catch { return null; }
+        }
+
+        private static string InvokeHostedDesignerStringAdapter(
+            DesignerActionList list, string methodName, string memberName)
+        {
+            try
+            {
+                MethodInfo? method = list.GetType().GetMethod(
+                    methodName,
+                    BindingFlags.Instance | BindingFlags.Public,
+                    binder: null,
+                    types: new[] { typeof(string) },
+                    modifiers: null);
+                return method?.ReturnType == typeof(string)
+                    ? method.Invoke(list, new object[] { memberName }) as string ?? ""
+                    : "";
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>Resolve the same live/fallback ControlDesigner path as action-list metadata and expose only the
+        /// fixed hosted-adorner contract. Arbitrary BehaviorService objects never cross the process boundary.</summary>
+        private static List<DesignerAdornerInfo> DescribeDesignerAdorners(
+            IDesignerHost host, IComponent component, bool componentEditable)
+        {
+            if (!componentEditable || component is not Control) return new List<DesignerAdornerInfo>();
+            var (designer, fallback) = ResolveHostedControlDesigner(host, component);
+            if (designer == null) return new List<DesignerAdornerInfo>();
+            try { return HostedDesignerAdornerContract.Read(designer); }
+            catch { return new List<DesignerAdornerInfo>(); }
+            finally { fallback?.Dispose(); }
+        }
+
+        /// <summary>Rebuild-time confirmation for a hover emitted by the canvas. Descriptor identity, local bounds, and
+        /// the designer callback must all agree; stale/unknown/uneditable requests fail closed.</summary>
+        internal static DesignerAdornerHitInfo HitTestDesignerAdorner(
+            IDesignerHost host,
+            IComponent component,
+            string componentId,
+            string adornerId,
+            int x,
+            int y,
+            bool componentEditable)
+        {
+            if (!componentEditable || component is not Control)
+            {
+                return AdornerHitError(component, componentId, adornerId, "component_read_only",
+                    "The component is not editable in the current designer source.");
+            }
+            if (string.IsNullOrWhiteSpace(adornerId) || adornerId.Length > 128)
+            {
+                return AdornerHitError(component, componentId, adornerId, "invalid_adorner",
+                    "The hosted adorner identity is invalid.");
+            }
+
+            var (designer, fallback) = ResolveHostedControlDesigner(host, component);
+            if (designer == null)
+            {
+                return AdornerHitError(component, componentId, adornerId, "designer_unavailable",
+                    "No hosted ControlDesigner is available for the component.");
+            }
+            try
+            {
+                var matches = HostedDesignerAdornerContract.Read(designer)
+                    .Where(candidate => string.Equals(candidate.Id, adornerId, StringComparison.Ordinal))
+                    .ToList();
+                if (matches.Count != 1)
+                {
+                    return AdornerHitError(component, componentId, adornerId, "adorner_unavailable",
+                        "The hosted adorner is not uniquely available.");
+                }
+                var adorner = matches[0];
+                var point = new Point(x, y);
+                var bounds = new Rectangle(adorner.Left, adorner.Top, adorner.Width, adorner.Height);
+                bool hit = adorner.HitTestable && bounds.Contains(point)
+                    && HostedDesignerAdornerContract.ConfirmsHit(designer, adorner.Id, point);
+                return new DesignerAdornerHitInfo
+                {
+                    Ok = true,
+                    Hit = hit,
+                    ComponentId = componentId,
+                    AdornerId = adorner.Id,
+                    ComponentType = component.GetType().FullName ?? component.GetType().Name,
+                    DesignerType = designer.GetType().FullName ?? designer.GetType().Name,
+                };
+            }
+            catch (Exception ex)
+            {
+                return AdornerHitError(component, componentId, adornerId, "designer_failed",
+                    "Hosted designer adorner hit-test failed: " + ex.GetType().Name + ".");
+            }
+            finally { fallback?.Dispose(); }
+        }
+
+        private static (ControlDesigner? Designer, ComponentDesigner? Fallback) ResolveHostedControlDesigner(
+            IDesignerHost host, IComponent component)
+        {
+            ControlDesigner? live = null;
+            try { live = host.GetDesigner(component) as ControlDesigner; }
+            catch { /* an explicit same-ALC designer may still be resolvable */ }
+
+            // A stock fallback ControlDesigner carries no hosted contract. Same-ALC DesignerAttribute resolution is
+            // required for byte-loaded project assemblies, exactly as for DesignerActionList metadata above.
+            if (live?.GetType().GetMethod("GetHostedDesignerAdorners", BindingFlags.Public | BindingFlags.Instance,
+                    binder: null, types: Type.EmptyTypes, modifiers: null) != null
+                && ReferenceEquals(
+                    AssemblyLoadContext.GetLoadContext(live.GetType().Assembly),
+                    AssemblyLoadContext.GetLoadContext(component.GetType().Assembly)))
+                return (live, null);
+
+            var fallback = CreateExplicitHostedDesigner(component, live?.GetType());
+            return fallback is ControlDesigner controlDesigner
+                ? (controlDesigner, fallback)
+                : (live, fallback);
+        }
+
+        private static DesignerAdornerHitInfo AdornerHitError(
+            IComponent component, string componentId, string adornerId, string errorCode, string reason) => new()
+        {
+            ComponentId = componentId ?? "",
+            AdornerId = adornerId ?? "",
+            ComponentType = component.GetType().FullName ?? component.GetType().Name,
+            ErrorCode = errorCode,
+            Reason = reason,
+        };
+
+        private static ComponentDesigner? CreateExplicitHostedDesigner(IComponent component, Type? existingDesignerType)
+        {
+            AttributeCollection attributes;
+            try { attributes = TypeDescriptor.GetAttributes(component); }
+            catch { return null; }
+            foreach (DesignerAttribute attribute in attributes.OfType<DesignerAttribute>())
+            {
+                Type? designerType = ResolveDesignerTypeInComponentContext(component.GetType().Assembly, attribute.DesignerTypeName);
+                if (designerType == null || designerType == existingDesignerType
+                    || !typeof(ComponentDesigner).IsAssignableFrom(designerType)) continue;
+                try
+                {
+                    if (Activator.CreateInstance(designerType) is not ComponentDesigner designer) continue;
+                    designer.Initialize(component);
+                    return designer;
+                }
+                catch { /* try another applicable DesignerAttribute, if present */ }
+            }
+            return null;
+        }
+
+        private static Type? ResolveDesignerTypeInComponentContext(Assembly componentAssembly, string? designerTypeName)
+        {
+            if (string.IsNullOrWhiteSpace(designerTypeName)) return null;
+            try
+            {
+                AssemblyLoadContext? context = AssemblyLoadContext.GetLoadContext(componentAssembly);
+                return Type.GetType(
+                    designerTypeName,
+                    assemblyName =>
+                    {
+                        if (AssemblyName.ReferenceMatchesDefinition(componentAssembly.GetName(), assemblyName))
+                            return componentAssembly;
+                        return context?.Assemblies.FirstOrDefault(assembly =>
+                                   AssemblyName.ReferenceMatchesDefinition(assembly.GetName(), assemblyName))
+                            ?? AssemblyLoadContext.Default.Assemblies.FirstOrDefault(assembly =>
+                                   AssemblyName.ReferenceMatchesDefinition(assembly.GetName(), assemblyName));
+                    },
+                    (assembly, typeName, ignoreCase) =>
+                        (assembly ?? componentAssembly).GetType(typeName, throwOnError: false, ignoreCase: ignoreCase),
+                    throwOnError: false);
+            }
+            catch { return null; }
+        }
+
+        private static string ResolveHostedDesignerPropertyTarget(DesignerActionList list, string memberName)
+        {
+            string target = memberName;
+            try
+            {
+                MethodInfo? adapter = list.GetType().GetMethod(
+                    "GetHostedDesignerPropertyTarget",
+                    BindingFlags.Instance | BindingFlags.Public,
+                    binder: null,
+                    types: new[] { typeof(string) },
+                    modifiers: null);
+                if (adapter != null && adapter.ReturnType == typeof(string))
+                    target = adapter.Invoke(list, new object[] { memberName }) as string ?? "";
+            }
+            catch { return ""; }
+            return target;
+        }
+
+        private static string BoundDesignerActionString(string? value, int maxChars)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            return value.Length <= maxChars ? value : value.Substring(0, maxChars);
+        }
+
+        private static string? BoundDesignerActionNullable(string? value, int maxChars) =>
+            string.IsNullOrEmpty(value) ? null : BoundDesignerActionString(value, maxChars);
 
         private static ComponentOwnershipInfo OwnershipOf(IComponent c, IComponent root, string rootName,
             IReadOnlyDictionary<IComponent, ComponentOwnershipInfo>? ownership)
@@ -447,7 +927,9 @@ namespace WinFormsDesigner.Engine
         }
 
         private static List<PropertyInfo> DescribeProperties(IComponent c, HashSet<(IComponent, string)> explicitMembers,
-            IReadOnlyList<IComponent> siblings, IComponent root, bool componentEditable = true)
+            IReadOnlyList<IComponent> siblings, IComponent root, bool componentEditable = true,
+            bool inheritedOverrideEditable = false, bool inheritedGeometryOverrideEditable = false,
+            string? controlAssemblyPath = null)
         {
             var list = new List<PropertyInfo>();
             // a child sited directly in a TableLayoutPanel exposes the panel's Column/Row extender properties; they
@@ -507,7 +989,14 @@ namespace WinFormsDesigner.Engine
                 // GdiCharSet/GdiVerticalFont — so editing a Font that carries a non-default charset (e.g. 204 =
                 // RUSSIAN_CHARSET, common in Cyrillic/CJK forms) would silently drop the charset on save. Show
                 // such a Font read-only so the value can't be lost; plain fonts (charset 1) stay editable.
-                bool readOnly = !componentEditable || (!genericCollection && pd.IsReadOnly) || unhandledCollection; // Content lists use their source-first editor despite a getter-only property.
+                string propertyTypeName = pd.PropertyType.FullName ?? pd.PropertyType.Name;
+                bool inheritedPropertySupported = inheritedOverrideEditable
+                    && !pd.IsReadOnly && !isTableCell && !isCollection && !unhandledCollection && !isDataSource
+                    && DesignerInheritedOverrideEditor.SupportsProperty(pd.Name, propertyTypeName);
+                bool inheritedPropertyEditable = inheritedPropertySupported
+                    && (!DesignerInheritedOverrideEditor.IsGeometryProperty(pd.Name) || inheritedGeometryOverrideEditable);
+                bool readOnly = !(componentEditable || inheritedPropertyEditable)
+                    || (!genericCollection && pd.IsReadOnly) || unhandledCollection; // Content lists use their source-first editor despite a getter-only property.
                 if (isDataSource && componentEditable) readOnly = false;
                 if (raw is System.Drawing.Font font && (font.GdiCharSet != 1 || font.GdiVerticalFont))
                 {
@@ -518,8 +1007,34 @@ namespace WinFormsDesigner.Engine
                     : !readOnly && pd.PropertyType == typeof(System.Drawing.Font)
                         ? "System.Drawing.Design.FontEditor"
                         : null;
+                string? advertisedUiTypeEditor = !readOnly
+                    ? AdvertisedUiTypeEditor(pd, c.GetType().Assembly)
+                    : null;
+                if (uiTypeEditor == null && genericCollection
+                    && advertisedUiTypeEditor == DesignerUiTypeEditorPolicy.CollectionEditorTypeName)
+                    uiTypeEditor = advertisedUiTypeEditor;
+                string? uiTypeEditorAssemblyPath = null;
+                string? uiTypeEditorAssemblySha256 = null;
+                string? uiTypeEditorCertificationId = null;
+                if (!readOnly && uiTypeEditor == null
+                    && DesignerUiTypeEditorPolicy.TryDescribeCertifiedVendorEditor(
+                        c.GetType(),
+                        pd.Name,
+                        propertyTypeName,
+                        advertisedUiTypeEditor,
+                        controlAssemblyPath,
+                        out string certifiedEditorType,
+                        out string certifiedAssemblyPath,
+                        out string certifiedAssemblySha256,
+                        out string certifiedCertificationId))
+                {
+                    uiTypeEditor = certifiedEditorType;
+                    uiTypeEditorAssemblyPath = certifiedAssemblyPath;
+                    uiTypeEditorAssemblySha256 = certifiedAssemblySha256;
+                    uiTypeEditorCertificationId = certifiedCertificationId;
+                }
 
-                var (standardValues, stdExclusive) = StandardValuesOf(pd, c);
+                var (standardValues, stdExclusive, metadataDiagnosticCode) = StandardValuesOf(pd, c);
 
                 // Component-reference property (ReferenceConverter: AcceptButton/CancelButton/ContextMenuStrip…): the
                 // converter can only enumerate the compatible siblings with a design container (a plain runtime
@@ -557,7 +1072,8 @@ namespace WinFormsDesigner.Engine
                 try { description = string.IsNullOrEmpty(pd.Description) ? null : pd.Description; } catch { description = null; }
 
                 var expandable = ExpandablePropertiesOf(pd, c, raw, pd.Name,
-                    isTableCell || isCollection || unhandledCollection || isImage || referenceValues || isDataSource);
+                    isTableCell || isCollection || unhandledCollection || isImage || referenceValues || isDataSource
+                    || inheritedPropertyEditable);
 
                 list.Add(new PropertyInfo
                 {
@@ -569,11 +1085,14 @@ namespace WinFormsDesigner.Engine
                     IsDefault = isDefault,
                     SourceExplicit = explicitMembers.Contains((c, pd.Name)),
                     ReadOnly = readOnly,
+                    InheritedOverrideEditable = inheritedPropertyEditable,
+                    InheritedOverrideResettable = inheritedPropertySupported,
                     IsEnum = pd.PropertyType.IsEnum,
                     Category = string.IsNullOrEmpty(pd.Category) ? "Misc" : pd.Category,
                     Description = description,
                     StandardValues = standardValues,
                     StandardValuesExclusive = stdExclusive,
+                    MetadataDiagnosticCode = metadataDiagnosticCode,
                     FlagsMembers = FlagsMembersOf(pd.PropertyType),
                     FlagsZero = FlagsZeroOf(pd.PropertyType),
                     TableCell = isTableCell,
@@ -583,6 +1102,9 @@ namespace WinFormsDesigner.Engine
                     GenericCollection = genericCollection,
                     CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : (typedCollectionItem ?? genericCollectionItem)),
                     UiTypeEditor = uiTypeEditor,
+                    UiTypeEditorAssemblyPath = uiTypeEditorAssemblyPath,
+                    UiTypeEditorAssemblySha256 = uiTypeEditorAssemblySha256,
+                    UiTypeEditorCertificationId = uiTypeEditorCertificationId,
                     ReferenceValues = referenceValues,
                     IsDataSource = isDataSource,
                     Properties = expandable.properties,
@@ -607,6 +1129,62 @@ namespace WinFormsDesigner.Engine
             }
         }
 
+        private static string? AdvertisedUiTypeEditor(PropertyDescriptor descriptor, Assembly componentAssembly)
+        {
+            try
+            {
+                foreach (Attribute rawAttribute in descriptor.Attributes)
+                {
+                    string? editorBaseTypeMetadata;
+                    string? editorTypeMetadata;
+                    if (rawAttribute is EditorAttribute attribute)
+                    {
+                        editorBaseTypeMetadata = attribute.EditorBaseTypeName;
+                        editorTypeMetadata = attribute.EditorTypeName;
+                    }
+                    else if (rawAttribute.GetType().FullName == typeof(EditorAttribute).FullName)
+                    {
+                        // Project assemblies can carry ComponentModel metadata through a collectible ALC whose
+                        // EditorAttribute identity is not assignable to the engine's compile-time identity. Reflect
+                        // only this exact framework attribute name and only its two string metadata properties.
+                        Type attributeType = rawAttribute.GetType();
+                        editorBaseTypeMetadata = attributeType.GetProperty(nameof(EditorAttribute.EditorBaseTypeName))
+                            ?.GetValue(rawAttribute) as string;
+                        editorTypeMetadata = attributeType.GetProperty(nameof(EditorAttribute.EditorTypeName))
+                            ?.GetValue(rawAttribute) as string;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    string baseTypeName = UnqualifiedMetadataTypeName(editorBaseTypeMetadata);
+                    if (baseTypeName != "System.Drawing.Design.UITypeEditor") continue;
+                    string editorTypeName = UnqualifiedMetadataTypeName(editorTypeMetadata);
+                    if (editorTypeName == DesignerUiTypeEditorPolicy.CollectionEditorTypeName)
+                        return editorTypeName;
+                    Type? editorType = ResolveDesignerTypeInComponentContext(componentAssembly, editorTypeMetadata);
+                    Type? baseType = ResolveDesignerTypeInComponentContext(componentAssembly, editorBaseTypeMetadata);
+                    if (editorType != null && baseType?.IsAssignableFrom(editorType) == true) return editorType.FullName;
+                    // A collectible project ALC can expose the UITypeEditor base through a framework type-forwarder
+                    // that Type.GetType cannot resolve back into the component context. Preserve only the unqualified
+                    // advertised name here: callers still publish nothing unless the fixed certified-vendor policy
+                    // validates the exact component/property/value/editor tuple and assembly path/hash. Arbitrary
+                    // EditorAttribute code therefore remains non-executable.
+                    if (!string.IsNullOrEmpty(editorTypeName)) return editorTypeName;
+                }
+            }
+            catch { /* unsupported or hostile metadata remains non-executable */ }
+            return null;
+        }
+
+        private static string UnqualifiedMetadataTypeName(string? assemblyQualifiedName)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyQualifiedName)) return "";
+            int separator = assemblyQualifiedName.IndexOf(',');
+            return (separator < 0 ? assemblyQualifiedName : assemblyQualifiedName.Substring(0, separator)).Trim();
+        }
+
         private const int ExpandableMaxDepth = 4;
         private const int ExpandableMaxNodes = 128;
         private const int ExpandableMaxChildrenPerNode = 64;
@@ -617,6 +1195,7 @@ namespace WinFormsDesigner.Engine
         private const int ExpandableMaxValueChars = 1024;
         private const int ExpandableMaxDescriptionChars = 1024;
         private const int ExpandableMaxCategoryChars = 128;
+        private static readonly TimeSpan ConverterQueryTimeout = TimeSpan.FromMilliseconds(200);
 
         private static (List<ExpandablePropertyInfo>? properties, bool truncated) ExpandablePropertiesOf(
             PropertyDescriptor pd, object owner, object? raw, string path, bool suppressForBespokeEditor)
@@ -660,7 +1239,8 @@ namespace WinFormsDesigner.Engine
                     bool childReadOnly = true;
                     try { childReadOnly = child.IsReadOnly; } catch { childReadOnly = true; }
 
-                    var (standardValues, stdExclusive) = StandardValuesOf(child, raw, ExpandableMaxStandardValues, ExpandableMaxValueChars);
+                    var (standardValues, stdExclusive, metadataDiagnosticCode) = StandardValuesOf(
+                        child, raw, ExpandableMaxStandardValues, ExpandableMaxValueChars);
 
                     string? description = null;
                     try { description = BoundNullable(string.IsNullOrEmpty(child.Description) ? null : child.Description, ExpandableMaxDescriptionChars); }
@@ -688,6 +1268,7 @@ namespace WinFormsDesigner.Engine
                         Description = description,
                         StandardValues = standardValues,
                         StandardValuesExclusive = stdExclusive,
+                        MetadataDiagnosticCode = metadataDiagnosticCode,
                         Properties = nested,
                         PropertiesTruncated = nestedTruncated,
                     });
@@ -713,22 +1294,15 @@ namespace WinFormsDesigner.Engine
 
         private static bool ConverterPropertiesSupported(TypeConverter conv, ITypeDescriptorContext ctx)
         {
-            try { return conv.GetPropertiesSupported(ctx); }
-            catch
-            {
-                try { return conv.GetPropertiesSupported(); }
-                catch { return false; }
-            }
+            if (TryRunConverterQuery(() => conv.GetPropertiesSupported(ctx), out bool supported)) return supported;
+            return TryRunConverterQuery(() => conv.GetPropertiesSupported(), out supported) && supported;
         }
 
         private static PropertyDescriptorCollection? ConverterProperties(TypeConverter conv, ITypeDescriptorContext ctx, object value)
         {
-            try { return conv.GetProperties(ctx, value, Array.Empty<Attribute>()); }
-            catch
-            {
-                try { return conv.GetProperties(value); }
-                catch { return null; }
-            }
+            if (TryRunConverterQuery(() => conv.GetProperties(ctx, value, Array.Empty<Attribute>()), out PropertyDescriptorCollection? descriptors))
+                return descriptors;
+            return TryRunConverterQuery(() => conv.GetProperties(value), out descriptors) ? descriptors : null;
         }
 
         private static bool ShouldSurfaceExpandableChild(PropertyDescriptor pd)
@@ -813,16 +1387,18 @@ namespace WinFormsDesigner.Engine
         /// exclusive (closed). Returns (null, false) when none are offered, the type is a flags enum (a
         /// single-select can't express combined flags), or any value fails to stringify. Bounded and fully
         /// guarded — a hostile converter degrades to no dropdown, never throws.</summary>
-        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd, object owner) =>
+        private static (List<string>?, bool, string?) StandardValuesOf(PropertyDescriptor pd, object owner) =>
             StandardValuesOf(pd, owner, 256, 0);
 
-        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd, object owner, int maxValues, int maxValueChars)
+        private static (List<string>?, bool, string?) StandardValuesOf(
+            PropertyDescriptor pd, object owner, int maxValues, int maxValueChars)
         {
             try
             {
-                if (pd.PropertyType.IsEnum && pd.PropertyType.IsDefined(typeof(FlagsAttribute), false)) return (null, false);
+                if (pd.PropertyType.IsEnum && pd.PropertyType.IsDefined(typeof(FlagsAttribute), false))
+                    return (null, false, null);
                 var conv = pd.Converter;
-                if (conv == null) return (null, false);
+                if (conv == null) return (null, false, null);
                 // ONLY the WinForms ImageIndex / ImageKey converters get a describe-time context (Instance = the component,
                 // PropertyDescriptor = pd) — they read the control's ATTACHED ImageList off context.Instance to enumerate its
                 // indices / keys. Every OTHER converter uses the context-less path, EXACTLY as before. GATE on the WinForms
@@ -834,8 +1410,8 @@ namespace WinFormsDesigner.Engine
                     && ReferenceEquals(conv.GetType().Assembly, typeof(Control).Assembly);
                 ITypeDescriptorContext? ctx = null;
                 if (isImageConv) { try { ctx = new DescribeContext(owner, pd); } catch { ctx = null; } }
-                var coll = StandardValuesColl(conv, ctx);
-                if (coll == null) return (null, false);
+                var coll = StandardValuesColl(conv, ctx, out string? metadataDiagnosticCode);
+                if (coll == null) return (null, false, metadataDiagnosticCode);
                 var vals = new List<string>();
                 foreach (var sv in coll)
                 {
@@ -859,15 +1435,15 @@ namespace WinFormsDesigner.Engine
                 // vals.Count==0 → no dropdown (plain field). For an image converter that means the ImageList is absent/empty
                 // (only the sentinel, now filtered) — so a populated 1-image list (even a no-sentinel NoneExcludedImageIndex
                 // Converter, which yields exactly [0]) correctly still shows its dropdown (codex: the old <2 gate wrongly hid it).
-                if (vals.Count == 0) return (null, false);
+                if (vals.Count == 0) return (null, false, metadataDiagnosticCode);
                 // guard the exclusivity query separately — a converter that enumerates fine but throws here
                 // should still yield the (non-exclusive) dropdown rather than discard the whole list.
                 bool excl = false;
                 try { excl = ctx != null ? conv.GetStandardValuesExclusive(ctx) : conv.GetStandardValuesExclusive(); }
                 catch { try { excl = conv.GetStandardValuesExclusive(); } catch { excl = false; } }
-                return (vals, excl);
+                return (vals, excl, metadataDiagnosticCode);
             }
-            catch { return (null, false); }
+            catch { return (null, false, null); }
         }
 
         /// <summary>The "clear the reference" sentinel shown/committed for a component-reference dropdown. A fixed
@@ -955,14 +1531,59 @@ namespace WinFormsDesigner.Engine
         /// <summary>The converter's standard-values set, PREFERRING the context-aware overload (so ImageIndexConverter /
         /// ImageKeyConverter can resolve the attached ImageList) and FALLING BACK to the context-less form if the context
         /// upsets a converter — strictly non-regressing. Null when neither reports a supported set.</summary>
-        private static System.Collections.ICollection? StandardValuesColl(System.ComponentModel.TypeConverter conv, ITypeDescriptorContext? ctx)
+        private static System.Collections.ICollection? StandardValuesColl(
+            System.ComponentModel.TypeConverter conv,
+            ITypeDescriptorContext? ctx,
+            out string? metadataDiagnosticCode)
         {
+            metadataDiagnosticCode = null;
             if (ctx != null)
             {
-                try { if (conv.GetStandardValuesSupported(ctx)) { var c = conv.GetStandardValues(ctx); if (c != null) return c; } }
-                catch { /* the context upset this converter → fall back to the context-less form below */ }
+                bool supportedQuery = TryRunConverterQuery(
+                    () => conv.GetStandardValuesSupported(ctx), out bool supported, out bool supportedTimedOut);
+                if (supportedTimedOut)
+                {
+                    metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                    return null;
+                }
+                System.Collections.ICollection? c = null;
+                bool valuesTimedOut = false;
+                bool valuesQuery = supportedQuery && supported
+                    && TryRunConverterQuery<System.Collections.ICollection?>(
+                        () => conv.GetStandardValues(ctx), out c, out valuesTimedOut);
+                if (valuesTimedOut)
+                {
+                    metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                    return null;
+                }
+                if (valuesQuery
+                    && c != null)
+                {
+                    return c;
+                }
             }
-            try { if (conv.GetStandardValuesSupported()) return conv.GetStandardValues(); } catch { /* no standard values */ }
+            bool contextlessSupportedQuery = TryRunConverterQuery(
+                () => conv.GetStandardValuesSupported(), out bool contextlessSupported, out bool contextlessSupportedTimedOut);
+            if (contextlessSupportedTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            System.Collections.ICollection? values = null;
+            bool contextlessValuesTimedOut = false;
+            bool contextlessValuesQuery = contextlessSupportedQuery && contextlessSupported
+                && TryRunConverterQuery<System.Collections.ICollection?>(
+                    () => conv.GetStandardValues(), out values, out contextlessValuesTimedOut);
+            if (contextlessValuesTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            if (contextlessValuesQuery
+                && values != null)
+            {
+                return values;
+            }
             return null;
         }
 
@@ -1056,14 +1677,15 @@ namespace WinFormsDesigner.Engine
         private static bool IsStringCollectionProperty(PropertyDescriptor pd) =>
             pd.PropertyType.FullName != null && StringCollectionTypeNames.Contains(pd.PropertyType.FullName);
 
-        /// <summary>Typed collections edited with a per-item property editor (VS "Collection Editor"). This slice
-        /// surfaces only ListView.Columns (ColumnHeader items); its property type is matched exactly so no other
-        /// collection is affected. The webview branches on <see cref="PropertyInfo.CollectionItemType"/>.</summary>
+        /// <summary>Typed collections edited with a bounded per-item property editor (VS "Collection Editor"). Exact
+        /// framework collection types select the matching editor; all other collections remain on their existing
+        /// generic/read-only path. The webview branches on <see cref="PropertyInfo.CollectionItemType"/>.</summary>
         private static readonly Dictionary<string, string> TypedCollectionItemTypes = new(StringComparer.Ordinal)
         {
             ["System.Windows.Forms.ListView+ColumnHeaderCollection"] = "System.Windows.Forms.ColumnHeader",
             ["System.Windows.Forms.DataGridViewColumnCollection"] = "System.Windows.Forms.DataGridViewColumn",
             ["System.Windows.Forms.TreeNodeCollection"] = "System.Windows.Forms.TreeNode",
+            ["System.Windows.Forms.TabControl+TabPageCollection"] = "System.Windows.Forms.TabPage",
             ["System.Windows.Forms.ControlBindingsCollection"] = "System.Windows.Forms.Binding",
             // MenuStrip/ToolStrip/StatusStrip.Items and ToolStripMenuItem/ToolStripDropDownButton.DropDownItems are
             // all ToolStripItemCollection — one entry surfaces the "…" ToolStrip item editor on every strip and submenu.
@@ -1165,11 +1787,62 @@ namespace WinFormsDesigner.Engine
         private static string? StringifyInvariant(PropertyDescriptor pd, object? v)
         {
             if (v == null) return null;
-            if (pd.Converter is { } conv && conv.CanConvertTo(typeof(string)))
+            if (pd.Converter is { } conv
+                && TryRunConverterQuery(() => conv.CanConvertTo(typeof(string)), out bool canConvert)
+                && canConvert
+                && TryRunConverterQuery(() => conv.ConvertToInvariantString(v), out string? converted))
             {
-                return conv.ConvertToInvariantString(v);
+                return converted;
             }
             return null;
+        }
+
+        private static bool TryRunConverterQuery<T>(Func<T> query, out T? result)
+        {
+            return TryRunConverterQuery(query, out result, out _);
+        }
+
+        private static bool TryRunConverterQuery<T>(Func<T> query, out T? result, out bool timedOut)
+        {
+            timedOut = false;
+            Task<T> task;
+            try
+            {
+                task = Task.Run(query);
+            }
+            catch
+            {
+                result = default;
+                return false;
+            }
+
+            try
+            {
+                if (task.Wait(ConverterQueryTimeout))
+                {
+                    result = task.GetAwaiter().GetResult();
+                    return true;
+                }
+            }
+            catch
+            {
+                result = default;
+                return false;
+            }
+
+            ObserveLateConverterFault(task);
+            timedOut = true;
+            result = default;
+            return false;
+        }
+
+        private static void ObserveLateConverterFault(Task task)
+        {
+            _ = task.ContinueWith(
+                static completed => _ = completed.Exception,
+                System.Threading.CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
         }
     }
 }

@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260823T034954Z-S006",
+  "scenarioId": "V2-FND-001-S006",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "A loaded buildable classic non-SDK net48 WinForms project contains only Anchor.cs and has no S006GeneratedUserControl artifacts.",
+  "actionLog": [
+    "Build the three-project scratch solution in actual Visual Studio",
+    "Select the exact classic net48 project through the real Solution Explorer hierarchy",
+    "Resolve Microsoft.CSharp.WindowsFormsUserControl through Solution2.GetProjectItemTemplate",
+    "Invoke ProjectItems.AddFromTemplate for S006GeneratedUserControl.cs",
+    "Require source and Designer source as the exact required artifact delta and verify that the installed UserControl template creates no neutral resx",
+    "Verify the classic project gains exactly one source Compile/SubType and one Designer Compile/DependentUpon relationship with no EmbeddedResource item",
+    "Verify Designer source is the only child beneath the created source ProjectItem",
+    "Save All, rebuild the solution, and open the created UserControl in the actual WinForms Designer",
+    "Reject any unexpected top-level delta"
+  ],
+  "expected": "Visual Studio creates the installed two-file UserControl source/Designer set, persists exact classic Compile/DependentUpon/SubType relationships without a neutral resx or EmbeddedResource item, builds successfully, and opens the generated UserControl in the native designer.",
+  "runtimeArchitecture": "actual Visual Studio x64 classic net48 reference",
+  "createdArtifacts": {
+    "S006GeneratedUserControl.cs": "27fcbbc7cb76e158e5a4cf9e72fa793ef90d52912915f819454edd1c3582da65",
+    "S006GeneratedUserControl.Designer.cs": "fc810825f7784f91eaeaf35c242ae33b8d715626df9ca740a436bc074d50e81f"
+  },
+  "auxiliaryArtifacts": {},
+  "projectBeforeSha256": "38771ffe6a2827ed5d9934f17dc486ef936767ddc3a6a6395b589c729282c18a",
+  "projectAfterSha256": "c51eb92dc84eeaa09238c6dd75413b32794744dfac026252c972283ea6825add",
+  "projectByteIdentical": false,
+  "projectMutationExact": true,
+  "projectItemRelationships": {
+    "sourceCompileCount": 1,
+    "sourceSubType": "UserControl",
+    "designerCompileCount": 1,
+    "designerDependentUpon": "S006GeneratedUserControl.cs",
+    "resourceCount": 0,
+    "resourceDependentUpon": ""
+  },
+  "topLevelDelta": [
+    "S006GeneratedUserControl.cs",
+    "S006GeneratedUserControl.Designer.cs"
+  ],
+  "allowedAuxiliaryTopLevelDelta": [
+    "VisualStudioReference.ClassicNet48.csproj.user"
+  ],
+  "unexpectedTopLevelDelta": [],
+  "projectHierarchy": [
+    "S006GeneratedUserControl.Designer.cs"
+  ],
+  "sourceShapeExact": true,
+  "designerShapeExact": true,
+  "resourceRoot": null,
+  "solutionBuild": "PASS",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\403ca1f8bb26438389ac43e8cb2f8885\\ClassicNet48\\S006GeneratedUserControl.cs",
+    "command": "Installed Visual Studio UserControl template + ProjectItems.AddFromTemplate",
+    "templatePath": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\Common7\\IDE\\ItemTemplates\\CSharp\\Windows Forms\\1033\\UserControl\\usercontrol.vstemplate",
+    "templateResolution": "Solution2.GetProjectItemTemplate(Microsoft.CSharp.WindowsFormsUserControl, CSharp)",
+    "itemName": "S006GeneratedUserControl.cs",
+    "addFromTemplateReturnedProjectItem": false,
+    "beforeProjectSha256": "38771ffe6a2827ed5d9934f17dc486ef936767ddc3a6a6395b589c729282c18a",
+    "afterProjectSha256": "c51eb92dc84eeaa09238c6dd75413b32794744dfac026252c972283ea6825add",
+    "projectByteIdentical": false,
+    "expectProjectByteIdentical": false,
+    "projectMutationExact": true,
+    "projectItemRelationships": {
+      "sourceCompileCount": 1,
+      "sourceSubType": "UserControl",
+      "designerCompileCount": 1,
+      "designerDependentUpon": "S006GeneratedUserControl.cs",
+      "resourceCount": 0,
+      "resourceDependentUpon": ""
+    },
+    "projectItemRelationshipsExact": true,
+    "beforeTopLevelFiles": [
+      "Anchor.cs",
+      "VisualStudioReference.ClassicNet48.csproj"
+    ],
+    "afterTopLevelFiles": [
+      "Anchor.cs",
+      "S006GeneratedUserControl.cs",
+      "S006GeneratedUserControl.Designer.cs",
+      "VisualStudioReference.ClassicNet48.csproj"
+    ],
+    "topLevelDelta": [
+      "S006GeneratedUserControl.cs",
+      "S006GeneratedUserControl.Designer.cs"
+    ],
+    "expectedTopLevelDelta": [
+      "S006GeneratedUserControl.cs",
+      "S006GeneratedUserControl.Designer.cs"
+    ],
+    "allowedAuxiliaryTopLevelDelta": [
+      "VisualStudioReference.ClassicNet48.csproj.user"
+    ],
+    "auxiliaryTopLevelDelta": [],
+    "missingRequiredTopLevelDelta": [],
+    "unexpectedTopLevelDelta": [],
+    "childNames": [
+      "S006GeneratedUserControl.Designer.cs"
+    ],
+    "sourceShapeExact": true,
+    "designerShapeExact": true,
+    "resourceExists": false,
+    "resourceRoot": null,
+    "resourceExpectationExact": true,
+    "projectHierarchyExact": true,
+    "solutionBuild": "PASS",
+    "artifactHashes": {
+      "S006GeneratedUserControl.cs": "27fcbbc7cb76e158e5a4cf9e72fa793ef90d52912915f819454edd1c3582da65",
+      "S006GeneratedUserControl.Designer.cs": "fc810825f7784f91eaeaf35c242ae33b8d715626df9ca740a436bc074d50e81f"
+    },
+    "auxiliaryArtifactHashes": {},
+    "pass": true,
+    "capture": {
+      "hwnd": 26615606,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "a4c404b7935a7c5c92bc5dfad3656ea11187b087cdeddd28274b52b67f230be2"
+    }
+  }
+}

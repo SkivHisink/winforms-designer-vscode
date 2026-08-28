@@ -1,12 +1,193 @@
 # v2.0.0 implementation roadmap — Visual Studio WinForms Designer parity
 
-**Status:** implementation blueprint; Phase 0 decisions and evidence are required before the architecture is approved for production implementation.  
-**Last updated:** 2026-08-11.  
-**Baseline:** repository v1.9.0, including atomic Explorer Form/UserControl/Component/Class creation and real
-default-event double-click, with planned 1.10–1.15 workflow milestones in [ROADMAP.md](../ROADMAP.md).
-**Target:** the Visual Studio **WinForms Designer** workflow, hosted naturally inside VS Code — not a second copy of the entire Visual Studio IDE.
+**Status:** repository implementation through the bounded 2.0.0 managed standard-control parity preview is closed;
+the unqualified Visual Studio-parity/GA program and its external gates remain open.
+**Last updated:** 2026-08-26.
+**Baseline:** repository v1.15.0, including atomic Explorer Form/UserControl/Component/Class creation, real
+default-event double-click, all-or-nothing mixed-value multi-object properties, and engine-measured precision layout,
+plus default-size/exact-rectangle toolbox creation, canonical existing-project image-resource assignment, direct
+strip-item reorder/reparent, **Insert Standard Items** for editable MenuStrip/ToolStrip collections, bounded
+derived-source visual-inheritance overrides with fail-closed base reconciliation, and bounded Data Sources generation
+and application-settings binding.
+**Long-term target:** the Visual Studio **WinForms Designer** workflow, hosted naturally inside VS Code — not a second copy of the entire Visual Studio IDE. The planned 2.0.0 claim is narrower and is defined by the release gate record; the current clean-Git/tag gate remains `NO-GO`.
 
 This is the execution document behind the public roadmap. It turns “Visual Studio parity” into bounded behaviors, architectural contracts, ordered work, kill gates, verification evidence, and an honest release claim. A v2 feature is not complete until it is safe on source and resources, keyboard and assistive-technology accessible, measured on a representative corpus, recoverable after a worker failure, and covered on every runtime tier it claims to support.
+
+**Post-close continuation (2026-08-22):** the real VS Code Extension Host product suite now closes S001-S008,
+S010-S012, S021, and S023 at repository level: clean/stale CustomEditor save, a real two-process S003 hot-exit restart
+with one recovered native move/Undo unit on modern and compiled-net48 CustomEditors, aggregate nested-form Save As
+collision refusal, SDK/classic Explorer Add with atomic persistence and forced-write compensation, unsafe item-name
+refusal, ambiguous/missing-owner pre-render refusal, and a two-control engine-authorized move whose single native
+Undo/Redo restores/reapplies both assignments. It also proves net48 reparenting rebases the child's absolute frame to
+its new parent's client origin and proves that a concrete `GenericBaseForm<int>` session exposes inherited controls as
+read-only while keeping derived controls editable. Subsequent bounded product proofs include selected-control rename,
+tray selection, outline/menu/collection editing, real Properties search and standard values, strongly typed project
+resources, local Form Icon Import, standard ColorEditor apply/cancel, Language-scoped neutral/fr-FR resource editing,
+stale-resource refusal, compiled net48 binding, and exact ImageList compensation after a rejected final postcondition.
+ The current catalog is 111 repository `PASS`, 12 `NOT_EXECUTED`, and 5 `GATED`; every PASS is backed by a completed
+ machine-readable suite report and direct executed assertion anchors. Ten former caller-supplied capability-inspection
+ echo rows are now honestly `NOT_EXECUTED / HARNESS_ONLY`. Forty actual Visual Studio reference traces are archived as
+ `PASS`, while the remaining 88 stay explicitly `NOT_EXECUTED`. S074 specifically
+uses the shipped Properties `Icon` Import transaction in the real modern CustomEditor on VS Code 1.84.0 and 1.134.0,
+preserves opaque resx payload/metadata, and proves exact Designer-plus-resource Undo/Redo; actual Visual Studio and
+physical ARM64 execution remain external.
+S126 now replaces its preview-only headless evidence with the contributed High-DPI Advisor command on a real modern
+CustomEditor. Live root metadata authorizes the exact `AutoScaleMode.None` assignment, the normal safe planner feeds a
+read-only before/after VS Code diff, and Apply commits only that retained revision through the ordinary CustomDocument
+firewall as one native Undo/Redo unit. S128 proves an intervening ordinary edit makes the preview stale and refuses
+without replacing it. Both VS Code 1.84.0 and 1.134.0 pass with byte-exact disk; physical ARM64 and actual Visual Studio
+reference execution remain external.
+S124 now replaces caller-supplied headless crash metadata with an actual product worker loss in a real modern
+CustomEditor. The mapped child is terminated while the form is open; the session becomes non-editable, Diagnostics
+records the loss, bounded recovery starts a different PID, the exact clean graph returns, ordinary edit/native Undo
+passes, and a later form continues through that recovered process on both VS Code 1.84.0 and 1.134.0. The actual
+Visual Studio trace and an external crashing-vendor artifact remain external.
+ S085-S088 additionally exercise visual inheritance through real source-identical modern and compiled-net48
+CustomEditors. Protected inherited controls accept only a live-token-authorized derived override; private inherited
+controls publish a visible read-only reason and reject Properties and canvas moves without mutation/history; a toolbox
+ Add targets only the derived root and remains one native Undo/Redo unit. Base and derived disks remain exact before Save
+ on both supported host lines. S085 now also has an actual Visual Studio Enterprise 2026 18.7 x64 reference: the installed
+ designer selects the protected inherited Button, changes `Text` through native Properties, writes exactly one derived
+ override, preserves both base artifacts, derived code-behind, and project bytes, removes the override through native
+ Undo after deterministic CodeDOM canonicalization, and reproduces the applied Designer byte-exact on Redo. S086 now
+ also has an actual Visual Studio 18.7 x64 reference: the installed designer exposes the private inherited Label with a
+ native lock glyph, selects it, publishes `Text=Private inherited label` on a disabled Properties row, rejects an
+ attempted UI Automation `SetValue`, and preserves all five base/derived/project artifacts byte-exact. S087 now has an
+ actual classic-net48 reference: native `All Windows Forms → Button` adds exactly one derived-root control, native Undo
+ removes it, and Redo restores the complete operation contract while measured CodeDOM byte differences remain visible.
+ S088 now has actual modern and classic-net48 references: native locked/read-only selection plus a bounded designer-HWND
+ drag leaves bounds, observable Saved/Undo states, and all ten artifacts exact. Physical ARM64 remains external.
+S104 additionally exercises the established product engine lifecycle rather than the diagnostics-only v2 supervisor.
+Three clean modern/compiled-net48 close/reopen cycles reuse the same two warm PIDs without duplicate children; after
+the last session, the 30-second product idle path returns mapped engines and host-owned process registrations to zero,
+proves both old OS PIDs exited, and starts fresh PIDs on reopen. VS Code 1.84.0 and 1.134.0 pass; Visual Studio,
+physical ARM64, and performance-lab handle telemetry remain external.
+S079 now selects ar-SA on a real compiled-net48 localizable CustomEditor and proves exact mirrored child geometry,
+Arabic metadata, clean native history, and byte-exact source/Designer/neutral/culture resources on both host lines.
+Its bounded actual Visual Studio Enterprise 2026 18.7 x64 reference independently opens an exact classic-net48
+`RightToLeft=Yes` / `RightToLeftLayout=true` fixture, measures the real native Form/Button/Label HWNDs, and proves the
+same mirror formula inside a `320×160` client without changing source, Designer, or project bytes.
+S101 and S105 resolve actual `net8.0-windows` and built `net48` projects to running host-owned modern and net48
+workers; S105 also reports live-source interpreted authority. Their remaining Visual Studio reference execution and
+physical ARM64 stay external where applicable.
+S016 now runs a generated 300-control standard-control form through real x64 modern and compiled-net48 CustomEditors
+instead of accepting caller-supplied timings. Both publish 301 layout nodes; initial open stays below 5000 ms and a
+selected Text commit plus reconciliation below 500 ms on VS Code 1.84.0 and 1.134.0. The accepted snapshot feeds
+Properties without a trailing describe, native Undo restores the exact baseline, and all fixture disk hashes remain
+unchanged. Actual Visual Studio, physical cross-architecture, and external performance-lab p95 evidence remain open.
+S122 now consumes only real product telemetry from 50-control, 300-control modern/net48, and 180-control/96-FakeVendor
+CustomEditor sessions at logical 100/125/150/200% DPI. High-DPI retained patches scale only the invalidated leaf and the
+webview maps logical patch rectangles to physical canvas pixels; all 12 frozen budgets, same-snapshot checks, native
+Undo, and disk guards pass on VS Code 1.84.0 and 1.134.0. Physical performance-lab p95, a licensed vendor artifact, and
+the Visual Studio reference remain open. S120 is also repository-automated on both host lines: its mandatory bounded
+move/save/native-Undo leg matches the archived Visual Studio Enterprise 2026 18.7 byte-identical Save All trace.
+S100 and S108 now add the missing bidirectional product corpus: modern and compiled-net48 CustomEditors save the exact
+exported Forms, actual Visual Studio Enterprise 2026 18.7 opens and saves those artifacts, and subsequent real product
+runs reopen the archived Visual Studio output through the matching engine with exact Text semantics, clean state, and
+CustomDocument/disk equality. The static S100 adapter remains data-only and has no vendor-code or workspace-write
+authority. Only S096 (OS-enforced isolation of arbitrary designer callbacks) and S102 (physical Windows ARM64 execution)
+  remain repository `NOT_EXECUTED`; the other 88 Visual Studio reference traces remain open. S024 now has an actual
+  Visual Studio 18.7 x64 reference on both modern and net48: native Copy/Paste resolves occupied `submitButton` to
+  unique `button1`, preserves copied properties/ownership, and passes exact Undo/Redo. Visual Studio's observed
+  `(98,74)` Paste location is recorded separately from the product's bounded 8px placement, so no coordinate-parity
+  claim is inferred from the collision-safety `PASS`. S005 now records the actual modern SDK project-system baseline:
+  Visual Studio resolves its installed `Microsoft.CSharp.WindowsForm` template, creates the source, nested Designer
+  source, and neutral resx, leaves the SDK project byte-identical, builds the solution, and opens the new Form in the
+  native designer. The bounded per-user `.csproj.user` sidecar is recorded separately from the immutable project file.
+S051 now also has a bounded classic-net48 Visual Studio 18.7 x64 reference: native Document Outline selects `textBox1`,
+the real Events editor rewires `TextChanged` to the compatible alternate handler, and Visual Studio's empty-handler
+lifecycle is frozen across native Undo/Redo while project bytes and unrelated source/Designer facts stay exact. The
+repository CustomEditor independently retains its dual-document revision refusal and stable rewire transaction.
+S006 records the adjacent classic net48 project-system baseline. Visual Studio resolves the installed
+`Microsoft.CSharp.WindowsFormsUserControl` item template, creates only source plus nested Designer source, writes the
+exact `SubType=UserControl`/`DependentUpon` Compile relationships, adds no neutral resx or `EmbeddedResource`, rebuilds,
+and opens the native designer. The product Explorer Add implementation now matches that observed two-file contract
+instead of pre-seeding a resource that Visual Studio does not create.
+S025 records the actual native baseline-snap contract at 96 DPI: moving a default Button to raw source Y `36` is
+corrected to Y `35`, aligning its measured baseline offset `21` with the default TextBox offset `16`. The product now
+publishes those exact baseline snap lines, translates the guide through the full-frame client origin, and gives the
+baseline candidate precedence over a closer center candidate, with exact engine and webview regression coverage.
+S026 records the actual native SnapToGrid contract at 96 DPI: with the effective 8×8 parent grid, a raw AutoSize Label
+target `(33,25)` persists at `(32,24)` and preserves Size `57×15`. The capture restores the exact original designer
+options, while the product's full-frame webview evidence reproduces the same move and grid-aware resize. The resulting
+29-scenario actual-Visual-Studio control run terminates with 22 `PASS`, 6 `CAPTURED_UNREVIEWED`, 1 `NOT_EXECUTED`, and
+0 `FAIL`; at that control-run snapshot W4 remained open for the other 94 rows. A later focused S017 trace proves that the modern designer marquee
+selects every positive-area intersection among direct children of the active Panel, including a partially intersected
+Button, while excluding nonintersecting Panel children and Form-level controls. The product marquee now uses that same
+intersection rule and container boundary; its full webview suite passes 970 checks across 209 tests. The reversible
+Copy/Paste selection probe is archived separately from its disclosed CodeDOM block-order normalization after Undo.
+The later focused S110 trace reads the installed designer's UI Automation model without mutation: Button, TextBox,
+visual MenuStrip, nested File menu item, and Timer tray component each expose an exact role/type, enabled and onscreen
+state, non-empty bounds, and raw-view parent chain. Source, Designer, and project hashes remain exact. This closes the
+x64 Visual Studio reference leg only; physical ARM64 and live assistive-technology acceptance remain external gates.
+The focused S061 trace selects `button1` in the real owner-drawn Document Outline and commits `submitButton` through
+Properties `(Name)`. Visual Studio changes the field, all eight member references, and the `Name` literal exactly once;
+one native Undo restores the semantic original and Redo reproduces the renamed Designer bytes exactly, while source and
+project remain byte-identical. Native outline F2 did not expose an inline editor, so it is not claimed as Visual Studio
+behavior; the product's F2 binding is an additive shortcut over the matching atomic selected-control rename.
+The focused S062 trace clicks the installed designer's visible `refreshTimer` Pane beneath `ComponentTray`; native
+Properties identifies `refreshTimer System.Windows.Forms.Timer` and shows `(Name)=refreshTimer`, `Enabled=False`,
+and `Interval=1500` while source, Designer, and project hashes remain exact. The product independently matches the
+nonvisual tray/session-pick and live Timer Properties contract; physical Windows ARM64 execution remains external.
+S082 additionally refreshes the dedicated Data Sources pane from a real modern `Customer` schema and commits its
+DataGridView, BindingSource, columns, and BindingNavigator as one unsaved native history unit with exact pre-Save disk
+bytes. S084 proves the adjacent unsupported-provider boundary through real modern and compiled-net48 CustomEditors:
+typed `UNSUPPORTED_DATA_PROVIDER`, no generated IDs, no dirty/history entry, and no disk mutation. Both host lines pass;
+actual Visual Studio reference execution and S082 physical ARM64 remain external.
+S075 additionally selects a compiled-net48 tray `ImageList`, serializes two PNGs through the bundled engine, commits
+canonical Designer plus binary-resx output as one native history unit, and proves exact Undo/Redo on both supported
+VS Code host lines; its actual Visual Studio trace remains external.
+S076 additionally runs an injection-shaped project-resource accessor through real modern and compiled-net48
+CustomEditors after live `Button.Image` metadata authorization. Both refuse with typed `INVALID_RESOURCE_SYMBOL`
+before resource discovery, source planning, mutation, native history, or disk writes on both supported host lines;
+actual Visual Studio execution remains external.
+S118 additionally drives the shipped modern ImageList transaction through a real CustomEditor, writes and verifies the
+planned resource bytes, then rejects only the final forward postcondition through a deterministic Extension Host seam.
+The normal durable runner compensates to exact source, Designer, opaque-resx, clean-tab, and empty-history baselines on
+both supported host lines; actual Visual Studio and physical ARM64 execution remain external.
+S045/S046 additionally start from live `Button.BackColor` metadata that publishes the framework `ColorEditor`. A
+deterministic seam replaces only the native modal Blue/dismiss outcome; the shared product ingress, normal source plan,
+CustomDocument commit, canonical `Color.Blue` expression, dirty state, native Undo/Redo, typed `CANCELLED` result, and
+cancel no-mutation checks run on VS Code 1.84.0 and Stable. S046 now also has an actual Visual Studio x64 reference:
+explicit `BackColor=Red` opens the native owner-drawn `Custom / Web / System` Color editor with Red selected, and
+`Esc` preserves Red plus every project input hash. S045 independently selects the exact native `Blue` Web-color row,
+accepts canonical `Color.Blue`, preserves all sibling Button properties, and proves one native Undo back to Red plus one
+Redo byte-identical to apply while source/project remain exact. Physical ARM64 remains external where catalogued.
+S047 additionally runs the exact in-repo MIT FakeVendor dropdown through the actual isolated child worker from live
+compiled-net48 metadata, then commits `Vendor Beta` through the proven Lane B owned region as one native Undo/Redo
+unit. S048 runs the actual wrong-type worker outcome on modern and compiled-net48 sessions and receives
+`INVALID_EDITOR_RESULT` with no source/history mutation. Both host lines pass; licensed-vendor and Visual Studio gates
+remain external.
+S071 additionally runs the exact certified FakeVendor collection editor through the actual isolated worker from live
+modern and compiled-net48 metadata. Its `[1,2] → [3,5]` result enters the product as a generic-list proposal, passes the
+engine-owned bounded-region planner, and becomes one Lane B native Undo/Redo/final-Undo unit without writing disk.
+S072 proves the negative boundary with the same successful worker: a proposal that also changes root `Form.Text` is
+rejected as `OWNED_REGION_VIOLATION` with exact source, dirty-state, history, and disk no-mutation on both host lines.
+Licensed-vendor and actual Visual Studio certification remain external.
+S020 additionally binds every canvas selection/manipulation intent to the generation of the PNG actually drawn. The
+open CustomEditor, not the browser, is authoritative: missing, malformed, and older generations return typed
+`STALE_CANVAS` before selection, source, dirty state, history, or disk mutation. Real modern and compiled-net48
+sessions start a newer full render, reject an old click and keyboard nudge with native Undo remaining a no-op, then
+accept the fresh generation on both VS Code host lines. Actual Visual Studio reference execution remains external.
+S093 additionally renders a bounded `ControlDesigner` adorner on the real modern CustomEditor canvas from the
+workspace-built in-repo MIT FakeVendor fixture. Hover is accepted only after a fresh engine graph and the live designer
+confirm the exact control-local point; unit, webview, and both Extension Host lines prove visible feedback plus exact
+source, dirty-state, native-history, and disk no-mutation. Licensed-vendor and Visual Studio gates stay external.
+S094 additionally builds the in-repo MIT FakeVendor project inside the disposable workspace, reads the live
+`ComponentDesigner.ActionLists` Caption descriptor through the real modern CustomEditor, maps it to `Text`, and proves
+canonical source plus one native Undo/Redo unit. Licensed-vendor, Visual Studio, and physical ARM64 gates stay external.
+S089/S090 additionally bind the exact repository-certified modern hosted-service fixture to the ordinary CustomEditor.
+The engine publishes `Apply Service Preset` only after proving STA, assembly/component/designer/certificate identity,
+and complete container, selection, change, name, command, and toolbox capabilities; incomplete kernels withhold
+`IDesignerHost`, and unsupported services refuse explicitly. The webview sends only the certified command identity.
+The host revalidates the live revision and exact one-transaction/two-change result, independently plans `Text` and
+`Size`, and commits them as one unsaved native Undo/Redo unit; a forged certificate is exact no-mutation. Unit, webview,
+and both Extension Host lines pass. S091/S092 additionally run the shared service registry through a real
+compiled-net48 CustomEditor: the certified cancellation command opens one outer transaction in a disposable private-
+desktop child, refuses the nested transaction as `REENTRANT_CANCELLED`, balances all four change events, restores the
+transient graph, emits no source proposal, and leaves source, dirty state, native history, project/assembly disks, and
+the mapped EngineApi process exact. Arbitrary vendor designers, licensed-vendor certification, physical ARM64, and
+actual Visual Studio reference execution remain external.
 
 ## 1. Product contract
 
@@ -50,7 +231,13 @@ The following are not part of the v2 parity claim:
 - VB WithEvents/Handles parity unless separately staffed, designed, and added to the release claim;
 - Linux/macOS/WSL rendering. A Windows UI host remains required.
 
-COM/ActiveX and x86 support are a **conditional GA scope**. They enter the unqualified parity claim only if Phase 0 bitness, hosting, redistribution, security, and packaging spikes pass. Otherwise v2 must be marketed explicitly as managed WinForms parity, while COM/ActiveX remains a named post-v2 tier.
+Phase 0 records the v2.0.0 runtime cut explicitly: the managed GA baseline is modern `win-x64` / `win-arm64`
+plus .NET Framework 4.8 x64 compatibility. Tier D (`x86`, `COM`, and `ActiveX`) is excluded by name from
+v2.0.0 GA and moves to a post-v2 decision. Unsupported Tier D requests must fail before mutation with stable
+diagnostics such as `X86_WORKER_UNAVAILABLE` or `COM_ACTIVE_X_UNSUPPORTED`, never by attempting a partial edit.
+As shipped, only the ActiveX source route meets that bar: an AxInterop/AxHost-bearing Designer file refuses before
+render. The x86 predicate is reachable only on the Framework route (nothing reads `PlatformTarget`/`Prefer32Bit`)
+and the COM refusal has no product caller, so both remain gated rather than product-wired.
 
 ## 2. Live baseline and constraints
 
@@ -66,7 +253,8 @@ The plan builds on the existing product instead of restarting it:
 
 As of this audit, the largest coordination files are approximately 7,497 lines (designerEditor.ts), 3,617 lines (DesignerRenderer.cs), 3,491 lines (RenderWorker.cs), 2,494 lines (panel.js), 2,290 lines (DesignerControlEditor.cs), 2,273 lines (engineClient.ts), and 2,229 lines (designer.js). v2 must not add a second architecture inside these files. Controlled decomposition with characterization tests is a release-enabling feature, not optional cleanup.
 
-The 1.10–1.15 milestones remain valid and should land as small compatible releases where practical. They become input to the v2 parity corpus; v2 does not postpone every daily-workflow improvement behind the new design-time host.
+The 1.15 Data Sources milestone is now repository-side complete and becomes input to the v2 parity corpus; v2 does
+not postpone every daily-workflow improvement behind the new design-time host.
 
 ## 3. Capability and parity matrix
 
@@ -88,7 +276,7 @@ Legend: **GA** is required for the v2 parity claim; **conditional** is required 
 | PRP-03 | Framework and vendor UITypeEditor | Compatible | GA for managed supported set | Modal/dropdown broker is cancellable, owned, DPI/theme-aware, and cannot bypass the transaction planner. |
 | EVT-01 | Events tab, default event, handler generation/navigation | Exact | GA | Double-click and event grid use real metadata; source/code-behind revisions are checked together. |
 | TLB-01 | Toolbox discovery/search/categories/favorites/Choose Items | Workflow | GA | Framework/project/vendor items, auto-population, cache provenance, user-curated suppression. |
-| TLB-02 | COM/ActiveX toolbox and AxHost generation | Exact | Conditional | x86/x64 fixtures, license/resource generation, packaging and security gates pass. |
+| TLB-02 | COM/ActiveX toolbox and AxHost generation | Exact | 2.x; excluded from v2.0.0 GA | v2.0.0 refuses before mutation with `COM_ACTIVE_X_UNSUPPORTED`; future support needs x86/x64 fixtures, license/resource generation, packaging and security gates. |
 | OUT-01 | Document Outline and component tray | Exact | GA | Rename/reparent/order/select; nonvisual components and inherited ownership are accurate. |
 | MNU-01 | MenuStrip/ToolStrip/ContextMenuStrip | Exact | GA | Direct nested edit, verbs, standard items, drag/reorder/reparent, overflow and tray paths. |
 | COL-01 | Collection editors | Compatible | GA | Standard and hosted vendor collection editors plan an inspectable atomic patch. |
@@ -99,8 +287,8 @@ Legend: **GA** is required for the v2 parity claim; **conditional** is required 
 | EXT-01 | IDesignerHost service kernel | Compatible | GA | Documented service contract with transactions, selection, changes, names, commands, toolbox and serialization. |
 | EXT-02 | ControlDesigner, adorners, verbs, DesignerActionList | Compatible | GA | Certified managed designers run in an isolated worker tier; capabilities and failures are explicit. |
 | EXT-03 | Vendor adapter SDK | Superior | GA | Versioned public adapter/protocol surface, samples, compatibility tests, no product-specific hard-coded branch. |
-| RUN-01 | Modern .NET runtime/architecture matrix | Compatible | GA | Project TFM/runtime selection, x64/ARM64 worker, unload/recycle and dependency isolation. |
-| RUN-02 | .NET Framework runtime/bitness matrix | Compatible | GA; x86 conditional | Live-source authority retained; x64 plus gated x86 worker and deterministic fallback. |
+| RUN-01 | Modern .NET runtime/architecture matrix | Compatible | GA | Project TFM/runtime selection, `win-x64` / `win-arm64` workers, unload/recycle and dependency isolation. |
+| RUN-02 | .NET Framework runtime/bitness matrix | Compatible | GA for x64 compatibility only; x86 excluded from v2.0.0 GA | Live-source authority retained on x64 compatibility. As shipped, the `X86_WORKER_UNAVAILABLE` refusal is reached by the ActiveX source gate and by an explicitly bound Framework output; general x86 project detection is gated and not executed. |
 | ACC-01 | Keyboard, screen reader, high contrast, zoom | Workflow | GA | All product operations are keyboard reachable; accessible mirror tree and manual AT evidence. |
 | DIA-01 | Capability inspector and diagnostics | Superior | GA | Every unavailable operation has reason, target, recovery; export is reproducible and redacted. |
 | SAF-01 | Source/resource integrity | Superior | GA | Zero silent loss/corruption; every mutation has a validated patch plan and independent postcondition. |
@@ -115,7 +303,7 @@ Legend: **GA** is required for the v2 parity claim; **conditional** is required 
 | **A — Microsoft framework** | Standard controls, containers, components, resources and binding patterns on supported runtimes | 100% required scenarios; zero silent fallback, corruption, crash, or unexplained semantic diff. |
 | **B — custom managed controls** | In-repo FakeVendor plus independent samples using documented design-time APIs | At least 98% required scenarios; every miss classified and non-mutating. |
 | **C — certified vendor suites** | Licensed, versioned cohorts from at least three materially different suites, or an explicitly smaller named set | At least 95% required scenarios per advertised cohort; zero silent mismatch/data loss; archived redacted manifest. |
-| **D — COM/ActiveX/x86** | Signed/unsigned test controls, AxHost resources/licenses, AnyCPU/x86/x64 projects | 100% supported matrix if advertised; otherwise excluded by name from v2 GA. |
+| **D — COM/ActiveX/x86** | Signed/unsigned test controls, AxHost resources/licenses, AnyCPU/x86/x64 projects | Excluded by name from v2.0.0 GA. Future 2.x support requires 100% of an advertised matrix. v2.0.0 refuses ActiveX-bearing Designer source before render with `X86_WORKER_UNAVAILABLE` and no mutation; general x86 project detection and the `COM_ACTIVE_X_UNSUPPORTED` toolbox contract are gated and not executed. |
 
 Percentages never waive a safety failure. One silent mutation, unexplained source loss, arbitrary-source execution, cross-document overwrite, or undisclosed stale canvas is a release blocker regardless of aggregate pass rate.
 
@@ -233,7 +421,7 @@ Compiled project/vendor controls are **trusted-to-execute**: constructors, acces
 | **SRF — canvas/layout** | Authoritative geometry, prediction, guides/grid, selection, container adapters, smooth interaction | engine geometry/capture, webview canvas |
 | **PRP — metadata/editors/events** | Multi-object grid, converters, editors, events/default handlers, collections | engine describe/editor, panel modules |
 | **PRJ — project/assets/data** | Scaffolding, project resolution, resources, localization, Data Sources, settings binding | extension resolver, resource/data planners |
-| **RUN — runtime/vendor** | Modern/net48 matrix, x86 conditional path, bitness/dependencies, adapter SDK, certification | engines, supervisor, fixtures |
+| **RUN — runtime/vendor** | Managed modern/net48 matrix, Tier D refusal boundary, bitness/dependencies, adapter SDK, certification | engines, supervisor, fixtures |
 | **QAS — quality/security/a11y** | Threat model, adversarial/parity/golden/perf/soak/a11y CI, manifests | tests, scripts, workflows, testing docs |
 | **REL — migration/release** | Settings/cache/protocol migrations, packages, rollback, support matrix, evidence ledger | metadata, release workflow/docs |
 
@@ -248,13 +436,24 @@ Effort bands assume a stable core team of roughly 6–9 people: lead/architect, 
 - **V2-FND-001:** freeze a versioned Visual Studio catalog with traces and at least 100 core scenarios.
 - **V2-FND-002:** approve ADR 0003, trust model, proprietary-binary exclusion, rollback and cut decisions.
 - **V2-HST-001:** host a real Form and UserControl on the exact modern runtime using approved redistributable dependencies; inventory actual services.
-- **V2-HST-002:** repeat the kernel on net48 x64; test x86/COM separately from managed GA.
+- **V2-HST-002:** prove net48 x64 compatibility feasibility only; x86/COM is explicitly outside v2.0.0 GA and must
+  fail closed with `X86_WORKER_UNAVAILABLE` / `COM_ACTIVE_X_UNSUPPORTED`.
 - **V2-PRP-001:** prove one framework and one FakeVendor designer/action list/editor through the broker, including cancellation, reentrancy, crash, and invalid return.
 - **V2-DOC-001:** produce Lane A/Lane B plans for the same forms; prove byte/semantic preservation and Visual Studio round-trip.
 - **V2-SRF-001:** measure capture, preview, commit, and reconciliation on 50-, 300-, and vendor-heavy forms across the DPI matrix.
-- **V2-RUN-001:** obtain licensing/redistribution/security decisions for every dependency and vendor certification path.
+- **V2-RUN-001:** approve the repo-side managed runtime baseline (`win-x64`, `win-arm64`, and net48 x64
+  compatibility) while recording licensing, redistribution, security, vendor certification, physical hardware,
+  legal/product, and publication decisions as external PASS/GATED/NOT EXECUTED evidence.
 
-**Exit / kill gate:** no production implementation before managed hosting, dual-lane round-trip, worker recovery, editor broker, and legal/dependency route pass. A failed hosted serializer keeps that shape source-first. A failed vendor-host route narrows the claim. A failed x86/COM spike removes Tier D from v2 GA.
+**Phase 0 runtime/legal decision:** `V2-RUN-001` is repo-side approved for the managed baseline only. The repository
+can document and package the managed route, but legal approval, vendor agreements/certification, physical x64/ARM64
+hardware validation, publication credentials, and public rollout remain **GATED** or **NOT EXECUTED** until separately
+proven.
+
+**Exit / kill gate:** no production implementation before managed hosting, dual-lane round-trip, worker recovery, and
+editor broker pass. The managed runtime route may proceed within the recorded external gates above. A failed hosted
+serializer keeps that shape source-first. A failed vendor-host route narrows the claim. Tier D is already removed from
+v2.0.0 GA, so x86/COM/ActiveX work cannot delay the managed baseline.
 
 ### Phase 1 — architectural runway, zero feature regression (8–14 weeks)
 
@@ -266,6 +465,16 @@ Effort bands assume a stable core team of roughly 6–9 people: lead/architect, 
 - **V2-DOC-002:** introduce document store, multi-artifact fingerprints, DesignerIntent, PatchSet, and journal behind current commands.
 - **V2-RUN-002:** introduce WorkerSupervisor, capabilities, deadlines, cancellation, crash policy, worker keys, and diagnostics.
 - **V2-REL-001:** add N/N−1 protocol, partial-update, settings/cache migration, rollback, and self-repair tests.
+
+**Current repository-side foundation evidence:** [`v1-characterization-matrix.md`](v2/v1-characterization-matrix.md)
+freezes the observable document, commit, render, property, resource, toolbox, tab, event, fallback, lifecycle, and
+diagnostic behavior that the architecture runway must preserve. The working tree also contains a generated v2 protocol
+schema and TypeScript/C# bindings, document snapshots/fingerprints, bounded PatchSet validation, an atomic process-crash journal
+model, a pure transaction runner with exact-baseline revalidation, per-target progress, guarded compensation,
+`recoveryRequired` ambiguity handling, and one-undo-unit registration, Phase 0 performance-report validation, and a pure
+WorkerSupervisor/worker-selection foundation for the managed runtime cut. These pieces are covered by focused unit tests
+and build/typecheck gates, but they are not yet wired as the sole command path, do not prove Visual Studio reference
+parity, and do not satisfy the Phase 1 exit condition above.
 
 **Exit:** every v1.7 plus landed 1.x test is green with byte-identical expected output. Protocol fuzzing, stale replies, crash recovery, and transactions pass. Old coordination classes become facades or are removed; there are not two truths.
 
@@ -299,7 +508,7 @@ Effort bands assume a stable core team of roughly 6–9 people: lead/architect, 
 
 - select modern workers by compatible TFM/runtime and x64/ARM64 architecture;
 - harden net48 x64 host, dependency redirects, output release/rebuild, and live-source authority;
-- implement x86/COM only if Phase 0 approved it;
+- keep x86/COM/ActiveX out of v2.0.0 GA; future 2.x work may implement it only after a new explicit approval;
 - certify vendor cohorts with versioned manifests, reference results, diffs, fallbacks, timings, licenses, and environment;
 - exercise dependency collisions, native DLLs, static state, multiple projects/forms, unload, crash, quota recycle, and build churn.
 
@@ -352,7 +561,7 @@ Hard dependencies:
 
 - Lane B waits for the transaction journal and independent postcondition gate.
 - Vendor designers/editors wait for service contracts, trust tier, quotas, and malicious fixtures.
-- x86/COM cannot delay managed parity unless Phase 0 includes it in the v2 claim.
+- x86/COM cannot delay managed parity because Phase 0 excludes Tier D from the v2.0.0 GA claim.
 - Data Sources generation depends on scaffolding, project resolution, resource transactions, property metadata, and atomic commands.
 - Headless validation uses the same protocol/capability/command truth as the interactive product.
 - GA waits for real vendor/hardware/accessibility evidence for every named tier.
@@ -361,7 +570,8 @@ Hard dependencies:
 
 ### 8.1 Required corpus
 
-- modern .NET 8/9/10 and current target; net48 SDK/classic projects; x64/ARM64 and gated x86;
+- modern .NET 8/9/10 and current target; net48 SDK/classic projects; `win-x64` / `win-arm64` plus net48 x64
+  compatibility; x86/COM/ActiveX negative-refusal scenarios;
 - Form, UserControl, inherited/multi-level/abstract/generic/nested/partial roots;
 - standard controls, nonvisual components, all layout containers, menus, tabs, grids, trees, lists/images, binding and extenders;
 - neutral/multi-culture resources, RTL, images/icons/ImageList, opaque/binary/corrupt/unsafe resources;
@@ -400,7 +610,11 @@ Each scenario records support tier, authority/render mode, graph, metadata, oper
 
 Cold restore/build uses a responsiveness gate: progress within 500 ms, cancellation at every awaited stage, no editor freeze, named phase, and no assembly execution before trust/consent.
 
-## 9. v2.0.0 GA gates
+## 9. Unqualified Visual Studio-parity / GA gates
+
+These gates define the larger claim and are deliberately **not** represented as complete by the 2.0.0 managed-preview
+package. The package can be repository-side closed while these remain `GATED` or `NOT_EXECUTED`, provided the public
+release wording does not advertise the unavailable tiers or evidence.
 
 All gates are conjunctive:
 
@@ -414,7 +628,8 @@ All gates are conjunctive:
 8. soak/build churn has bounded memory/handles, no leaked output locks, deterministic recovery;
 9. frozen performance budgets pass on standard, large, and vendor corpora;
 10. keyboard/AT, all locales, and native RTL/culture acceptance pass;
-11. clean-machine x64/ARM64 and any advertised x86/COM packages have correct architecture;
+11. clean-machine x64/ARM64 packages and the net48 x64 compatibility payload have correct architecture; x86/COM
+    requests fail closed with stable diagnostics and no mutation;
 12. evidence includes exact totals, failures, skips, and gates; a timed-out aggregate is not a pass;
 13. final architecture, safety, and release evidence receive independent review;
 14. publication, vendor licenses, hardware, legal approval, and credentials are PASS, GATED, or NOT EXECUTED — never inferred from repository evidence.
@@ -449,7 +664,7 @@ Suggested first order after Phase 0:
 | Cross-runtime dialect divergence | Same intent emits different source | Canonical planner persists; runtime adapters only validate/reconcile. |
 | Modal deadlock/reentrancy | UI or worker hangs | Deadline/cancel/owner broker; quarantine offender; generic fallback. |
 | Vendor matrix unavailable | No licenses/hardware/versioned projects | Do not claim vendor parity; ship only verified Tier A/B. |
-| x86/COM destabilizes core | Phase 0 packaging/hosting/security fails | Remove Tier D; continue managed GA. |
+| x86/COM destabilizes core | Phase 0 packaging/hosting/security/legal route is not approved for v2.0.0 | Tier D is excluded from v2.0.0 GA; return `X86_WORKER_UNAVAILABLE` / `COM_ACTIVE_X_UNSUPPORTED` and continue managed GA. |
 | Performance hidden by timeouts | Frozen budgets miss | Profile/cut/disclose reduced mode; do not silently raise thresholds. |
 | C# tooling varies | Optional integration absent/incompatible | Capability-detect and degrade visibly; keep core designer independent. |
 | Scope exceeds capacity | Many areas remain half-built | Ship preview tiers; reduce cohorts, not integrity/security/a11y gates. |

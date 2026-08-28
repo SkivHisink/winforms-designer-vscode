@@ -2,8 +2,42 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { startEngine, EngineHandle, ping, resolveAssembly, describeDesigner, listToolboxItems, getCapabilities, releaseCompiledAssembly, releaseAllCompiledAssemblies } from './engineClient';
-import { WinFormsDesignerProvider, DesignerPanelViewProvider, DesignerHub, hasDesignerSibling, canOpenDesigner, resolveOpenTarget, resolveDesignerFile, EngineKind } from './designerEditor';
+import {
+  EngineBackedV2WorkerSupervisor,
+  EngineHandle,
+  createEngineBackedV2WorkerSupervisor,
+  getCapabilities,
+  listToolboxItems,
+  ping,
+  recordV2EngineProbeCrash,
+  releaseAllCompiledAssemblies,
+  releaseCompiledAssembly,
+  requestV2EngineProbe,
+  resolveAssembly,
+  startEngine,
+  describeDesigner,
+  ComponentDesc,
+  DesignerAdornerHitResult,
+  HostedDesignerProbeResult,
+  HostedServiceKernelProductResult,
+  BindingItem,
+  BindingItems,
+  ColumnItem,
+  ToolStripItemModel,
+  DataSourcesResult,
+  DataSourceGenerationResult,
+} from './engineClient';
+import {
+  WinFormsDesignerProvider,
+  DesignerPanelViewProvider,
+  DesignerHub,
+  hasDesignerSibling,
+  canOpenDesigner,
+  resolveOpenTarget,
+  resolveDesignerFile,
+  EngineKind,
+  HighDpiQuickFixPreviewResult,
+} from './designerEditor';
 import { resolveFrameworkOutput } from './csprojRef';
 import { setLocale, t } from './i18n';
 import { EngineRecoveryPolicy } from './engineRecovery';
@@ -12,6 +46,7 @@ import { BuildWriteOrigin, ExternalBuildRelease, intermediateDirCandidates, isAs
 import { formSiblingsToDelete } from './formSiblings';
 import { shouldSuppressAutoOpen } from './autoOpen';
 import {
+  applyScaffoldPlanAtomically,
   createScaffoldPlan,
   detectUsingPlacement,
   normalizeScaffoldTypeName,
@@ -21,6 +56,315 @@ import {
   ScaffoldKind,
   suggestScaffoldTypeName,
 } from './scaffolding';
+import { atomicWriteLocalFile } from './atomicFile';
+import { recoverPendingTransactions } from './transactionRecovery';
+import { planRemoveFormMembership, resolveFormMembershipProject } from './formProjectMembership';
+import {
+  V2AdapterManifestProductStatus,
+  V2AdapterManifestRegistry,
+} from './v2AdapterManifestRegistry';
+
+export interface ScaffoldCommandOptions {
+  /** Optional non-interactive type name. Explorer calls omit this and keep the normal VS-style prompt. */
+  name?: string;
+}
+
+export interface ScaffoldCommandResult {
+  status: 'created' | 'cancelled' | 'refused';
+  kind: ScaffoldKind;
+  typeName?: string;
+  createdFiles?: readonly string[];
+  projectUpdated?: boolean;
+  errorCode?: ScaffoldErrorCode;
+}
+
+export interface ExtensionHostTestApi {
+  adapterManifestRegistryState(): readonly V2AdapterManifestProductStatus[];
+  refreshAdapterManifests(): Promise<readonly V2AdapterManifestProductStatus[]>;
+  engineLifecycleState(): {
+    openDesignerSessions: number;
+    mappedEngines: readonly { kind: EngineKind; pid: number; running: boolean }[];
+    liveProcessPids: readonly number[];
+    idleRecycleScheduled: boolean;
+    idleRecycleInFlight: boolean;
+    idleRecycleBudgetMs: number;
+  };
+  /** Test timing only: the next real last-session-close timer uses this bounded delay instead of the product budget. */
+  armNextIdleEngineRecycle(delayMs: number): void;
+  /** Test trigger only: terminate the actual mapped product worker so Extension Host E2E can observe normal recovery. */
+  crashMappedEngineForRecoveryTest(kind: EngineKind): { pid: number; signaled: boolean };
+  saveOpenDesigner(source: vscode.Uri): Promise<void>;
+  saveOpenDesignerAs(source: vscode.Uri, destination: vscode.Uri): Promise<void>;
+  openDesignerState(source: vscode.Uri): {
+    dirty: boolean;
+    designerFile: string | null;
+    designerText: string;
+    /** Bumped by every text mutation — a deterministic "the native history callback ran on this document" signal. */
+    revision: number;
+    /** VS Code considers this designer's panel the active editor, the object custom-editor Undo/Redo routing uses. */
+    panelActive: boolean;
+    renderReady: boolean;
+    engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
+    ownerDiagnosticCode: string | null;
+    ownerTypeName: string | null;
+    ownerProjectPath: string | null;
+    ownerPaths: readonly string[];
+    renderFailureCause: string | null;
+    renderFailureMessage: string | null;
+    lastPropertyPersistenceLane: 'ownedRegion' | 'sourceFirst' | null;
+    lastNet48PropertyEditTelemetry: {
+      plannerMs: number;
+      commitMs: number;
+      reconcileMs: number;
+      liveMs: number;
+      snapshotComponentId: string | null;
+      componentInSnapshot: boolean;
+      propertiesReconciled: boolean;
+      trailingPropertiesMs: number;
+    } | null;
+    lastModernPropertyEditTelemetry: {
+      plannerMs: number;
+      commitMs: number;
+      reconcileMs: number;
+      retainedApplied: boolean;
+      trailingPropertiesMs: number;
+    } | null;
+    lastFullRenderTelemetry: {
+      modelMs: number;
+      captureMs: number;
+      previewMs: number;
+      reconciliationMs: number;
+      totalMeasuredMs: number;
+      displayDpr: number;
+      captureScale: 1 | 2;
+      controlCount: number;
+    } | null;
+    lastHostedDesignerProbe: HostedDesignerProbeResult | null;
+    lastHostedServiceKernelResult: HostedServiceKernelProductResult | null;
+    renderGeneration: number;
+    currentId: string;
+    currentSelectionIds: readonly string[];
+    controls: readonly { id: string; parentId?: string | null; ownership?: 'root' | 'currentSource' | 'inherited' | 'unresolved'; editable?: boolean }[];
+    tray: readonly { id: string; name: string; type: string; isStrip?: boolean }[];
+    selectedPropertyComponent: {
+      id: string;
+      name: string;
+      type: string;
+      properties: readonly { name: string; value: string | null }[];
+    } | null;
+  } | undefined;
+  /** Full metadata most recently published to the real Properties panel for the current selection/revision. */
+  openDesignerProperties(source: vscode.Uri): ComponentDesc | null | undefined;
+  listOpenDesignerBindings(source: vscode.Uri, id: string): Promise<BindingItems>;
+  setOpenDesignerBindings(source: vscode.Uri, id: string, bindings: BindingItem[]): Promise<boolean>;
+  listOpenDesignerDataSources(source: vscode.Uri): Promise<DataSourcesResult>;
+  generateOpenDesignerDataSource(
+    source: vscode.Uri,
+    schemaKey: string,
+    mode: 'detail' | 'grid',
+    parentId: string,
+    x: number,
+    y: number,
+    includeNavigator: boolean,
+    existingBindingSourceId: string | null,
+    existingGridId: string | null,
+  ): Promise<DataSourceGenerationResult>;
+  setOpenDesignerProjectImageResource(source: vscode.Uri, id: string, propertyName: string,
+    accessor: string): Promise<boolean>;
+  tryOpenDesignerProjectImageResource(source: vscode.Uri, id: string, propertyName: string,
+    accessor: string): Promise<{ applied: boolean; refusalCode: string | null; reason: string | null }>;
+  importOpenDesignerLocalImage(source: vscode.Uri, id: string, propertyName: string,
+    propertyType: string, image: vscode.Uri): Promise<boolean>;
+  setOpenDesignerImageListImages(source: vscode.Uri, id: string,
+    images: readonly { image: vscode.Uri; key?: string }[]): Promise<boolean>;
+  setOpenDesignerImageListWithPostconditionFailure(source: vscode.Uri, id: string,
+    images: readonly { image: vscode.Uri; key?: string }[]): Promise<{
+      applied: boolean;
+      failureObserved: boolean;
+      refusalCode: 'POSTCONDITION_FAILED_ROLLED_BACK' | null;
+    }>;
+  setOpenDesignerLocalizationCulture(source: vscode.Uri, culture: string): Promise<boolean>;
+  openDesignerLayout(source: vscode.Uri): readonly {
+    id: string; type: string; parentId: string | null; x: number; y: number; width: number; height: number;
+    clientX?: number; clientY?: number; tableColumnWidths?: number[]; tableRowHeights?: number[]; flowDirection?: string;
+  }[];
+  moveOpenDesignerGroup(source: vscode.Uri, ids: readonly string[], dx: number, dy: number): Promise<void>;
+  alignOpenDesignerControls(
+    source: vscode.Uri,
+    edits: readonly { id: string; dx: number; dy: number }[],
+  ): Promise<void>;
+  centerOpenDesignerControls(source: vscode.Uri, axis: 'h' | 'v', ids: readonly string[]): Promise<void>;
+  resizeOpenDesignerControls(
+    source: vscode.Uri,
+    sizeEdits: readonly { id: string; width: number; height: number }[],
+  ): Promise<void>;
+  resizeOpenDesignerControl(source: vscode.Uri, id: string, width: number, height: number): Promise<void>;
+  editOpenDesignerProperty(
+    source: vscode.Uri,
+    id: string,
+    propertyName: string,
+    propertyType: string,
+    isEnum: boolean,
+    value: string,
+  ): Promise<void>;
+  editOpenDesignerColorUiTypeEditor(
+    source: vscode.Uri,
+    id: string,
+    propertyName: string,
+    outcome: 'apply-blue' | 'dismiss',
+  ): Promise<{
+      applied: boolean;
+      dismissed: boolean;
+      resultConsumed: boolean;
+      editorType: string | null;
+      refusalCode: 'CANCELLED' | null;
+    }>;
+  editOpenDesignerCertifiedVendorUiTypeEditor(
+    source: vscode.Uri,
+    id: string,
+    propertyName: string,
+  ): Promise<{
+      applied: boolean;
+      brokerApplied: boolean;
+      dismissed: boolean;
+      ok: boolean;
+      errorCode: string | null;
+      invariantValue: string | null;
+      editorType: string | null;
+      assemblyPath: string | null;
+      assemblySha256: string | null;
+      certificationId: string | null;
+    }>;
+  editOpenDesignerCertifiedVendorCollectionEditor(
+    source: vscode.Uri,
+    id: string,
+    propertyName: string,
+    tamperOutsideOwnedComponent: boolean,
+  ): Promise<{
+      applied: boolean;
+      brokerApplied: boolean;
+      dismissed: boolean;
+      ok: boolean;
+      errorCode: string | null;
+      collectionItems: string[];
+      editorType: string | null;
+      assemblyPath: string | null;
+      assemblySha256: string | null;
+      certificationId: string | null;
+      persistenceLane: 'ownedRegion' | 'sourceFirst' | null;
+      refusalReason: string | null;
+    }>;
+  editOpenDesignerActionProperty(
+    source: vscode.Uri,
+    id: string,
+    displayName: string,
+    value: string,
+  ): Promise<{
+      applied: boolean;
+      displayName: string | null;
+      category: string | null;
+      propertyName: string | null;
+      propertyType: string | null;
+    }>;
+  hitOpenDesignerAdorner(
+    source: vscode.Uri,
+    id: string,
+    adornerId: string,
+    x: number,
+    y: number,
+  ): Promise<DesignerAdornerHitResult>;
+  editOpenDesignerPropertyWithResourceInterleave(
+    source: vscode.Uri,
+    id: string,
+    propertyName: string,
+    propertyType: string,
+    isEnum: boolean,
+    value: string,
+    interleave: () => Promise<void>,
+  ): Promise<boolean>;
+  reparentOpenDesignerControl(source: vscode.Uri, id: string, parentId: string): Promise<string | null>;
+  addOpenDesignerControl(source: vscode.Uri, controlType: string, parentId: string,
+    x?: number, y?: number, width?: number, height?: number): Promise<void>;
+  removeOpenDesignerControl(source: vscode.Uri, id: string): Promise<number>;
+  renameOpenDesignerControl(source: vscode.Uri, id: string, newName: string): Promise<void>;
+  selectOpenDesignerControl(source: vscode.Uri, id: string): Promise<void>;
+  probeOpenDesignerHostedDesigner(source: vscode.Uri, id: string): Promise<HostedDesignerProbeResult>;
+  invokeOpenDesignerHostedServiceAction(
+    source: vscode.Uri,
+    id: string,
+    commandId: string,
+    certificationId: string,
+  ): Promise<HostedServiceKernelProductResult>;
+  rerenderOpenDesigner(source: vscode.Uri): Promise<void>;
+  setOpenDesignerDpi(source: vscode.Uri, displayDpr: number): Promise<void>;
+  sendOpenDesignerCanvasInput(
+    source: vscode.Uri,
+    kind: 'pick' | 'nudge',
+    id: string,
+    generation: number,
+  ): Promise<{ accepted: boolean; refusalCode: 'STALE_CANVAS' | null; renderGeneration: number }>;
+  moveOpenDesignerLayoutChild(source: vscode.Uri, id: string, dropX: number, dropY: number): Promise<boolean>;
+  listOpenDesignerColumns(source: vscode.Uri, id: string): Promise<{
+    ok: boolean;
+    columns: ColumnItem[];
+    reason: string;
+  }>;
+  setOpenDesignerColumns(source: vscode.Uri, id: string, columns: ColumnItem[]): Promise<boolean>;
+  listOpenDesignerTabPages(source: vscode.Uri, hostId: string): Promise<{
+    ok: boolean;
+    pages: string[];
+    reason: string;
+  }>;
+  setOpenDesignerTabPages(source: vscode.Uri, hostId: string, pageIds: string[]): Promise<boolean>;
+  listOpenDesignerToolStripItems(source: vscode.Uri, id: string): Promise<{
+    ok: boolean;
+    items: ToolStripItemModel[];
+    reason: string;
+  }>;
+  setOpenDesignerToolStripItems(source: vscode.Uri, id: string, items: ToolStripItemModel[]): Promise<boolean>;
+  moveOpenDesignerToolStripItem(
+    source: vscode.Uri,
+    hostId: string,
+    itemId: string,
+    targetParentItemId: string | null,
+    targetIndex: number,
+  ): Promise<{ applied: boolean; reason: string | null }>;
+  copyOpenDesignerControls(source: vscode.Uri, ids: readonly string[]): Promise<void>;
+  pasteOpenDesignerControls(source: vscode.Uri, targetId?: string): Promise<void>;
+  setOpenDesignerHandler(source: vscode.Uri, id: string, eventName: string, handlerName: string): Promise<void>;
+  setOpenDesignerHandlerWithInterleave(
+    source: vscode.Uri,
+    id: string,
+    eventName: string,
+    handlerName: string,
+    interleave: () => Promise<void>,
+  ): Promise<void>;
+  createOpenDesignerHandler(source: vscode.Uri, id: string, eventName: string): Promise<void>;
+  createOpenDesignerHandlerWithInterleave(
+    source: vscode.Uri,
+    id: string,
+    eventName: string,
+    interleave: () => Promise<void>,
+  ): Promise<void>;
+  createOpenDesignerDefaultHandler(source: vscode.Uri, id: string): Promise<void>;
+  focusOpenDesigner(source: vscode.Uri): Promise<void>;
+  runOpenDesignerResourceRace(
+    source: vscode.Uri,
+    kind: 'journaled' | 'ordinary',
+    resource: vscode.Uri,
+    interleave: () => Promise<void>,
+  ): Promise<boolean>;
+  makeOpenDesignerLocalizableWithJournalFailure(
+    source: vscode.Uri,
+    state: 'applied' | 'undoRegistered' | 'committed',
+  ): Promise<{ result: boolean; failureObserved: boolean }>;
+  addScaffoldWithInjectedWriteFailure(
+    kind: ScaffoldKind,
+    resource: vscode.Uri,
+    name: string,
+    failWriteFileName: string,
+  ): Promise<ScaffoldCommandResult>;
+}
 
 // Two engine processes, started lazily and keyed by kind: 'modern' (the default WinForms/Roslyn engine) and
 // 'net48' (the .NET Framework compiled-render engine for DevExpress/Framework projects). A form routes to one
@@ -33,6 +377,8 @@ const engineStarts = new Map<EngineKind, Promise<EngineHandle>>();
 // host still pinning the user's dll. Reuses EngineHandle's ChildProcess type — no new import.
 const liveProcs = new Set<EngineHandle['process']>();
 const engineRecovery = new EngineRecoveryPolicy();
+const v2WorkerRecovery = new EngineRecoveryPolicy();
+let v2WorkerSupervisor: EngineBackedV2WorkerSupervisor | undefined;
 interface EngineHealth {
   starts: number;
   lastStartupMs?: number;
@@ -43,7 +389,49 @@ const engineHealth = new Map<EngineKind, EngineHealth>();
 const coordinatedTasks = new Map<vscode.TaskExecution, Promise<boolean>>();
 const preReleasedTaskKeys = new Map<string, number>();
 let shuttingDown = false;
+/** VS-like worker residency: keep a warm worker briefly, then return every child/process handle after the last form closes. */
+const ENGINE_IDLE_RECYCLE_MS = 30_000;
+let idleEngineRecycleTimer: ReturnType<typeof setTimeout> | undefined;
+let idleEngineRecycleInFlight: Promise<number> | null = null;
+let nextIdleEngineRecycleDelayForTest: number | undefined;
 let output: vscode.OutputChannel;
+const pendingDeleteProjectSaves = new Map<string, { projectPath: string; expectedText: string; expiresAt: number }>();
+
+/** Read-only documents backing the High-DPI advisor diff. Unlike untitled editors these snapshots can never become
+ * dirty or enter hot exit. Keep a bounded recent set so repeated previews cannot grow the Extension Host forever. */
+class HighDpiAdvisorContentProvider implements vscode.TextDocumentContentProvider {
+  static readonly scheme = 'winforms-designer-advisor';
+  private readonly snapshots = new Map<string, string>();
+  private nextId = 0;
+
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return this.snapshots.get(uri.toString()) ?? '';
+  }
+
+  addPreview(designerFile: string, before: string, after: string): {
+    original: vscode.Uri;
+    modified: vscode.Uri;
+  } {
+    const id = ++this.nextId;
+    const fileName = path.basename(designerFile).replace(/[^A-Za-z0-9._-]/g, '_');
+    const original = vscode.Uri.from({
+      scheme: HighDpiAdvisorContentProvider.scheme,
+      path: `/high-dpi/${id}/before/${fileName}`,
+    });
+    const modified = vscode.Uri.from({
+      scheme: HighDpiAdvisorContentProvider.scheme,
+      path: `/high-dpi/${id}/after/${fileName}`,
+    });
+    this.snapshots.set(original.toString(), before);
+    this.snapshots.set(modified.toString(), after);
+    while (this.snapshots.size > 64) {
+      const oldest = this.snapshots.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.snapshots.delete(oldest);
+    }
+    return { original, modified };
+  }
+}
 
 /** Files the user explicitly chose to view as code — auto-open must not re-hijack them into the designer. */
 const codeIntent = new Set<string>();
@@ -114,14 +502,51 @@ function updateControlStatus(): void {
   })();
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<ExtensionHostTestApi | undefined> {
   output = vscode.window.createOutputChannel('WinForms Designer');
   context.subscriptions.push(output);
   extContext = context;
+  const adapterManifestRegistry = new V2AdapterManifestRegistry(
+    String(context.extension.packageJSON.version ?? '0.0.0'),
+    output,
+  );
+  context.subscriptions.push(
+    adapterManifestRegistry,
+    vscode.commands.registerCommand(
+      'winformsDesigner.refreshAdapterManifests',
+      () => adapterManifestRegistry.refresh(),
+    ),
+  );
+  await adapterManifestRegistry.refresh();
+  v2WorkerSupervisor = createEngineBackedV2WorkerSupervisor(
+    (kind) => getEngine(context, kind),
+    {
+      sessionId: `extension:${process.pid}:${Date.now()}`,
+      buildId: `extension-${String(context.extension.packageJSON.version ?? 'dev').replace(/[^A-Za-z0-9._:-]+/g, '-')}`,
+      recoveryPolicy: v2WorkerRecovery,
+    },
+  );
 
   // Resolve the UI language from the `winformsDesigner.language` setting (default English). It is driven
   // ONLY by the setting — it never auto-follows the VS Code display language. Refreshed on config change below.
   setLocale();
+
+  // Recover durable multi-file edits before any custom document can open. A process can die after replacing one
+  // target but before recording it in appliedTargets, so recovery compares every target with the exact before/after
+  // byte images in the journal. Conflicting files are retained for manual resolution and are never overwritten.
+  if (['file', 'vscode-userdata'].includes(context.globalStorageUri.scheme)
+    && path.isAbsolute(context.globalStorageUri.fsPath)) {
+    const recovered = await recoverPendingTransactions(context.globalStorageUri.fsPath, {
+      log: (message) => output.appendLine(message),
+    });
+    if (recovered.rolledBack > 0) {
+      output.appendLine(`[transaction recovery] restored ${recovered.rolledBack} interrupted transaction(s)`);
+    }
+    const manualCount = recovered.manual + recovered.corrupt;
+    if (manualCount > 0) {
+      void vscode.window.showErrorMessage(t('host.transactionRecovery.manual', { count: manualCount }));
+    }
+  }
 
   // Persist toolbox additions/removals/custom tabs in workspace state. The reflection cache remains global because
   // it is keyed by absolute assembly path plus file metadata and is safe to reuse across workspaces.
@@ -135,14 +560,31 @@ export function activate(context: vscode.ExtensionContext): void {
     const eng = engines.get('net48');
     return !!eng && !shuttingDown && eng.process.exitCode == null && eng.process.signalCode == null;
   });
+  context.subscriptions.push(DesignerHub.instance.onDidChangeSessionCount((count) => {
+    if (count === 0) scheduleIdleEngineRecycle();
+    else cancelIdleEngineRecycle();
+  }));
 
   // The unified VS-style designer: a custom editor on *.cs (the sibling .Designer.cs gate is enforced at
   // resolve time). priority "option" keeps the C# text editor the default; the designer opens via
   // auto-open below, the "Open Designer" action, or "Reopen Editor With…".
+  const designerProvider = new WinFormsDesignerProvider(
+    context,
+    (kind?: EngineKind) => getEngine(context, kind),
+    getAssemblyOverride,
+    output,
+    doViewCode,
+    (file, dll) => setControlSource(file, dll),
+  );
+  const highDpiAdvisorDocuments = new HighDpiAdvisorContentProvider();
   context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      HighDpiAdvisorContentProvider.scheme,
+      highDpiAdvisorDocuments,
+    ),
     vscode.window.registerCustomEditorProvider(
       WinFormsDesignerProvider.viewType,
-      new WinFormsDesignerProvider(context, (kind?: EngineKind) => getEngine(context, kind), getAssemblyOverride, output, doViewCode, (file, dll) => setControlSource(file, dll)),
+      designerProvider,
       { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false },
     ),
   );
@@ -190,10 +632,67 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // VS-style advisor quick fix: build an exact source proposal through the normal safe planner, show it in a
+  // read-only diff, then apply that SAME revision-bound proposal through the normal CustomDocument commit funnel.
+  // Preview is mutation-free; Apply creates one native Undo/Redo unit and refuses if the baseline went stale.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.previewHighDpiQuickFix', async () => {
+      const session = DesignerHub.instance.activeSession;
+      if (!session) {
+        void vscode.window.showInformationMessage(t('advisor.highDpi.noActive'));
+        return { status: 'notApplicable', reason: 'no active WinForms designer document' } as HighDpiQuickFixPreviewResult;
+      }
+      const preview = await session.previewHighDpiQuickFix();
+      if (preview.status !== 'previewed') {
+        output.appendLine(`[advisor] High-DPI quick fix ${preview.status}: ${preview.reason}`);
+        const message = preview.status === 'refused'
+          ? t('advisor.highDpi.refused')
+          : t('advisor.highDpi.notApplicable');
+        if (preview.status === 'refused') void vscode.window.showWarningMessage(message);
+        else void vscode.window.showInformationMessage(message);
+        return preview;
+      }
+
+      const documents = highDpiAdvisorDocuments.addPreview(
+        preview.designerFile,
+        preview.before,
+        preview.after,
+      );
+      const title = t('advisor.highDpi.diffTitle', { file: path.basename(preview.designerFile) });
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        documents.original,
+        documents.modified,
+        title,
+        { preview: false },
+      );
+      const applyLabel = t('advisor.highDpi.apply');
+      void vscode.window.showInformationMessage(t('advisor.highDpi.previewReady'), applyLabel).then(async (choice) => {
+        if (choice !== applyLabel) return;
+        const applied = await session.applyPendingHighDpiQuickFix();
+        if (applied.status === 'applied') {
+          void vscode.window.showInformationMessage(t('advisor.highDpi.applied'));
+        } else {
+          output.appendLine(`[advisor] High-DPI quick fix refused on Apply: ${applied.reason}`);
+          void vscode.window.showWarningMessage(t('advisor.highDpi.refused'));
+        }
+      });
+      return { ...preview, originalUri: documents.original, modifiedUri: documents.modified, title };
+    }),
+    // Non-contributed deterministic ingress used by Extension Host acceptance. It calls the exact same pending-plan
+    // method as the notification button; normal users see only the contributed preview command.
+    vscode.commands.registerCommand('winformsDesigner.applyPendingHighDpiQuickFix', async () => {
+      const session = DesignerHub.instance.activeSession;
+      return session
+        ? session.applyPendingHighDpiQuickFix()
+        : { status: 'refused', reason: 'no active WinForms designer document' };
+    }),
+  );
+
   // GitHub #4 — VS-style Explorer `Add` submenu. Each command resolves one unambiguous owning project, plans every
-  // companion file before writing, and submits file creation plus any classic-project items as ONE WorkspaceEdit.
-  // That makes the operation undoable and, more importantly, prevents a failed Form/UserControl create from leaving
-  // just Foo.cs (or just Foo.resx) behind. Components are complete code components; the extension deliberately does
+  // companion file before writing, and applies generated files plus any classic-project items through the v2 rollback
+  // host. That prevents a failed Form/UserControl create from leaving only part of its Visual Studio template set.
+  // Components are complete code components; the extension deliberately does
   // not advertise Visual Studio's separate non-visual ComponentDesigner surface, which it cannot render.
   const scaffoldCommands: readonly [string, ScaffoldKind][] = [
     ['winformsDesigner.addForm', 'form'],
@@ -203,7 +702,10 @@ export function activate(context: vscode.ExtensionContext): void {
   ];
   for (const [command, kind] of scaffoldCommands) {
     context.subscriptions.push(
-      vscode.commands.registerCommand(command, (resource?: vscode.Uri) => addScaffoldFromExplorer(kind, resource)),
+      vscode.commands.registerCommand(
+        command,
+        (resource?: vscode.Uri, options?: ScaffoldCommandOptions) => addScaffoldFromExplorer(kind, resource, options),
+      ),
     );
   }
 
@@ -248,8 +750,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('winformsDesigner.runTestTask', () => runCoordinatedTask('test')),
   );
 
-  // 1.0.1 "Stop the Designer Preview Engine": an explicit off switch for the resident engine process(es). They start
-  // lazily and otherwise live until the window closes; this lets the user shut them down when they're done. Always in
+  // 1.0.1 "Stop the Designer Preview Engine": an immediate off switch for the resident engine process(es). They start
+  // lazily, stay warm for bounded idle reuse, then recycle; this command lets the user shut them down immediately. Always in
   // the palette (no `when`) — it's needed precisely when no designer is focused. See stopPreviewEngines.
   context.subscriptions.push(
     vscode.commands.registerCommand('winformsDesigner.stopEngines', () => stopPreviewEngines()),
@@ -368,21 +870,95 @@ export function activate(context: vscode.ExtensionContext): void {
       const covered = e.files.map((f) => f.fsPath);
       const edit = new vscode.WorkspaceEdit();
       let added = 0;
+      const membershipFiles = new Map<string, { projectPath: string; files: Set<string> }>();
       for (const file of e.files) {
         // hasDesignerSibling is the "is this a form?" test the rest of the product uses: a .cs with a generated
         // partner. A plain class file has no nest, so nothing is ever taken with it.
         if (!hasDesignerSibling(file.fsPath)) continue;
         let entries: string[];
         try { entries = fs.readdirSync(path.dirname(file.fsPath)); } catch { continue; }
-        for (const sibling of formSiblingsToDelete(file.fsPath, entries, covered)) {
+        const siblings = formSiblingsToDelete(file.fsPath, entries, covered);
+        for (const sibling of siblings) {
           edit.deleteFile(vscode.Uri.file(sibling), { ignoreIfNotExists: true });
           covered.push(sibling);
           added++;
         }
+        const workspace = vscode.workspace.getWorkspaceFolder(file);
+        const membershipProject = workspace
+          ? resolveFormMembershipProject(file.fsPath, workspace.uri.fsPath)
+          : null;
+        if (membershipProject) {
+          const key = normalize(membershipProject);
+          const bucket = membershipFiles.get(key) ?? { projectPath: membershipProject, files: new Set<string>() };
+          bucket.files.add(file.fsPath);
+          for (const sibling of siblings) bucket.files.add(sibling);
+          membershipFiles.set(key, bucket);
+        }
       }
-      if (added === 0) return;
-      output.appendLine(`[delete] taking ${added} generated file(s) with the form(s) being deleted`);
+      let projectEdits = 0;
+      for (const bucket of membershipFiles.values()) {
+        const projectUri = vscode.Uri.file(bucket.projectPath);
+        const open = vscode.workspace.textDocuments.find(
+          (document) => normalize(document.uri.fsPath) === normalize(bucket.projectPath),
+        );
+        let projectText: string;
+        try {
+          if (open) projectText = open.getText();
+          else {
+            const bytes = fs.readFileSync(bucket.projectPath);
+            const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+            projectText = bytes.subarray(bom ? 3 : 0).toString('utf8');
+          }
+        } catch (error) {
+          output.appendLine(`[delete] project membership read failed: ${bucket.projectPath}: ${String(error)}`);
+          continue;
+        }
+        let membershipEdit;
+        try {
+          membershipEdit = planRemoveFormMembership(bucket.projectPath, projectText, [...bucket.files]);
+        } catch (error) {
+          output.appendLine(`[delete] project membership update refused: ${bucket.projectPath}: ${String(error)}`);
+          continue;
+        }
+        if (!membershipEdit) continue;
+        const lines = projectText.split(/\r\n|\r|\n/);
+        const end = new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
+        edit.replace(projectUri, new vscode.Range(new vscode.Position(0, 0), end), membershipEdit.after);
+        if (!open?.isDirty) {
+          pendingDeleteProjectSaves.set(normalize(bucket.projectPath), {
+            projectPath: bucket.projectPath,
+            expectedText: membershipEdit.after,
+            expiresAt: Date.now() + 30_000,
+          });
+        }
+        projectEdits++;
+      }
+      if (added === 0 && projectEdits === 0) return;
+      output.appendLine(
+        `[delete] taking ${added} generated file(s) and updating ${projectEdits} project item file(s) with the form(s) being deleted`,
+      );
       e.waitUntil(Promise.resolve(edit));
+    }),
+    vscode.workspace.onDidDeleteFiles(() => {
+      // File-operation participants apply text edits to a TextDocument but do not necessarily flush that clean
+      // project back to disk. Persist only our exact calculated image, and only when onWill observed no user WIP.
+      // This makes an immediate build see the same project state while never saving unrelated dirty project edits.
+      void (async () => {
+        for (const [key, pending] of [...pendingDeleteProjectSaves]) {
+          if (pending.expiresAt < Date.now()) {
+            pendingDeleteProjectSaves.delete(key);
+            continue;
+          }
+          const document = vscode.workspace.textDocuments.find(
+            (candidate) => normalize(candidate.uri.fsPath) === key,
+          );
+          if (document) await persistPendingDeleteProject(document);
+        }
+      })();
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (!pendingDeleteProjectSaves.has(normalize(event.document.uri.fsPath))) return;
+      void persistPendingDeleteProject(event.document);
     }),
   );
 
@@ -414,7 +990,10 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration('winformsDesigner.toolbox.autoDiscoverProjectControls')) {
         void DesignerHub.instance.activeSession?.refreshToolbox();
       }
-      if (e.affectsConfiguration('winformsDesigner.placementSnapOverrideModifier')) {
+      if (e.affectsConfiguration('winformsDesigner.placementSnapOverrideModifier')
+        || e.affectsConfiguration('winformsDesigner.layoutMode')
+        || e.affectsConfiguration('winformsDesigner.gridSize')
+        || e.affectsConfiguration('winformsDesigner.showGrid')) {
         DesignerHub.instance.activeSession?.refreshPlacementSettings();
       }
       // Turning the external-build release off must stop watching immediately (and on → start), not at the next
@@ -442,6 +1021,119 @@ export function activate(context: vscode.ExtensionContext): void {
   const active = vscode.window.activeTextEditor;
   updateContext(active);
   autoOpenIfDesigner(active);
+
+  // The native Save As dialog cannot be driven reliably by @vscode/test-electron. Expose the already-registered
+  // provider only to the Extension Host E2E process so the suite can invoke the exact product save-as callback and
+  // inspect its open custom document. Packaged/normal extension hosts never receive this surface.
+  if (process.env.WFD_EXTENSION_HOST_E2E === '1') {
+    return {
+      adapterManifestRegistryState: () => adapterManifestRegistry.snapshot(),
+      refreshAdapterManifests: () => adapterManifestRegistry.refresh(),
+      engineLifecycleState: () => engineLifecycleState(),
+      armNextIdleEngineRecycle: (delayMs) => armNextIdleEngineRecycle(delayMs),
+      crashMappedEngineForRecoveryTest: (kind) => crashMappedEngineForRecoveryTest(kind),
+      saveOpenDesigner: (source) => designerProvider.saveOpenDocument(source),
+      saveOpenDesignerAs: (source, destination) => designerProvider.saveOpenDocumentAs(source, destination),
+      openDesignerState: (source) => designerProvider.openDocumentState(source),
+      openDesignerProperties: (source) => designerProvider.openDocumentProperties(source),
+      listOpenDesignerBindings: (source, id) => designerProvider.listOpenDocumentBindings(source, id),
+      setOpenDesignerBindings: (source, id, bindings) =>
+        designerProvider.setOpenDocumentBindings(source, id, bindings),
+      listOpenDesignerDataSources: (source) => designerProvider.listOpenDocumentDataSources(source),
+      generateOpenDesignerDataSource:
+        (source, schemaKey, mode, parentId, x, y, includeNavigator, existingBindingSourceId, existingGridId) =>
+          designerProvider.generateOpenDocumentDataSource(
+            source, schemaKey, mode, parentId, x, y, includeNavigator,
+            existingBindingSourceId, existingGridId),
+      setOpenDesignerProjectImageResource: (source, id, propertyName, accessor) =>
+        designerProvider.setOpenDocumentProjectImageResource(source, id, propertyName, accessor),
+      tryOpenDesignerProjectImageResource: (source, id, propertyName, accessor) =>
+        designerProvider.tryOpenDocumentProjectImageResource(source, id, propertyName, accessor),
+      importOpenDesignerLocalImage: (source, id, propertyName, propertyType, image) =>
+        designerProvider.importOpenDocumentLocalImage(source, id, propertyName, propertyType, image),
+      setOpenDesignerImageListImages: (source, id, images) =>
+        designerProvider.setOpenDocumentImageListImages(source, id, images),
+      setOpenDesignerImageListWithPostconditionFailure: (source, id, images) =>
+        designerProvider.setOpenDocumentImageListWithPostconditionFailure(source, id, images),
+      setOpenDesignerLocalizationCulture: (source, culture) =>
+        designerProvider.setOpenDocumentLocalizationCulture(source, culture),
+      openDesignerLayout: (source) => designerProvider.openDocumentLayout(source),
+      moveOpenDesignerGroup: (source, ids, dx, dy) => designerProvider.moveOpenDocumentGroup(source, ids, dx, dy),
+      alignOpenDesignerControls: (source, edits) => designerProvider.alignOpenDocumentControls(source, edits),
+      centerOpenDesignerControls: (source, axis, ids) =>
+        designerProvider.centerOpenDocumentControls(source, axis, ids),
+      resizeOpenDesignerControls: (source, sizeEdits) =>
+        designerProvider.resizeOpenDocumentControls(source, sizeEdits),
+      resizeOpenDesignerControl: (source, id, width, height) =>
+        designerProvider.resizeOpenDocumentControl(source, id, width, height),
+      editOpenDesignerProperty: (source, id, propertyName, propertyType, isEnum, value) =>
+        designerProvider.editOpenDocumentProperty(source, id, propertyName, propertyType, isEnum, value),
+      editOpenDesignerColorUiTypeEditor: (source, id, propertyName, outcome) =>
+        designerProvider.editOpenDocumentColorUiTypeEditor(source, id, propertyName, outcome),
+      editOpenDesignerCertifiedVendorUiTypeEditor: (source, id, propertyName) =>
+        designerProvider.editOpenDocumentCertifiedVendorUiTypeEditor(source, id, propertyName),
+      editOpenDesignerCertifiedVendorCollectionEditor:
+        (source, id, propertyName, tamperOutsideOwnedComponent) =>
+          designerProvider.editOpenDocumentCertifiedVendorCollectionEditor(
+            source, id, propertyName, tamperOutsideOwnedComponent),
+      editOpenDesignerActionProperty: (source, id, displayName, value) =>
+        designerProvider.editOpenDocumentDesignerActionProperty(source, id, displayName, value),
+      hitOpenDesignerAdorner: (source, id, adornerId, x, y) =>
+        designerProvider.hitOpenDocumentDesignerAdorner(source, id, adornerId, x, y),
+      editOpenDesignerPropertyWithResourceInterleave:
+        (source, id, propertyName, propertyType, isEnum, value, interleave) =>
+          designerProvider.editOpenDocumentPropertyWithResourceInterleave(
+            source, id, propertyName, propertyType, isEnum, value, interleave),
+      reparentOpenDesignerControl: (source, id, parentId) =>
+        designerProvider.reparentOpenDocumentControl(source, id, parentId),
+      addOpenDesignerControl: (source, controlType, parentId, x, y, width, height) =>
+        designerProvider.addOpenDocumentControl(source, controlType, parentId, x, y, width, height),
+      removeOpenDesignerControl: (source, id) => designerProvider.removeOpenDocumentControl(source, id),
+      renameOpenDesignerControl: (source, id, newName) =>
+        designerProvider.renameOpenDocumentControl(source, id, newName),
+      selectOpenDesignerControl: (source, id) => designerProvider.selectOpenDocumentControl(source, id),
+      probeOpenDesignerHostedDesigner: (source, id) =>
+        designerProvider.probeOpenDocumentHostedDesigner(source, id),
+      invokeOpenDesignerHostedServiceAction: (source, id, commandId, certificationId) =>
+        designerProvider.invokeOpenDocumentHostedServiceAction(source, id, commandId, certificationId),
+      rerenderOpenDesigner: (source) => designerProvider.rerenderOpenDocument(source),
+      setOpenDesignerDpi: (source, displayDpr) => designerProvider.setOpenDocumentDpi(source, displayDpr),
+      sendOpenDesignerCanvasInput: (source, kind, id, generation) =>
+        designerProvider.sendOpenDocumentCanvasInput(source, kind, id, generation),
+      moveOpenDesignerLayoutChild: (source, id, dropX, dropY) =>
+        designerProvider.moveOpenDocumentLayoutChild(source, id, dropX, dropY),
+      listOpenDesignerColumns: (source, id) => designerProvider.listOpenDocumentColumns(source, id),
+      setOpenDesignerColumns: (source, id, columns) => designerProvider.setOpenDocumentColumns(source, id, columns),
+      listOpenDesignerTabPages: (source, hostId) => designerProvider.listOpenDocumentTabPages(source, hostId),
+      setOpenDesignerTabPages: (source, hostId, pageIds) =>
+        designerProvider.setOpenDocumentTabPages(source, hostId, pageIds),
+      listOpenDesignerToolStripItems: (source, id) => designerProvider.listOpenDocumentToolStripItems(source, id),
+      setOpenDesignerToolStripItems: (source, id, items) =>
+        designerProvider.setOpenDocumentToolStripItems(source, id, items),
+      moveOpenDesignerToolStripItem: (source, hostId, itemId, targetParentItemId, targetIndex) =>
+        designerProvider.moveOpenDocumentToolStripItem(source, hostId, itemId, targetParentItemId, targetIndex),
+      copyOpenDesignerControls: (source, ids) => designerProvider.copyOpenDocumentControls(source, ids),
+      pasteOpenDesignerControls: (source, targetId) => designerProvider.pasteOpenDocumentControls(source, targetId),
+      setOpenDesignerHandler: (source, id, eventName, handlerName) =>
+        designerProvider.setOpenDocumentHandler(source, id, eventName, handlerName),
+      setOpenDesignerHandlerWithInterleave: (source, id, eventName, handlerName, interleave) =>
+        designerProvider.setOpenDocumentHandlerWithInterleave(source, id, eventName, handlerName, interleave),
+      createOpenDesignerHandler: (source, id, eventName) =>
+        designerProvider.createOpenDocumentHandler(source, id, eventName),
+      createOpenDesignerHandlerWithInterleave: (source, id, eventName, interleave) =>
+        designerProvider.createOpenDocumentHandlerWithInterleave(source, id, eventName, interleave),
+      createOpenDesignerDefaultHandler: (source, id) =>
+        designerProvider.createOpenDocumentDefaultHandler(source, id),
+      focusOpenDesigner: (source) => designerProvider.focusOpenDocument(source),
+      runOpenDesignerResourceRace: (source, kind, resource, interleave) =>
+        designerProvider.runOpenDocumentResourceRace(source, kind, resource, interleave),
+      makeOpenDesignerLocalizableWithJournalFailure: (source, state) =>
+        designerProvider.makeOpenDocumentLocalizableWithJournalFailure(source, state),
+      addScaffoldWithInjectedWriteFailure: (kind, resource, name, failWriteFileName) =>
+        addScaffoldFromExplorer(kind, resource, { name }, { failWriteFileName }),
+    };
+  }
+  return undefined;
 }
 
 /** Open a file as a plain text editor and remember the user wants it as code (no auto-redirect). With a
@@ -476,6 +1168,7 @@ const scaffoldErrorKeys: Record<ScaffoldErrorCode, string> = {
   notWinFormsProject: 'host.scaffold.error.projectUnsupported',
   unsupportedProjectItems: 'host.scaffold.error.projectUnsupported',
   fileCollision: 'host.scaffold.error.fileCollision',
+  applyFailed: 'host.scaffold.error.applyFailed',
 };
 
 function showScaffoldError(error: unknown): void {
@@ -491,11 +1184,16 @@ function showScaffoldError(error: unknown): void {
 }
 
 /** Create one issue-#4 item from an Explorer resource without ever guessing between projects. */
-async function addScaffoldFromExplorer(kind: ScaffoldKind, resource?: vscode.Uri): Promise<void> {
+async function addScaffoldFromExplorer(
+  kind: ScaffoldKind,
+  resource?: vscode.Uri,
+  options?: ScaffoldCommandOptions,
+  testHooks?: { readonly failWriteFileName?: string },
+): Promise<ScaffoldCommandResult> {
   try {
     if (!resource || resource.scheme !== 'file') {
       void vscode.window.showErrorMessage(t('host.scaffold.error.noResource'));
-      return;
+      return { status: 'refused', kind, errorCode: 'noProject' };
     }
 
     let stat: vscode.FileStat;
@@ -513,22 +1211,32 @@ async function addScaffoldFromExplorer(kind: ScaffoldKind, resource?: vscode.Uri
     catch { throw new ScaffoldError('noProject', targetDir); }
     const label = scaffoldKindLabel(kind);
     const suggested = suggestScaffoldTypeName(kind, entries);
-    const input = await vscode.window.showInputBox({
-      title: t('host.scaffold.prompt.title', { kind: label }),
-      prompt: t('host.scaffold.prompt.description', { kind: label }),
-      value: suggested,
-      valueSelection: [0, suggested.length],
-      validateInput: (value) => {
-        try { normalizeScaffoldTypeName(value); return undefined; }
-        catch { return t('host.scaffold.error.invalidName'); }
-      },
-    });
-    if (input == null) return;
+    const input = options?.name ?? await vscode.window.showInputBox({
+        title: t('host.scaffold.prompt.title', { kind: label }),
+        prompt: t('host.scaffold.prompt.description', { kind: label }),
+        value: suggested,
+        valueSelection: [0, suggested.length],
+        validateInput: (value) => {
+          try { normalizeScaffoldTypeName(value); return undefined; }
+          catch { return t('host.scaffold.error.invalidName'); }
+        },
+      });
+    if (input == null) return { status: 'cancelled', kind };
 
     const projectUri = vscode.Uri.file(projectPath);
-    const projectDocument = await vscode.workspace.openTextDocument(projectUri);
-    const projectVersion = projectDocument.version;
-    const projectText = projectDocument.getText();
+    // Do not open a hidden TextDocument just to read a project: an atomic disk replacement would then depend on an
+    // asynchronous file-watcher reload before that stale buffer could ever be saved. Respect a project document the
+    // user already has open (and refuse its unsaved WIP), but bind normal planning directly to exact on-disk bytes.
+    const projectDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === projectUri.toString());
+    if (projectDocument?.isDirty) throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
+    const projectBytes = await fs.promises.readFile(projectPath);
+    const projectHadBom = projectBytes.length >= 3
+      && projectBytes[0] === 0xef && projectBytes[1] === 0xbb && projectBytes[2] === 0xbf;
+    const projectText = projectBytes.subarray(projectHadBom ? 3 : 0).toString('utf8');
+    if (projectDocument && projectDocument.getText() !== projectText) {
+      throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
+    }
+    const projectVersion = projectDocument?.version;
     // Re-read immediately before planning: the prompt may have been open long enough for another process to create
     // one of the companion files. The pure planner compares all names case-insensitively.
     entries = fs.readdirSync(targetDir);
@@ -540,34 +1248,64 @@ async function addScaffoldFromExplorer(kind: ScaffoldKind, resource?: vscode.Uri
       projectText,
       existingEntries: entries,
       usingPlacement: detectUsingPlacement(targetDir, workspaceFolder.uri.fsPath),
+      seedSdkResx: kind === 'form',
     });
 
-    const edit = new vscode.WorkspaceEdit();
-    for (const file of plan.files) {
-      edit.createFile(vscode.Uri.file(path.join(plan.targetDir, file.name)), {
-        overwrite: false,
-        ignoreIfExists: false,
-        contents: Buffer.from(file.content, 'utf8'),
-      });
-    }
-    if (plan.projectInsertion) {
-      edit.insert(
-        projectUri,
-        projectDocument.positionAt(plan.projectInsertion.offset),
-        plan.projectInsertion.text,
-      );
-    }
-
-    // No await occurs between this final snapshot check and submitting the bulk edit. A project-buffer edit that
-    // landed while the prompt/planner was active therefore cannot shift the insertion point under us.
-    if (projectDocument.version !== projectVersion || projectDocument.getText() !== projectText) {
-      void vscode.window.showErrorMessage(t('host.scaffold.error.projectChanged'));
-      return;
-    }
-    if (!await vscode.workspace.applyEdit(edit)) {
-      void vscode.window.showErrorMessage(t('host.scaffold.error.applyFailed'));
-      return;
-    }
+    const applied = await applyScaffoldPlanAtomically(plan, {
+      async writeFile(filePath, content) {
+        if (testHooks?.failWriteFileName === path.basename(filePath)) {
+          throw new Error(`Extension Host injected write failure for ${path.basename(filePath)}`);
+        }
+        const handle = await fs.promises.open(filePath, 'wx');
+        let writeSucceeded = false;
+        let closeSucceeded = false;
+        try {
+          await handle.writeFile(content, 'utf8');
+          writeSucceeded = true;
+        } finally {
+          try {
+            await handle.close();
+            closeSucceeded = true;
+          } finally {
+            if (!writeSucceeded || !closeSucceeded) {
+              try { await fs.promises.rm(filePath, { force: true }); } catch { /* best effort cleanup of this partial create */ }
+            }
+          }
+        }
+      },
+      async deleteFile(filePath) {
+        await fs.promises.rm(filePath, { force: true });
+      },
+      async applyProjectInsertion(_projectPath, insertion) {
+        // Classic project files are part of the generated-item transaction, not a dirty editor left for the user to
+        // notice and save later. Refuse an already-dirty project: silently persisting unrelated project WIP would be
+        // worse than declining Add. Bind the insertion to both any user-open document and the exact bytes captured
+        // above. The command itself never creates a hidden project buffer. If replacement fails, the scaffold wrapper
+        // removes every generated file and the original project remains intact.
+        const liveDocument = vscode.workspace.textDocuments.find(
+          (document) => document.uri.toString() === projectUri.toString(),
+        );
+        if (liveDocument?.isDirty
+          || (projectDocument && liveDocument === projectDocument && liveDocument.version !== projectVersion)
+          || (liveDocument && liveDocument.getText() !== projectText)) {
+          throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
+        }
+        const diskBytes = await fs.promises.readFile(projectPath);
+        const currentDocument = vscode.workspace.textDocuments.find(
+          (document) => document.uri.toString() === projectUri.toString(),
+        );
+        if (!diskBytes.equals(projectBytes)
+          || currentDocument?.isDirty
+          || (projectDocument && currentDocument === projectDocument && currentDocument.version !== projectVersion)
+          || (currentDocument && currentDocument.getText() !== projectText)) {
+          throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
+        }
+        const nextText = projectText.slice(0, insertion.offset) + insertion.text + projectText.slice(insertion.offset);
+        const body = Buffer.from(nextText, 'utf8');
+        const nextBytes = projectHadBom ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]) : body;
+        await atomicWriteLocalFile(projectPath, nextBytes);
+      },
+    });
 
     const mainUri = vscode.Uri.file(path.join(plan.targetDir, plan.mainFileName));
     output.appendLine(
@@ -582,8 +1320,20 @@ async function addScaffoldFromExplorer(kind: ScaffoldKind, resource?: vscode.Uri
     } else {
       doViewCode(mainUri);
     }
+    return {
+      status: 'created',
+      kind,
+      typeName: plan.typeName,
+      createdFiles: applied.createdFiles,
+      projectUpdated: applied.projectUpdated,
+    };
   } catch (error) {
     showScaffoldError(error);
+    return {
+      status: 'refused',
+      kind,
+      errorCode: error instanceof ScaffoldError ? error.code : 'applyFailed',
+    };
   }
 }
 
@@ -628,6 +1378,8 @@ async function exportDiagnostics(context: vscode.ExtensionContext): Promise<void
       + `lastStartup=${health?.lastStartupMs != null ? `${health.lastStartupMs} ms` : 'n/a'}; `
       + `recentCrashes=${engineRecovery.recentCrashCount(kind)}; lastExit=${health?.lastExit ?? 'n/a'}`);
   }
+  L.push('', '## V2 worker probe (diagnostics only; normal designer traffic uses the established engine path)');
+  await appendV2WorkerDiagnostics(L, 'modern');
 
   const uri = activeCustomEditorUri() ?? vscode.window.activeTextEditor?.document.uri;
   L.push('', '## Active document');
@@ -665,6 +1417,61 @@ async function exportDiagnostics(context: vscode.ExtensionContext): Promise<void
 
   const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: L.join('\n') });
   await vscode.window.showTextDocument(doc, { preview: false });
+}
+
+async function appendV2WorkerDiagnostics(lines: string[], kind: EngineKind): Promise<void> {
+  if (!v2WorkerSupervisor) {
+    lines.push(`- ${kind}: unavailable; reason=SUPERVISOR_NOT_INITIALIZED`);
+    return;
+  }
+  if (!engines.get(kind)) {
+    lines.push(`- ${kind}: unavailable; reason=ENGINE_UNAVAILABLE_AFTER_PRIMARY_PROBE`);
+    return;
+  }
+
+  const active = activeCustomEditorUri() ?? vscode.window.activeTextEditor?.document.uri;
+  const documentLabel = active?.fsPath ?? 'no-active-document';
+  const sourceFingerprintSeed = active ? sourceMetadataSeed(active.fsPath) : documentLabel;
+  try {
+    const result = await requestV2EngineProbe(v2WorkerSupervisor, {
+      runtime: kind,
+      command: 'getCapabilities',
+      documentLabel,
+      documentRevision: sourceFingerprintSeed,
+      sourceFingerprintSeed,
+      workspaceTrust: vscode.workspace.isTrusted ? 'trusted' : 'untrusted',
+      designTimeTrust: 'sourceFirst',
+      timeoutMs: 1_000,
+    });
+    if (result.status === 'ok') {
+      if (result.result.command === 'getCapabilities') {
+        const value = result.result.value;
+        lines.push(`- ${kind}: ok; worker=${result.workerKey}; request=${result.requestId}; generation=${result.generation}; `
+          + `engine=${value.engine}; edit=${value.edit}; livePreviewUnsavedEdits=${value.livePreviewUnsavedEdits}; `
+          + `recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
+      } else {
+        lines.push(`- ${kind}: ok; worker=${result.workerKey}; request=${result.requestId}; generation=${result.generation}; `
+          + `ping=${result.result.value}; recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
+      }
+      return;
+    }
+
+    lines.push(`- ${kind}: ${result.status}; worker=${result.workerKey ?? 'none'}; reason=${result.reasonCode}; `
+      + `request=${result.requestId ?? 'n/a'}; generation=${result.generation ?? 'n/a'}; `
+      + `recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
+  } catch (error) {
+    lines.push(`- ${kind}: faulted; reason=${error instanceof Error ? error.message : String(error)}; `
+      + `recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
+  }
+}
+
+function sourceMetadataSeed(fsPath: string): string {
+  try {
+    const stat = fs.statSync(fsPath);
+    return `${fsPath}:${stat.size}:${Math.trunc(stat.mtimeMs)}`;
+  } catch {
+    return `${fsPath}:missing`;
+  }
 }
 
 /** Drives the "Open Designer" editor-title action (shown on a form .cs OR a .Designer.cs partner). */
@@ -748,6 +1555,10 @@ function hasOpenDesignerTab(key: string): boolean {
  * Without the shared startup promise two first-renders could each spawn an engine and leak one.
  */
 async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'modern'): Promise<EngineHandle> {
+  // A last-session idle recycle removes/signals the resident processes before it awaits exit. A designer opened in
+  // that small window waits for the bounded teardown and starts one fresh worker instead of receiving a dying handle.
+  const idleRecycle = idleEngineRecycleInFlight;
+  if (idleRecycle) await idleRecycle;
   // Never start a net48 engine while one is being recycled — that would re-pin the very output the recycle is freeing
   // Wait for the confirmed teardown; and if the teardown could NOT confirm the old process exited, stay
   // fail-closed rather than start a replacement beside a process that may still hold the dll.
@@ -755,9 +1566,9 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
     if (net48Recycling) { try { await net48Recycling; } catch { /* fall through to the block check below */ } }
     if (net48Blocked) throw new Error(t('host.net48.recycleBlocked'));
   }
-  // Refuse to start once the host is shutting down. This is the ONLY await-before-spawn point in getEngine (the net48
-  // recycle wait above), so a start suspended there could otherwise resume AFTER deactivate() snapshotted liveProcs and
-  // spawn a child that escapes shutdown ownership — still pinning the dll past teardown.
+  // Refuse to start once the host is shutting down. The idle/net48 waits above can suspend a start until AFTER
+  // deactivate() snapshotted liveProcs; without this recheck it could resume and spawn a child that escapes teardown,
+  // still pinning the user's dll after the extension host has exited.
   // The recheck is synchronous from here through the spawn (no await), so any process onSpawn registers is guaranteed
   // to land in deactivate()'s snapshot instead. Covers both engine kinds; deactivate()'s late guard remains a backstop.
   if (shuttingDown) throw new Error('extension is shutting down');
@@ -816,6 +1627,7 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
           if (shuttingDown) return;
           const scheduleRecovery = (): void => {
             const decision = engineRecovery.recordCrash(kind);
+            recordV2EngineProbeCrash(v2WorkerSupervisor, kind);
             output.appendLine(decision.restart
               ? `[engine:${kind}] automatic recovery ${decision.recentCrashes}/2 in ${decision.delayMs} ms`
               : `[engine:${kind}] crash-loop guard stopped automatic recovery (${decision.recentCrashes} crashes/30s)`);
@@ -1332,9 +2144,9 @@ async function doRecycleNet48(handle: EngineHandle | undefined): Promise<boolean
 
 /**
  * 1.0.1 "Stop the Designer Preview Engine": shut down every resident engine process on demand. The modern and net48
- * engines start lazily on the first render and then stay alive for the whole window session — closing a designer tab
- * does NOT stop them — so a user who is done with the extension is left with an idle engine exe running. This is the
- * explicit off switch.
+ * engines start lazily, stay warm for the bounded idle-reuse window, and recycle after the last designer closes. This
+ * command remains the immediate explicit off switch when the user does not want to wait for the idle budget to elapse.
+ * It also provides the common bounded stop implementation reused by the automatic idle lifecycle.
  *
  * Deliberately does NOT set shuttingDown: the engine is meant to come back on the next open/render (getEngine restarts
  * it). net48 goes through the careful recycle (kill + confirmed-exit wait) which ALSO frees any build output it had
@@ -1365,6 +2177,79 @@ async function stopEnginesCore(): Promise<number> {
     await Promise.race([exited, deadline(2000)]);
   }
   return running;
+}
+
+function cancelIdleEngineRecycle(): void {
+  if (!idleEngineRecycleTimer) return;
+  clearTimeout(idleEngineRecycleTimer);
+  idleEngineRecycleTimer = undefined;
+}
+
+function engineLifecycleState(): {
+  openDesignerSessions: number;
+  mappedEngines: readonly { kind: EngineKind; pid: number; running: boolean }[];
+  liveProcessPids: readonly number[];
+  idleRecycleScheduled: boolean;
+  idleRecycleInFlight: boolean;
+  idleRecycleBudgetMs: number;
+} {
+  const mappedEngines = [...engines.entries()]
+    .map(([kind, handle]) => ({
+      kind,
+      pid: handle.process.pid ?? -1,
+      running: handle.process.exitCode == null && handle.process.signalCode == null,
+    }))
+    .sort((a, b) => a.kind.localeCompare(b.kind));
+  return {
+    openDesignerSessions: DesignerHub.instance.openSessionCount,
+    mappedEngines,
+    liveProcessPids: [...liveProcs].map((proc) => proc.pid ?? -1).filter((pid) => pid > 0).sort((a, b) => a - b),
+    idleRecycleScheduled: idleEngineRecycleTimer !== undefined,
+    idleRecycleInFlight: idleEngineRecycleInFlight !== null,
+    idleRecycleBudgetMs: ENGINE_IDLE_RECYCLE_MS,
+  };
+}
+
+/** Extension Host E2E fault trigger. It deliberately does not clear maps, record a crash, start a replacement, or
+ * touch a session: the real ChildProcess exit/connection-loss handlers above must perform every recovery step. This
+ * function is reachable only through activate()'s WFD_EXTENSION_HOST_E2E return value, never as a product command. */
+function crashMappedEngineForRecoveryTest(kind: EngineKind): { pid: number; signaled: boolean } {
+  const handle = engines.get(kind);
+  if (!handle || handle.process.exitCode != null || handle.process.signalCode != null) {
+    throw new Error(`no running ${kind} engine is mapped`);
+  }
+  const pid = handle.process.pid;
+  if (!pid || pid <= 0) throw new Error(`${kind} engine has no operating-system process id`);
+  return { pid, signaled: handle.process.kill('SIGKILL') };
+}
+
+/** Arm only the next schedule delay; the timer, zero-session gate, stop path, and process-exit waits stay product code. */
+function armNextIdleEngineRecycle(delayMs: number): void {
+  if (!Number.isFinite(delayMs)) throw new Error('idle recycle delay must be finite');
+  nextIdleEngineRecycleDelayForTest = Math.max(25, Math.min(5_000, Math.round(delayMs)));
+  if (DesignerHub.instance.openSessionCount === 0) scheduleIdleEngineRecycle();
+}
+
+function scheduleIdleEngineRecycle(): void {
+  cancelIdleEngineRecycle();
+  if (shuttingDown || DesignerHub.instance.openSessionCount !== 0 || idleEngineRecycleInFlight) return;
+  const delayMs = nextIdleEngineRecycleDelayForTest ?? ENGINE_IDLE_RECYCLE_MS;
+  nextIdleEngineRecycleDelayForTest = undefined;
+  idleEngineRecycleTimer = setTimeout(() => {
+    idleEngineRecycleTimer = undefined;
+    if (shuttingDown || DesignerHub.instance.openSessionCount !== 0 || idleEngineRecycleInFlight) return;
+    const run = stopEnginesCore().then((stopped) => {
+      if (stopped > 0) output.appendLine(`[engine:idle] recycled ${stopped} preview engine(s) after the last designer closed`);
+      return stopped;
+    }, (error) => {
+      output.appendLine(`[engine:idle] recycle failed: ${String(error)}`);
+      return 0;
+    });
+    idleEngineRecycleInFlight = run;
+    void run.finally(() => {
+      if (idleEngineRecycleInFlight === run) idleEngineRecycleInFlight = null;
+    });
+  }, delayMs);
 }
 
 async function stopPreviewEngines(): Promise<void> {
@@ -1526,8 +2411,35 @@ function normalize(fsPath: string): string {
   return process.platform === 'win32' ? p.toLowerCase() : p;
 }
 
+async function persistPendingDeleteProject(document: vscode.TextDocument): Promise<void> {
+  const key = normalize(document.uri.fsPath);
+  const pending = pendingDeleteProjectSaves.get(key);
+  if (!pending) return;
+  if (pending.expiresAt < Date.now()) {
+    pendingDeleteProjectSaves.delete(key);
+    return;
+  }
+  // A WorkspaceEdit may report more than one text-change event. Wait for the exact whole-project image rather than
+  // interpreting an intermediate event as user interference.
+  if (document.getText() !== pending.expectedText) return;
+  pendingDeleteProjectSaves.delete(key); // claim it before await so onDidDelete cannot save it twice
+  try {
+    if (!await document.save()) {
+      output.appendLine(`[delete] project membership save was refused: ${pending.projectPath}`);
+      return;
+    }
+    output.appendLine(`[delete] project membership persisted: ${pending.projectPath}`);
+  } catch (error) {
+    output.appendLine(`[delete] project membership save failed: ${pending.projectPath}: ${String(error)}`);
+  }
+}
+
 export function deactivate(): void | Promise<void> {
   shuttingDown = true;
+  cancelIdleEngineRecycle();
+  nextIdleEngineRecycleDelayForTest = undefined;
+  v2WorkerSupervisor?.dispose();
+  v2WorkerSupervisor = undefined;
   closeExternalBuildWatch(); // a watch that fires during teardown would only try to release engines already going away
   // dispose() already kills the mapped engines' processes; remember which so the pending-scan below does NOT signal them
   // a second time (a redundant failed kill on every normal shutdown). Startup children that never

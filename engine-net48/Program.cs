@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Serialization;
 using StreamJsonRpc;
+using WinFormsDesigner.Engine;
 
 namespace WinFormsDesigner.Engine.Net48
 {
@@ -29,6 +30,32 @@ namespace WinFormsDesigner.Engine.Net48
             int? supervised = RenderDesktop.RelaunchOnPrivateDesktop(args);
             if (supervised.HasValue) return supervised.Value;
             await Console.Error.WriteLineAsync("[engine:net48] " + RenderDesktop.Describe());
+
+            // Internal child mode for the repository-certified hosted-service kernel. The shared service kernel and
+            // vendor callback run in a short-lived process; only a bounded DTO returns to the JSON-RPC parent.
+            if (Has(args, "--hosted-service-worker", out _))
+            {
+                return HostedServiceKernelBroker.RunWorker(
+                    Value(args, "--assembly") ?? "",
+                    Value(args, "--component-type") ?? "",
+                    Value(args, "--certification") ?? "",
+                    Value(args, "--assembly-sha256") ?? "",
+                    Value(args, "--action") ?? "",
+                    Value(args, "--result") ?? "");
+            }
+
+            // Internal child mode for the repository-certified ComponentDesigner broker. This branch runs only
+            // after the private-desktop handoff above: a modal/license window opened by vendor design-time code can
+            // never appear on the user's interactive desktop. The child is short lived and never opens JSON-RPC.
+            if (Has(args, "--hosted-designer-worker", out _))
+            {
+                return HostedDesignerBroker.RunWorker(
+                    Value(args, "--assembly") ?? "",
+                    Value(args, "--component-type") ?? "",
+                    Value(args, "--certification") ?? "",
+                    Value(args, "--assembly-sha256") ?? "",
+                    Value(args, "--result") ?? "");
+            }
 
             if (Has(args, "--pipe", out string? pipeName) && pipeName != null)
             {
@@ -301,7 +328,9 @@ namespace WinFormsDesigner.Engine.Net48
                     Console.WriteLine($"   [tray] {t.Name} [id={t.Id}] : {t.Type}");
                 if (!string.IsNullOrEmpty(r.Diagnostics)) Console.WriteLine("[render] diag: " + r.Diagnostics);
                 if (!string.IsNullOrEmpty(outPng)) { File.WriteAllBytes(outPng!, r.Png); Console.WriteLine("[render] wrote " + Path.GetFullPath(outPng!)); }
-                return r.Png.Length > 0 ? 0 : 2;
+                bool dropped = WinFormsDesigner.Engine.SaveSafety.DropsControls(r.Unrepresentable);
+                if (dropped) Console.Error.WriteLine("[render] refused: a declared control was dropped");
+                return r.Png.Length > 0 && !dropped ? 0 : 2;
             }
             catch (Exception ex)
             {
@@ -336,7 +365,9 @@ namespace WinFormsDesigner.Engine.Net48
                     Console.WriteLine($"   {(c.IsRoot ? "*" : " ")} id={c.Id} type={c.Type} @({c.X},{c.Y}) {c.Width}x{c.Height} parent={c.ParentId}");
                 if (!string.IsNullOrEmpty(r.Diagnostics)) Console.WriteLine("[render-interpreted] diag: " + r.Diagnostics);
                 if (!string.IsNullOrEmpty(outPng)) { File.WriteAllBytes(outPng!, r.Png); Console.WriteLine("[render-interpreted] wrote " + Path.GetFullPath(outPng!)); }
-                return r.Png.Length > 0 ? 0 : 2;
+                bool dropped = WinFormsDesigner.Engine.SaveSafety.DropsControls(r.Unrepresentable);
+                if (dropped) Console.Error.WriteLine("[render-interpreted] refused: a declared control was dropped");
+                return r.Png.Length > 0 && !dropped ? 0 : 2;
             }
             catch (Exception ex)
             {
@@ -686,8 +717,31 @@ namespace WinFormsDesigner.Engine.Net48
         private readonly object _cultureGate = new object();
         private readonly Dictionary<string, string> _designerCultures =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HostedDesignerBroker _hostedDesigners = new HostedDesignerBroker();
+        private readonly HostedServiceKernelBroker _hostedServices = new HostedServiceKernelBroker();
 
         public string Ping() => "winforms-engine-net48 ok / " + RuntimeInformation.FrameworkDescription;
+
+        public V2ProtocolValidationResult ValidateV2Envelope(string envelopeJson) =>
+            V2Protocol.ValidateEnvelopeJson(envelopeJson);
+
+        /// <summary>
+        /// Construct one exact repository-certified vendor ComponentDesigner in a disposable process. A designer
+        /// exception/process exit quarantines only the assembly-content/type identity; the main JSON-RPC engine and
+        /// its already-open generic compiled form remain alive and editable. Rebuilding changes the SHA identity and
+        /// therefore naturally clears the old quarantine without trusting a caller-supplied reset.
+        /// </summary>
+        public HostedDesignerProbeResult InspectCertifiedHostedDesigner(string assemblyPath,
+            string componentTypeName, string certificationId) =>
+            _hostedDesigners.Inspect(assemblyPath, componentTypeName, certificationId);
+
+        public HostedServiceKernelProductResult InspectCertifiedHostedServiceKernel(
+            string assemblyPath, string componentTypeName, string certificationId) =>
+            _hostedServices.Inspect(assemblyPath, componentTypeName, certificationId);
+
+        public HostedServiceKernelProductResult InvokeCertifiedHostedServiceAction(
+            string assemblyPath, string componentTypeName, string certificationId, string actionId) =>
+            _hostedServices.Invoke(assemblyPath, componentTypeName, certificationId, actionId);
 
         /// <summary>Select the VS-style design culture for one form. The selection is retained in the parent domain
         /// even before a render AppDomain exists and is copied into every worker before an interpreted operation.</summary>
@@ -831,28 +885,33 @@ namespace WinFormsDesigner.Engine.Net48
         /// back to the compiled last build with a named reason. The host passes the unsaved buffer as
         /// <paramref name="sourceText"/>; the result's RenderMode/FallbackReason drive the two-axis mode + banner.</summary>
         public RenderLayoutResult RenderInterpretedWithLayout(string designerFilePath, string assemblyPath, string sourceText,
-            string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0, string[]? selectedTabs = null, int renderScale = 1)
+            string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0, string[]? selectedTabs = null,
+            int renderScale = 1, string? codeBehindText = null)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
+            string[] probes = ComputeProbes(assemblyPath, probeDirs);
+            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, probes), designerFilePath);
             // Parse the source into IR HERE, in the engine's DEFAULT AppDomain — Roslyn must never load into the render
             // child domain (its binding redirects are unified on the user's assembly versions, which would redirect
             // Roslyn's own graph, e.g. System.Collections.Immutable, and break it). Only the [Serializable] IrDocument
             // crosses the boundary. RootTypeResolver/SourceMetadata already parse here.
             // selectedTabs () = transient "hostField=pageField" tab overrides, re-supplied each render.
             var doc = DesignerIrBuilder.Build(sourceText ?? "");
+            string sourceBase = RootTypeResolver.ResolveDeclaredBase(designerFilePath, sourceText,
+                codeBehindText, assemblyPath, probes);
             return worker.RenderInterpretedWithLayout(designerFilePath, assemblyPath, doc, typeName, width, height,
-                selectedTabs, renderScale, SourceKey(sourceText));
+                selectedTabs, renderScale, SourceKey(sourceText, codeBehindText), sourceBase);
         }
 
         /// <summary>1.2.x — the buffer identity the child domain uses to decide whether its cached interpreted graph is
         /// still the picture of THIS text (see RenderWorker.ApplyInterpretedEdits). A content hash, so it survives the
         /// AppDomain boundary cheaply and can never be confused with a different buffer of the same length.</summary>
-        private static string SourceKey(string? sourceText)
+        private static string SourceKey(string? sourceText, string? codeBehindText = null)
         {
             if (sourceText == null) return "";
             using (var sha = System.Security.Cryptography.SHA256.Create())
-                return Convert.ToBase64String(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(sourceText)));
+                return Convert.ToBase64String(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(
+                    sourceText + "\0" + (codeBehindText ?? ""))));
         }
 
         /// <summary>
@@ -866,28 +925,39 @@ namespace WinFormsDesigner.Engine.Net48
         /// </summary>
         public RenderLayoutResult ApplyInterpretedEditsLive(string designerFilePath, string assemblyPath,
             PropEdit[] edits, string beforeSourceText, string afterSourceText, string? rootTypeName = null,
-            string[]? probeDirs = null, string[]? selectedTabs = null, int renderScale = 1)
+            string[]? probeDirs = null, string[]? selectedTabs = null, int renderScale = 1,
+            string? codeBehindText = null)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
-            return worker.ApplyInterpretedEdits(designerFilePath, assemblyPath, typeName, edits ?? Array.Empty<PropEdit>(),
-                SourceKey(beforeSourceText), SourceKey(afterSourceText), selectedTabs, renderScale, 0, 0);
+            var result = worker.ApplyInterpretedEdits(designerFilePath, assemblyPath, typeName, edits ?? Array.Empty<PropEdit>(),
+                SourceKey(beforeSourceText, codeBehindText), SourceKey(afterSourceText, codeBehindText), selectedTabs, renderScale, 0, 0);
+            if (result.Component != null)
+                SourceMetadata.Apply(result.Component, designerFilePath,
+                    string.IsNullOrWhiteSpace(afterSourceText) ? null : afterSourceText);
+            return result;
         }
 
         /// <summary>describe one component of the INTERPRETED live-source instance so the
         /// property panel matches the interpreted canvas on an unsaved edit. Roslyn parses the buffer into IR HERE (the
         /// default AppDomain invariant); the worker builds a request-local interpreted graph and describes the
-        /// target from the executor's identity model. Returns null when the form doesn't fully interpret or the id names
-        /// no current component — the host then keeps the panel unavailable (never compiled values under an interpreted
-        /// canvas). Source metadata (assigned-in-source, wired events) is applied HERE from the same buffer.</summary>
+        /// target from the executor's identity model. Returns null when the form doesn't fully interpret or the id is
+        /// unknown. An inherited id is described only from the interpreted instance and is stamped with a freshly
+        /// validated compiled-base capability/token; the host never substitutes compiled property values under an
+        /// interpreted canvas. Source metadata (assigned-in-source, wired events) is applied HERE from the same buffer.</summary>
         public ComponentDesc? DescribeInterpretedComponent(string designerFilePath, string assemblyPath, string sourceText,
-            string componentId, string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0)
+            string componentId, string? rootTypeName = null, string[]? probeDirs = null, int width = 0, int height = 0,
+            string? codeBehindText = null)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs)), designerFilePath);
+            string[] probes = ComputeProbes(assemblyPath, probeDirs);
+            var worker = ConfigureCulture(_domains.GetWorker(assemblyPath, probes), designerFilePath);
             var doc = DesignerIrBuilder.Build(sourceText ?? "");
+            string sourceBase = RootTypeResolver.ResolveDeclaredBase(designerFilePath, sourceText,
+                codeBehindText, assemblyPath, probes);
             var desc = worker.DescribeInterpretedComponent(designerFilePath, assemblyPath, doc, typeName,
-                string.IsNullOrEmpty(componentId) ? "this" : componentId, width, height, SourceKey(sourceText));
+                string.IsNullOrEmpty(componentId) ? "this" : componentId, width, height,
+                SourceKey(sourceText, codeBehindText), sourceBase);
             if (desc != null) SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
             return desc;
         }
@@ -895,17 +965,172 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>Property-grid + events for one control of the LIVE compiled instance ("this" = root, else its
         /// .Designer.cs field name) — the read side behind the property panel in compiled-preview mode.</summary>
         public ComponentDesc? DescribeCompiledComponent(string designerFilePath, string assemblyPath, string componentId,
-            string? rootTypeName = null, string[]? probeDirs = null, string? sourceText = null)
+            string? rootTypeName = null, string[]? probeDirs = null, string? sourceText = null,
+            string? codeBehindText = null)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
-            var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
+            string[] probes = ComputeProbes(assemblyPath, probeDirs);
+            var worker = _domains.GetWorker(assemblyPath, probes);
             var desc = worker.DescribeComponent(assemblyPath, typeName, string.IsNullOrEmpty(componentId) ? "this" : componentId);
             // enrich with source-only facts the live TypeDescriptor can't see (Roslyn in the HOST domain): which
             // properties were assigned in source (grid bold) + which event handlers were wired (Events tab). When the host
             // passes the UNSAVED buffer (sourceText), parse THAT so an item's just-wired event / just-reset prop is fresh.
             SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
+            string baseRefusal = CurrentSourceBaseRefusal(worker, designerFilePath, assemblyPath, typeName,
+                sourceText, codeBehindText, probes);
+            if (baseRefusal.Length > 0) RemoveInheritedOverrideCapability(desc, baseRefusal);
             return desc;
         }
+
+        public EditPreview ApplyInheritedPropertyOverride(string designerFilePath, string componentId,
+            string propertyName, string valueExpression, string expectedBaseIdentityToken, string controlAssemblyPath,
+            string sourceText, string? codeBehindText = null)
+        {
+            if (string.IsNullOrWhiteSpace(controlAssemblyPath) || !File.Exists(controlAssemblyPath))
+                return RefusedEditPreview("control assembly not found");
+            if (string.IsNullOrWhiteSpace(sourceText))
+                return RefusedEditPreview("source text is empty");
+
+            try
+            {
+                string typeName = ResolveTypeName(designerFilePath, controlAssemblyPath, null);
+                string[] probes = ComputeProbes(controlAssemblyPath, null);
+                var worker = _domains.GetWorker(controlAssemblyPath, probes);
+                string baseRefusal = CurrentSourceBaseRefusal(worker, designerFilePath, controlAssemblyPath, typeName,
+                    sourceText, codeBehindText, probes);
+                if (baseRefusal.Length > 0) return RefusedEditPreview(baseRefusal);
+                var info = worker.GetInheritedOverrideTargetInfo(controlAssemblyPath, typeName,
+                    string.IsNullOrEmpty(componentId) ? "" : componentId,
+                    propertyName ?? "", expectedBaseIdentityToken ?? "");
+                if (!info.Safe) return RefusedEditPreview(info.Reason);
+                if (DesignerInheritedOverrideEditor.IsGeometryProperty(info.PropertyName)
+                    && !info.GeometryOverrideEditable)
+                    return RefusedEditPreview(info.Reason.Length > 0
+                        ? info.Reason
+                        : "inherited geometry is managed by Dock, AutoSize, or a layout-panel parent");
+
+                var result = DesignerInheritedOverrideEditor.TryApplyValidatedLiveTarget(new InheritedOverrideEditRequest
+                {
+                    SourceText = sourceText ?? "",
+                    FieldId = info.FieldId,
+                    FieldTypeName = info.FieldTypeName,
+                    EffectiveAccessibility = info.EffectiveAccessibility,
+                    PropertyName = info.PropertyName,
+                    PropertyTypeName = info.PropertyTypeName,
+                    ValueExpression = valueExpression ?? "",
+                    ExpectedBaseIdentityToken = expectedBaseIdentityToken ?? "",
+                    ObservedBaseIdentityToken = info.BaseIdentityToken,
+                });
+                return new EditPreview
+                {
+                    Safe = result.Safe,
+                    Mode = result.Mode.ToString(),
+                    Text = result.NewText,
+                    Reason = result.Reason,
+                };
+            }
+            catch (Exception ex)
+            {
+                return RefusedEditPreview(ex.GetBaseException().Message);
+            }
+        }
+
+        public EditPreview RemoveInheritedPropertyOverride(string designerFilePath, string componentId,
+            string propertyName, string expectedBaseIdentityToken, string controlAssemblyPath,
+            string sourceText, string? codeBehindText = null)
+        {
+            if (string.IsNullOrWhiteSpace(controlAssemblyPath) || !File.Exists(controlAssemblyPath))
+                return RefusedEditPreview("control assembly not found");
+            if (string.IsNullOrWhiteSpace(sourceText))
+                return RefusedEditPreview("source text is empty");
+
+            try
+            {
+                string typeName = ResolveTypeName(designerFilePath, controlAssemblyPath, null);
+                string[] probes = ComputeProbes(controlAssemblyPath, null);
+                var worker = _domains.GetWorker(controlAssemblyPath, probes);
+                string baseRefusal = CurrentSourceBaseRefusal(worker, designerFilePath, controlAssemblyPath, typeName,
+                    sourceText, codeBehindText, probes);
+                if (baseRefusal.Length > 0) return RefusedEditPreview(baseRefusal);
+                var info = worker.GetInheritedOverrideTargetInfo(controlAssemblyPath, typeName,
+                    string.IsNullOrEmpty(componentId) ? "" : componentId,
+                    propertyName ?? "", expectedBaseIdentityToken ?? "");
+                if (!info.Safe) return RefusedEditPreview(info.Reason);
+
+                var result = DesignerInheritedOverrideEditor.TryRemoveValidatedLiveTarget(new InheritedOverrideEditRequest
+                {
+                    SourceText = sourceText ?? "",
+                    FieldId = info.FieldId,
+                    FieldTypeName = info.FieldTypeName,
+                    EffectiveAccessibility = info.EffectiveAccessibility,
+                    PropertyName = info.PropertyName,
+                    PropertyTypeName = info.PropertyTypeName,
+                    ExpectedBaseIdentityToken = expectedBaseIdentityToken ?? "",
+                    ObservedBaseIdentityToken = info.BaseIdentityToken,
+                });
+                return new EditPreview
+                {
+                    Safe = result.Safe,
+                    Mode = result.Mode.ToString(),
+                    Text = result.NewText,
+                    Reason = result.Reason,
+                };
+            }
+            catch (Exception ex)
+            {
+                return RefusedEditPreview(ex.GetBaseException().Message);
+            }
+        }
+
+        public InheritedGeometryOverrideAuthorization AuthorizeInheritedGeometryOverride(string designerFilePath,
+            string componentId, string expectedBaseIdentityToken, string controlAssemblyPath)
+        {
+            if (string.IsNullOrWhiteSpace(controlAssemblyPath) || !File.Exists(controlAssemblyPath))
+                return new InheritedGeometryOverrideAuthorization { Safe = false, Reason = "control assembly not found" };
+            try
+            {
+                string typeName = ResolveTypeName(designerFilePath, controlAssemblyPath, null);
+                var worker = _domains.GetWorker(controlAssemblyPath, ComputeProbes(controlAssemblyPath, null));
+                return worker.AuthorizeInheritedGeometryOverride(controlAssemblyPath, typeName,
+                    string.IsNullOrEmpty(componentId) ? "" : componentId,
+                    expectedBaseIdentityToken ?? "");
+            }
+            catch (Exception ex)
+            {
+                return new InheritedGeometryOverrideAuthorization { Safe = false, Reason = ex.GetBaseException().Message };
+            }
+        }
+
+        private static string CurrentSourceBaseRefusal(RenderWorker worker, string designerFilePath,
+            string assemblyPath, string rootTypeName, string? sourceText, string? codeBehindText,
+            string[]? probeDirs)
+        {
+            string sourceBase = RootTypeResolver.ResolveDeclaredBase(designerFilePath,
+                sourceText, codeBehindText, assemblyPath, probeDirs);
+            return worker.ValidateCurrentSourceBase(assemblyPath, rootTypeName, sourceBase) ??
+                "current source base validation failed closed";
+        }
+
+        private static void RemoveInheritedOverrideCapability(ComponentDesc? desc, string reason)
+        {
+            if (desc == null || desc.Ownership != InheritedOwnershipPolicy.Inherited) return;
+            desc.InheritedOverrideEditable = false;
+            desc.BaseIdentityToken = "";
+            desc.InheritedFieldType = "";
+            desc.EffectiveAccessibility = "";
+            desc.ReadOnlyReason = string.IsNullOrWhiteSpace(reason)
+                ? "current source base does not match the compiled preview; rebuild required"
+                : reason;
+            foreach (var property in desc.Properties)
+            {
+                property.InheritedOverrideEditable = false;
+                property.InheritedOverrideResettable = false;
+                property.ReadOnly = true;
+            }
+        }
+
+        private static EditPreview RefusedEditPreview(string reason) =>
+            new EditPreview { Safe = false, Mode = "Failed", Reason = reason ?? "unsafe" };
 
         /// <summary>The vendor smart-tag menu a control's compiled type declares (the DevExpress "Tasks" panel:
         /// "Add Tab Page", "Tab Pages", …). Metadata only — the vendor's action is never invoked; the host maps the
@@ -1099,11 +1324,12 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>Add a control of controlTypeKey to parentId at (locX,locY), registered under newId, on the live
         /// instance + re-render (the persisted declaration is the host's net9 splice).</summary>
         public RenderLayoutResult AddCompiledControl(string designerFilePath, string assemblyPath, string parentId,
-            string controlTypeKey, string newId, int locX = -1, int locY = -1, string? rootTypeName = null, string[]? probeDirs = null)
+            string controlTypeKey, string newId, int locX = -1, int locY = -1, string? rootTypeName = null, string[]? probeDirs = null,
+            int width = -1, int height = -1)
         {
             string typeName = ResolveTypeName(designerFilePath, assemblyPath, rootTypeName);
             var worker = _domains.GetWorker(assemblyPath, ComputeProbes(assemblyPath, probeDirs));
-            return worker.AddControl(assemblyPath, typeName, parentId ?? "this", controlTypeKey ?? "", newId ?? "", locX, locY);
+            return worker.AddControl(assemblyPath, typeName, parentId ?? "this", controlTypeKey ?? "", newId ?? "", locX, locY, width, height);
         }
 
         /// <summary>Switch the active tab of the tab host at hostId to the header under window-space (x,y) +

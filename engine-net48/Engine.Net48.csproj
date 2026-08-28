@@ -11,6 +11,10 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <InformationalVersion>2.0.0</InformationalVersion>
     <PlatformTarget>x64</PlatformTarget>
     <LangVersion>latest</LangVersion>
     <Nullable>annotations</Nullable>
@@ -27,6 +31,7 @@
   <ItemGroup>
     <Compile Include="../engine/FormClassResolver.cs" Link="Shared/FormClassResolver.cs" />
     <Compile Include="../engine/DesignerModifiers.cs" Link="Shared/DesignerModifiers.cs" />
+    <Compile Include="../engine/SaveSafety.cs" Link="Shared/SaveSafety.cs" />
     <!-- M0 (ADR 0001): the CLOSED statement-IR contract for live-source interpretation. Produced by the Roslyn
          front-end in this process's DEFAULT domain, consumed by the child-AppDomain executor; one linked file =
          one vocabulary + one validator on both sides of the boundary (a copy would fork the security contract). -->
@@ -52,12 +57,26 @@
     <Compile Include="../engine/CompiledRootFactory.cs" Link="Shared/CompiledRootFactory.cs" />
     <Compile Include="../engine/InterpretedRenderPlan.cs" Link="Shared/InterpretedRenderPlan.cs" />
     <Compile Include="../engine/InterpretedDescribeResolver.cs" Link="Shared/InterpretedDescribeResolver.cs" />
+    <Compile Include="../engine/DesignerInheritedOverrideEditor.cs" Link="Shared/DesignerInheritedOverrideEditor.cs" />
+    <!-- One compile-linked hosted-service kernel keeps service completeness, transaction/reentrancy, and refusal
+         semantics identical across modern and net48. Vendor designers still execute only in a disposable child. -->
+    <Compile Include="../engine/DesignerAdornerInfo.cs" Link="Shared/DesignerAdornerInfo.cs" />
+    <Compile Include="../engine/HostedDesignerAdornerContract.cs" Link="Shared/HostedDesignerAdornerContract.cs" />
+    <Compile Include="../engine/VsNameCreationService.cs" Link="Shared/VsNameCreationService.cs" />
+    <Compile Include="../engine/DesignerServiceKernel.cs" Link="Shared/DesignerServiceKernel.cs" />
+    <Compile Include="../engine/HostedServiceKernelProductContract.cs" Link="Shared/HostedServiceKernelProductContract.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="StreamJsonRpc" Version="2.25.29" />
     <!-- Roslyn parse (root type-name resolution today; interpret/edit reuse later). netstandard2.0 → net48 OK. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+  </ItemGroup>
+
+  <!-- The certified hosted-designer worker creates a real DesignSurface/IDesignerHost in its own short-lived
+       process. No vendor ComponentDesigner is ever instantiated in the long-lived JSON-RPC engine process. -->
+  <ItemGroup>
+    <Reference Include="System.Design" />
   </ItemGroup>
 
 </Project>

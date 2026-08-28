@@ -7,6 +7,17 @@ Version 1.4.0 ships repository-side packaging for two Windows VSIX artifacts:
 
 The ARM64 package is native for the modern .NET engine only. Modern WinForms projects targeting `net8.0-windows`, `net9.0-windows`, or `net10.0-windows` should use the ARM64 VS Code Extension Host plus the ARM64 .NET Desktop Runtime.
 
+## v2.0.0 runtime boundary
+
+The v2.0.0 managed GA baseline keeps this architecture policy: modern `win-x64` and `win-arm64` workers, plus a
+.NET Framework 4.8 x64 compatibility payload. It does not add native ARM64 .NET Framework support and it does not add
+x86, COM, or ActiveX support.
+
+Tier D (`x86`, `COM`, and `ActiveX`) is excluded by name from v2.0.0 GA. Requests that require it must fail before
+mutation with stable diagnostics such as `X86_WORKER_UNAVAILABLE` or `COM_ACTIVE_X_UNSUPPORTED`. A future 2.x release
+would need a separate approved hosting, security, licensing, packaging, and physical-hardware matrix before changing
+that support boundary.
+
 ## .NET Framework compatibility policy
 
 The .NET Framework 4.8 engine is not represented as native ARM64. It remains the x64 compatibility engine because the classic .NET Framework and many vendor WinForms control suites are x64-oriented on Windows ARM64.

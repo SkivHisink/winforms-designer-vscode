@@ -1,0 +1,910 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260824T150121Z-S088",
+  "scenarioId": "V2-FND-001-S088",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "Source-identical modern net10.0-windows and classic net48 derived Forms each inherit one private Button named privateInheritedButton from a compiled base Form and contain one writable derivedButton peer.",
+  "actionLog": [
+    "Build both exact modern and classic net48 base/derived Form pairs in actual Visual Studio",
+    "Open each S088InheritedMoveDerivedForm.cs with its installed WinForms Designer",
+    "Resolve privateInheritedButton and derivedButton as WinForm controls: modern exposes ControlType.Button/AutomationId while classic exposes exact accessible Name plus native WindowsForms10.BUTTON HWND class",
+    "Select privateInheritedButton and require native Properties Text=Private inherited to be disabled or read-only; the private base component intentionally exposes no editable derived (Name) row",
+    "Attempt a bounded drag through posted mouse messages synchronized to the real designer capture HWND and screen cursor",
+    "Require the inherited Button bounds plus the preexisting Document.Saved and Edit.Undo availability states to remain exact before versus after the drag attempt",
+    "Require base source, base Designer, derived code-behind, derived Designer, and project bytes to remain exact on both runtime legs without Save"
+  ],
+  "expected": "Actual Visual Studio exposes the private inherited Button with its native locked/read-only Properties state, consumes the bounded drag attempt without moving it or changing the observable Saved/Undo-availability state, and preserves every modern and net48 artifact byte-identical. Internal Undo stack depth is not claimed because DTE does not expose it.",
+  "refusal": "INHERITED_READONLY",
+  "runtimeArchitecture": "actual Visual Studio x64 modern SDK and classic net48 reference; physical Windows ARM64 remains an independent external gate",
+  "before": {
+    "modern": {
+      "baseSourceSha256": "c74f9f3d238292008c7dcd8e9f6fd52222a0f7c2616fcf4bd5761656af59fd4c",
+      "baseDesignerSha256": "cca4e6a9288bd7517900bb4d3c6f847d12ead1ec237507b7ec51bd202c85d69b",
+      "sourceSha256": "6e0e07627cc6b7cf08af53b909d864595364ce65806e32b960ff9f3edd3c52b5",
+      "designerSha256": "43e45560f089850934ccf9893677c90cb5564c15fcc996840740b749e901f3ab",
+      "projectSha256": "8c20c4f897023481bc6b87e9ac906f42c1b594ddefe02061f8ea7f4ed15c5a8c"
+    },
+    "net48": {
+      "baseSourceSha256": "d3d77975ad9d0095dec2f15f94d456bc4712d93b7cd534fac9ba95df0b66e410",
+      "baseDesignerSha256": "dba0eb81eea5ae6bad70291721f22b8ca6c84a2d3fee4d330e5a819a7e826838",
+      "sourceSha256": "872688ed24fd816100f14f34eafb8d1d9c49ef22cf9893f4ba6adac1a48bf659",
+      "designerSha256": "646d749b04c296fd684f27453f833978108be4aea7f496d4308ee4ea04a2e236",
+      "projectSha256": "86e47155821cb5d359fda3d549d79b0aaca76d74ec316f365001ec389b8e54da"
+    }
+  },
+  "after": {
+    "modern": {
+      "baseSourceSha256": "c74f9f3d238292008c7dcd8e9f6fd52222a0f7c2616fcf4bd5761656af59fd4c",
+      "baseDesignerSha256": "cca4e6a9288bd7517900bb4d3c6f847d12ead1ec237507b7ec51bd202c85d69b",
+      "sourceSha256": "6e0e07627cc6b7cf08af53b909d864595364ce65806e32b960ff9f3edd3c52b5",
+      "designerSha256": "43e45560f089850934ccf9893677c90cb5564c15fcc996840740b749e901f3ab",
+      "projectSha256": "8c20c4f897023481bc6b87e9ac906f42c1b594ddefe02061f8ea7f4ed15c5a8c"
+    },
+    "net48": {
+      "baseSourceSha256": "d3d77975ad9d0095dec2f15f94d456bc4712d93b7cd534fac9ba95df0b66e410",
+      "baseDesignerSha256": "dba0eb81eea5ae6bad70291721f22b8ca6c84a2d3fee4d330e5a819a7e826838",
+      "sourceSha256": "872688ed24fd816100f14f34eafb8d1d9c49ef22cf9893f4ba6adac1a48bf659",
+      "designerSha256": "646d749b04c296fd684f27453f833978108be4aea7f496d4308ee4ea04a2e236",
+      "projectSha256": "86e47155821cb5d359fda3d549d79b0aaca76d74ec316f365001ec389b8e54da"
+    }
+  },
+  "modernExact": true,
+  "net48Exact": true,
+  "modernArtifactsExact": true,
+  "net48ArtifactsExact": true,
+  "modern": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\e8c188ad9fbc48b5973cf71d197047b4\\Modern\\S088InheritedMoveDerivedForm.cs",
+    "designerDocument": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\e8c188ad9fbc48b5973cf71d197047b4\\Modern\\S088InheritedMoveDerivedForm.Designer.cs",
+    "control": {
+      "name": "Private inherited",
+      "automationId": "privateInheritedButton",
+      "controlType": "ControlType.Button",
+      "localizedControlType": "button",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.Button.app.0.2281665_r3_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 25954282,
+      "enabled": true,
+      "focusable": true,
+      "hasKeyboardFocus": false,
+      "selectionItemSelected": null,
+      "offscreen": false,
+      "bounds": {
+        "x": 1408.0,
+        "y": 181.0,
+        "width": 130.0,
+        "height": 30.0
+      },
+      "ancestors": [
+        {
+          "name": "S088 inherited move derived modern",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayContainer",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        }
+      ]
+    },
+    "controlLocator": "AutomationId=privateInheritedButton",
+    "derivedPeer": {
+      "name": "Derived writable",
+      "automationId": "derivedButton",
+      "controlType": "ControlType.Button",
+      "localizedControlType": "button",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.Button.app.0.2281665_r3_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 1051578,
+      "enabled": true,
+      "focusable": true,
+      "hasKeyboardFocus": false,
+      "selectionItemSelected": null,
+      "offscreen": false,
+      "bounds": {
+        "x": 1578.0,
+        "y": 181.0,
+        "width": 130.0,
+        "height": 30.0
+      },
+      "ancestors": [
+        {
+          "name": "S088 inherited move derived modern",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayContainer",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        }
+      ]
+    },
+    "selectionAttempts": [
+      {
+        "method": "PostClickUsingCapture",
+        "clickedWindow": 1247804,
+        "propertyValues": [
+          "S029AlignLeftForm.cs",
+          "S030SameWidthForm.cs",
+          "S038MultiPropertyForm.cs",
+          "S041FlatStyleForm.cs",
+          "S042PaddingForm.cs",
+          "S045ColorEditorForm.cs",
+          "S046ColorEditorForm.cs",
+          "S049DefaultEventForm.cs",
+          "S050ExistingEventForm.cs",
+          "S053ToolboxForm.cs",
+          "S061OutlineRenameForm.cs",
+          "S085InheritedBaseForm.cs",
+          "S085InheritedDerivedForm.cs",
+          "S086InheritedLockedBaseForm.cs",
+          "S086InheritedLockedDerivedForm.cs",
+          "S088InheritedMoveBaseForm.cs",
+          "S088InheritedMoveDerivedForm.cs",
+          "S088InheritedMoveDerivedForm",
+          "S088InheritedMoveDerivedForm.Designer.cs",
+          "S088InheritedMoveDerivedForm.resx",
+          "S100AdapterRoundTripForm.cs",
+          "True",
+          "",
+          "Standard",
+          "Segoe UI; 9pt",
+          "ControlText",
+          "(none)",
+          "MiddleCenter",
+          "(none)",
+          "(none)",
+          "(none)",
+          "40; 40",
+          "False",
+          "3; 3; 3; 3",
+          "0; 0",
+          "0; 0",
+          "Private",
+          "0; 0; 0; 0",
+          "No",
+          "130; 30",
+          "0",
+          "True",
+          "",
+          "Private inherited"
+        ],
+        "selectedExact": true
+      }
+    ],
+    "outlineSelection": null,
+    "propertiesCommandAvailable": true,
+    "identityProperty": {
+      "propertyName": "Text",
+      "value": "Private inherited",
+      "rowEnabled": false,
+      "valuePatternAvailable": true,
+      "valuePatternIsReadOnly": false,
+      "readOnlyExact": true
+    },
+    "input": {
+      "mode": "posted-mouse-with-screen-cursor-synchronization-to-actual-designer-capture",
+      "windowChain": "L0 hwnd=1247804 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield <- L1 hwnd=2951506 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView <- L2 hwnd=1182506 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface <- L3 hwnd=1181102 class=GenericPane text=S088InheritedMoveDerivedForm.cs [Design] <- L4 hwnd=1182090 class=HwndWrapper[DefaultDomain;;a1079561-565f-4598-aec2-f1f1a08dc54b] text=VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+      "dragWindow": 1247804,
+      "start": {
+        "x": 1473,
+        "y": 196
+      },
+      "end": {
+        "x": 1480,
+        "y": 205
+      },
+      "requestedDelta": {
+        "x": 7,
+        "y": 9
+      }
+    },
+    "beforeBounds": {
+      "x": 1408.0,
+      "y": 181.0,
+      "width": 130.0,
+      "height": 30.0
+    },
+    "afterBounds": {
+      "x": 1408.0,
+      "y": 181.0,
+      "width": 130.0,
+      "height": 30.0
+    },
+    "boundsExact": true,
+    "undoAvailableBefore": false,
+    "undoAvailableAfter": false,
+    "undoAvailabilityUnchanged": true,
+    "documentSavedBefore": true,
+    "documentSavedAfter": true,
+    "documentSavedStateUnchanged": true,
+    "beforeCapture": {
+      "hwnd": 1182090,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "71b70816cbdedea91d159ea11f2fd24832d606457e6a20450ef60bae3d00acb4"
+    },
+    "capture": {
+      "hwnd": 1182090,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "da88fdf3880a1b06cec43d152d6eb3d9612e045b1506cd3f05541e86a43685bf"
+    }
+  },
+  "net48": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\e8c188ad9fbc48b5973cf71d197047b4\\Net48\\S088InheritedMoveDerivedForm.cs",
+    "designerDocument": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\e8c188ad9fbc48b5973cf71d197047b4\\Net48\\S088InheritedMoveDerivedForm.Designer.cs",
+    "control": {
+      "name": "Private inherited",
+      "automationId": "920064",
+      "controlType": "ControlType.Pane",
+      "localizedControlType": "pane",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.BUTTON.app.0.2cea0ca_r17_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 920064,
+      "enabled": true,
+      "focusable": false,
+      "hasKeyboardFocus": false,
+      "selectionItemSelected": null,
+      "offscreen": false,
+      "bounds": {
+        "x": 1408.0,
+        "y": 181.0,
+        "width": 130.0,
+        "height": 30.0
+      },
+      "ancestors": [
+        {
+          "name": "S088 inherited move derived net48",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayControl",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]*",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]*",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]*",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design]* - Microsoft Visual Studio (Administrator)",
+          "controlType": "ControlType.Window"
+        }
+      ]
+    },
+    "controlLocator": "Name=Private inherited",
+    "derivedPeer": {
+      "name": "Derived writable",
+      "automationId": "16519482",
+      "controlType": "ControlType.Pane",
+      "localizedControlType": "pane",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.BUTTON.app.0.2cea0ca_r17_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 16519482,
+      "enabled": true,
+      "focusable": false,
+      "hasKeyboardFocus": false,
+      "selectionItemSelected": null,
+      "offscreen": false,
+      "bounds": {
+        "x": 1578.0,
+        "y": 181.0,
+        "width": 130.0,
+        "height": 30.0
+      },
+      "ancestors": [
+        {
+          "name": "S088 inherited move derived net48",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayControl",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S088InheritedMoveDerivedForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+          "controlType": "ControlType.Window"
+        }
+      ]
+    },
+    "selectionAttempts": [
+      {
+        "method": "PostClickUsingCapture",
+        "clickedWindow": 4327770,
+        "propertyValues": [
+          "S029AlignLeftForm.cs",
+          "S030SameWidthForm.cs",
+          "S038MultiPropertyForm.cs",
+          "S041FlatStyleForm.cs",
+          "S042PaddingForm.cs",
+          "S045ColorEditorForm.cs",
+          "S046ColorEditorForm.cs",
+          "S049DefaultEventForm.cs",
+          "S050ExistingEventForm.cs",
+          "S053ToolboxForm.cs",
+          "S061OutlineRenameForm.cs",
+          "S085InheritedBaseForm.cs",
+          "S085InheritedDerivedForm.cs",
+          "S086InheritedLockedBaseForm.cs",
+          "S086InheritedLockedDerivedForm.cs",
+          "S088InheritedMoveBaseForm.cs",
+          "S088InheritedMoveDerivedForm.cs",
+          "S088InheritedMoveDerivedForm",
+          "S088InheritedMoveDerivedForm.Designer.cs",
+          "S088InheritedMoveDerivedForm.resx",
+          "S100AdapterRoundTripForm.cs",
+          "NoControl",
+          "False",
+          "False",
+          "(Default)",
+          "False",
+          "0; 0",
+          "False",
+          "(none)",
+          "True",
+          "0; 0",
+          "True",
+          "0; 0",
+          "100%",
+          "0; 0; 0; 0",
+          "No",
+          "False",
+          "True",
+          "True",
+          "406; 209",
+          "Auto",
+          "WindowsDefaultLocation",
+          "",
+          "S088 inherited move derived net48",
+          "False"
+        ],
+        "selectedExact": false
+      },
+      {
+        "method": "LegacyIAccessible.Select(SELFLAG_TAKEFOCUS|SELFLAG_TAKESELECTION)",
+        "error": "Unable to find type [System.Windows.Automation.LegacyIAccessiblePattern].",
+        "propertyValues": [
+          "S029AlignLeftForm.cs",
+          "S030SameWidthForm.cs",
+          "S038MultiPropertyForm.cs",
+          "S041FlatStyleForm.cs",
+          "S042PaddingForm.cs",
+          "S045ColorEditorForm.cs",
+          "S046ColorEditorForm.cs",
+          "S049DefaultEventForm.cs",
+          "S050ExistingEventForm.cs",
+          "S053ToolboxForm.cs",
+          "S061OutlineRenameForm.cs",
+          "S085InheritedBaseForm.cs",
+          "S085InheritedDerivedForm.cs",
+          "S086InheritedLockedBaseForm.cs",
+          "S086InheritedLockedDerivedForm.cs",
+          "S088InheritedMoveBaseForm.cs",
+          "S088InheritedMoveDerivedForm.cs",
+          "S088InheritedMoveDerivedForm",
+          "S088InheritedMoveDerivedForm.Designer.cs",
+          "S088InheritedMoveDerivedForm.resx",
+          "S100AdapterRoundTripForm.cs",
+          "NoControl",
+          "False",
+          "False",
+          "(Default)",
+          "False",
+          "0; 0",
+          "False",
+          "(none)",
+          "True",
+          "0; 0",
+          "True",
+          "0; 0",
+          "100%",
+          "0; 0; 0; 0",
+          "No",
+          "False",
+          "True",
+          "True",
+          "406; 209",
+          "Auto",
+          "WindowsDefaultLocation",
+          "",
+          "S088 inherited move derived net48",
+          "False"
+        ],
+        "selectedExact": false
+      },
+      {
+        "method": "Native Document Outline measured-row scan with exact PropertyGrid identity proof",
+        "attempts": [
+          {
+            "rowIndex": 0,
+            "point": {
+              "x": 1240,
+              "y": 128
+            },
+            "clickedWindow": 2362150,
+            "chain": "L0 hwnd=2362150 class=WindowsForms10.SysTreeView32.app.0.2cea0ca_r17_ad1 text= <- L1 hwnd=723488 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= <- L2 hwnd=854596 class=VsDocOutlineTool text= <- L3 hwnd=11015214 class=GenericPane text=Document Outline - S088InheritedMoveDerivedForm <- L4 hwnd=1182090 class=HwndWrapper[DefaultDomain;;a1079561-565f-4598-aec2-f1f1a08dc54b] text=VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "propertyValues": [
+              "S029AlignLeftForm.cs",
+              "S030SameWidthForm.cs",
+              "S038MultiPropertyForm.cs",
+              "S041FlatStyleForm.cs",
+              "S042PaddingForm.cs",
+              "S045ColorEditorForm.cs",
+              "S046ColorEditorForm.cs",
+              "S049DefaultEventForm.cs",
+              "S050ExistingEventForm.cs",
+              "S053ToolboxForm.cs",
+              "S061OutlineRenameForm.cs",
+              "S085InheritedBaseForm.cs",
+              "S085InheritedDerivedForm.cs",
+              "S086InheritedLockedBaseForm.cs",
+              "S086InheritedLockedDerivedForm.cs",
+              "S088InheritedMoveBaseForm.cs",
+              "S088InheritedMoveDerivedForm.cs",
+              "S088InheritedMoveDerivedForm",
+              "S088InheritedMoveDerivedForm.Designer.cs",
+              "S088InheritedMoveDerivedForm.resx",
+              "S100AdapterRoundTripForm.cs",
+              "NoControl",
+              "False",
+              "False",
+              "(Default)",
+              "False",
+              "0; 0",
+              "False",
+              "(none)",
+              "True",
+              "0; 0",
+              "True",
+              "0; 0",
+              "100%",
+              "0; 0; 0; 0",
+              "No",
+              "False",
+              "True",
+              "True",
+              "406; 209",
+              "Auto",
+              "WindowsDefaultLocation",
+              "",
+              "S088 inherited move derived net48",
+              "False"
+            ],
+            "selectedExact": false
+          },
+          {
+            "rowIndex": 1,
+            "point": {
+              "x": 1240,
+              "y": 146
+            },
+            "clickedWindow": 2362150,
+            "chain": "L0 hwnd=2362150 class=WindowsForms10.SysTreeView32.app.0.2cea0ca_r17_ad1 text= <- L1 hwnd=723488 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= <- L2 hwnd=854596 class=VsDocOutlineTool text= <- L3 hwnd=11015214 class=GenericPane text=Document Outline - S088InheritedMoveDerivedForm <- L4 hwnd=1182090 class=HwndWrapper[DefaultDomain;;a1079561-565f-4598-aec2-f1f1a08dc54b] text=VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "propertyValues": [
+              "S029AlignLeftForm.cs",
+              "S030SameWidthForm.cs",
+              "S038MultiPropertyForm.cs",
+              "S041FlatStyleForm.cs",
+              "S042PaddingForm.cs",
+              "S045ColorEditorForm.cs",
+              "S046ColorEditorForm.cs",
+              "S049DefaultEventForm.cs",
+              "S050ExistingEventForm.cs",
+              "S053ToolboxForm.cs",
+              "S061OutlineRenameForm.cs",
+              "S085InheritedBaseForm.cs",
+              "S085InheritedDerivedForm.cs",
+              "S086InheritedLockedBaseForm.cs",
+              "S086InheritedLockedDerivedForm.cs",
+              "S088InheritedMoveBaseForm.cs",
+              "S088InheritedMoveDerivedForm.cs",
+              "S088InheritedMoveDerivedForm",
+              "S088InheritedMoveDerivedForm.Designer.cs",
+              "S088InheritedMoveDerivedForm.resx",
+              "S100AdapterRoundTripForm.cs",
+              "True",
+              "",
+              "Standard",
+              "Microsoft Sans Serif; 8,25pt",
+              "ControlText",
+              "(none)",
+              "MiddleCenter",
+              "(none)",
+              "(none)",
+              "(none)",
+              "40; 40",
+              "False",
+              "3; 3; 3; 3",
+              "0; 0",
+              "0; 0",
+              "Private",
+              "0; 0; 0; 0",
+              "No",
+              "130; 30",
+              "0",
+              "True",
+              "",
+              "Private inherited"
+            ],
+            "selectedExact": true
+          }
+        ],
+        "selectedExact": true
+      }
+    ],
+    "outlineSelection": {
+      "commandAvailable": true,
+      "treeHwnd": 2362150,
+      "treeBounds": {
+        "x": 1140,
+        "y": 119,
+        "width": 197,
+        "height": 533
+      },
+      "attempts": [
+        {
+          "rowIndex": 0,
+          "point": {
+            "x": 1240,
+            "y": 128
+          },
+          "clickedWindow": 2362150,
+          "chain": "L0 hwnd=2362150 class=WindowsForms10.SysTreeView32.app.0.2cea0ca_r17_ad1 text= <- L1 hwnd=723488 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= <- L2 hwnd=854596 class=VsDocOutlineTool text= <- L3 hwnd=11015214 class=GenericPane text=Document Outline - S088InheritedMoveDerivedForm <- L4 hwnd=1182090 class=HwndWrapper[DefaultDomain;;a1079561-565f-4598-aec2-f1f1a08dc54b] text=VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+          "propertyValues": [
+            "S029AlignLeftForm.cs",
+            "S030SameWidthForm.cs",
+            "S038MultiPropertyForm.cs",
+            "S041FlatStyleForm.cs",
+            "S042PaddingForm.cs",
+            "S045ColorEditorForm.cs",
+            "S046ColorEditorForm.cs",
+            "S049DefaultEventForm.cs",
+            "S050ExistingEventForm.cs",
+            "S053ToolboxForm.cs",
+            "S061OutlineRenameForm.cs",
+            "S085InheritedBaseForm.cs",
+            "S085InheritedDerivedForm.cs",
+            "S086InheritedLockedBaseForm.cs",
+            "S086InheritedLockedDerivedForm.cs",
+            "S088InheritedMoveBaseForm.cs",
+            "S088InheritedMoveDerivedForm.cs",
+            "S088InheritedMoveDerivedForm",
+            "S088InheritedMoveDerivedForm.Designer.cs",
+            "S088InheritedMoveDerivedForm.resx",
+            "S100AdapterRoundTripForm.cs",
+            "NoControl",
+            "False",
+            "False",
+            "(Default)",
+            "False",
+            "0; 0",
+            "False",
+            "(none)",
+            "True",
+            "0; 0",
+            "True",
+            "0; 0",
+            "100%",
+            "0; 0; 0; 0",
+            "No",
+            "False",
+            "True",
+            "True",
+            "406; 209",
+            "Auto",
+            "WindowsDefaultLocation",
+            "",
+            "S088 inherited move derived net48",
+            "False"
+          ],
+          "selectedExact": false
+        },
+        {
+          "rowIndex": 1,
+          "point": {
+            "x": 1240,
+            "y": 146
+          },
+          "clickedWindow": 2362150,
+          "chain": "L0 hwnd=2362150 class=WindowsForms10.SysTreeView32.app.0.2cea0ca_r17_ad1 text= <- L1 hwnd=723488 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= <- L2 hwnd=854596 class=VsDocOutlineTool text= <- L3 hwnd=11015214 class=GenericPane text=Document Outline - S088InheritedMoveDerivedForm <- L4 hwnd=1182090 class=HwndWrapper[DefaultDomain;;a1079561-565f-4598-aec2-f1f1a08dc54b] text=VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+          "propertyValues": [
+            "S029AlignLeftForm.cs",
+            "S030SameWidthForm.cs",
+            "S038MultiPropertyForm.cs",
+            "S041FlatStyleForm.cs",
+            "S042PaddingForm.cs",
+            "S045ColorEditorForm.cs",
+            "S046ColorEditorForm.cs",
+            "S049DefaultEventForm.cs",
+            "S050ExistingEventForm.cs",
+            "S053ToolboxForm.cs",
+            "S061OutlineRenameForm.cs",
+            "S085InheritedBaseForm.cs",
+            "S085InheritedDerivedForm.cs",
+            "S086InheritedLockedBaseForm.cs",
+            "S086InheritedLockedDerivedForm.cs",
+            "S088InheritedMoveBaseForm.cs",
+            "S088InheritedMoveDerivedForm.cs",
+            "S088InheritedMoveDerivedForm",
+            "S088InheritedMoveDerivedForm.Designer.cs",
+            "S088InheritedMoveDerivedForm.resx",
+            "S100AdapterRoundTripForm.cs",
+            "True",
+            "",
+            "Standard",
+            "Microsoft Sans Serif; 8,25pt",
+            "ControlText",
+            "(none)",
+            "MiddleCenter",
+            "(none)",
+            "(none)",
+            "(none)",
+            "40; 40",
+            "False",
+            "3; 3; 3; 3",
+            "0; 0",
+            "0; 0",
+            "Private",
+            "0; 0; 0; 0",
+            "No",
+            "130; 30",
+            "0",
+            "True",
+            "",
+            "Private inherited"
+          ],
+          "selectedExact": true
+        }
+      ],
+      "selectedExact": true
+    },
+    "propertiesCommandAvailable": true,
+    "identityProperty": {
+      "propertyName": "Text",
+      "value": "Private inherited",
+      "rowEnabled": false,
+      "valuePatternAvailable": true,
+      "valuePatternIsReadOnly": false,
+      "readOnlyExact": true
+    },
+    "input": {
+      "mode": "posted-mouse-with-screen-cursor-synchronization-to-actual-designer-capture",
+      "windowChain": "L0 hwnd=4327770 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=AdornerWindow <- L1 hwnd=789040 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=OverlayControl <- L2 hwnd=788008 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerFrame <- L3 hwnd=2757524 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= <- L4 hwnd=1640760 class=GenericPane text=S088InheritedMoveDerivedForm.cs [Design]* <- L5 hwnd=1182090 class=HwndWrapper[DefaultDomain;;a1079561-565f-4598-aec2-f1f1a08dc54b] text=VisualStudioReference - S088InheritedMoveDerivedForm.cs [Design]* - Microsoft Visual Studio (Administrator)",
+      "dragWindow": 4327770,
+      "start": {
+        "x": 1473,
+        "y": 196
+      },
+      "end": {
+        "x": 1484,
+        "y": 209
+      },
+      "requestedDelta": {
+        "x": 11,
+        "y": 13
+      }
+    },
+    "beforeBounds": {
+      "x": 1408.0,
+      "y": 181.0,
+      "width": 130.0,
+      "height": 30.0
+    },
+    "afterBounds": {
+      "x": 1408.0,
+      "y": 181.0,
+      "width": 130.0,
+      "height": 30.0
+    },
+    "boundsExact": true,
+    "undoAvailableBefore": true,
+    "undoAvailableAfter": true,
+    "undoAvailabilityUnchanged": true,
+    "documentSavedBefore": false,
+    "documentSavedAfter": false,
+    "documentSavedStateUnchanged": true,
+    "beforeCapture": {
+      "hwnd": 1182090,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "e05e6e210dbfb8cd4254807321de9de4dd36e407e1671c6b92b9756114e79035"
+    },
+    "capture": {
+      "hwnd": 1182090,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "b20a9ebb6836682588ff8eccdec8d257fa299e547361f0c011ba3d78bceb31d3"
+    }
+  },
+  "visualStudioWindow": {
+    "capture": {
+      "hwnd": 1182090,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "da88fdf3880a1b06cec43d152d6eb3d9612e045b1506cd3f05541e86a43685bf"
+    }
+  },
+  "primaryCaptureArtifact": "visual-studio-designer.png",
+  "artifactDirectories": {
+    "modern": "modern",
+    "net48": "net48"
+  }
+}

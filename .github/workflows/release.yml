@@ -12,10 +12,19 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      WFD_EVIDENCE_RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.14.0"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
 
       # Fail fast, before ANY public artifact exists: the publish steps used to discover a missing VSCE_PAT only
       # after `gh release create` had already made the tag public, leaving a released version with no Marketplace
@@ -52,10 +61,16 @@ jobs:
         run: dotnet build engine-net48 -c Release -p:PlatformTarget=x64
 
       - name: Unit tests (engine)
-        run: dotnet test tests/Engine.UnitTests -c Release
+        run: dotnet test tests/Engine.UnitTests -c Release --logger "trx;LogFileName=modern.trx" --results-directory "$env:RUNNER_TEMP\v2-scenario-evidence\test-results\modern"
 
       - name: Unit tests (engine, net48)
-        run: dotnet test tests/Engine.Net48.UnitTests -c Release
+        run: dotnet test tests/Engine.Net48.UnitTests -c Release --logger "trx;LogFileName=net48.trx" --results-directory "$env:RUNNER_TEMP\v2-scenario-evidence\test-results\net48"
+
+      - name: Compare product renders with archived Visual Studio references
+        shell: pwsh
+        env:
+          WFD_VISUAL_REFERENCE_EVIDENCE_FILE: ${{ runner.temp }}\v2-scenario-evidence\visual-reference.json
+        run: ./scripts/compare-visual-studio-reference-renders.ps1
 
       - name: M6 coverage gate (engine samples)
         run: dotnet run --project engine -c Release --coverage-report engine/samples --min-rate 80
@@ -68,13 +83,6 @@ jobs:
           dotnet build samples/ComplexProject -f net10.0-windows -c Debug -p:TargetFrameworks=net10.0-windows
           dotnet build fixtures/Net48CtxFixture -c Release -p:PlatformTarget=x64
           dotnet build fixtures/FakeVendor -c Release -p:PlatformTarget=x64
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
 
       - name: Install extension dependencies
         working-directory: extension
@@ -91,9 +99,20 @@ jobs:
           }
           exit 1
 
+      - name: Validate v2 scenario catalog and archived traces
+        shell: pwsh
+        run: ./scripts/validate-v2-scenario-catalog.ps1 -StaticOnly
+
+      - name: Validate generated v2 protocol contract
+        run: node ./scripts/generate-v2-protocol.mjs --check
+
       - name: Release metadata preflight
         working-directory: extension
         run: npm run release:preflight
+
+      - name: VSIX packaging isolation tests
+        shell: pwsh
+        run: ./scripts/test-vsix-isolation.ps1
 
       - name: Typecheck
         working-directory: extension
@@ -101,7 +120,14 @@ jobs:
 
       - name: Unit tests (extension)
         working-directory: extension
-        run: npm test
+        run: npm test -- --reporter=json --outputFile="$env:RUNNER_TEMP\v2-scenario-evidence\test-results\vitest.json"
+
+      - name: Build xUnit and Vitest scenario evidence
+        shell: pwsh
+        run: |
+          node ./scripts/collect-v2-test-evidence.mjs --kind=xunit "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/modern/modern.trx')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/xunit-modern.json')" --invocation=xunit-modern-net10
+          node ./scripts/collect-v2-test-evidence.mjs --kind=xunit "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/net48/net48.trx')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/xunit-net48.json')" --invocation=xunit-net48
+          node ./scripts/collect-v2-test-evidence.mjs --kind=vitest "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/vitest.json')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/vitest.json')" --invocation=vitest-4.1.11
 
       - name: Build extension
         working-directory: extension
@@ -135,25 +161,54 @@ jobs:
 
       - name: Live-webview tests (headless jsdom)
         working-directory: extension
+        env:
+          WFD_SCENARIO_EVIDENCE_FILE: ${{ runner.temp }}\v2-scenario-evidence\webview.json
         run: npm run webview-e2e
 
       - name: VS Code 1.84 Extension Host smoke
         working-directory: extension
+        env:
+          WFD_SCENARIO_EVIDENCE_DIR: ${{ runner.temp }}\v2-scenario-evidence
         run: npm run extension-host-e2e -- --version=1.84.0
 
       - name: VS Code Stable Extension Host smoke
         working-directory: extension
+        env:
+          WFD_SCENARIO_EVIDENCE_DIR: ${{ runner.temp }}\v2-scenario-evidence
         run: npm run extension-host-e2e -- --version=stable
+
+      - name: Validate measured v2 scenario evidence
+        shell: pwsh
+        run: ./scripts/validate-v2-scenario-catalog.ps1 -EvidenceDirectory (Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence')
+
+      - name: Prove all v2 evidence adversarial controls fail closed
+        shell: pwsh
+        run: node ./scripts/test-v2-execution-evidence-gate.mjs "--evidence-dir=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence')"
+
+      - name: Upload measured v2 scenario evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2-scenario-evidence
+          path: ${{ runner.temp }}/v2-scenario-evidence
+          if-no-files-found: error
 
       # Runs `vscode:prepublish` (build + bundle the engine into extension/engine/ + copy LICENSE).
       - name: Package VSIX (Windows x64)
         working-directory: extension
+        env:
+          WFD_BUNDLE_RID: win-x64
         run: npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix
 
       - name: Assert VSIX contains the bundled engines (Windows x64)
         working-directory: extension
         shell: pwsh
         run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664
+
+      - name: Freeze verified VSIX (Windows x64)
+        working-directory: extension
+        shell: pwsh
+        run: Copy-Item -LiteralPath winforms-designer-win32-x64.vsix -Destination (Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix') -Force
 
       - name: Package VSIX (Windows ARM64)
         working-directory: extension
@@ -166,6 +221,16 @@ jobs:
         working-directory: extension
         shell: pwsh
         run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-arm64.vsix -ExpectedTarget win32-arm64 -ExpectedRuntimeIdentifier win-arm64 -ExpectedModernMachine 0xAA64 -ExpectedNet48Machine 0x8664
+
+      - name: Freeze and re-verify both VSIX artifacts
+        working-directory: extension
+        shell: pwsh
+        run: |
+          Copy-Item -LiteralPath winforms-designer-win32-arm64.vsix -Destination (Join-Path $env:RUNNER_TEMP 'frozen-win32-arm64.vsix') -Force
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix') -Destination winforms-designer-win32-x64.vsix -Force
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'frozen-win32-arm64.vsix') -Destination winforms-designer-win32-arm64.vsix -Force
+          ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664
+          ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-arm64.vsix -ExpectedTarget win32-arm64 -ExpectedRuntimeIdentifier win-arm64 -ExpectedModernMachine 0xAA64 -ExpectedNet48Machine 0x8664
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v7

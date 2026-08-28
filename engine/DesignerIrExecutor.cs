@@ -93,6 +93,9 @@ namespace WinFormsDesigner.Engine
             if (structural != null) return IrExecutionResult.Fail("IR failed validation: " + structural);
 
             var instances = new Dictionary<string, object>(StringComparer.Ordinal) { [""] = root };
+            var inheritedOverrideNames = new HashSet<string>(StringComparer.Ordinal);
+            var inheritedSeedError = SeedInheritedOverrideInstances(doc, root, instances, inheritedOverrideNames);
+            if (inheritedSeedError != null) return IrExecutionResult.Fail(inheritedSeedError);
             var beganInit = new List<object>();
             // Tree nodes are LOCAL variables (not sited components), kept in their own side-table (mirrors VS's local
             // `TreeNode treeNodeN = …` serialization). Pure objects — TreeNode ctors/setters run no user code.
@@ -102,7 +105,7 @@ namespace WinFormsDesigner.Engine
             {
                 try
                 {
-                    var err = ExecuteStatement(stmt, instances, beganInit, treeNodes, host);
+                    var err = ExecuteStatement(stmt, instances, beganInit, treeNodes, host, inheritedOverrideNames);
                     if (err != null) return Abort(beganInit, err);
                 }
                 catch (Exception ex)
@@ -115,7 +118,7 @@ namespace WinFormsDesigner.Engine
                 return Abort(beganInit, "unbalanced ISupportInitialize: " + beganInit.Count + " BeginInit without EndInit");
 
             var result = IrExecutionResult.Success(instances);
-            var idErr = BuildIdentityModel(doc, root, instances, result.Origins);
+            var idErr = BuildIdentityModel(doc, root, instances, result.Origins, inheritedOverrideNames);
             if (idErr != null) return IrExecutionResult.Fail(idErr);
             return result;
         }
@@ -126,11 +129,13 @@ namespace WinFormsDesigner.Engine
         /// button) is surfaced as Inherited under its field name — so Snapshot/selection see it, but the caller marks
         /// it read-only. Fail-closed on a HIDING collision: a current-source name that reflection also finds bound to
         /// a DIFFERENT instance is ambiguous and must not be guessed.</summary>
-        private static string? BuildIdentityModel(IrDocument doc, object root, Dictionary<string, object> instances, Dictionary<string, IrOrigin> origins)
+        private static string? BuildIdentityModel(IrDocument doc, object root, Dictionary<string, object> instances,
+            Dictionary<string, IrOrigin> origins, HashSet<string> inheritedOverrideNames)
         {
             origins[""] = IrOrigin.Root;
             foreach (var name in instances.Keys)
-                if (name.Length != 0) origins[name] = IrOrigin.DeclaredInCurrentSource;
+                if (name.Length != 0) origins[name] = inheritedOverrideNames.Contains(name)
+                    ? IrOrigin.Inherited : IrOrigin.DeclaredInCurrentSource;
 
             // reflect field-backed IComponents across the runtime root type and its bases (mirrors the compiled
             // engine's field-name map — the analogue of Site.Name for inherited components).
@@ -171,6 +176,65 @@ namespace WinFormsDesigner.Engine
             return null;
         }
 
+        /// <summary>Seed only uniquely field-backed, accessible framework controls from the compiled base so the IR can
+        /// replay the narrow derived-source override assignments emitted by the 1.14 writer. Names constructed by the
+        /// current document win and are never seeded. All non-property/unsupported mutations remain refused below.</summary>
+        private static string? SeedInheritedOverrideInstances(IrDocument doc, object root,
+            Dictionary<string, object> instances, HashSet<string> inheritedNames)
+        {
+            var declared = new HashSet<string>(doc.Statements.OfType<IrConstructComponent>().Select(c => c.Name), StringComparer.Ordinal);
+            var byInstance = new Dictionary<object, List<FieldInfo>>(IrReferenceEqualityComparer.Instance);
+            // Only source-declared user/vendor hierarchy fields are identities. Framework base classes keep private
+            // runtime references (for example the active-control cache) that can alias a real designer field.
+            for (Type? type = root.GetType(); type != null && type != typeof(Form) && type != typeof(UserControl)
+                 && type != typeof(Control) && type != typeof(Component) && type != typeof(object); type = type.BaseType)
+            {
+                FieldInfo[] fields;
+                try { fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly); }
+                catch { continue; }
+                foreach (var field in fields)
+                {
+                    try
+                    {
+                        if (!typeof(IComponent).IsAssignableFrom(field.FieldType)) continue;
+                        if (field.GetValue(root) is not IComponent component) continue;
+                        if (!byInstance.TryGetValue(component, out var aliases)) byInstance[component] = aliases = new List<FieldInfo>();
+                        aliases.Add(field);
+                    }
+                    catch { }
+                }
+            }
+
+            var candidates = new List<(string name, object value)>();
+            foreach (var entry in byInstance)
+            {
+                if (entry.Value.Count != 1 || entry.Key is not Control control) continue;
+                var field = entry.Value[0];
+                // The interpreter is deliberately given an instance of the immediate BASE type, not an
+                // instance of the source-only derived type (see Execute's contract above). Consequently a
+                // field declared on root.GetType() is inherited from the logical designer document and must
+                // remain eligible. Current-document members are identified by the IR construction set instead.
+                if (field.IsStatic || declared.Contains(field.Name)) continue;
+                bool accessible = field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly;
+                if (!accessible || !IsValidInheritedIdentifier(field.Name)
+                    || !typeof(Control).IsAssignableFrom(field.FieldType)
+                    || !field.FieldType.IsInstanceOfType(control)
+                    || !DesignerAllowlists.IsTrustedFrameworkType(field.FieldType)
+                    || !DesignerAllowlists.IsTrustedFrameworkType(control.GetType())) continue;
+                candidates.Add((field.Name, entry.Key));
+            }
+
+            foreach (var group in candidates.GroupBy(candidate => candidate.name, StringComparer.Ordinal))
+            {
+                if (group.Count() != 1) continue;
+                var candidate = group.Single();
+                if (instances.ContainsKey(candidate.name)) return "ambiguous inherited override identity: " + candidate.name;
+                instances[candidate.name] = candidate.value;
+                inheritedNames.Add(candidate.name);
+            }
+            return null;
+        }
+
         private static IrExecutionResult Abort(List<object> beganInit, string reason)
         {
             var r = IrExecutionResult.Fail(reason);
@@ -189,7 +253,7 @@ namespace WinFormsDesigner.Engine
         };
 
         private static string? ExecuteStatement(IrStatement stmt, Dictionary<string, object> inst, List<object> beganInit,
-            Dictionary<string, TreeNode> treeNodes, IIrHost host)
+            Dictionary<string, TreeNode> treeNodes, IIrHost host, HashSet<string> inheritedOverrideNames)
         {
             switch (stmt)
             {
@@ -217,6 +281,20 @@ namespace WinFormsDesigner.Engine
                 case IrSetProperty p:
                     {
                         if (!TryTarget(p.TargetIsRoot, p.TargetName, inst, out var target, out var terr)) return terr;
+                        if (!p.TargetIsRoot && inheritedOverrideNames.Contains(p.TargetName))
+                        {
+                            if (p.PropertyPath.Count != 1)
+                                return "nested inherited override properties are not supported: " + p.TargetName;
+                            string inheritedProperty = p.PropertyPath[0];
+                            var inheritedDescriptor = TypeDescriptor.GetProperties(target)[inheritedProperty];
+                            string inheritedType = inheritedDescriptor?.PropertyType.FullName ?? "";
+                            if (inheritedDescriptor == null || inheritedDescriptor.IsReadOnly
+                                || !IsSupportedInheritedProperty(inheritedProperty, inheritedType))
+                                return "property is not eligible for an inherited override: " + p.TargetName + "." + inheritedProperty;
+                            if (IsInheritedGeometryProperty(inheritedProperty)
+                                && (target is not Control inheritedControl || !InheritedGeometryAllowed(inheritedControl)))
+                                return "inherited geometry is managed by Dock, AutoSize, or a layout-panel parent: " + p.TargetName;
+                        }
                         // walk to the owner of the final property (all but the last hop must be readable properties)
                         for (int i = 0; i < p.PropertyPath.Count - 1; i++)
                         {
@@ -236,6 +314,9 @@ namespace WinFormsDesigner.Engine
 
                 case IrAddControl a:
                     {
+                        if ((!a.ParentIsRoot && inheritedOverrideNames.Contains(a.ParentName))
+                            || inheritedOverrideNames.Contains(a.ChildName))
+                            return "structural mutation of an inherited control is not supported";
                         if (!TryTarget(a.ParentIsRoot, a.ParentName, inst, out var parentObj, out var perr)) return perr;
                         foreach (var hop in a.ParentPath)
                         {
@@ -256,6 +337,8 @@ namespace WinFormsDesigner.Engine
 
                 case IrAddCollectionItem it:
                     {
+                        if (!it.TargetIsRoot && inheritedOverrideNames.Contains(it.TargetName))
+                            return "collection mutation of an inherited control is not supported";
                         if (!TryTarget(it.TargetIsRoot, it.TargetName, inst, out var owner, out var oerr)) return oerr;
                         for (int i = 0; i < it.PropertyPath.Count; i++)
                         {
@@ -281,6 +364,8 @@ namespace WinFormsDesigner.Engine
 
                 case IrLayoutCall l:
                     {
+                        if (!l.TargetIsRoot && inheritedOverrideNames.Contains(l.TargetName))
+                            return "layout call on an inherited control is not supported";
                         if (!TryTarget(l.TargetIsRoot, l.TargetName, inst, out var lt, out var lterr)) return lterr;
                         var lperr = WalkInitPath(ref lt, l.TargetIsRoot ? "this" : l.TargetName, l.TargetPath, "layout call");
                         if (lperr != null) return lperr;
@@ -301,6 +386,7 @@ namespace WinFormsDesigner.Engine
 
                 case IrBeginInit b:
                     {
+                        if (inheritedOverrideNames.Contains(b.TargetName)) return "BeginInit on an inherited control is not supported";
                         if (!inst.TryGetValue(b.TargetName, out var o)) return "BeginInit unknown target " + b.TargetName;
                         var berr = WalkInitPath(ref o, b.TargetName, b.TargetPath, "BeginInit");
                         if (berr != null) return berr;
@@ -311,6 +397,7 @@ namespace WinFormsDesigner.Engine
                     }
                 case IrEndInit e:
                     {
+                        if (inheritedOverrideNames.Contains(e.TargetName)) return "EndInit on an inherited control is not supported";
                         if (!inst.TryGetValue(e.TargetName, out var o)) return "EndInit unknown target " + e.TargetName;
                         var eerr = WalkInitPath(ref o, e.TargetName, e.TargetPath, "EndInit");
                         if (eerr != null) return eerr;
@@ -353,6 +440,8 @@ namespace WinFormsDesigner.Engine
                     }
                 case IrAddTreeNodes ta:
                     {
+                        if (!ta.TargetIsRoot && inheritedOverrideNames.Contains(ta.TargetName))
+                            return "tree mutation of an inherited control is not supported";
                         if (!TryTarget(ta.TargetIsRoot, ta.TargetName, inst, out var owner, out var oerr)) return oerr;
                         foreach (var hop in ta.PropertyPath)
                         {
@@ -375,6 +464,9 @@ namespace WinFormsDesigner.Engine
 
                 case IrSetExtender x:
                     {
+                        if (inheritedOverrideNames.Contains(x.ProviderName)
+                            || (!x.TargetIsRoot && inheritedOverrideNames.Contains(x.TargetName)))
+                            return "extender mutation involving an inherited control is not supported";
                         if (!inst.TryGetValue(x.ProviderName, out var prov)) return "unknown extender provider " + x.ProviderName;
                         if (prov is not IExtenderProvider ep) return x.ProviderName + " is not an IExtenderProvider";
                         if (!TryTarget(x.TargetIsRoot, x.TargetName, inst, out var tgt, out var terr)) return terr;
@@ -400,6 +492,8 @@ namespace WinFormsDesigner.Engine
 
                 case IrApplyResources ar:
                     {
+                        if (!ar.TargetIsRoot && inheritedOverrideNames.Contains(ar.TargetName))
+                            return "localized inherited overrides are not supported";
                         if (!TryTarget(ar.TargetIsRoot, ar.TargetName, inst, out var target, out var terr)) return terr;
                         if (!host.ApplyResources(target, ar.ResourceKey, out var aerr))
                             return aerr ?? ("ApplyResources failed for '" + ar.ResourceKey + "'");
@@ -409,6 +503,61 @@ namespace WinFormsDesigner.Engine
                 default:
                     return "unknown statement " + stmt.GetType().Name; // unreachable while IrValidate.Closed is exact
             }
+        }
+
+        private static bool InheritedGeometryAllowed(Control control) =>
+            control.Parent is not TableLayoutPanel
+            && control.Parent is not FlowLayoutPanel
+            && control.Dock == DockStyle.None
+            && !control.AutoSize;
+
+        // Reflection returns a field's metadata name without the source escape (for example @class -> class).
+        // The 1.14 writer cannot safely address a reserved keyword through its deliberately narrow canonical
+        // `this.<field>.<property>` grammar, so the replay side must not advertise that identity either.
+        private static readonly HashSet<string> CSharpReservedKeywords = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked",
+            "class", "const", "continue", "decimal", "default", "delegate", "do", "double", "else", "enum",
+            "event", "explicit", "extern", "false", "finally", "fixed", "float", "for", "foreach", "goto",
+            "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long", "namespace", "new",
+            "null", "object", "operator", "out", "override", "params", "private", "protected", "public",
+            "readonly", "ref", "return", "sbyte", "sealed", "short", "sizeof", "stackalloc", "static",
+            "string", "struct", "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong",
+            "unchecked", "unsafe", "ushort", "using", "virtual", "void", "volatile", "while",
+        };
+
+        private static bool IsValidInheritedIdentifier(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return false;
+            if (CSharpReservedKeywords.Contains(value)) return false;
+            if (!((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z') || value[0] == '_')) return false;
+            for (int i = 1; i < value.Length; i++)
+                if (!((value[i] >= 'A' && value[i] <= 'Z') || (value[i] >= 'a' && value[i] <= 'z')
+                    || (value[i] >= '0' && value[i] <= '9') || value[i] == '_')) return false;
+            return true;
+        }
+
+        private static bool IsInheritedGeometryProperty(string propertyName) =>
+            propertyName == "Location" || propertyName == "Size" || propertyName == "Bounds";
+
+        private static bool IsSupportedInheritedProperty(string propertyName, string propertyTypeName)
+        {
+            string type = (propertyTypeName ?? "").Trim();
+            return (propertyName == "Location" && type == "System.Drawing.Point")
+                || (propertyName == "Size" && type == "System.Drawing.Size")
+                || (propertyName == "Bounds" && type == "System.Drawing.Rectangle")
+                || (propertyName == "Anchor" && type == "System.Windows.Forms.AnchorStyles")
+                || (propertyName == "Dock" && type == "System.Windows.Forms.DockStyle")
+                || (propertyName == "Text" && type == "System.String")
+                || ((propertyName == "Enabled" || propertyName == "Visible") && type == "System.Boolean")
+                || (propertyName == "TabIndex" && type == "System.Int32");
+        }
+
+        private sealed class IrReferenceEqualityComparer : IEqualityComparer<object>
+        {
+            public static readonly IrReferenceEqualityComparer Instance = new IrReferenceEqualityComparer();
+            public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
+            public int GetHashCode(object obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
         }
 
         // -------------------------------------------------------- values --------------------------------------------
@@ -463,6 +612,18 @@ namespace WinFormsDesigner.Engine
                         if (ft == null) { err = "unresolved factory type " + f.TypeName; return false; }
                         // SECURITY re-check: only the allowlisted pure Color factories.
                         if (!DesignerAllowlists.IsFactoryInvocationAllowed(ft, f.Method)) { err = "factory not allowed: " + f.TypeName + "." + f.Method; return false; }
+                        if (DesignerAllowlists.TryGetSystemIconBitmapMember(ft, f.Method, out string iconMember))
+                        {
+                            if (f.Args.Count != 0) { err = "system icon bitmap factory requires zero arguments"; return false; }
+                            var iconProperty = ft.GetProperty(iconMember, BindingFlags.Public | BindingFlags.Static);
+                            if (iconProperty?.GetValue(null) is System.Drawing.Icon icon)
+                            {
+                                value = icon.ToBitmap();
+                                return true;
+                            }
+                            err = "no system icon member " + iconMember;
+                            return false;
+                        }
                         if (!TryMaterializeArgs(f.Args, inst, host, out var fargs, out err)) return false;
                         var mi = ResolveStatic(ft, f.Method, fargs);
                         if (mi == null) { err = "no static overload " + f.TypeName + "." + f.Method; return false; }

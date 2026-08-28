@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "comparisonId": "VS18.0-20260821T082946Z-product-20260821T124354Z",
+  "generatedAtUtc": "2026-08-21T12:43:54.5839096Z",
+  "sourceHead": "2ce79bbc892f965b04257ab8133384c77724c5cf",
+  "sourceTreeDirty": true,
+  "referenceAuthority": {
+    "runId": "VS18.0-20260821T082946Z",
+    "product": "Visual Studio Enterprise 2026",
+    "installationVersion": "18.7.11911.148",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "referenceAuthorities": [
+    {
+      "runId": "VS18.0-20260821T082946Z",
+      "product": "Visual Studio Enterprise 2026",
+      "installationVersion": "18.7.11911.148"
+    },
+    {
+      "runId": "VS18.7.11911.148-20260821T124034Z",
+      "product": "Visual Studio Enterprise 2026",
+      "installationVersion": "18.7.11911.148"
+    }
+  ],
+  "productEngines": {
+    "modern": {
+      "path": "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll",
+      "sha256": "e2084e1d1cd0412c1661b6b6a7552aed9887285d77d00377912818a8bf51d9ec"
+    },
+    "net48": {
+      "path": "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe",
+      "sha256": "f8c0a2c878ede2a0b983e88de6549e1d402d66540ded5e15a9f6c3ddc727ba9c"
+    }
+  },
+  "status": "PASS",
+  "comparisons": [
+    {
+      "scenarioId": "V2-FND-001-S011",
+      "traceId": "VS18.7.11911.148-20260821T124034Z-S011",
+      "runtime": "net48-interpreted-generic-base",
+      "status": "PASS",
+      "referenceManifest": "docs/v2/reference-traces/VS18.7.11911.148-20260821T124034Z/V2-FND-001-S011/manifest.json",
+      "referenceScreenshot": {
+        "path": "docs/v2/reference-traces/VS18.7.11911.148-20260821T124034Z/V2-FND-001-S011/visual-studio-designer.png",
+        "sha256": "1a32e2337027afd4c27438de5efa8cb8f429e4ed969b6a0a20e4b8d9853a6053",
+        "crop": {
+          "x": 524,
+          "y": 146,
+          "width": 360,
+          "height": 180
+        },
+        "clientSha256": "bfd04d23e4a22cb97d87e786b97fe884ecdc01fceab20d4fd34199fd63f3cb6c"
+      },
+      "productRender": {
+        "path": "V2-FND-001-S011-product.png",
+        "sha256": "76a28d057169678a95554f942b303eb30e0191637152cd48eb43d8f6677e2450",
+        "crop": {
+          "x": 8,
+          "y": 31,
+          "width": 360,
+          "height": 180
+        },
+        "clientSha256": "17c0d4d5eb5eb441b7758d4ff52a04bb79af798643e0758f04810cef034fe1f8"
+      },
+      "comparison": {
+        "width": 360,
+        "height": 180,
+        "pixelCount": 64800,
+        "differentPixels": 113,
+        "differentPixelPercent": 0.174383,
+        "meanAbsoluteErrorPerChannel": 0.149388,
+        "maximumChannelDelta": 246,
+        "tolerance": {
+          "maximumDifferentPixelPercent": 1.0,
+          "maximumMeanAbsoluteErrorPerChannel": 1.0
+        },
+        "referenceClient": "V2-FND-001-S011-reference-client.png",
+        "productClient": "V2-FND-001-S011-product-client.png",
+        "differenceImage": "V2-FND-001-S011-difference.png"
+      }
+    },
+    {
+      "scenarioId": "V2-FND-001-S013",
+      "traceId": "VS18.0-20260821T082946Z-S013",
+      "runtime": "modern",
+      "status": "PASS",
+      "referenceManifest": "docs/v2/reference-traces/VS18.0-20260821T082946Z/V2-FND-001-S013/manifest.json",
+      "referenceScreenshot": {
+        "path": "docs/v2/reference-traces/VS18.0-20260821T082946Z/V2-FND-001-S013/visual-studio-designer.png",
+        "sha256": "6a4151917e3b184cae2f1ba15b17258ca92d7cfe1cb1a6c65a7718d375338341",
+        "crop": {
+          "x": 524,
+          "y": 146,
+          "width": 360,
+          "height": 180
+        },
+        "clientSha256": "4bf5b23978aecc8d6cc7da79fc46fca5bcc234af0484d9dd56151155e1c436ec"
+      },
+      "productRender": {
+        "path": "V2-FND-001-S013-product.png",
+        "sha256": "c2f296a3fe68dc5782d5de0184af5e3af01cf7049833e85be2149dddc98bf611",
+        "crop": {
+          "x": 8,
+          "y": 31,
+          "width": 360,
+          "height": 180
+        },
+        "clientSha256": "4bf5b23978aecc8d6cc7da79fc46fca5bcc234af0484d9dd56151155e1c436ec"
+      },
+      "comparison": {
+        "width": 360,
+        "height": 180,
+        "pixelCount": 64800,
+        "differentPixels": 0,
+        "differentPixelPercent": 0.0,
+        "meanAbsoluteErrorPerChannel": 0.0,
+        "maximumChannelDelta": 0,
+        "tolerance": {
+          "maximumDifferentPixelPercent": 1.0,
+          "maximumMeanAbsoluteErrorPerChannel": 1.0
+        },
+        "referenceClient": "V2-FND-001-S013-reference-client.png",
+        "productClient": "V2-FND-001-S013-product-client.png",
+        "differenceImage": "V2-FND-001-S013-difference.png"
+      }
+    },
+    {
+      "scenarioId": "V2-FND-001-S014",
+      "traceId": "VS18.0-20260821T082946Z-S014",
+      "runtime": "net48-interpreted",
+      "status": "PASS",
+      "referenceManifest": "docs/v2/reference-traces/VS18.0-20260821T082946Z/V2-FND-001-S014/manifest.json",
+      "referenceScreenshot": {
+        "path": "docs/v2/reference-traces/VS18.0-20260821T082946Z/V2-FND-001-S014/visual-studio-designer.png",
+        "sha256": "5671eff22df3c8b7361e43af65f8b34453ece55789117f3c02635ec2a7c1a716",
+        "crop": {
+          "x": 524,
+          "y": 146,
+          "width": 360,
+          "height": 180
+        },
+        "clientSha256": "d48ac41a7f930e8b5219d2b0d23d5a28afd4422c62a8fa157bb1ee73470b501f"
+      },
+      "productRender": {
+        "path": "V2-FND-001-S014-product.png",
+        "sha256": "4e6e4bed4a5628fa793a11d93d871967ec7f720a0dc35a93db614f963148138e",
+        "crop": {
+          "x": 8,
+          "y": 31,
+          "width": 360,
+          "height": 180
+        },
+        "clientSha256": "d48ac41a7f930e8b5219d2b0d23d5a28afd4422c62a8fa157bb1ee73470b501f"
+      },
+      "comparison": {
+        "width": 360,
+        "height": 180,
+        "pixelCount": 64800,
+        "differentPixels": 0,
+        "differentPixelPercent": 0.0,
+        "meanAbsoluteErrorPerChannel": 0.0,
+        "maximumChannelDelta": 0,
+        "tolerance": {
+          "maximumDifferentPixelPercent": 1.0,
+          "maximumMeanAbsoluteErrorPerChannel": 1.0
+        },
+        "referenceClient": "V2-FND-001-S014-reference-client.png",
+        "productClient": "V2-FND-001-S014-product-client.png",
+        "differenceImage": "V2-FND-001-S014-difference.png"
+      }
+    }
+  ]
+}

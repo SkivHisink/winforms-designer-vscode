@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260821T160747Z-S029",
+  "scenarioId": "V2-FND-001-S029",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains three Buttons at X=12,42,77 with Y=10,55,100; button1 is the primary selection after Edit.SelectAll.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S029AlignLeftForm.cs with the WinForms Designer",
+    "Execute Edit.SelectAll",
+    "Verify Format.AlignLefts is enabled",
+    "Execute Format.AlignLefts",
+    "Execute File.SaveAll",
+    "Verify the exact generated-source patch"
+  ],
+  "expected": "Visual Studio preserves button1 at X=12, changes only button2 X 42->12 and button3 X 77->12, preserves every Y and Size, canonicalizes bare CodeDOM separator comments, and leaves source/project byte-identical.",
+  "before": {
+    "sourceSha256": "1a12c6a8c553258086922bb935b7ad4e195b68a72f715c75261baa3597717b5f",
+    "designerSha256": "b49cf0132355373215b90cd2286ef72c7927af7e76aba82de11e2bf21155f8aa",
+    "projectSha256": "9a464ea512c294c55321d96a6b8906cdf5d4dc7508bcb218b509c340c9f04d14",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 12,
+          "y": 10
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 42,
+          "y": 55
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      },
+      "button3": {
+        "location": {
+          "x": 77,
+          "y": 100
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "1a12c6a8c553258086922bb935b7ad4e195b68a72f715c75261baa3597717b5f",
+    "designerSha256": "6be1cc9f3116eb6381ac3f559156e16e9951aad2d767c0cf158a2916c067d2ff",
+    "projectSha256": "9a464ea512c294c55321d96a6b8906cdf5d4dc7508bcb218b509c340c9f04d14",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 12,
+          "y": 10
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 12,
+          "y": 55
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      },
+      "button3": {
+        "location": {
+          "x": 12,
+          "y": 100
+        },
+        "size": {
+          "width": 100,
+          "height": 30
+        }
+      }
+    }
+  },
+  "exactDesignerPatch": true,
+  "exactAfterArtifact": "S029AlignLeftForm.Designer.after.cs.gz",
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\8cc3958fda604a8886b2620856fd754c\\Modern\\S029AlignLeftForm.cs",
+    "command": "Format.AlignLefts",
+    "beforeSelect": {
+      "selectAllAvailable": true,
+      "alignLeftAvailable": false
+    },
+    "afterSelect": {
+      "selectAllAvailable": true,
+      "alignLeftAvailable": true
+    },
+    "capture": {
+      "hwnd": 33756842,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "3b5a1ecb64122785537bbfd7ea6f304cf27bb827b05cf8f96dca28f260a68d07"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T143728Z-S108",
+  "scenarioId": "V2-FND-001-S108",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "The compiled-net48 product CustomEditor saved a live-source Button Text edit in ReparentForm.",
+  "actionLog": [
+    "Validate the product extension-leg hashes",
+    "Build and open ReparentForm.cs in the Visual Studio WinForms Designer",
+    "Execute File.SaveAll",
+    "Hash code-behind and Designer source before and after"
+  ],
+  "expected": "Visual Studio preserves the extension-produced net48 source artifacts exactly for product reopen.",
+  "beforeSha256": {
+    "ReparentForm.cs": "ff2e7936288a288b14a382de6fb882689adaf5398586286ff9705798ac5834c3",
+    "ReparentForm.Designer.cs": "585bb6405f6da6a83eeceb392a10bf0d0b997a909611d66b5d9bd41813b3742c"
+  },
+  "afterSha256": {
+    "ReparentForm.cs": "ff2e7936288a288b14a382de6fb882689adaf5398586286ff9705798ac5834c3",
+    "ReparentForm.Designer.cs": "585bb6405f6da6a83eeceb392a10bf0d0b997a909611d66b5d9bd41813b3742c"
+  },
+  "byteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\f6f3e9b27e824ff8b16546d9c20164fb\\Net48\\ReparentForm.cs",
+    "caption": "",
+    "capture": {
+      "hwnd": 165810698,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "14058a82d250d28e8392f9e965ca7b8d82556617acdeb42215a5781fe2c856d2"
+    }
+  }
+}

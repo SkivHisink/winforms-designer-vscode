@@ -44,6 +44,8 @@ namespace FakeVendor
             this.vendorEdit1.Location = new System.Drawing.Point(140, 12);
             this.vendorEdit1.Name = "vendorEdit1";
             this.vendorEdit1.Properties.Caption = "Vendor edit";
+            this.vendorEdit1.Thresholds.Add(1);
+            this.vendorEdit1.Thresholds.Add(2);
             this.vendorEdit1.Size = new System.Drawing.Size(120, 32);
             this.vendorPanel1.Location = new System.Drawing.Point(12, 200);
             this.vendorPanel1.Name = "vendorPanel1";

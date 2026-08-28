@@ -9,6 +9,851 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-28
+
+**The v2 managed designer foundation ships as an explicitly bounded release.** It freezes the generated protocol,
+transaction and worker contracts; expands repository-automated standard-control, resource, accessibility, recovery,
+and diagnostic coverage; and packages Windows x64 alongside an untested `win32-arm64` build that carries no ARM64
+support claim.
+What is bounded is the *claim*, not the packaging: this is a stable `2.0.0` package, but it is **not** an unqualified
+Visual Studio-parity or vendor-certification claim, and the gates listed under **Release boundary** below stay open
+and are not converted into a green result by wording.
+The strengthened scenario gate records 111 repository `PASS` rows backed by nine completed machine-readable reports,
+exact executed xUnit/TRX test identities, runtime assertion anchors, one run id, the exact git HEAD, and a shared SHA-256
+over 215 product files. It records 12 `NOT_EXECUTED` and 5 explicitly excluded Tier-D `GATED`; measured refusal coverage
+that is not enough to lift S057-S060 or S096 is machine-labelled `MEASURED_BUT_INSUFFICIENT` with a mandatory reason. Eleven non-executed
+rows are classified `HARNESS_ONLY`: ten caller-supplied capability-inspection/echo scenarios were deliberately removed
+from `PASS`, while S102 still requires physical Windows ARM64 execution. A mutation acceptance test removes a real
+assertion anchor and proves that the affected catalog `PASS` can no longer validate; four required adversarial controls
+plus a product-source mutation prove quoted TSV, handwritten-report, trivial-Fact, and stale-product attacks fail closed.
+Forty actual Visual Studio Enterprise 2026 (18.7) reference traces are archived as `PASS` (S001, S005, S006,
+S009, S011, S012, S013, S014, S015, S017, S021, S022, S024, S025, S026, S029, S030, S031, S037, S038, S039, S041,
+S042, S045, S046, S049, S050, S051, S053, S061, S062, S079, S085, S086, S087, S088, S100, S108, S110, and S120); the remaining 88 reference traces stay
+`NOT_EXECUTED`, for an explicit actual-Visual-Studio result of `40/88`; this is not a broad parity result. S079 now also
+opens an exact classic-net48 `RightToLeft=Yes` / `RightToLeftLayout=true` fixture in the installed designer and measures
+the real Form/Button/Label HWNDs: logical `(20,30,90×28)` and `(50,82,80×20)` render at exact mirrored client
+`(210,30,90×28)` and `(190,82,80×20)` inside `320×160`, while source, Designer, and project stay byte-identical. S085
+opens an exact net10 derived Form, selects the protected inherited Button exposed by the installed designer, and changes
+`Text` from `Base inherited` to `Derived override` through native Properties. Visual Studio writes exactly one bounded
+derived assignment, leaves both base artifacts, derived code-behind, and project byte-identical, removes the override on
+one native Undo after deterministic first-touch CodeDOM canonicalization, and reproduces the applied Designer byte-exact
+on Redo. S086 opens a separate exact net10 derived Form, selects its private inherited Label with the visible native
+lock glyph, and shows `Text=Private inherited label` on a disabled Properties row. A direct UI Automation `SetValue`
+attempt is rejected as not allowed on a nonenabled element; the value, base source, base Designer, derived code-behind,
+derived Designer, and project bytes remain exact. This x64 reference does not claim the still-gated physical ARM64 leg.
+S087 opens an exact classic-net48 derived Form over a compiled base with a protected inherited Panel, filters the native
+Toolbox to `All Windows Forms → Button`, invokes its actual MSAA Double-Click default action, and writes exactly one
+derived-root `button1` field/construction/property set/`Controls.Add` without touching the base artifacts. Native Undo
+removes every `button1` shape after measured CodeDOM whitespace canonicalization; Redo restores the complete operation
+contract while the trace honestly records Visual Studio's generated `TabIndex 1→0` and `SetChildIndex` call-order byte
+difference instead of claiming byte identity. S088 repeats the private-inherited move refusal in source-identical modern
+and classic-net48 Forms: the exact locked Button is selected through native Properties/Document Outline, a bounded
+cursor-synchronized drag leaves its screen bounds and all ten base/derived/project files exact, and the observable
+Saved/Undo-availability states remain unchanged. Classic net48 exposes the real `WindowsForms10.BUTTON` HWND through
+UIA as `ControlType.Pane`; physical Windows ARM64 remains external.
+S001 additionally
+proves that a no-edit Visual Studio Save All preserves SDK source, Designer, neutral resx, and project bytes exactly;
+S009 records Visual Studio's fail-closed refusal for a Form nested inside another type, which the product now matches
+before rendering or mutation. S011 proves a concrete generic-base form on both Visual Studio and the live net48
+interpreted path. S012 records that Visual Studio opens a blank design surface when an otherwise proven empty Form
+partial lacks `InitializeComponent`. S015 places two Labels at identical bounds with the frontmost sibling first in the
+native `Controls.Add` z-order, clicks the shared pixel through the real designer `InputShield`, and proves that Visual
+Studio selects `topLabel` by exposing `Text=Top z-order` in native Properties; all fixture bytes remain exact. The
+repository hit-test independently matches the same WinForms index-0-first rule. Physical ARM64 remains external. S021
+multi-selects two Buttons in the actual designer, performs one real
+InputShield/capture-window drag by `+17,+9`, proves both `Location` assignments move exactly once, and proves that one
+Visual Studio Undo/Redo restores/reapplies both controls together while source/project stay byte-identical. S022
+captures an actual designer east-handle drag and proves that resizing an
+anchored Button from 120×30 to 160×30 preserves `Anchor` and `Location`; the real product CustomEditor matches the
+semantic source patch with one native Undo/Redo unit on both supported VS Code test lines. Physical ARM64 execution
+remains externally gated. S029 executes Visual Studio's native `Format.AlignLefts` command over three selected Buttons,
+proves the exact two-`Location` source patch, and is matched by the product CustomEditor with one native Undo/Redo unit.
+S030 executes Visual Studio's native `Format.MakeSameWidth`, proves the exact two-`Size` source patch while preserving
+all heights and Locations, and is matched by the product CustomEditor with one native Undo/Redo unit.
+S031 selects the nested Button through the actual owner-drawn Document Outline and executes Visual Studio's native
+`Format.CenterHorizontally`: relative X changes `15→80`, UI bounds move by `+65`, and asymmetric
+`Padding(10,0,20,0)` does not shift the complete-client-area center. The product now matches both that full
+`ClientRectangle` rule and WinForms integer truncation, with the exact one-`Location` patch and one native Undo/Redo
+unit on both supported VS Code lines.
+S017 records the installed modern designer's native marquee rule instead of relying on the former catalog assumption:
+within the active Panel, Visual Studio selects every direct child whose bounds intersect the marquee, including a
+partially intersected Button. A reversible Copy/Paste probe duplicates exactly the three intersecting Text identities,
+excludes the same-Panel nonintersecting and Form-level controls, and leaves the marquee/Copy Designer bytes exact. The
+product now uses the same intersection and active-container boundary; its full webview regression passes 970 checks
+across 209 tests. Native Undo restores the original semantic shape after the probe, while Visual Studio's modern CodeDOM
+serializer only reorders component blocks, which the trace records separately rather than misreporting as a marquee edit.
+S110 inspects the installed designer's real UI Automation tree for a purpose-built modern Form. It records
+`Submit button` as `ControlType.Button`, `Customer name` as `ControlType.Edit`, the visual `Main menu` as
+`ControlType.MenuBar` with the nested `fileMenuItem` as `ControlType.MenuItem`, and `refreshTimer` as a
+`ComponentTray` pane. Every record is enabled, onscreen, has non-empty bounds and raw-view ancestry, and source,
+Designer, and project bytes remain exact. This x64 trace does not substitute for physical ARM64 or live assistive-
+technology acceptance; those gates remain external.
+S061 selects `button1` in the actual owner-drawn Document Outline and commits `submitButton` through the native
+Properties `(Name)` row. Visual Studio changes the field plus all eight member references and the `Name` literal once,
+preserves `Button.Text = "button1"` and every `textBox1` reference, and gives the transaction exact native Undo/Redo;
+source and project bytes remain exact. A real outline F2 route did not expose an inline editor and is not claimed as
+native behavior. The product matches the selected-control atomic rename and retains F2 only as an additive shortcut;
+its more minimal source patch deliberately avoids Visual Studio CodeDOM's unrelated qualifier/comment normalization.
+S062 clicks the actual `refreshTimer` bounds in the native Component Tray and proves the selection through native
+Properties: its object selector reads `refreshTimer System.Windows.Forms.Timer`, `(Name)=refreshTimer`,
+`Enabled=False`, and `Interval=1500`. Source, Designer, and project bytes remain exact. The product independently
+matches this workflow through its engine-authoritative nonvisual tray/session pick and publishes live Timer properties
+without source, dirty-state, disk, or native-history mutation; physical Windows ARM64 remains external.
+S046 starts from an explicit actual-Visual-Studio `Button.BackColor=Red`, opens the native owner-drawn framework Color
+editor through its real Properties `Open` button, and freezes the visible `Custom / Web / System` tabs with `Red`
+selected. `Esc` restores `BackColor=Red`; source, Designer, and project hashes remain exact. The product's matching
+typed `CANCELLED` path independently preserves source, dirty state, native history, and disk on both supported VS Code
+lines. S045 uses the same installed editor from an explicit Red fixture, selects the exact native `Blue` Web-color row,
+accepts it with Enter, and saves canonical `Color.Blue` without changing the Button's Location, Name, Size, Text, or
+`UseVisualStyleBackColor`. One native Undo restores Red and one native Redo reproduces the Blue Designer bytes exactly;
+source and project hashes remain exact.
+S037 selects the actual Visual Studio Button and captures its categorized Properties view: Text is visibly bold at
+`Button reference`, default `Enabled=True` is not bold, the Text description matches, and source/Designer/project bytes
+remain exact. The repository Properties panel matches the categorized/default/non-default/description semantics.
+S038 selects an actual Visual Studio Button and TextBox together: the shared `Text` row is blank/mixed, the common
+property intersection remains visible, and type-specific `DialogResult`, `Multiline`, `AcceptsReturn`, and
+`UseSystemPasswordChar` rows are absent. Both controls show selection handles and all project inputs remain exact; the
+repository multi-property grid matches the same intersection/mixed-value contract. Physical ARM64 remains external.
+S039 opens the actual in-process net48 designer, selects `button1` through the visible legacy Document Outline after
+the rendered child absorbs a synthetic click, and invokes the enabled Property Browser `Reset` command for its explicit
+`Text=Custom reset text`. The visible value becomes empty and the exact Designer patch removes only the
+`this.button1.Text` assignment; net48 CodeDOM preserves `this.` qualifiers and sibling semantics, canonicalizes four
+separator comments, inserts one pre-close blank line, and rewrites only the generated region to CRLF while
+source/project bytes remain exact. In the disconnected capture session the native context popup was not exposed through
+UI Automation, so the exact enabled
+`OtherContextMenus.PropertyBrowser.Reset` handler was invoked through DTE; repository unit, webview, and named-pipe
+paths independently prove the matching reset enablement and source-safe assignment removal.
+S041 opens the actual Visual Studio `FlatStyle` dropdown for a default Button and captures the native list child order
+`Flat, Popup, Standard, System` with `Standard` selected; source, Designer, and project bytes remain exact. The product
+publishes the same exclusive closed list and selection through the real modern CustomEditor without mutation on both
+supported VS Code lines.
+S042 opens the actual modern Visual Studio designer, selects `button1`, expands the owner-drawn `Padding` row through
+the PropertyGrid keyboard contract, and commits only `Left: 3→8` through the real child value editor. The exact saved
+CodeDOM artifact preserves `Top=4`, `Right=5`, `Bottom=6`, source, and project bytes while performing Visual Studio's
+first-write canonicalization of `this.` qualifiers and separator comments. Repository unit, webview, and E2E paths
+cover the same bounded subproperty update and sibling-value preservation.
+S053 opens the supported `net10.0-windows` form in actual Visual Studio, executes native `View.Toolbox`, finds the real
+`Search Toolbox` / `PART_SearchBox` control, and enters `Button` through UI Automation `ValuePattern`. Visual Studio
+reports exactly `2 results found`; its legacy native Toolbox exposes the MSAA hierarchy
+`Toolbox → All Windows Forms → Button` beside `RadioButton`, while source, Designer, and project bytes remain exact.
+Repository unit/E2E evidence independently proves `System.Windows.Forms.Button` framework provenance and
+`Common Controls` categorization; the Visual Studio claim remains bounded to the observed `All Windows Forms` search
+result and is not a claim about custom/vendor Toolbox discovery.
+S049 double-clicks a real Visual Studio designer Button, creates exactly one default `Click` subscription and one
+`button1_Click` method, navigates the DTE cursor into the method, and preserves project bytes. Its Save All watcher now
+keeps the exact line-ending modal lifecycle bounded until the dialog appears and records `observed`, `clickPosted`, and
+`dismissed` only after the HWND is gone, preventing the former synchronous/expired-watcher deadlock. The product CustomEditor
+now treats generated-source wiring and the code-behind insertion as one compensated history transaction: both buffers
+remain unsaved until Save, one native Undo restores both, and one native Redo reapplies both on VS Code 1.84.0 and
+1.134.0. Independent code edits cancel the narrow redo bridge fail-closed.
+S120 now executes its bounded extension leg in every full product regression rather than only while exporting a manual
+reference trace. The real CustomEditor moves `button1` by `+11,+7`, saves exact generated-source bytes, preserves the
+code-behind, proves the saved CustomDocument and Designer disk bytes agree, then uses native Undo plus Save to restore
+the byte-exact clean baseline. The archived Visual Studio Enterprise 2026 18.7 Save All trace preserves those same
+source and Designer artifacts byte-identically.
+S100 and S108 now close their bounded cross-tool corpus through a real two-way round trip. The modern and compiled-net48
+CustomEditors edit and save disposable Forms, actual Visual Studio Enterprise 2026 18.7 opens those exact exported
+artifacts and saves them, and a later product run reopens the archived Visual Studio output through the matching real
+engine. Both lanes prove the expected `Button.Text`, byte equality between CustomDocument and disk, clean state, and
+native Undo plus Save restoration of the original baseline. The accepted static S100 adapter manifest remains data-only:
+vendor code is not loaded and the adapter has no workspace-mutation authority. These fixtures close S100/S108, not the
+remaining 105-reference-trace corpus or arbitrary vendor compatibility.
+S050 now opens a separately wired form in actual Visual Studio, selects `button1`, switches the native Properties grid
+to Events, verifies the owner-drawn `Click=button1_Click` row and its real writable child editor, and commits that same
+handler through `ValuePattern.SetValue` plus Enter. Source, Designer, and project stay byte-identical with exactly one
+subscription and one method. The product independently exercises its adjacent real Events `setHandler` ingress on both
+VS Code host lines with both buffers clean and both disk hashes exact. Physical ARM64 remains external.
+S016 replaces its former synthetic timing record with real x64 product evidence. Generated 300-control standard-control
+forms open through both modern and compiled-net48 CustomEditors with 301 layout nodes; initial interaction remains under
+5000 ms and a selected Text commit plus reconciliation under 500 ms on VS Code 1.84.0 and 1.134.0. The accepted snapshot
+feeds Properties without a trailing describe, native Undo restores the exact baseline, and every fixture file remains
+byte-identical on disk. Actual Visual Studio, physical cross-architecture, and external performance-lab p95 evidence
+remain external.
+S122 replaces the synthetic headless-only record with product telemetry captured from real x64 CustomEditor sessions.
+Generated 50-control and 300-control forms run through modern and compiled-net48 engines, and a 180-control form with 96
+real in-repo FakeVendor controls runs through net48, at logical 100/125/150/200% DPI. Retained high-DPI dirty patches now
+scale only the changed leaf while the webview composites logical patch coordinates into the physical backing store.
+All 12 frozen capture/preview/commit/reconciliation budgets pass on VS Code 1.84.0 and 1.134.0 with native Undo,
+same-snapshot reconciliation, and byte-exact disk guards. Physical performance-lab p95, a licensed vendor corpus, and
+the Visual Studio reference trace remain explicit external gates.
+S126 replaces its preview-only headless record with a visible High-DPI Advisor command on a real modern CustomEditor.
+`AutoScaleMode.None` is authorized from live root metadata and planned through the normal safe source lane; preview
+opens the exact before/after bytes in a read-only VS Code diff without dirty state or hot-exit participation. Apply
+accepts only that retained revision-bound proposal, commits `AutoScaleMode.Font` through the ordinary CustomDocument
+firewall as one native Undo/Redo unit, and leaves source, Designer, and project disk hashes exact. The adjacent S128
+product leg proves that an intervening ordinary edit makes the stale preview refuse without replacing the newer text.
+Both flows pass on VS Code 1.84.0 and 1.134.0; physical ARM64 and actual Visual Studio reference execution remain external.
+S124 replaces its caller-supplied headless crash record with real product recovery. While a modern CustomEditor is
+open, the actual mapped worker is terminated; the session immediately revokes edit authority, records the loss in
+Diagnostics, starts a different OS process through the bounded crash policy, and re-renders the byte-exact clean
+document. Ordinary Properties edit/native Undo then succeeds, and a later form renders and edits through the same
+recovered worker. Both supported VS Code lines pass without an unhandled pipe rejection; the Visual Studio reference
+trace and an external crashing-vendor artifact remain external.
+S095 closes the repository's hosted-designer crash path through the real compiled-net48 product route. The exact
+repository-certified `FakeVendor.CrashOnInitializeDesigner` is first activated successfully on the engine's private
+desktop in a disposable child process. Its next real `ComponentDesigner.Initialize` terminates that OS process; the
+main mapped net48 EngineApi PID stays alive, the dead child is observed, and the exact assembly SHA-256/component/
+certificate identity is quarantined. A retry returns `DESIGNER_QUARANTINED` without starting another child, while the
+generic source-first surface remains renderable and a Text edit completes one native Undo/Redo unit with byte-exact
+disk artifacts on VS Code 1.84.0 and 1.134.0. This is process crash containment, not an OS security sandbox or licensed
+vendor certification; its Visual Studio reference and licensed-vendor legs remain external.
+S089/S090 close the adjacent modern hosted-service action path through the ordinary product CustomEditor. The exact
+repository-certified `HostedServiceKernelControl` publishes `Apply Service Preset` only after the engine proves STA,
+assembly SHA-256, component/designer/certificate identity, and complete container, selection, change, name, command,
+and toolbox services; an incomplete kernel withholds `IDesignerHost`, and an unsupported service returns an explicit
+refusal. The webview sends only the certified command identity, never source proposals. The host revalidates the live
+revision and the exact one-transaction/two-change outcome, independently plans `Text = "Hosted service preset"` and
+`Size = 180, 42`, and commits both as one unsaved native Undo/Redo unit. A forged certificate leaves source, history,
+dirty state, and disk unchanged. Unit, webview, and full Extension Host suites pass on VS Code 1.84.0 and 1.134.0.
+This is one bounded modern contract, not arbitrary vendor, net48/cross-runtime, licensed-vendor, or Visual Studio proof.
+S085-S088 move visual inheritance beyond metadata-only coverage. Source-identical modern and compiled-net48 base forms
+publish protected and private inherited controls through the real CustomEditor: a protected Button accepts one
+token-authorized derived Text override with exact native Undo/Redo, private controls remain visibly read-only and reject
+property/move intents without dirty state or phantom history, and adding a new control writes only the derived Designer
+buffer. Base, code-behind, and Designer files remain byte-exact on disk before Save on VS Code 1.84.0 and 1.134.0;
+actual Visual Studio reference execution and physical ARM64 remain external.
+S082 now drives the shipped Data Sources surface through a real modern CustomEditor: an opaque `Customer` schema with
+`Id`, `Name`, and `Email` generates the complete DataGridView/BindingSource/BindingNavigator graph as one native
+Undo/Redo unit while source, Designer, project, and model files remain byte-exact before Save. S084 adds the paired
+modern/compiled-net48 fail-closed path: unsupported provider metadata returns typed
+`UNSUPPORTED_DATA_PROVIDER` before source, created IDs, dirty state, native history, or disk mutation. Both product
+proofs pass on VS Code 1.84.0 and 1.134.0; actual Visual Studio traces and S082 physical ARM64 remain external.
+S051 closes the adjacent revision-race gap: after the engine validates an existing TextChanged handler against one
+project-partial snapshot, a deterministic code-behind rename before commit makes the CustomEditor refuse the stale
+Designer wiring while preserving both disk hashes and a clean Designer buffer. Once the net48 render recovers on the
+exact reverted code snapshot, the same stable rewire changes exactly one subscription and passes one native Undo/Redo
+unit on VS Code 1.84.0 and 1.134.0. The archived actual Visual Studio 18.7 x64 trace independently selects `textBox1`
+through native Document Outline, commits the compatible alternate handler through the real Events cell, and freezes
+Visual Studio's exact empty-handler lifecycle: initial original+alternate becomes alternate, Undo becomes original,
+and Redo becomes alternate while project bytes and all unrelated source/Designer facts remain exact.
+S052 applies the same fail-closed boundary to new handler generation on both runtime lanes. A deterministic change to
+the real open code-behind document after the engine has produced a valid Click stub makes both a modern SDK and a
+compiled-net48 CustomEditor commit neither artifact: the independent edit remains visible, Designer stays clean, no
+stub or subscription appears, and both disk hashes remain exact on VS Code 1.84.0 and 1.134.0. Its Visual Studio
+reference leg remains external.
+S007 now records the already-live public Explorer refusal as scenario-bound product evidence: `Add Component` receives
+the traversal name `..\Injected`, returns the typed `invalidName` result, and leaves the target directory entries
+unchanged on both Extension Host versions. S035 adds the corresponding visible container workflow: a compiled-net48
+CustomEditor moves an external TextBox onto selected `tabPage2`, converts Form-client `(300,80)` to the live page-client
+`(276,38)`, retains exactly one owner, leaves disk untouched, and binds ownership plus Location to one native
+Undo/Redo unit on both host lines. Their Visual Studio reference legs remain external.
+S036 now makes a previously published `SplitContainer.Panel2` target genuinely stale by renaming its owning
+SplitContainer through the product, then proves that both modern and compiled-net48 CustomEditors refuse reparenting
+without source, disk, or history mutation. S061 selects `button1` through the real canvas/outline session pick and
+renames it to `submitButton` through the product transaction: the selection follows, every declaration/Name/reference
+changes once, unrelated Text and `textBox1` stay exact, and one native Undo/Redo unit owns the whole edit on both host
+lines. S036's actual Visual Studio reference leg remains external; S061's bounded reference is archived above.
+S024 now drives the real shared designer clipboard: Copy remains a no-op, while Paste beside an occupied
+`submitButton` generates the non-colliding VS-style `button1` before commit on both modern and compiled-net48 paths,
+preserves disk, and forms one native Undo/Redo unit. S063 binds the existing net48 outline-reparent proof to its exact
+catalog scenario: `button1` moves from `panel1` to `groupBox1`, gets live client-relative `(10,15)`, and restores/replays
+ownership plus geometry with one native Undo/Redo unit. S024 now also has an archived actual Visual Studio 18.7 x64
+reference on both modern and net48: native Copy/Paste produces `button1` at `(98,74)` and passes exact Undo/Redo. That
+bounded reference closes collision-safety semantics without claiming coordinate parity with the product's 8px nudge;
+S063's actual Visual Studio reference leg remains external.
+S005 now archives the actual Visual Studio modern SDK **Add New Windows Form** baseline. The installed
+`Microsoft.CSharp.WindowsForm` project template creates exactly `S005GeneratedForm.cs`, its nested
+`S005GeneratedForm.Designer.cs`, and nested `S005GeneratedForm.resx`; the SDK project remains byte-identical, the
+solution builds, and the new Form opens in the native designer. Visual Studio also writes one bounded per-user
+`.csproj.user` `SubType=Form` sidecar, recorded separately from the immutable project contract; every other top-level
+delta is rejected by the capture harness. The authoritative 26-scenario control run finishes 19 `PASS`, 6
+`CAPTURED_UNREVIEWED`, 1 `NOT_EXECUTED`, and 0 `FAIL`.
+S006 now archives the adjacent actual Visual Studio classic-project **Add New User Control** baseline. The installed
+`Microsoft.CSharp.WindowsFormsUserControl` template creates exactly `S006GeneratedUserControl.cs` plus its nested
+`S006GeneratedUserControl.Designer.cs`: the classic project gains one `Compile` item with `SubType=UserControl` and one
+Designer `Compile` item with `DependentUpon`, while no neutral `.resx` or `EmbeddedResource` is created. This observed
+two-file contract corrected the product's former three-file assumption; Explorer Add now persists the same exact
+relationships atomically, opens the clean CustomEditor, and passes on VS Code 1.84.0 and 1.134.0. The authoritative
+27-scenario control run finishes 20 `PASS`, 6 `CAPTURED_UNREVIEWED`, 1 `NOT_EXECUTED`, and 0 `FAIL`.
+S025 now archives an actual Visual Studio baseline-snap transaction instead of extrapolating from generic layout
+helpers. With a default 96-DPI `Button` baseline offset of 21 and `TextBox` baseline offset of 16, a real native drag to
+raw source Y `36` is corrected by Visual Studio to exact Y `35`; X, Size, the reference control, source, and project
+remain exact, and Save All creates the standard empty neutral Form resx. The product now publishes the same Button and
+TextBox baseline snap lines and prioritizes that baseline correction over a numerically nearer center snap. The exact
+engine and webview scenario covers the full-frame coordinate translation, visible guide, final `manipulate` payload,
+and margin-snapping subcase. The authoritative 28-scenario control run finishes 21 `PASS`, 6
+`CAPTURED_UNREVIEWED`, 1 `NOT_EXECUTED`, and 0 `FAIL`.
+S026 now archives the installed Visual Studio SnapToGrid contract rather than relying on a generic lattice assumption.
+With `LayoutMode=1`, `ShowGrid=true`, and `SnapToGrid=true`, an AutoSize Label at source `(13,25)`, Size `57×15`, is
+dragged by raw `(+20,0)` through the actual designer input HWND; Visual Studio persists exact `(32,24)` on its effective
+8×8 parent grid. The reference Button, source/project bytes, Label size, and standard empty neutral resx remain exact,
+and the harness restores the original `LayoutMode=0, ShowGrid=true, SnapToGrid=true` options in `finally`. On the
+disconnected capture desktop the manifest names the bounded input as `cursor-relative-capture-owned-window-offset`, so
+it does not overclaim a physical mouse. The full-frame webview test independently reproduces
+`(13,25) + (+20,0) → (32,24)` and grid-aware resize. The authoritative 29-scenario control run finishes 22 `PASS`, 6
+`CAPTURED_UNREVIEWED`, 1 `NOT_EXECUTED`, and 0 `FAIL`.
+S062 now proves the non-visual component surface through a real modern CustomEditor: the engine publishes `timer1` in
+the component tray rather than the visual-control tree, the shared tray/outline selection ingress selects it, and
+Properties publishes live `Interval=250` and `Enabled=false` values without source, dirty-state, history, or disk
+mutation on both Extension Host versions. Its actual Visual Studio and physical Windows ARM64 legs remain external.
+S064 exercises the adjacent fail-closed outline path through the compiled-net48 CustomEditor: dropping `panel1` onto
+its own descendant `button1` returns the product's containment-cycle refusal before engine mutation and preserves
+Designer source, clean state, native history, and both disk hashes on both host lines. Its actual Visual Studio leg
+remains external.
+S065 opens an empty modern `MenuStrip` through the real Properties Items read/write seam and commits the panel's full
+Visual Studio-style File/Edit/Tools/Help standard skeleton, including nested items and separators, as one native
+Undo/Redo unit. S066 moves `Open` before `New/Save` through the real canvas item ingress while preserving unmanaged
+metadata. S067 moves top-level `Help` into `Tools.DropDownItems` through a compiled-net48 CustomEditor. All three leave
+disk untouched before Save and pass on VS Code 1.84.0 and 1.134.0. S068 proves the adjacent fail-closed path on modern
+and compiled-net48: `openButton` cannot be moved under non-dropdown `newButton`; the exact diagnostic is returned before
+source/history mutation and both disk hashes remain exact. Actual Visual Studio and applicable ARM64 hardware legs
+remain external.
+S069 hardens the existing typed `ListView.Columns` product path: the real modern CustomEditor reads an empty collection,
+adds `Name` at width 180 through the panel editor, mints `columnHeader1`, renders the result, and binds it to one native
+Undo/Redo unit without touching disk before Save. S070 adds a Visual Studio-style `TabControl.TabPages` order editor.
+It submits the complete `C,A,B` permutation once, rewrites only canonical page references, publishes `pageC` as the
+visible page, and restores/reapplies the exact order with one native Undo/Redo unit. Both editors reject stale reads;
+the TabPages path additionally rejects comments attached to page statements/expressions, duplicates, incomplete
+permutations, and ambiguous collection source while correctly preserving the canonical three-line Visual Studio host
+section banner.
+Both scenarios pass on VS Code 1.84.0 and 1.134.0. Their actual Visual Studio traces, and S070's physical ARM64 leg,
+remain external.
+S033 and S034 close the corresponding real canvas-drag paths for layout-owned children. A modern CustomEditor uses the
+engine's live `TableLayoutPanel` column/row extents to move a Button from cell `(0,0)` to `(1,1)`, and uses live
+`FlowDirection` plus child geometry to move C before A as exact `Controls.Add` order `C,A,B`. Neither operation emits a
+free `Location`; both render the committed result, keep code-behind and Designer files byte-identical before Save, and
+form exactly one native Undo/Redo unit on VS Code 1.84.0 and 1.134.0. Their actual Visual Studio traces remain external.
+S041 now reaches the same Properties publication used by the real modern CustomEditor instead of stopping at metadata
+helpers. Selecting a live Button publishes `FlatStyle` as the exclusive ordered list Flat / Popup / Standard / System
+with Standard selected; the panel renders the same order as a closed dropdown. Opening/focusing it emits no edit,
+keeps Designer and both disk files exact, and preserves an existing native Redo on VS Code 1.84.0 and 1.134.0. Its
+actual Visual Studio reference trace remains external.
+S040 now exercises the same live Button metadata through the shipped keyboard-search path. Typing the exact
+`flatstyle` query leaves only `FlatStyle`; `ArrowDown` focuses its selected `Standard` editor, updates the description
+pane, and posts no mutation. S083 opens a real compiled-net48 form, reads its live `customerBindingSource`, commits
+`TextBox.Text → Customer.Name` through the exact Properties DataBindings OK seam, and generates exactly one canonical
+`DataBindings.Add` statement. Product readback is exact, disk stays byte-identical before Save, and one native
+Undo/Redo unit restores/reapplies the binding on VS Code 1.84.0 and 1.134.0. Their actual Visual Studio traces remain
+external.
+S073 now drives the shipped **Project…** image-resource action through a real modern CustomEditor. It discovers the
+strongly typed `DemoApp.Properties.Resources.Logo` Bitmap from the project `.resx`/generated accessor pair and emits
+exactly one canonical `this.imageButton.Image = global::DemoApp.Properties.Resources.Logo;` assignment. No form
+`.resx`, `resources.GetObject`, or copied base64 payload is created; both project resource authority files and both
+source files stay byte-identical on disk before Save, and one native Undo/Redo unit restores/reapplies the assignment
+on VS Code 1.84.0 and 1.134.0. Its actual Visual Studio reference trace remains external.
+S074 now drives the shipped Properties **Import…** action for a Form `Icon` through the same real modern CustomEditor;
+only the native file chooser is replaced by a deterministic URI. The product validates a real ICO, writes a typed
+`$this.Icon` resource, emits the canonical `resources.GetObject("$this.Icon")` assignment, and preserves the unknown
+resource node's payload and `xml:space` metadata while permitting safe XML formatting. Code-behind and Designer disk
+bytes remain exact before Save, and native Undo/Redo/final Undo restores and reapplies the exact Designer-plus-resx
+transaction on VS Code 1.84.0 and 1.134.0. Actual Visual Studio and physical ARM64 execution remain external.
+S075 now exercises the shipped ImageList images transaction in a real compiled-net48 CustomEditor. With `imageList1`
+selected from the component tray, two real 16×16 PNGs are validated and serialized by the bundled net48 engine into a
+VS-compatible `ImageListStreamer`; the product emits the canonical `ImageStream`/`resources.GetObject` assignment and
+ordered `SetKeyName` calls, writes the binary neutral-resx node, preserves an unrelated resource, and reconciles the
+live compiled instance. Code-behind and Designer disk bytes remain unchanged before Save, while one native
+Undo/Redo/final-Undo unit restores/reapplies exact Designer and resx baselines on VS Code 1.84.0 and 1.134.0. Actual
+Visual Studio execution remains external.
+S076 now drives an unsafe project-resource picker result through real modern and compiled-net48 CustomEditors. After
+the engine-published `Button.Image` metadata authorizes the exact target, a punctuation/property-chain accessor is
+rejected as typed `INVALID_RESOURCE_SYMBOL` before project-resource discovery, engine source planning, in-memory
+Designer mutation, native history, or any source/Designer/resource disk write. Both runtime paths pass on VS Code
+1.84.0 and 1.134.0; actual Visual Studio execution remains external.
+S045/S046 now drive the standard framework `ColorEditor` ingress from live `Button.BackColor` metadata in a real
+modern CustomEditor. Only the native modal accept/dismiss outcome is deterministic: the product still authorizes the
+published editor, enters the shared UITypeEditor path, performs the normal engine source plan and CustomDocument
+commit, writes canonical `System.Drawing.Color.Blue`, and owns exactly one native Undo/Redo unit. Dismissal returns the
+typed `CANCELLED` result with exact source, dirty-state, history, and disk no-mutation. Both paths pass on VS Code
+1.84.0 and 1.134.0, and the isolated broker's 24 tests independently cover its applied/dismissed wire contract. S046's
+actual Visual Studio cancel reference and S045's actual Visual Studio apply/Undo/Redo reference are archived above; the
+physical ARM64 leg remains external where the catalog requires it.
+S047 now drives the actual in-repo MIT FakeVendor drop-down editor through a real compiled-net48 CustomEditor. Live
+`TypeDescriptor` metadata authorizes the exact component/property/editor tuple plus assembly path, SHA-256, and
+certification id; the isolated child worker returns `Vendor Beta`, and the normal scalar transaction commits one
+canonical Lane B owned-region assignment with exact native Undo/Redo/final Undo and no disk write before Save. S048
+executes the same certified editor with a wrong-type object result on both modern and compiled-net48 sessions; the
+shared broker returns `INVALID_EDITOR_RESULT` without changing Designer text, dirty state, disk hashes, or native
+history. Both VS Code 1.84.0 and 1.134.0 pass. This is repository contract evidence for the MIT fixture, not licensed
+vendor certification; actual vendor artifacts and Visual Studio reference executions remain external.
+S071 now drives the actual in-repo MIT FakeVendor collection editor from live modern and compiled-net48 metadata.
+The exact component/property/editor/value tuple, resolved assembly path, SHA-256, and certification id authorize the
+isolated child worker; its `[1,2] → [3,5]` result is converted to a generic-list proposal, checked by the engine's
+bounded owned-region planner, and committed as one Lane B native Undo/Redo/final-Undo unit while disk remains unchanged
+before Save. S072 runs the same real worker successfully, then injects a proposal that also changes root `Form.Text`;
+the product returns typed `OWNED_REGION_VIOLATION` and preserves exact Designer text, dirty state, native history, and
+both disk hashes on modern and compiled-net48 sessions. Both VS Code 1.84.0 and 1.134.0 pass. Licensed-vendor and actual
+Visual Studio certification remain external.
+S020 now closes the stale-canvas input gap at the product authority boundary. Every click, move, resize, group move,
+and keyboard nudge emitted from a drawn PNG carries that exact render generation; the open CustomEditor rejects any
+missing, malformed, or superseded generation as typed `STALE_CANVAS` before selection, source, dirty state, or native
+history can change. Real modern and compiled-net48 sessions deliberately start a newer full render, submit an old
+selection and nudge, prove exact no-mutation plus native Undo no-op, then accept the same selection with the fresh
+generation on VS Code 1.84.0 and 1.134.0. The browser-side pending-image gate remains an additional UX shield rather
+than the source of authority; actual Visual Studio reference execution remains external.
+S093 now renders a bounded `ControlDesigner` adorner on the actual modern CustomEditor canvas. The disposable
+workspace builds the in-repo MIT `FakeVendor.FancyButton`; its live designer publishes one control-local Caption
+descriptor, and hover becomes active only after the host reloads a fresh engine graph and the same live designer
+confirms the exact local hit. Stale selection/revision, malformed or duplicate descriptors, and unconfirmed points
+fail closed. Unit, webview, and both Extension Host lines prove the visible overlay and exact source-buffer,
+dirty-state, native-history, code-disk, and Designer-disk no-mutation boundary. Actual Visual Studio execution and a
+licensed vendor artifact remain external; this is not vendor certification.
+S094 now drives the VS-style on-canvas smart tag from a real modern CustomEditor. A disposable workspace-local build of
+the in-repo MIT `FakeVendor` fixture publishes its live `ComponentDesigner.ActionLists`; the product maps the `Caption`
+row to writable `Text`, routes `Hosted caption` through the normal source-first engine planner, emits exactly one
+canonical assignment, and owns it as one native Undo/Redo unit while both source files remain byte-identical on disk
+before Save. The same flyout metadata, label, tooltip, and edit intent are covered in the webview. Both VS Code 1.84.0
+and 1.134.0 pass; an actual licensed vendor artifact, Visual Studio execution, and physical ARM64 remain external.
+S118 now exercises failed-commit compensation through the shipped modern ImageList transaction in a real CustomEditor.
+The transaction writes its planned binary resource image and passes the real byte-fingerprint checks; a deterministic
+test-only seam then rejects the final forward postcondition, so the normal runner compensates instead of publishing the
+edit. Exact code-behind, Designer, opaque `.resx`, clean-tab, and empty native-history baselines are proven on VS Code
+1.84.0 and 1.134.0. Actual Visual Studio and physical ARM64 execution remain external.
+S077 and S078 now exercise Visual Studio-style Language-scoped scalar editing through a real modern CustomEditor.
+With Language at Default, editing `label1.Text` changes only the exact neutral `.resx` value; selecting the discovered
+`fr-FR` culture writes nothing by itself, publishes the French value in Properties, and the following edit changes
+only that culture overlay. Both paths preserve code-behind, generated `ApplyResources` source, the other resource
+layer, original LF/CRLF and terminal-newline shape, and expose each resource-only transaction as one native Undo/Redo
+unit on VS Code 1.84.0 and 1.134.0. The transaction runner now distinguishes the first forward authorization from a
+replay of the same durable native history entry, while still rechecking resource baselines and postconditions on Redo.
+Their actual Visual Studio traces, and S078's physical ARM64 leg, remain external.
+S080 closes the adjacent stale-resource race through that same product path. A fresh CustomEditor selects `fr-FR`,
+starts the shipped Properties Text edit, and pauses only after the durable transaction has captured the exact resource
+baseline. A deterministic external writer then changes the culture resource before the first product write. The
+transaction refuses, preserves the newer external bytes plus neutral fallback and both source files, leaves the tab
+clean with no native history entry, and restores the fixture after proof on VS Code 1.84.0 and 1.134.0. The actual
+Visual Studio trace remains external.
+
+### Added
+
+- **Versioned v2 protocol and compatibility floor.** One schema generates the modern C#, net48 C#, and TypeScript
+  bindings. The shipped engine probe uses that envelope for diagnostics only. N/N-1 settings-cache migration,
+  self-repair, and adapter-manifest validation remain experimental contract-test modules: 2.0.0 activation does not
+  consume them and no vendor adapter is discovered through them.
+- **Journaled multi-artifact transactions.** The document store, `PatchSet`, transaction journal, runner, and resource
+  coordinator provide exact-baseline preflight, postcondition verification, compensation, recovery classification,
+  and one undo-registration boundary. Localized resource commands use the runner instead of an ad-hoc write path.
+- **Managed worker lifecycle contracts.** Runtime/architecture selection, generation tracking, cancellation, crash-loop
+  accounting, recycle/quarantine handoff, real modern dependency-start recovery, and real net48 crash replacement are
+  exercised by the diagnostics probe. Normal render/edit traffic still uses the established engine lifecycle; the v2
+  supervisor is not claimed as the product traffic supervisor and no OS sandbox is claimed. That established product
+  lifecycle now keeps modern and compiled-net48 workers warm for a bounded 30-second idle window, then waits for both
+  child processes to exit before a later designer starts fresh workers.
+- **Expanded standard-control workflow evidence.** Repository scenarios now cover z-order hit testing, grouped
+  manipulation intents, layout commands, property-grid modes, bounded converter metadata, toolbox discovery,
+  outline/menu/collection editing, localization/resources/inheritance, Data Sources, runtime recovery, diagnostics,
+  headless validation, and advisor workflows.
+- **Real Visual Studio render comparison.** A CI harness verifies the archived VS 18.7 screenshot/source hashes, renders
+  S011 and S014 through the net48 interpreted engine and S013 through the modern engine, crops the matching 360×180
+  client surfaces, and enforces a frozen pixel tolerance. S013/S014 are exact at 0 / 64,800 differing pixels; S011
+  differs by 113 / 64,800 pixels (0.174383%, MAE/channel 0.149388), including the VS-only inheritance adornment, and
+  remains inside the 1% / 1.0 tolerance. The claim is limited to those three reference forms.
+- **Real Visual Studio anchored-resize transaction.** The S022 capture selects `anchoredButton` in the actual WinForms
+  Designer and drags the east sizing handle by 40 physical pixels. The archive proves live bounds 120×30 → 160×30,
+  unchanged `Anchor`/`Location`, byte-identical source/project inputs, and the exact Designer serialization result. The
+  product CustomEditor changes only the `Size` assignment and passes native Undo/Redo in VS Code 1.84.0 and 1.134.0.
+- **Real Visual Studio Align Left transaction.** The S029 capture invokes `Edit.SelectAll` and the native
+  `Format.AlignLefts` command in the actual WinForms Designer. The archive proves button1 stays at X=12, button2 moves
+  42→12, button3 moves 77→12, every Y/Size survives, and source/project inputs remain byte-identical outside the exact
+  Designer serialization. The product now exercises the same `applyAlign` ingress in both Extension Host lines and
+  proves the two edits form one native Undo/Redo unit.
+- **Real Visual Studio Make Same Width transaction.** The S030 capture invokes `Edit.SelectAll` and the native
+  `Format.MakeSameWidth` command in the actual WinForms Designer. The archive proves button1 remains 120×30, button2
+  changes 60×24→120×24, button3 changes 90×36→120×36, every Location/height survives, and source/project inputs stay
+  byte-identical outside the exact Designer serialization. The product exercises the same `applyResize` ingress in
+  both Extension Host lines and proves the two edits form one native Undo/Redo unit.
+- **Real Visual Studio default-event transaction.** The S049 capture sends a double-click through the real designer
+  input HWND to `button1`. Visual Studio emits exactly one `button1.Click += button1_Click` subscription and one
+  signature-correct handler, navigates its DTE cursor inside the method, and leaves the project byte-identical. The
+  archived action log records the explicit **No** choice for the unrelated mixed-line-ending normalization prompt.
+  The product resolves the control's actual default event, confines its code edit to the changed span, compensates
+  either artifact on a refused final gate, keeps both documents dirty until explicit Save, and binds both artifacts to
+  one native Undo/Redo gesture on both supported VS Code host lines.
+- **Existing event handler is a product no-op.** S050 now invokes the real CustomEditor `setHandler` ingress used by
+  the Events dropdown with the already-selected, signature-compatible `button1_Click`. Both supported Extension Host
+  versions prove one subscription, one method, clean Designer/code buffers, and byte-identical files before and after.
+  The archived actual Visual Studio 18.7 x64 trace independently drives the native Events cell and proves the same
+  byte-identical no-op; physical ARM64 remains external.
+- **Event rewiring is revision-safe across both files.** S051 now snapshots every bounded project partial used to
+  validate a signature-compatible event handler and checks those document versions again at the final Designer commit
+  boundary. A real compiled-net48 CustomEditor interleave proves a code-behind rename refuses the stale subscription
+  without dirtying Designer or touching disk; after exact revert and authoritative re-render, the stable rewire changes
+  one subscription and forms one native Undo/Redo unit on VS Code 1.84.0 and 1.134.0. Actual Visual Studio 18.7 x64
+  independently performs the rewire through native Document Outline and Events, retains only the currently referenced
+  empty handler across rewire/Undo/Redo, reproduces the rewire Designer bytes exactly on Redo, and preserves the project
+  plus every unrelated source/Designer fact.
+- **Stale handler generation commits neither artifact.** S052 reaches the real `createHandler` product path through
+  modern SDK and compiled-net48 CustomEditors, changes the open code-behind document after engine generation, and
+  proves the project-partial version gate runs before either the stub or Designer subscription. Both supported
+  Extension Host versions retain the independent edit, keep Designer clean, preserve both disk hashes, and create no
+  orphan method or wiring. Actual Visual Studio execution remains unclaimed.
+- **Unsafe Explorer component names refuse before creation.** S007 drives the registered public `Add Component`
+  command with `..\Injected` in a real SDK project. Both Extension Host versions return `invalidName` before creating
+  source/generated/resource/project artifacts and preserve the target directory entries exactly. Actual Visual Studio
+  execution remains unclaimed.
+- **Selected TabPage receives exact ownership and client geometry.** S035 opens a compiled-net48 form whose second
+  TabPage is selected, moves an external TextBox through the product reparent ingress, replaces the Form owner with
+  exactly one `tabPage2.Controls.Add`, and converts `(300,80)` to the live TabPage client `(276,38)`. Both supported
+  Extension Host versions keep disk unchanged and restore/reapply membership plus Location with one native Undo/Redo
+  unit. Actual Visual Studio execution remains unclaimed.
+- **Stale SplitContainer targets refuse without a hidden history edit.** S036 first renames `splitContainer1` through
+  the product so the old `splitContainer1.Panel2` identity is no longer live, then routes a reparent intent to that
+  stale target through real modern and compiled-net48 CustomEditors. Both supported Extension Host versions preserve
+  source/disk exactly; one native Undo removes the setup rename, proving the refusal registered no second edit.
+- **Document Outline rename is one selected-control transaction.** S061 selects `button1` through the real session pick
+  shared by canvas/outline and renames it to `submitButton` through the product. Both supported Extension Host versions
+  prove selected identity transfer, exact declaration/Name/reference rewriting, unchanged unrelated strings/control,
+  no pre-Save disk write, and one native Undo/Redo unit. Actual Visual Studio execution remains unclaimed.
+- **Collision-safe Paste is a real cross-runtime product transaction.** S024 copies `submitButton` through the shared
+  product clipboard without mutation, then pastes into the same form. Modern and compiled-net48 CustomEditors generate
+  `button1` before commit, keep the original identity/property/owner exact, apply the bounded 8px nudge, select the
+  clone, preserve disk, and restore/reapply the whole Paste with one native Undo/Redo unit on both host lines. The
+  archived actual Visual Studio 18.7 x64 trace independently executes native Copy/Paste on both runtime lanes, also
+  generates `button1`, preserves copied properties/ownership, and passes shape-exact Undo plus byte-exact Redo; VS
+  places the clone at `(98,74)`, so the evidence is intentionally bounded to collision safety rather than geometry.
+- **Outline reparent is scenario-bound to the compiled-net48 CustomEditor.** S063 combines the real outline drag intent
+  with the product reparent ingress: `button1` leaves `panel1`, gains exactly one `groupBox1` owner and live
+  GroupBox-relative `(10,15)`, and one native Undo/Redo unit restores/reapplies membership plus geometry on both host
+  lines. Actual Visual Studio execution remains unclaimed.
+- **Real net48 Center Horizontally product transaction.** S031 now opens a compiled net48 CustomEditor with a 241px
+  Panel and asymmetric `Padding(10,0,20,0)`, computes the actual Visual Studio result `X 15→80` from the complete
+  `ClientRectangle` with WinForms integer truncation, changes only the
+  Button `Location`, leaves disk untouched before save, and passes one native Undo/Redo unit on VS Code 1.84.0 and
+  1.134.0. The archived Visual Studio 18.7 trace selects the same Button through the real owner-drawn Document Outline,
+  enables and executes native `Format.CenterHorizontally`, proves the exact generated-source/trivia region, and leaves
+  source/project byte-identical.
+- **Visible Visual Studio-style designer workflows.** `SplitContainer.Panel1` / `.Panel2` are selectable and accept
+  exact toolbox drops/reparenting; Table/Flow/Split container edits, drop feedback, `AutoSize`/Dock geometry,
+  custom/vendor-control manipulation, and stateful `ProgressBar.Value` rendering now follow the live WinForms graph.
+- **Real design-time metadata routes.** Product smart tags consume bounded `DesignerActionList` metadata instead of a
+  property-name heuristic, and properties carrying the framework `CollectionEditor` route through the cancellable
+  isolated editor worker. Unsupported actions/editors remain inert or fail closed.
+- **Project-wide designer semantics.** Event discovery/wiring spans project partials; typed DataSet tables generate a
+  real DataSet/DataMember/BindingSource graph; `.sln`/`.slnx`, classic `<TargetFrameworkVersion>`, and inline
+  `InitializeComponent` ownership/routing are covered.
+- **Localized structural editing.** In the Default language, bounded Add/Delete/Reparent and event wiring commit the
+  generated source and neutral resources through one durable, conflict-checked undo transaction.
+- **Real CustomEditor product E2E.** The minimum/current VS Code Extension Host matrix now uses a disposable workspace
+  to prove clean open/save, nested-form Save As collision refusal, SDK/classic Explorer Add, unsafe-name refusal,
+  generated-source stale-save refusal, partial-Add compensation, ambiguous/unproven-owner pre-render refusals, grouped
+  engine-authorized movement, three-control Align Left, composite default-event creation with one native Undo/Redo
+  gesture, and same-handler Events selection with no mutation; it also covers net48 reparenting with parent-relative coordinate conversion, generic-base
+  visual-inheritance ownership, the proven missing-`InitializeComponent` blank read-only surface, diff suppression,
+  and form-family deletion.
+- **Repository accessibility surface.** Keyboard-addressable commands and resize handles, accessible component mirrors,
+  forced-colors styling, and 200%/400% keyboard paths are covered by the real webview scripts in jsdom. Physical
+  assistive-technology and hardware acceptance remain external.
+- **Certified editor preview contract.** The repository FakeVendor fixture demonstrates one exact allowlisted dropdown
+  editor contract using assembly path, SHA-256, certification ID, isolated execution, bounded invariant return, and
+  fail-closed wrong-type handling on modern and net48 metadata paths. This does not enable arbitrary vendor editors.
+- **Headless and soak development tooling.** Non-mutating compatibility reports, synthetic observations, redacted
+  diagnostics, recovery timelines, and performance-report classification remain repository-only CLI entry points;
+  `v2-headless-validate.cjs` and `v2-soak.cjs` are explicitly excluded from the VSIX.
+- **`ContextMenuStrip` can finally be created from the toolbox.** It fell between two filters — excluded from the
+  control path because a `ToolStripDropDown` throws if parented, and from the component path because it derives from
+  `Control` — so the designer could render and edit a context menu but never add one. It is now offered under
+  **Menus & Toolbars** and lands in the component tray, as in Visual Studio.
+- **Nine more framework toolbox items**, closing most of the remaining Visual Studio gap:
+  `PrintDocument` and `PrintPreviewDialog` (Printing is now complete), `BackgroundWorker`, `FileSystemWatcher`,
+  `Process`, `EventLog` and `PerformanceCounter` (Components), and `DataSet` (Data). Each was verified to compile in
+  a bare `UseWindowsForms` project on **both** `net10.0-windows` and `net48` and to construct on the engine runtime;
+  `DirectoryEntry` / `DirectorySearcher` are deliberately still absent because they need a `System.DirectoryServices`
+  reference the designer does not add. The palette is now 69 items across 8 categories.
+- **`winformsDesigner.toolbox.runtimeFilter`** decides which runtime's controls the palette offers: `auto` (default)
+  follows the open form's project, `modern` / `net48` pin it for a mixed workspace, and `all` shows everything.
+
+### Changed
+
+- The v2 scenario catalog and validator now require concrete, nonblank evidence references for repository `PASS`,
+  a cited executable test containing the same scenario ID and matching `testKinds`, architecture legs consistent with
+  each scenario, and truthful external gates. There is no allowlist path to `PASS`; harness-only and synthetic rows
+  remain `NOT_EXECUTED`/`HARNESS_ONLY`.
+- Proven modern scalar property edits now use the designer-owned `InitializeComponent` region only when the engine
+  proves byte preservation outside the region and exact Lane-A semantic/text equivalence. Unsupported forms retain
+  the established source-first path, and the CustomEditor Extension Host test proves the product route plus Undo.
+- Form Save As now consumes the document-store aggregate create-only collision plan before the durable multi-artifact
+  transaction. S003 now exercises a real two-process hot-exit lifecycle on VS Code 1.84.0 and 1.134.0: one modern and
+  one compiled-net48 CustomEditor each persist one VS Code-owned dirty backup, reopen through the workspace recovery
+  index, and reconstruct the frozen one-move/one-unit native Undo/Redo state without changing source or Designer disk
+  bytes. This bounded proof does not claim serialization of arbitrary multi-unit or multi-artifact history.
+- S104 now exercises the established product engine lifecycle through real modern and compiled-net48 CustomEditors on
+  VS Code 1.84.0 and 1.134.0. Three clean close/reopen cycles keep the healthy modern PID warm and exactly two owned
+  children; a fail-closed net48 whole-worker replacement is accepted only after its old OS PID exits. The final
+  last-session idle cycle returns mapped engines and process registrations to zero, proves both current PIDs exited,
+  and starts fresh PIDs on reopen. The product budget is 30 seconds; the test shortens only the next timer delay.
+  Physical ARM64, Visual Studio execution, and performance-lab handle telemetry remain external.
+- S079, S101, and S105 now run through real product CustomEditors on both supported host lines. An ar-SA
+  compiled-net48 localizable form mirrors Button and Label window-space X exactly while preserving Y/size, publishes
+  Arabic resource metadata, and leaves all four artifacts clean and byte-exact. Separate actual `net8.0-windows` and
+  built `net48` projects resolve to live host-owned modern and compiled-net48 workers respectively; the framework form
+  explicitly reports live-source interpreted authority. Their actual Visual Studio traces and physical ARM64 legs
+  remain external where applicable.
+- Modern and net48 metadata queries bound third-party `TypeConverter` calls and publish `CONVERTER_TIMEOUT` instead of
+  hanging the property grid or leaking stale dropdown metadata.
+- Release packaging stages each target in isolation, verifies RID/TFM/PE machine values, freezes the verified x64
+  artifact before ARM64 staging, then restores and re-verifies both immutable VSIX files together.
+- Release tooling now has one chain: Node `24.14.0`, npm `11.9.0`, exact dependency versions, and the sole
+  `extension/package-lock.json`. Both engines declare `Version=2.0.0`, `AssemblyVersion=2.0.0.0`, and
+  `FileVersion=2.0.0.0`; metadata-only and clean-tag identity preflights are separate and explicit.
+- Explorer Add commands accept an optional programmatic item name while preserving the normal interactive prompt.
+  Classic-project item insertion is now persisted atomically as part of the generated-file transaction instead of
+  leaving a hidden dirty `.csproj` document.
+- Toolbox categories now follow Visual Studio's tabs rather than the type's shape: `NotifyIcon` and `ToolTip` sit in
+  **Common Controls**, `BindingSource` in **Data**, and `PageSetupDialog` / `PrintDialog` in **Printing**.
+- The Windows ARM64 wording is narrowed everywhere it appeared. The `win32-arm64` package is still published and
+  still genuinely contains an ARM64 modern engine — the release assertion fails the build otherwise — but nothing in
+  it has ever been executed on ARM64 hardware, because every build and test run happens on x64. It is now described
+  as untested and carrying no support claim, and the requirement line reads **Windows x64**.
+
+### Fixed
+
+- **Make Localizable atomicity.** The converted `.Designer.cs` is flushed inside the journaled resource transaction's
+  undo-registration phase. A source flush failure now rolls the `.resx` back and reports rejection instead of posting
+  a false success with only half of the conversion persisted.
+- Certified editor results with a malformed or wrong runtime type now return `INVALID_EDITOR_RESULT` before the normal
+  source transaction can mutate the document.
+- Converter timeouts no longer poison later healthy metadata queries on either engine.
+- Project output discovery no longer treats the newest file under `bin/` as loadable merely because it exists. The
+  resolver inspects the managed PE machine and CLR flags, accepts portable AnyCPU images, and skips foreign-RID or
+  fixed-machine assemblies that cannot load in the current designer process; this prevents a newer ARM64 publish from
+  degrading an x64 custom-control form to a framework-only or near-empty canvas.
+- Form `Save As` now preflights the visible `.cs`, generated `.Designer.cs`, neutral `.resx`, and existing localized
+  `.resx` destinations together. Any collision is reported before a sidecar is created, with all conflicting names.
+- Generated-source save conflicts now carry the stable `STALE_SOURCE` code while preserving the external bytes and the
+  user's dirty buffer. Late render/describe replies after a designer tab closes no longer leak a disposed-webview
+  rejection from the Extension Host.
+- The VS Code 1.84 generated-source watcher no longer adopts a journaled transaction's own forward write as an external
+  revision and roll back a valid localized reparent. Exact transaction-owned text/BOM images are suppressed only for
+  the runner lifetime; every other external change still follows the normal stale/conflict path.
+- Modern and net48 inherited overrides now authorize protected custom/vendor `Control` fields from the resolved live
+  field/runtime types, preserving the opaque base token and keeping mismatched/private targets read-only.
+- VS-canonical `SystemIcons.<member>.ToBitmap()` assignments now pass through a finite trusted-framework allowlist in
+  both interpreters, so the S013 Button renders its actual icon instead of silently dropping the Image statement.
+- The net48 render-desktop host clears transient child focus and TextBox selection before `DrawToBitmap`, matching the
+  Visual Studio design surface instead of capturing runtime-blue selected text in S014.
+- The net48 stale-base handshake now compares assembly-version-independent closed generic identities. A derived
+  `GenericBaseForm<int>` no longer falls back as if its base had changed merely because Roslyn described the open
+  definition while reflection returned a closed CLR name; S011 stays live-source interpreted and keeps inherited
+  metadata visible. Net48 reflection tests also resolve the engine from their own build configuration instead of
+  mixing Debug and Release `Assembly.LoadFrom` inputs, removing an order-dependent false result in the full suite.
+- A proven Form/UserControl with exactly one empty generated partial and no `InitializeComponent` now opens as the
+  same blank surface observed in Visual Studio instead of being rejected. The product uses an engine-only transient
+  method, exposes the root as read-only, refuses every mutation at ingress and commit, and never writes placeholder
+  source. Visual Studio's neutral-resx creation on Save All is recorded but is not claimed as product parity yet.
+- **The toolbox no longer hands a modern project a control that breaks the form.** Seven .NET Framework
+  binary-compatibility types — `DataGrid`, `ToolBar`, `StatusBar`, `MainMenu`, `ContextMenu` and the
+  `DataGrid*Column` pair — are public in the modern reference assembly, so the generated line compiled, but their
+  constructors throw `PlatformNotSupportedException` on .NET Core and later: the control never entered the graph and
+  the form rendered permanently short a control. They stay available for a `net4x` form, where they are real working
+  controls, and are filtered out on the modern route.
+- The Properties panel no longer wastes width and height on inset that does nothing. VS Code injects
+  `body { padding: 0 20px }` into every webview and only the margin was being reset, so the whole surface sat in a
+  frame; the property grid also carried its own inset and now runs edge to edge like Visual Studio's. The bottom tab
+  strip could not shrink below its labels, which wrapped them to two lines and, on a narrow panel, forced a
+  horizontal scrollbar whose gutter read as padding under the tabs.
+
+### Release boundary
+
+- The shipped claim is a **bounded repository-side managed standard-control release**, not “full Visual Studio parity,”
+  vendor-suite certification, physical ARM64/DPI acceptance, live assistive-technology acceptance, an 8-hour real
+  product soak, or publication approval.
+- x86, COM, and ActiveX remain explicitly excluded and fail closed. Licensed vendor cohorts, Visual Studio
+  round-trips/reference traces, physical hardware, legal/product approval, and rollout/rollback observation remain
+  `GATED` or `NOT_EXECUTED` in the release record. Publishing this tag does not change any of them.
+
+## [1.15.0] - 2026-08-20
+
+**Bounded Data Sources are now source-first and fail-closed.** The designer can discover conventional project DTOs
+and application settings, generate detail/grid binding surfaces, append schema columns to an existing
+`DataGridView`, and bind a compatible setting without reading setting values or invoking project code.
+
+### Added
+
+- **Data Sources pane and RPC contract.** `ListDataSources` returns engine-owned schema and setting keys for
+  recognized project-local `.cs` DTOs and `Properties/Settings.settings` metadata. Discovery is parse-only,
+  bounded, excludes build/IDE directories, and reports existing `BindingSource` fields whose canonical
+  `DataSource` is `typeof(schema)`.
+- **Detail and grid generation.** `GenerateDataSource` emits one all-or-nothing source edit that creates a typed
+  `BindingSource`, detail labels/editors or a bound `DataGridView`, and optional `BindingNavigator` wiring.
+- **Existing grid append.** Supported `DataGridView` columns can be extended with missing schema columns while
+  preserving existing hand-written supported columns and their source order.
+- **Application setting binding.** `BindApplicationSetting` binds a discovered setting to a curated compatible target
+  property through a canonical `global::...Properties.Settings.Default` binding.
+
+### Safety
+
+- Schema keys, setting keys, parents, existing grids, and existing binding sources are revalidated against the
+  current source and project before every edit. Forged/stale keys, unsupported schemas, duplicate type identities,
+  incompatible targets, unsafe existing columns, comments/directives in managed binding/column blocks, non-container
+  parents, and partial-edit attempts return no changed text.
+- Settings discovery returns only name, type, scope, and an opaque key. Setting default values are never read or
+  returned, and the generated settings namespace must be proven from `Settings.Designer.cs` or the project
+  `RootNamespace`; it is not inferred from the form namespace.
+
+## [1.14.0] - 2026-08-20
+
+**Visual inheritance is now editable through bounded, derived-source-only overrides.** Eligible inherited
+first-party WinForms controls remain visibly inherited while exposing a narrow property and geometry override surface;
+the base form source is never modified.
+
+### Added
+
+- **Accessible inherited overrides.** Public, protected, and protected-internal first-party WinForms controls can
+  override the bounded `Text`, `Enabled`, `Visible`, `TabIndex`, and authorized layout property set from the property
+  grid or canvas on modern and .NET Framework paths.
+- **Reset to the base value.** Reset removes only the canonical derived-class assignment, restoring the inherited
+  value without rewriting the base form or unrelated derived source.
+- **Explicit ownership and authority.** Layout and property metadata carry effective accessibility, separate inherited
+  property/geometry capabilities, and an engine-authored base identity token.
+
+### Changed
+
+- Direct manipulation and property-grid edits share the same live layout restrictions. Docked, autosized,
+  TableLayoutPanel-managed, FlowLayoutPanel-managed, unsupported, inaccessible, custom/vendor, or unresolved
+  inherited controls remain read-only for the refused operation.
+- The .NET Framework engine resolves the current declared base semantically from the unsaved designer and sibling
+  code-behind buffers. It requires the exact runtime full name and no longer guesses from an equal short type name.
+
+### Safety
+
+- A dirty or rebuilt base-type mismatch produces a visible `BaseTypeChanged` fallback with all inherited tokens and
+  capabilities removed. Describe, apply, reset, and geometry commits revalidate current designer and code-behind
+  snapshots and refuse stale authority before writing.
+- Derived edits are limited to one canonical `this.<field>.<property> = ...;` assignment. Ambiguous control flow,
+  unsafe expressions, duplicate or handwritten target writes, unsupported enum/literal shapes, source-field
+  collisions, and comment/directive loss fail closed.
+
+## [1.13.0] - 2026-08-19
+
+**Assets and menu/toolbar editing now stay source-first across project resources and direct manipulation.** Existing
+strongly typed image resources can be assigned without copying bytes, menu and toolbar items can be reordered or
+reparented on the canvas, and standard Visual Studio-style menu/toolbar skeletons insert as one atomic edit.
+
+### Added
+
+- **Existing project image resources.** Image, Bitmap, and Icon properties expose a **Project…** action before
+  **Import…**. Discovery is bounded to conventional project-local `.resx` plus adjacent `.Designer.cs` pairs; the
+  engine cross-checks losslessly representable byte-array/FileRef metadata with canonical strongly typed accessors and
+  emits only the typed `global::…Resources.<name>` assignment. The project resource files are never written.
+- **On-canvas strip moves.** A field-backed `ToolStrip`/`MenuStrip` item can be dragged within its current collection or
+  reparented between modelled `Items`/`DropDownItems` collections. The host emits one forest transaction, retains item
+  identity/selection, creates a missing target `AddRange` when safe, and preserves unrelated item statements.
+- **Insert Standard Items.** The ToolStrip/MenuStrip item editor now exposes **Insert Standard Items**
+  for editable `MenuStrip.Items` and `ToolStrip.Items` collections. The command appends the standard menu or toolbar
+  skeleton as one pending forest edit, supports Cancel without posting a mutation, and commits through the existing
+  `setToolStripItems` safety funnel.
+
+### Changed
+
+- The ToolStrip item engine now accepts a brand-new dropdown item with brand-new children in the same atomic forest
+  edit and existing field-backed item moves between modelled collections. New non-dropdown items with children,
+  non-dropdown move targets, cycles, shared/anonymous items, and unsupported collection shapes still fail closed.
+
+### Safety
+
+- Webview messages cannot forge a target property type: the host re-resolves the exact writable image property from
+  engine metadata published for the current source revision. Project resource paths are canonical-realpath checked
+  before and after reading, including parent junctions/symlinks, and reads are UTF-8/regular-file/64 MiB bounded.
+- A resource accessor is offered only from a non-partial generated-like class without a base, static constructor, or
+  static member initializer, with canonical `resourceMan`/`resourceCulture`, a canonical lazy `ResourceManager`, and a
+  side-effect-free `GetObject(key, resourceCulture)` image getter. Duplicate accessors, malformed/binary/unknown
+  resources, stale form/resource inputs, localizable forms, and unknown baselines cause zero source/resource writes.
+- Strip moves refuse cycles, missing/non-dropdown targets, unsupported Add/AddRange shapes, shared/anonymous items,
+  and any rewrite that would drop an item-adjacent comment or unknown statement.
+
+## [1.12.0] - 2026-08-19
+
+**Toolbox creation now supports both familiar placement gestures without sacrificing source-first safety.** A
+double-click inserts a default-sized control into the active container, while an armed toolbox item can be drawn as
+an exact rectangle on the canvas. Modern and .NET Framework previews consume the same parent, position, and size.
+
+### Added
+
+- **Selected toolbox placement.** A single click arms a visual toolbox control, exposes the selected state in the
+  Toolbox and canvas, and `Escape` cancels it. Double-click performs exactly one default-sized insert. Non-visual
+  components retain their tray-only add path and explicitly disarm any previously selected visual control.
+- **Exact rectangle creation.** Dragging on the canvas posts the exact logical rectangle and hit target. The host walks
+  from a child hit to the nearest supported container, converts the rectangle to that container's client coordinates,
+  and emits explicit `Location` and `Size` assignments. Autosized controls receive `AutoSize = false` before the
+  requested size, matching an intentional user-drawn rectangle.
+- **Cross-runtime size protocol.** Optional trailing width/height fields extend the modern and net48 add RPCs without
+  changing older point-drop callers. The compiled net48 live instance receives the exact size immediately, so the
+  preview and persisted source agree before the next rebuild.
+
+### Changed
+
+- Ordinary cross-webview drag/drop remains a point placement with the curated default size. Toolbox selection is
+  host-owned across panel re-renders and is cleared only by cancellation, switching to a component, or a successful
+  source commit.
+- Mixed exclusive property editors now display an explicit mixed value instead of mislabelling disagreement as
+  unset; choosing a concrete enum or Boolean value still uses the existing all-target transaction.
+
+### Safety
+
+- Unknown/stale toolbox keys, components on the rectangle route, incomplete/non-integer/non-positive/oversized
+  rectangles, unsupported parents, stale document revisions, and failed source commits leave the document unchanged.
+  Requested dimensions are bounded to `100000` logical pixels in both engines, and the net48 live mirror validates the
+  same pair before creating a control.
+
+## [1.11.0] - 2026-08-18
+
+**Precision layout is now driven by the live WinForms geometry instead of browser approximations.** Move and resize
+can use SnapLines, a configurable grid, or free placement; nested client insets, margins, padding, font baselines,
+DPI, zoom, and mirrored forms all share the same engine-authored coordinate model.
+
+### Added
+
+- **Three layout modes.** `winformsDesigner.layoutMode` selects `SnapLines`, `SnapToGrid`, or `None`;
+  `winformsDesigner.gridSize` sets the 2–128 logical-pixel cell size, and `winformsDesigner.showGrid` draws that
+  grid only inside the form's exact client rectangle. **Align to Grid** is now an active context command. The existing
+  per-gesture snap-override modifier still bypasses the selected mode.
+- **WinForms-aware snaplines.** The engine sends every control's exact outer/client rectangle, `Margin`, `Padding`,
+  and a live Font/DPI-measured baseline for Label/TextBox-class controls. SnapLines use those values for container
+  padding, adjacent-control margin distance, and text-baseline alignment without measuring text in the webview.
+- **Complete spacing commands.** Horizontal and vertical Increase, Decrease, and Remove join Make Equal. The first
+  sorted control is stable, every original gap changes by exactly one configured grid cell (or becomes zero), and
+  controls from different containers are refused.
+- **Ctrl+drag duplication.** A snapped drag can clone a single or multi-selection instead of moving the originals.
+  It reuses the source-first copy/paste representation, applies the exact preview delta to every clone, and commits
+  the whole set as one undoable edit without changing the ordinary clipboard.
+
+### Changed
+
+- Nested window and client coordinates now use live WinForms screen translation, including GroupBox/container
+  non-client insets and `RightToLeftLayout`; the deterministic hierarchy calculation remains the fail-closed fallback
+  for a hostile or unrealized vendor handle.
+- Toolbox drop placement and Center in Container now consume the same exact client rectangles as SnapLines. Ctrl+Arrow
+  and spacing steps follow the configured grid size instead of a separate fixed constant.
+
+### Safety
+
+- Exact-offset paste is a bounded RPC. Ctrl+drag preflights every source, composes every clone against one immutable
+  revision, and returns without a document edit if any member cannot be represented safely; no valid prefix is
+  committed. Layout metadata also participates in the dirty-region geometry equality gate, preventing a stale
+  snap model after a font, margin, padding, or client-inset change.
+
+## [1.10.0] - 2026-08-18
+
+**The property grid now edits a multi-selection as one source transaction.** It shows only the browsable, writable,
+type-compatible properties shared by every selected control, represents disagreement as a mixed value, and never
+uses the primary control's value as an implicit write to the rest.
+
+### Added
+
+- **Multi-object property editing.** Ctrl/rubber-band/Ctrl+A selection is carried from the canvas to the host as an
+  exact ordered target set. Modern, net48 interpreted, and net48 compiled-property descriptions are intersected by
+  property name, type, enum shape, editability, and compatible standard values. Structural, resource, reference,
+  collection, extender, table-cell, and modal-editor properties stay on their dedicated single-target transactions.
+- **Mixed-value and multi-reset UI.** A shared property whose values differ renders an explicit blank mixed editor.
+  Reset is offered only when the shared row has a representable source override and sends the same multi-object
+  transaction marker as Edit.
+- **Atomic batch RPCs.** `SetProperties` and `ResetProperties` preflight the complete current-source target set before
+  returning any text. Every safe per-control splice is composed in memory, revision-checked by the host, and committed
+  as one undo unit. Duplicate, missing, inherited, unrepresentable, unsafe-comment/directive, or stale targets return
+  no text, so a valid prefix can never be committed.
+
+### Changed
+
+- The existing **Categorized / Alphabetical** property-grid toggle is now covered as part of the multi-object workflow;
+  both modes use the same search predicate.
+- net48's one-snapshot live batch accepts explicit Reset operations, so a committed multi-object source reset is
+  mirrored with `PropertyDescriptor.ResetValue` instead of parsing an empty value.
+
+### Safety
+
+- Webview multi-object requests are authorized only against the exact synthetic property intersection published for
+  the current source revision and still-current canvas selection. The server independently validates the closed target
+  set and the source ownership of every member before computing a batch preview.
+
 ## [1.9.0] - 2026-08-14
 
 **The daily design loop now matches the familiar Visual Studio gestures and project workflow.** Naming,
@@ -1622,7 +2467,15 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.15.0...v2.0.0
+[1.15.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.14.0...v1.15.0
+[1.14.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.12.0...v1.13.0
+[1.12.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.9.0...v1.10.0
+[1.9.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.5.0...v1.6.0

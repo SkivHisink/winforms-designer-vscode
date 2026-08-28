@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T204633Z-S039",
+  "scenarioId": "V2-FND-001-S039",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net48 Form contains one Button whose Text property has the explicit non-default value Custom reset text.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S039ResetPropertyForm.cs with the WinForms Designer",
+    "Select button1 in the actual designer",
+    "Open View.PropertiesWindow and select the Text row",
+    "Request the real property-grid context menu and invoke the enabled OtherContextMenus.PropertyBrowser.Reset command; use the exact DTE command route when a disconnected session does not expose the native popup through UI Automation",
+    "Execute File.SaveAll",
+    "Verify the exact generated-source patch and source/project byte identity"
+  ],
+  "expected": "Visual Studio removes exactly the explicit button1.Text assignment, preserves this qualifiers and all sibling semantics, canonicalizes four CodeDOM separators, inserts one pre-close blank line, rewrites only the generated region to CRLF, and displays the default empty Text value.",
+  "before": {
+    "sourceSha256": "cfaa90d76b0595811b4acf726241afc1fb75e9bb2cb0a9e61ed6f18430b179ea",
+    "designerSha256": "691f7173c32f1b37c99ab035ed575e0ff86f53e8821b9ebd76d656f84a439f02",
+    "projectSha256": "201bb5ca3fdc508de9fc77dd1ae6878bd5a28933a897426c1992baf73b02cdb4",
+    "textAssignmentCount": 1
+  },
+  "after": {
+    "sourceSha256": "cfaa90d76b0595811b4acf726241afc1fb75e9bb2cb0a9e61ed6f18430b179ea",
+    "designerSha256": "f2cfc31bb56c15f55dab14b452b4aa7bddba2a6f33ec23d89f7e0156e5f457e7",
+    "projectSha256": "201bb5ca3fdc508de9fc77dd1ae6878bd5a28933a897426c1992baf73b02cdb4",
+    "textAssignmentCount": 0
+  },
+  "exactDesignerPatch": true,
+  "designerBeforeArtifact": "S039ResetPropertyForm.Designer.before.cs",
+  "designerAfterArtifact": "S039ResetPropertyForm.Designer.after.cs.gz",
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\c99fc5e4aa3e491b8280c177bcc49eaf\\Net48\\S039ResetPropertyForm.cs",
+    "controlAutomationId": "button1",
+    "controlAutomationName": "Custom reset text",
+    "controlLocator": "Name=Custom reset text; DocumentOutline measured-row click Name=button1 | Button (visible row 2)",
+    "propertyName": "Text",
+    "propertiesCommandAvailable": true,
+    "beforeValue": "Custom reset text",
+    "afterValue": "",
+    "clickedWindow": 64820750,
+    "rowWindow": 166136674,
+    "contextWindow": 166136674,
+    "contextMenuMethod": "Shift+F10",
+    "resetWindow": 0,
+    "resetEnabled": true,
+    "invocationMethod": "DTE.ExecuteCommand(OtherContextMenus.PropertyBrowser.Reset)",
+    "registeredResetCommands": [
+      {
+        "name": "Tools.ResetToolbox",
+        "available": true
+      },
+      {
+        "name": "Window.ResetWindowLayout",
+        "available": true
+      },
+      {
+        "name": "OtherContextMenus.FSIConsoleContext.ResetInteractiveSession",
+        "available": true
+      },
+      {
+        "name": "ResetZoom",
+        "available": false
+      },
+      {
+        "name": "ReSharper_ResetSelectedSettingsLayers",
+        "available": false
+      },
+      {
+        "name": "ReSharper_ResetAllSettings",
+        "available": true
+      },
+      {
+        "name": "ReSharper_SettingsStoreViewResetEntry",
+        "available": false
+      },
+      {
+        "name": "Format.ResetAll",
+        "available": false
+      },
+      {
+        "name": "Format.ResetWidth",
+        "available": false
+      },
+      {
+        "name": "Format.ResetHeight",
+        "available": false
+      },
+      {
+        "name": "Format.ResetSize",
+        "available": false
+      },
+      {
+        "name": "Format.ResetMargin",
+        "available": false
+      },
+      {
+        "name": "Format.ResetAlignments",
+        "available": false
+      },
+      {
+        "name": "View.ResetOrigin",
+        "available": false
+      },
+      {
+        "name": "DSLTools.ResetSize",
+        "available": false
+      },
+      {
+        "name": "DSLTools.ResetLocation",
+        "available": false
+      },
+      {
+        "name": "Test.ResetLiveUnitTestingstateforsolution",
+        "available": false
+      },
+      {
+        "name": "OtherContextMenus.CodeCoverageResultsContextMenu.ResetColumnsLayout",
+        "available": true
+      },
+      {
+        "name": "OtherContextMenus.WorkspaceContextMenu.AddBuildPreset…",
+        "available": false
+      },
+      {
+        "name": "OtherContextMenus.WorkspaceContextMenu.AddTestPreset…",
+        "available": false
+      },
+      {
+        "name": "OtherContextMenus.WorkspaceContextMenu.AddPackagePreset…",
+        "available": false
+      },
+      {
+        "name": "OtherContextMenus.WorkspaceContextMenu.AddWorkflowPreset…",
+        "available": false
+      },
+      {
+        "name": "InteractiveConsole.Reset",
+        "available": true
+      },
+      {
+        "name": "Team.Git.ResetMixed",
+        "available": false
+      },
+      {
+        "name": "Team.Git.ResetHard",
+        "available": false
+      },
+      {
+        "name": "OtherContextMenus.Calltree.ResetRoot",
+        "available": true
+      },
+      {
+        "name": "OtherContextMenus.Module.ResetColumnstoDefault",
+        "available": true
+      },
+      {
+        "name": "ResetC#InteractiveFromProject",
+        "available": false
+      },
+      {
+        "name": "ResetVisualBasicInteractiveFromProject",
+        "available": false
+      },
+      {
+        "name": "OtherContextMenus.XAMLBindingFailuresContextMenu.ResetColumns",
+        "available": true
+      },
+      {
+        "name": "OtherContextMenus.PropertyBrowser.Reset",
+        "available": true
+      },
+      {
+        "name": "Project.BuildPresetSelector",
+        "available": false
+      }
+    ],
+    "menuItems": [],
+    "propertyBounds": {
+      "x": 1593.0,
+      "y": 421.0,
+      "width": 266.0,
+      "height": 18.0
+    },
+    "lineEndingDialog": {
+      "title": "Inconsistent Line Endings",
+      "choice": "No",
+      "observed": false,
+      "clickPosted": false,
+      "dismissed": false
+    },
+    "menuCapture": {
+      "hwnd": 209720518,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "ca5102928edf44a8ba9d275de3344bf89eb5195227bb1dd7a61a711fce71cf95"
+    },
+    "capture": {
+      "hwnd": 209720518,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "51043f6de51a835d5e3cecb75313ef9f81d516eb72730368c0699fc12b70e1b4"
+    }
+  }
+}

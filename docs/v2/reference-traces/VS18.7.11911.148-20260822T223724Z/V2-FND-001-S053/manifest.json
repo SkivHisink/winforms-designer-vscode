@@ -1,0 +1,1511 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T223724Z-S053",
+  "scenarioId": "V2-FND-001-S053",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "A supported net10.0-windows SDK-style WinForms project is loaded and S053ToolboxForm is open in the actual Visual Studio designer.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S053ToolboxForm.cs with the WinForms Designer",
+    "Verify and execute the native View.Toolbox command",
+    "Bound the actual Toolbox surface through UI Automation",
+    "Set the real Toolbox search Edit value to Button through ValuePattern",
+    "Read the legacy TBToolboxPane through native MSAA and verify Toolbox > All Windows Forms > Button plus RadioButton",
+    "Execute File.SaveAll and verify exact source, Designer, and project hashes"
+  ],
+  "expected": "The native Toolbox search exposes a framework Button in the All Windows Forms category, reports exactly two Button matches, and leaves source, Designer source, and project bytes exact.",
+  "before": {
+    "sourceSha256": "b1c1b73cde67eb661f3ffabc822d16094a61cfd3bd615266ace83fe6edbd15f6",
+    "designerSha256": "8fc21849a4f399db581e42282d65a697c7c03405298b739f3bf2075a5c5f63f2",
+    "projectSha256": "8de22b45ab75dae17a5b9cdfc586e0ec4f3362de777a5520c8305610f92c0636"
+  },
+  "after": {
+    "sourceSha256": "b1c1b73cde67eb661f3ffabc822d16094a61cfd3bd615266ace83fe6edbd15f6",
+    "designerSha256": "8fc21849a4f399db581e42282d65a697c7c03405298b739f3bf2075a5c5f63f2",
+    "projectSha256": "8de22b45ab75dae17a5b9cdfc586e0ec4f3362de777a5520c8305610f92c0636"
+  },
+  "sourceByteIdentical": true,
+  "designerByteIdentical": true,
+  "projectByteIdentical": true,
+  "exactSearchResultCount": 2,
+  "frameworkProvenance": {
+    "projectTargetFramework": "net10.0-windows",
+    "projectUseWindowsForms": true,
+    "visualStudioGroup": "All Windows Forms",
+    "item": "Button",
+    "nativeEvidence": "MSAA outline item under the actual Visual Studio All Windows Forms Toolbox group"
+  },
+  "boundedVisualReview": "PASS; archived PNG visibly shows All Windows Forms expanded with Button and RadioButton after the Button query",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\a6b2b5168a134928b21eae724395f3e2\\Modern\\S053ToolboxForm.cs",
+    "command": "View.Toolbox",
+    "commandAvailable": true,
+    "mainWindowHwnd": 245765434,
+    "toolboxElementFound": true,
+    "toolboxAnchors": [
+      {
+        "name": "Toolbox",
+        "automationId": "ST:0:0:{b1e99781-ab81-11d0-b683-00aa00a3ee26}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 41.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 968.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S053ToolboxForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "PART_Header",
+        "controlType": "ControlType.TitleBar",
+        "localizedControlType": "title bar",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ToolWindowTitleBar",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 41.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 25.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S053ToolboxForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "DragHeader",
+        "controlType": "ControlType.TitleBar",
+        "localizedControlType": "title bar",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "DragUndockHeaderTitleBar",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 41.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 25.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S053ToolboxForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 50.0,
+          "y": 79.0,
+          "width": 42.0,
+          "height": 15.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S053ToolboxForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 95292646,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 42.0,
+          "y": 125.0,
+          "width": 286.0,
+          "height": 916.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S053ToolboxForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "AUTOHIDE_ST:0:0:{b1e99781-ab81-11d0-b683-00aa00a3ee26}",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 8.0,
+          "y": 74.0,
+          "width": 27.0,
+          "height": 42.0
+        },
+        "ancestors": [
+          {
+            "name": "VisualStudioReference - S053ToolboxForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      }
+    ],
+    "toolboxScope": {
+      "name": "",
+      "automationId": "PART_HwndHost",
+      "controlType": "ControlType.Pane",
+      "localizedControlType": "pane",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "AutoHideWindowContentControl",
+      "frameworkId": "WPF",
+      "nativeWindowHandle": 0,
+      "enabled": true,
+      "focusable": false,
+      "offscreen": false,
+      "bounds": {
+        "x": 35.0,
+        "y": 74.0,
+        "width": 300.0,
+        "height": 968.0
+      },
+      "ancestors": [
+        {
+          "name": "VisualStudioReference - S053ToolboxForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+          "controlType": "ControlType.Window"
+        }
+      ]
+    },
+    "boundedPointProbes": [
+      {
+        "name": "Toolbox",
+        "automationId": "ST:0:0:{b1e99781-ab81-11d0-b683-00aa00a3ee26}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 41.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 968.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Search Toolbox",
+        "automationId": "PART_SearchBox",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "",
+        "helpText": "Press Alt+Down to navigate any recent search terms",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBox",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 46.0,
+          "y": 99.0,
+          "width": 231.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Search",
+        "automationId": "PART_SearchButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Search",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 277.0,
+          "y": 99.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Dropdown",
+        "automationId": "PART_SearchDropdownButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Show dropdown",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 301.0,
+          "y": 99.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "Image",
+        "controlType": "ControlType.Image",
+        "localizedControlType": "image",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Image",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 281.0,
+          "y": 103.0,
+          "width": 16.0,
+          "height": 16.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.Button"
+          },
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "1",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TBToolboxPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 32905552,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 42.0,
+          "y": 125.0,
+          "width": 286.0,
+          "height": 916.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      }
+    ],
+    "query": "Button",
+    "searchCandidates": [
+      {
+        "name": "Search Toolbox",
+        "automationId": "PART_SearchBox",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "",
+        "helpText": "Press Alt+Down to navigate any recent search terms",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBox",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 46.0,
+          "y": 99.0,
+          "width": 231.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      }
+    ],
+    "searchControl": {
+      "name": "Search Toolbox",
+      "automationId": "PART_SearchBox",
+      "controlType": "ControlType.Edit",
+      "localizedControlType": "edit",
+      "value": "",
+      "helpText": "Press Alt+Down to navigate any recent search terms",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "TextBox",
+      "frameworkId": "WPF",
+      "nativeWindowHandle": 0,
+      "enabled": true,
+      "focusable": true,
+      "offscreen": false,
+      "bounds": {
+        "x": 46.0,
+        "y": 99.0,
+        "width": 231.0,
+        "height": 24.0
+      },
+      "ancestors": [
+        {
+          "name": "Search",
+          "controlType": "ControlType.ComboBox"
+        },
+        {
+          "name": "Toolbox",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        }
+      ]
+    },
+    "searchMethod": "UIAutomation.ValuePattern.SetValue",
+    "searchFailure": null,
+    "uiAutomationInventoryBefore": [
+      {
+        "name": "Toolbox",
+        "automationId": "ST:0:0:{b1e99781-ab81-11d0-b683-00aa00a3ee26}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 41.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 968.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 50.0,
+          "y": 79.0,
+          "width": 42.0,
+          "height": 15.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Window Position (Alt+-)",
+        "automationId": "HeaderDropDown",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "Dropdown button",
+        "value": null,
+        "helpText": "Window Position (Alt+-)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "DropDownButton",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 256.0,
+          "y": 75.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Auto Hide",
+        "automationId": "AutoHideButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Auto Hide",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 280.0,
+          "y": 75.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Close (Shift+Esc)",
+        "automationId": "HideButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Close (Shift+Esc)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 304.0,
+          "y": 75.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Search Toolbox",
+        "automationId": "PART_SearchBox",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "",
+        "helpText": "Press Alt+Down to navigate any recent search terms",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBox",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 46.0,
+          "y": 99.0,
+          "width": 231.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Search",
+        "automationId": "PART_SearchButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Search",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 277.0,
+          "y": 99.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Dropdown",
+        "automationId": "PART_SearchDropdownButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Show dropdown",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 301.0,
+          "y": 99.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 95292646,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 42.0,
+          "y": 125.0,
+          "width": 286.0,
+          "height": 916.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "1",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TBToolboxPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 32905552,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 42.0,
+          "y": 125.0,
+          "width": 286.0,
+          "height": 916.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      }
+    ],
+    "uiAutomationInventoryAfter": [
+      {
+        "name": "Toolbox",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 50.0,
+          "y": 79.0,
+          "width": 42.0,
+          "height": 15.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Window Position (Alt+-)",
+        "automationId": "HeaderDropDown",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "Dropdown button",
+        "value": null,
+        "helpText": "Window Position (Alt+-)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "DropDownButton",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 256.0,
+          "y": 75.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Auto Hide",
+        "automationId": "AutoHideButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Auto Hide",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 280.0,
+          "y": 75.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Close (Shift+Esc)",
+        "automationId": "HideButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Close (Shift+Esc)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 304.0,
+          "y": 75.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Search Toolbox",
+        "automationId": "PART_SearchBox",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "Button",
+        "helpText": "Press Alt+Down to navigate any recent search terms",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBox",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 46.0,
+          "y": 99.0,
+          "width": 231.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Clear search",
+        "automationId": "PART_SearchButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Clear search",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 277.0,
+          "y": 99.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Dropdown",
+        "automationId": "PART_SearchDropdownButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Show dropdown",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 301.0,
+          "y": 99.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "2 results found",
+        "automationId": "PART_LiveSearchTextBlock",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "LiveTextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Toolbox",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 95292646,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 42.0,
+          "y": 125.0,
+          "width": 286.0,
+          "height": 916.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "1",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TBToolboxPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 32905552,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 42.0,
+          "y": 125.0,
+          "width": 286.0,
+          "height": 916.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      }
+    ],
+    "resultPointProbes": [
+      {
+        "name": "Search Toolbox",
+        "automationId": "PART_SearchBox",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "Button",
+        "helpText": "Press Alt+Down to navigate any recent search terms",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBox",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 46.0,
+          "y": 99.0,
+          "width": 231.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Dropdown",
+        "automationId": "PART_SearchDropdownButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Show dropdown",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 301.0,
+          "y": 99.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Search",
+            "controlType": "ControlType.ComboBox"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "1",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TBToolboxPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 32905552,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 42.0,
+          "y": 125.0,
+          "width": 286.0,
+          "height": 916.0
+        },
+        "ancestors": [
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Toolbox",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      }
+    ],
+    "exactButtonRows": [],
+    "categoryRows": [],
+    "legacyToolboxHwnd": 32905552,
+    "legacyToolboxInventory": [
+      {
+        "Name": "Toolbox",
+        "Role": "outline",
+        "Description": "Toolbox",
+        "Value": "",
+        "DefaultAction": "",
+        "Depth": 0,
+        "ChildId": 0,
+        "Ancestors": []
+      },
+      {
+        "Name": "All Windows Forms",
+        "Role": "outline item",
+        "Description": "Toolbox Group",
+        "Value": "0",
+        "DefaultAction": "Collapse",
+        "Depth": 1,
+        "ChildId": 0,
+        "Ancestors": [
+          "Toolbox"
+        ]
+      },
+      {
+        "Name": "Button",
+        "Role": "outline item",
+        "Description": "Toolbox Item",
+        "Value": "1",
+        "DefaultAction": "Double-Click",
+        "Depth": 2,
+        "ChildId": 1,
+        "Ancestors": [
+          "Toolbox",
+          "All Windows Forms"
+        ]
+      },
+      {
+        "Name": "RadioButton",
+        "Role": "outline item",
+        "Description": "Toolbox Item",
+        "Value": "1",
+        "DefaultAction": "Double-Click",
+        "Depth": 2,
+        "ChildId": 2,
+        "Ancestors": [
+          "Toolbox",
+          "All Windows Forms"
+        ]
+      }
+    ],
+    "legacyButtonRows": [
+      {
+        "Name": "Button",
+        "Role": "outline item",
+        "Description": "Toolbox Item",
+        "Value": "1",
+        "DefaultAction": "Double-Click",
+        "Depth": 2,
+        "ChildId": 1,
+        "Ancestors": [
+          "Toolbox",
+          "All Windows Forms"
+        ]
+      }
+    ],
+    "legacyCategoryRows": [
+      {
+        "Name": "All Windows Forms",
+        "Role": "outline item",
+        "Description": "Toolbox Group",
+        "Value": "0",
+        "DefaultAction": "Collapse",
+        "Depth": 1,
+        "ChildId": 0,
+        "Ancestors": [
+          "Toolbox"
+        ]
+      }
+    ],
+    "legacyToolboxFailure": null,
+    "capture": {
+      "hwnd": 245765434,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "974c824913dddd92a0d51a3907b1c3a927bf8f0da82898d49bd630c466388e49"
+    }
+  }
+}

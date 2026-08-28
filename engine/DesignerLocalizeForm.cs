@@ -47,6 +47,14 @@ namespace WinFormsDesigner.Engine
     /// </summary>
     public static class DesignerLocalizeForm
     {
+        private static readonly Dictionary<string, string> AddedControlLocalizableTypes = new(StringComparer.Ordinal)
+        {
+            ["AutoSize"] = "System.Boolean",
+            ["Location"] = "System.Drawing.Point",
+            ["Size"] = "System.Drawing.Size",
+            ["Text"] = "System.String",
+        };
+
         /// <summary>Compose the rewritten source + .resx. <paramref name="values"/> is the live-graph inventory of
         /// localizable properties the source assigns, gathered by the caller (which owns the design surface).</summary>
         public static LocalizeFormResult Apply(string src, string className, IReadOnlyList<LocalizableValue> values,
@@ -140,6 +148,182 @@ namespace WinFormsDesigner.Engine
             if (gate != null) return Refuse(gate);
 
             return new LocalizeFormResult { Safe = true, NewText = result, ResxText = resx.ResxText, Keys = resx.Keys.ToList() };
+        }
+
+        /// <summary>
+        /// Convert the bounded property block emitted by <see cref="DesignerControlEditor.AddControl"/> into the
+        /// shape Visual Studio uses on an already-localizable form: localizable values move to the neutral .resx and
+        /// one existing ComponentResourceManager invokes ApplyResources for the new control. Structural statements,
+        /// Name, TabIndex, visual-style state, field declaration and Controls.Add remain source-backed.
+        /// </summary>
+        public static LocalizeFormResult ApplyAddedControl(string src, string componentId, string? existingResxText)
+        {
+            if (string.IsNullOrEmpty(src)) return Refuse("designer source is empty");
+            if (!DesignerControlEditor.IsValidIdentifier(componentId)) return Refuse("invalid component: " + componentId);
+
+            var root = CSharpSyntaxTree.ParseText(src).GetRoot();
+            var cls = DesignerControlEditor.FindClassWithICShared(root);
+            var init = FormClassResolver.InitMethodOf(cls);
+            if (cls == null || init?.Body == null) return Refuse("InitializeComponent not found");
+            string? resourcesVariable = ExistingResourcesVariable(init, cls.Identifier.Text);
+            if (resourcesVariable == null) return Refuse("a canonical same-form ComponentResourceManager was not found");
+            if (!init.Body.Statements.Any(st => IsApplyResourcesCall(st, resourcesVariable)))
+                return Refuse("the form is not already ApplyResources-backed");
+
+            var lifted = new List<(StatementSyntax Statement, LocalizableValue Value)>();
+            foreach (var statement in init.Body.Statements)
+            {
+                if (statement is not ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax assign }
+                    || !assign.OperatorToken.IsKind(SyntaxKind.EqualsToken)) continue;
+                var chain = DesignerControlEditor.FlattenChain(assign.Left);
+                if (chain.Count != 2 || chain[0] != componentId
+                    || !AddedControlLocalizableTypes.TryGetValue(chain[1], out string? valueType)) continue;
+                if (!TryInvariantAddedValue(chain[1], assign.Right, out string invariant))
+                    return Refuse("the added control carries an unsupported localizable value: " + chain[1]);
+                lifted.Add((statement, new LocalizableValue
+                {
+                    ComponentId = componentId,
+                    PropertyName = chain[1],
+                    ValueTypeName = valueType,
+                    InvariantValue = invariant,
+                }));
+            }
+            if (lifted.Count == 0) return Refuse("the added control has no localizable property assignments");
+
+            var edits = lifted.Select(item => new LocalizedResourceEdit
+            {
+                Kind = LocalizedResourceEditKind.UpsertScalar,
+                ComponentId = componentId,
+                PropertyName = item.Value.PropertyName,
+                ValueTypeName = item.Value.ValueTypeName,
+                ScalarValue = item.Value.InvariantValue,
+            }).ToList();
+            var resx = DesignerLocalizedResxEditor.ApplyScalarEdits(existingResxText, edits);
+            if (!resx.Ok || resx.ResxText == null) return Refuse(resx.Reason);
+
+            string nl = src.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            string indent = DesignerControlEditor.StatementIndent(src, init);
+            var replacements = new List<(int Start, int End, string Text)>();
+            bool first = true;
+            foreach (var item in lifted)
+            {
+                var range = DesignerControlEditor.StatementLineRange(src, item.Statement);
+                string replacement = first
+                    ? indent + resourcesVariable + $".ApplyResources(this.{componentId}, \"{componentId}\");" + nl
+                    : "";
+                replacements.Add((range.Start, range.End, replacement));
+                first = false;
+            }
+            replacements.Sort((a, b) => b.Start.CompareTo(a.Start));
+            string result = src;
+            foreach (var replacement in replacements)
+                result = result.Substring(0, replacement.Start) + replacement.Text + result.Substring(replacement.End);
+
+            if (CSharpSyntaxTree.ParseText(result).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
+                return Refuse("the localized add source has syntax errors");
+            string? gate = VerifyAddedControlLift(src, result, lifted.Select(item => item.Statement), resourcesVariable, componentId);
+            if (gate != null) return Refuse(gate);
+            return new LocalizeFormResult { Safe = true, NewText = result, ResxText = resx.ResxText, Keys = resx.Keys.ToList() };
+        }
+
+        private static string? ExistingResourcesVariable(MethodDeclarationSyntax init, string className)
+        {
+            var candidates = new List<string>();
+            foreach (var local in init.Body!.Statements.OfType<LocalDeclarationStatementSyntax>())
+            {
+                string type = local.Declaration.Type.ToString().Replace("global::", "", StringComparison.Ordinal);
+                if (type.Substring(type.LastIndexOf('.') + 1).TrimEnd('?') != "ComponentResourceManager") continue;
+                foreach (var variable in local.Declaration.Variables)
+                {
+                    if (variable.Initializer?.Value is not ObjectCreationExpressionSyntax creation
+                        || creation.ArgumentList?.Arguments.Count != 1
+                        || creation.ArgumentList.Arguments[0].Expression is not TypeOfExpressionSyntax typeOf
+                        || typeOf.Type.ToString().Replace("global::", "", StringComparison.Ordinal).Split('.').Last() != className)
+                        continue;
+                    candidates.Add(variable.Identifier.ValueText);
+                }
+            }
+            return candidates.Distinct(StringComparer.Ordinal).Take(2).Count() == 1 ? candidates[0] : null;
+        }
+
+        private static bool IsApplyResourcesCall(StatementSyntax statement, string receiver) =>
+            statement is ExpressionStatementSyntax
+            {
+                Expression: InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax
+                    {
+                        Expression: IdentifierNameSyntax id,
+                        Name.Identifier.Text: "ApplyResources",
+                    },
+                },
+            } && id.Identifier.ValueText == receiver;
+
+        private static bool TryInvariantAddedValue(string propertyName, ExpressionSyntax expression, out string value)
+        {
+            value = "";
+            if (propertyName == "Text" && expression is LiteralExpressionSyntax text
+                && text.IsKind(SyntaxKind.StringLiteralExpression))
+            {
+                value = text.Token.ValueText;
+                return true;
+            }
+            if (propertyName == "AutoSize" && expression is LiteralExpressionSyntax boolean
+                && (boolean.IsKind(SyntaxKind.TrueLiteralExpression) || boolean.IsKind(SyntaxKind.FalseLiteralExpression)))
+            {
+                value = boolean.IsKind(SyntaxKind.TrueLiteralExpression) ? "True" : "False";
+                return true;
+            }
+            if ((propertyName == "Location" || propertyName == "Size")
+                && expression is ObjectCreationExpressionSyntax creation
+                && creation.ArgumentList?.Arguments.Count == 2
+                && TryInteger(creation.ArgumentList.Arguments[0].Expression, out int x)
+                && TryInteger(creation.ArgumentList.Arguments[1].Expression, out int y))
+            {
+                string expected = propertyName == "Location" ? "Point" : "Size";
+                string actual = creation.Type.ToString().Replace("global::", "", StringComparison.Ordinal);
+                actual = actual.Substring(actual.LastIndexOf('.') + 1);
+                if (actual != expected) return false;
+                value = x.ToString(System.Globalization.CultureInfo.InvariantCulture) + ", "
+                    + y.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return true;
+            }
+            return false;
+        }
+
+        private static bool TryInteger(ExpressionSyntax expression, out int value)
+        {
+            if (expression is LiteralExpressionSyntax literal && literal.Token.Value is int integer)
+            {
+                value = integer;
+                return true;
+            }
+            if (expression is PrefixUnaryExpressionSyntax unary
+                && unary.IsKind(SyntaxKind.UnaryMinusExpression)
+                && unary.Operand is LiteralExpressionSyntax operand && operand.Token.Value is int positive)
+            {
+                value = -positive;
+                return true;
+            }
+            value = 0;
+            return false;
+        }
+
+        private static string? VerifyAddedControlLift(string original, string edited,
+            IEnumerable<StatementSyntax> lifted, string resourcesVariable, string componentId)
+        {
+            var before = DesignerControlEditor.InitStatementTexts(original);
+            var after = DesignerControlEditor.InitStatementTexts(edited);
+            var removed = Multiset(before);
+            foreach (var text in after) Decrement(removed, text);
+            var added = Multiset(after);
+            foreach (var text in before) Decrement(added, text);
+            var expectedRemoved = Multiset(lifted.Select(statement => DesignerControlEditor.Normalize(statement.ToString())));
+            var expectedAdded = Multiset(new[] { DesignerControlEditor.Normalize(
+                resourcesVariable + $".ApplyResources(this.{componentId}, \"{componentId}\");") });
+            if (!SameMultiset(removed, expectedRemoved)) return "the localized add removed statements outside the added control's localizable block";
+            if (!SameMultiset(added, expectedAdded)) return "the localized add inserted statements outside the ApplyResources call";
+            return null;
         }
 
         /// <summary>

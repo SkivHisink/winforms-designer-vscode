@@ -1,0 +1,225 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T181918Z-S031",
+  "scenarioId": "V2-FND-001-S031",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net48 Form contains a 241x120 Panel with Padding(10,0,20,0) and one 80x24 Button at relative Location (15,40).",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S031CenterPanelForm.cs with the WinForms Designer",
+    "Select button1 through its real designer automation element",
+    "Verify Format.CenterHorizontally is enabled",
+    "Execute Format.CenterHorizontally",
+    "Execute File.SaveAll",
+    "Verify the exact generated-source patch"
+  ],
+  "expected": "Visual Studio centers button1 in the complete Panel client area using reference rounding: relative X 15->80; asymmetric Padding does not shift the native Format command, while Y/Size/Panel geometry remain exact and source/project stay byte-identical.",
+  "before": {
+    "sourceSha256": "fb58d886bf083a2a073ccf7d9d06014b73538dfb96a2930e690ad219407a55ad",
+    "designerSha256": "af032162bed5f62ac4bc217661404e2f816477a4ef223e460ceae73be29ca7de",
+    "projectSha256": "03bd56f6748a98a32550701c8e73cfd067ec3d9dfe3d6dc5c849cda457ae6f2f",
+    "shape": {
+      "panel": {
+        "location": {
+          "x": 20,
+          "y": 20
+        },
+        "padding": {
+          "left": 10,
+          "top": 0,
+          "right": 20,
+          "bottom": 0
+        },
+        "size": {
+          "width": 241,
+          "height": 120
+        }
+      },
+      "button": {
+        "location": {
+          "x": 15,
+          "y": 40
+        },
+        "size": {
+          "width": 80,
+          "height": 24
+        }
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "fb58d886bf083a2a073ccf7d9d06014b73538dfb96a2930e690ad219407a55ad",
+    "designerSha256": "b6104f842c303e1e94d489e180a3eb37911beecdf8505d1ec3fb22b608a4fe60",
+    "projectSha256": "03bd56f6748a98a32550701c8e73cfd067ec3d9dfe3d6dc5c849cda457ae6f2f",
+    "shape": {
+      "panel": {
+        "location": {
+          "x": 20,
+          "y": 20
+        },
+        "padding": {
+          "left": 10,
+          "top": 0,
+          "right": 20,
+          "bottom": 0
+        },
+        "size": {
+          "width": 241,
+          "height": 120
+        }
+      },
+      "button": {
+        "location": {
+          "x": 80,
+          "y": 40
+        },
+        "size": {
+          "width": 80,
+          "height": 24
+        }
+      }
+    }
+  },
+  "exactDesignerPatch": true,
+  "exactAfterArtifact": "S031CenterPanelForm.Designer.after.cs.gz",
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "selectionFailure": null,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\8448850d56384d398d04e0fa0eac41c6\\Net48\\S031CenterPanelForm.cs",
+    "automationId": "button1",
+    "automationName": "Center me",
+    "selectionLocator": "Name=Center me",
+    "command": "Format.CenterHorizontally",
+    "commandAvailability": {
+      "centerHorizontally": true,
+      "centerHorizontal": false
+    },
+    "selectionFailure": null,
+    "input": {
+      "clickedWindow": 73668596
+    },
+    "selectionAttempts": [
+      {
+        "method": "SetFocus",
+        "error": "Target element cannot receive focus.",
+        "supportedPatterns": [],
+        "commandAvailability": {
+          "centerHorizontally": false,
+          "centerHorizontal": false
+        }
+      },
+      {
+        "method": "SelectionItem.Select",
+        "error": "SelectionItemPattern is unavailable",
+        "supportedPatterns": [],
+        "commandAvailability": {
+          "centerHorizontally": false,
+          "centerHorizontal": false
+        }
+      },
+      {
+        "method": "LegacyIAccessible.Select",
+        "error": "Unable to find type [System.Windows.Automation.LegacyIAccessiblePattern].",
+        "supportedPatterns": [],
+        "commandAvailability": {
+          "centerHorizontally": false,
+          "centerHorizontal": false
+        }
+      },
+      {
+        "method": "PostClickUsingCapture",
+        "error": "",
+        "clickedWindow": 259330206,
+        "deepestChildChain": "L0 hwnd=259330206 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=AdornerWindow <- L1 hwnd=56104938 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=OverlayControl <- L2 hwnd=25892846 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerFrame <- L3 hwnd=34608314 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= <- L4 hwnd=67900212 class=GenericPane text=S031CenterPanelForm.cs [Design] <- L5 hwnd=93260698 class=HwndWrapper[DefaultDomain;;8d72708b-f250-41ad-8abc-71ce23cf452d] text=VisualStudioReference - S031CenterPanelForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+        "commandAvailability": {
+          "centerHorizontally": false,
+          "centerHorizontal": false
+        }
+      },
+      {
+        "method": "DisconnectedDesktopWindowOffsetClick",
+        "error": "",
+        "clickedWindow": 259330206,
+        "windowShift": {
+          "x": -804,
+          "y": -218,
+          "syntheticButtonBounds": {
+            "x": -39.0,
+            "y": -11.0,
+            "width": 80.0,
+            "height": 24.0
+          }
+        },
+        "commandAvailability": {
+          "centerHorizontally": false,
+          "centerHorizontal": false
+        }
+      },
+      {
+        "method": "DocumentOutlineSelectionItem",
+        "error": "",
+        "outlineCommandAvailable": true,
+        "selected": {
+          "name": "button1",
+          "locator": "FixtureRelativeOwnerDrawnDocumentOutlineThirdRow",
+          "point": {
+            "x": 610,
+            "y": 169
+          },
+          "buttonOrigin": {
+            "x": 764.0,
+            "y": 206.0
+          },
+          "clickedWindow": 73668596
+        },
+        "window": {
+          "caption": "DTE_UNEXPOSED_OWNER_DRAWN_DOCUMENT_OUTLINE",
+          "left": null,
+          "top": null,
+          "width": null,
+          "height": null,
+          "visible": true
+        },
+        "windowInventory": [],
+        "inventory": [],
+        "treeInventory": [],
+        "commandAvailability": {
+          "centerHorizontally": true,
+          "centerHorizontal": false
+        }
+      }
+    ],
+    "beforeBounds": {
+      "x": 764.0,
+      "y": 206.0,
+      "width": 80.0,
+      "height": 24.0
+    },
+    "afterBounds": {
+      "x": 829.0,
+      "y": 206.0,
+      "width": 80.0,
+      "height": 24.0
+    },
+    "capture": {
+      "hwnd": 93260698,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "9753ec2f6043c4ec2e31f360887ce27573bf49f4f0f30583e6228ad4f54c0416"
+    }
+  }
+}

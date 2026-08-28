@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260821T140047Z-S009",
+  "scenarioId": "V2-FND-001-S009",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "reviewedAtUtc": "2026-08-21T14:04:17.5311233Z",
+  "setup": "Buildable net10.0-windows nested partial S009Outer.InnerForm has its code-behind and InitializeComponent declarations split across two files and contains one Button.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S009NestedForm.cs with the WinForms Designer",
+    "Capture the designer document window"
+  ],
+  "expected": "Observe whether Visual Studio supports a nested Form as a design root without assuming an open or refusal outcome.",
+  "beforeSha256": {
+    "sourceSha256": "1d607a84ee9be73adeb42e67fb6146828a4b3e56cd521605b94a056b8d931366",
+    "designerSha256": "1b317bf996ef542cacd494b2d603cfe9ac1c8cc9dc3b313d6f3d9351dcc0e48d"
+  },
+  "afterSha256": {
+    "sourceSha256": "1d607a84ee9be73adeb42e67fb6146828a4b3e56cd521605b94a056b8d931366",
+    "designerSha256": "1b317bf996ef542cacd494b2d603cfe9ac1c8cc9dc3b313d6f3d9351dcc0e48d"
+  },
+  "byteIdentical": true,
+  "refusalResult": {
+    "refused": true,
+    "reasonCode": "NESTED_DESIGNER_UNSUPPORTED",
+    "visualStudioMessage": "The designer could not be shown for this file because none of the classes within it can be designed."
+  },
+  "reviewOutcome": "Visual Studio displayed its fail-closed designer error page instead of a canvas. The enclosing S009Outer and nested InnerForm were recognized as source, but no class in the file was considered designable; source and Designer bytes remained identical.",
+  "claimBoundary": "REFERENCE_NESTED_FORM_REFUSAL_ONLY",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\93c21272508a4cef97ef3f9299364ec0\\Modern\\S009NestedForm.cs",
+    "caption": "",
+    "capture": {
+      "hwnd": 8199814,
+      "x": -8,
+      "y": -8,
+      "width": 1936,
+      "height": 1048,
+      "dpi": 96,
+      "sha256": "2993fb6ab502c2ff45e72126555796ab9e8f5b9ad2d3a689a9b473a2e7ed808e"
+    }
+  }
+}

@@ -68,6 +68,74 @@ public sealed class DesignerCrossFormClipboardTests
         Assert.Contains($"this.panel1.Controls.Add(this.{paste.Name});", paste.NewText);
     }
 
+    [Fact]
+    public void PasteAtOffset_UsesExactCtrlDragDeltaClampsAtClientOriginAndBoundsRpcInput()
+    {
+        var copy = DesignerControlEditor.CopyControl(Source, "nameTextBox");
+        Assert.True(copy.Safe, copy.Reason);
+
+        var exact = DesignerControlEditor.PasteControlAtOffset(CompatibleTarget, copy.Clip!, "panel1", 23, -50);
+
+        Assert.True(exact.Safe, exact.Reason);
+        Assert.Equal(33, exact.X);
+        Assert.Equal(0, exact.Y);
+        Assert.Contains("new System.Drawing.Point(33, 0)", exact.NewText);
+
+        var ordinary = DesignerControlEditor.PasteControl(CompatibleTarget, copy.Clip!, "panel1");
+        Assert.True(ordinary.Safe, ordinary.Reason);
+        Assert.Equal((18, 28), (ordinary.X, ordinary.Y));
+
+        var outside = DesignerControlEditor.PasteControlAtOffset(CompatibleTarget, copy.Clip!, "panel1", 100001, 0);
+        Assert.False(outside.Safe);
+        Assert.Contains("offset", outside.Reason);
+        Assert.Null(outside.NewText);
+    }
+
+    [Fact]
+    public void V2_FND_001_S024_PasteWithExistingClipboardNameGeneratesNonCollidingNameBeforeReturningText()
+    {
+        const string target = """
+            namespace Demo
+            {
+                partial class TargetForm
+                {
+                    private System.Windows.Forms.Button submitButton;
+
+                    private void InitializeComponent()
+                    {
+                        this.submitButton = new System.Windows.Forms.Button();
+                        this.submitButton.Name = "submitButton";
+                        this.submitButton.Location = new System.Drawing.Point(4, 5);
+                        this.Controls.Add(this.submitButton);
+                    }
+                }
+            }
+            """;
+        const string clip = """
+            {
+              "Fqn":"System.Windows.Forms.Button",
+              "Name":"submitButton",
+              "Statements":[
+                "this.submitButton = new System.Windows.Forms.Button();",
+                "this.submitButton.Name = \"submitButton\";",
+                "this.submitButton.Location = new System.Drawing.Point(10, 20);"
+              ]
+            }
+            """;
+
+        var paste = DesignerControlEditor.PasteControl(target, clip, "this");
+
+        Assert.True(paste.Safe, paste.Reason);
+        Assert.NotEqual("submitButton", paste.Name);
+        Assert.Contains($"private System.Windows.Forms.Button {paste.Name};", paste.NewText);
+        Assert.Contains($"this.{paste.Name}.Name = \"{paste.Name}\";", paste.NewText);
+        Assert.Contains($"this.Controls.Add(this.{paste.Name});", paste.NewText);
+        Assert.Contains("private System.Windows.Forms.Button submitButton;", paste.NewText);
+        Assert.Contains("this.submitButton.Name = \"submitButton\";", paste.NewText);
+        Assert.DoesNotContain("private System.Windows.Forms.Button submitButton;\r\n                    private System.Windows.Forms.Button submitButton;", paste.NewText);
+        Assert.DoesNotContain("this.Controls.Add(this.submitButton);\r\n                        this.Controls.Add(this.submitButton);", paste.NewText);
+    }
+
     /// <summary>Drop whole lines from a fixture whatever the file's line endings are. A raw string literal keeps
     /// the source file's terminators, so on a fresh CRLF checkout (what CI does) a `\n`-anchored Replace silently
     /// no-ops and the "dependency missing" fixture still declares the dependency.</summary>

@@ -13,12 +13,14 @@ VS Code
  │   └─ panel.js            Properties + Toolbox side panel
  └─ Engines (C#)                        engine/  and  engine-net48/
      ├─ .NET 10 engine      interprets the LIVE source and renders it
-     └─ .NET Framework 4.8  renders the last COMPILED build (net4x/DevExpress)
+     └─ .NET Framework 4.8  interprets the LIVE source onto COMPILED net4x/DevExpress
+                            controls (disclosed compiled-build fallback)
 ```
 
 The host never parses C# itself and the engine never touches VS Code APIs. They speak JSON-RPC over a named pipe;
-the engine writes no files (with one deliberate exception, the `.resx`, described in
-[Localization](Localization)) — it *composes* text and the host applies it as an undoable workspace edit.
+the engine writes no files at all — it *composes* text (both the `.Designer.cs` splice and the new `.resx` XML) and
+the host applies it as an undoable workspace edit, with the resource write bundled into the same undo entry. See
+[Localization](Localization).
 
 ## How a form becomes a picture
 
@@ -41,17 +43,30 @@ Two consequences follow, and both are intentional:
 ## Why there are two engines
 
 A `net4x` project's controls (DevExpress and friends) cannot be loaded by a .NET 10 process. For those projects
-the extension routes to the **.NET Framework 4.8 engine**, which takes the opposite approach: it instantiates the
-**compiled type** from your last build and renders that. You get pixel-accurate vendor controls; the cost is that
-the picture reflects the last build rather than unsaved source, which the canvas discloses in a banner.
+the extension routes to the **.NET Framework 4.8 engine**, which follows the same Visual Studio model on a runtime
+that can load those controls: it parses `InitializeComponent`, instantiates the form's **declared base type**, and
+replays the statements onto the *compiled* vendor controls. You get pixel-accurate DevExpress controls drawn from
+your live, unsaved source. A construct the interpreter cannot reproduce falls back to a compiled render of your
+last build with a named, disclosed reason (`unrepresentableStatements`, `unsafeBinaryResource`, `baseTypeChanged`,
+…), never a silent mismatch.
 
-Routing is automatic, per form, based on the owning project's target framework. Both engines answer the same RPC
-surface, so the host code path is shared; where behavior genuinely differs the host asks which engine it is
-talking to (`engineKind`).
+Routing is automatic and per form: an explicit control source (a per-form override, or
+`winformsDesigner.assemblyPath`) wins; otherwise the owning `.csproj`'s build output decides — an output with no
+`.deps.json` sidecar is a .NET Framework build and goes to the net48 engine, and a single-target `net4x` project
+that has not been built yet prompts for an assembly instead of rendering. Both engines answer the same RPC surface,
+so the host code path is shared; where behavior genuinely differs the host asks which engine it is talking to
+(`engineKind`).
 
 One thing is deliberately NOT split: **all source rewriting happens in the modern engine's Roslyn splicer**, for
 both runtimes. The net48 engine only mirrors an already-decided edit onto its live compiled instance. That keeps
 one implementation of the editing rules, so a net4x form and a net9 form get byte-identical generated code.
+
+## v2.0.0 runtime boundary
+
+The v2.0.0 architecture keeps the managed GA baseline to modern `win-x64` / `win-arm64` workers plus a .NET
+Framework 4.8 x64 compatibility payload. It does not claim native ARM64 .NET Framework, x86, COM, or ActiveX support.
+Those Tier D cases are excluded by name from v2.0.0 GA and must refuse before mutation with stable diagnostics such as
+`X86_WORKER_UNAVAILABLE` or `COM_ACTIVE_X_UNSUPPORTED`.
 
 ## The design surface is real
 
@@ -67,5 +82,7 @@ matches what the type actually declares.
   dirty, undoable thing.
 - **`.resx`** is written to disk immediately (it is a resource file, as in Visual Studio) but is bundled into the
   same undo transaction, so one Ctrl+Z reverts both halves of an edit.
-- **View state** (zoom, ruler, selected tabs, chosen culture, collapsed notice) is per form and non-persistent
-  beyond the session, except for the few things stored in the webview's own state.
+- **View state** is per form and **persisted in VS Code's `workspaceState`** (`designerViewStates`): zoom, Lock
+  Controls, the selected page of each TabControl, the chosen localization culture, the active panel tab, and the
+  toolbox/outline collapse state all survive closing and reopening a form without touching any project file. Only
+  the ruler toggle and the collapsed-notice choice live in the webview's own state.

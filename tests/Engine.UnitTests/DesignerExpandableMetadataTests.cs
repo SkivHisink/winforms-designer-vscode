@@ -37,7 +37,7 @@ public sealed class DesignerExpandableMetadataTests
     }
 
     [Fact]
-    public void NestedValues_IncludeStandardValuesCategoryDescriptionAndRecursiveChildren()
+    public void V2_FND_001_S041_NestedValues_IncludeStandardValuesCategoryDescriptionAndRecursiveChildren()
     {
         var component = DescribeRoot();
         var expandable = Prop(component, nameof(ExpandableMetadataComponent.Expandable));
@@ -76,7 +76,7 @@ public sealed class DesignerExpandableMetadataTests
     }
 
     [Fact]
-    public void CycleAndBounds_AreGuarded()
+    public void V2_FND_001_S044_CycleAndBounds_AreGuarded()
     {
         var component = DescribeRoot();
         var cycle = Prop(component, nameof(ExpandableMetadataComponent.Cycle));
@@ -112,13 +112,36 @@ public sealed class DesignerExpandableMetadataTests
         Assert.False(ordinary.PropertiesTruncated);
     }
 
+    [Fact]
+    public void V2_FND_001_S043_SlowStandardValuesConverter_TimesOutWithoutDropdown()
+    {
+        SlowStandardValuesConverter.ResetProbe();
+        var component = Describe(new SlowStandardValuesComponent(), nameof(SlowStandardValuesComponent));
+        var mode = Prop(component, nameof(SlowStandardValuesComponent.Mode));
+
+        Assert.Equal("Alpha", mode.Value);
+        Assert.Null(mode.StandardValues);
+        Assert.False(mode.StandardValuesExclusive);
+        Assert.Equal("CONVERTER_TIMEOUT", mode.MetadataDiagnosticCode);
+        Assert.Null(mode.Properties);
+        Assert.True(SlowStandardValuesConverter.WaitForProbe(), "the abandoned converter probe should finish during the test");
+
+        var healthy = Describe(new ExpandableMetadataComponent(), nameof(ExpandableMetadataComponent));
+        var healthyMode = Child(Prop(healthy, nameof(ExpandableMetadataComponent.Expandable)).Properties!, "Nested");
+        Assert.Equal(new[] { "Alpha", "Beta" }, Child(healthyMode.Properties!, "Mode").StandardValues);
+    }
+
     private static ComponentInfo DescribeRoot()
     {
+        return Describe(new ExpandableMetadataComponent(), nameof(ExpandableMetadataComponent));
+    }
+
+    private static ComponentInfo Describe(IComponent root, string rootName)
+    {
         using var container = new Container();
-        var root = new ExpandableMetadataComponent();
         container.Add(root, "root");
         var host = new TestDesignerHost(container, root);
-        var component = DesignerDescribe.DescribeComponent(host, "ExpandableMetadataComponent", new HashSet<(IComponent, string)>(), "this");
+        var component = DesignerDescribe.DescribeComponent(host, rootName, new HashSet<(IComponent, string)>(), "this");
         Assert.NotNull(component);
         return component!;
     }
@@ -146,6 +169,13 @@ public sealed class ExpandableMetadataComponent : Component
 
     [DefaultValue("plain")]
     public string OrdinaryText { get; set; } = "plain";
+}
+
+public sealed class SlowStandardValuesComponent : Component
+{
+    [DefaultValue("Alpha")]
+    [TypeConverter(typeof(SlowStandardValuesConverter))]
+    public string Mode { get; set; } = "Alpha";
 }
 
 internal sealed class TestDesignerHost : IDesignerHost
@@ -283,6 +313,31 @@ public sealed class StandardChoiceConverter : StringConverter
     public override bool GetStandardValuesSupported(ITypeDescriptorContext? context) => true;
     public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context) => true;
     public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context) => Values;
+}
+
+public sealed class SlowStandardValuesConverter : StringConverter
+{
+    private static readonly System.Threading.ManualResetEventSlim ProbeFinished = new(initialState: true);
+
+    public static void ResetProbe() => ProbeFinished.Reset();
+
+    public static bool WaitForProbe() => ProbeFinished.Wait(TimeSpan.FromSeconds(2));
+
+    public override bool GetStandardValuesSupported(ITypeDescriptorContext? context)
+    {
+        try
+        {
+            System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(300));
+            return true;
+        }
+        finally
+        {
+            ProbeFinished.Set();
+        }
+    }
+
+    public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context) =>
+        new(new[] { "Alpha", "Beta" });
 }
 
 public sealed class ThrowingExpandableConverter : TypeConverter

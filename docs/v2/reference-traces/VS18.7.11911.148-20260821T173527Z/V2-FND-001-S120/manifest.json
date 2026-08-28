@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260821T173527Z-S120",
+  "scenarioId": "V2-FND-001-S120",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "The product CustomEditor moved button1 by +11,+7 and saved exact generated-source bytes.",
+  "actionLog": [
+    "Open GroupMoveForm.cs in the Visual Studio WinForms Designer",
+    "Execute File.SaveAll",
+    "Hash source and generated source before and after"
+  ],
+  "expected": "No unrelated source or resource diff; exact bytes are accepted for this bounded fixture.",
+  "beforeSha256": {
+    "GroupMoveForm.cs": "db7a11be903988516bed60bd727127bf48a6c54bea54e1b155877f54c0acb850",
+    "GroupMoveForm.Designer.cs": "8159fa7f93b10b7086e725304478c0909e7921491f07d52636ac4c8676348f39"
+  },
+  "afterSha256": {
+    "GroupMoveForm.cs": "db7a11be903988516bed60bd727127bf48a6c54bea54e1b155877f54c0acb850",
+    "GroupMoveForm.Designer.cs": "8159fa7f93b10b7086e725304478c0909e7921491f07d52636ac4c8676348f39"
+  },
+  "byteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\55d1bd8c7df54a6d987f036f6e128fd4\\Modern\\GroupMoveForm.cs",
+    "caption": "",
+    "capture": {
+      "hwnd": 33560866,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "25198b273697f0a619b5cc1e59f9acd12b82063569144ddff5ecf691fb9e4be9"
+    }
+  }
+}

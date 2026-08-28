@@ -1,0 +1,1782 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260824T080449Z-S110",
+  "scenarioId": "V2-FND-001-S110",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains an accessible Button, TextBox, MenuStrip/File item, and Timer component.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S110AccessibilityTreeForm.cs with the installed WinForms Designer",
+    "Open the native Document Outline when the command is available",
+    "Read bounded UI Automation and MSAA inventories without sending a mutation",
+    "Resolve Button, TextBox, MenuStrip, menu item, and Timer records with role/type, state, ancestry, and bounds",
+    "Verify source, Designer, and project bytes remain exact"
+  ],
+  "expected": "The installed designer accessibility surface exposes the Button, TextBox, MenuStrip, File item, and Timer with a stable name or id, semantic role/type, enabled/offscreen state, parent ancestry, and non-empty bounds.",
+  "before": {
+    "sourceSha256": "eea8b10af33ac84b32c5f618d1c3430d1b729f6ea57d86f9eaab7e156472de7b",
+    "designerSha256": "ddf9ad0a3599a8755c14835fda9ba321ae152e9ea404aa032a238dfe04c50879",
+    "projectSha256": "9fe6a00c3c5e285d280f976c17be0226397424a5ba2d822f8e648e3ea12c52e7"
+  },
+  "after": {
+    "sourceSha256": "eea8b10af33ac84b32c5f618d1c3430d1b729f6ea57d86f9eaab7e156472de7b",
+    "designerSha256": "ddf9ad0a3599a8755c14835fda9ba321ae152e9ea404aa032a238dfe04c50879",
+    "projectSha256": "9fe6a00c3c5e285d280f976c17be0226397424a5ba2d822f8e648e3ea12c52e7"
+  },
+  "sourceByteIdentical": true,
+  "designerByteIdentical": true,
+  "projectByteIdentical": true,
+  "selectedMatches": {
+    "button": {
+      "name": "Submit button",
+      "automationId": "submitButton",
+      "controlType": "ControlType.Button",
+      "localizedControlType": "button",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.Button.app.0.2281665_r3_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 1903966,
+      "enabled": true,
+      "focusable": true,
+      "offscreen": false,
+      "bounds": {
+        "x": 1400.0,
+        "y": 233.0,
+        "width": 136.0,
+        "height": 36.0
+      },
+      "ancestors": [
+        {
+          "name": "S110 accessibility tree",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayContainer",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        }
+      ]
+    },
+    "textBox": {
+      "name": "Customer name",
+      "automationId": "customerNameTextBox",
+      "controlType": "ControlType.Edit",
+      "localizedControlType": "edit",
+      "value": "Ada Lovelace",
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.Edit.app.0.2281665_r3_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 721540,
+      "enabled": true,
+      "focusable": true,
+      "offscreen": false,
+      "bounds": {
+        "x": 1400.0,
+        "y": 189.0,
+        "width": 232.0,
+        "height": 23.0
+      },
+      "ancestors": [
+        {
+          "name": "S110 accessibility tree",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayContainer",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        }
+      ]
+    },
+    "menuStrip": {
+      "name": "Main menu",
+      "automationId": "mainMenuStrip",
+      "controlType": "ControlType.MenuBar",
+      "localizedControlType": "menu bar",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.Window.8.app.0.2281665_r3_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 9703734,
+      "enabled": true,
+      "focusable": false,
+      "offscreen": false,
+      "bounds": {
+        "x": 1368.0,
+        "y": 141.0,
+        "width": 420.0,
+        "height": 24.0
+      },
+      "ancestors": [
+        {
+          "name": "S110 accessibility tree",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayContainer",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        }
+      ]
+    },
+    "menuItem": {
+      "name": "fileMenuItem",
+      "automationId": "",
+      "controlType": "ControlType.MenuItem",
+      "localizedControlType": "menu item",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 0,
+      "enabled": true,
+      "focusable": true,
+      "offscreen": false,
+      "bounds": {
+        "x": 1374.0,
+        "y": 143.0,
+        "width": 37.0,
+        "height": 20.0
+      },
+      "ancestors": [
+        {
+          "name": "Main menu",
+          "controlType": "ControlType.MenuBar"
+        },
+        {
+          "name": "S110 accessibility tree",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayContainer",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        }
+      ]
+    },
+    "timer": {
+      "name": "refreshTimer",
+      "automationId": "3146378",
+      "controlType": "ControlType.Pane",
+      "localizedControlType": "pane",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.Window.8.app.0.2281665_r3_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 3146378,
+      "enabled": true,
+      "focusable": false,
+      "offscreen": false,
+      "bounds": {
+        "x": 1498.0,
+        "y": 231.0,
+        "width": 104.0,
+        "height": 20.0
+      },
+      "ancestors": [
+        {
+          "name": "ComponentTray",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S110AccessibilityTreeForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+          "controlType": "ControlType.Window"
+        }
+      ]
+    }
+  },
+  "missingElements": [],
+  "incompleteElements": [],
+  "accessibilityNotes": {
+    "x64VisualStudioReferenceExecuted": true,
+    "physicalArm64": "GATED",
+    "assistiveTechnologyAcceptance": "NOT_EXECUTED"
+  },
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\51cb40a9bf7e46a2ac77d96710ec7339\\Modern\\S110AccessibilityTreeForm.cs",
+    "documentOutlineCommandAvailable": true,
+    "expectedElements": [
+      "button",
+      "textBox",
+      "menuStrip",
+      "menuItem",
+      "timer"
+    ],
+    "matches": {
+      "button": [
+        {
+          "name": "Submit button",
+          "automationId": "submitButton",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "WindowsForms10.Button.app.0.2281665_r3_ad1",
+          "frameworkId": "WinForm",
+          "nativeWindowHandle": 1903966,
+          "enabled": true,
+          "focusable": true,
+          "offscreen": false,
+          "bounds": {
+            "x": 1400.0,
+            "y": 233.0,
+            "width": 136.0,
+            "height": 36.0
+          },
+          "ancestors": [
+            {
+              "name": "S110 accessibility tree",
+              "controlType": "ControlType.Window"
+            },
+            {
+              "name": "OverlayContainer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerWindowFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerView",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "WinForms Window Surface",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            }
+          ]
+        }
+      ],
+      "textBox": [
+        {
+          "name": "Customer name",
+          "automationId": "customerNameTextBox",
+          "controlType": "ControlType.Edit",
+          "localizedControlType": "edit",
+          "value": "Ada Lovelace",
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "WindowsForms10.Edit.app.0.2281665_r3_ad1",
+          "frameworkId": "WinForm",
+          "nativeWindowHandle": 721540,
+          "enabled": true,
+          "focusable": true,
+          "offscreen": false,
+          "bounds": {
+            "x": 1400.0,
+            "y": 189.0,
+            "width": 232.0,
+            "height": 23.0
+          },
+          "ancestors": [
+            {
+              "name": "S110 accessibility tree",
+              "controlType": "ControlType.Window"
+            },
+            {
+              "name": "OverlayContainer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerWindowFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerView",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "WinForms Window Surface",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            }
+          ]
+        }
+      ],
+      "menuStrip": [
+        {
+          "name": "Main menu",
+          "automationId": "mainMenuStrip",
+          "controlType": "ControlType.MenuBar",
+          "localizedControlType": "menu bar",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "WindowsForms10.Window.8.app.0.2281665_r3_ad1",
+          "frameworkId": "WinForm",
+          "nativeWindowHandle": 9703734,
+          "enabled": true,
+          "focusable": false,
+          "offscreen": false,
+          "bounds": {
+            "x": 1368.0,
+            "y": 141.0,
+            "width": 420.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "S110 accessibility tree",
+              "controlType": "ControlType.Window"
+            },
+            {
+              "name": "OverlayContainer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerWindowFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerView",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "WinForms Window Surface",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            }
+          ]
+        }
+      ],
+      "menuItem": [
+        {
+          "name": "fileMenuItem",
+          "automationId": "",
+          "controlType": "ControlType.MenuItem",
+          "localizedControlType": "menu item",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "",
+          "frameworkId": "WinForm",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "offscreen": false,
+          "bounds": {
+            "x": 1374.0,
+            "y": 143.0,
+            "width": 37.0,
+            "height": 20.0
+          },
+          "ancestors": [
+            {
+              "name": "Main menu",
+              "controlType": "ControlType.MenuBar"
+            },
+            {
+              "name": "S110 accessibility tree",
+              "controlType": "ControlType.Window"
+            },
+            {
+              "name": "OverlayContainer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerWindowFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerView",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "WinForms Window Surface",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            }
+          ]
+        }
+      ],
+      "timer": [
+        {
+          "name": "refreshTimer",
+          "automationId": "3146378",
+          "controlType": "ControlType.Pane",
+          "localizedControlType": "pane",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "WindowsForms10.Window.8.app.0.2281665_r3_ad1",
+          "frameworkId": "WinForm",
+          "nativeWindowHandle": 3146378,
+          "enabled": true,
+          "focusable": false,
+          "offscreen": false,
+          "bounds": {
+            "x": 1498.0,
+            "y": 231.0,
+            "width": 104.0,
+            "height": 20.0
+          },
+          "ancestors": [
+            {
+              "name": "ComponentTray",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerWindowFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerView",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "WinForms Window Surface",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S110AccessibilityTreeForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        }
+      ]
+    },
+    "uiAutomationInventoryCount": 193,
+    "relevantUiAutomation": [
+      {
+        "name": "Save S110AccessibilityTreeForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Save S110AccessibilityTreeForm.cs (Ctrl+S)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 859.0,
+          "y": 36.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Standard",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S110AccessibilityTreeForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S110AccessibilityTreeForm.cs",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 513.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S110AccessibilityTreeForm",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S110AccessibilityTreeForm",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 537.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S110AccessibilityTreeForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S110AccessibilityTreeForm.Designer.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S110AccessibilityTreeForm.Designer.cs",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 561.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S110AccessibilityTreeForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S110AccessibilityTreeForm.resx",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S110AccessibilityTreeForm.resx",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 585.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S110AccessibilityTreeForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S110AccessibilityTreeForm",
+        "automationId": "ST:0:0:{25f7e850-ffa1-11d0-b63f-00a0c922e851}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1139.0,
+          "y": 69.0,
+          "width": 199.0,
+          "height": 584.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S110AccessibilityTreeForm",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1148.0,
+          "y": 74.0,
+          "width": 107.0,
+          "height": 15.0
+        },
+        "ancestors": [
+          {
+            "name": "Document Outline - S110AccessibilityTreeForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S110AccessibilityTreeForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S110AccessibilityTreeForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S110AccessibilityTreeForm",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 1770142,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 558.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S110AccessibilityTreeForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S110AccessibilityTreeForm.cs [Design]",
+        "automationId": "",
+        "controlType": "ControlType.TabItem",
+        "localizedControlType": "tab item",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TabItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1344.0,
+          "y": 69.0,
+          "width": 220.0,
+          "height": 26.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S110AccessibilityTreeForm.cs [Design]",
+        "automationId": "D:0:0:{BCE7043E-E7D7-A278-1417-E91FBF1872ED}|Modern\\VisualStudioReference.Modern.csproj|d:\\data\\code\\csharpwinformextension\\.codex-tmp\\vs-reference-traces\\51cb40a9bf7e46a2ac77d96710ec7339\\modern\\s110accessibilitytreeform.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}|Form",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1345.0,
+          "y": 95.0,
+          "width": 535.0,
+          "height": 199.0
+        },
+        "ancestors": [
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S110AccessibilityTreeForm.cs [Design]",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 4984786,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1345.0,
+          "y": 95.0,
+          "width": 535.0,
+          "height": 199.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Submit button",
+        "automationId": "submitButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Button.app.0.2281665_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 1903966,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1400.0,
+          "y": 233.0,
+          "width": 136.0,
+          "height": 36.0
+        },
+        "ancestors": [
+          {
+            "name": "S110 accessibility tree",
+            "controlType": "ControlType.Window"
+          },
+          {
+            "name": "OverlayContainer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Customer name",
+        "automationId": "customerNameTextBox",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "Ada Lovelace",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Edit.app.0.2281665_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 721540,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1400.0,
+          "y": 189.0,
+          "width": 232.0,
+          "height": 23.0
+        },
+        "ancestors": [
+          {
+            "name": "S110 accessibility tree",
+            "controlType": "ControlType.Window"
+          },
+          {
+            "name": "OverlayContainer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Main menu",
+        "automationId": "mainMenuStrip",
+        "controlType": "ControlType.MenuBar",
+        "localizedControlType": "menu bar",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Window.8.app.0.2281665_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 9703734,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1368.0,
+          "y": 141.0,
+          "width": 420.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S110 accessibility tree",
+            "controlType": "ControlType.Window"
+          },
+          {
+            "name": "OverlayContainer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "fileMenuItem",
+        "automationId": "",
+        "controlType": "ControlType.MenuItem",
+        "localizedControlType": "menu item",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1374.0,
+          "y": 143.0,
+          "width": 37.0,
+          "height": 20.0
+        },
+        "ancestors": [
+          {
+            "name": "Main menu",
+            "controlType": "ControlType.MenuBar"
+          },
+          {
+            "name": "S110 accessibility tree",
+            "controlType": "ControlType.Window"
+          },
+          {
+            "name": "OverlayContainer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          }
+        ]
+      },
+      {
+        "name": "mainMenuStrip",
+        "automationId": "1837918",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Window.8.app.0.2281665_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 1837918,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1362.0,
+          "y": 231.0,
+          "width": 119.0,
+          "height": 20.0
+        },
+        "ancestors": [
+          {
+            "name": "ComponentTray",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "refreshTimer",
+        "automationId": "3146378",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Window.8.app.0.2281665_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 3146378,
+        "enabled": true,
+        "focusable": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1498.0,
+          "y": 231.0,
+          "width": 104.0,
+          "height": 20.0
+        },
+        "ancestors": [
+          {
+            "name": "ComponentTray",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S110AccessibilityTreeForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S110AccessibilityTreeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      }
+    ],
+    "msaaInventoryCount": 0,
+    "msaaError": "SKIPPED_UNSAFE_FULL_VISUAL_STUDIO_OBJID_CLIENT_RECURSION",
+    "relevantMsaa": [],
+    "capture": {
+      "hwnd": 6490888,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "1106ea75fe2b0b663c873f307021c442cc0aaab555d38cebc455e5ec6db0715b"
+    }
+  }
+}

@@ -1,0 +1,774 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T192402Z-S038",
+  "scenarioId": "V2-FND-001-S038",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains one Button and one TextBox with different explicit Text values.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S038MultiPropertyForm.cs with the WinForms Designer",
+    "Execute Edit.SelectAll to select both controls",
+    "Open View.PropertiesWindow",
+    "Capture the multi-object grid and bounded UI Automation inventory",
+    "Verify one blank mixed Text row, the common property intersection, and absence of type-specific rows",
+    "Verify source, Designer, and project bytes remain exact"
+  ],
+  "expected": "The actual multi-object Properties grid identifies both selected objects, exposes their common property intersection, displays different Text values as mixed/blank, and omits type-specific properties such as Button.DialogResult and TextBox.Multiline.",
+  "before": {
+    "sourceSha256": "867dcf242ac9bc625c40ee80ecacfe1d2db965f68d03aa3eb3bf4a176901665b",
+    "designerSha256": "2879fde5e08d2763b74ed1f10398dddd133255482d52cc7dc81e003a28564fa4",
+    "projectSha256": "201b8018840e2fd6016fce148cd0fdb0945943fdf4454aead4135722c669f466"
+  },
+  "after": {
+    "sourceSha256": "867dcf242ac9bc625c40ee80ecacfe1d2db965f68d03aa3eb3bf4a176901665b",
+    "designerSha256": "2879fde5e08d2763b74ed1f10398dddd133255482d52cc7dc81e003a28564fa4",
+    "projectSha256": "201b8018840e2fd6016fce148cd0fdb0945943fdf4454aead4135722c669f466"
+  },
+  "sourceByteIdentical": true,
+  "designerByteIdentical": true,
+  "projectByteIdentical": true,
+  "selectedAutomationIds": [
+    "button1",
+    "textBox1"
+  ],
+  "mixedTextRows": [
+    {
+      "name": "Text",
+      "automationId": "66586737",
+      "controlType": "ControlType.TreeItem",
+      "value": "",
+      "enabled": true,
+      "offscreen": false,
+      "bounds": {
+        "x": 1593.0,
+        "y": 345.0,
+        "width": 283.0,
+        "height": 18.0
+      }
+    }
+  ],
+  "observedPropertyNames": [
+    "AccessibleName",
+    "AccessibleRole",
+    "AllowDrop",
+    "Anchor",
+    "Appearance",
+    "BackColor",
+    "Behavior",
+    "ContextMenuStrip",
+    "Enabled",
+    "Font",
+    "ForeColor",
+    "Location",
+    "Locked",
+    "MaximumSize",
+    "MinimumSize",
+    "Modifiers",
+    "S014TextBoxForm.cs",
+    "S022AnchoredResizeForm",
+    "S022AnchoredResizeForm.cs",
+    "S022AnchoredResizeForm.Designer.cs",
+    "S022AnchoredResizeForm.resx",
+    "Size",
+    "TabStop",
+    "Text",
+    "Visible"
+  ],
+  "typeSpecificLeaks": [],
+  "missingCommonProperties": [],
+  "boundedVisualReview": "PASS; both controls show selection handles and the visible shared grid agrees with the UI Automation inventory",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\c8d9982fa3dc45a68a7b617cdc47325d\\Modern\\S038MultiPropertyForm.cs",
+    "command": "Edit.SelectAll + View.PropertiesWindow",
+    "beforeSelect": {
+      "selectAllAvailable": true,
+      "alignLeftAvailable": false,
+      "makeSameWidthAvailable": false
+    },
+    "afterSelect": {
+      "selectAllAvailable": true,
+      "alignLeftAvailable": true,
+      "makeSameWidthAvailable": true
+    },
+    "propertiesCommandAvailable": true,
+    "uiAutomationInventory": [
+      {
+        "name": "Make Same Size",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1158.0,
+          "y": 41.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "Size to Grid",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1184.0,
+          "y": 41.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "TabGroup, Children = 15, VisibleChildren = 3, DockedWidth = 459, DockedHeight = 937",
+        "automationId": "DragHeader",
+        "controlType": "ControlType.TitleBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 41.0,
+          "y": 74.0,
+          "width": 453.0,
+          "height": 25.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 273.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "S022AnchoredResizeForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "value": "S022AnchoredResizeForm.cs",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 45.0,
+          "y": 590.0,
+          "width": 435.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "S022AnchoredResizeForm",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "value": "S022AnchoredResizeForm",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 45.0,
+          "y": 614.0,
+          "width": 435.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "S022AnchoredResizeForm.Designer.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "value": "S022AnchoredResizeForm.Designer.cs",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 45.0,
+          "y": 638.0,
+          "width": 435.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "S022AnchoredResizeForm.resx",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "value": "S022AnchoredResizeForm.resx",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 45.0,
+          "y": 662.0,
+          "width": 435.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "S014TextBoxForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "value": "S014TextBoxForm.cs",
+        "enabled": true,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        }
+      },
+      {
+        "name": "S038MultiPropertyForm.cs [Design]",
+        "automationId": "D:0:0:{BCE7043E-E7D7-A278-1417-E91FBF1872ED}|Modern\\VisualStudioReference.Modern.csproj|d:\\data\\code\\csharpwinformextension\\.codex-tmp\\vs-reference-traces\\c8d9982fa3dc45a68a7b617cdc47325d\\modern\\s038multipropertyform.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}|Form",
+        "controlType": "ControlType.Pane",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 706.0,
+          "y": 100.0,
+          "width": 1172.0,
+          "height": 583.0
+        }
+      },
+      {
+        "name": "S038 multi-object Properties",
+        "automationId": "S038MultiPropertyForm",
+        "controlType": "ControlType.Window",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 721.0,
+          "y": 115.0,
+          "width": 336.0,
+          "height": 199.0
+        }
+      },
+      {
+        "name": "",
+        "automationId": "textBox1",
+        "controlType": "ControlType.Edit",
+        "value": "TextBox text",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 757.0,
+          "y": 232.0,
+          "width": 180.0,
+          "height": 23.0
+        }
+      },
+      {
+        "name": "Button text",
+        "automationId": "button1",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 757.0,
+          "y": 178.0,
+          "width": 120.0,
+          "height": 32.0
+        }
+      },
+      {
+        "name": "S022AnchoredResizeForm.cs [Design]",
+        "automationId": "",
+        "controlType": "ControlType.TabItem",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1554.0,
+          "y": 74.0,
+          "width": 208.0,
+          "height": 25.0
+        }
+      },
+      {
+        "name": "S022AnchoredResizeForm.cs [Design]",
+        "automationId": "Content",
+        "controlType": "ControlType.TitleBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1555.0,
+          "y": 75.0,
+          "width": 158.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "TabGroup, Children = 32, VisibleChildren = 3, DockedWidth = 1024, DockedHeight = 352",
+        "automationId": "DragHeader",
+        "controlType": "ControlType.TitleBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 705.0,
+          "y": 690.0,
+          "width": 1174.0,
+          "height": 25.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+        "controlType": "ControlType.Pane",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1591.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 968.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "PART_Header",
+        "controlType": "ControlType.TitleBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1591.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 25.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "DragHeader",
+        "controlType": "ControlType.TitleBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1591.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 25.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1600.0,
+          "y": 79.0,
+          "width": 53.0,
+          "height": 15.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.ToolBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1592.0,
+          "y": 99.0,
+          "width": 284.0,
+          "height": 30.0
+        }
+      },
+      {
+        "name": "Sort Properties By Category",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1594.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "Sort Properties Alphabetically",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1620.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "Show Properties",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1651.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1592.0,
+          "y": 129.0,
+          "width": 286.0,
+          "height": 912.0
+        }
+      },
+      {
+        "name": "Properties Window",
+        "automationId": "118493636",
+        "controlType": "ControlType.Table",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1592.0,
+          "y": 153.0,
+          "width": 286.0,
+          "height": 826.0
+        }
+      },
+      {
+        "name": "AccessibleName",
+        "automationId": "31043824",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 193.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "AccessibleRole",
+        "automationId": "10958962",
+        "controlType": "ControlType.TreeItem",
+        "value": "Default",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 212.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Appearance",
+        "automationId": "24816612",
+        "controlType": "ControlType.TreeItem",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 231.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "BackColor",
+        "automationId": "31521802",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 250.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Font",
+        "automationId": "3129189",
+        "controlType": "ControlType.TreeItem",
+        "value": "Segoe UI; 9pt",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 288.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "ForeColor",
+        "automationId": "28162706",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 307.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Text",
+        "automationId": "66586737",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 345.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Behavior",
+        "automationId": "63025737",
+        "controlType": "ControlType.TreeItem",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 383.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "AllowDrop",
+        "automationId": "22022921",
+        "controlType": "ControlType.TreeItem",
+        "value": "False",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 402.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "ContextMenuStrip",
+        "automationId": "63988564",
+        "controlType": "ControlType.TreeItem",
+        "value": "(none)",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 421.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Enabled",
+        "automationId": "39026166",
+        "controlType": "ControlType.TreeItem",
+        "value": "True",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 440.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "TabStop",
+        "automationId": "15691176",
+        "controlType": "ControlType.TreeItem",
+        "value": "True",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 459.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Visible",
+        "automationId": "7002859",
+        "controlType": "ControlType.TreeItem",
+        "value": "True",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 478.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Locked",
+        "automationId": "17585934",
+        "controlType": "ControlType.TreeItem",
+        "value": "False",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 592.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Modifiers",
+        "automationId": "24055686",
+        "controlType": "ControlType.TreeItem",
+        "value": "Private",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 611.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Anchor",
+        "automationId": "56416799",
+        "controlType": "ControlType.TreeItem",
+        "value": "Top, Left",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 687.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Location",
+        "automationId": "6358035",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 725.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "MaximumSize",
+        "automationId": "45238827",
+        "controlType": "ControlType.TreeItem",
+        "value": "0; 0",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 763.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "MinimumSize",
+        "automationId": "4496264",
+        "controlType": "ControlType.TreeItem",
+        "value": "0; 0",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 782.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Size",
+        "automationId": "40466384",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 801.0,
+          "width": 283.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "AUTOHIDE_ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1885.0,
+          "y": 154.0,
+          "width": 27.0,
+          "height": 53.0
+        }
+      }
+    ],
+    "capture": {
+      "hwnd": 69670178,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "cd07cc383397b76c211f47f49179753d9d43f8196f4c89a5c1deedf875b9c872"
+    }
+  }
+}

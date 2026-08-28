@@ -50,4 +50,18 @@ await esbuild.build({
   outfile: 'dist/performance-baseline.cjs',
 });
 
+// v2 repository-side automation gates. These are stdout-only CLIs: they validate report shape and preserve
+// external evidence as GATED / NOT_EXECUTED unless a future real product runner supplies it.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/v2HeadlessValidateCli.ts'],
+  outfile: 'dist/v2-headless-validate.cjs',
+});
+
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/v2SoakCli.ts'],
+  outfile: 'dist/v2-soak.cjs',
+});
+
 console.log('build ok');

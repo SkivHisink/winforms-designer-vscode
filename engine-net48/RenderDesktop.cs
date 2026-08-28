@@ -338,7 +338,7 @@ namespace WinFormsDesigner.Engine.Net48
         /// plain escaping of quotes alone corrupts any argument ending in a backslash (a directory path with a
         /// trailing separator, e.g. `--probe C:\Vendor\`), which then reaches the child as a stray quote.
         /// </summary>
-        private static string Quote(string value)
+        internal static string Quote(string value)
         {
             var sb = new StringBuilder("\"");
             int backslashes = 0;

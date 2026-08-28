@@ -138,6 +138,30 @@ namespace Demo {
     }
 
     [Fact]
+    public void Execute_SystemIconToBitmap_AssignsRealButtonImage()
+    {
+        const string source = @"
+namespace Demo {
+  partial class IconForm : System.Windows.Forms.Form {
+    private System.Windows.Forms.Button button1;
+    private void InitializeComponent() {
+      this.button1 = new System.Windows.Forms.Button();
+      this.button1.Image = System.Drawing.SystemIcons.Information.ToBitmap();
+      this.Controls.Add(this.button1);
+    }
+  }
+}";
+        var doc = DesignerIrBuilder.Build(source);
+        Assert.NotNull(doc);
+        Assert.True(doc!.FullCoverage, string.Join(" | ", doc.UnrepresentableReasons));
+        var result = DesignerIrExecutor.Execute(doc, new Form(), new TestHost());
+        Assert.True(result.Ok, result.FailureReason);
+        using var image = Assert.IsType<Bitmap>(((Button)result.Instances["button1"]).Image);
+        Assert.True(image.Width > 0);
+        Assert.True(image.Height > 0);
+    }
+
+    [Fact]
     public void Execute_SitesComponents_WithDesignModeTrue()
     {
         var doc = DesignerIrBuilder.Build(Source);
@@ -334,8 +358,16 @@ namespace Demo {
     private class TestBaseForm : Form
     {
         internal Button baseButton = new Button();
-        public TestBaseForm() { baseButton.Name = "baseButton"; Controls.Add(baseButton); }
+        protected Button inheritedButton = new Button();
+        public TestBaseForm()
+        {
+            baseButton.Name = "baseButton";
+            inheritedButton.Name = "inheritedButton";
+            Controls.Add(baseButton);
+            Controls.Add(inheritedButton);
+        }
         public Button BaseButton => baseButton;
+        public Button InheritedButton => inheritedButton;
     }
     private sealed class TestDerivedForm : TestBaseForm { }
 
@@ -367,6 +399,25 @@ namespace Demo {
         Assert.Equal(IrOrigin.Inherited, res.Origins["baseButton"]);
         // the inherited component is surfaced by its real base instance (for Snapshot/selection), not re-created.
         Assert.Same(root.BaseButton, res.Instances["baseButton"]);
+    }
+
+    [Fact]
+    public void Execute_ReplaysAllowlistedOverride_OnImmediateBaseInstance()
+    {
+        var doc = DerivedDoc(new IrSetProperty
+        {
+            TargetName = "inheritedButton",
+            PropertyPath = { "Text" },
+            Value = new IrString { Value = "Derived override" },
+        });
+        // Production passes the immediate compiled base to the executor; there is no compiled derived instance.
+        var root = new TestBaseForm();
+        var res = DesignerIrExecutor.Execute(doc, root, new TestHost());
+
+        Assert.True(res.Ok, res.FailureReason);
+        Assert.Equal("Derived override", root.InheritedButton.Text);
+        Assert.Same(root.InheritedButton, res.Instances["inheritedButton"]);
+        Assert.Equal(IrOrigin.Inherited, res.Origins["inheritedButton"]);
     }
 
     [Fact]

@@ -4,13 +4,80 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Newtonsoft.Json.Linq;
 
 namespace WinFormsDesigner.Engine
 {
+    public enum DesignerDocumentOwnerStatus
+    {
+        Resolved,
+        AmbiguousOwner,
+        MissingInitializeComponent,
+        UnsupportedNestedDesigner,
+        NoProject
+    }
+
+    public sealed class DesignerDocumentOwnerResolution
+    {
+        public DesignerDocumentOwnerStatus Status { get; set; }
+        public string DiagnosticCode { get; set; } = "";
+        public string TypeName { get; set; } = "";
+        public string ProjectPath { get; set; } = "";
+        public string[] Owners { get; set; } = Array.Empty<string>();
+        public bool EmptyInitializeComponentSurface { get; set; }
+        /// <summary>True when more than one project compiles this file and none of them can influence the render, so
+        /// <see cref="ProjectPath"/> is a deterministic pick among <see cref="Owners"/> rather than the sole owner.
+        /// See the modern-inert rule in <c>ResolveDesignerDocumentOwner</c>.</summary>
+        public bool SelectedAmongEquivalentOwners { get; set; }
+
+        public static DesignerDocumentOwnerResolution MissingInitializeComponent() => new()
+        {
+            Status = DesignerDocumentOwnerStatus.MissingInitializeComponent,
+            DiagnosticCode = "MISSING_INITIALIZE_COMPONENT"
+        };
+
+        public static DesignerDocumentOwnerResolution NoProject() => new()
+        {
+            Status = DesignerDocumentOwnerStatus.NoProject,
+            DiagnosticCode = "NO_PROJECT"
+        };
+
+        public static DesignerDocumentOwnerResolution UnsupportedNested(string typeName) => new()
+        {
+            Status = DesignerDocumentOwnerStatus.UnsupportedNestedDesigner,
+            DiagnosticCode = "NESTED_DESIGNER_UNSUPPORTED",
+            TypeName = typeName
+        };
+
+        public static DesignerDocumentOwnerResolution Ambiguous(IEnumerable<string> owners, string typeName) => new()
+        {
+            Status = DesignerDocumentOwnerStatus.AmbiguousOwner,
+            DiagnosticCode = "AMBIGUOUS_OWNER",
+            TypeName = typeName,
+            Owners = owners.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray()
+        };
+
+        public static DesignerDocumentOwnerResolution Resolved(string owner, string typeName,
+            bool emptyInitializeComponentSurface = false, string[]? equivalentOwners = null) => new()
+        {
+            Status = DesignerDocumentOwnerStatus.Resolved,
+            DiagnosticCode = "NONE",
+            ProjectPath = owner,
+            TypeName = typeName,
+            Owners = equivalentOwners ?? new[] { owner },
+            EmptyInitializeComponentSurface = emptyInitializeComponentSurface,
+            SelectedAmongEquivalentOwners = equivalentOwners is { Length: > 1 }
+        };
+    }
+
     /// <summary>
     /// Discovery of a project's built output assembly for a given .Designer.cs.
     /// Two strategies, tried in order by <see cref="ResolveOutputAssembly"/>:
@@ -103,6 +170,123 @@ namespace WinFormsDesigner.Engine
             return FindOutputAssemblyFromCsproj(csproj);
         }
 
+        public static DesignerDocumentOwnerResolution ResolveDesignerDocumentOwner(
+            string designerFilePath,
+            IEnumerable<string> projectPaths,
+            string? designerSourceText = null,
+            string? codeBehindSourceText = null)
+        {
+            string source;
+            try { source = designerSourceText ?? File.ReadAllText(designerFilePath); }
+            catch { return DesignerDocumentOwnerResolution.MissingInitializeComponent(); }
+
+            var root = CSharpSyntaxTree.ParseText(source, path: designerFilePath).GetRoot();
+            var form = FormClassResolver.FormClass(root);
+            var init = FormClassResolver.InitMethodOf(form);
+            bool emptyInitializeComponentSurface = false;
+            if (form == null || init?.Body == null)
+            {
+                form = EmptySurfaceFormClass(root, codeBehindSourceText);
+                if (form == null) return DesignerDocumentOwnerResolution.MissingInitializeComponent();
+                emptyInitializeComponentSurface = true;
+            }
+
+            string typeName = FormClassResolver.QualifiedName(form);
+            // Actual Visual Studio Enterprise 2026 18.7 refuses a Form nested inside another type with its
+            // fail-closed "none of the classes within it can be designed" page. Do this in the product's mandatory
+            // pre-render owner gate: allowing the syntax-only engine to draw a plausible canvas would be a silent
+            // compatibility fork, and would expose edits for a document Visual Studio itself cannot design.
+            if (form.Ancestors().OfType<TypeDeclarationSyntax>().Any())
+                return DesignerDocumentOwnerResolution.UnsupportedNested(typeName);
+
+            string fullDesignerPath;
+            try { fullDesignerPath = Path.GetFullPath(designerFilePath); }
+            catch { return DesignerDocumentOwnerResolution.NoProject(); }
+
+            var normalizedProjects = projectPaths
+                .Select(TryFullPath)
+                .Where(projectPath => projectPath != null)
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var owners = normalizedProjects
+                .Where(projectPath => ProjectContainsCompileFile(projectPath, fullDesignerPath, normalizedProjects))
+                .ToArray();
+
+            if (owners.Length == 0) return DesignerDocumentOwnerResolution.NoProject();
+            if (owners.Length > 1)
+            {
+                // A shared project (.projitems imported by several .csproj) and a file linked into two projects are
+                // ordinary Visual Studio layouts, and VS offers a project context for them instead of declaring the
+                // document undesignable. Refusing on candidate COUNT alone made every such workspace unrenderable —
+                // strictly worse than the previous release, which rendered them.
+                //
+                // The pick is only safe where the owner cannot influence the render at all. That is exactly the
+                // modern route: the host resolves it to { kind: 'modern', asm: undefined } and the engine then finds
+                // its own project by walking UP from the designer file (see FindCsproj), so which contender we name
+                // never reaches the renderer. On the .NET Framework route the host instead calls
+                // resolveFrameworkOutput(owner) and instantiates the form from THAT project's compiled binary, so an
+                // arbitrary pick there could render the wrong build (per-project DefineConstants and differing vendor
+                // reference versions are the whole reason shared projects exist). Multi-target and unreadable/
+                // undeclared TFMs stay ambiguous too — "unknown" must never compare equal to "unknown".
+                var ordered = owners.OrderBy(projectPath => projectPath, StringComparer.OrdinalIgnoreCase).ToArray();
+                if (ordered.All(IsModernInertOwner))
+                    return DesignerDocumentOwnerResolution.Resolved(
+                        ordered[0], typeName, emptyInitializeComponentSurface, ordered);
+                return DesignerDocumentOwnerResolution.Ambiguous(owners, typeName);
+            }
+            return DesignerDocumentOwnerResolution.Resolved(owners[0], typeName, emptyInitializeComponentSurface);
+        }
+
+        private static ClassDeclarationSyntax? EmptySurfaceFormClass(
+            Microsoft.CodeAnalysis.SyntaxNode designerRoot,
+            string? codeBehindSourceText)
+        {
+            if (string.IsNullOrWhiteSpace(codeBehindSourceText)) return null;
+            var topLevelTypes = designerRoot.DescendantNodes().OfType<TypeDeclarationSyntax>()
+                .Where(candidate => !candidate.Ancestors().OfType<TypeDeclarationSyntax>().Any())
+                .ToArray();
+            if (topLevelTypes.Length != 1 || topLevelTypes[0] is not ClassDeclarationSyntax designerClass)
+                return null;
+            if (!designerClass.Modifiers.Any(modifier =>
+                    modifier.IsKind(Microsoft.CodeAnalysis.CSharp.SyntaxKind.PartialKeyword))
+                || designerClass.Members.Count != 0
+                || designerClass.AttributeLists.Count != 0
+                || designerClass.BaseList != null
+                || designerClass.TypeParameterList != null
+                || designerClass.ConstraintClauses.Count != 0)
+                return null;
+
+            var codeRoot = CSharpSyntaxTree.ParseText(codeBehindSourceText).GetRoot();
+            string identity = FormClassResolver.QualifiedName(designerClass);
+            var matching = codeRoot.DescendantNodes().OfType<ClassDeclarationSyntax>()
+                .Where(candidate => FormClassResolver.QualifiedName(candidate) == identity)
+                .ToArray();
+            if (matching.Length != 1 || !matching[0].Modifiers.Any(modifier =>
+                    modifier.IsKind(Microsoft.CodeAnalysis.CSharp.SyntaxKind.PartialKeyword))) return null;
+            TypeSyntax? baseType = matching[0].BaseList?.Types.FirstOrDefault()?.Type;
+            return baseType != null && IsFrameworkSurfaceBase(baseType, codeRoot) ? designerClass : null;
+        }
+
+        private static bool IsFrameworkSurfaceBase(TypeSyntax baseType, Microsoft.CodeAnalysis.SyntaxNode codeRoot)
+        {
+            string name = string.Concat(baseType.DescendantTokens(descendIntoTrivia: false).Select(token => token.Text));
+            if (name.StartsWith("global::", StringComparison.Ordinal)) name = name.Substring("global::".Length);
+            if (name == "System.Windows.Forms.Form" || name == "System.Windows.Forms.UserControl") return true;
+
+            foreach (UsingDirectiveSyntax usingDirective in codeRoot.DescendantNodes().OfType<UsingDirectiveSyntax>())
+            {
+                string imported = usingDirective.Name?.ToString() ?? "";
+                if (usingDirective.Alias != null
+                    && usingDirective.Alias.Name.Identifier.Text == name
+                    && (imported == "System.Windows.Forms.Form" || imported == "System.Windows.Forms.UserControl"))
+                    return true;
+                if (usingDirective.Alias == null && imported == "System.Windows.Forms"
+                    && (name == "Form" || name == "UserControl")) return true;
+            }
+            return false;
+        }
+
         // ---- MSBuild design-time evaluation (strategy 1) ----
 
         private static string? TryResolveViaMSBuild(string csproj, bool allowEval)
@@ -146,14 +330,243 @@ namespace WinFormsDesigner.Engine
             return candidates == null ? null : FreshestExisting(candidates);
         }
 
+        private sealed class ProjectDocument
+        {
+            public required string FilePath { get; init; }
+            public required XDocument Document { get; init; }
+        }
+
+        private static string? TryFullPath(string value)
+        {
+            try { return Path.GetFullPath(value); }
+            catch { return null; }
+        }
+
+        private static readonly Regex XmlCommentSpan = new(@"<!--.*?-->", RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex SingleTargetFramework =
+            new(@"<TargetFramework(?:\s[^>]*)?>\s*([^<]+?)\s*</TargetFramework>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex MultiTargetFrameworks =
+            new(@"<TargetFrameworks(?:\s[^>]*)?>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex ClassicTargetFrameworkVersion =
+            new(@"<TargetFrameworkVersion(?:\s[^>]*)?>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex FrameworkTfm =
+            new(@"^net(2|3|4)\d?\d?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// True only when this project provably routes to the MODERN engine, where the owner project never reaches
+        /// the renderer (the host passes no assembly and the engine finds its own project by walking up from the
+        /// designer file). Used to decide whether naming one contender among several co-owners is inert.
+        /// <para/>
+        /// Deliberately fail-closed and deliberately textual, mirroring the host's own reader
+        /// (extension/src/csprojRef.ts <c>projectTargetFramework</c> / <c>isFrameworkTfm</c>) so engine and host cannot
+        /// disagree about the route: an unreadable project, one that declares no TFM in its own file (a
+        /// Directory.Build.props-driven project), one that multi-targets, and any classic
+        /// <c>&lt;TargetFrameworkVersion&gt;</c> or net2x/net3x/net4x project all return false.
+        /// </summary>
+        private static bool IsModernInertOwner(string projectPath)
+        {
+            string text;
+            try { text = File.ReadAllText(projectPath); }
+            catch { return false; }
+
+            string live = XmlCommentSpan.Replace(text, "");
+            // Multi-target and classic projects reach the net48 route, where the owner selects the compiled binary.
+            if (MultiTargetFrameworks.IsMatch(live) || ClassicTargetFrameworkVersion.IsMatch(live)) return false;
+
+            var single = SingleTargetFramework.Match(live);
+            if (!single.Success) return false;
+            return !FrameworkTfm.IsMatch(single.Groups[1].Value.Trim());
+        }
+
+        private static bool ProjectContainsCompileFile(
+            string projectPath,
+            string filePath,
+            IReadOnlyList<string> workspaceProjects)
+        {
+            try
+            {
+                string fullProjectPath = Path.GetFullPath(projectPath);
+                string projectDir = Path.GetDirectoryName(fullProjectPath)!;
+                string fullFilePath = Path.GetFullPath(filePath);
+                var documents = LoadProjectDocuments(fullProjectPath);
+                var root = documents[0].Document;
+                bool sdkStyle = root.Root?.Attribute("Sdk") != null
+                    || root.Root?.Elements().Any(e => e.Name.LocalName == "Sdk") == true;
+
+                foreach (var projectDocument in documents)
+                {
+                    string itemDir = Path.GetDirectoryName(projectDocument.FilePath)!;
+                    foreach (var compile in projectDocument.Document.Descendants().Where(e => e.Name.LocalName == "Compile"))
+                    {
+                        string? remove = compile.Attribute("Remove")?.Value;
+                        if (remove != null && ProjectItemMatches(itemDir, remove, fullFilePath)) return false;
+                    }
+                }
+
+                foreach (var projectDocument in documents)
+                {
+                    string itemDir = Path.GetDirectoryName(projectDocument.FilePath)!;
+                    foreach (var compile in projectDocument.Document.Descendants().Where(e => e.Name.LocalName == "Compile"))
+                    {
+                        string? include = compile.Attribute("Include")?.Value;
+                        if (include != null && ProjectItemMatches(itemDir, include, fullFilePath)) return true;
+                    }
+                }
+
+                return sdkStyle
+                    && IsInsideProjectDir(projectDir, fullFilePath)
+                    && !IsInBuildOutput(projectDir, fullFilePath)
+                    // SDK default Compile globs stop at a nested project boundary. Treating both the outer and inner
+                    // project as owners made an ordinary nested WinForms project fail as AMBIGUOUS_OWNER.
+                    && !IsInsideNestedProject(projectDir, fullProjectPath, fullFilePath, workspaceProjects);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static IReadOnlyList<ProjectDocument> LoadProjectDocuments(string rootProjectPath)
+        {
+            const int MaxImportedDocuments = 128;
+            var result = new List<ProjectDocument>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pending = new Queue<string>();
+            pending.Enqueue(Path.GetFullPath(rootProjectPath));
+            while (pending.Count > 0)
+            {
+                string current = pending.Dequeue();
+                if (!visited.Add(current)) continue;
+                if (result.Count >= MaxImportedDocuments) throw new InvalidDataException("project import graph is too large");
+                var document = XDocument.Load(current);
+                result.Add(new ProjectDocument { FilePath = current, Document = document });
+                string currentDir = Path.GetDirectoryName(current)!;
+                foreach (var import in document.Descendants().Where(e => e.Name.LocalName == "Import"))
+                {
+                    string? importValue = import.Attribute("Project")?.Value;
+                    if (string.IsNullOrWhiteSpace(importValue)) continue;
+                    foreach (string imported in ExpandStaticProjectPath(currentDir, importValue))
+                    {
+                        // Document ownership only needs shared item membership. Do not recursively evaluate arbitrary
+                        // SDK/targets imports (which can contain properties and executable MSBuild semantics).
+                        if (!string.Equals(Path.GetExtension(imported), ".projitems", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (File.Exists(imported)) pending.Enqueue(imported);
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static IEnumerable<string> ExpandStaticProjectPath(string projectDir, string value)
+        {
+            string expanded = value.Replace("$(MSBuildThisFileDirectory)", projectDir + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+            if (expanded.Contains("$(") || expanded.Contains("@(") || expanded.Contains("%(")) yield break;
+            string candidate = Path.IsPathRooted(expanded)
+                ? Path.GetFullPath(expanded)
+                : Path.GetFullPath(Path.Combine(projectDir, expanded.Replace('/', Path.DirectorySeparatorChar)));
+            if (candidate.IndexOfAny(new[] { '*', '?' }) < 0)
+            {
+                yield return candidate;
+                yield break;
+            }
+            string? dir = Path.GetDirectoryName(candidate);
+            string pattern = Path.GetFileName(candidate);
+            if (dir == null || !Directory.Exists(dir)) yield break;
+            foreach (string match in Directory.EnumerateFiles(dir, pattern).Take(128)) yield return Path.GetFullPath(match);
+        }
+
+        private static bool ProjectItemMatches(string projectDir, string include, string fullFilePath)
+        {
+            include = include.Replace("$(MSBuildThisFileDirectory)", projectDir + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+            if (include.IndexOfAny(new[] { '*', '?' }) >= 0
+                || include.Contains("$(")
+                || include.Contains("@(")
+                || include.Contains("%("))
+                return false;
+            string candidate = Path.GetFullPath(Path.Combine(projectDir, include.Replace('/', Path.DirectorySeparatorChar)));
+            return string.Equals(candidate, fullFilePath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsInsideNestedProject(
+            string projectDir,
+            string fullProjectPath,
+            string fullFilePath,
+            IReadOnlyList<string> workspaceProjects)
+        {
+            foreach (string otherProject in workspaceProjects)
+            {
+                if (string.Equals(otherProject, fullProjectPath, StringComparison.OrdinalIgnoreCase)) continue;
+                string? otherDir = Path.GetDirectoryName(otherProject);
+                if (otherDir == null || !IsInsideProjectDir(projectDir, otherDir)) continue;
+                if (IsInsideProjectDir(otherDir, fullFilePath)) return true;
+            }
+            return false;
+        }
+
+        private static bool IsInsideProjectDir(string projectDir, string fullFilePath)
+        {
+            string relative = Path.GetRelativePath(Path.GetFullPath(projectDir), fullFilePath);
+            return relative.Length > 0 && !relative.StartsWith("..") && !Path.IsPathRooted(relative);
+        }
+
+        private static bool IsInBuildOutput(string projectDir, string fullFilePath)
+        {
+            string relative = Path.GetRelativePath(Path.GetFullPath(projectDir), fullFilePath)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            return relative.StartsWith("bin/", StringComparison.OrdinalIgnoreCase)
+                || relative.StartsWith("obj/", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string? FreshestExisting(IReadOnlyList<string> candidates)
         {
             return candidates
                 .Where(File.Exists)
                 .Select(p => new FileInfo(p))
+                .Where(f => IsProcessArchitectureCompatibleAssembly(f.FullName))
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .Select(f => f.FullName)
                 .FirstOrDefault();
+        }
+
+        /// <summary>
+        /// A project can retain outputs for several RIDs under one <c>bin/</c>. Freshness alone is not authority:
+        /// after an ARM64 publish, an x64 designer used to select the newer ARM64 DLL, fail to load it, and quietly
+        /// render a framework-only/near-empty canvas. Accept a real managed assembly only when its PE machine can load
+        /// in this process. Pure IL AnyCPU remains portable; fixed-machine and 32-bit-required images must match.
+        /// </summary>
+        private static bool IsProcessArchitectureCompatibleAssembly(string path)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var pe = new PEReader(stream, PEStreamOptions.LeaveOpen);
+                if (!pe.HasMetadata || pe.PEHeaders.CorHeader == null) return false;
+                return IsMachineCompatible(pe.PEHeaders.CoffHeader.Machine, pe.PEHeaders.CorHeader.Flags,
+                    RuntimeInformation.ProcessArchitecture);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal static bool IsMachineCompatible(Machine machine, CorFlags flags, Architecture processArchitecture)
+        {
+            bool portableIl = machine == Machine.I386
+                && (flags & CorFlags.ILOnly) != 0
+                && (flags & CorFlags.Requires32Bit) == 0;
+            if (portableIl) return true;
+
+            return processArchitecture switch
+            {
+                Architecture.X86 => machine == Machine.I386,
+                Architecture.X64 => machine == Machine.Amd64,
+                Architecture.Arm => machine == Machine.ArmThumb2,
+                Architecture.Arm64 => machine == Machine.Arm64,
+                _ => false,
+            };
         }
 
         /// <summary>
@@ -417,9 +830,11 @@ namespace WinFormsDesigner.Engine
             // the .dll), which silently empties the project-control toolbox. A naive freshest-of-{dll,exe} picks the
             // .exe whenever the apphost is stamped at/after the .dll (the common case), so we must not order across
             // the two extensions. The .exe fallback still covers a .NET Framework Exe output (whose .exe IS the
-            // managed assembly, with no sibling .dll) and a self-contained single-file publish.
+            // managed assembly, with no sibling .dll). Native apphosts and self-contained single-file launchers are
+            // not loadable managed assemblies and are intentionally excluded by the PE/CLR-header filter below.
             string? Freshest(string ext) => Directory.EnumerateFiles(bin, asmName + ext, SearchOption.AllDirectories)
                 .Select(p => new FileInfo(p))
+                .Where(f => IsProcessArchitectureCompatibleAssembly(f.FullName))
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .Select(f => f.FullName)
                 .FirstOrDefault();

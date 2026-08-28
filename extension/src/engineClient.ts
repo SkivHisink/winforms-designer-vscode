@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as net from 'net';
 import * as path from 'path';
 import {
@@ -7,6 +7,29 @@ import {
   MessageConnection,
 } from 'vscode-jsonrpc/node';
 import { StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node';
+import { RecoveryDecision } from './engineRecovery';
+import {
+  SupervisedWorker,
+  WorkerAdapter,
+  WorkerClock,
+  WorkerEnvelope,
+  WorkerReply,
+  WorkerRecoveryPolicy,
+  WorkerRequestResult,
+  WorkerSupervisor,
+} from './workerSupervisor';
+import {
+  DesignTimeTrust,
+  ProjectArchitecture,
+  WorkerArchitecture,
+  WorkerKey,
+  WorkerPayloadIdentity,
+  WorkerRefusalCode,
+  WorkerRuntime,
+  WorkspaceTrust,
+  selectWorker,
+  workerKeyId,
+} from './workerSelection';
 
 /**
 * VS Code-free client for the WinForms design engine. Spawns the .NET engine in
@@ -227,6 +250,16 @@ function asmTextTail(controlAssemblyPath?: string, sourceText?: string): (string
   return controlAssemblyPath ? [controlAssemblyPath] : [];
 }
 
+/** Preserve the two established optional slots before appending the net48-only current code-behind snapshot. */
+function asmTextCodeBehindTail(
+  controlAssemblyPath?: string,
+  sourceText?: string,
+  codeBehindText?: string,
+): (string | null)[] {
+  if (codeBehindText !== undefined) return [controlAssemblyPath ?? null, sourceText ?? null, codeBehindText];
+  return asmTextTail(controlAssemblyPath, sourceText);
+}
+
 /** A single control rendered to PNG + its placement (dirty-region patch). See engine RenderControl. */
 export interface ControlPatch {
   png: Buffer; // the control's PNG (empty when not found)
@@ -270,17 +303,38 @@ export interface LayoutControl {
   y: number;
   width: number;
   height: number;
+  /** Exact live client rectangle in the same full-frame logical-pixel space as x/y. */
+  clientX?: number;
+  clientY?: number;
+  clientWidth?: number;
+  clientHeight?: number;
+  /** Live WinForms layout distances used by Margin/Padding-aware snaplines. */
+  margin?: GeometrySpacing | null;
+  padding?: GeometrySpacing | null;
+  /** Absolute full-frame text baseline for Label/TextBox-class controls; -1/absent means unsupported. */
+  textBaseline?: number;
   depth: number; // nesting from root (root = 0); higher wins a hit-test
   tabIndex: number; // control's TabIndex for the tab-order overlay (root = -1)
   anchor: string; // anchor edges ("Top, Left" / "None") for the canvas anchor-tether overlay
   dock: string; // dock style ("Fill"/"Top"/… / "None") for the canvas dock indicator
   isTabHost?: boolean; // net48 compiled preview: control is a tab host (TabControl/XtraTabControl) → header clicks switch tabs
   isStripHost?: boolean; // control is a ToolStrip/MenuStrip/StatusStrip → canvas routes clicks into on-canvas item mode
+  /** Exact live TableLayoutPanel grid dimensions; empty/absent for other controls. */
+  tableColumnWidths?: number[];
+  tableRowHeights?: number[];
+  /** Live FlowLayoutPanel ordering metadata; empty/absent for other controls. */
+  flowDirection?: 'LeftToRight' | 'RightToLeft' | 'TopDown' | 'BottomUp' | string;
+  flowWrapContents?: boolean;
   /** Visual-inheritance origin supplied by the engine. Missing on older engines and treated as unresolved/read-only. */
   ownership?: 'root' | 'currentSource' | 'inherited' | 'unresolved';
   /** Engine-authoritative editability. The host/webview must not infer this from the control name or tree position. */
   editable?: boolean;
   readOnlyReason?: string | null;
+  /** Narrow derived-source override capability. Structural component editability remains false. */
+  inheritedOverrideEditable?: boolean;
+  inheritedGeometryOverrideEditable?: boolean;
+  /** Opaque engine-issued compiled-base field identity; never client-authored. */
+  baseIdentityToken?: string;
 }
 
 /** One top-level ToolStrip/MenuStrip/StatusStrip item's window-space rect (or the trailing "Type Here" slot) for
@@ -381,6 +435,8 @@ export interface GeometryDragStartResult {
   maximumHeight: number;
   canMove: boolean;
   canResize: boolean;
+  /** Present only for an inherited derived-source geometry override. */
+  baseIdentityToken?: string;
 }
 
 /** Engine-corrected direct-manipulation result. `designerText` is the only text the host may commit. */
@@ -414,11 +470,12 @@ export function commitGeometryBounds(
   bounds: GeometryRect,
   controlAssemblyPath?: string,
   sourceText?: string,
+  expectedBaseIdentityToken?: string,
 ): Promise<GeometryCommitResult> {
   return engine.connection.sendRequest<GeometryCommitResult>(
     'CommitGeometryBounds', designerFilePath, componentId,
     bounds.x, bounds.y, bounds.width, bounds.height,
-    ...asmTextTail(controlAssemblyPath, sourceText));
+    ...asmTextTail(controlAssemblyPath, sourceText), expectedBaseIdentityToken ?? null);
 }
 
 /**
@@ -493,7 +550,8 @@ export async function authorizeGeometryCommit(
     return { ok: false, reason: 'live geometry metadata is incomplete', designerText: null, start, result: null };
   }
   const result = await commitGeometryBounds(
-    engine, designerFilePath, componentId, requested, controlAssemblyPath, sourceText);
+    engine, designerFilePath, componentId, requested, controlAssemblyPath, sourceText,
+    start.baseIdentityToken);
   if (!result.ok || result.componentId !== componentId) {
     return {
       ok: false,
@@ -551,6 +609,8 @@ export async function authorizeGeometryBatch(
 
 /** A full-frame render + the click-to-select hit-test map from ONE engine graph load. See RenderWithLayout. */
 export interface RenderLayout {
+  /** Opaque process-local identity of the retained modern DesignSurface, including its 1x/2x capture-scale contract. */
+  graphToken?: string;
   png: Buffer; // full-frame PNG (same bytes as renderDesigner)
   width: number; // full frame size
   height: number;
@@ -591,6 +651,16 @@ export interface RenderLayout {
    * when the root is not a container. Both engines report their OWN runtime's value, which is what lets the first
    * control drop persist the pair the target actually scales by. */
   autoScaleDimensions?: string;
+  /** net48 bounded single-Text interpreted live edit: exact post-set metadata from the same graph as the picture. */
+  component?: ComponentDesc | null;
+  /** net48 interpreted live edit returned one unchanged-geometry control bitmap instead of a full frame. */
+  isPatch?: boolean;
+  /** Dirty patch proved the existing hit-test/tray/item model unchanged; response collections are intentionally empty. */
+  layoutUnchanged?: boolean;
+  patchX?: number;
+  patchY?: number;
+  patchWidth?: number;
+  patchHeight?: number;
 }
 
 /**
@@ -612,9 +682,10 @@ export async function renderWithLayout(
   const raw = await engine.connection.sendRequest<{
     png: string; width: number; height: number; clientWidth: number; clientHeight: number;
     rootType: string; controls: LayoutControl[]; tray: TrayComponent[]; toolStripItems?: ToolStripItemBounds[]; unrepresentable?: string[];
-    inheritedBase?: boolean; baseTypeName?: string; unrenderableResxCount?: number; autoScaleDimensions?: string;
+    inheritedBase?: boolean; baseTypeName?: string; unrenderableResxCount?: number; autoScaleDimensions?: string; graphToken?: string;
   }>('RenderWithLayout', designerFilePath, controlAssemblyPath ?? null, sourceText ?? null, scale ?? 1, selectedTabs ?? null);
   return {
+    graphToken: raw.graphToken ?? '',
     png: Buffer.from(raw.png ?? '', 'base64'),
     width: raw.width,
     height: raw.height,
@@ -635,6 +706,49 @@ export async function renderWithLayout(
     unrenderableResxCount: raw.unrenderableResxCount ?? 0, // pre-S3 engine → 0 (no banner), same version-skew default as inheritedBase
     autoScaleDimensions: raw.autoScaleDimensions ?? '',
   };
+}
+
+/** One exact post-edit snapshot produced from the retained modern DesignSurface that drew the previous frame. */
+export interface CachedTextPropertyEdit {
+  applied: boolean;
+  reason: string;
+  graphToken: string;
+  fullFrame: boolean;
+  layoutUnchanged: boolean;
+  png: Buffer;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  frameWidth: number;
+  frameHeight: number;
+  clientWidth: number;
+  clientHeight: number;
+  controls: LayoutControl[];
+  toolStripItems: ToolStripItemBounds[];
+  component: ComponentDesc | null;
+  geometry: GeometryDragStartResult | null;
+}
+
+/**
+ * Echo an engine-issued graph token plus the exact old/new source bytes for a bounded Text edit. The engine repeats the
+ * source-first proof and returns applied=false on any mismatch; callers then use the normal graph-rebuild path.
+ */
+export async function applyCachedTextPropertyEdit(
+  engine: EngineHandle,
+  graphToken: string,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  newValueExpr: string,
+  beforeSourceText: string,
+  afterSourceText: string,
+): Promise<CachedTextPropertyEdit> {
+  const raw = await engine.connection.sendRequest<Omit<CachedTextPropertyEdit, 'png'> & { png: string }>(
+    'ApplyCachedTextPropertyEdit', graphToken, designerFilePath, componentId, propertyName, newValueExpr,
+    beforeSourceText, afterSourceText,
+  );
+  return { ...raw, png: Buffer.from(raw.png ?? '', 'base64') };
 }
 
 /** The result of converting a plain form into a localizable one (Visual Studio's Localizable = true). */
@@ -712,9 +826,11 @@ export async function renderInterpretedWithLayout(
   height?: number,
   selectedTabs?: string[], // transient "hostField=pageField" tab overrides, re-supplied each render
   scale?: number,
+  codeBehindText?: string,
 ): Promise<InterpretedRenderResult> {
   const raw = await engine.connection.sendRequest<CompiledRenderRaw & { renderMode?: string; fallbackReason?: string }>(
-    'RenderInterpretedWithLayout', designerFilePath, assemblyPath, sourceText ?? '', rootTypeName ?? null, probeDirs ?? null, width ?? 0, height ?? 0, selectedTabs ?? null, scale ?? 1);
+    'RenderInterpretedWithLayout', designerFilePath, assemblyPath, sourceText ?? '', rootTypeName ?? null,
+    probeDirs ?? null, width ?? 0, height ?? 0, selectedTabs ?? null, scale ?? 1, codeBehindText ?? null);
   return { ...fromCompiledRaw(raw), renderMode: raw.renderMode ?? 'compiled', fallbackReason: raw.fallbackReason ?? '' };
 }
 
@@ -725,6 +841,8 @@ interface CompiledRenderRaw {
   liveInstanceId?: string; // 1.0.0 — RenderLayoutResult.LiveInstanceId (camelCased on the wire)
   liveBuildId?: string; // 1.0.0 — RenderLayoutResult.LiveBuildId
   autoScaleDimensions?: string; // 1.9.0 — this runtime's live CurrentAutoScaleDimensions ("6F, 13F")
+  component?: ComponentDesc | null; // bounded interpreted single-Text live edit only
+  isPatch?: boolean; layoutUnchanged?: boolean; patchX?: number; patchY?: number; patchWidth?: number; patchHeight?: number;
 }
 
 function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
@@ -751,6 +869,13 @@ function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
     liveInstanceId: raw.liveInstanceId,
     liveBuildId: raw.liveBuildId,
     autoScaleDimensions: raw.autoScaleDimensions ?? '',
+    component: raw.component ?? null,
+    isPatch: raw.isPatch ?? false,
+    layoutUnchanged: raw.layoutUnchanged ?? false,
+    patchX: raw.patchX ?? 0,
+    patchY: raw.patchY ?? 0,
+    patchWidth: raw.patchWidth ?? 0,
+    patchHeight: raw.patchHeight ?? 0,
     applied: raw.applied ?? true,
     diagnostics: raw.diagnostics ?? '',
   };
@@ -760,12 +885,13 @@ function fromCompiledRaw(raw: CompiledRenderRaw): RenderLayout {
 * .Designer.cs field name). Same ComponentDesc shape as the net9 describeComponent. null when not found. */
 export function describeCompiledComponent(
   engine: EngineHandle, designerFilePath: string, assemblyPath: string, componentId: string,
-  rootTypeName?: string, probeDirs?: string[], sourceText?: string,
+  rootTypeName?: string, probeDirs?: string[], sourceText?: string, codeBehindText?: string,
 ): Promise<ComponentDesc | null> {
   // sourceText = the UNSAVED .Designer.cs buffer; when passed, the net48 SourceMetadata pass parses IT (not the on-disk
   // file) so a just-wired event / just-reset property reflects the dirty edit immediately. Omitted → engine reads disk.
   return engine.connection.sendRequest<ComponentDesc | null>(
-    'DescribeCompiledComponent', designerFilePath, assemblyPath, componentId, rootTypeName ?? null, probeDirs ?? null, sourceText ?? null);
+    'DescribeCompiledComponent', designerFilePath, assemblyPath, componentId, rootTypeName ?? null,
+    probeDirs ?? null, sourceText ?? null, codeBehindText ?? null);
 }
 
 /** describe one component of the INTERPRETED live-source instance, so the property panel matches
@@ -774,11 +900,11 @@ export function describeCompiledComponent(
 * never substitute compiled values under an interpreted canvas. */
 export function describeInterpretedComponent(
   engine: EngineHandle, designerFilePath: string, assemblyPath: string, sourceText: string, componentId: string,
-  rootTypeName?: string, probeDirs?: string[], width?: number, height?: number,
+  rootTypeName?: string, probeDirs?: string[], width?: number, height?: number, codeBehindText?: string,
 ): Promise<ComponentDesc | null> {
   return engine.connection.sendRequest<ComponentDesc | null>(
     'DescribeInterpretedComponent', designerFilePath, assemblyPath, sourceText ?? '', componentId,
-    rootTypeName ?? null, probeDirs ?? null, width ?? 0, height ?? 0);
+    rootTypeName ?? null, probeDirs ?? null, width ?? 0, height ?? 0, codeBehindText ?? null);
 }
 
 /** The vendor smart-tag menu a control's compiled type DECLARES (the DevExpress "XtraTabControl Tasks" panel).
@@ -792,6 +918,42 @@ export function listCompiledVendorSmartTags(
 ): Promise<VendorSmartTag[]> {
   return engine.connection.sendRequest<VendorSmartTag[]>(
     'ListCompiledVendorSmartTags', designerFilePath, assemblyPath, componentId, rootTypeName ?? null, probeDirs ?? null);
+}
+
+/** Activate one repository-certified ComponentDesigner in the net48 engine's disposable hosted process. The engine,
+* not the caller, revalidates assembly identity and owns crash quarantine for its full process lifetime. */
+export function inspectCertifiedHostedDesigner(
+  engine: EngineHandle,
+  assemblyPath: string,
+  componentTypeName: string,
+  certificationId: string,
+): Promise<HostedDesignerProbeResult> {
+  return engine.connection.sendRequest<HostedDesignerProbeResult>(
+    'InspectCertifiedHostedDesigner', assemblyPath, componentTypeName, certificationId);
+}
+
+/** Revalidate complete/incomplete service advertisement for one exact repository-certified ComponentDesigner. */
+export function inspectCertifiedHostedServiceKernel(
+  engine: EngineHandle,
+  assemblyPath: string,
+  componentTypeName: string,
+  certificationId: string,
+): Promise<HostedServiceKernelProductResult> {
+  return engine.connection.sendRequest<HostedServiceKernelProductResult>(
+    'InspectCertifiedHostedServiceKernel', assemblyPath, componentTypeName, certificationId);
+}
+
+/** Invoke one exact certified DesignerAction method in the disposable service graph. The returned edits are proposals
+* and must still pass the ordinary source planner as one complete transaction. */
+export function invokeCertifiedHostedServiceAction(
+  engine: EngineHandle,
+  assemblyPath: string,
+  componentTypeName: string,
+  certificationId: string,
+  actionId: string,
+): Promise<HostedServiceKernelProductResult> {
+  return engine.connection.sendRequest<HostedServiceKernelProductResult>(
+    'InvokeCertifiedHostedServiceAction', assemblyPath, componentTypeName, certificationId, actionId);
 }
 
 /** Apply ONE property edit to the net48 live instance + re-render (live preview for a designer-originated edit).
@@ -981,8 +1143,8 @@ export async function releaseAllCompiledAssemblies(engine: EngineHandle): Promis
   return { attempted: r?.attempted ?? 0, released: r?.released ?? 0, failed: r?.failed ?? 0 };
 }
 
-/** One live property edit for the net48 batch-mutate (drag/resize/align). */
-export interface CompiledEdit { componentId: string; propName: string; rawValue: string; }
+/** One live property operation for the net48 batch-mutate (drag/resize/align/multi-object property set/reset). */
+export interface CompiledEdit { componentId: string; propName: string; rawValue: string; reset?: boolean; }
 
 /** Apply a BATCH of property edits to the net48 live instance + re-render once (drag/resize/align). */
 export async function applyCompiledEdits(
@@ -1006,10 +1168,11 @@ export async function applyInterpretedEditsLive(
   engine: EngineHandle, designerFilePath: string, assemblyPath: string, edits: CompiledEdit[],
   beforeSourceText: string, afterSourceText: string,
   rootTypeName?: string, probeDirs?: string[], selectedTabs?: string[], renderScale?: number,
+  codeBehindText?: string,
 ): Promise<RenderLayout> {
   const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
     'ApplyInterpretedEditsLive', designerFilePath, assemblyPath, edits, beforeSourceText, afterSourceText,
-    rootTypeName ?? null, probeDirs ?? null, selectedTabs ?? null, renderScale ?? 1);
+    rootTypeName ?? null, probeDirs ?? null, selectedTabs ?? null, renderScale ?? 1, codeBehindText ?? null);
   return fromCompiledRaw(raw);
 }
 
@@ -1082,10 +1245,13 @@ export function hitTestInterpretedTab(
 export async function addCompiledControl(
   engine: EngineHandle, designerFilePath: string, assemblyPath: string, parentId: string,
   controlTypeKey: string, newId: string, locX?: number, locY?: number, rootTypeName?: string, probeDirs?: string[],
+  width?: number, height?: number,
 ): Promise<RenderLayout> {
+  const tail: (string | number | null | string[])[] = [locX ?? -1, locY ?? -1, rootTypeName ?? null, probeDirs ?? null];
+  if (width !== undefined || height !== undefined) tail.push(width ?? -1, height ?? -1);
   const raw = await engine.connection.sendRequest<CompiledRenderRaw>(
     'AddCompiledControl', designerFilePath, assemblyPath, parentId, controlTypeKey, newId,
-    locX ?? -1, locY ?? -1, rootTypeName ?? null, probeDirs ?? null);
+    ...tail);
   return fromCompiledRaw(raw);
 }
 
@@ -1104,6 +1270,230 @@ export function getCapabilities(engine: EngineHandle): Promise<EngineCapabilitie
   return engine.connection.sendRequest<EngineCapabilities>('GetCapabilities');
 }
 
+export type V2EngineProbeCommand = 'ping' | 'getCapabilities';
+
+export interface V2EngineProbePayload {
+  command: V2EngineProbeCommand;
+}
+
+export type V2EngineProbeValue =
+  | { command: 'ping'; value: string }
+  | { command: 'getCapabilities'; value: EngineCapabilities };
+
+export type V2EngineProbeResult =
+  | {
+    status: 'ok';
+    workerKey: string;
+    requestId: string;
+    generation: number;
+    result: V2EngineProbeValue;
+  }
+  | {
+    status: Exclude<WorkerRequestResult<V2EngineProbeValue>['status'], 'ok'> | 'selectionRefused';
+    workerKey?: string;
+    reasonCode: string;
+    requestId?: string;
+    generation?: number;
+  };
+
+export interface V2EngineProbeInput {
+  runtime: WorkerRuntime;
+  command: V2EngineProbeCommand;
+  documentLabel?: string;
+  documentRevision?: string | number;
+  sourceFingerprintSeed?: string;
+  resourceFingerprintSeed?: string;
+  projectArchitecture?: ProjectArchitecture;
+  hostArchitecture?: WorkerArchitecture;
+  workspaceTrust?: WorkspaceTrust;
+  designTimeTrust?: DesignTimeTrust;
+  containsComActiveX?: boolean;
+  requiresX86?: boolean;
+  timeoutMs?: number;
+  cancellation?: AbortSignal;
+}
+
+export type EngineBackedV2WorkerSupervisor = WorkerSupervisor<V2EngineProbePayload, V2EngineProbeValue>;
+
+export interface EngineBackedV2WorkerSupervisorOptions {
+  sessionId: string;
+  recoveryPolicy: WorkerRecoveryPolicy;
+  buildId?: string;
+  clock?: WorkerClock;
+}
+
+export function createEngineBackedV2WorkerSupervisor(
+  getEngine: (kind: WorkerRuntime) => Promise<EngineHandle>,
+  options: EngineBackedV2WorkerSupervisorOptions,
+): EngineBackedV2WorkerSupervisor {
+  return new WorkerSupervisor<V2EngineProbePayload, V2EngineProbeValue>(
+    new EngineBackedV2WorkerAdapter(getEngine),
+    options,
+  );
+}
+
+export async function requestV2EngineProbe(
+  supervisor: EngineBackedV2WorkerSupervisor,
+  input: V2EngineProbeInput,
+): Promise<V2EngineProbeResult> {
+  const payload: V2EngineProbePayload = { command: input.command };
+  const identity = createV2EngineProbeIdentity(input, payload);
+  const selection = selectWorker({
+    runtime: input.runtime,
+    hostArchitecture: input.hostArchitecture ?? currentWorkerArchitecture(),
+    projectArchitecture: input.projectArchitecture ?? 'anycpu',
+    workspaceTrust: input.workspaceTrust ?? 'trusted',
+    designTimeTrust: input.designTimeTrust ?? 'sourceFirst',
+    payload: identity,
+    containsComActiveX: input.containsComActiveX,
+    requiresX86: input.requiresX86,
+  });
+  if (!selection.ok) {
+    return {
+      status: 'selectionRefused',
+      reasonCode: selection.refusal.reasonCode,
+    };
+  }
+
+  const workerKey = workerKeyId(selection.worker.key);
+  const result = await supervisor.request(
+    selection.worker.key,
+    selection.worker.payload,
+    payload,
+    input.timeoutMs ?? 1_000,
+    input.cancellation,
+  );
+  if (result.status === 'ok') {
+    return {
+      status: 'ok',
+      workerKey,
+      requestId: result.requestId,
+      generation: result.generation,
+      result: result.result,
+    };
+  }
+
+  return {
+    status: result.status,
+    workerKey,
+    reasonCode: result.reasonCode,
+    requestId: result.requestId,
+    generation: result.generation,
+  };
+}
+
+export function recordV2EngineProbeCrash(
+  supervisor: EngineBackedV2WorkerSupervisor | undefined,
+  runtime: WorkerRuntime,
+  hostArchitecture: WorkerArchitecture = currentWorkerArchitecture(),
+): RecoveryDecision | null {
+  if (!supervisor) return null;
+  const key = selectV2EngineProbeKey(runtime, hostArchitecture);
+  return key ? supervisor.recordCrash(key) : null;
+}
+
+export function selectV2EngineProbeKey(
+  runtime: WorkerRuntime,
+  hostArchitecture: WorkerArchitecture = currentWorkerArchitecture(),
+  projectArchitecture: ProjectArchitecture = 'anycpu',
+): WorkerKey | null {
+  const payload = createV2EngineProbeIdentity({
+    runtime,
+    command: 'ping',
+    hostArchitecture,
+    projectArchitecture,
+  }, { command: 'ping' });
+  const selection = selectWorker({
+    runtime,
+    hostArchitecture,
+    projectArchitecture,
+    workspaceTrust: 'trusted',
+    designTimeTrust: 'sourceFirst',
+    payload,
+  });
+  return selection.ok ? selection.worker.key : null;
+}
+
+function createV2EngineProbeIdentity(
+  input: V2EngineProbeInput,
+  payload: V2EngineProbePayload,
+): WorkerPayloadIdentity {
+  const documentSeed = input.documentLabel?.trim() || 'diagnostics';
+  const revisionSeed = input.documentRevision === undefined ? 'rev-0' : String(input.documentRevision);
+  const sourceSeed = input.sourceFingerprintSeed ?? documentSeed;
+  const resourceSeed = input.resourceFingerprintSeed;
+  return {
+    sessionId: stableV2Identifier('session', documentSeed),
+    documentId: stableV2Identifier('document', documentSeed),
+    documentRevision: stableV2Identifier('rev', revisionSeed),
+    sourceFingerprint: sha256Hex(sourceSeed),
+    resourceFingerprint: resourceSeed === undefined ? undefined : sha256Hex(resourceSeed),
+    payloadHash: sha256Hex(JSON.stringify(payload)),
+  };
+}
+
+function stableV2Identifier(prefix: string, seed: string): string {
+  const clean = seed
+    .replace(/[^A-Za-z0-9._:-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .slice(0, 72);
+  const body = clean || prefix;
+  return `${prefix}:${body}:${sha256Hex(seed).slice(0, 16)}`;
+}
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function currentWorkerArchitecture(): WorkerArchitecture {
+  if (process.arch === 'x64') return 'x64';
+  if (process.arch === 'arm64') return 'arm64';
+  return 'x86';
+}
+
+class EngineBackedV2WorkerAdapter implements WorkerAdapter<V2EngineProbePayload, V2EngineProbeValue> {
+  constructor(private readonly getEngine: (kind: WorkerRuntime) => Promise<EngineHandle>) {}
+
+  async start(key: WorkerKey): Promise<SupervisedWorker<V2EngineProbePayload, V2EngineProbeValue>> {
+    return new EngineBackedV2Worker(key, this.getEngine);
+  }
+}
+
+class EngineBackedV2Worker implements SupervisedWorker<V2EngineProbePayload, V2EngineProbeValue> {
+  constructor(
+    readonly key: WorkerKey,
+    private readonly getEngine: (kind: WorkerRuntime) => Promise<EngineHandle>,
+  ) {}
+
+  async send(envelope: WorkerEnvelope<V2EngineProbePayload>): Promise<WorkerReply<V2EngineProbeValue>> {
+    if (envelope.payload.command !== 'ping' && envelope.payload.command !== 'getCapabilities') {
+      return this.reply(envelope, 'refused', undefined, 'UNSUPPORTED_OPERATION');
+    }
+
+    const engine = await this.getEngine(this.key.runtime);
+    const result: V2EngineProbeValue = envelope.payload.command === 'ping'
+      ? { command: 'ping', value: await ping(engine) }
+      : { command: 'getCapabilities', value: await getCapabilities(engine) };
+    return this.reply(envelope, 'ok', result);
+  }
+
+  private reply(
+    envelope: WorkerEnvelope<V2EngineProbePayload>,
+    status: 'ok' | 'refused',
+    result?: V2EngineProbeValue,
+    reasonCode?: WorkerRefusalCode | 'UNSUPPORTED_OPERATION',
+  ): WorkerReply<V2EngineProbeValue> {
+    return {
+      sessionId: envelope.sessionId,
+      generation: envelope.generation,
+      requestId: envelope.requestId,
+      status,
+      result,
+      reasonCode,
+    };
+  }
+}
+
 // ---- describe / edit (property-grid data + write side) ----
 
 export interface ExpandablePropertyDesc {
@@ -1117,6 +1507,8 @@ export interface ExpandablePropertyDesc {
   description?: string | null;
   standardValues?: string[] | null;
   standardValuesExclusive?: boolean;
+  /** Stable engine diagnostic when bounded converter metadata could not be obtained safely. */
+  metadataDiagnosticCode?: string | null;
   properties?: ExpandablePropertyDesc[] | null;
   propertiesTruncated?: boolean;
 }
@@ -1128,12 +1520,18 @@ export interface PropertyDesc {
   isDefault: boolean | null;
   sourceExplicit: boolean;
   readOnly: boolean;
+  /** True only when this row must use ApplyInheritedPropertyOverride. */
+  inheritedOverrideEditable?: boolean;
+  /** A source-explicit canonical inherited assignment may be deleted even when geometry writes are layout-gated. */
+  inheritedOverrideResettable?: boolean;
   isEnum: boolean;
   category: string;
   /** TypeConverter standard values as invariant strings (dropdowns), or null/absent when none. */
   standardValues?: string[] | null;
   /** True → closed set (render a <select>); false → editable combobox (datalist). */
   standardValuesExclusive?: boolean;
+  /** Stable engine diagnostic when bounded converter metadata could not be obtained safely. */
+  metadataDiagnosticCode?: string | null;
   /** For a [Flags] enum: the individual single-bit member names (e.g. Top/Bottom/Left/Right), so the grid
    * can render a checkbox dropdown that composes "Top, Left". Null/absent for non-flags. */
   flagsMembers?: string[] | null;
@@ -1176,8 +1574,20 @@ export interface PropertyDesc {
   /** Bounded TypeConverter-provided child metadata. Nested writes remain fail-closed unless a dedicated adapter exists. */
   properties?: ExpandablePropertyDesc[] | null;
   propertiesTruncated?: boolean;
-  /** Exact allowlisted framework UITypeEditor FQN, or null/absent when modal editing is unavailable. */
+  /** Exact allowlisted framework or certified-vendor UITypeEditor FQN, or null/absent when modal editing is unavailable. */
   uiTypeEditor?: string | null;
+  uiTypeEditorAssemblyPath?: string | null;
+  uiTypeEditorAssemblySha256?: string | null;
+  uiTypeEditorCertificationId?: string | null;
+  /** Host-composed multi-object row: selected targets currently have different invariant values. Never emitted by
+   * either engine describe RPC; consumed only by the property-panel presentation layer. */
+  mixed?: boolean;
+  /** Host-composed multi-object row. The panel echoes this bit on edits/resets so a forged ordinary property message
+   * cannot accidentally widen into the session's current multi-selection. */
+  multi?: boolean;
+  /** At least one selected target has an explicit value and every target passed the metadata-level reset contract.
+   * The source engine still performs the authoritative all-or-nothing reset preflight. */
+  multiResettable?: boolean;
 }
 
 export interface EventDesc {
@@ -1185,6 +1595,89 @@ export interface EventDesc {
   type: string; // delegate type (e.g. System.EventHandler)
   category: string;
   handler: string | null; // wired handler method name from the source, or null if unhandled
+}
+
+export interface DesignerActionDesc {
+  displayName: string;
+  propertyName: string;
+  commandId?: string;
+  certificationId?: string;
+  category: string;
+  description: string | null;
+}
+
+/** One bounded control-local rectangle from a hosted ControlDesigner. It is display metadata only; hover authority
+* comes from hitTestDesignerAdorner against a freshly loaded engine graph. */
+export interface DesignerAdornerDesc {
+  id: string;
+  displayName: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  hitTestable: boolean;
+}
+
+export interface DesignerAdornerHitResult {
+  ok: boolean;
+  hit: boolean;
+  componentId: string;
+  adornerId: string;
+  componentType: string;
+  designerType: string;
+  errorCode: string;
+  reason: string;
+}
+
+/** Process-supervised activation result for one exact repository-certified net48 ComponentDesigner. A crash or
+* quarantine is deliberately independent of the form render result: the generic form/property surface stays usable. */
+export interface HostedDesignerProbeResult {
+  ok: boolean;
+  status: 'ready' | 'crashed' | 'quarantined' | 'refused';
+  errorCode: string;
+  reason: string;
+  componentType: string;
+  designerType: string;
+  certificationId: string;
+  assemblySha256: string;
+  mainEnginePid: number;
+  workerPid: number;
+  exitCode: number;
+  workerStarted: boolean;
+  quarantined: boolean;
+  privateDesktop: boolean;
+}
+
+export interface HostedServiceKernelEdit {
+  propertyName: string;
+  propertyType: string;
+  invariantValue: string;
+}
+
+/** Product evidence and bounded edit proposals from the exact certified hosted service contract. */
+export interface HostedServiceKernelProductResult {
+  ok: boolean;
+  status: 'ready' | 'applied' | 'cancelled' | 'refused';
+  errorCode: string;
+  reason: string;
+  componentType: string;
+  designerType: string;
+  certificationId: string;
+  assemblySha256: string;
+  apartmentState: string;
+  capabilities: string[];
+  completeHostAdvertised: boolean;
+  incompleteHostWithheld: boolean;
+  incompleteHostReason: string;
+  unsupportedServiceRefused: boolean;
+  unsupportedServiceReason: string;
+  actionId: string;
+  actionInvoked: boolean;
+  transactionsOpened: number;
+  transactionsCommitted: number;
+  transactionsCancelled: number;
+  changeEvents: number;
+  edits: HostedServiceKernelEdit[];
 }
 
 export interface ComponentDesc {
@@ -1198,8 +1691,16 @@ export interface ComponentDesc {
   ownership?: 'root' | 'currentSource' | 'inherited' | 'unresolved';
   editable?: boolean;
   readOnlyReason?: string | null;
+  inheritedOverrideEditable?: boolean;
+  baseIdentityToken?: string;
   properties: PropertyDesc[];
+  /** Property smart tags read from the live ComponentDesigner/DesignerActionList product path. */
+  designerActions?: DesignerActionDesc[];
+  /** ControlDesigner adorner rectangles read through the bounded hosted DTO contract. */
+  designerAdorners?: DesignerAdornerDesc[];
   events: EventDesc[];
+  /** Host-composed synthetic component for a multi-selection; absent on ordinary engine descriptions. */
+  multiCount?: number;
 }
 
 /** One entry of a vendor control's DECLARED smart-tag menu (DevExpress "Tasks"), read off the compiled type's
@@ -1224,9 +1725,27 @@ export interface DescribeResult {
 
 export interface EditPreview {
   safe: boolean;
-  mode: string; // Replace | Insert | Failed
+  mode: string | number; // Replace | Insert | Failed; enum serializers may send numeric values.
   text: string | null;
   reason: string;
+}
+
+export interface OwnedRegionPropertySetPreview {
+  safe: boolean;
+  reason: string;
+  expectedSourceSha256: string;
+  actualSourceSha256: string;
+  componentName: string;
+  propertyName: string;
+  mode: string; // Replace | Insert | Failed
+  ownedRegionStart: number;
+  ownedRegionEnd: number;
+  replacementText: string;
+  plannedSourceText: string;
+  laneASourceText: string;
+  normalizationPreview: string;
+  semanticEquivalence: boolean;
+  outsideRegionPreserved: boolean;
 }
 
 export interface SerializePreview {
@@ -1251,6 +1770,22 @@ export function describeDesigner(engine: EngineHandle, designerFilePath: string,
 /** Describe one component by edit id ("this" = root) — bounded per-selection fetch. */
 export function describeComponent(engine: EngineHandle, designerFilePath: string, componentId: string, controlAssemblyPath?: string, sourceText?: string): Promise<ComponentDesc | null> {
   return engine.connection.sendRequest<ComponentDesc | null>('DescribeComponent', designerFilePath, componentId, ...asmTextTail(controlAssemblyPath, sourceText));
+}
+
+/** Confirm a selected control's adorner hover in control-local coordinates against a fresh live graph. */
+export function hitTestDesignerAdorner(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  adornerId: string,
+  x: number,
+  y: number,
+  controlAssemblyPath?: string,
+  sourceText?: string,
+): Promise<DesignerAdornerHitResult> {
+  return engine.connection.sendRequest<DesignerAdornerHitResult>(
+    'HitTestDesignerAdorner', designerFilePath, componentId, adornerId, x, y,
+    ...asmTextTail(controlAssemblyPath, sourceText));
 }
 
 /**
@@ -1289,6 +1824,7 @@ export interface SupportedUiTypeEditorResult {
   applied: boolean;
   dismissed: boolean;
   invariantValue?: string | null;
+  collectionItems?: string[] | null;
   errorCode: string;
   reason: string;
 }
@@ -1343,9 +1879,53 @@ export function editSupportedUiTypeEditor(
   editorTypeName: string,
   valueTypeName: string,
   invariantValue: string,
+  editorAssemblyPath?: string | null,
+  editorAssemblySha256?: string | null,
+  editorCertificationId?: string | null,
 ): Promise<SupportedUiTypeEditorResult> {
   return engine.connection.sendRequest<SupportedUiTypeEditorResult>(
-    'EditSupportedUiTypeEditor', requestId, editorTypeName, valueTypeName, invariantValue);
+    'EditSupportedUiTypeEditor',
+    requestId,
+    editorTypeName,
+    valueTypeName,
+    invariantValue,
+    editorAssemblyPath ?? null,
+    editorAssemblySha256 ?? null,
+    editorCertificationId ?? null);
+}
+
+export function editSupportedCollectionEditor(
+  engine: EngineHandle,
+  requestId: string,
+  itemTypeName: string,
+  items: string[],
+): Promise<SupportedUiTypeEditorResult> {
+  return engine.connection.sendRequest<SupportedUiTypeEditorResult>(
+    'EditSupportedCollectionEditor', requestId, itemTypeName, items);
+}
+
+/** Invoke one fixed-contract certified vendor collection editor. The engine validates the exact assembly
+ * path/hash/certification tuple and returns invariant items only; source planning and commit stay host-owned. */
+export function editCertifiedVendorCollectionEditor(
+  engine: EngineHandle,
+  requestId: string,
+  editorTypeName: string,
+  itemTypeName: string,
+  items: string[],
+  editorAssemblyPath: string,
+  editorAssemblySha256: string,
+  editorCertificationId: string,
+): Promise<SupportedUiTypeEditorResult> {
+  return engine.connection.sendRequest<SupportedUiTypeEditorResult>(
+    'EditCertifiedVendorCollectionEditor',
+    requestId,
+    editorTypeName,
+    itemTypeName,
+    items,
+    editorAssemblyPath,
+    editorAssemblySha256,
+    editorCertificationId,
+  );
 }
 
 /** One color-dropdown swatch: a KnownColor name + its opaque RRGGBB hex (theme-accurate for system colors). */
@@ -1385,6 +1965,41 @@ export function resolveAssembly(engine: EngineHandle, designerFilePath: string):
   return engine.connection.sendRequest<string | null>('ResolveAssembly', designerFilePath);
 }
 
+export interface DesignerDocumentOwnerResolution {
+  status?: string | number;
+  diagnosticCode: string;
+  typeName: string;
+  projectPath: string;
+  owners: string[];
+  emptyInitializeComponentSurface?: boolean;
+  /** Several projects compile this file and none of them can influence the render, so `projectPath` is a
+   * deterministic pick among `owners` rather than the sole owner. Consumers that act on the OWNER PROJECT rather
+   * than on the render (event-source discovery, project references) must not treat such a pick as authoritative. */
+  selectedAmongEquivalentOwners?: boolean;
+}
+
+/**
+* Resolve the unique project/type owner for a designer source before the host renders it. This is a bounded
+* pre-render safety gate: the engine parses InitializeComponent and checks only the project paths the extension
+* supplies. A missing method is accepted only for the Visual Studio-compatible empty read-only surface when the
+* matching code-behind proves a direct framework Form/UserControl; ambiguous or unproven ownership stays refused.
+*/
+export function resolveDesignerDocumentOwner(
+  engine: EngineHandle,
+  designerFilePath: string,
+  projectPaths: string[],
+  designerSourceText?: string | null,
+  codeBehindSourceText?: string | null,
+): Promise<DesignerDocumentOwnerResolution> {
+  return engine.connection.sendRequest<DesignerDocumentOwnerResolution>(
+    'ResolveDesignerDocumentOwner',
+    designerFilePath,
+    projectPaths,
+    designerSourceText ?? null,
+    codeBehindSourceText ?? null,
+  );
+}
+
 /** Result of GenerateEventHandler: new texts for the .Designer.cs (wiring) and .cs code-behind (stub). */
 export interface EventGenResult {
   safe: boolean;
@@ -1417,10 +2032,12 @@ export function generateEventHandler(
   designerSourceText: string | null,
   codeText: string | null,
   controlAssemblyPath: string | null,
+  projectCodeTexts?: string[] | null,
 ): Promise<EventGenResult> {
   return engine.connection.sendRequest<EventGenResult>(
     'GenerateEventHandler',
     designerFilePath, componentId, eventName, handlerName, designerSourceText, codeText, controlAssemblyPath,
+    projectCodeTexts ?? null,
   );
 }
 
@@ -1435,15 +2052,32 @@ export async function listHandlerCandidates(
   designerSourceText: string | null,
   codeText: string | null,
   controlAssemblyPath: string | null,
+  projectCodeTexts?: string[] | null,
 ): Promise<Record<string, string[]>> {
   // the engine returns a LIST of {event, handlers} (not a map) so event names aren't camelCased as JSON
   // dictionary keys; rebuild the by-event map here with the real names preserved.
   const list = await engine.connection.sendRequest<Array<{ event: string; handlers: string[] }>>(
     'ListHandlerCandidates', designerFilePath, componentId, designerSourceText, codeText, controlAssemblyPath,
+    projectCodeTexts ?? null,
   );
   const map: Record<string, string[]> = {};
   for (const e of list ?? []) map[e.event] = e.handlers ?? [];
   return map;
+}
+
+/** Resolve an existing handler to the exact project-partial source index (same order as projectCodeTexts). */
+export function findEventHandlerSourceIndex(
+  engine: EngineHandle,
+  designerFilePath: string,
+  handlerName: string,
+  projectCodeTexts: string[],
+  designerSourceText: string | null,
+  controlAssemblyPath: string | null,
+): Promise<number> {
+  return engine.connection.sendRequest<number>(
+    'FindEventHandlerSourceIndex', designerFilePath, handlerName, projectCodeTexts,
+    designerSourceText, controlAssemblyPath,
+  );
 }
 
 /** Result of SetEventWiring: the new .Designer.cs text after a wire/rewire/unwire (code-behind untouched). */
@@ -1468,9 +2102,11 @@ export function setEventWiring(
   designerSourceText: string | null,
   codeText: string | null,
   controlAssemblyPath: string | null,
+  projectCodeTexts?: string[] | null,
 ): Promise<EventWiringResult> {
   return engine.connection.sendRequest<EventWiringResult>(
     'SetEventWiring', designerFilePath, componentId, eventName, handlerName, designerSourceText, codeText, controlAssemblyPath,
+    projectCodeTexts ?? null,
   );
 }
 
@@ -1480,6 +2116,8 @@ export interface ControlAddResult {
   reason: string;
   newText: string | null; // new .Designer.cs text (field decl + InitializeComponent statements), or null
   name: string; // generated control name (e.g. "button1")
+  resxText?: string | null;
+  resourceKeys?: string[];
 }
 
 /**
@@ -1502,19 +2140,65 @@ export function addControl(
   /** The rendered form's live CurrentAutoScaleDimensions ("6F, 13F"). The engine persists it on the first drop
    * into a form that has no pair yet — the same moment Visual Studio does. */
   autoScaleDimensions?: string,
+  width?: number,
+  height?: number,
 ): Promise<ControlAddResult> {
   // optional positional tail: each earlier slot must be filled (with null) once a later one is supplied.
   const hasLoc = locX !== undefined && locY !== undefined;
   const hasAsm = controlAssemblyPath !== undefined && controlAssemblyPath !== null;
   const hasFqns = projectControlFqns !== undefined && projectControlFqns !== null;
   const hasScale = autoScaleDimensions !== undefined && autoScaleDimensions !== null && autoScaleDimensions !== '';
+  const hasSize = width !== undefined || height !== undefined;
   const tail: (string | number | null | string[])[] = [];
-  if (sourceText !== undefined || hasLoc || hasAsm || hasFqns || hasScale) tail.push(sourceText ?? null);
-  if (hasLoc || hasAsm || hasFqns || hasScale) tail.push(hasLoc ? (locX as number) : null, hasLoc ? (locY as number) : null);
-  if (hasAsm || hasFqns || hasScale) tail.push((controlAssemblyPath as string) ?? null);
-  if (hasFqns || hasScale) tail.push((projectControlFqns as string[]) ?? null);
-  if (hasScale) tail.push(autoScaleDimensions as string);
+  if (sourceText !== undefined || hasLoc || hasAsm || hasFqns || hasScale || hasSize) tail.push(sourceText ?? null);
+  if (hasLoc || hasAsm || hasFqns || hasScale || hasSize) tail.push(hasLoc ? (locX as number) : null, hasLoc ? (locY as number) : null);
+  if (hasAsm || hasFqns || hasScale || hasSize) tail.push((controlAssemblyPath as string) ?? null);
+  if (hasFqns || hasScale || hasSize) tail.push((projectControlFqns as string[]) ?? null);
+  if (hasScale || hasSize) tail.push(hasScale ? (autoScaleDimensions as string) : null);
+  if (hasSize) tail.push(width ?? null, height ?? null);
   return engine.connection.sendRequest<ControlAddResult>('AddControl', designerFilePath, parentId, controlTypeKey, ...tail);
+}
+
+/** ApplyResources-backed sibling of addControl. The engine returns both source and the updated neutral .resx;
+ * the host must persist them as one resource/source transaction. */
+export function addLocalizedControl(
+  engine: EngineHandle,
+  designerFilePath: string,
+  parentId: string,
+  controlTypeKey: string,
+  sourceText: string,
+  resxText: string | null,
+  locX?: number,
+  locY?: number,
+  controlAssemblyPath?: string,
+  projectControlFqns?: string[],
+  autoScaleDimensions?: string,
+  width?: number,
+  height?: number,
+): Promise<ControlAddResult> {
+  return engine.connection.sendRequest<ControlAddResult>(
+    'AddLocalizedControl', designerFilePath, parentId, controlTypeKey, sourceText, resxText,
+    locX ?? null, locY ?? null, controlAssemblyPath ?? null, projectControlFqns ?? null,
+    autoScaleDimensions || null, width ?? null, height ?? null,
+  );
+}
+
+export interface LocalizedComponentResourceRemovalResult {
+  ok: boolean;
+  resxText: string | null;
+  keys: string[];
+  reason: string;
+}
+
+/** Remove all id.* entries for structurally deleted controls from one neutral/satellite .resx snapshot. */
+export function removeLocalizedComponentResources(
+  engine: EngineHandle,
+  resxText: string | null,
+  componentIds: string[],
+): Promise<LocalizedComponentResourceRemovalResult> {
+  return engine.connection.sendRequest<LocalizedComponentResourceRemovalResult>(
+    'RemoveLocalizedComponentResources', resxText, componentIds,
+  );
 }
 
 /** Enumerate the project/vendor (DevExpress/net4x) assembly's own toolbox-eligible controls via the net48 engine
@@ -1593,6 +2277,11 @@ export interface ToolboxItemInfo {
   /** 16×16 toolbox bitmap (the control's own [ToolboxBitmap]) as a base64 PNG, or null/absent when none was
    * found. Display-only; the palette renders it as a data: image, falling back to a generic glyph when absent. */
   iconPng?: string | null;
+  /** The type only works on .NET Framework: it exists in the modern reference assembly, so the generated line
+   * compiles, but its constructor throws PlatformNotSupportedException on .NET Core and later (DataGrid, ToolBar,
+   * StatusBar, MainMenu, ContextMenu, DataGrid*Column). Correct to offer for a `net4x` form — Visual Studio does —
+   * and a trap on the modern route, where the control would silently never reach the canvas. */
+  frameworkOnly?: boolean;
   /** True for a non-visual component (Timer/ToolTip/dialog…) — added via addComponent (lands in the tray), not addControl. */
   isComponent?: boolean;
 }
@@ -1712,6 +2401,37 @@ export function moveTabPage(
   return engine.connection.sendRequest<ControlReorderResult>('MoveTabPage', designerFilePath, hostId, pageId, left, ...tail);
 }
 
+/** Read-side result for the standard TabControl.TabPages collection editor. Page ids are returned in canonical
+* source execution order; ok=false makes an ambiguous/non-owned collection read-only. */
+export interface TabPageItemsResult {
+  ok: boolean;
+  pages: string[];
+  reason: string;
+}
+
+/** Read the complete field-backed page order used by the TabPages collection editor. */
+export function listTabPages(
+  engine: EngineHandle,
+  designerFilePath: string,
+  hostId: string,
+  sourceText?: string,
+): Promise<TabPageItemsResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<TabPageItemsResult>('ListTabPages', designerFilePath, hostId, ...tail);
+}
+
+/** Atomically set one host's complete TabPages permutation. The engine accepts only the exact existing id set. */
+export function setTabPageOrder(
+  engine: EngineHandle,
+  designerFilePath: string,
+  hostId: string,
+  pageIds: string[],
+  sourceText?: string,
+): Promise<ControlReorderResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlReorderResult>('SetTabPageOrder', designerFilePath, hostId, pageIds, ...tail);
+}
+
 /** Result of CopyControl: an OPAQUE clipboard blob the host stores and hands back to pasteControl. */
 export interface ControlCopyResult {
   safe: boolean;
@@ -1762,6 +2482,22 @@ export function pasteControl(
   return engine.connection.sendRequest<ControlPasteResult>('PasteControl', designerFilePath, clip, parentId, ...tail);
 }
 
+/** Paste a clone at the exact pointer delta used by Ctrl+drag. */
+export function pasteControlAtOffset(
+  engine: EngineHandle,
+  designerFilePath: string,
+  clip: string,
+  parentId: string,
+  offsetX: number,
+  offsetY: number,
+  sourceText?: string,
+): Promise<ControlPasteResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<ControlPasteResult>(
+    'PasteControlAtOffset', designerFilePath, clip, parentId, offsetX, offsetY, ...tail,
+  );
+}
+
 /** Result of MoveZOrder: the reordered text (equals the input when already at the requested end), or null. */
 export interface ControlReorderResult {
   safe: boolean;
@@ -1785,15 +2521,21 @@ export function moveZOrder(
 }
 
 /** Reparent: move a leaf control into a different container (newParentId "this" = root). Minimal text edit
-* (rewrites only the child's Controls.Add receiver). The host applies newText like a removeControl/moveZOrder edit. */
+* (rewrites the child's Controls.Add receiver and, when supplied, its parent-relative Location). The host applies
+* newText like a removeControl/moveZOrder edit. */
 export function reparentControl(
   engine: EngineHandle,
   designerFilePath: string,
   childId: string,
   newParentId: string,
   sourceText?: string,
+  locX?: number,
+  locY?: number,
 ): Promise<ControlReorderResult> {
-  const tail = sourceText !== undefined ? [sourceText] : [];
+  const tail: Array<string | number | null> = [];
+  if (sourceText !== undefined) tail.push(sourceText);
+  else if (locX !== undefined || locY !== undefined) tail.push(null);
+  if (locX !== undefined || locY !== undefined) tail.push(locX ?? null, locY ?? null);
   return engine.connection.sendRequest<ControlReorderResult>('Reparent', designerFilePath, childId, newParentId, ...tail);
 }
 
@@ -1808,6 +2550,187 @@ export function setProperty(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetProperty', designerFilePath, componentId, propertyName, newValueExpr, ...tail);
+}
+
+/** Low-level owned-region planner. The product route below consumes it only when the engine independently proves that
+ * Lane B is byte-bounded outside InitializeComponent and exactly equivalent to the established Lane A output. */
+export function previewOwnedRegionPropertySet(
+  engine: EngineHandle,
+  designerFilePath: string,
+  expectedSourceSha256: string,
+  componentId: string,
+  propertyName: string,
+  newValueExpr: string,
+  sourceText: string,
+  optIn = false,
+  retainedGraphToken?: string,
+): Promise<OwnedRegionPropertySetPreview> {
+  const args: [string, ...unknown[]] = [
+    'PreviewOwnedRegionPropertySet',
+    designerFilePath,
+    expectedSourceSha256,
+    componentId,
+    propertyName,
+    newValueExpr,
+    sourceText,
+    optIn,
+  ];
+  if (retainedGraphToken) args.push(retainedGraphToken);
+  return engine.connection.sendRequest<OwnedRegionPropertySetPreview>(...args);
+}
+
+/** Validate a complete adapter/editor-proposed source image against one component's statements inside
+ * InitializeComponent. This is a preview only: the engine never writes the document and no source-first fallback is
+ * permitted when a certified vendor adapter crosses its declared component boundary. */
+export function planBoundedComponentPatch(
+  engine: EngineHandle,
+  sourceText: string,
+  expectedSourceSha256: string,
+  proposedSourceText: string,
+  componentName: string,
+  patchLabel: string,
+): Promise<OwnedRegionPropertySetPreview> {
+  return engine.connection.sendRequest<OwnedRegionPropertySetPreview>(
+    'PlanBoundedComponentPatch',
+    sourceText,
+    expectedSourceSha256,
+    proposedSourceText,
+    componentName,
+    patchLabel,
+  );
+}
+
+export interface ProductPropertyEditPreview extends EditPreview {
+  persistenceLane: 'ownedRegion' | 'sourceFirst';
+  ownedRegionRefusal: string | null;
+}
+
+/**
+ * Plan an ordinary modern scalar property edit through the proven designer-owned region when possible. Lane B is an
+ * opt-in optimization, never a weaker fallback: the client accepts it only when all engine proof flags are present
+ * and its resulting bytes are exactly the Lane A bytes. Unsupported or unrepresentable forms stay on the established
+ * minimal source-first planner. The caller still owns revision revalidation, one undo unit, and persistence.
+ */
+export async function setPropertyViaProvenOwnedRegion(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  newValueExpr: string,
+  sourceText: string,
+  retainedGraphToken?: string,
+): Promise<ProductPropertyEditPreview> {
+  let ownedRegionRefusal: string | null = null;
+  try {
+    const owned = await previewOwnedRegionPropertySet(
+      engine,
+      designerFilePath,
+      sha256Hex(sourceText),
+      componentId,
+      propertyName,
+      newValueExpr,
+      sourceText,
+      true,
+      retainedGraphToken,
+    );
+    if (owned.safe
+      && owned.semanticEquivalence
+      && owned.outsideRegionPreserved
+      && owned.plannedSourceText.length > 0
+      && owned.plannedSourceText === owned.laneASourceText) {
+      return {
+        safe: true,
+        mode: owned.mode,
+        text: owned.plannedSourceText,
+        reason: '',
+        persistenceLane: 'ownedRegion',
+        ownedRegionRefusal: null,
+      };
+    }
+    ownedRegionRefusal = owned.reason || 'owned-region proof was incomplete';
+  } catch (error) {
+    ownedRegionRefusal = `owned-region planner unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  const sourceFirst = await setProperty(
+    engine,
+    designerFilePath,
+    componentId,
+    propertyName,
+    newValueExpr,
+    sourceText,
+  );
+  return {
+    ...sourceFirst,
+    persistenceLane: 'sourceFirst',
+    ownedRegionRefusal,
+  };
+}
+
+/** Token-checked property override emitted only into the derived designer source for an inherited control. */
+export function applyInheritedPropertyOverride(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  newValueExpr: string,
+  expectedBaseIdentityToken: string,
+  controlAssemblyPath?: string,
+  sourceText?: string,
+  codeBehindText?: string,
+): Promise<EditPreview> {
+  return engine.connection.sendRequest<EditPreview>(
+    'ApplyInheritedPropertyOverride', designerFilePath, componentId, propertyName, newValueExpr,
+    expectedBaseIdentityToken, ...asmTextCodeBehindTail(controlAssemblyPath, sourceText, codeBehindText));
+}
+
+/** Delete one canonical derived-source inherited override after the authority revalidates the base token. */
+export function removeInheritedPropertyOverride(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  expectedBaseIdentityToken: string,
+  controlAssemblyPath?: string,
+  sourceText?: string,
+  codeBehindText?: string,
+): Promise<EditPreview> {
+  return engine.connection.sendRequest<EditPreview>(
+    'RemoveInheritedPropertyOverride', designerFilePath, componentId, propertyName,
+    expectedBaseIdentityToken, ...asmTextCodeBehindTail(controlAssemblyPath, sourceText, codeBehindText));
+}
+
+/** Revalidate an inherited control's direct-manipulation gate against the currently loaded compiled base. */
+export interface InheritedGeometryOverrideAuthorization {
+  safe: boolean;
+  reason: string;
+  baseIdentityToken: string;
+}
+
+export function authorizeInheritedGeometryOverride(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  expectedBaseIdentityToken: string,
+  controlAssemblyPath: string,
+): Promise<InheritedGeometryOverrideAuthorization> {
+  return engine.connection.sendRequest<InheritedGeometryOverrideAuthorization>(
+    'AuthorizeInheritedGeometryOverride', designerFilePath, componentId,
+    expectedBaseIdentityToken, controlAssemblyPath);
+}
+
+/** Compute one all-or-nothing property edit for a selected component set (no write). */
+export function setProperties(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentIds: string[],
+  propertyName: string,
+  newValueExpr: string,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>(
+    'SetProperties', designerFilePath, componentIds, propertyName, newValueExpr, ...tail);
 }
 
 /**
@@ -2205,6 +3128,108 @@ export function setDataSource(
   return engine.connection.sendRequest<EditPreview>('SetDataSource', designerFilePath, ownerId, kind, value, ...tail);
 }
 
+/** One bounded project DTO property exposed by the 1.15 Data Sources pane. `kind` is presentation-only; the engine
+* independently chooses the generated WinForms editor/binding shape. */
+export interface ProjectDataProperty {
+  name: string;
+  typeName: string;
+  kind: string;
+  readOnly: boolean;
+}
+
+/** A project-local object/list schema that can be generated safely. `key` is an opaque engine identity and is the
+* only value returned on a generation request; the webview never supplies a C# type expression. */
+export interface ProjectDataSchema {
+  key: string;
+  name: string;
+  typeName: string;
+  sourceKind: 'object' | 'typedDataSetTable';
+  dataMember: string;
+  properties: ProjectDataProperty[];
+  existingBindingSources: string[];
+}
+
+/** Name/type metadata for a conventional application setting. Default values are intentionally never returned. */
+export interface ProjectApplicationSetting {
+  key: string;
+  name: string;
+  typeName: string;
+  scope: string;
+}
+
+export interface DataSourcesResult {
+  ok: boolean;
+  schemas: ProjectDataSchema[];
+  settings: ProjectApplicationSetting[];
+  reason: string;
+  refusalCode: string | null;
+}
+
+export interface DataSourceGenerationResult {
+  safe: boolean;
+  reason: string;
+  newText: string | null;
+  /** Compatibility with ordinary EditPreview implementations. */
+  text?: string | null;
+  createdIds: string[];
+  boundProperty?: string;
+  refusalCode: string | null;
+}
+
+/** Discover bounded project-local DTO and application-settings metadata for the current form. */
+export function listDataSources(
+  engine: EngineHandle,
+  designerFilePath: string,
+  sourceText?: string,
+): Promise<DataSourcesResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<DataSourcesResult>('ListDataSources', designerFilePath, ...tail)
+    .then((result) => ({ ...result, refusalCode: result.refusalCode ?? null }));
+}
+
+/** Generate one atomic detail/grid binding surface or append missing bound columns to a supported existing grid. */
+export function generateDataSource(
+  engine: EngineHandle,
+  designerFilePath: string,
+  schemaKey: string,
+  mode: 'detail' | 'grid',
+  parentId: string,
+  x: number,
+  y: number,
+  includeNavigator: boolean,
+  existingBindingSourceId: string | null,
+  existingGridId: string | null,
+  sourceText?: string,
+): Promise<DataSourceGenerationResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<DataSourceGenerationResult>(
+    'GenerateDataSource', designerFilePath, schemaKey, mode, parentId, x, y, includeNavigator,
+    existingBindingSourceId, existingGridId, ...tail)
+    .then((result) => ({
+      ...result,
+      newText: result.newText ?? null,
+      refusalCode: result.refusalCode ?? null,
+    }));
+}
+
+/** Bind one engine-discovered setting to the selected compatible current-source control. */
+export function bindApplicationSetting(
+  engine: EngineHandle,
+  designerFilePath: string,
+  settingKey: string,
+  targetId: string,
+  sourceText?: string,
+): Promise<DataSourceGenerationResult> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<DataSourceGenerationResult>(
+    'BindApplicationSetting', designerFilePath, settingKey, targetId, ...tail)
+    .then((result) => ({
+      ...result,
+      newText: result.newText ?? null,
+      refusalCode: result.refusalCode ?? null,
+    }));
+}
+
 export function setExtender(
   engine: EngineHandle,
   designerFilePath: string,
@@ -2232,6 +3257,19 @@ export function resetProperty(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('ResetProperty', designerFilePath, componentId, propertyName, ...tail);
+}
+
+/** Compute one all-or-nothing Reset for a selected component set (no write). */
+export function resetProperties(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentIds: string[],
+  propertyName: string,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>(
+    'ResetProperties', designerFilePath, componentIds, propertyName, ...tail);
 }
 
 /** Result of SetImageResource: the new .Designer.cs text (resources.GetObject assignment) AND the new sibling
@@ -2266,6 +3304,60 @@ export function setImageResource(
   return engine.connection.sendRequest<ImageEditPreview>(
     'SetImageResource', designerFilePath, componentId, propertyName, propertyTypeName, imageBase64, resxText, sourceText,
   );
+}
+
+/** One existing strongly typed project resource that can be assigned to Image/Bitmap/Icon properties. */
+export interface ProjectResourceCandidate {
+  key: string;
+  propertyName: string;
+  resourceClassName: string;
+  resourceClassFullName: string;
+  valueTypeName: string;
+  storageKind: 'bytearray' | 'fileRef' | string;
+}
+
+/** Fail-closed project resource picker result. */
+export interface ProjectResourceListResult {
+  ok: boolean;
+  reason: string;
+  candidates: ProjectResourceCandidate[];
+}
+
+/** List project resources by cross-checking existing .resx text with strongly typed Resources.Designer.cs source. */
+export function listProjectImageResources(
+  engine: EngineHandle,
+  resxText: string | null,
+  resourcesDesignerSource: string | null,
+): Promise<ProjectResourceListResult> {
+  return engine.connection.sendRequest<ProjectResourceListResult>(
+    'ListProjectImageResources', resxText, resourcesDesignerSource);
+}
+
+/** Assign an existing strongly typed project image resource without copying or rewriting the project .resx. */
+export function setProjectImageResource(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  propertyTypeName: string,
+  resxText: string | null,
+  resourcesDesignerSource: string | null,
+  resourceClassFullName: string,
+  resourcePropertyName: string,
+  sourceText?: string,
+): Promise<EditPreview> {
+  const tail = sourceText !== undefined ? [sourceText] : [];
+  return engine.connection.sendRequest<EditPreview>(
+    'SetProjectImageResource',
+    designerFilePath,
+    componentId,
+    propertyName,
+    propertyTypeName,
+    resxText,
+    resourcesDesignerSource,
+    resourceClassFullName,
+    resourcePropertyName,
+    ...tail);
 }
 
 /** 0.11.0 ImageList editor — embed a serialized ImageStream blob (from {@link serializeImageList}) into the sibling

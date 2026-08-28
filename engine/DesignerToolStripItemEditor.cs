@@ -264,8 +264,7 @@ namespace WinFormsDesigner.Engine
         /// whose desired <see cref="ToolStripItemModel.Text"/> is non-empty and differs from its current Text is RENAMED —
         /// its <c>Text = "…"</c> string literal is rewritten in place (an empty desired Text leaves it unchanged, so a
         /// caller that omits Text never wipes one; an item with no simple string-literal Text assignment is refused).
-        /// Reparenting an
-        /// existing item, adding a submenu under a brand-new item, appending onto a non-<c>AddRange</c> collection, or
+        /// Adding a submenu under a brand-new non-dropdown item, appending onto a non-<c>AddRange</c> collection, or
         /// removing an item still referenced by non-item code are refused (follow-up slices / fail-safe). New items'
         /// constructions are placed with the other constructions (before any AddRange) so every referenced field is
         /// assigned before use.</summary>
@@ -313,23 +312,19 @@ namespace WinFormsDesigner.Engine
                     && (!curTextById.TryGetValue(id, out var ct) || ct != dt))
                     renames[id] = dt;
 
-            // (2) per-receiver child-order maps + reparent guard. An existing item may be reordered within its parent or
-            // removed, but never MOVED to a different parent (a cross-parent move — which also covers keeping a child of
-            // a removed item — is refused). A des-only receiver = a childless existing item gaining all-NEW children.
+            // (2) per-receiver child-order maps. Existing items may be reordered within a parent or reparented between
+            // modelled AddRanges; a des-only receiver must be a known/new dropdown-capable item and may receive only
+            // still-modelled item ids. A des-only receiver containing an id that neither existed nor was minted is
+            // refused before source mutation.
             var cur = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             CollectOrders(ownerId, current, cur);
             var des = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             CollectOrders(ownerId, resolved, des);
-            var curParent = new Dictionary<string, string>(StringComparer.Ordinal); BuildParentMap(ownerId, current, curParent);
-            var desParent = new Dictionary<string, string>(StringComparer.Ordinal); BuildParentMap(ownerId, resolved, desParent);
-            foreach (var id in resolvedExisting)
-                if (!curParent.TryGetValue(id, out var cp) || !desParent.TryGetValue(id, out var dp) || cp != dp)
-                    return Failed("reparenting an existing item is not supported yet (" + id + ")");
             foreach (var kv in des)
             {
                 if (cur.ContainsKey(kv.Key)) continue;
-                if (kv.Key != ownerId && !currentSet.Contains(kv.Key)) return Failed("unknown receiver " + kv.Key);
-                foreach (var id in kv.Value) if (!newIds.Contains(id)) return Failed("reparenting an existing item is not supported yet (" + id + " under " + kv.Key + ")");
+                if (kv.Key != ownerId && !currentSet.Contains(kv.Key) && !newIds.Contains(kv.Key)) return Failed("unknown receiver " + kv.Key);
+                foreach (var id in kv.Value) if (!resolvedExisting.Contains(id) && !newIds.Contains(id)) return Failed("unknown item id: " + id);
             }
 
             // (3) Phase 0 (removal): classify every InitializeComponent statement that references a removed id. A removed
@@ -415,6 +410,7 @@ namespace WinFormsDesigner.Engine
             int insertPos = ConstructionInsertPos(src0, init1, fields1);
             foreach (var recv in create)
             {
+                if (newIds.Contains(recv)) continue;
                 var recvCtor = FindConstruction(init1, recv, fields1);
                 if (recvCtor == null || recvCtor.Span.End > insertPos)
                     return Failed("cannot add a first child to '" + recv + "' — its construction is not in the leading block");
@@ -484,6 +480,8 @@ namespace WinFormsDesigner.Engine
                 if (origElems.Count == 0) return Failed("cannot add to an empty item collection under " + recv);
                 var byId = new Dictionary<string, ExpressionSyntax>(StringComparer.Ordinal);
                 foreach (var e in origElems) { var f = Flatten(e); if (f.Count == 1) byId[f[0]] = e; }
+                var modelledIds = new HashSet<string>(currentSet, StringComparer.Ordinal);
+                modelledIds.UnionWith(newIds);
                 // a new element's leading trivia = the sibling's INDENT only (the whitespace after the last newline of
                 // the first element's leading trivia). Copying the first element's trivia verbatim would DUPLICATE a
                 // leading comment on it, which the comment-multiset gate then rejects — so take just the indent.
@@ -494,7 +492,7 @@ namespace WinFormsDesigner.Engine
                 foreach (var id in des[recv])
                 {
                     if (byId.TryGetValue(id, out var node)) reordered.Add(node);
-                    else if (newIds.Contains(id)) reordered.Add(SyntaxFactory.ParseExpression("this." + id).WithLeadingTrivia(newLeading));
+                    else if (modelledIds.Contains(id)) reordered.Add(SyntaxFactory.ParseExpression("this." + id).WithLeadingTrivia(newLeading));
                     else return Failed("could not locate item " + id + " under " + recv);
                 }
                 // when this AddRange lost an element, the survivor now in first position may have lost its leading
@@ -549,8 +547,8 @@ namespace WinFormsDesigner.Engine
                 if (it.Children.Count > 0) CollectOrders(it.Id, it.Children, into);
         }
 
-        /// <summary>Record every itemId→parentReceiverId pair in a forest (a root's parent is the owner). Used to refuse
-        /// a cross-parent move: an existing item may be reordered or removed, but never reparented.</summary>
+        /// <summary>Record every itemId→parentReceiverId pair in a forest (a root's parent is the owner). Retained for
+        /// diagnostics/future call sites; reparent validation now happens through receiver/add-range safety gates.</summary>
         private static void BuildParentMap(string receiverId, IReadOnlyList<ToolStripItemModel> items, Dictionary<string, string> into)
         {
             foreach (var it in items)
@@ -634,9 +632,10 @@ namespace WinFormsDesigner.Engine
             init.Body!.DescendantNodes().OfType<VariableDeclaratorSyntax>().Select(v => v.Identifier.Text);
 
         /// <summary>Copy the desired forest, validating existing ids and minting a unique field name for every NEW
-        /// item (empty Id). A new item must be a whitelisted type and (for now) a LEAF — a submenu under a
-        /// brand-new item is refused. Every minted name is added to <paramref name="used"/> so two new siblings never
-        /// collide, and to <paramref name="seen"/> alongside existing ids.</summary>
+        /// item (empty Id). A new item must be a whitelisted type; when it owns new children, the later create phase
+        /// still proves the new parent type has a DropDownItems collection before emitting that AddRange. Every minted
+        /// name is added to <paramref name="used"/> so two new siblings never collide, and to <paramref name="seen"/>
+        /// alongside existing ids.</summary>
         private static bool ResolveNewIds(IReadOnlyList<ToolStripItemModel> items, HashSet<string> currentSet,
             HashSet<string> used, HashSet<string> seen, List<NewItem> newItems, out List<ToolStripItemModel> resolved, out string reason)
         {
@@ -654,7 +653,6 @@ namespace WinFormsDesigner.Engine
                 }
                 else
                 {
-                    if ((d.Children?.Count ?? 0) > 0) { reason = "adding a submenu under a new item is not supported yet"; return false; }
                     var fqn = ItemFqn(d.ItemType ?? "");
                     if (fqn == null) { reason = "unsupported new item type: " + (d.ItemType ?? ""); return false; }
                     string baseName = ShortName(fqn);
@@ -663,7 +661,7 @@ namespace WinFormsDesigner.Engine
                     if (!IsValidIdentifier(id)) { reason = "could not generate a valid item name"; return false; }
                     used.Add(id); seen.Add(id);
                     newItems.Add(new NewItem { Id = id, Fqn = fqn, Text = d.Text ?? "" });
-                    kids = new List<ToolStripItemModel>();
+                    if (!ResolveNewIds(d.Children ?? new List<ToolStripItemModel>(), currentSet, used, seen, newItems, out kids, out reason)) return false;
                 }
                 resolved.Add(new ToolStripItemModel { Id = id, Text = d.Text ?? "", Name = d.Name ?? "", ItemType = d.ItemType ?? "", Children = kids });
             }
@@ -802,6 +800,18 @@ namespace WinFormsDesigner.Engine
             var eOtherNodes = new List<StatementSyntax>(); var eAdd = new List<(string recv, string coll, HashSet<string> ids, List<string> comments)>();
             foreach (var st in oStmts) { if (TryItemAddRange(st, out var r, out var c, out var ids)) oAdd.Add((r!, c!, ids!, InitializerComments(st))); else oOtherNodes.Add(st); }
             foreach (var st in eStmts) { if (TryItemAddRange(st, out var r, out var c, out var ids)) eAdd.Add((r!, c!, ids!, InitializerComments(st))); else eOtherNodes.Add(st); }
+            var oMembership = new Dictionary<string, string>(StringComparer.Ordinal);
+            var eMembership = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var a in oAdd)
+                foreach (var id in a.ids)
+                    if (!oMembership.TryAdd(id, Key(a.recv, a.coll))) return false;
+            foreach (var a in eAdd)
+                foreach (var id in a.ids)
+                    if (!eMembership.TryAdd(id, Key(a.recv, a.coll))) return false;
+            foreach (var kv in oMembership)
+                if (!removedIds.Contains(kv.Key) && !eMembership.ContainsKey(kv.Key)) return false;
+            foreach (var kv in eMembership)
+                if (!newIds.Contains(kv.Key) && !oMembership.ContainsKey(kv.Key)) return false;
 
             // the ids that are elements of some ORIGINAL item AddRange — i.e. actual menu/toolbar items. ONLY these may
             // have their `.Text = "…"` string literal change VALUE in place (a RENAME). `Canon` blanks that literal's value
@@ -853,20 +863,23 @@ namespace WinFormsDesigner.Engine
                 }
                 if (el.Count != 1) return false;
                 var e = el[0];
-                foreach (var id in o.ids) if (!removedIds.Contains(id) && !e.ids.Contains(id)) return false; // a survivor was dropped
-                foreach (var id in e.ids) if (!o.ids.Contains(id) && !newIds.Contains(id)) return false;     // an extra isn't new
+                foreach (var id in o.ids)
+                    if (!removedIds.Contains(id) && !e.ids.Contains(id) && !eMembership.ContainsKey(id)) return false; // a survivor was dropped, not moved
+                foreach (var id in e.ids)
+                    if (!o.ids.Contains(id) && !newIds.Contains(id) && !oMembership.ContainsKey(id)) return false;     // an extra isn't new or moved
                 foreach (var id in e.ids) if (removedIds.Contains(id)) return false;                          // a removed id lingers
                 // comments: a pure add/reorder keeps them exactly; an AddRange that LOST an element must carry none
                 // (fail-safe — the shrink can't then silently drop a comment that belonged to a surviving element).
-                if (o.ids.Any(id => removedIds.Contains(id))) { if (o.comments.Count != 0 || e.comments.Count != 0) return false; }
+                if (o.ids.Any(id => !e.ids.Contains(id))) { if (o.comments.Count != 0 || e.comments.Count != 0) return false; }
                 else if (!SameMultiset(o.comments, e.comments)) return false;
             }
-            // a freshly-created AddRange (edited-only key) must hold only new ids.
+            // a freshly-created AddRange (edited-only key) must hold only new ids or existing ids moved from another
+            // modelled item collection.
             foreach (var kv in eByKey)
             {
                 if (oByKey.ContainsKey(kv.Key)) continue;
                 if (kv.Value.Count != 1) return false;
-                foreach (var id in kv.Value[0].ids) if (!newIds.Contains(id)) return false;
+                foreach (var id in kv.Value[0].ids) if (!newIds.Contains(id) && !oMembership.ContainsKey(id)) return false;
             }
             return true;
         }

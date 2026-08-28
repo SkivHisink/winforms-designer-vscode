@@ -315,7 +315,14 @@ namespace WinFormsDesigner.Engine
             bool targetIsRoot;
             string targetName;
             List<string> path;
-            if (chain.Count >= 2 && ctx.Fields.Contains(chain[0]))
+            if (chain.Count == 2 && !ctx.Fields.Contains(chain[0]) && IsInheritedOverrideProperty(chain[1]))
+            {
+                // A derived designer may legally address a public/protected field declared by its compiled base. The
+                // syntax-only front-end cannot prove that field, so emit only the exact one-hop allowlisted shape; the
+                // executor must independently resolve a unique accessible framework field before it can mutate anything.
+                targetIsRoot = false; targetName = chain[0]; path = new List<string> { chain[1] };
+            }
+            else if (chain.Count >= 2 && ctx.Fields.Contains(chain[0]))
             {
                 targetIsRoot = false; targetName = chain[0]; path = chain.Skip(1).ToList();
             }
@@ -334,6 +341,10 @@ namespace WinFormsDesigner.Engine
             if (val == null) return Gap(Trim(asg));
             return One(new IrSetProperty { TargetIsRoot = targetIsRoot, TargetName = targetName, PropertyPath = path, Value = val });
         }
+
+        private static bool IsInheritedOverrideProperty(string propertyName) =>
+            propertyName is "Location" or "Size" or "Bounds" or "Anchor" or "Dock"
+                or "Text" or "Enabled" or "Visible" or "TabIndex";
 
         private static (List<IrStatement>, bool, string?) ClassifyInvocation(InvocationExpressionSyntax inv, Ctx ctx)
         {
@@ -665,6 +676,17 @@ namespace WinFormsDesigner.Engine
                             && inv.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax keyLit
                             && keyLit.IsKind(SyntaxKind.StringLiteralExpression))
                             return new IrResourceRef { Key = (string)keyLit.Token.Value!, IsString = method == "GetString" };
+                        // VS emits Image values such as `System.Drawing.SystemIcons.Information.ToBitmap()`. Model
+                        // only that exact zero-argument framework shape, encoded as a fixed allowlisted pseudo-factory
+                        // so the child executor can re-check both the trusted type and the finite icon-member set.
+                        if (method == "ToBitmap" && inv.ArgumentList.Arguments.Count == 0
+                            && ima.Expression is MemberAccessExpressionSyntax iconRead)
+                        {
+                            string iconType = FullDottedName(iconRead.Expression);
+                            string iconMember = iconRead.Name.Identifier.Text;
+                            if (DesignerAllowlists.TryGetSystemIconBitmapFactoryName(iconType, iconMember, out string iconFactory))
+                                return new IrStaticFactory { TypeName = iconType, Method = iconFactory };
+                        }
                         // allowlisted static factory (System.Drawing.Color.FromArgb/FromName/FromKnownColor)
                         if (AllowlistHasFactory(recv, method))
                         {

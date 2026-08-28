@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "2.0.0-headless-input.1",
+  "generatedAtUtc": "2026-08-20T00:00:00.000Z",
+  "scenarios": [
+    {
+      "id": "V2-FND-001-S121",
+      "runtime": "headless",
+      "renderMode": "interpreted",
+      "requiresVendorArtifact": true,
+      "capabilityInspection": {
+        "operation": "Headless designer validation",
+        "target": "repository-sample",
+        "authorityLane": "ReadOnly",
+        "reasonCode": "HEADLESS_SAMPLE",
+        "recoveryOptions": [
+          "Run Visual Studio reference traces separately",
+          "Import licensed vendor evidence separately"
+        ]
+      },
+      "controls": [
+        {
+          "id": "button1",
+          "typeName": "System.Windows.Forms.Button",
+          "text": "OK",
+          "imageOnly": false,
+          "visible": true,
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}

@@ -58,8 +58,17 @@ namespace WinFormsDesigner.Engine
                     Console.WriteLine("   unrepresent. : " + res.Unrepresentable.Count);
                     foreach (var u in res.Unrepresentable) Console.WriteLine("       " + u);
                     Console.WriteLine("   png          : " + res.Width + "x" + res.Height + ", " + res.Png.Length + " bytes -> " + outPng);
-                    Console.WriteLine(res.Png.Length > 0 ? "RESULT: PASS" : "RESULT: FAIL");
-                    return res.Png.Length > 0 ? 0 : 1;
+                    // A render that LOST a control is never a pass: an ActiveX / vendor / x86 type the interpreter
+                    // could not create leaves a canvas that silently disagrees with the source, and pixels alone
+                    // cannot tell the difference. Report the same category token Classify already assigns to a
+                    // "Controls.Add unknown child" signal, so the CLI and the save gate speak one vocabulary.
+                    bool dropped = SaveSafety.DropsControls(res.Unrepresentable);
+                    bool pass = res.Png.Length > 0 && !dropped;
+                    Console.WriteLine(pass ? "RESULT: PASS"
+                        : dropped ? "RESULT: FAIL — " + SaveSafety.CategoryName(SaveSafetyReason.UnresolvedType)
+                            + ": the render dropped a control the source declares"
+                        : "RESULT: FAIL");
+                    return pass ? 0 : 1;
                 }
                 catch (Exception ex)
                 {
@@ -1253,8 +1262,14 @@ namespace WinFormsDesigner.Engine
                                           + "  @ (" + c.X + "," + c.Y + ") " + c.Width + "x" + c.Height
                                           + " depth=" + c.Depth + (c.ParentId != null ? " parent=" + c.ParentId : ""));
                     }
-                    bool pass = res.Png.Length > 0 && colors > 1 && res.Controls.Count > 0;
-                    Console.WriteLine(pass ? "RESULT: PASS" : "RESULT: FAIL");
+                    // Same fail-closed rule as --selftest: a dropped control means the hit-test map is missing a
+                    // control the source declares, so the combined render is not a pass either.
+                    bool dropped = SaveSafety.DropsControls(res.Unrepresentable);
+                    bool pass = res.Png.Length > 0 && colors > 1 && res.Controls.Count > 0 && !dropped;
+                    Console.WriteLine(pass ? "RESULT: PASS"
+                        : dropped ? "RESULT: FAIL — " + SaveSafety.CategoryName(SaveSafetyReason.UnresolvedType)
+                            + ": the render dropped a control the source declares"
+                        : "RESULT: FAIL");
                     return pass ? 0 : 1;
                 }
                 catch (Exception ex)
@@ -1294,7 +1309,8 @@ namespace WinFormsDesigner.Engine
                 {
                     Console.WriteLine($"-- {g.Key} ({g.Count()})");
                     foreach (var i in g.OrderBy(i => i.Name, StringComparer.Ordinal))
-                        Console.WriteLine($"   {i.Name,-22} {(i.IconPng != null ? "[icon]" : "[    ]")} {i.Fqn}");
+                        Console.WriteLine($"   {i.Name,-22} {(i.IconPng != null ? "[icon]" : "[    ]")} "
+                            + $"{(i.FrameworkOnly ? "[net4x-only] " : "")}{i.Fqn}");
                 }
                 return 0;
             }
@@ -1442,6 +1458,17 @@ namespace WinFormsDesigner.Engine
         public string Notes { get; set; } = "";
     }
 
+    public sealed class HostedServiceKernelProbeResult
+    {
+        public bool Ok { get; set; }
+        public string ApartmentState { get; set; } = "";
+        public string RootType { get; set; } = "";
+        public List<string> Capabilities { get; set; } = new();
+        public bool RootIsSited { get; set; }
+        public bool UnsupportedServiceRefused { get; set; }
+        public string Reason { get; set; } = "";
+    }
+
     /// <summary>JSON-RPC surface exposed to the VS Code extension.</summary>
     public sealed class EngineApi
     {
@@ -1449,6 +1476,9 @@ namespace WinFormsDesigner.Engine
         public EngineApi(StaDispatcher sta) => _sta = sta;
 
         public string Ping() => "winforms-engine ok / " + RuntimeInformation.FrameworkDescription;
+
+        public V2ProtocolValidationResult ValidateV2Envelope(string envelopeJson) =>
+            V2Protocol.ValidateEnvelopeJson(envelopeJson);
 
         public EngineCapabilities GetCapabilities() => new EngineCapabilities
         {
@@ -1460,6 +1490,66 @@ namespace WinFormsDesigner.Engine
             Notes = "Allowlisted source interpretation with immediate unsaved-buffer preview and source-first edits.",
         };
 
+        /// <summary>Bounded v2 hosted-service probe. Session creation and every WinForms service operation run on
+        /// the engine-owned STA dispatcher; this proves the production factory cannot be entered from an RPC/MTA
+        /// thread. It advertises only the kernel's implemented contracts and explicitly verifies one unavailable
+        /// serialization service remains refused.</summary>
+        public HostedServiceKernelProbeResult ProbeHostedServiceKernel(string rootKind = "Form")
+        {
+            try
+            {
+                return _sta.Invoke(() =>
+                {
+                    using var session = string.Equals(rootKind, "UserControl", StringComparison.Ordinal)
+                        ? DesignerServiceKernel.CreateUserControlSession()
+                        : string.Equals(rootKind, "Form", StringComparison.Ordinal)
+                            ? DesignerServiceKernel.CreateFormSession()
+                            : throw new NotSupportedException("UNSUPPORTED_HOSTED_ROOT_KIND: " + rootKind);
+                    var unsupported = session.GetService(typeof(System.ComponentModel.Design.Serialization.IDesignerSerializationService));
+                    var refused = unsupported == null && session.TryGetServiceRefusal(
+                        typeof(System.ComponentModel.Design.Serialization.IDesignerSerializationService), out _);
+                    return new HostedServiceKernelProbeResult
+                    {
+                        Ok = Thread.CurrentThread.GetApartmentState() == ApartmentState.STA
+                            && session.RootComponent.Site?.DesignMode == true
+                            && refused,
+                        ApartmentState = Thread.CurrentThread.GetApartmentState().ToString(),
+                        RootType = session.RootComponent.GetType().FullName ?? session.RootComponent.GetType().Name,
+                        Capabilities = session.Capabilities.Select(capability => capability.ToString()).ToList(),
+                        RootIsSited = session.RootComponent.Site?.DesignMode == true,
+                        UnsupportedServiceRefused = refused,
+                    };
+                });
+            }
+            catch (Exception ex)
+            {
+                return new HostedServiceKernelProbeResult
+                {
+                    Ok = false,
+                    Reason = ex.GetBaseException().Message,
+                };
+            }
+        }
+
+        /// <summary>Inspect the complete/incomplete service advertisement of the exact repository-certified hosted
+        /// designer. All component/designer callbacks stay on the engine STA and mutate only a disposable graph.</summary>
+        public HostedServiceKernelProductResult InspectCertifiedHostedServiceKernel(
+            string assemblyPath,
+            string componentTypeName,
+            string certificationId) =>
+            _sta.Invoke(() => HostedServiceKernelProductBroker.Inspect(
+                assemblyPath, componentTypeName, certificationId));
+
+        /// <summary>Invoke one exact certified smart-tag command in the disposable kernel graph. Returned edits are
+        /// proposals only; the Extension Host must re-plan them against its current source and commit them together.</summary>
+        public HostedServiceKernelProductResult InvokeCertifiedHostedServiceAction(
+            string assemblyPath,
+            string componentTypeName,
+            string certificationId,
+            string actionId) =>
+            _sta.Invoke(() => HostedServiceKernelProductBroker.Invoke(
+                assemblyPath, componentTypeName, certificationId, actionId));
+
         /// <summary>Run one explicitly allowlisted framework UITypeEditor in a bounded child process. The result is
         /// an invariant value only; the extension must still route it through the normal source-first SetProperty
         /// preview and one-undo commit. Arbitrary project/vendor editor types are never accepted.</summary>
@@ -1468,6 +1558,9 @@ namespace WinFormsDesigner.Engine
             string editorTypeName,
             string valueTypeName,
             string invariantValue,
+            string? editorAssemblyPath,
+            string? editorAssemblySha256,
+            string? editorCertificationId,
             CancellationToken cancellationToken)
         {
             try
@@ -1480,6 +1573,9 @@ namespace WinFormsDesigner.Engine
                     EditorTypeName = editorTypeName ?? "",
                     ValueTypeName = valueTypeName ?? "",
                     InvariantValue = invariantValue ?? "",
+                    EditorAssemblyPath = NullIfBlank(editorAssemblyPath),
+                    EditorAssemblySha256 = NullIfBlank(editorAssemblySha256),
+                    EditorCertificationId = NullIfBlank(editorCertificationId),
                 }, cancellationToken).ConfigureAwait(false);
             }
             catch
@@ -1491,6 +1587,96 @@ namespace WinFormsDesigner.Engine
                 };
             }
         }
+
+        /// <summary>Run the real framework CollectionEditor in the same isolated STA worker. The payload is limited
+        /// to source-adapter-supported invariant items; the returned list still requires the extension's normal
+        /// Roslyn preview/revision/one-undo commit.</summary>
+        public async Task<DesignerUiTypeEditorBrokerResult> EditSupportedCollectionEditor(
+            string requestId,
+            string itemTypeName,
+            string[] items,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var broker = new DesignerUiTypeEditorBroker(
+                    DesignerUiTypeEditorProcessRunnerFactory.CreateForCurrentEngine());
+                return await broker.EditAsync(new DesignerUiTypeEditorRequest
+                {
+                    RequestId = requestId ?? "",
+                    EditorTypeName = DesignerUiTypeEditorPolicy.CollectionEditorTypeName,
+                    ValueTypeName = DesignerUiTypeEditorPolicy.CollectionValueTypeName,
+                    InvariantValue = "",
+                    CollectionItemTypeName = itemTypeName ?? "",
+                    CollectionItems = new List<string>(items ?? Array.Empty<string>()),
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorBrokerResult
+                {
+                    ErrorCode = "worker_failed",
+                    Reason = "The collection editor worker could not be started.",
+                };
+            }
+        }
+
+        /// <summary>Run one fixed-contract certified vendor collection editor in the same isolated STA worker.
+        /// Live property metadata supplies the exact editor assembly path/hash/certification tuple; the returned
+        /// invariant items still require a source preview, owned-region validation, revision gate, and host commit.</summary>
+        public async Task<DesignerUiTypeEditorBrokerResult> EditCertifiedVendorCollectionEditor(
+            string requestId,
+            string editorTypeName,
+            string itemTypeName,
+            string[] items,
+            string editorAssemblyPath,
+            string editorAssemblySha256,
+            string editorCertificationId,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var broker = new DesignerUiTypeEditorBroker(
+                    DesignerUiTypeEditorProcessRunnerFactory.CreateForCurrentEngine());
+                return await broker.EditAsync(new DesignerUiTypeEditorRequest
+                {
+                    RequestId = requestId ?? "",
+                    EditorTypeName = editorTypeName ?? "",
+                    ValueTypeName = DesignerUiTypeEditorPolicy.CollectionValueTypeName,
+                    InvariantValue = "",
+                    CollectionItemTypeName = itemTypeName ?? "",
+                    CollectionItems = new List<string>(items ?? Array.Empty<string>()),
+                    EditorAssemblyPath = NullIfBlank(editorAssemblyPath),
+                    EditorAssemblySha256 = NullIfBlank(editorAssemblySha256),
+                    EditorCertificationId = NullIfBlank(editorCertificationId),
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorBrokerResult
+                {
+                    ErrorCode = "worker_failed",
+                    Reason = "The certified collection editor worker could not be started.",
+                };
+            }
+        }
+
+        /// <summary>Validate an adapter/editor-proposed full source image against one component's owned
+        /// InitializeComponent statements. This returns a preview only; the engine never writes the document.</summary>
+        public DesignerOwnedRegionPlanResult PlanBoundedComponentPatch(
+            string sourceText,
+            string expectedSourceSha256,
+            string proposedSourceText,
+            string componentName,
+            string patchLabel) =>
+            DesignerOwnedRegionSerializer.PlanBoundedComponentPatch(new DesignerOwnedRegionPatchRequest
+            {
+                SourceText = sourceText ?? "",
+                ExpectedSourceSha256 = expectedSourceSha256 ?? "",
+                ProposedSourceText = proposedSourceText ?? "",
+                ComponentName = componentName ?? "",
+                PatchLabel = patchLabel ?? "",
+            });
 
         /// <summary>Blank/whitespace → null, so a client can send "" to mean "auto-discover the assembly".</summary>
         private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
@@ -1524,6 +1710,22 @@ namespace WinFormsDesigner.Engine
             ProjectResolver.ResolveOutputAssembly(designerFilePath);
 
         /// <summary>
+        /// Resolve the unique project/type owner for a designer source before render. Pure/off-STA: it parses the
+        /// source for a single InitializeComponent-bearing partial type and checks only the bounded project paths
+        /// supplied by the extension.
+        /// </summary>
+        public DesignerDocumentOwnerResolution ResolveDesignerDocumentOwner(
+            string designerFilePath,
+            string[] projectPaths,
+            string? designerSourceText = null,
+            string? codeBehindSourceText = null) =>
+            ProjectResolver.ResolveDesignerDocumentOwner(
+                designerFilePath,
+                projectPaths ?? Array.Empty<string>(),
+                designerSourceText,
+                codeBehindSourceText);
+
+        /// <summary>
         /// Render a .Designer.cs to PNG bytes (base64 over JSON-RPC). controlAssemblyPath is an optional
         /// explicit override for the control assembly; when null/blank the engine auto-discovers the
         /// project's build output (ProjectResolver). The override is the fallback for projects whose
@@ -1550,6 +1752,22 @@ namespace WinFormsDesigner.Engine
             return _sta.Invoke(() => DesignerRenderer.RenderWithLayout(designerFilePath, NullIfBlank(controlAssemblyPath), sourceText, renderScale, selectedTabs));
         }
 
+        /// <summary>
+        /// Revision-bound modern property-grid fast path. The opaque graph token was issued by RenderWithLayout; the
+        /// renderer independently proves the exact source transition again before touching the retained DesignSurface.
+        /// A refusal is non-fatal and tells the extension to use its established rebuild path.
+        /// </summary>
+        public CachedTextPropertyEditResult ApplyCachedTextPropertyEdit(
+            string graphToken,
+            string designerFilePath,
+            string componentId,
+            string propertyName,
+            string newValueExpr,
+            string beforeSourceText,
+            string afterSourceText) => _sta.Invoke(() => DesignerRenderer.ApplyCachedTextPropertyEdit(
+                graphToken ?? "", designerFilePath, componentId ?? "", propertyName ?? "", newValueExpr ?? "",
+                beforeSourceText ?? "", afterSourceText ?? ""));
+
         /// <summary>Modern standard-TabControl header hit-test. selectedTabs is transient view state only;
         /// unknown/nonmember identities and off-header points return an empty hit.</summary>
         public TabHit HitTestTab(string designerFilePath, string hostId, int x, int y,
@@ -1558,6 +1776,23 @@ namespace WinFormsDesigner.Engine
             Prewarm(designerFilePath, controlAssemblyPath);
             return _sta.Invoke(() => DesignerRenderer.HitTestTab(designerFilePath, hostId ?? "", x, y,
                 NullIfBlank(controlAssemblyPath), sourceText, selectedTabs));
+        }
+
+        /// <summary>Modern hosted-ControlDesigner adorner confirmation. Coordinates are control-local and the result
+        /// is a DTO only; no designer object or service crosses JSON-RPC.</summary>
+        public DesignerAdornerHitInfo HitTestDesignerAdorner(
+            string designerFilePath,
+            string componentId,
+            string adornerId,
+            int x,
+            int y,
+            string? controlAssemblyPath = null,
+            string? sourceText = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            return _sta.Invoke(() => DesignerRenderer.HitTestDesignerAdorner(
+                designerFilePath, componentId ?? "", adornerId ?? "", x, y,
+                NullIfBlank(controlAssemblyPath), sourceText));
         }
 
         /// <summary>
@@ -1625,6 +1860,86 @@ namespace WinFormsDesigner.Engine
         public EditPreview SetProperty(string designerFilePath, string componentName, string propertyName, string newValueExpr, string? sourceText = null)
         {
             var r = DesignerRenderer.ApplyPropertyEdit(designerFilePath, componentName, propertyName, newValueExpr, sourceText);
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>
+        /// V2-DOC-001 kill-spike endpoint: build a preview-only owned-InitializeComponent-region Lane B plan for a
+        /// scalar property set and compare it against the established Lane A source-first planner. This never writes
+        /// workspace files and is deliberately gated by an explicit opt-in flag so normal SetProperty routing stays
+        /// source-first.
+        /// </summary>
+        public DesignerOwnedRegionPlanResult PreviewOwnedRegionPropertySet(
+            string designerFilePath,
+            string expectedSourceSha256,
+            string componentName,
+            string propertyName,
+            string newValueExpr,
+            string? sourceText = null,
+            bool optIn = false,
+            string? retainedGraphToken = null)
+        {
+            string source = sourceText ?? File.ReadAllText(designerFilePath);
+            if (!optIn)
+            {
+                string actual = DesignerOwnedRegionSerializer.Sha256Hex(source);
+                return new DesignerOwnedRegionPlanResult
+                {
+                    Safe = false,
+                    Reason = "owned-region Lane B preview requires explicit opt-in",
+                    ExpectedSourceSha256 = expectedSourceSha256 ?? "",
+                    ActualSourceSha256 = actual,
+                    ComponentName = componentName ?? "",
+                    PropertyName = propertyName ?? "",
+                    Mode = EditMode.Failed,
+                };
+            }
+
+            bool retainedCoverage = !string.IsNullOrWhiteSpace(retainedGraphToken)
+                && _sta.Invoke(() => DesignerRenderer.RetainedGraphProvesFullCoverage(
+                    retainedGraphToken!, designerFilePath, source));
+            return DesignerOwnedRegionSerializer.PlanPropertySet(new DesignerOwnedRegionPlanRequest
+            {
+                SourceText = source,
+                ExpectedSourceSha256 = expectedSourceSha256 ?? "",
+                ComponentName = componentName ?? "",
+                PropertyName = propertyName ?? "",
+                ValueExpression = newValueExpr ?? "",
+            }, retainedCoverage);
+        }
+
+        /// <summary>Token-checked derived-source override for an inherited public/protected framework control.
+        /// Observed base identity and all type/accessibility metadata are recomputed inside the STA engine.</summary>
+        public EditPreview ApplyInheritedPropertyOverride(string designerFilePath, string componentName,
+            string propertyName, string newValueExpr, string expectedBaseIdentityToken,
+            string? controlAssemblyPath = null, string? sourceText = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            var r = _sta.Invoke(() => DesignerRenderer.ApplyInheritedPropertyOverride(
+                designerFilePath, componentName, propertyName, newValueExpr, expectedBaseIdentityToken,
+                NullIfBlank(controlAssemblyPath), sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Delete one canonical derived-source inherited override after revalidating the compiled base token.</summary>
+        public EditPreview RemoveInheritedPropertyOverride(string designerFilePath, string componentName,
+            string propertyName, string expectedBaseIdentityToken,
+            string? controlAssemblyPath = null, string? sourceText = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            var r = _sta.Invoke(() => DesignerRenderer.RemoveInheritedPropertyOverride(
+                designerFilePath, componentName, propertyName, expectedBaseIdentityToken,
+                NullIfBlank(controlAssemblyPath), sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Compute one all-or-nothing multi-object property edit. Every target is preflighted against the
+        /// same source snapshot and no candidate text is returned unless the full selection composes safely.</summary>
+        public EditPreview SetProperties(string designerFilePath, string[] componentNames, string propertyName,
+            string newValueExpr, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyPropertyEdits(designerFilePath, componentNames ?? Array.Empty<string>(),
+                propertyName, newValueExpr, sourceText);
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
@@ -1742,6 +2057,16 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Ok, Mode = r.Ok ? (r.Changed ? "Remove" : "Noop") : "Failed", Text = r.NewText, Reason = r.Reason };
         }
 
+        /// <summary>Reset a shared property across a selection as one preview. One unsafe target rejects the entire
+        /// operation; already-default targets are representable no-ops.</summary>
+        public EditPreview ResetProperties(string designerFilePath, string[] componentNames, string propertyName,
+            string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyPropertyResets(designerFilePath, componentNames ?? Array.Empty<string>(),
+                propertyName, sourceText);
+            return new EditPreview { Safe = r.Ok, Mode = r.Ok ? (r.Changed ? "Remove" : "Noop") : "Failed", Text = r.NewText, Reason = r.Reason };
+        }
+
         /// <summary>Import an image into a resx-backed image/icon property: embed the (base64) bytes into the form's
         /// sibling .resx and write the <c>resources.GetObject</c> assignment into InitializeComponent. Returns BOTH
         /// new texts — the host writes <see cref="ImageEditPreview.ResxText"/> to the .resx and applies
@@ -1763,6 +2088,23 @@ namespace WinFormsDesigner.Engine
                 ResxKey = r.ResxKey,
                 Reason = r.Reason,
             };
+        }
+
+        /// <summary>List existing project image/bitmap/icon resources from the host-supplied .resx and strongly typed
+        /// Resources.Designer.cs texts. The engine reads no ResXFileRef target path.</summary>
+        public ProjectResourceListResult ListProjectImageResources(string? resxText, string? resourcesDesignerSource) =>
+            DesignerRenderer.ListProjectImageResources(resxText, resourcesDesignerSource);
+
+        /// <summary>Assign an existing strongly typed project image resource to a form property. The resource file is
+        /// not rewritten; only the form .Designer.cs property expression is previewed.</summary>
+        public EditPreview SetProjectImageResource(string designerFilePath, string componentName, string propertyName,
+            string propertyTypeName, string? resxText, string? resourcesDesignerSource,
+            string resourceClassFullName, string resourcePropertyName, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyProjectImageResource(designerFilePath, componentName, propertyName,
+                propertyTypeName, resxText, resourcesDesignerSource, resourceClassFullName, resourcePropertyName,
+                NullIfBlank(sourceText));
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
         /// <summary>0.11.0 ImageList editor — embed a serialized ImageStream blob (produced by the net48 serializer)
@@ -1879,6 +2221,46 @@ namespace WinFormsDesigner.Engine
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 
+        /// <summary>Discover bounded project DTO schemas and conventional application settings for the Data Sources pane.</summary>
+        public DataSourcesResult ListDataSources(string designerFilePath, string? sourceText = null)
+            => DesignerRenderer.ListProjectDataSources(designerFilePath, NullIfBlank(sourceText));
+
+        /// <summary>Generate a bounded detail/grid data-binding surface as one source edit.</summary>
+        public DataSourceGenerationResult GenerateDataSource(
+            string designerFilePath,
+            string schemaKey,
+            string mode,
+            string parentId,
+            int x,
+            int y,
+            bool includeNavigator,
+            string? existingBindingSourceId = null,
+            string? existingGridId = null,
+            string? sourceText = null)
+            => DesignerRenderer.GenerateProjectDataSource(
+                designerFilePath,
+                schemaKey ?? "",
+                mode ?? "",
+                parentId ?? "this",
+                x,
+                y,
+                includeNavigator,
+                NullIfBlank(existingBindingSourceId),
+                NullIfBlank(existingGridId),
+                NullIfBlank(sourceText));
+
+        /// <summary>Bind one discovered application setting to a compatible selected control.</summary>
+        public DataSourceGenerationResult BindApplicationSetting(
+            string designerFilePath,
+            string settingKey,
+            string targetId,
+            string? sourceText = null)
+            => DesignerRenderer.BindProjectApplicationSetting(
+                designerFilePath,
+                settingKey ?? "",
+                targetId ?? "",
+                NullIfBlank(sourceText));
+
         /// <summary>Set a common framework extender provider value.</summary>
         public EditPreview SetExtender(string designerFilePath, string providerId, string targetId,
             string propertyName, string propertyType, string rawValue, string? sourceText = null)
@@ -1986,7 +2368,8 @@ namespace WinFormsDesigner.Engine
             int width,
             int height,
             string? controlAssemblyPath = null,
-            string? sourceText = null)
+            string? sourceText = null,
+            string? expectedBaseIdentityToken = null)
         {
             Prewarm(designerFilePath, controlAssemblyPath);
             return _sta.Invoke(() => DesignerRenderer.CommitGeometryBounds(
@@ -1997,7 +2380,8 @@ namespace WinFormsDesigner.Engine
                 width,
                 height,
                 NullIfBlank(controlAssemblyPath),
-                sourceText));
+                sourceText,
+                expectedBaseIdentityToken));
         }
 
         /// <summary>
@@ -2008,43 +2392,71 @@ namespace WinFormsDesigner.Engine
         /// reflect the delegate signature. controlAssemblyPath optionally overrides project auto-discovery.
         /// </summary>
         public EventGenResult GenerateEventHandler(string designerFilePath, string componentId, string eventName,
-            string? handlerName = null, string? designerSourceText = null, string? codeText = null, string? controlAssemblyPath = null)
+            string? handlerName = null, string? designerSourceText = null, string? codeText = null,
+            string? controlAssemblyPath = null, List<string>? projectCodeTexts = null)
         {
             Prewarm(designerFilePath, controlAssemblyPath);
             return _sta.Invoke(() => DesignerRenderer.GenerateEventHandler(
                 designerFilePath, componentId, eventName,
-                NullIfBlank(handlerName), designerSourceText, codeText, NullIfBlank(controlAssemblyPath)));
+                NullIfBlank(handlerName), designerSourceText, codeText, NullIfBlank(controlAssemblyPath), projectCodeTexts));
         }
 
         /// <summary>Events dropdown: existing code-behind methods compatible with each of a component's events
         /// (eventName → candidate method names). designerSourceText/codeText are the unsaved buffers.</summary>
         public List<EventCandidates> ListHandlerCandidates(string designerFilePath, string componentId,
-            string? designerSourceText = null, string? codeText = null, string? controlAssemblyPath = null)
+            string? designerSourceText = null, string? codeText = null, string? controlAssemblyPath = null,
+            List<string>? projectCodeTexts = null)
         {
             Prewarm(designerFilePath, controlAssemblyPath);
-            return _sta.Invoke(() => DesignerRenderer.ListHandlerCandidates(designerFilePath, componentId, designerSourceText, codeText, NullIfBlank(controlAssemblyPath)));
+            return _sta.Invoke(() => DesignerRenderer.ListHandlerCandidates(designerFilePath, componentId,
+                designerSourceText, codeText, NullIfBlank(controlAssemblyPath), projectCodeTexts));
+        }
+
+        public int FindEventHandlerSourceIndex(string designerFilePath, string handlerName,
+            List<string>? projectCodeTexts = null, string? designerSourceText = null,
+            string? controlAssemblyPath = null)
+        {
+            Prewarm(designerFilePath, controlAssemblyPath);
+            return _sta.Invoke(() => DesignerRenderer.FindEventHandlerSourceIndex(
+                designerFilePath, handlerName, projectCodeTexts, designerSourceText, NullIfBlank(controlAssemblyPath)));
         }
 
         /// <summary>Events dropdown write path: wire/rewire/unwire an event to an EXISTING handler. handlerName
         /// null/blank → unwire. Edits only the .Designer.cs; the host applies the returned text as an unsaved
         /// edit. codeText (the code-behind buffer) lets the engine refuse wiring to a non-existent method.</summary>
         public EventWiringResult SetEventWiring(string designerFilePath, string componentId, string eventName,
-            string? handlerName = null, string? designerSourceText = null, string? codeText = null, string? controlAssemblyPath = null)
+            string? handlerName = null, string? designerSourceText = null, string? codeText = null,
+            string? controlAssemblyPath = null, List<string>? projectCodeTexts = null)
         {
             Prewarm(designerFilePath, controlAssemblyPath);
-            return _sta.Invoke(() => DesignerRenderer.SetEventWiring(designerFilePath, componentId, eventName, NullIfBlank(handlerName), designerSourceText, codeText, NullIfBlank(controlAssemblyPath)));
+            return _sta.Invoke(() => DesignerRenderer.SetEventWiring(designerFilePath, componentId, eventName,
+                NullIfBlank(handlerName), designerSourceText, codeText, NullIfBlank(controlAssemblyPath), projectCodeTexts));
         }
 
         /// <summary>Toolbox add-control: insert a standard WinForms control (field decl + InitializeComponent
         /// statements) as a text edit. PURE TEXT — no graph load / STA (the generated statements are
         /// interpreted on the next render). The host applies the returned text as an unsaved edit.</summary>
-        public ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, List<string>? projectControlFqns = null, string? autoScaleDimensions = null)
+        public ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, List<string>? projectControlFqns = null, string? autoScaleDimensions = null, int? width = null, int? height = null)
         {
             // A net9 project-control key needs the resolved assembly enumerated; the net48 (DevExpress/
             // net4x) path instead supplies projectControlFqns (net9 can't load that assembly) → no prewarm needed.
             if (projectControlFqns == null) Prewarm(designerFilePath, controlAssemblyPath);
-            return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath), projectControlFqns, NullIfBlank(autoScaleDimensions));
+            return DesignerRenderer.AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY, NullIfBlank(controlAssemblyPath), projectControlFqns, NullIfBlank(autoScaleDimensions), width, height);
         }
+
+        public ControlAddResult AddLocalizedControl(string designerFilePath, string parentId, string controlTypeKey,
+            string? sourceText, string? resxText, int? locX = null, int? locY = null,
+            string? controlAssemblyPath = null, List<string>? projectControlFqns = null,
+            string? autoScaleDimensions = null, int? width = null, int? height = null)
+        {
+            if (projectControlFqns == null) Prewarm(designerFilePath, controlAssemblyPath);
+            return DesignerRenderer.AddLocalizedControl(designerFilePath, parentId, controlTypeKey, sourceText,
+                resxText, locX, locY, NullIfBlank(controlAssemblyPath), projectControlFqns,
+                NullIfBlank(autoScaleDimensions), width, height);
+        }
+
+        public LocalizedResourceEditResult RemoveLocalizedComponentResources(string? resxText, List<string> componentIds) =>
+            DesignerLocalizedResxEditor.RemoveComponents(resxText, componentIds);
 
         /// <summary>Add a new empty tab page to a tab host (pure text edit; pageTypeFqn is the page type). The host
         /// applies the returned text as an unsaved edit, then the net48 engine live-adds the page to the picture.</summary>
@@ -2106,6 +2518,14 @@ namespace WinFormsDesigner.Engine
         public ControlReorderResult MoveTabPage(string designerFilePath, string hostId, string pageId, bool left, string? sourceText = null) =>
             DesignerRenderer.MoveTabPage(designerFilePath, hostId, pageId, left, sourceText);
 
+        /// <summary>Read the exact field-backed order surfaced by the standard TabPages collection editor.</summary>
+        public TabPageItemsResult ListTabPages(string designerFilePath, string hostId, string? sourceText = null) =>
+            DesignerRenderer.ListTabPages(designerFilePath, hostId, sourceText);
+
+        /// <summary>Apply the complete TabPages permutation as one pure-text transaction / one host undo unit.</summary>
+        public ControlReorderResult SetTabPageOrder(string designerFilePath, string hostId, string[] pageIds, string? sourceText = null) =>
+            DesignerRenderer.SetTabPageOrder(designerFilePath, hostId, pageIds ?? Array.Empty<string>(), sourceText);
+
         /// <summary>Copy a leaf control to an opaque clipboard blob (field type + InitializeComponent statements).
         /// PURE TEXT — no graph load/STA. The host stores the blob and hands it back to <see cref="PasteControl"/>.</summary>
         public ControlCopyResult CopyControl(string designerFilePath, string controlId, string? sourceText = null) =>
@@ -2116,15 +2536,21 @@ namespace WinFormsDesigner.Engine
         public ControlPasteResult PasteControl(string designerFilePath, string clip, string parentId, string? sourceText = null) =>
             DesignerRenderer.PasteControl(designerFilePath, clip, parentId, sourceText);
 
+        /// <summary>Paste a clipboard clone at an exact offset from the copied Location (Ctrl+drag).</summary>
+        public ControlPasteResult PasteControlAtOffset(string designerFilePath, string clip, string parentId,
+            int offsetX, int offsetY, string? sourceText = null) =>
+            DesignerRenderer.PasteControlAtOffset(designerFilePath, clip, parentId, offsetX, offsetY, sourceText);
+
         /// <summary>Bring a control to front / send it to back by relocating its Controls.Add among its siblings.
         /// PURE TEXT — no graph load/STA. The host applies the returned text as an unsaved edit.</summary>
         public ControlReorderResult MoveZOrder(string designerFilePath, string controlId, bool toFront, string? sourceText = null) =>
             DesignerRenderer.MoveZOrder(designerFilePath, controlId, toFront, sourceText);
 
         /// <summary>reparent: move a leaf control into a different container (or the root form, newParentId
-        /// "this"/""). Minimal text edit — rewrites only the child's Controls.Add receiver. See DesignerControlEditor.Reparent.</summary>
-        public ControlReorderResult Reparent(string designerFilePath, string childId, string newParentId, string? sourceText = null) =>
-            DesignerRenderer.ReparentControl(designerFilePath, childId, newParentId, sourceText);
+        /// "this"/""). Minimal text edit — rewrites the child's Controls.Add receiver and optionally its
+        /// parent-relative Location. See DesignerControlEditor.Reparent.</summary>
+        public ControlReorderResult Reparent(string designerFilePath, string childId, string newParentId, string? sourceText = null, int? locX = null, int? locY = null) =>
+            DesignerRenderer.ReparentControl(designerFilePath, childId, newParentId, sourceText, locX, locY);
 
         /// <summary>
         /// Build a C# initializer expression for a complex framework property value (Point/Size/Color/…)

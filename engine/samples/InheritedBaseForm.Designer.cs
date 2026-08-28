@@ -2,7 +2,9 @@ namespace SampleApp
 {
     partial class InheritedBaseForm
     {
-        private System.Windows.Forms.Button baseButton;
+        // Protected on purpose: v1.14's visual-inheritance fixture proves that a derived designer may
+        // emit a narrow, token-checked override without ever rewriting this base designer source.
+        protected System.Windows.Forms.Button baseButton;
 
         private void InitializeComponent()
         {

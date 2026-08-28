@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "V2-FND-001-S108",
+  "producer": "WinForms Designer for VS Code compiled-net48 CustomEditor Extension Host",
+  "vscodeVersion": "1.134.0",
+  "action": {
+    "kind": "property",
+    "componentId": "button1",
+    "propertyName": "Text",
+    "value": "Extension + VS net48 round-trip"
+  },
+  "artifacts": {
+    "ReparentForm.cs": "ff2e7936288a288b14a382de6fb882689adaf5398586286ff9705798ac5834c3",
+    "ReparentForm.Designer.cs": "585bb6405f6da6a83eeceb392a10bf0d0b997a909611d66b5d9bd41813b3742c"
+  }
+}

@@ -7,25 +7,63 @@
 // Run: `npm run webview-e2e` (after `npm run build`). jsdom is a devDependency (never shipped in the VSIX).
 
 import { loadDesigner, loadPanel, loadChooseItems, delay, drainHarnesses, Harness } from './webviewHarness';
+import { ScenarioEvidenceRecorder } from './scenarioEvidence';
 
 let checks = 0;
+const scenarioEvidence = new ScenarioEvidenceRecorder({ suite: 'webview' });
 function ok(cond: boolean, msg: string): void {
+  scenarioEvidence.recordAssertion('webview.ok', ok);
   if (!cond) throw new Error(msg);
   checks++;
 }
 function eq(actual: unknown, expected: unknown, msg: string): void {
-  ok(
-    JSON.stringify(actual) === JSON.stringify(expected),
-    `${msg} — got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`,
-  );
+  scenarioEvidence.recordAssertion('webview.eq', eq);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${msg} — got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+  }
+  checks++;
 }
 function only<T extends { type: string }>(posted: T[], type: string): T[] {
   return posted.filter((m) => m.type === type);
 }
+function hClick(h: Harness, id: string): void { h.click(h.el(id)); }
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /** Find a rendered context-menu item (.mi) by a substring of its label (with an empty i18n catalog the label IS the key). */
 function findMenuItem(h: Harness, menuId: string, labelSubstr: string): any {
   return (Array.from(h.el(menuId).querySelectorAll('.mi')) as any[]).find((d) => d.textContent.indexOf(labelSubstr) >= 0);
+}
+function toolboxDragEvent(h: Harness, type: string, init: Record<string, any>, controlType: string): Event {
+  const ev = new h.window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'offsetX', { value: init.offsetX ?? 0, configurable: true });
+  Object.defineProperty(ev, 'offsetY', { value: init.offsetY ?? 0, configurable: true });
+  Object.defineProperty(ev, 'dataTransfer', {
+    value: {
+      types: ['application/vnd.winforms-toolbox-item'],
+      dropEffect: '',
+      effectAllowed: '',
+      getData(name: string) { return name === 'application/vnd.winforms-toolbox-item' ? controlType : ''; },
+      setData() {},
+    },
+  });
+  h.el('surface').dispatchEvent(ev);
+  return ev;
+}
+function dataSourceDragEvent(h: Harness, type: string, init: Record<string, any>, payload: Record<string, unknown>): Event {
+  const raw = JSON.stringify(payload);
+  const ev = new h.window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'offsetX', { value: init.offsetX ?? 0, configurable: true });
+  Object.defineProperty(ev, 'offsetY', { value: init.offsetY ?? 0, configurable: true });
+  Object.defineProperty(ev, 'dataTransfer', {
+    value: {
+      types: ['application/vnd.winforms-data-source'],
+      dropEffect: '',
+      effectAllowed: '',
+      getData(name: string) { return name === 'application/vnd.winforms-data-source' ? raw : ''; },
+      setData() {},
+    },
+  });
+  h.el('surface').dispatchEvent(ev);
+  return ev;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -99,6 +137,156 @@ test('toolbox discovery yields when the user starts filtering the toolbox', () =
   h.destroy();
 });
 
+test('v1.12 toolbox panel: single-click selects a visual item, click-click-dblclick posts one default add, host clear resets it', () => {
+  const h = loadPanel();
+  h.send({
+    type: 'toolbox',
+    items: [
+      { name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' },
+      { name: 'Timer', fqn: 'System.Windows.Forms.Timer', category: 'Common Controls', isComponent: true },
+    ],
+  });
+  h.click(h.el('mainTabToolbox'));
+  h.resetPosted();
+
+  let button = h.el('tbList').querySelector('.tbItem') as any;
+  ok(!!button, 'toolbox rendered a visual item');
+  h.click(button);
+  ok(button.classList.contains('selected'), 'single-click gives the visual toolbox item selected state without replacing the DOM node');
+  eq(only(h.posted, 'selectToolboxControl'), [{ type: 'selectToolboxControl', controlType: 'Button' }],
+    'single-click arms rectangle placement through the host');
+
+  h.send({ type: 'toolboxSelection', controlType: 'Button' });
+  ok(h.el('tbList').querySelector('.tbItem') === button, 'host selection echo updates selected state without replacing the click target');
+  ok(button.classList.contains('selected'), 'host selection echo keeps the same toolbox item selected');
+
+  h.click(button);
+  h.mouse('dblclick', {}, button);
+  eq(only(h.posted, 'addControl').length, 1, 'the real click-click-dblclick sequence posts exactly one add');
+  eq(only(h.posted, 'addControl')[0].controlType, 'Button', 'double-click inserts the selected item at default size');
+
+  h.send({
+    type: 'toolbox',
+    items: [
+      { name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' },
+      { name: 'Timer', fqn: 'System.Windows.Forms.Timer', category: 'Common Controls', isComponent: true },
+    ],
+  });
+  const rerenderedButton = h.el('tbList').querySelector('.tbItem') as any;
+  ok(rerenderedButton.classList.contains('selected'), 'a later toolbox re-render preserves the host-owned selection state');
+
+  h.resetPosted();
+  const timer = h.el('tbList').querySelector('[data-add-key="Timer"]') as any;
+  h.click(timer);
+  ok(!rerenderedButton.classList.contains('selected'), 'choosing a tray component immediately disarms the visual toolbox item');
+  eq(only(h.posted, 'addComponent'), [{ type: 'addComponent', componentType: 'Timer' }],
+    'the component still uses its dedicated no-position add route');
+
+  h.send({ type: 'toolboxSelection', controlType: null });
+  const clearedButton = h.el('tbList').querySelector('.tbItem') as any;
+  ok(!clearedButton.classList.contains('selected'), 'successful host add clears toolbox selection');
+  h.destroy();
+});
+
+test('v1.12 toolbox canvas: selected item draws an exact rectangle payload and Escape cancels selection', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({
+    id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true,
+    x: 0, y: 0, width: 320, height: 240, depth: 0,
+  });
+  const panel = mkCtrl({ id: 'panel1', name: 'panel1', type: 'System.Windows.Forms.Panel', x: 20, y: 20, width: 150, height: 100, depth: 1 });
+  const child = mkCtrl({ id: 'button1', name: 'button1', type: 'System.Windows.Forms.Button', parentId: 'panel1', x: 30, y: 30, width: 50, height: 20, depth: 2 });
+  h.send({ type: 'layout', controls: [child, panel, root] });
+  h.send({ type: 'toolboxSelection', controlType: 'TextBox' });
+  h.resetPosted();
+
+  h.mouse('mousedown', { button: 0, offsetX: 35, offsetY: 35, clientX: 35, clientY: 35 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 75, clientY: 65 });
+  h.mouse('mouseup', { clientX: 75, clientY: 65 });
+  eq(only(h.posted, 'dropControl'), [{
+    type: 'dropControl', controlType: 'TextBox', hitId: 'button1', x: 35, y: 35, width: 40, height: 30,
+  }], 'rectangle placement posts exact logical bounds and the hit target for host parent resolution');
+
+  h.send({ type: 'toolboxSelection', controlType: 'Label' });
+  h.resetPosted();
+  h.key('keydown', { key: 'Escape' });
+  eq(only(h.posted, 'cancelToolboxSelection'), [{ type: 'cancelToolboxSelection' }],
+    'Escape synchronizes toolbox selection cancellation back through the host');
+  h.destroy();
+});
+
+test('v1.12 toolbox canvas: ordinary cross-webview drag still posts a point drop without size', () => {
+  const h = loadDesigner();
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true, width: 320, height: 240 })] });
+  h.resetPosted();
+  const over = toolboxDragEvent(h, 'dragover', { offsetX: 40, offsetY: 50 }, 'Button');
+  ok(over.defaultPrevented, 'toolbox dragover still enables the drop target');
+  toolboxDragEvent(h, 'drop', { offsetX: 40, offsetY: 50 }, 'Button');
+  eq(only(h.posted, 'dropControl'), [{ type: 'dropControl', controlType: 'Button', hitId: 'this', x: 40, y: 50 }],
+    'cross-webview drag-to-point keeps the old payload shape');
+  h.destroy();
+});
+
+test('v2.0 toolbox canvas: empty SplitterPanel is an exact highlighted point/rectangle drop surface', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({
+    id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true,
+    x: 0, y: 0, width: 340, height: 220, clientX: 0, clientY: 0, clientWidth: 340, clientHeight: 220, depth: 0,
+  });
+  const split = mkCtrl({
+    id: 'splitContainer1', name: 'splitContainer1', type: 'System.Windows.Forms.SplitContainer', parentId: 'this',
+    x: 20, y: 20, width: 300, height: 180, clientX: 20, clientY: 20, clientWidth: 300, clientHeight: 180, depth: 1,
+  });
+  const panel1 = mkCtrl({
+    id: 'splitContainer1.Panel1', name: 'Panel1', type: 'System.Windows.Forms.SplitterPanel', parentId: 'splitContainer1',
+    x: 20, y: 20, width: 140, height: 180, clientX: 20, clientY: 20, clientWidth: 140, clientHeight: 180, depth: 2,
+  });
+  const panel2 = mkCtrl({
+    id: 'splitContainer1.Panel2', name: 'Panel2', type: 'System.Windows.Forms.SplitterPanel', parentId: 'splitContainer1',
+    x: 164, y: 20, width: 156, height: 180, clientX: 164, clientY: 20, clientWidth: 156, clientHeight: 180, depth: 2,
+  });
+  h.send({ type: 'layout', controls: [panel1, panel2, split, root] });
+  h.resetPosted();
+
+  const over = toolboxDragEvent(h, 'dragover', { offsetX: 190, offsetY: 60 }, 'Button');
+  ok(over.defaultPrevented, 'SplitterPanel dragover enables the drop');
+  const feedback = h.document.querySelector('.toolboxdroptarget') as any;
+  ok(!!feedback && feedback.style.display === 'block', 'cross-webview drag highlights the exact container surface');
+  eq([feedback?.style.left, feedback?.style.top, feedback?.style.width, feedback?.style.height],
+    ['164px', '20px', '156px', '180px'], 'drop feedback follows Panel2 client bounds, not the whole SplitContainer');
+  ok((feedback?.textContent || '').includes('Panel2'), 'drop feedback names Panel2');
+  toolboxDragEvent(h, 'drop', { offsetX: 190, offsetY: 60 }, 'Button');
+  eq(only(h.posted, 'dropControl'), [{
+    type: 'dropControl', controlType: 'Button', hitId: 'splitContainer1.Panel2', x: 190, y: 60,
+  }], 'point drop preserves the synthetic Panel2 identity for host-side client-coordinate conversion');
+  ok(feedback?.style.display === 'none', 'drop feedback is removed after the drop');
+
+  h.send({ type: 'toolboxSelection', controlType: 'Label' });
+  h.resetPosted();
+  h.mouse('mousedown', { button: 0, offsetX: 180, offsetY: 40, clientX: 180, clientY: 40 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 220, clientY: 70 });
+  h.mouse('mouseup', { clientX: 220, clientY: 70 });
+  eq(only(h.posted, 'dropControl'), [{
+    type: 'dropControl', controlType: 'Label', hitId: 'splitContainer1.Panel2', x: 180, y: 40, width: 40, height: 30,
+  }], 'selected-toolbox rectangle placement also targets an otherwise empty Panel2');
+  h.destroy();
+});
+
+test('v1.15 data-source canvas: a bounded schema drag posts one detail/grid generation intent at the hit point', () => {
+  const h = loadDesigner();
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true, width: 320, height: 240 })] });
+  h.resetPosted();
+  const intent = { schemaKey: 'schema:customer', mode: 'grid', includeNavigator: true, existingBindingSourceId: 'customerBindingSource' };
+  const over = dataSourceDragEvent(h, 'dragover', { offsetX: 64, offsetY: 72 }, intent);
+  ok(over.defaultPrevented, 'data-source drag enables the same canvas drop surface');
+  dataSourceDragEvent(h, 'drop', { offsetX: 64, offsetY: 72 }, intent);
+  eq(only(h.posted, 'dropDataSource'), [{
+    type: 'dropDataSource', schemaKey: 'schema:customer', mode: 'grid', includeNavigator: true,
+    existingBindingSourceId: 'customerBindingSource', hitId: 'this', x: 64, y: 72,
+  }], 'the canvas forwards only the opaque schema key, closed mode/options, hit target, and logical point');
+  h.destroy();
+});
+
 test('Choose Items scope guard: COM/WPF cannot browse/apply; .NET still emits scoped messages', () => {
   const h = loadChooseItems();
   eq(only(h.posted, 'ready').length, 1, 'Choose Items posts ready');
@@ -155,6 +343,23 @@ test('HiDPI 1.4: reports fractional monitor changes exactly and keeps canvas hit
   h.resetPosted();
   h.mouse('click', { offsetX: 20, offsetY: 30 }, h.el('surface'));
   eq(only(h.posted, 'pick')[0]?.id, 'button1', 'fractional display DPR does not scale logical control hit boxes');
+  h.destroy();
+});
+
+test('V2-FND-001-S122: a logical dirty patch composites into the exact 2x backing rectangle', () => {
+  const h = loadDesigner();
+  h.setImageAutoLoad(false);
+  h.send({ type: 'render', png: 'frame', width: 100, height: 50, gen: 1 });
+  h.flushImages(200, 100);
+  h.canvasCalls.length = 0;
+
+  h.send({ type: 'patch', png: 'patch', x: 10, y: 5, width: 20, height: 10, gen: 2 });
+  h.flushImages(40, 20);
+
+  const clear = h.canvasCalls.find((call) => call.method === 'clearRect');
+  const draw = h.canvasCalls.find((call) => call.method === 'drawImage');
+  eq(clear?.args, [20, 10, 40, 20], 'logical dirty rectangle maps to physical 2x backing pixels');
+  eq(draw?.args.slice(1), [20, 10, 40, 20], '2x patch bitmap is composited into the same physical rectangle');
   h.destroy();
 });
 
@@ -283,7 +488,7 @@ test('nudge: does NOT move when the host has not granted move (canMove=false)', 
   h.destroy();
 });
 
-test('placement snap override: normal move snaps, Alt move stays raw and draws no guides', () => {
+test('V2-FND-001-S027: Alt move bypasses snaplines and commits the raw pointer delta', () => {
   const h = loadDesigner();
   setupSnapPair(h);
   h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, h.el('surface'));
@@ -349,6 +554,225 @@ test('placement snap override: host setting can disable Alt override and invalid
   fallback.mouse('mouseup', { clientX: 24, clientY: 30, altKey: true });
   eq(only(fallback.posted, 'manipulate')[0]?.x, 14, 'invalid setting falls back to unsnapped Alt behavior');
   fallback.destroy();
+});
+
+test('V2-FND-001-S026: Snap to Grid rounds movement and resize to the configured lattice', () => {
+  const grid = loadDesigner();
+  setupSelected(grid, mkCtrl({
+    id: 'gridLabel', name: 'gridLabel', type: 'System.Windows.Forms.Label',
+    x: 13, y: 25, width: 57, height: 15,
+  }));
+  grid.send({ type: 'placementSettings', layoutMode: 'snapToGrid', gridSize: 8, showGrid: false });
+  grid.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, grid.el('surface'));
+  grid.mouse('mousemove', { clientX: 40, clientY: 30 });
+  grid.mouse('mouseup', { clientX: 40, clientY: 30 });
+  const moved = only(grid.posted, 'manipulate')[0];
+  eq(
+    [moved?.x, moved?.y, moved?.width, moved?.height],
+    [32, 24, 57, 15],
+    'actual VS S026 drag (13,25)+(+20,0) rounds to (32,24) without changing Label size',
+  );
+  grid.destroy();
+
+  const resize = loadDesigner();
+  setupSelected(resize, mkCtrl());
+  resize.send({ type: 'placementSettings', layoutMode: 'snapToGrid', gridSize: 8 });
+  const east = resize.el('sel').querySelector('.h-e');
+  resize.mouse('mousedown', { button: 0, clientX: 90, clientY: 32 }, east);
+  resize.mouse('mousemove', { clientX: 93, clientY: 32 });
+  resize.mouse('mouseup', { clientX: 93, clientY: 32 });
+  eq(only(resize.posted, 'manipulate')[0]?.width, 86, 'resize snaps the dragged edge to the grid without moving the fixed edge');
+  resize.destroy();
+
+  const none = loadDesigner();
+  setupSnapPair(none);
+  none.send({ type: 'placementSettings', layoutMode: 'none', gridSize: 8 });
+  none.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, none.el('surface'));
+  none.mouse('mousemove', { clientX: 24, clientY: 30 });
+  none.mouse('mouseup', { clientX: 24, clientY: 30 });
+  eq(only(none.posted, 'manipulate')[0]?.x, 14, 'None preserves the raw pointer coordinate near a sibling');
+  eq(visibleSnapGuides(none), 0, 'None draws no snaplines');
+  none.destroy();
+});
+
+test('V2-FND-001-S028: grid visibility toggles as a view-only overlay without posting edits', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({
+    id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true,
+    x: 0, y: 0, width: 320, height: 240, clientX: 8, clientY: 31, clientWidth: 304, clientHeight: 201,
+  });
+  h.send({ type: 'layout', controls: [root] });
+  h.send({ type: 'placementSettings', layoutMode: 'snapToGrid', gridSize: 10, showGrid: true });
+  const grid = h.el('designerGrid');
+  eq([grid.style.left, grid.style.top, grid.style.width, grid.style.height, grid.style.backgroundSize],
+    ['8px', '31px', '304px', '201px', '10px 10px'], 'grid is clipped to the exact root client rectangle');
+  eq(h.posted.filter((m) => m.type !== 'ready'), [], 'showing the grid posts no mutation or host command');
+  h.send({ type: 'canvasViewState', state: { zoom: 2, lockedIds: [] } });
+  eq([grid.style.left, grid.style.top, grid.style.backgroundSize], ['16px', '62px', '20px 20px'],
+    'grid origin and cell size scale exactly once with zoom');
+  h.send({ type: 'placementSettings', layoutMode: 'snapLines', gridSize: 10, showGrid: false });
+  eq(grid.style.display, 'none', 'grid visibility is independent and can be disabled');
+  eq(h.posted.filter((m) => m.type !== 'ready'), [], 'hiding the grid is also view-only');
+  h.destroy();
+});
+
+test('nudge: host Undo render cancels a pending optimistic nudge before its debounce commits', async () => {
+  const h = loadDesigner();
+  setupSelected(h, mkCtrl());
+  h.key('keydown', { key: 'ArrowRight' });
+  eq(only(h.posted, 'manipulate').length, 0, 'nudge is still pending when Undo begins');
+
+  // Native CustomDocument Undo causes the host to publish a fresh render/layout. Model the real message order and
+  // then outwait the old timer: no stale manipulate may resurrect the undone position.
+  h.send({ type: 'render', png: '', width: 400, height: 300, gen: 2 });
+  h.send({ type: 'layout', controls: [mkCtrl()] });
+  await delay(700);
+
+  eq(only(h.posted, 'manipulate').length, 0, 'the pre-Undo nudge timer was cancelled');
+  h.destroy();
+});
+
+test('V2-FND-001-S025: SnapLine aligns the actual VS Button/TextBox baseline scenario', () => {
+  const margin = loadDesigner();
+  const moving = mkCtrl({ margin: { left: 0, top: 0, right: 6, bottom: 0 } });
+  const sibling = mkCtrl({ id: 'button2', name: 'button2', x: 100, y: 20, margin: { left: 4, top: 0, right: 0, bottom: 0 } });
+  margin.send({ type: 'layout', controls: [moving, sibling] });
+  margin.send({ type: 'select', id: moving.id });
+  margin.send({ type: 'manip', id: moving.id, move: true, resize: true });
+  margin.resetPosted();
+  margin.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, margin.el('surface'));
+  margin.mouse('mousemove', { clientX: 23, clientY: 30 });
+  margin.mouse('mouseup', { clientX: 23, clientY: 30 });
+  eq(only(margin.posted, 'manipulate')[0]?.x, 14, 'adjacent controls stop at max(right Margin, left Margin)');
+  margin.destroy();
+  const baseline = loadDesigner();
+  // VS offsets are Button=21/TextBox=16; full-frame window Y 67→66 maps raw source Y 36→snapped Y 35.
+  const button = mkCtrl({ id: 'snapButton', name: 'snapButton', type: 'System.Windows.Forms.Button', x: 40, y: 111, width: 100, height: 30, textBaseline: 132 });
+  const text = mkCtrl({ id: 'referenceTextBox', name: 'referenceTextBox', type: 'System.Windows.Forms.TextBox', x: 188, y: 71, width: 120, height: 23, textBaseline: 87 });
+  baseline.send({ type: 'layout', controls: [button, text] });
+  baseline.send({ type: 'select', id: button.id });
+  baseline.send({ type: 'manip', id: button.id, move: true, resize: true });
+  baseline.resetPosted();
+  baseline.mouse('mousedown', { button: 0, offsetX: 90, offsetY: 126, clientX: 90, clientY: 126 }, baseline.el('surface'));
+  baseline.mouse('mousemove', { clientX: 90, clientY: 82 });
+  ok(visibleSnapGuides(baseline) > 0, 'the one-pixel correction publishes a guide'); const guide = Array.from(baseline.document.querySelectorAll('.snapguide.horz')).find((el: any) => el.style.display !== 'none') as any; eq(guide?.style.top, '87px', 'guide uses the engine TextBox baseline');
+  baseline.mouse('mouseup', { clientX: 90, clientY: 82 }); const committed = only(baseline.posted, 'manipulate')[0]; eq([committed?.id, committed?.x, committed?.y, committed?.width, committed?.height], ['snapButton', 40, 66, 100, 30], 'raw source Y=36 snaps to VS source Y=35');
+  baseline.destroy();
+});
+
+test('V2-FND-001-S029: Align Left posts one deterministic multi-selection delta set', () => {
+  const h = loadDesigner();
+  const a = mkCtrl({ id: 'button1', name: 'button1', x: 12, y: 10, width: 40, height: 20 });
+  const b = mkCtrl({ id: 'button2', name: 'button2', x: 42, y: 45, width: 40, height: 20 });
+  const c = mkCtrl({ id: 'button3', name: 'button3', x: 77, y: 80, width: 40, height: 20 });
+  h.send({ type: 'render', png: '', width: 320, height: 200, gen: 1 });
+  h.send({ type: 'layout', controls: [a, b, c] });
+  h.send({ type: 'select', id: 'button1', ids: ['button1', 'button2', 'button3'] });
+  h.resetPosted();
+  hClick(h, 'alignLeft');
+  eq(only(h.posted, 'alignControls')[0]?.edits, [
+    { id: 'button2', dx: -30, dy: 0 },
+    { id: 'button3', dx: -65, dy: 0 },
+  ], 'every non-primary control is moved to the primary X in one host transaction');
+  h.destroy();
+});
+
+test('V2-FND-001-S030: Make Same Width changes widths and preserves heights', () => {
+  const h = loadDesigner();
+  const a = mkCtrl({ id: 'button1', name: 'button1', x: 10, y: 10, width: 100, height: 20 });
+  const b = mkCtrl({ id: 'button2', name: 'button2', x: 20, y: 40, width: 40, height: 25 });
+  const c = mkCtrl({ id: 'button3', name: 'button3', x: 30, y: 75, width: 70, height: 32 });
+  h.send({ type: 'render', png: '', width: 320, height: 200, gen: 1 });
+  h.send({ type: 'layout', controls: [a, b, c] });
+  h.send({ type: 'select', id: 'button1', ids: ['button1', 'button2', 'button3'] });
+  h.resetPosted();
+  hClick(h, 'sameW');
+  eq(only(h.posted, 'resizeControls')[0]?.sizeEdits, [
+    { id: 'button2', width: 100, height: 25 },
+    { id: 'button3', width: 100, height: 32 },
+  ], 'same-width preserves each target height while matching the primary width');
+  h.destroy();
+});
+
+test('V2-FND-001-S031: Center Horizontally delegates parent-client-area placement to the host', () => {
+  const h = loadDesigner();
+  const panel = mkCtrl({
+    id: 'panel1', name: 'panel1', type: 'System.Windows.Forms.Panel',
+    x: 10, y: 10, width: 220, height: 120, clientX: 18, clientY: 18, clientWidth: 196, clientHeight: 96,
+  });
+  const button = mkCtrl({ id: 'button1', name: 'button1', x: 35, y: 40, width: 80, height: 24, parentId: 'panel1' });
+  h.send({ type: 'render', png: '', width: 320, height: 200, gen: 1 });
+  h.send({ type: 'layout', controls: [panel, button] });
+  h.send({ type: 'select', id: 'button1' });
+  h.resetPosted();
+  hClick(h, 'centerFormH');
+  eq(only(h.posted, 'centerInForm'), [{ type: 'centerInForm', axis: 'h', ids: ['button1'] }],
+    'the webview sends the exact selection and lets the host use engine client bounds/rounding');
+  h.destroy();
+});
+
+test('v1.11 Ctrl+drag duplicates the snapped selection and takes priority over Control snap override', () => {
+  const h = loadDesigner();
+  setupSnapPair(h);
+  h.send({ type: 'placementSettings', snapOverrideModifier: 'control', layoutMode: 'snapLines', gridSize: 8 });
+  h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30, ctrlKey: true }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 24, clientY: 30, ctrlKey: true });
+  h.mouse('mouseup', { clientX: 24, clientY: 30, ctrlKey: true });
+  eq(only(h.posted, 'duplicateDrag'), [{ type: 'duplicateDrag', ids: ['button1'], dx: 10, dy: 0 }],
+    'Ctrl+drag emits one exact duplicate transaction using the snapped delta');
+  eq(only(h.posted, 'manipulate').length, 0, 'Ctrl+drag never moves the originals');
+  h.destroy();
+});
+
+test('V2-FND-001-S032: spacing commands are deterministic and refuse mixed parents', () => {
+  function spacingHarness(): Harness {
+    const h = loadDesigner();
+    const items = [
+      mkCtrl({ id: 'a', name: 'a', x: 10, y: 10, width: 10, height: 10 }),
+      mkCtrl({ id: 'b', name: 'b', x: 30, y: 10, width: 10, height: 10 }),
+      mkCtrl({ id: 'c', name: 'c', x: 50, y: 10, width: 10, height: 10 }),
+    ];
+    h.send({ type: 'layout', controls: items });
+    h.send({ type: 'select', id: 'c', ids: ['a', 'b', 'c'] });
+    h.send({ type: 'placementSettings', gridSize: 8 });
+    h.resetPosted(); return h;
+  }
+  const inc = spacingHarness(); hClick(inc, 'spaceHInc');
+  eq(only(inc.posted, 'alignControls')[0]?.edits, [{ id: 'b', dx: 8, dy: 0 }, { id: 'c', dx: 16, dy: 0 }],
+    'Increase adds one grid cell to every original gap'); inc.destroy();
+  const dec = spacingHarness(); hClick(dec, 'spaceHDec');
+  eq(only(dec.posted, 'alignControls')[0]?.edits, [{ id: 'b', dx: -8, dy: 0 }, { id: 'c', dx: -16, dy: 0 }],
+    'Decrease subtracts one grid cell from every gap'); dec.destroy();
+  const remove = spacingHarness(); hClick(remove, 'spaceHRemove');
+  eq(only(remove.posted, 'alignControls')[0]?.edits, [{ id: 'b', dx: -10, dy: 0 }, { id: 'c', dx: -20, dy: 0 }],
+    'Remove makes every gap zero'); remove.destroy();
+
+  const mixed = spacingHarness();
+  mixed.send({ type: 'layout', controls: [mkCtrl({ id: 'a' }), mkCtrl({ id: 'b', parentId: 'panel1' })] });
+  mixed.send({ type: 'select', id: 'b', ids: ['a', 'b'] }); mixed.resetPosted(); hClick(mixed, 'spaceVInc');
+  eq(only(mixed.posted, 'alignControls').length, 0, 'mixed-parent spacing posts no edit');
+  eq(mixed.el('status').textContent, 'designer.status.spacingSameParent', 'mixed-parent refusal is visible');
+  mixed.destroy();
+
+  const dist = spacingHarness();
+  dist.send({ type: 'layout', controls: [mkCtrl({ id: 'a' }), mkCtrl({ id: 'b', parentId: 'panel1' }), mkCtrl({ id: 'c' })] });
+  dist.send({ type: 'select', id: 'c', ids: ['a', 'b', 'c'] }); dist.resetPosted(); hClick(dist, 'distH');
+  eq(only(dist.posted, 'alignControls').length, 0, 'mixed-parent horizontal distribute posts no edit');
+  eq(dist.el('status').textContent, 'designer.status.spacingSameParent', 'mixed-parent distribute refusal is visible');
+  dist.destroy();
+});
+
+test('v1.11 Align to Grid context command is enabled and posts exact deltas', () => {
+  const h = loadDesigner();
+  setupSelected(h, mkCtrl({ x: 11, y: 19 }));
+  h.send({ type: 'placementSettings', gridSize: 8 });
+  h.mouse('contextmenu', { clientX: 20, clientY: 30 }, h.el('surfaceWrap'));
+  const item = findMenuItem(h, 'ctxMenu', 'designer.menu.alignToGrid');
+  ok(item && !item.classList.contains('disabled'), 'Align to Grid is active for an editable control');
+  h.click(item);
+  eq(only(h.posted, 'alignControls')[0]?.edits, [{ id: 'button1', dx: -3, dy: -3 }],
+    'Align to Grid uses the configured grid origin and one host transaction');
+  h.destroy();
 });
 
 test('nudge: ignored while typing in an input (arrow keys belong to the field)', () => {
@@ -541,6 +965,245 @@ test('selection: a canvas click hit-tests the control under the cursor and posts
   const picks = only(h.posted, 'pick');
   eq(picks.length, 1, 'one pick posted');
   eq(picks[0].id, 'button1', 'picked the control under the cursor');
+  eq(picks[0].ids, ['button1'], 'the host receives the exact single-object selection snapshot');
+  h.destroy();
+});
+
+test('V2-FND-001-S017: marquee selects intersecting controls from the active container only', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', x: 0, y: 0, width: 360, height: 240, parentId: null, isRoot: true });
+  const panel = mkCtrl({ id: 'panel1', name: 'panel1', type: 'System.Windows.Forms.Panel', x: 20, y: 20, width: 180, height: 120, parentId: 'this' });
+  const b1 = mkCtrl({ id: 'button1', name: 'button1', x: 40, y: 40, width: 30, height: 20, parentId: 'panel1' });
+  const b2 = mkCtrl({ id: 'button2', name: 'button2', x: 90, y: 40, width: 30, height: 20, parentId: 'panel1' });
+  const partial = mkCtrl({ id: 'button3', name: 'button3', x: 115, y: 40, width: 30, height: 20, parentId: 'panel1' });
+  const lower = mkCtrl({ id: 'button4', name: 'button4', x: 40, y: 85, width: 30, height: 20, parentId: 'panel1' });
+  const outsideOverlap = mkCtrl({ id: 'outside1', name: 'outside1', x: 45, y: 42, width: 30, height: 20, parentId: 'this' });
+  const outsideOther = mkCtrl({ id: 'outside2', name: 'outside2', x: 230, y: 40, width: 30, height: 20, parentId: 'this' });
+  h.send({ type: 'layout', controls: [b1, b2, partial, lower, outsideOverlap, outsideOther, panel, root] });
+  h.resetPosted();
+
+  h.mouse('mousedown', { button: 0, offsetX: 30, offsetY: 30, clientX: 30, clientY: 30 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 121, clientY: 65 });
+  h.mouse('mouseup', { clientX: 121, clientY: 65 });
+  const pick = only(h.posted, 'pick')[0];
+  eq(pick?.ids, ['button1', 'button2', 'button3'], 'panel-scope marquee includes partial intersections but ignores outside siblings');
+  eq(pick?.id, 'button3', 'primary is deterministic: the last intersecting control in layout order');
+  h.key('keydown', { key: 'Delete' });
+  eq(only(h.posted, 'removeControls')[0]?.ids, ['button1', 'button2', 'button3'], 'delete uses exactly the scoped marquee selection');
+
+  h.resetPosted();
+  h.mouse('mousedown', { button: 0, offsetX: 220, offsetY: 30, clientX: 220, clientY: 30 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 270, clientY: 70 });
+  h.mouse('mouseup', { clientX: 270, clientY: 70 });
+  eq(only(h.posted, 'pick')[0]?.ids, ['outside2'], 'form-scope marquee does not descend into Panel children');
+  h.destroy();
+});
+
+test('V2-FND-001-S018: keyboard traversal stays inside nested container scope and keeps a visible focus rectangle', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', x: 0, y: 0, width: 360, height: 240, parentId: null, isRoot: true });
+  const group = mkCtrl({ id: 'groupBox1', name: 'groupBox1', type: 'System.Windows.Forms.GroupBox', x: 15, y: 15, width: 220, height: 120, parentId: 'this' });
+  const text = mkCtrl({ id: 'textBox1', name: 'textBox1', type: 'System.Windows.Forms.TextBox', x: 30, y: 45, width: 80, height: 23, parentId: 'groupBox1', tabIndex: 0 });
+  const button = mkCtrl({ id: 'button1', name: 'button1', x: 120, y: 45, width: 75, height: 23, parentId: 'groupBox1', tabIndex: 2 });
+  const check = mkCtrl({ id: 'checkBox1', name: 'checkBox1', type: 'System.Windows.Forms.CheckBox', x: 30, y: 85, width: 90, height: 23, parentId: 'groupBox1', tabIndex: 1 });
+  const outside = mkCtrl({ id: 'outside', name: 'outside', x: 260, y: 40, width: 60, height: 23, parentId: 'this', tabIndex: 0 });
+  h.send({ type: 'layout', controls: [button, text, check, outside, group, root] });
+  h.send({ type: 'select', id: 'textBox1' });
+  h.resetPosted();
+
+  h.key('keydown', { key: 'Tab' });
+  h.key('keydown', { key: 'Tab' });
+  h.key('keydown', { key: 'Tab' });
+  h.key('keydown', { key: 'Tab', shiftKey: true });
+  h.key('keydown', { key: 'Escape' });
+  eq(only(h.posted, 'pick').map((m) => m.id), ['checkBox1', 'button1', 'textBox1', 'button1', 'groupBox1'],
+    'Tab traversal follows WinForms TabIndex, wraps, Shift+Tab reverses, and Esc stays in the nested GroupBox scope');
+  ok(h.el('sel').style.display === 'block', 'selection rectangle remains visible after keyboard traversal');
+  eq([h.el('sel').style.left, h.el('sel').style.top], ['15px', '15px'], 'focus rectangle lands on the parent container after Esc');
+  h.destroy();
+});
+
+test('V2-FND-001-S019: Ctrl-click toggles multi-selection without losing the primary anchor', () => {
+  const h = loadDesigner();
+  const b1 = mkCtrl({ id: 'button1', name: 'button1', x: 10, y: 20 });
+  const b2 = mkCtrl({ id: 'button2', name: 'button2', x: 110, y: 20 });
+  const b3 = mkCtrl({ id: 'button3', name: 'button3', x: 210, y: 20 });
+  h.send({ type: 'layout', controls: [b1, b2, b3] });
+  h.resetPosted();
+
+  h.mouse('click', { offsetX: 20, offsetY: 30 }, h.el('surface'));
+  h.mouse('click', { offsetX: 120, offsetY: 30, ctrlKey: true }, h.el('surface'));
+  h.mouse('click', { offsetX: 220, offsetY: 30, ctrlKey: true }, h.el('surface'));
+  const picks = only(h.posted, 'pick');
+  eq(picks.map((m) => m.id), ['button1', 'button1', 'button1'], 'the first selected control remains the primary anchor');
+  eq(picks[picks.length - 1].ids, ['button1', 'button2', 'button3'], 'the multi-selection set still includes every Ctrl-click target in order');
+  eq([h.el('sel').style.left, h.el('sel').style.top], ['10px', '20px'], 'primary selection box remains on the anchor');
+
+  h.resetPosted();
+  h.mouse('click', { offsetX: 20, offsetY: 30, ctrlKey: true }, h.el('surface'));
+  eq(only(h.posted, 'pick')[0], { type: 'pick', id: 'button3', ids: ['button2', 'button3'], token: 4 },
+    'removing the primary chooses the last remaining selected control deterministically');
+  h.destroy();
+});
+
+test('V2-FND-001-S020: stale canvas input is ignored until the newer render generation is visible', () => {
+  const h = loadDesigner();
+  h.setImageAutoLoad(false);
+  h.send({ type: 'render', png: '', width: 320, height: 200, gen: 10 });
+  h.flushImages(320, 200);
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', x: 0, y: 0, width: 320, height: 200, parentId: null, isRoot: true });
+  const b1 = mkCtrl({ id: 'button1', name: 'button1', x: 10, y: 20 });
+  const b2 = mkCtrl({ id: 'button2', name: 'button2', x: 110, y: 20 });
+  h.send({ type: 'layout', controls: [b1, b2, root] });
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'manip', id: 'button1', move: true, resize: true });
+  h.resetPosted();
+
+  h.send({ type: 'render', png: '', width: 320, height: 200, gen: 11 });
+  h.mouse('click', { offsetX: 120, offsetY: 30 }, h.el('surface'));
+  h.mouse('contextmenu', { clientX: 120, clientY: 30, button: 2 }, h.el('surfaceWrap'));
+  h.key('keydown', { key: 'Tab' });
+  h.key('keydown', { key: 'a', ctrlKey: true });
+  h.key('keydown', { key: 'Escape' });
+  h.key('keydown', { key: 'ArrowRight' });
+  eq(only(h.posted, 'pick'), [], 'click and context selection do not post while a newer frame is pending');
+  eq(only(h.posted, 'manipulate'), [], 'keyboard nudge does not post while a newer frame is pending');
+  eq(h.el('status').textContent, 'STALE_CANVAS', 'stale canvas input emits the named refusal status');
+  eq([h.el('sel').style.left, h.el('sel').style.top], ['10px', '20px'], 'stale input leaves the existing focus rectangle in place');
+
+  h.flushImages(320, 200);
+  h.mouse('click', { offsetX: 120, offsetY: 30 }, h.el('surface'));
+  eq(only(h.posted, 'pick')[0]?.id, 'button2', 'selection resumes after the newer generation is visible');
+  eq(only(h.posted, 'pick')[0]?.gen, 11, 'the resumed canvas pick carries the exact drawn generation to the host');
+  h.send({ type: 'layout', controls: [b1, b2, root] });
+  eq([h.el('sel').style.left, h.el('sel').style.top], ['110px', '20px'], 'rerender/layout retains focus for the still-existing selection');
+  h.destroy();
+});
+
+test('V2-FND-001-S015: overlapping label hit-test uses explicit WinForms z-order before layout order', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', x: 0, y: 0, width: 240, height: 160, parentId: null, isRoot: true, depth: 0, zOrder: 2147483647 });
+  const bottom = mkCtrl({ id: 'bottomLabel', name: 'bottomLabel', type: 'System.Windows.Forms.Label', x: 24, y: 24, width: 96, height: 24, depth: 1, zOrder: 1 });
+  const top = mkCtrl({ id: 'topLabel', name: 'topLabel', type: 'System.Windows.Forms.Label', x: 24, y: 24, width: 96, height: 24, depth: 1, zOrder: 0 });
+  h.send({ type: 'layout', controls: [bottom, top, root] });
+  h.resetPosted();
+
+  h.mouse('click', { offsetX: 32, offsetY: 30 }, h.el('surface'));
+
+  eq(only(h.posted, 'pick')[0]?.id, 'topLabel', 'the top z-order label wins the overlapping pixel even when it arrived after a same-size sibling');
+  h.destroy();
+});
+
+test('V2-FND-001-S021: dragging a multi-selection posts one group transaction with the exact delta', () => {
+  const h = loadDesigner();
+  const a = mkCtrl({ id: 'button1', name: 'button1', x: 10, y: 20, width: 80, height: 24 });
+  const b = mkCtrl({ id: 'button2', name: 'button2', x: 120, y: 60, width: 80, height: 24 });
+  h.send({ type: 'layout', controls: [a, b] });
+  h.send({ type: 'placementSettings', layoutMode: 'none', gridSize: 8 });
+  h.send({ type: 'select', id: 'button1', ids: ['button1', 'button2'] });
+  h.send({ type: 'manip', id: 'button1', move: true, resize: true });
+  h.resetPosted();
+
+  h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 30, clientX: 20, clientY: 30 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 37, clientY: 39 });
+  h.mouse('mouseup', { clientX: 37, clientY: 39 });
+
+  eq(only(h.posted, 'manipulateGroup'), [{ type: 'manipulateGroup', ids: ['button1', 'button2'], dx: 17, dy: 9 }],
+    'one host message carries the complete ordered group move');
+  eq(only(h.posted, 'manipulate').length, 0, 'the drag does not emit per-control move commits');
+  h.destroy();
+});
+
+test('V2-FND-001-S109: designer toolbar and diagnostics commands are keyboard-focusable and named', () => {
+  const h = loadDesigner();
+  h.send({ type: 'render', png: '', width: 320, height: 200, gen: 1 });
+  h.send({ type: 'layout', controls: [
+    mkCtrl({ id: 'button1', name: 'button1', x: 10, y: 20 }),
+    mkCtrl({ id: 'button2', name: 'button2', x: 120, y: 20 }),
+  ] });
+  h.send({ type: 'select', id: 'button1', ids: ['button1', 'button2'] });
+  h.send({ type: 'renderDiag', items: [{ category: 'unsupported', target: 'this.button1', text: 'synthetic', detail: 'repo static check' }] });
+
+  eq(h.el('toolbar').getAttribute('role'), 'toolbar', 'toolbar exposes a toolbar role');
+  const commandIds = [
+    'zoomOut', 'zoomLabel', 'zoomIn', 'zoomFit',
+    'alignLeft', 'alignRight', 'alignTop', 'alignBottom', 'alignCenterH', 'alignCenterV',
+    'distH', 'distV', 'spaceHInc', 'spaceHDec', 'spaceHRemove', 'spaceVInc', 'spaceVDec', 'spaceVRemove',
+    'sameW', 'sameH', 'sameWH', 'centerFormH', 'centerFormV', 'tabOrder', 'rulerToggle', 'deleteCtl',
+    'diagDismiss', 'diagRetry', 'diagRebuild', 'diagChooseAssembly', 'diagCopy',
+  ];
+  for (const id of commandIds) {
+    const button = h.el(id);
+    ok(!!button, `${id} exists`);
+    ok(button.tabIndex >= 0, `${id} is in the keyboard tab order`);
+    ok((button.getAttribute('aria-label') || '').length > 0, `${id} has an accessible name`);
+    button.focus();
+    ok(h.document.activeElement === button, `${id} can receive keyboard focus`);
+  }
+  h.destroy();
+});
+
+test('V2-FND-001-S110: accessible mirror tree and tray expose component/control names and selection state', () => {
+  const panel = loadPanel();
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', isRoot: true, parentId: null, depth: 0 });
+  const menu = mkCtrl({ id: 'menuStrip1', name: 'menuStrip1', type: 'System.Windows.Forms.MenuStrip', parentId: 'this', depth: 1 });
+  const button = mkCtrl({ id: 'button1', name: 'button1', type: 'System.Windows.Forms.Button', parentId: 'this', depth: 1 });
+  const text = mkCtrl({ id: 'textBox1', name: 'textBox1', type: 'System.Windows.Forms.TextBox', parentId: 'this', depth: 1 });
+  panel.send({ type: 'layout', controls: [button, text, menu, root] });
+  panel.send({ type: 'select', id: 'button1' });
+  panel.click(panel.el('mainTabOutline'));
+
+  eq(panel.el('outlineTree').getAttribute('role'), 'tree', 'outline is exposed as an ARIA tree');
+  const names = (Array.from(panel.el('outlineTree').querySelectorAll('[role="treeitem"]')) as any[])
+    .map((n) => n.textContent);
+  ok(names.some((n) => /button1 : Button/.test(n)), 'mirror tree names the Button control');
+  ok(names.some((n) => /textBox1 : TextBox/.test(n)), 'mirror tree names the TextBox control');
+  ok(names.some((n) => /menuStrip1 : MenuStrip/.test(n)), 'mirror tree names the MenuStrip control');
+  ok((panel.el('outlineTree').querySelector('[data-id="button1"]') as any).getAttribute('aria-selected') === 'true',
+    'selected control is announced in the mirror tree');
+  panel.destroy();
+
+  const designer = loadDesigner();
+  designer.send({ type: 'tray', items: [{ id: 'timer1', name: 'timer1', type: 'System.Windows.Forms.Timer', isStrip: false }] });
+  const chip = designer.el('tray').querySelector('.trayItem') as any;
+  eq(designer.el('tray').getAttribute('role'), 'list', 'component tray exposes a list role');
+  ok(/timer1 : Timer/.test(chip.getAttribute('aria-label') || ''), 'tray chip names the Timer component');
+  designer.resetPosted();
+  designer.key('keydown', { key: ' ' }, chip);
+  eq(only(designer.posted, 'pick')[0]?.id, 'timer1', 'keyboard activation selects the tray component');
+  ok(chip.getAttribute('aria-selected') === 'true', 'tray chip exposes selected state after keyboard activation');
+  designer.destroy();
+});
+
+test('V2-FND-001-S111: forced-colors style keeps selection handles and adorners in system colors', () => {
+  const h = loadDesigner();
+  const style = h.document.getElementById('wfd-designer-a11y-style');
+  ok(!!style, 'designer injected the static accessibility stylesheet');
+  const css = style.textContent || '';
+  ok(css.indexOf('@media (forced-colors: active)') >= 0, 'stylesheet has a forced-colors branch');
+  ok(css.indexOf('#sel') >= 0 && css.indexOf('.handle') >= 0 && css.indexOf('.snapguide') >= 0 && css.indexOf('.smarttag') >= 0,
+    'selection handles, snaplines, and adorners are covered by the high-contrast rule');
+  ok(css.indexOf('Highlight') >= 0 && css.indexOf('CanvasText') >= 0, 'forced-colors uses system color tokens');
+  h.destroy();
+});
+
+test('V2-FND-001-S112: 200/400 percent zoom keeps keyboard focus target and context menu path usable', () => {
+  const h = loadDesigner();
+  setupSelected(h, mkCtrl());
+
+  h.send({ type: 'canvasViewState', state: { zoom: 2, lockedIds: [] } });
+  h.el('surfaceWrap').focus();
+  ok(h.document.activeElement === h.el('surfaceWrap'), 'surface wrapper is keyboard focusable at 200 percent zoom');
+  h.key('keydown', { key: 'Tab' });
+  eq(only(h.posted, 'pick')[0]?.id, 'button1', 'keyboard traversal still resolves the focused control at 200 percent zoom');
+
+  h.resetPosted();
+  h.send({ type: 'canvasViewState', state: { zoom: 4, lockedIds: [] } });
+  h.key('keydown', { key: 'ContextMenu' });
+  ok(h.el('ctxMenu').className.indexOf('open') >= 0, 'keyboard context menu opens at 400 percent zoom');
+  const handle = h.el('sel').querySelector('.handle') as any;
+  ok(handle && handle.getAttribute('role') === 'button', 'resize handles remain keyboard-addressable controls');
+  ok((handle.getAttribute('aria-label') || '').indexOf('Resize') === 0, 'resize handle exposes an accessible name');
   h.destroy();
 });
 
@@ -551,7 +1214,9 @@ test('nudge: a multi-selection moves as a group (one manipulateGroup)', () => {
   h.send({ type: 'layout', controls: [b1, b2] });
   h.mouse('click', { offsetX: 20, offsetY: 30 }, h.el('surface')); // button1
   h.mouse('click', { offsetX: 20, offsetY: 70, ctrlKey: true }, h.el('surface')); // + button2
-  h.send({ type: 'manip', id: 'button2', move: true, resize: true }); // host grants move for the new primary
+  eq(only(h.posted, 'pick').slice(-1)[0].ids, ['button1', 'button2'],
+    'the primary pick carries the complete ordered multi-selection to the property host');
+  h.send({ type: 'manip', id: 'button1', move: true, resize: true }); // host grants move for the primary anchor
   h.resetPosted();
   h.key('keydown', { key: 'ArrowRight' });
   flushNudge(h);
@@ -1081,6 +1746,73 @@ test('on-canvas item rename: a bare re-render layout (item still present, no tra
   const del = only(h.posted, 'stripDelete');
   eq(del.length, 1, 'Delete still targets the item after the re-render');
   eq(del[0].itemId, 'fileMenu', 'the delete carries the re-resolved item id');
+  h.destroy();
+});
+
+test('on-canvas strip item drag: dragging an existing top-level item posts one stripMove reorder intent with deterministic feedback', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    { ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false, children: [] },
+    { ownerId: 'strip1', itemId: 'editMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Edit', x: 55, y: 10, width: 39, height: 20, isTypeHere: false, children: [] },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 96, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 15, clientX: 20, clientY: 15 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 90, clientY: 15 }); // second half of Edit ⇒ insert after Edit
+  const feedback = h.document.querySelector('.stripdropindicator') as any;
+  ok(!!feedback && feedback.style.display !== 'none', 'dragging over Edit shows insertion feedback');
+  h.mouse('mouseup', { clientX: 90, clientY: 15 });
+  const move = only(h.posted, 'stripMove');
+  eq(move.length, 1, 'mouseup posts exactly one stripMove intent');
+  eq([move[0].hostId, move[0].itemId, move[0].targetParentItemId, move[0].targetIndex], ['strip1', 'fileMenu', null, 2], 'the intent is keyed by owner, source item, root parent, and exact target index');
+  eq(only(h.posted, 'manipulate').length, 0, 'a strip-item drag does not fall through to ordinary control movement');
+  eq((h.document.querySelector('.stripdropindicator') as any)?.style.display ?? 'none', 'none', 'drop feedback clears after mouseup');
+  h.destroy();
+});
+
+test('on-canvas strip item drag: dragging a nested field-backed row to the root Type Here slot posts a reparent intent', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.MenuStrip', [
+    {
+      ownerId: 'strip1', itemId: 'fileMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'File', x: 14, y: 10, width: 37, height: 20, isTypeHere: false,
+      children: [
+        { ownerId: 'strip1', itemId: 'openItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Open', children: [] },
+        { ownerId: 'strip1', itemId: 'saveItem', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Save', children: [] },
+      ],
+    },
+    { ownerId: 'strip1', itemId: 'editMenu', itemType: 'System.Windows.Forms.ToolStripMenuItem', text: 'Edit', x: 55, y: 10, width: 39, height: 20, isTypeHere: false, children: [] },
+    { ownerId: 'strip1', itemId: '', itemType: '', text: '', x: 96, y: 10, width: 66, height: 20, isTypeHere: true },
+  ]);
+  h.mouse('click', { offsetX: 20, offsetY: 15 }, h.el('surface')); // open File's flyout
+  h.resetPosted();
+  const saveRow = Array.prototype.find.call(visibleFlyouts(h)[0].querySelectorAll('.stripflyoutrow'), (r: any) => r.textContent.indexOf('Save') >= 0);
+  const rootSlot = Array.prototype.filter.call(h.document.querySelectorAll('.typehereslot'), (s: any) => s.style.display !== 'none')[0];
+  h.mouse('mousedown', { button: 0, clientX: 10, clientY: 40 }, saveRow);
+  h.mouse('mousemove', { clientX: 120, clientY: 15 }, rootSlot);
+  const feedback = h.document.querySelector('.stripdropindicator.append') as any;
+  ok(!!feedback && feedback.style.display !== 'none', 'dragging to the root Type Here slot shows append/reparent feedback');
+  h.mouse('mouseup', { clientX: 120, clientY: 15 }, rootSlot);
+  const move = only(h.posted, 'stripMove');
+  eq(move.length, 1, 'nested drop posts exactly one stripMove intent');
+  eq([move[0].hostId, move[0].itemId, move[0].targetParentItemId, move[0].targetIndex], ['strip1', 'saveItem', null, 2], 'the nested row is reparented to the strip root append index');
+  eq(only(h.posted, 'selectItem').length, 0, 'a drag posts only the move intent, not an extra row selection');
+  h.destroy();
+});
+
+test('on-canvas strip item drag: anonymous items and the overflow chevron do not start a move', () => {
+  const h = loadDesigner();
+  setupStripItems(h, 'System.Windows.Forms.ToolStrip', [
+    { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripStatusLabel', text: 'Anon', x: 14, y: 10, width: 40, height: 20, isTypeHere: false, children: [] },
+    { ownerId: 'strip1', itemId: '', itemType: 'System.Windows.Forms.ToolStripOverflowButton', text: '', x: 60, y: 10, width: 16, height: 20, isTypeHere: false, overflow: true, children: [
+      { ownerId: 'strip1', itemId: 'hiddenButton', itemType: 'System.Windows.Forms.ToolStripButton', text: 'Hidden', children: [] },
+    ] },
+  ]);
+  h.mouse('mousedown', { button: 0, offsetX: 20, offsetY: 15, clientX: 20, clientY: 15 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 85, clientY: 15 });
+  h.mouse('mouseup', { clientX: 85, clientY: 15 });
+  h.mouse('mousedown', { button: 0, offsetX: 64, offsetY: 15, clientX: 64, clientY: 15 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 90, clientY: 15 });
+  h.mouse('mouseup', { clientX: 90, clientY: 15 });
+  eq(only(h.posted, 'stripMove').length, 0, 'anonymous/overflow-only hit regions never post stripMove');
   h.destroy();
 });
 
@@ -2422,6 +3154,200 @@ test('smoke: panel loads and posts ready', () => {
   h.destroy();
 });
 
+test('V2-FND-001-S093 product canvas renders a bounded ControlDesigner adorner and confirms its hover through the host', () => {
+  const h = loadDesigner();
+  const button = mkCtrl({ id: 'fancyButton1', name: 'fancyButton1', type: 'FakeVendor.FancyButton', x: 24, y: 32, width: 120, height: 32 });
+  h.send({ type: 'layout', controls: [button] });
+  h.send({ type: 'select', id: 'fancyButton1' });
+  h.send({
+    type: 'tasks', id: 'fancyButton1', vendorTags: [],
+    component: {
+      id: 'fancyButton1', name: 'fancyButton1', type: 'FakeVendor.FancyButton', parent: 'this', isRoot: false,
+      properties: [{ name: 'Text', type: 'System.String', value: 'Fancy', readOnly: false }],
+      designerActions: [],
+      designerAdorners: [{
+        id: 'fakevendor.caption', displayName: 'Caption adorner',
+        left: 0, top: 0, width: 96, height: 18, hitTestable: true,
+      }],
+      events: [],
+    },
+  });
+
+  const adorner = h.document.querySelector('.designeradorner') as any;
+  ok(adorner && adorner.style.display !== 'none', 'the selected control renders its hosted adorner rectangle');
+  eq(adorner.title, 'Caption adorner', 'the hosted display name reaches the visible adorner tooltip');
+  eq([adorner.style.left, adorner.style.top, adorner.style.width, adorner.style.height],
+    ['24px', '32px', '96px', '18px'], 'control-local bounds map exactly into the canvas coordinate space');
+
+  h.resetPosted();
+  adorner.dispatchEvent(new h.window.MouseEvent('mouseenter', { clientX: 25, clientY: 33 }));
+  const requests = only(h.posted, 'designerAdornerHit');
+  eq(requests.length, 1, 'one hover posts one fresh-graph adorner confirmation request');
+  eq({ type: requests[0].type, id: requests[0].id, adornerId: requests[0].adornerId }, {
+    type: 'designerAdornerHit', id: 'fancyButton1', adornerId: 'fakevendor.caption',
+  }, 'the hover carries only the selected component and engine-issued adorner identities');
+  ok(Number.isInteger(requests[0].x) && requests[0].x >= 0 && requests[0].x < 96
+    && Number.isInteger(requests[0].y) && requests[0].y >= 0 && requests[0].y < 18,
+  'the requested point stays inside the published control-local rectangle');
+  ok(adorner.classList.contains('pending') && !adorner.classList.contains('hit'),
+    'the canvas does not treat the descriptor as authoritative before the host reply');
+
+  h.send({
+    type: 'designerAdornerHit', id: 'fancyButton1', adornerId: 'fakevendor.caption',
+    token: requests[0].token, ok: true, hit: true,
+  });
+  ok(!adorner.classList.contains('pending') && adorner.classList.contains('hit'),
+    'the confirmed hosted result activates the visible hover state');
+  adorner.dispatchEvent(new h.window.MouseEvent('mouseleave'));
+  ok(!adorner.classList.contains('hit'), 'leaving the adorner retracts the transient confirmed state');
+  h.destroy();
+});
+
+test('V2-FND-001-S094 product smart tag: real DesignerActionList metadata replaces the old property-name heuristic', () => {
+  const h = loadDesigner();
+  const button = mkCtrl({ id: 'fancyButton1', name: 'fancyButton1', type: 'FakeVendor.FancyButton' });
+  h.send({ type: 'layout', controls: [button] });
+  h.send({ type: 'select', id: 'fancyButton1' });
+  h.send({
+    type: 'tasks', id: 'fancyButton1', vendorTags: [],
+    component: {
+      id: 'fancyButton1', name: 'fancyButton1', type: 'FakeVendor.FancyButton', parent: 'this', isRoot: false,
+      properties: [
+        { name: 'Text', type: 'System.String', value: 'Fancy', readOnly: false },
+        { name: 'Enabled', type: 'System.Boolean', value: 'True', readOnly: false, standardValues: ['True', 'False'] },
+      ],
+      designerActions: [{
+        displayName: 'Caption', propertyName: 'Text', category: 'FakeVendor',
+        description: 'Edits the vendor button text through the hosted action-list path.',
+      }],
+      events: [],
+    },
+  });
+  ok(h.document.querySelector('.smarttag').style.display !== 'none', 'a real DesignerActionList property raises the smart-tag glyph');
+  h.resetPosted();
+  h.click(h.document.querySelector('.smarttag'));
+  const rows = Array.from(h.document.querySelectorAll('.tfRow')) as any[];
+  eq(rows.map((row) => row.querySelector('.tfLabel')?.textContent), ['Caption'],
+    'the flyout uses the designer display name and does not add heuristic Enabled/Text rows');
+  const input = rows[0].querySelector('input.tfText') as any;
+  input.value = 'Hosted caption';
+  input.dispatchEvent(new h.window.Event('blur'));
+  eq(only(h.posted, 'edit'), [{
+    type: 'edit', id: 'fancyButton1', prop: 'Text', propType: 'System.String', isEnum: false, value: 'Hosted caption',
+  }], 'the action-list row writes its mapped component property through the ordinary source-first edit route');
+  ok((rows[0].title || '').includes('hosted action-list path'), 'the vendor action description reaches the flyout tooltip');
+  h.destroy();
+});
+
+test('V2-FND-001-S089/S090 product smart tag: certified DesignerAction command posts identity only', () => {
+  const h = loadDesigner();
+  const control = mkCtrl({
+    id: 'hostedServiceControl1', name: 'hostedServiceControl1', type: 'FakeVendor.HostedServiceControl',
+  });
+  h.send({ type: 'layout', controls: [control] });
+  h.send({ type: 'select', id: 'hostedServiceControl1' });
+  h.send({
+    type: 'tasks', id: 'hostedServiceControl1', vendorTags: [],
+    component: {
+      id: 'hostedServiceControl1', name: 'hostedServiceControl1', type: 'FakeVendor.HostedServiceControl',
+      parent: 'this', isRoot: false,
+      properties: [
+        { name: 'Text', type: 'System.String', value: 'Before service action', readOnly: false },
+        { name: 'Size', type: 'System.Drawing.Size', value: '120, 32', readOnly: false },
+      ],
+      designerActions: [{
+        displayName: 'Apply Service Preset', propertyName: '', category: 'FakeVendor',
+        description: 'Changes Text and Size through one hosted DesignerTransaction.',
+        commandId: 'applyServicePreset', certificationId: 'repo.fakevendor.hosted-service-kernel.v1',
+      }, {
+        displayName: 'Cancel Reentrant Service Action', propertyName: '', category: 'FakeVendor',
+        description: 'Proves that a nested hosted transaction cancels without a source proposal.',
+        commandId: 'cancelReentrantServiceAction', certificationId: 'repo.fakevendor.hosted-service-kernel.v1',
+      }],
+      events: [],
+    },
+  });
+  ok(h.document.querySelector('.smarttag').style.display !== 'none',
+    'a certified DesignerActionMethodItem raises the visible smart-tag glyph without a mapped property');
+  h.resetPosted();
+  h.click(h.document.querySelector('.smarttag'));
+  const command = h.document.querySelector('.tfCommand') as any;
+  ok(!!command && command.textContent === 'Apply Service Preset',
+    'the real designer display name reaches a command row');
+  h.click(command);
+  eq(h.posted, [{
+    type: 'designerActionCommand',
+    id: 'hostedServiceControl1',
+    commandId: 'applyServicePreset',
+    certificationId: 'repo.fakevendor.hosted-service-kernel.v1',
+  }], 'the webview sends only certified identity, never caller-authored property proposals');
+  h.resetPosted();
+  h.click(h.document.querySelector('.smarttag'));
+  const commands = Array.from(h.document.querySelectorAll('.tfCommand')) as any[];
+  eq(commands.map((row) => row.textContent), [
+    'Apply Service Preset', 'Cancel Reentrant Service Action',
+  ], 'both certified methods remain visible as commands without property surrogates');
+  h.click(commands[1]);
+  eq(h.posted, [{
+    type: 'designerActionCommand',
+    id: 'hostedServiceControl1',
+    commandId: 'cancelReentrantServiceAction',
+    certificationId: 'repo.fakevendor.hosted-service-kernel.v1',
+  }], 'the reentrant-cancellation command also sends identity only and no partial patch');
+  h.destroy();
+});
+
+test('v1.15 Data Sources pane: persists as a main tab and routes detail/grid/column/settings actions with opaque keys', () => {
+  const h = loadPanel();
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true });
+  const grid = mkCtrl({ id: 'customerGrid', name: 'customerGrid', type: 'System.Windows.Forms.DataGridView', parentId: 'this' });
+  const button = mkCtrl({ id: 'saveButton', name: 'saveButton', type: 'System.Windows.Forms.Button', parentId: 'this' });
+  h.send({ type: 'layout', controls: [root, grid, button] });
+  h.send({ type: 'select', id: 'customerGrid' });
+  h.resetPosted();
+  h.click(h.el('mainTabData'));
+  eq(only(h.posted, 'refreshDataSources'), [{ type: 'refreshDataSources' }], 'opening the main Data Sources tab requests a fresh bounded catalog');
+  ok(only(h.posted, 'panelViewStateChanged').some((m: any) => m.state?.activeTab === 'data'), 'Data Sources is persisted as the active main tab');
+
+  h.send({
+    type: 'dataSources', ok: true, reason: '',
+    schemas: [{
+      key: 'schema:customer', name: 'Customer', typeName: 'Demo.Customer',
+      properties: [{ name: 'Name', typeName: 'System.String', kind: 'text', readOnly: false }],
+      existingBindingSources: ['customerBindingSource'],
+    }],
+    settings: [{ key: 'setting:theme', name: 'Theme', typeName: 'System.String', scope: 'User' }],
+  });
+  const card = h.el('dataList').querySelector('.dsCard') as any;
+  ok(!!card && /Customer/.test(card.textContent), 'the opaque engine schema renders its public display metadata');
+  const source = card.querySelector('.dsSource') as any;
+  source.value = 'customerBindingSource';
+  source.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  (h.el('dataNavigator') as any).checked = true;
+  const actions = Array.from(card.querySelectorAll('.dsAction')) as any[];
+  ok(actions.every((b) => b.draggable), 'detail/grid generation actions are real cross-webview drag handles');
+
+  h.resetPosted();
+  h.click(actions[0]);
+  eq(only(h.posted, 'generateDataSource'), [{
+    type: 'generateDataSource', schemaKey: 'schema:customer', mode: 'detail', parentId: 'this',
+    includeNavigator: true, existingBindingSourceId: 'customerBindingSource', existingGridId: null,
+  }], 'detail generation returns only the opaque schema key and closed generation options');
+
+  h.resetPosted();
+  h.click(actions[2]);
+  eq(only(h.posted, 'generateDataSource')[0].existingGridId, 'customerGrid', 'selected-grid action appends missing schema columns instead of replacing the grid');
+
+  h.send({ type: 'select', id: 'saveButton' });
+  const bind = h.el('dataList').querySelector('.settingRow button') as any;
+  ok(!!bind && !bind.disabled, 'a current-source control enables the application-setting action');
+  h.resetPosted();
+  h.click(bind);
+  eq(only(h.posted, 'bindApplicationSetting'), [{ type: 'bindApplicationSetting', settingKey: 'setting:theme', id: 'saveButton' }],
+    'settings binding forwards only the engine setting key and selected target id');
+  h.destroy();
+});
+
 test('per-form panel/toolbox state (1.1.0): active tab, collapsed categories and custom tabs restore from host state', () => {
   const h = loadPanel();
   h.send({
@@ -2569,7 +3495,195 @@ test('panel value edit: committing a text field posts an edit with the new value
   h.destroy();
 });
 
-test('panel reset (T0.2): right-click a source-explicit row → Reset posts resetProperty; a default row disables Reset', () => {
+test('V2-FND-001-S038: multi-object grid mixed values render blank and edit/reset keep the all-target transaction marker', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button2',
+    name: 'button2',
+    type: 'System.Windows.Forms.Button',
+    multiCount: 2,
+    properties: [prop('Text', {
+      value: null,
+      mixed: true,
+      multi: true,
+      multiResettable: true,
+      sourceExplicit: true,
+      isDefault: null,
+      category: 'Appearance',
+    })],
+    events: [],
+  });
+
+  const input = findPropRow(h, 'Text').querySelector('input');
+  ok(!!input, 'a mixed shared string property remains editable');
+  eq(input.value, '', 'a mixed value is not replaced by one arbitrary target value');
+  eq(input.placeholder, 'panel.grid.mixed', 'the blank editor explicitly discloses mixed values');
+  input.value = 'Shared';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const edit = only(h.posted, 'edit');
+  eq(edit.length, 1, 'one multi-object edit intent is posted');
+  eq([edit[0].id, edit[0].prop, edit[0].value, edit[0].multi], ['button2', 'Text', 'Shared', true],
+    'the edit is tagged for the host atomic batch route');
+
+  h.resetPosted();
+  h.mouse('contextmenu', { clientX: 5, clientY: 5 }, findPropRow(h, 'Text').querySelector('td.name'));
+  const reset = h.el('tbMenu').querySelector('.mi');
+  ok(!!reset && reset.className.indexOf('disabled') < 0, 'Reset is offered when every target is representable');
+  h.click(reset);
+  const resets = only(h.posted, 'resetProperty');
+  eq(resets.length, 1, 'one multi-object reset intent is posted');
+  eq([resets[0].id, resets[0].prop, resets[0].multi], ['button2', 'Text', true],
+    'Reset is tagged for the same all-target transaction route');
+  h.destroy();
+});
+
+test('V2-FND-001-S038: standard-values dropdown discloses mixed value and commits concrete all-target value', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button2',
+    name: 'button2',
+    type: 'System.Windows.Forms.Button',
+    multiCount: 2,
+    properties: [prop('Enabled', {
+      type: 'System.Boolean',
+      value: null,
+      mixed: true,
+      multi: true,
+      isEnum: true,
+      standardValues: ['True', 'False'],
+      standardValuesExclusive: true,
+      category: 'Behavior',
+    })],
+    events: [],
+  });
+
+  const select = findPropRow(h, 'Enabled').querySelector('select');
+  ok(!!select, 'a shared mixed Boolean remains an editable exclusive dropdown');
+  eq(select.options[select.selectedIndex].textContent, 'panel.grid.mixed',
+    'the closed-list placeholder describes disagreement instead of an unset value');
+  eq([select.getAttribute('data-mixed'), select.getAttribute('aria-label')], ['true', 'panel.grid.mixed'],
+    'mixed state is exposed to styling and assistive technology');
+
+  h.resetPosted();
+  select.value = 'True';
+  select.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  eq(only(h.posted, 'edit').map((m) => [m.prop, m.value, m.multi]), [['Enabled', 'True', true]],
+    'choosing a concrete value still posts one all-target transaction');
+  h.destroy();
+});
+
+test('V2-FND-001-S041: exclusive TypeConverter values render in exact engine order without an edit intent', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button1',
+    name: 'button1',
+    type: 'System.Windows.Forms.Button',
+    properties: [prop('FlatStyle', {
+      type: 'System.Windows.Forms.FlatStyle',
+      value: 'Standard',
+      isEnum: true,
+      standardValues: ['Flat', 'Popup', 'Standard', 'System'],
+      standardValuesExclusive: true,
+      category: 'Appearance',
+    })],
+    events: [],
+  });
+
+  const select = findPropRow(h, 'FlatStyle').querySelector('select');
+  ok(!!select, 'an exclusive TypeConverter list renders as the VS-style closed dropdown');
+  eq(Array.from(select.options).map((option: any) => [option.value, option.textContent]), [
+    ['Flat', 'Flat'],
+    ['Popup', 'Popup'],
+    ['Standard', 'Standard'],
+    ['System', 'System'],
+  ], 'dropdown value/display pairs preserve the exact engine order');
+  eq(select.value, 'Standard', 'the current invariant value is selected');
+  h.resetPosted();
+  select.dispatchEvent(new h.window.FocusEvent('focus'));
+  select.dispatchEvent(new h.window.MouseEvent('mousedown', { bubbles: true }));
+  select.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  eq(only(h.posted, 'edit'), [], 'opening/focusing the dropdown is inspection-only');
+  h.destroy();
+});
+
+test('V2-FND-001-S037: categorized property grid and search share the same non-mutating property set', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button1',
+    name: 'button1',
+    type: 'System.Windows.Forms.Button',
+    properties: [
+      prop('Zeta', { category: 'Layout' }),
+      prop('Alpha', { category: 'Appearance' }),
+      prop('Beta', { category: 'Layout' }),
+    ],
+    events: [],
+  });
+  const names = () => (Array.from(h.el('props').querySelectorAll('tr')) as any[])
+    .map((row) => row.querySelector('td.name'))
+    .filter(Boolean)
+    .map((cell) => cell.textContent.replace(/^[▾▸]\s*/, '').trim());
+
+  ok(h.el('props').querySelectorAll('td.cat').length >= 2, 'categorized mode renders category groups');
+  h.click(h.el('sortAlpha'));
+  eq(names(), ['Alpha', 'Beta', 'Zeta'], 'alphabetical mode orders the flat property list by name');
+
+  h.el('search').value = 'ta';
+  h.el('search').dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  eq(names(), ['Beta', 'Zeta'], 'alphabetical mode applies the property search');
+  h.el('search').focus();
+  h.resetPosted();
+  const moved = h.key('keydown', { key: 'ArrowDown' }, h.el('search'));
+  ok(moved.defaultPrevented, 'ArrowDown from search moves into the filtered property results');
+  ok(h.document.activeElement !== h.el('search'), 'keyboard navigation leaves the search input');
+  eq(h.el('propDesc').querySelector('.pdName').textContent, 'Beta', 'keyboard focus selects the first filtered property row');
+  eq(h.posted.length, 0, 'keyboard search navigation is read-only and posts no host mutation');
+  h.click(h.el('sortCat'));
+  eq(names().slice().sort(), ['Beta', 'Zeta'], 'categorized mode applies the identical search predicate');
+  h.destroy();
+});
+
+test('V2-FND-001-S040: keyboard property search filters live rows and focuses the first result without mutation', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button1',
+    name: 'button1',
+    type: 'System.Windows.Forms.Button',
+    properties: [
+      prop('Text', { type: 'System.String', value: 'Move me', category: 'Appearance' }),
+      prop('FlatStyle', {
+        type: 'System.Windows.Forms.FlatStyle',
+        value: 'Standard',
+        isEnum: true,
+        standardValues: ['Flat', 'Popup', 'Standard', 'System'],
+        standardValuesExclusive: true,
+        category: 'Appearance',
+      }),
+      prop('Location', { type: 'System.Drawing.Point', value: '12, 12', category: 'Layout' }),
+    ],
+    events: [],
+  });
+
+  const search = h.el('search');
+  search.focus();
+  search.value = 'flatstyle';
+  search.dispatchEvent(new h.window.InputEvent('input', { bubbles: true, data: 'flatstyle', inputType: 'insertText' }));
+  const visibleNames = (Array.from(h.el('props').querySelectorAll('td.name')) as any[])
+    .map((cell) => cell.textContent.trim());
+  eq(visibleNames, ['FlatStyle'], 'keyboard search leaves only the matching live property row');
+  h.resetPosted();
+  const moved = h.key('keydown', { key: 'ArrowDown' }, search);
+  ok(moved.defaultPrevented, 'ArrowDown is consumed after focus moves to the first filtered result');
+  const active = h.document.activeElement as any;
+  eq([active?.tagName, active?.value], ['SELECT', 'Standard'],
+    'focus order enters the filtered FlatStyle closed-list editor with its current value');
+  eq(h.el('propDesc').querySelector('.pdName').textContent, 'FlatStyle',
+    'keyboard focus updates the Properties description pane');
+  eq(h.posted, [], 'typing, filtering, and keyboard result navigation post no host mutation');
+  h.destroy();
+});
+
+test('V2-FND-001-S039: property reset menu posts resetProperty for explicit values and disables default rows', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'button1',
@@ -2598,7 +3712,42 @@ test('panel reset (T0.2): right-click a source-explicit row → Reset posts rese
   h.destroy();
 });
 
-test('panel bold-nondefault (T0.3): non-default rows get the "set" class; ambient/noise props never do', () => {
+test('V2-FND-001-S042: expanded Padding subproperty edit preserves the other subvalues in one bounded edit intent', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button1',
+    name: 'button1',
+    type: 'System.Windows.Forms.Button',
+    properties: [
+      prop('Padding', {
+        type: 'System.Windows.Forms.Padding',
+        value: '3, 4, 5, 6',
+        sourceExplicit: true,
+        isDefault: false,
+        category: 'Layout',
+      }),
+    ],
+    events: [],
+  });
+
+  h.click(findPropRow(h, 'Padding').querySelector('.tw'));
+  const leftRow = (Array.from(h.el('props').querySelectorAll('tr')) as any[])
+    .find((row) => (row.querySelector('td.name.sub')?.textContent || '').trim() === 'panel.field.left');
+  ok(!!leftRow, 'the Left subproperty row is rendered when Padding is expanded');
+  const input = leftRow.querySelector('input');
+  eq(input.value, '3', 'the Left editor starts from the first Padding component');
+  input.value = '8';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+
+  const edits = only(h.posted, 'edit');
+  eq(edits.length, 1, 'one Padding edit intent is posted');
+  eq([edits[0].id, edits[0].prop, edits[0].propType, edits[0].value],
+    ['button1', 'Padding', 'System.Windows.Forms.Padding', '8, 4, 5, 6'],
+    'only the requested subvalue changes while the other Padding components are preserved');
+  h.destroy();
+});
+
+test('V2-FND-001-S037: non-default rows get the set class and ambient/noise props never do', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'x',
@@ -2619,7 +3768,7 @@ test('panel bold-nondefault (T0.3): non-default rows get the "set" class; ambien
   h.destroy();
 });
 
-test('panel description pane (T0.4): selecting a row shows its name + description', () => {
+test('V2-FND-001-S037: selecting a property row shows its name and description', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'x',
@@ -2634,6 +3783,32 @@ test('panel description pane (T0.4): selecting a row shows its name + descriptio
     (h.el('propDesc').querySelector('.pdText').textContent || '').indexOf('The caption of the control.') >= 0,
     'description pane shows the DescriptionAttribute text',
   );
+  h.destroy();
+});
+
+test('V2-FND-001-S043: converter timeout diagnostic is surfaced without offering a dropdown or mutation', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'vendor1',
+    name: 'vendor1',
+    type: 'FakeVendor.SlowControl',
+    properties: [prop('Mode', {
+      value: 'Alpha',
+      category: 'Behavior',
+      metadataDiagnosticCode: 'CONVERTER_TIMEOUT',
+      standardValues: null,
+      standardValuesExclusive: false,
+    })],
+    events: [],
+  });
+
+  const row = findPropRow(h, 'Mode');
+  eq(row.getAttribute('data-diagnostic-code'), 'CONVERTER_TIMEOUT', 'row carries the stable converter diagnostic');
+  ok(!row.querySelector('select,datalist'), 'timed-out converter metadata cannot create a dropdown');
+  h.mouse('mousedown', {}, row);
+  ok((h.el('propDesc').querySelector('.pdText').textContent || '').indexOf('CONVERTER_TIMEOUT') >= 0,
+    'the visible description pane surfaces the timeout diagnostic');
+  eq(h.posted.length, 0, 'showing the timeout diagnostic performs no mutation');
   h.destroy();
 });
 
@@ -2712,6 +3887,64 @@ test('panel generic IList editor: routes the metadata item type through list + o
   h.destroy();
 });
 
+test('panel real CollectionEditor: explicit framework editor metadata bypasses the textarea and posts one isolated-worker intent', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'settings1', name: 'settings1', type: 'Demo.SettingsControl',
+    properties: [prop('Thresholds', {
+      type: 'System.Collections.Generic.IList`1[[System.Int32]]',
+      value: null,
+      isCollection: true,
+      genericCollection: true,
+      collectionItemType: 'System.Int32',
+      uiTypeEditor: 'System.ComponentModel.Design.CollectionEditor',
+      category: 'Data',
+    })],
+    events: [],
+  });
+
+  h.click(findPropRow(h, 'Thresholds').querySelector('button.genericListBtn'));
+
+  eq(only(h.posted, 'uiCollectionEditor'), [{
+    type: 'uiCollectionEditor', id: 'settings1', prop: 'Thresholds', itemType: 'System.Int32',
+    editorType: 'System.ComponentModel.Design.CollectionEditor',
+  }], 'the exact [Editor] metadata requests the host-owned isolated framework CollectionEditor');
+  eq(only(h.posted, 'listGenericList').length, 0, 'the old line-based approximation is not opened for a real CollectionEditor property');
+  ok(!h.document.querySelector('.collectionPop'), 'no webview textarea masquerades as the framework CollectionEditor');
+  h.destroy();
+});
+
+test('S071 panel vendor CollectionEditor: certified metadata uses the same VS-style ellipsis ingress without a textarea surrogate', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'vendorEdit1', name: 'vendorEdit1', type: 'FakeVendor.VendorEdit',
+    properties: [prop('Thresholds', {
+      type: 'System.Collections.Generic.IList`1[[System.Int32]]',
+      value: null,
+      isCollection: true,
+      genericCollection: true,
+      collectionItemType: 'System.Int32',
+      uiTypeEditor: 'FakeVendor.VendorThresholdsEditor',
+      uiTypeEditorAssemblyPath: 'C:\\fixtures\\FakeVendor.dll',
+      uiTypeEditorAssemblySha256: 'a'.repeat(64),
+      uiTypeEditorCertificationId: 'repo.fakevendor.thresholds.v1',
+      category: 'Data',
+    })],
+    events: [],
+  });
+
+  h.click(findPropRow(h, 'Thresholds').querySelector('button.genericListBtn'));
+
+  eq(only(h.posted, 'uiCollectionEditor'), [{
+    type: 'uiCollectionEditor', id: 'vendorEdit1', prop: 'Thresholds', itemType: 'System.Int32',
+    editorType: 'FakeVendor.VendorThresholdsEditor',
+  }], 'the certified vendor metadata requests the host-owned isolated editor');
+  eq(only(h.posted, 'listGenericList').length, 0,
+    'the generic textarea does not replace a certified vendor collection editor');
+  ok(!h.document.querySelector('.collectionPop'), 'the certified vendor path does not open the webview line editor');
+  h.destroy();
+});
+
 test('daily loop 1.9: the (Name) design row is editable and tagged for the source rename route', () => {
   const h = loadPanel();
   setupComponent(h, {
@@ -2731,7 +3964,7 @@ test('daily loop 1.9: the (Name) design row is editable and tagged for the sourc
   h.destroy();
 });
 
-test('panel expandable TypeConverter metadata: nested values are bounded read-only rows with truncation disclosure', () => {
+test('V2-FND-001-S044: expandable TypeConverter metadata is bounded read-only rows with truncation disclosure', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'vendor1', name: 'vendor1', type: 'Acme.VendorControl',
@@ -2762,7 +3995,7 @@ test('panel expandable TypeConverter metadata: nested values are bounded read-on
   h.destroy();
 });
 
-test('panel UITypeEditor: editable metadata adds one accessible ellipsis action with the exact editor type', () => {
+test('V2-FND-001-S045 and V2-FND-001-S046: UITypeEditor metadata adds one accessible ellipsis action with the exact editor type', () => {
   const h = loadPanel();
   setupComponent(h, {
     id: 'label1', name: 'label1', type: 'System.Windows.Forms.Label',
@@ -2805,6 +4038,48 @@ test('panel ownership: editable=false suppresses scalar, collection, modal, rese
   ok(!h.el('events').querySelector('input'), 'event creation/wiring input is suppressed');
   h.mouse('dblclick', {}, h.el('events').querySelector('td.name'));
   eq(only(h.posted, 'createHandler').length, 0, 'double-click cannot create an event handler');
+  h.destroy();
+});
+
+test('panel visual inheritance: one engine-authorized override row is editable without widening component actions', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'baseButton', name: 'baseButton', type: 'System.Windows.Forms.Button',
+    ownership: 'inherited', editable: false, inheritedOverrideEditable: true, baseIdentityToken: 'sha256:BASE',
+    readOnlyReason: 'Structural edits remain read-only.',
+    properties: [
+      prop('Text', { value: 'Base', sourceExplicit: true, category: 'Appearance',
+        inheritedOverrideEditable: true, inheritedOverrideResettable: true }),
+      prop('Location', { type: 'System.Drawing.Point', value: '8, 8', sourceExplicit: true,
+        readOnly: true, inheritedOverrideEditable: false, inheritedOverrideResettable: true, category: 'Layout' }),
+      prop('Font', { type: 'System.Drawing.Font', value: 'Segoe UI, 9pt', readOnly: true,
+        uiTypeEditor: 'System.Drawing.Design.FontEditor', category: 'Appearance' }),
+      prop('Values', { type: 'System.Collections.IList', isCollection: true, genericCollection: true,
+        collectionItemType: 'System.Int32', value: '(Collection)', readOnly: true, category: 'Data' }),
+    ],
+    events: [{ name: 'Click', type: 'System.EventHandler', handler: '', category: 'Action' }],
+  });
+
+  const text = findPropRow(h, 'Text');
+  const input = text.querySelector('input');
+  ok(!!input, 'the single inherited override row renders an editor');
+  input.value = 'Derived';
+  input.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  eq(only(h.posted, 'edit').map((m) => [m.id, m.prop, m.value]),
+    [['baseButton', 'Text', 'Derived']], 'the row uses the ordinary untrusted edit message; host metadata authorizes it');
+  ok(!findPropRow(h, 'Font').querySelector('button.uiTypeEditorBtn'), 'modal editors remain suppressed');
+  ok(!findPropRow(h, 'Values').querySelector('button.collectionBtn'), 'collection editors remain suppressed');
+  h.mouse('contextmenu', { clientX: 5, clientY: 5 }, text.querySelector('td.name'));
+  const resetText = h.el('tbMenu').querySelector('.mi');
+  ok(resetText.className.indexOf('disabled') < 0, 'a source-explicit inherited override can be reset');
+  h.click(resetText);
+  eq(only(h.posted, 'resetProperty').map((m) => [m.id, m.prop]),
+    [['baseButton', 'Text']], 'Reset routes the inherited row to host-side token validation');
+  h.mouse('contextmenu', { clientX: 5, clientY: 5 }, findPropRow(h, 'Location').querySelector('td.name'));
+  ok(h.el('tbMenu').querySelector('.mi').className.indexOf('disabled') < 0,
+    'a layout-gated inherited geometry write can still remove its existing derived override');
+  h.click(h.el('tabEvents'));
+  ok(!h.el('events').querySelector('input'), 'event wiring remains suppressed');
   h.destroy();
 });
 
@@ -3086,6 +4361,76 @@ test('panel component-reference ROOT token (Tier 4): a [(none), (this)] dropdown
   sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
   edits = only(h.posted, 'edit');
   eq([edits[0].value, edits[0].refEdit], ['(this)', true], 'picking the root token posts "(this)" + refEdit (host splices bare `this`)');
+  h.destroy();
+});
+
+test('V2-FND-001-S069 panel ListView.Columns editor: empty collection + Add + OK posts one typed column transaction', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'listView1',
+    name: 'listView1',
+    type: 'System.Windows.Forms.ListView',
+    properties: [prop('Columns', {
+      type: 'System.Windows.Forms.ListView+ColumnHeaderCollection',
+      value: '(Collection)',
+      isCollection: true,
+      collectionItemType: 'System.Windows.Forms.ColumnHeader',
+      category: 'Misc',
+    })],
+    events: [],
+  });
+  const btn = findPropRow(h, 'Columns').querySelector('button.collectionBtn');
+  ok(!!btn, 'ListView.Columns renders the dedicated typed editor button');
+  h.click(btn);
+  eq(only(h.posted, 'listColumns'), [{ type: 'listColumns', id: 'listView1' }],
+    'the button requests the current source-backed Columns collection');
+
+  h.resetPosted();
+  h.send({ type: 'columnItems', id: 'listView1', ok: true, reason: '', columns: [] });
+  h.click(h.document.querySelector('.columnsAdd'));
+  const text = h.document.querySelector('.columnsRow .colText');
+  const width = h.document.querySelector('.columnsRow .colWidth');
+  text.value = 'Name'; text.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  width.value = '180'; width.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  h.click(h.document.querySelector('.collectionOk'));
+  eq(only(h.posted, 'setColumns'), [{
+    type: 'setColumns', id: 'listView1',
+    columns: [{ id: '', text: 'Name', width: 180, textAlign: 'Left' }],
+  }], 'OK submits one complete typed collection payload; the engine will mint the field id');
+  h.destroy();
+});
+
+test('V2-FND-001-S070 panel TabPages editor: move third first + OK posts one complete permutation', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'tabs',
+    name: 'tabs',
+    type: 'System.Windows.Forms.TabControl',
+    properties: [prop('TabPages', {
+      type: 'System.Windows.Forms.TabControl+TabPageCollection',
+      value: '(Collection)',
+      isCollection: true,
+      collectionItemType: 'System.Windows.Forms.TabPage',
+      category: 'Behavior',
+    })],
+    events: [],
+  });
+  const btn = findPropRow(h, 'TabPages').querySelector('button.collectionBtn');
+  ok(!!btn, 'TabPages renders a dedicated collection editor button');
+  eq(btn.getAttribute('aria-label'), 'Edit TabPages order', 'the editor entry point has an accessible name');
+  h.click(btn);
+  eq(only(h.posted, 'listTabPages'), [{ type: 'listTabPages', id: 'tabs' }],
+    'the editor first requests the canonical source order');
+
+  h.resetPosted();
+  h.send({ type: 'tabPageItems', id: 'tabs', ok: true, reason: '', pages: ['pageA', 'pageB', 'pageC'] });
+  h.click(h.document.querySelector('.tabPageRow[data-page-id="pageC"] .tabPageUp'));
+  h.click(h.document.querySelector('.tabPageRow[data-page-id="pageC"] .tabPageUp'));
+  eq(Array.from(h.document.querySelectorAll('.tabPageRow')).map((row: any) => row.dataset.pageId),
+    ['pageC', 'pageA', 'pageB'], 'the popup presents the requested C,A,B working order before commit');
+  h.click(h.document.querySelector('.collectionOk'));
+  eq(only(h.posted, 'setTabPages'), [{ type: 'setTabPages', id: 'tabs', pageIds: ['pageC', 'pageA', 'pageB'] }],
+    'OK posts the complete permutation once, not two adjacent history operations');
   h.destroy();
 });
 
@@ -3459,6 +4804,91 @@ test('panel toolstrip editor: the TYPE picker is context-sensitive — a ToolStr
   h.destroy();
 });
 
+test('panel toolstrip editor: Insert Standard Items appends the standard MenuStrip skeleton as empty-id nested nodes and OK posts one edit', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ms',
+    name: 'menuStrip1',
+    type: 'System.Windows.Forms.MenuStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({ type: 'toolStripItems', id: 'ms', ok: true, reason: '', items: [] });
+  const stdBtn = (Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === 'Insert Standard Items');
+  ok(!!stdBtn, 'editable MenuStrip popup exposes Insert Standard Items');
+  h.click(stdBtn);
+  ok((Array.from(h.document.querySelectorAll('.treeNodeRow')) as any[]).length > 20, 'standard menu skeleton is rendered expanded with nested children');
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq(set.length, 1, 'OK posts exactly one setToolStripItems edit');
+  eq(set[0].toolStripItems.map((n: any) => n.text), ['File', 'Edit', 'Tools', 'Help'], 'standard top-level menus are File/Edit/Tools/Help');
+  eq(set[0].toolStripItems[0].children.map((n: any) => n.text), ['New', 'Open', 'Save', 'Save As', '', 'Print', 'Print Preview', '', 'Exit'], 'File menu carries the standard child skeleton including separators');
+  eq(set[0].toolStripItems[1].children.map((n: any) => n.text), ['Undo', 'Redo', '', 'Cut', 'Copy', 'Paste', '', 'Select All'], 'Edit menu carries the standard child skeleton');
+  ok(set[0].toolStripItems.every((n: any) => n.id === ''), 'all standard top-level items are new empty-id nodes');
+  ok(set[0].toolStripItems[0].children.every((n: any) => n.id === ''), 'all standard child items are new empty-id nodes');
+  ok(!('_k' in set[0].toolStripItems[0]) && !('_k' in set[0].toolStripItems[0].children[0]), 'ephemeral expand keys are stripped from nested payload');
+  h.destroy();
+});
+
+test('panel toolstrip editor: Insert Standard Items can be cancelled and ToolStrip gets the toolbar skeleton', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'ts',
+    name: 'toolStrip1',
+    type: 'System.Windows.Forms.ToolStrip',
+    properties: [
+      prop('Items', {
+        type: 'System.Windows.Forms.ToolStripItemCollection',
+        value: '(Collection)',
+        isCollection: true,
+        collectionItemType: 'System.Windows.Forms.ToolStripItem',
+        category: 'Behavior',
+      }),
+    ],
+    events: [],
+  });
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({ type: 'toolStripItems', id: 'ts', ok: true, reason: '', items: [] });
+  const stdBtn = (Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === 'Insert Standard Items');
+  ok(!!stdBtn, 'editable ToolStrip popup exposes Insert Standard Items');
+  h.click(stdBtn);
+  h.click((Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === 'Cancel'));
+  eq(only(h.posted, 'setToolStripItems').length, 0, 'Cancel after inserting the skeleton posts no edit');
+
+  h.click(findPropRow(h, 'Items').querySelector('button.collectionBtn'));
+  h.resetPosted();
+  h.send({ type: 'toolStripItems', id: 'ts', ok: true, reason: '', items: [] });
+  h.click((Array.from(h.document.querySelectorAll('button')) as any[]).find((b) => b.textContent === 'Insert Standard Items'));
+  h.click(h.document.querySelector('.collectionOk'));
+  const set = only(h.posted, 'setToolStripItems');
+  eq(set.length, 1, 'OK posts one toolbar skeleton edit');
+  eq(set[0].toolStripItems.map((n: any) => [n.itemType, n.text]), [
+    ['ToolStripButton', 'New'],
+    ['ToolStripButton', 'Open'],
+    ['ToolStripButton', 'Save'],
+    ['ToolStripSeparator', ''],
+    ['ToolStripButton', 'Print'],
+    ['ToolStripSeparator', ''],
+    ['ToolStripButton', 'Cut'],
+    ['ToolStripButton', 'Copy'],
+    ['ToolStripButton', 'Paste'],
+    ['ToolStripSeparator', ''],
+    ['ToolStripButton', 'Help'],
+  ], 'ToolStrip standard skeleton is a flat toolbar with separators');
+  h.destroy();
+});
+
 // ---- item → Properties: clicking a top-level ToolStrip item loads ITS properties into the panel via a
 // dedicated selectItem→itemProps channel that never touches the control selection (currentId / manip / smart-tag). ----
 
@@ -3540,6 +4970,27 @@ test('item→Properties: an item’s collection/image props render READ-ONLY (th
   ok(!!coll.querySelector('td.ro'), 'the item collection renders read-only');
   ok(!findPropRow(h, 'Image').querySelector('button'), 'no Import/(none) image editor for an item image');
   ok(!!(findPropRow(h, 'Text').querySelector('input')), 'a scalar prop (Text) is still editable on an item');
+  h.destroy();
+});
+
+test('image property: Project… posts one bounded existing-resource picker intent before Import…', () => {
+  const h = loadPanel();
+  h.send({ type: 'layout', controls: [mkCtrl({ id: 'pictureBox1', type: 'System.Windows.Forms.PictureBox' })] });
+  h.send({ type: 'select', id: 'pictureBox1' });
+  h.send({ type: 'props', id: 'pictureBox1', component: {
+    id: 'pictureBox1', name: 'pictureBox1', type: 'System.Windows.Forms.PictureBox', events: [], properties: [
+      prop('Image', { type: 'System.Drawing.Image', isImage: true, value: '', category: 'Appearance' }),
+    ],
+  } });
+  const buttons = Array.from(findPropRow(h, 'Image').querySelectorAll('button')) as any[];
+  eq(buttons.map((button) => button.textContent), ['panel.image.project', 'panel.image.import'],
+    'an unset editable image offers the project picker and file import, but not Clear');
+  h.resetPosted();
+  h.click(buttons[0]);
+  eq(only(h.posted, 'pickProjectImageResource'), [{
+    type: 'pickProjectImageResource', id: 'pictureBox1', prop: 'Image', propType: 'System.Drawing.Image',
+  }], 'Project… posts one typed target/property intent and no resource expression or path from the webview');
+  eq(only(h.posted, 'importImage').length, 0, 'the project picker does not accidentally invoke file import');
   h.destroy();
 });
 
@@ -3653,6 +5104,49 @@ test('item→Properties (defensive): a non-null but non-editable itemProps (futu
   h.destroy();
 });
 
+test('V2-FND-001-S033 TableLayoutPanel child drag publishes the exact logical release point for cell hit testing', () => {
+  const h = loadDesigner();
+  h.setCanvasRect(100, 50);
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true,
+    x: 0, y: 0, width: 320, height: 240, depth: 0 });
+  const table = mkCtrl({ id: 'table1', name: 'table1', type: 'System.Windows.Forms.TableLayoutPanel', parentId: 'this',
+    x: 10, y: 10, width: 240, height: 120, depth: 1 });
+  const child = mkCtrl({ id: 'button1', parentId: 'table1', x: 20, y: 20, width: 80, height: 24, depth: 2 });
+  h.send({ type: 'layout', controls: [child, table, root] });
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'manip', id: 'button1', move: true, resize: false });
+  h.resetPosted();
+  h.mouse('mousedown', { button: 0, offsetX: 30, offsetY: 30, clientX: 130, clientY: 80 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 260, clientY: 160 });
+  h.mouse('mouseup', { clientX: 260, clientY: 160 });
+  const moves = only(h.posted, 'manipulate');
+  eq(moves.length, 1, 'one table child drag posts one product move intent');
+  eq([moves[0].id, moves[0].mode, moves[0].dropX, moves[0].dropY], ['button1', 'move', 160, 110],
+    'table child move preserves the canvas-relative release point separately from preview bounds');
+  h.destroy();
+});
+
+test('V2-FND-001-S034 FlowLayoutPanel child drag uses the same single release-point product intent', () => {
+  const h = loadDesigner();
+  const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true,
+    x: 0, y: 0, width: 320, height: 240, depth: 0 });
+  const flow = mkCtrl({ id: 'flow1', name: 'flow1', type: 'System.Windows.Forms.FlowLayoutPanel', parentId: 'this',
+    x: 10, y: 10, width: 280, height: 80, depth: 1 });
+  const child = mkCtrl({ id: 'buttonC', parentId: 'flow1', x: 150, y: 20, width: 60, height: 24, depth: 2 });
+  h.send({ type: 'layout', controls: [child, flow, root] });
+  h.send({ type: 'select', id: 'buttonC' });
+  h.send({ type: 'manip', id: 'buttonC', move: true, resize: false });
+  h.resetPosted();
+  h.mouse('mousedown', { button: 0, offsetX: 170, offsetY: 30, clientX: 170, clientY: 30 }, h.el('surface'));
+  h.mouse('mousemove', { clientX: 20, clientY: 30 });
+  h.mouse('mouseup', { clientX: 20, clientY: 30 });
+  const moves = only(h.posted, 'manipulate');
+  eq(moves.length, 1, 'one flow child drag posts one product move intent');
+  eq([moves[0].id, moves[0].mode, moves[0].dropX, moves[0].dropY], ['buttonC', 'move', 20, 30],
+    'flow reorder carries the exact release point used to choose an insertion slot');
+  h.destroy();
+});
+
 // ================================================================================================================
 // RUN
 // ================================================================================================================
@@ -3660,11 +5154,14 @@ test('item→Properties (defensive): a non-null but non-editable itemProps (futu
 async function main(): Promise<void> {
   let failures = 0;
   for (const [name, fn] of tests) {
+    scenarioEvidence.beginScenarioTest(name);
     try {
       await fn();
+      scenarioEvidence.endScenarioTest(true);
       console.log(`  PASS  ${name}`);
     } catch (e) {
       failures++;
+      scenarioEvidence.endScenarioTest(false, e);
       console.log(`  FAIL  ${name}\n        ${(e as Error).message}`);
     } finally {
       // Backstop: close any harness a throwing test left open, so a leaked jsdom window (and its live 250ms
@@ -3673,6 +5170,8 @@ async function main(): Promise<void> {
     }
   }
   console.log(`\n${checks} checks across ${tests.length} tests, ${failures} failed`);
+  scenarioEvidence.complete(failures === 0);
+  scenarioEvidence.writeFromEnvironment();
   if (failures) {
     console.log('WEBVIEW E2E RESULT: FAIL');
     process.exit(1);

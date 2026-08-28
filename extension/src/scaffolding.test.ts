@@ -274,11 +274,16 @@ describe('Explorer Add scaffolding', () => {
       kind: 'userControl', typeName: 'AddressEditor', targetDir: root, projectPath,
       projectText: sdkWinForms(), existingEntries: [],
     });
+    expect(plan.files.map((file) => file.name)).toEqual([
+      'AddressEditor.cs',
+      'AddressEditor.Designer.cs',
+    ]);
     expect(plan.files[0].content).toContain('public partial class AddressEditor : UserControl');
     expect(plan.files[1].content).toContain('#region Component Designer generated code');
     expect(plan.files[1].content).toContain('this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;');
     expect(plan.files[1].content).not.toContain('this.ClientSize');
     expect(plan.files[1].content).not.toContain('AutoScaleDimensions');
+    expect(plan.files.some((file) => file.name.endsWith('.resx'))).toBe(false);
   });
 
   it('generates code-only Component and Class templates without pretending the component has a visual root', () => {

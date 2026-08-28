@@ -14,7 +14,7 @@ It complements the dev/test commands in
 | **Performance baseline** *(exists)* | Engine cold start plus seven warm render/layout RPC samples, checked against configurable regression thresholds. | seconds | [`extension/src/performance-baseline.ts`](../extension/src/performance-baseline.ts) → `npm run perf:baseline` |
 | **Integration / E2E** *(exists)* | The whole engine driven over the named pipe against sample `.Designer.cs` fixtures: render, layout, property edits, add/remove, events, MSBuild resolution, byte-identity. | seconds | [`extension/src/e2e.ts`](../extension/src/e2e.ts) → `npm run e2e` |
 | **Live-webview** *(exists)* | The real `media/designer.js` + `media/panel.js` loaded into a headless jsdom window; synthetic events (keyboard nudge, click/selection, context-menu, banner dismiss, zoom, property-grid edits) assert on the messages the webview posts back + the resulting DOM. No Extension Host, no engine. | seconds | [`extension/src/webview-e2e.ts`](../extension/src/webview-e2e.ts) → `npm run webview-e2e` |
-| **VS Code Extension Host smoke** *(exists)* | Loads the real extension in VS Code, verifies its manifest and commands, activates it, runs Export Diagnostics, and proves the .NET 10 engine starts. Runs against VS Code 1.84 and current Stable. | minutes | [`extension/src/extension-host-suite.ts`](../extension/src/extension-host-suite.ts) → `npm run extension-host-e2e -- --version=…` |
+| **VS Code Extension Host product E2E** *(exists)* | Loads the real extension in one disposable workspace; verifies activation/diagnostics, CustomEditor clean/stale save and Save As collision refusal, SDK/classic Explorer Add persistence and rollback, unsafe-name refusal, owner-resolution/refusal gates, grouped move with native Undo/Redo, net48 parent-relative reparenting, generic-base visual-inheritance ownership, form-family deletion, diff-tab suppression, and close-during-RPC lifecycle safety. Runs against VS Code 1.84 and current Stable. | minutes | [`extension/src/extension-host-suite.ts`](../extension/src/extension-host-suite.ts) → `npm run extension-host-e2e -- --version=…` |
 | **Manual / F5** *(exists)* | Anything the headless webview layer can't reach: real PNG rendering, cross-webview drag geometry, VS Code focus/theming, layout that depends on real `getBoundingClientRect`. | manual | Extension Development Host (F5) |
 
 ## What exists today
@@ -63,6 +63,18 @@ It complements the dev/test commands in
   nothing on the interactive desktop, and that a vendor smart-tag query leaves nothing loaded. Pure Vitest cases pin
   the external-build release state machine (release before re-render, bounded waiting, one release per build) and the
   rule that vendor tasks are only requested for a preview that already is a compiled instance.
+- **1.10 multi-object property corpus** — pure engine tests prove closed-target validation, exact per-control scalar
+  splices, all-target Reset, unsafe-trivia refusal, and zero returned text for any ineligible member. Vitest covers
+  heterogeneous shared-property/type/standard-value intersection and selection normalization. The live-webview suite
+  pins exact selection propagation, mixed-value rendering, multi Edit/Reset markers, and identical search in
+  Categorized/Alphabetical modes; mandatory modern+net48 named-pipe E2E proves the atomic source RPCs and the net48
+  one-snapshot set/reset live mirror.
+- **1.11 precision-layout corpus** — engine tests and the modern named-pipe run prove exact nested outer/client
+  rectangles, Margin/Padding metadata, live Font/DPI text baselines, stable repeated reads, bounded exact-offset paste,
+  and `RightToLeftLayout` physical coordinates. The live-webview suite drives the real canvas through SnapLines,
+  Snap to Grid, and None move/resize modes; exact-client visible-grid zooming; Margin/baseline snaplines; Align to
+  Grid; horizontal/vertical spacing adjustment; Ctrl+drag precedence; and Alt raw placement. Mandatory net48 E2E
+  verifies the same client/Margin/Padding contract from a real compiled preview.
 - **Form-deletion corpus** - pure Vitest cases pin which files belong to a form (its `.Designer.cs`, its `.resx` and
   every `.<culture>.resx`) and which only look like they do (a non-culture middle segment, a same-prefix neighbour
   such as `Form10.resx`, the generated half deleted on its own). Because the behaviour is contributed to VS Code's

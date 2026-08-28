@@ -84,6 +84,25 @@ namespace Demo {
         }
 
         [Fact]
+        public void SystemIconToBitmap_ParsesAndExecutesOnNet48()
+        {
+            string source = Source.Replace(
+                "this.button1.Text = \"Click me\";",
+                "this.button1.Text = \"Click me\"; this.button1.Image = System.Drawing.SystemIcons.Information.ToBitmap();");
+            var doc = DesignerIrBuilder.Build(source);
+            Assert.NotNull(doc);
+            Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+
+            var root = new Form();
+            var result = DesignerIrExecutor.Execute(doc, root, new TestHost());
+            Assert.True(result.Ok, result.FailureReason);
+            var button = Assert.IsType<Button>(result.Instances["button1"]);
+            Assert.NotNull(button.Image);
+            Assert.True(button.Image.Width > 0);
+            button.Image.Dispose();
+        }
+
+        [Fact]
         public void Validator_RefusesForgedIdentifier_OnNet48()
         {
             var doc = new IrDocument

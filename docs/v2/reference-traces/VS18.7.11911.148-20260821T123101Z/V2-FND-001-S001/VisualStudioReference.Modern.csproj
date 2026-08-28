@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>Library</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>VisualStudioReference.Modern</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Update="S001SaveForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S001SaveForm.Designer.cs">
+      <DependentUpon>S001SaveForm.cs</DependentUpon>
+    </Compile>
+    <EmbeddedResource Update="S001SaveForm.resx">
+      <DependentUpon>S001SaveForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <Compile Update="S013ButtonForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S013ButtonForm.Designer.cs">
+      <DependentUpon>S013ButtonForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="GroupMoveForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="GroupMoveForm.Designer.cs">
+      <DependentUpon>GroupMoveForm.cs</DependentUpon>
+    </Compile>
+  </ItemGroup>
+</Project>

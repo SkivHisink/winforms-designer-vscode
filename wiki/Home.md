@@ -8,7 +8,23 @@ This wiki is written for two audiences:
 - **Users** who want to know what the designer does with their code, and why it sometimes refuses.
 - **Maintainers** who need the internal model before changing anything.
 
-## Start here
+## Using the designer
+
+Start here if you want to get work done.
+
+| Page | What it answers |
+|---|---|
+| [Getting started](Getting-started) | What you need, how a form opens, the three surfaces, saving and undo |
+| [Creating forms and controls](Creating-forms-and-controls) | `Add → Windows Form`, User Control, Component, Class; dropping controls; naming; deleting |
+| [Designing on the canvas](Designing-on-the-canvas) | Selection, move/resize, layout modes and the grid, snaplines, align and spacing, duplicate, z-order |
+| [Property grid](Property-grid) | Editing values, the specialized editors, Reset, and multi-selection with mixed values |
+| [Events and code](Events-and-code) | Double-click for the default event, the Events tab, handler stubs, navigating to code |
+| [Menus, toolbars and tabs](Menus-toolbars-and-tabs) | "Type Here" menu and toolbar editing, context menus, TabControl pages, container controls |
+| [Commands and settings](Commands-and-settings) | Every command, keybinding and setting, in one reference |
+
+## How it works
+
+Read these when you want to know *why* the designer behaves the way it does.
 
 | Page | What it answers |
 |---|---|
@@ -18,7 +34,7 @@ This wiki is written for two audiences:
 | [Localization](Localization) | The `.resx` model, cultures, `Add Localization`, and **externally localized forms** |
 | [.NET Framework and DevExpress](Framework-and-DevExpress) | How `net4x` projects are rendered and what differs |
 | [Troubleshooting](Troubleshooting) | Blank previews, refused saves, missing toolbox items |
-| [Development](Development) | Building, the four test suites, and where the code lives |
+| [Development](Development) | Building, the six test suites, and where the code lives |
 
 ## The one idea worth carrying everywhere
 
@@ -35,5 +51,7 @@ be previewed but not edited, and why a conversion sometimes declines instead of 
 ## Status
 
 The core designer loop is stable and follows semantic versioning from 1.0. The **.NET Framework 4.8 engine**
-(used for `net4x` / DevExpress projects) is **experimental** — see
+(used for `net4x` / DevExpress projects) renders your **live `.Designer.cs` source** through an IR interpreter —
+the Visual Studio model — and falls back to a **disclosed** compiled render of your last build, with a named
+reason, for constructs it cannot yet reproduce. See
 [.NET Framework and DevExpress](Framework-and-DevExpress).

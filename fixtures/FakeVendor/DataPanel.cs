@@ -18,6 +18,7 @@ namespace FakeVendor
 
         public void EndInit()
         {
+            if (!_initializing) return;
             _initializing = false;
             IsInitialized = true; // the "finalize layout" a real vendor control does here
         }

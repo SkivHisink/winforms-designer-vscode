@@ -4,8 +4,9 @@
  * The VS Code glue lives in extension.ts.  Keeping project discovery, namespace
  * derivation, templates, collision checks, and project-file insertion here makes
  * the part that can create several related files testable without an Extension
- * Host.  A caller must create every returned file and apply projectInsertion in
- * one WorkspaceEdit so refusal/failure never leaves a partial form behind.
+ * Host.  A caller must create every returned file and apply projectInsertion
+ * through the atomic scaffold wrapper so refusal/failure never leaves a partial
+ * form behind.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -26,7 +27,8 @@ export type ScaffoldErrorCode =
   | 'dynamicProjectProperty'
   | 'notWinFormsProject'
   | 'unsupportedProjectItems'
-  | 'fileCollision';
+  | 'fileCollision'
+  | 'applyFailed';
 
 export class ScaffoldError extends Error {
   constructor(public readonly code: ScaffoldErrorCode, public readonly detail = '') {
@@ -59,6 +61,17 @@ export interface ScaffoldPlan {
   projectInsertion?: ScaffoldProjectInsertion;
 }
 
+export interface AppliedScaffoldPlan {
+  createdFiles: readonly string[];
+  projectUpdated: boolean;
+}
+
+export interface ScaffoldApplyHost {
+  writeFile(filePath: string, content: string): Promise<void>;
+  deleteFile(filePath: string): Promise<void>;
+  applyProjectInsertion?(projectPath: string, insertion: ScaffoldProjectInsertion): Promise<void>;
+}
+
 export interface CreateScaffoldPlanOptions {
   kind: ScaffoldKind;
   typeName: string;
@@ -69,6 +82,8 @@ export interface CreateScaffoldPlanOptions {
   existingEntries: readonly string[];
   /** Resolved from .editorconfig by the caller; Visual Studio's own default is outside the namespace. */
   usingPlacement?: UsingPlacement;
+  /** v2 catalog path: seed the neutral .resx on SDK projects as part of the same generated-file transaction. */
+  seedSdkResx?: boolean;
 }
 
 const reservedWords = new Set([
@@ -100,9 +115,10 @@ export function normalizeScaffoldTypeName(input: string): string {
 }
 
 function plannedFileNames(kind: ScaffoldKind, typeName: string): string[] {
-  if (kind === 'form' || kind === 'userControl') {
+  if (kind === 'form') {
     return [`${typeName}.cs`, `${typeName}.Designer.cs`, `${typeName}.resx`];
   }
+  if (kind === 'userControl') return [`${typeName}.cs`, `${typeName}.Designer.cs`];
   return [`${typeName}.cs`];
 }
 
@@ -639,9 +655,10 @@ export function createScaffoldPlan(options: CreateScaffoldPlanOptions): Scaffold
   const implicitUsings = sdkStyle && /^(enable|true)$/i.test(simpleProperty(options.projectText, 'ImplicitUsings') ?? '');
   const usings = implicitUsings ? [] : visualStudioFormUsings;
   const placement = options.usingPlacement ?? 'outside';
-  // Visual Studio only seeds a .resx for classic projects; on SDK projects a form starts without one and the
-  // engine writes a skeleton the moment a resource (image, localized string) actually needs it.
-  const withResx = !sdkStyle;
+  // Actual Visual Studio 18.7 seeds neutral resx for the supported Form workflow, but its installed UserControl
+  // item template contains only source + Designer source on both classic and SDK projects. The engine can still
+  // create a UserControl resx later when a real resource/localization edit needs one.
+  const withResx = options.kind === 'form' && (!sdkStyle || options.seedSdkResx === true);
 
   const files: ScaffoldFile[] = [];
   if (options.kind === 'form' || options.kind === 'userControl') {
@@ -696,4 +713,28 @@ export function createScaffoldPlan(options: CreateScaffoldPlanOptions): Scaffold
       options.projectText, closeOffset, required, compileImplicit, resourcesImplicit, eol,
     ),
   };
+}
+
+export async function applyScaffoldPlanAtomically(
+  plan: ScaffoldPlan,
+  host: ScaffoldApplyHost,
+): Promise<AppliedScaffoldPlan> {
+  const createdFiles: string[] = [];
+  try {
+    for (const file of plan.files) {
+      const filePath = path.join(plan.targetDir, file.name);
+      await host.writeFile(filePath, file.content);
+      createdFiles.push(filePath);
+    }
+    if (plan.projectInsertion && host.applyProjectInsertion) {
+      await host.applyProjectInsertion(plan.projectPath, plan.projectInsertion);
+    }
+    return { createdFiles, projectUpdated: Boolean(plan.projectInsertion && host.applyProjectInsertion) };
+  } catch (error) {
+    for (const filePath of [...createdFiles].reverse()) {
+      try { await host.deleteFile(filePath); } catch { /* best effort rollback */ }
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ScaffoldError('applyFailed', detail);
+  }
 }

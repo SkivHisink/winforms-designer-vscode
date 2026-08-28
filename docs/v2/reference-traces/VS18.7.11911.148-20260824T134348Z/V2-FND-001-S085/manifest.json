@@ -1,0 +1,1360 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260824T134348Z-S085",
+  "scenarioId": "V2-FND-001-S085",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "A net10.0-windows derived Form inherits one protected Button named inheritedButton from a compiled base Form; the derived Designer initially contains no inheritedButton assignment.",
+  "actionLog": [
+    "Build the exact base and derived Forms in actual Visual Studio",
+    "Open S085InheritedDerivedForm.cs with the installed WinForms Designer",
+    "Resolve and select the visible inheritedButton exposed by the actual designer",
+    "Require native Properties Text to equal Base inherited before mutation",
+    "Set Text to Derived override through the native Property Grid UI Automation ValuePattern",
+    "Execute File.SaveAll and require exactly one derived Text override with no derived field declaration or unrelated inherited assignment",
+    "Execute one native Undo, save, and require the original derived semantics after normalizing only Visual Studio CodeDOM this-prefix and comment-spacing canonicalization",
+    "Execute one native Redo, save, and require the byte-exact applied derived Designer",
+    "Require base source, base Designer, derived code-behind, and project bytes to remain exact"
+  ],
+  "expected": "Actual Visual Studio edits the accessible inherited Button by writing only inheritedButton.Text = \"Derived override\" into the derived Designer; the base artifacts remain exact, native Undo removes the override while retaining deterministic first-touch CodeDOM canonicalization, and Redo reproduces the applied Designer byte-exact.",
+  "runtimeArchitecture": "actual Visual Studio x64 modern SDK reference",
+  "before": {
+    "baseSourceSha256": "1025089082126228e2cd6faade6a32166aad99f31017da5b2025217e7bfb5ecd",
+    "baseDesignerSha256": "ad50eaf01c29d6b0fb1e7ff3698aee3cfa3717c186c3ea76c60870bc9ea368b6",
+    "sourceSha256": "0aa9b2d214ba72b0998b9d6d4e3e94e8245b45e08b199da8fad0f30db48cefe7",
+    "designerSha256": "ef839e78621a806abecde02a485acdeef9d91a7b1a96236e5bb72b039cfcab9a",
+    "projectSha256": "dd9941725d5e4db2cee30888caf243847a163a4aea8a65186cf013337a78893f"
+  },
+  "after": {
+    "baseSourceSha256": "1025089082126228e2cd6faade6a32166aad99f31017da5b2025217e7bfb5ecd",
+    "baseDesignerSha256": "ad50eaf01c29d6b0fb1e7ff3698aee3cfa3717c186c3ea76c60870bc9ea368b6",
+    "sourceSha256": "0aa9b2d214ba72b0998b9d6d4e3e94e8245b45e08b199da8fad0f30db48cefe7",
+    "designerSha256": "84d1fa65d4a6247a58f22d12a70e331fae3ce746df9627a6a2a066e9812daf9f",
+    "projectSha256": "dd9941725d5e4db2cee30888caf243847a163a4aea8a65186cf013337a78893f"
+  },
+  "selectionExact": true,
+  "overrideExact": true,
+  "undoExact": true,
+  "redoExact": true,
+  "nonDerivedArtifactsExact": true,
+  "derivedDesignerBeforeArtifact": "S085InheritedDerivedForm.Designer.before.cs",
+  "derivedDesignerAfterArtifact": "S085InheritedDerivedForm.Designer.after-override.cs.gz",
+  "derivedDesignerUndoArtifact": "S085InheritedDerivedForm.Designer.after-undo.cs.gz",
+  "derivedDesignerRedoArtifact": "S085InheritedDerivedForm.Designer.after-redo.cs.gz",
+  "baseSourceArtifact": "S085InheritedBaseForm.cs",
+  "baseDesignerArtifact": "S085InheritedBaseForm.Designer.cs",
+  "sourceArtifact": "S085InheritedDerivedForm.cs",
+  "projectArtifact": "VisualStudioReference.Modern.csproj",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\9f4f9ac937a6497eac13285a7065d2bc\\Modern\\S085InheritedDerivedForm.cs",
+    "control": {
+      "name": "Base inherited",
+      "automationId": "inheritedButton",
+      "controlType": "ControlType.Button",
+      "localizedControlType": "button",
+      "value": null,
+      "helpText": "",
+      "itemStatus": "",
+      "accessKey": "",
+      "className": "WindowsForms10.Button.app.0.273e403_r3_ad1",
+      "frameworkId": "WinForm",
+      "nativeWindowHandle": 5835438,
+      "enabled": true,
+      "focusable": true,
+      "hasKeyboardFocus": false,
+      "selectionItemSelected": null,
+      "offscreen": false,
+      "bounds": {
+        "x": 1406.0,
+        "y": 185.0,
+        "width": 150.0,
+        "height": 38.0
+      },
+      "ancestors": [
+        {
+          "name": "S085 inherited derived",
+          "controlType": "ControlType.Window"
+        },
+        {
+          "name": "OverlayContainer",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerWindowFrame",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "DesignerView",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "WinForms Window Surface",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S085InheritedDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S085InheritedDerivedForm.cs [Design]",
+          "controlType": "ControlType.Pane"
+        },
+        {
+          "name": "S085InheritedDerivedForm.cs [Design]",
+          "controlType": "ControlType.TabItem"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Tab"
+        },
+        {
+          "name": "",
+          "controlType": "ControlType.Pane"
+        }
+      ]
+    },
+    "selectionAttempts": [
+      {
+        "method": "PostClickUsingCapture",
+        "clickedWindow": 13633096,
+        "propertyValues": [
+          "Base inherited"
+        ],
+        "selectedExact": true
+      }
+    ],
+    "propertiesCommandAvailable": true,
+    "selectionEvidence": [
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Properties (Alt+Enter)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 938.0,
+          "y": 97.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Explorer",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S014TextBoxForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S014TextBoxForm.cs",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        },
+        "ancestors": [
+          {
+            "name": "VisualStudioReference.Net48",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Base inherited",
+        "automationId": "inheritedButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Button.app.0.273e403_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 5835438,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1406.0,
+          "y": 185.0,
+          "width": 150.0,
+          "height": 38.0
+        },
+        "ancestors": [
+          {
+            "name": "S085 inherited derived",
+            "controlType": "ControlType.Window"
+          },
+          {
+            "name": "OverlayContainer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S085InheritedDerivedForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S085InheritedDerivedForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S085InheritedDerivedForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "Text Editor",
+        "automationId": "WpfTextView",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WpfTextView",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1355.0,
+          "y": 356.0,
+          "width": 506.0,
+          "height": 256.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Custom"
+          },
+          {
+            "name": "Output",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Output",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Output",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Output",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Properties",
+        "automationId": "ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 69.0,
+          "width": 288.0,
+          "height": 584.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1602.0,
+          "y": 74.0,
+          "width": 53.0,
+          "height": 15.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.ToolBar",
+        "localizedControlType": "tool bar",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ToolBar",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1594.0,
+          "y": 94.0,
+          "width": 284.0,
+          "height": 30.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Sort Properties By Category",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Sort Properties By Category",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1596.0,
+          "y": 97.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Sort Properties Alphabetically",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Sort Properties Alphabetically",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1622.0,
+          "y": 97.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Show Properties",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Show Properties",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1653.0,
+          "y": 97.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 7999550,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1594.0,
+          "y": 124.0,
+          "width": 286.0,
+          "height": 528.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "(Name)",
+        "automationId": "20935789",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "inheritedButton",
+        "helpText": "Indicates the name used in code to identify the object.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": false,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "ContextMenuStrip",
+        "automationId": "47422230",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "(none)",
+        "helpText": "The shortcut menu to display when the user right-clicks the control.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Text",
+        "automationId": "37609273",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "Base inherited",
+        "helpText": "The text associated with the control.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": true,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1595.0,
+          "y": 568.0,
+          "width": 266.0,
+          "height": 18.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Text",
+        "automationId": "13111996",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "Base inherited",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.EDIT.app.0.2cea0ca_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 13111996,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1736.0,
+          "y": 569.0,
+          "width": 109.0,
+          "height": 17.0
+        },
+        "ancestors": [
+          {
+            "name": "Text",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "TextAlign",
+        "automationId": "2939138",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "MiddleCenter",
+        "helpText": "The alignment of the text that will be displayed on the control.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1595.0,
+          "y": 587.0,
+          "width": 266.0,
+          "height": 2.0
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "TextImageRelation",
+        "automationId": "26452245",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "Overlay",
+        "helpText": "Specifies the relative location of the image to the text on the button.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "UseCompatibleTextRendering",
+        "automationId": "36743620",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree item",
+        "value": "False",
+        "helpText": "Specifies whether text rendering should be compatible with previous releases of Windows Forms.",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        },
+        "ancestors": [
+          {
+            "name": "Properties Window",
+            "controlType": "ControlType.Table"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Text",
+        "automationId": "7472878",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.STATIC.app.0.2cea0ca_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 7472878,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1597.0,
+          "y": 596.0,
+          "width": 280.0,
+          "height": 18.0
+        },
+        "ancestors": [
+          {
+            "name": "Description",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "The text associated with the control.",
+        "automationId": "6819126",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.STATIC.app.0.2cea0ca_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 6819126,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1597.0,
+          "y": 614.0,
+          "width": 280.0,
+          "height": 34.0
+        },
+        "ancestors": [
+          {
+            "name": "Description",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "PropertyGrid",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Property Browser",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Properties",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Properties",
+        "automationId": "AUTOHIDE_ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1887.0,
+          "y": 149.0,
+          "width": 27.0,
+          "height": 53.0
+        },
+        "ancestors": [
+          {
+            "name": "VisualStudioReference - S085InheritedDerivedForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      }
+    ],
+    "property": {
+      "name": "Text",
+      "beforeValue": "Base inherited",
+      "requestedValue": "Derived override",
+      "bounds": {
+        "x": 1595.0,
+        "y": 568.0,
+        "width": 266.0,
+        "height": 18.0
+      },
+      "editMethod": "UIAutomation ValuePattern.SetValue"
+    },
+    "beforeCapture": {
+      "hwnd": 16519852,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "de4dec5f79309e573a7e8c89151817ca9932474d20216be945924f034f1e2d97"
+    },
+    "after": {
+      "sha256": "84d1fa65d4a6247a58f22d12a70e331fae3ce746df9627a6a2a066e9812daf9f",
+      "shape": {
+        "inheritedFieldDeclarationCount": 0,
+        "inheritedAssignments": [
+          {
+            "property": "Text",
+            "expression": "\"Derived override\""
+          }
+        ],
+        "inheritedAssignmentCount": 1,
+        "requestedTextOverrideCount": 1
+      },
+      "capture": {
+        "hwnd": 16519852,
+        "x": 641,
+        "y": 2,
+        "width": 1279,
+        "height": 687,
+        "dpi": 96,
+        "sha256": "985d6f28c7e1fd798bfac6ea1737818641509a9d45ff49bd5d6d7678ea7330ae"
+      }
+    },
+    "undo": {
+      "available": true,
+      "sha256": "188f9c04c7f33246fb21788307d45f7da428630ef57d189d9c3c07c354857781",
+      "shape": {
+        "inheritedFieldDeclarationCount": 0,
+        "inheritedAssignments": [],
+        "inheritedAssignmentCount": 0,
+        "requestedTextOverrideCount": 0
+      },
+      "byteExactToOriginal": false,
+      "semanticExactToOriginalAfterCodeDomNormalization": true,
+      "capture": {
+        "hwnd": 16519852,
+        "x": 641,
+        "y": 2,
+        "width": 1279,
+        "height": 687,
+        "dpi": 96,
+        "sha256": "624eb4ebc8d86e0221e4ae1955baed10e19eeb996aed1e0a044a1039b10f7515"
+      }
+    },
+    "redo": {
+      "available": true,
+      "sha256": "84d1fa65d4a6247a58f22d12a70e331fae3ce746df9627a6a2a066e9812daf9f",
+      "shape": {
+        "inheritedFieldDeclarationCount": 0,
+        "inheritedAssignments": [
+          {
+            "property": "Text",
+            "expression": "\"Derived override\""
+          }
+        ],
+        "inheritedAssignmentCount": 1,
+        "requestedTextOverrideCount": 1
+      },
+      "byteExactToAfter": true,
+      "capture": {
+        "hwnd": 16519852,
+        "x": 641,
+        "y": 2,
+        "width": 1279,
+        "height": 687,
+        "dpi": 96,
+        "sha256": "e08ff4b4e77ac16b286ae095f0f3c53ef8f5ba267a1d1195058cc053368af46d"
+      }
+    },
+    "capture": {
+      "hwnd": 16519852,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "985d6f28c7e1fd798bfac6ea1737818641509a9d45ff49bd5d6d7678ea7330ae"
+    }
+  }
+}

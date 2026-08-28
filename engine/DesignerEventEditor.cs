@@ -74,8 +74,8 @@ namespace WinFormsDesigner.Engine
             bool isRoot = comp is "this" or "";
             // safe-save: comp/evt/handler are interpolated into generated C# — reject anything that isn't a plain
             // identifier so a crafted name can't inject statements / break out of the wiring expression.
-            if (!isRoot && !IsValidIdentifier(comp))
-                return new EditResult { Mode = EditMode.Failed, Reason = "component name is not a valid identifier: " + comp };
+            if (!isRoot && !IsValidComponentPath(comp))
+                return new EditResult { Mode = EditMode.Failed, Reason = "component name is not a valid source path: " + comp };
             if (!IsValidIdentifier(evt))
                 return new EditResult { Mode = EditMode.Failed, Reason = "event name is not a valid identifier: " + evt };
             if (!IsValidIdentifier(handler))
@@ -149,8 +149,8 @@ namespace WinFormsDesigner.Engine
         public static EditResult SetEventWiring(string src, string comp, string evt, string? handler, string delegateFqn)
         {
             bool isRoot = comp is "this" or "";
-            if (!isRoot && !IsValidIdentifier(comp))
-                return new EditResult { Mode = EditMode.Failed, Reason = "component name is not a valid identifier: " + comp };
+            if (!isRoot && !IsValidComponentPath(comp))
+                return new EditResult { Mode = EditMode.Failed, Reason = "component name is not a valid source path: " + comp };
             if (!IsValidIdentifier(evt))
                 return new EditResult { Mode = EditMode.Failed, Reason = "event name is not a valid identifier: " + evt };
             if (handler != null && !IsValidIdentifier(handler))
@@ -231,6 +231,20 @@ namespace WinFormsDesigner.Engine
                 }
                 if (ok) result.Add(m.Identifier.Text);
             }
+            return result;
+        }
+
+        /// <summary>Project-wide variant used by the product Events tab. Each source stays in its own syntax tree, so
+        /// file-scoped namespaces/usings and multiple partial files are never concatenated into an invalid pseudo-file.
+        /// Results preserve project/file order and are de-duplicated.</summary>
+        public static List<string> FindCompatibleHandlersInFiles(IEnumerable<string> codeTexts, string formClassName,
+            IReadOnlyList<string> paramTypeNames, string returnTypeName)
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string text in codeTexts ?? Array.Empty<string>())
+                foreach (string handler in FindCompatibleHandlers(text ?? "", formClassName, paramTypeNames, returnTypeName))
+                    if (seen.Add(handler)) result.Add(handler);
             return result;
         }
 
@@ -333,9 +347,15 @@ namespace WinFormsDesigner.Engine
             && asg.IsKind(SyntaxKind.AddAssignmentExpression)
             && WiringMatches(Flatten(asg.Left), comp, evt, isRoot);
 
-        private static bool WiringMatches(List<string> chain, string comp, string evt, bool isRoot) =>
-            isRoot ? (chain.Count == 1 && chain[0] == evt)
-                   : (chain.Count == 2 && chain[0] == comp && chain[1] == evt);
+        private static bool WiringMatches(List<string> chain, string comp, string evt, bool isRoot)
+        {
+            if (isRoot) return chain.Count == 1 && chain[0] == evt;
+            string[] path = ComponentPath(comp);
+            if (chain.Count != path.Length + 1 || chain[^1] != evt) return false;
+            for (int i = 0; i < path.Length; i++)
+                if (chain[i] != path[i]) return false;
+            return true;
+        }
 
         // ---- (b) generate a handler stub in the code-behind (.cs) ----
 
@@ -348,6 +368,9 @@ namespace WinFormsDesigner.Engine
                 .SelectMany(c => c.Members.OfType<MethodDeclarationSyntax>())
                 .Any(m => m.Identifier.Text == name);
         }
+
+        public static bool HasMethodInFiles(IEnumerable<string> codeTexts, string formClassName, string name) =>
+            (codeTexts ?? Array.Empty<string>()).Any(text => HasMethod(text ?? "", formClassName, name));
 
         /// <summary>A plain C# identifier (letter/underscore start, then letters/digits/underscore). Used to
         /// reject crafted component/event/handler names before they're interpolated into generated code.</summary>
@@ -494,8 +517,26 @@ namespace WinFormsDesigner.Engine
             return text.Substring(lineStart, i - lineStart);
         }
 
-        private static bool OwnerMatches(List<string> chain, string comp, bool isRoot) =>
-            isRoot ? chain.Count == 1 : (chain.Count == 2 && chain[0] == comp);
+        private static bool OwnerMatches(List<string> chain, string comp, bool isRoot)
+        {
+            if (isRoot) return chain.Count == 1;
+            string[] path = ComponentPath(comp);
+            bool exactPathOwner = (chain.Count == path.Length || chain.Count == path.Length + 1)
+                && path.Select((part, index) => chain[index] == part).All(match => match);
+            if (exactPathOwner) return true;
+            return path.Length > 1 && (chain.Count == 1 || chain.Count == 2) && chain[0] == path[0];
+        }
+
+        private static string[] ComponentPath(string componentName) =>
+            componentName.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
+
+        private static bool IsValidComponentPath(string componentName)
+        {
+            string[] path = ComponentPath(componentName);
+            return path.Length is > 0 and <= 8
+                && string.Join(".", path) == componentName
+                && path.All(IsValidIdentifier);
+        }
 
         private static List<string> Flatten(ExpressionSyntax expr)
         {

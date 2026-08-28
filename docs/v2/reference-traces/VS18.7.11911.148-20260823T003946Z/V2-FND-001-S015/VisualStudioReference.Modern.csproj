@@ -1,0 +1,111 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>Library</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>VisualStudioReference.Modern</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Update="S015OverlapForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S015OverlapForm.Designer.cs">
+      <DependentUpon>S015OverlapForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S001SaveForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S001SaveForm.Designer.cs">
+      <DependentUpon>S001SaveForm.cs</DependentUpon>
+    </Compile>
+    <EmbeddedResource Update="S001SaveForm.resx">
+      <DependentUpon>S001SaveForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <Compile Update="S013ButtonForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S013ButtonForm.Designer.cs">
+      <DependentUpon>S013ButtonForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S022AnchoredResizeForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S022AnchoredResizeForm.Designer.cs">
+      <DependentUpon>S022AnchoredResizeForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S029AlignLeftForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S029AlignLeftForm.Designer.cs">
+      <DependentUpon>S029AlignLeftForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S030SameWidthForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S030SameWidthForm.Designer.cs">
+      <DependentUpon>S030SameWidthForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S038MultiPropertyForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S038MultiPropertyForm.Designer.cs">
+      <DependentUpon>S038MultiPropertyForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S041FlatStyleForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S041FlatStyleForm.Designer.cs">
+      <DependentUpon>S041FlatStyleForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S042PaddingForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S042PaddingForm.Designer.cs">
+      <DependentUpon>S042PaddingForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S053ToolboxForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S053ToolboxForm.Designer.cs">
+      <DependentUpon>S053ToolboxForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S049DefaultEventForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S049DefaultEventForm.Designer.cs">
+      <DependentUpon>S049DefaultEventForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S050ExistingEventForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S050ExistingEventForm.Designer.cs">
+      <DependentUpon>S050ExistingEventForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S012MissingInitializeForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S012MissingInitializeForm.Designer.cs">
+      <DependentUpon>S012MissingInitializeForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S009NestedForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S009NestedForm.Designer.cs">
+      <DependentUpon>S009NestedForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="GroupMoveForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="GroupMoveForm.Designer.cs">
+      <DependentUpon>GroupMoveForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S100AdapterRoundTripForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S100AdapterRoundTripForm.Designer.cs">
+      <DependentUpon>S100AdapterRoundTripForm.cs</DependentUpon>
+    </Compile>
+  </ItemGroup>
+</Project>

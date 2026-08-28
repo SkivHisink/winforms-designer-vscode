@@ -1,0 +1,516 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T162725Z-S037",
+  "scenarioId": "V2-FND-001-S037",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "S013 referenceButton has explicit non-default Text/FlatStyle values while Enabled remains at its framework default.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S013ButtonForm.cs with the WinForms Designer",
+    "Select referenceButton through the real designer input HWND",
+    "Execute View.PropertiesWindow",
+    "Capture the actual Properties window and bounded UI Automation inventory",
+    "Verify source/Designer/project hashes remain exact"
+  ],
+  "expected": "The actual categorized Properties view shows non-default Text in bold, default Enabled without bold emphasis, and the reference Text description; no source mutation is permitted.",
+  "before": {
+    "sourceSha256": "7dc0aeeabcd361ec9d6afa65131592c094cea9e2538369954f6828279e82c100",
+    "designerSha256": "b9977383dfe223e979977f5f8c8f0f549fcb62c40c6eca0eba7749620f8b4995",
+    "projectSha256": "0a94c8147ce2eb0d196ff3612f5dcb6ed55ac4c2dd3dd58f277942f51bd9ccc8"
+  },
+  "after": {
+    "sourceSha256": "7dc0aeeabcd361ec9d6afa65131592c094cea9e2538369954f6828279e82c100",
+    "designerSha256": "b9977383dfe223e979977f5f8c8f0f549fcb62c40c6eca0eba7749620f8b4995",
+    "projectSha256": "0a94c8147ce2eb0d196ff3612f5dcb6ed55ac4c2dd3dd58f277942f51bd9ccc8"
+  },
+  "sourceByteIdentical": true,
+  "designerByteIdentical": true,
+  "projectByteIdentical": true,
+  "review": {
+    "reviewedAtUtc": "2026-08-22T16:36:00Z",
+    "reviewedScreenshotSha256": "32607d6834d2bca175bb358c8f1f8e9d7e7827953b6b33afbc12dfbeeccd040c",
+    "categorizedGroupsVisible": [
+      "Accessibility",
+      "Appearance",
+      "Behavior"
+    ],
+    "categorizedToolbarActionVisible": true,
+    "text": {
+      "value": "Button reference",
+      "visuallyBold": true,
+      "description": "The text associated with the control."
+    },
+    "enabled": {
+      "value": "True",
+      "visuallyBold": false
+    },
+    "boundary": "Screenshot review plus UI Automation row/value/description inventory for this exact fixture; not a broad claim about every PropertyDescriptor or theme."
+  },
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\a361b62056ca4410a9b281c187395577\\Modern\\S013ButtonForm.cs",
+    "automationId": "referenceButton",
+    "propertiesCommandAvailable": true,
+    "clickedWindow": 41619548,
+    "selectedBounds": {
+      "x": 560.0,
+      "y": 188.0,
+      "width": 208.0,
+      "height": 54.0
+    },
+    "uiAutomationInventory": [
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 273.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "S014TextBoxForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "value": "S014TextBoxForm.cs",
+        "enabled": true,
+        "offscreen": true,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        }
+      },
+      {
+        "name": "S013 Button reference",
+        "automationId": "S013ButtonForm",
+        "controlType": "ControlType.Window",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 516.0,
+          "y": 115.0,
+          "width": 376.0,
+          "height": 219.0
+        }
+      },
+      {
+        "name": "Button reference",
+        "automationId": "referenceButton",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 560.0,
+          "y": 188.0,
+          "width": 208.0,
+          "height": 54.0
+        }
+      },
+      {
+        "name": "Description (3 of 7), not sorted",
+        "automationId": "text",
+        "controlType": "ControlType.HeaderItem",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 626.0,
+          "y": 748.0,
+          "width": 357.0,
+          "height": 20.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+        "controlType": "ControlType.Pane",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1591.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 968.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "PART_Header",
+        "controlType": "ControlType.TitleBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1591.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 25.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "DragHeader",
+        "controlType": "ControlType.TitleBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1591.0,
+          "y": 74.0,
+          "width": 288.0,
+          "height": 25.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1600.0,
+          "y": 79.0,
+          "width": 53.0,
+          "height": 15.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.ToolBar",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1592.0,
+          "y": 99.0,
+          "width": 284.0,
+          "height": 30.0
+        }
+      },
+      {
+        "name": "Sort Properties By Category",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1594.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "Sort Properties Alphabetically",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1620.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "Show Properties",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1651.0,
+          "y": 102.0,
+          "width": 24.0,
+          "height": 24.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1592.0,
+          "y": 129.0,
+          "width": 286.0,
+          "height": 912.0
+        }
+      },
+      {
+        "name": "Properties Window",
+        "automationId": "47586570",
+        "controlType": "ControlType.Table",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1592.0,
+          "y": 153.0,
+          "width": 286.0,
+          "height": 826.0
+        }
+      },
+      {
+        "name": "AccessibleDescription",
+        "automationId": "14279023",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 174.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Appearance",
+        "automationId": "26666780",
+        "controlType": "ControlType.TreeItem",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 231.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "FlatAppearance",
+        "automationId": "43257633",
+        "controlType": "ControlType.TreeItem",
+        "value": "",
+        "enabled": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 326.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "FlatStyle",
+        "automationId": "53774382",
+        "controlType": "ControlType.TreeItem",
+        "value": "Popup",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 345.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Text",
+        "automationId": "53135084",
+        "controlType": "ControlType.TreeItem",
+        "value": "Button reference",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 516.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Text",
+        "automationId": "191500788",
+        "controlType": "ControlType.Edit",
+        "value": "Button reference",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1734.0,
+          "y": 517.0,
+          "width": 109.0,
+          "height": 17.0
+        }
+      },
+      {
+        "name": "TextAlign",
+        "automationId": "38674435",
+        "controlType": "ControlType.TreeItem",
+        "value": "MiddleCenter",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 535.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "TextImageRelation",
+        "automationId": "12525603",
+        "controlType": "ControlType.TreeItem",
+        "value": "ImageBeforeText",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 554.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Behavior",
+        "automationId": "44904986",
+        "controlType": "ControlType.TreeItem",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 630.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "ContextMenuStrip",
+        "automationId": "23672544",
+        "controlType": "ControlType.TreeItem",
+        "value": "(none)",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 687.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Enabled",
+        "automationId": "38427912",
+        "controlType": "ControlType.TreeItem",
+        "value": "True",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 725.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "UseCompatibleTextRendering",
+        "automationId": "29552039",
+        "controlType": "ControlType.TreeItem",
+        "value": "False",
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1593.0,
+          "y": 782.0,
+          "width": 266.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Description",
+        "automationId": "68228208",
+        "controlType": "ControlType.Pane",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1592.0,
+          "y": 982.0,
+          "width": 286.0,
+          "height": 59.0
+        }
+      },
+      {
+        "name": "Text",
+        "automationId": "27663444",
+        "controlType": "ControlType.Text",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1595.0,
+          "y": 985.0,
+          "width": 280.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "The text associated with the control.",
+        "automationId": "210569050",
+        "controlType": "ControlType.Text",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1595.0,
+          "y": 1003.0,
+          "width": 280.0,
+          "height": 34.0
+        }
+      },
+      {
+        "name": "Properties",
+        "automationId": "AUTOHIDE_ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+        "controlType": "ControlType.Button",
+        "value": null,
+        "enabled": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1885.0,
+          "y": 154.0,
+          "width": 27.0,
+          "height": 53.0
+        }
+      }
+    ],
+    "capture": {
+      "hwnd": 19144256,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "32607d6834d2bca175bb358c8f1f8e9d7e7827953b6b33afbc12dfbeeccd040c"
+    }
+  }
+}

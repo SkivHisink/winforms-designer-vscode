@@ -6,7 +6,8 @@
 [Bb]uild-out/
 extension/dist/
 extension/out/
-extension/.vscode-test/
+# VS Code test-runner downloads; the extension-host suite creates these at the repo root too
+**/.vscode-test/
 .npm-cache-do-not-use/
 .dotnet-temp/
 .dotnet-home/
@@ -73,3 +74,139 @@ docs/maps/
 docs/release-*-completion-plan.md
 run-codex.cmd
 test_handler_regex.js
+
+# ---------------------------------------------------------------------------
+# Visual Studio reference traces: scenario-level retention
+#
+# scripts/capture-visual-studio-reference-traces.ps1 writes one directory per capture
+# RUN, and a run holds every scenario it happened to sweep — 69 runs, 3948 files, 51 MB.
+# Only the 40 scenario directories that docs/v2/vs-parity-scenario-catalog.tsv actually
+# cites are release evidence (284 files, 5.8 MB); scripts/validate-v2-scenario-catalog.ps1
+# verifies exactly those manifests and screenshot hashes. The rest is raw capture history:
+# 32 fully superseded runs, plus the scenario folders no PASS row references inside the 37
+# runs kept below. It stays on disk for the author and out of the repository.
+#
+# Regenerate this block from the catalog rather than editing it by hand: a run/scenario
+# pair only belongs here while a row with referenceTraceStatus=PASS names it.
+# ---------------------------------------------------------------------------
+docs/v2/reference-traces/*
+!docs/v2/reference-traces/README.md
+!docs/v2/reference-traces/VS18.0-20260821T082946Z/
+docs/v2/reference-traces/VS18.0-20260821T082946Z/*
+!docs/v2/reference-traces/VS18.0-20260821T082946Z/V2-FND-001-S013/
+!docs/v2/reference-traces/VS18.0-20260821T082946Z/V2-FND-001-S014/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T123101Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T123101Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T123101Z/V2-FND-001-S001/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T124034Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T124034Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T124034Z/V2-FND-001-S011/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T132217Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T132217Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T132217Z/V2-FND-001-S012/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T140047Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T140047Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T140047Z/V2-FND-001-S009/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T150518Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T150518Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T150518Z/V2-FND-001-S022/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T160747Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T160747Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T160747Z/V2-FND-001-S029/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T163055Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T163055Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T163055Z/V2-FND-001-S030/
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T173527Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260821T173527Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260821T173527Z/V2-FND-001-S120/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T143728Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T143728Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T143728Z/V2-FND-001-S100/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T143728Z/V2-FND-001-S108/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T160305Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T160305Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T160305Z/V2-FND-001-S021/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T162725Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T162725Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T162725Z/V2-FND-001-S037/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T181918Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T181918Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T181918Z/V2-FND-001-S031/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T185223Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T185223Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T185223Z/V2-FND-001-S041/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T192402Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T192402Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T192402Z/V2-FND-001-S038/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T204633Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T204633Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T204633Z/V2-FND-001-S039/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T204633Z/V2-FND-001-S049/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T214634Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T214634Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T214634Z/V2-FND-001-S042/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T223724Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T223724Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T223724Z/V2-FND-001-S053/
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T234847Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260822T234847Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260822T234847Z/V2-FND-001-S050/
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T003946Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260823T003946Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T003946Z/V2-FND-001-S015/
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T020455Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260823T020455Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T020455Z/V2-FND-001-S024/
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T030759Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260823T030759Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T030759Z/V2-FND-001-S005/
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T034954Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260823T034954Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T034954Z/V2-FND-001-S006/
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T044854Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260823T044854Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T044854Z/V2-FND-001-S025/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T062506Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T062506Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T062506Z/V2-FND-001-S026/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T072607Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T072607Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T072607Z/V2-FND-001-S017/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T080449Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T080449Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T080449Z/V2-FND-001-S110/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T085431Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T085431Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T085431Z/V2-FND-001-S061/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T091246Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T091246Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T091246Z/V2-FND-001-S062/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T094716Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T094716Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T094716Z/V2-FND-001-S046/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T101950Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T101950Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T101950Z/V2-FND-001-S045/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T122309Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T122309Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T122309Z/V2-FND-001-S051/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T131153Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T131153Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T131153Z/V2-FND-001-S079/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T134348Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T134348Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T134348Z/V2-FND-001-S085/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T140405Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T140405Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T140405Z/V2-FND-001-S086/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T142933Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T142933Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T142933Z/V2-FND-001-S087/
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T150121Z/
+docs/v2/reference-traces/VS18.7.11911.148-20260824T150121Z/*
+!docs/v2/reference-traces/VS18.7.11911.148-20260824T150121Z/V2-FND-001-S088/
+
+# The S005 capture records this Visual Studio per-user sidecar in its own manifest as a hashed
+# auxiliary delta, so the global *.user rule above must not silently drop it: the manifest would
+# then carry a SHA-256 for a file no checkout contains.
+!docs/v2/reference-traces/VS18.7.11911.148-20260823T030759Z/V2-FND-001-S005/VisualStudioReference.Modern.csproj.user

@@ -32,6 +32,7 @@
   var canvas = document.getElementById('surface');
   var ctx = canvas.getContext('2d');
   var surfaceWrap = document.getElementById('surfaceWrap');
+  var gridEl = document.getElementById('designerGrid');
   var selBox = document.getElementById('sel');
   var selName = document.getElementById('selName');
   var deleteCtlEl = document.getElementById('deleteCtl');
@@ -40,6 +41,48 @@
   var statusEl = document.getElementById('status');
   var overlayEl = document.getElementById('overlay');
   var hasRendered = false;
+  function ensureA11yLabel(el, label) {
+    if (!el) return;
+    if (!el.getAttribute('aria-label')) el.setAttribute('aria-label', label || el.title || el.textContent || el.id || 'command');
+    if (el.tagName === 'BUTTON' && !el.getAttribute('type')) el.setAttribute('type', 'button');
+  }
+  function installSurfaceAccessibility() {
+    if (surfaceWrap) {
+      surfaceWrap.setAttribute('role', 'application');
+      surfaceWrap.setAttribute('aria-label', T('designer.surface.aria'));
+      surfaceWrap.tabIndex = surfaceWrap.tabIndex >= 0 ? surfaceWrap.tabIndex : 0;
+    }
+    if (canvas) {
+      canvas.setAttribute('role', 'img');
+      canvas.setAttribute('aria-label', T('designer.canvas.aria'));
+    }
+    var toolbar = document.getElementById('toolbar');
+    if (toolbar) {
+      toolbar.setAttribute('role', 'toolbar');
+      toolbar.setAttribute('aria-label', T('designer.toolbar.aria'));
+    }
+    var labels = {
+      zoomOut: 'Zoom out', zoomLabel: 'Reset zoom to 100 percent', zoomIn: 'Zoom in', zoomFit: 'Fit to view',
+      alignLeft: 'Align left', alignRight: 'Align right', alignTop: 'Align top', alignBottom: 'Align bottom',
+      alignCenterH: 'Align centers horizontally', alignCenterV: 'Align centers vertically',
+      distH: 'Distribute horizontally', distV: 'Distribute vertically',
+      spaceHInc: 'Increase horizontal spacing', spaceHDec: 'Decrease horizontal spacing', spaceHRemove: 'Remove horizontal spacing',
+      spaceVInc: 'Increase vertical spacing', spaceVDec: 'Decrease vertical spacing', spaceVRemove: 'Remove vertical spacing',
+      sameW: 'Make same width', sameH: 'Make same height', sameWH: 'Make same size',
+      centerFormH: 'Center horizontally', centerFormV: 'Center vertically',
+      tabOrder: 'Tab order', rulerToggle: 'Toggle ruler', deleteCtl: 'Delete selection',
+      diagDismiss: 'Dismiss diagnostics', diagRetry: 'Retry render', diagRebuild: 'Rebuild project',
+      diagChooseAssembly: 'Choose assembly', diagCopy: 'Copy diagnostics'
+    };
+    for (var id in labels) if (Object.prototype.hasOwnProperty.call(labels, id)) ensureA11yLabel(document.getElementById(id), labels[id]);
+    if (!document.getElementById('wfd-designer-a11y-style')) {
+      var style = document.createElement('style');
+      style.id = 'wfd-designer-a11y-style';
+      style.textContent = '.handle{min-width:10px;min-height:10px}.handle:focus,.typehereslot:focus,.smarttag:focus,#surfaceWrap:focus{outline:2px solid var(--vscode-focusBorder, Highlight);outline-offset:2px}@media (forced-colors: active){#sel,.selsec,.stripitemsel,.hoverhint,.rubberband,.toolboxdroptarget,.containeroutline,.anchortether,.snapguide,.stripdropindicator,.typehereslot,.smarttag,.lockbadge,.designeradorner{forced-color-adjust:auto;border-color:Highlight!important;color:CanvasText!important;background:Canvas!important}#sel .handle,.handle{background:Highlight!important;border-color:CanvasText!important}.snapguide{background:Highlight!important}}';
+      document.head.appendChild(style);
+    }
+  }
+  installSurfaceAccessibility();
   function showOverlay(msg, isErr) { overlayEl.style.display = 'flex'; overlayEl.className = isErr ? 'err' : ''; overlayEl.textContent = msg; }
   function hideOverlay() { overlayEl.style.display = 'none'; }
 
@@ -143,17 +186,27 @@
   var canResize = false;   // can it be resized
   var drag = null;         // active move/resize gesture
   var band = null;         // active rubber-band selection gesture
+  var toolboxBand = null;  // active rectangle placement gesture from a selected toolbox item
+  var stripDrag = null;    // active ToolStrip/MenuStrip item reorder/reparent gesture
   var nudge = null;        // in-progress keyboard-nudge series (arrow keys) — debounced into ONE commit/undo
-  var NUDGE_GRID = 8;      // Ctrl+Arrow step (VS default designer grid); plain Arrow = 1px
   var NUDGE_COMMIT_MS = 250; // idle after the last arrow key before the accumulated nudge is committed
   var suppressClick = false; // swallow the click that ENDS a drag/band so it doesn't re-select
   var placementSnapOverrideModifier = 'alt';
+  var placementLayoutMode = 'snapLines';
+  var placementGridSize = 8;
+  var placementShowGrid = false;
+  var selectedToolboxControl = null;
   function sanitizePlacementSnapOverrideModifier(raw) {
     return raw === 'control' || raw === 'shift' || raw === 'disabled' ? raw : 'alt';
   }
-  function placementSnapOverrideActive(e) {
+  function sanitizeLayoutMode(raw) { return raw === 'snapToGrid' || raw === 'none' ? raw : 'snapLines'; }
+  function sanitizeGridSize(raw) {
+    var n = Number(raw); return isFinite(n) ? Math.max(2, Math.min(128, Math.round(n))) : 8;
+  }
+  function placementSnapOverrideActive(e, ctrlDrag) {
     if (placementSnapOverrideModifier === 'disabled') return false;
-    if (placementSnapOverrideModifier === 'control') return !!(e && e.ctrlKey);
+    // Ctrl+drag is Duplicate and takes precedence over a user-configured Control snap override for move gestures.
+    if (placementSnapOverrideModifier === 'control') return !ctrlDrag && !!(e && e.ctrlKey);
     if (placementSnapOverrideModifier === 'shift') return !!(e && e.shiftKey);
     return !!(e && e.altKey);
   }
@@ -197,6 +250,9 @@
     var h = document.createElement('div');
     h.className = 'handle h-' + dir;
     h.style.display = 'none';
+    h.tabIndex = 0;
+    h.setAttribute('role', 'button');
+    h.setAttribute('aria-label', 'Resize ' + dir);
     h.addEventListener('mousedown', function (e) {
       if (e.button !== 0) return; // left-button only — right-click opens the context menu, not a resize
       if (drag || !canResize || selection.length > 1 || isLocked(current)) return; // resize only: single, unlocked selection
@@ -215,6 +271,7 @@
   var anchorEls = [];  // anchor tethers for the single selected control (Phase 2)
   var containerEls = []; // persistent dashed outlines for container controls (VS-style layout hint)
   var bandEl = null;   // rubber-band rectangle
+  var toolboxDropEl = null; // cross-webview drag target: the exact container the host will receive
   function secBox(i) {
     while (secBoxes.length <= i) { var d = document.createElement('div'); d.className = 'selsec'; d.style.display = 'none'; surfaceWrap.appendChild(d); secBoxes.push(d); }
     return secBoxes[i];
@@ -242,6 +299,78 @@
     hoverEl.style.display = 'block';
     hoverEl.style.left = (c.x * zoom) + 'px'; hoverEl.style.top = (c.y * zoom) + 'px';
     hoverEl.style.width = Math.max(0, c.width * zoom - 2) + 'px'; hoverEl.style.height = Math.max(0, c.height * zoom - 2) + 'px';
+  }
+
+  // ---- hosted ControlDesigner adorners (S093): the engine publishes only bounded control-local rectangles. The
+  // rectangle may be drawn for the current single selection, but hover activation remains provisional until the host
+  // rebuilds the graph and the live designer confirms the exact point through HitTestDesignerAdorner. ----
+  var designerAdornerEls = [];
+  var designerAdornerHitToken = 0;
+  function designerAdornerEl(i) {
+    while (designerAdornerEls.length <= i) {
+      var el = document.createElement('div');
+      el.className = 'designeradorner'; el.style.display = 'none'; el.textContent = '◆';
+      el.setAttribute('role', 'img');
+      el.addEventListener('mouseenter', function (e) {
+        var state = el._designerAdorner;
+        if (!state || state.controlId !== current || selection.length !== 1) return;
+        var a = state.adorner, r = el.getBoundingClientRect(), z = zoom || 1;
+        var px = a.left + Math.floor((e.clientX - r.left) / z);
+        var py = a.top + Math.floor((e.clientY - r.top) / z);
+        if (!isFinite(px) || px < a.left || px >= a.left + a.width) px = a.left + Math.floor(a.width / 2);
+        if (!isFinite(py) || py < a.top || py >= a.top + a.height) py = a.top + Math.floor(a.height / 2);
+        var token = ++designerAdornerHitToken;
+        el._designerAdornerHitToken = token;
+        el.classList.remove('hit'); el.classList.add('pending');
+        vscode.postMessage({ type: 'designerAdornerHit', id: state.controlId, adornerId: a.id, x: px, y: py, token: token });
+      });
+      el.addEventListener('mouseleave', function () {
+        el._designerAdornerHitToken = null;
+        el.classList.remove('pending'); el.classList.remove('hit');
+      });
+      surfaceWrap.appendChild(el); designerAdornerEls.push(el);
+    }
+    return designerAdornerEls[i];
+  }
+  function boundedDesignerAdorners(comp) {
+    var source = comp && Array.isArray(comp.designerAdorners) ? comp.designerAdorners : [];
+    var result = [], seen = {};
+    for (var i = 0; i < source.length && result.length < 32; i++) {
+      var a = source[i];
+      if (!a || typeof a.id !== 'string' || !a.id || a.id.length > 128 || seen[a.id]
+        || typeof a.displayName !== 'string' || a.displayName.length > 128 || a.hitTestable !== true
+        || !Number.isInteger(a.left) || !Number.isInteger(a.top)
+        || !Number.isInteger(a.width) || !Number.isInteger(a.height)
+        || a.width <= 0 || a.height <= 0 || a.width > 16384 || a.height > 16384) continue;
+      seen[a.id] = true; result.push(a);
+    }
+    return result;
+  }
+  function renderDesignerAdorners() {
+    var comp = (tasksState && tasksState.id === current) ? tasksState.comp : null;
+    var c = current ? findControl(current) : null;
+    var adorners = !tabOrderMode && !drag && selection.length === 1 && c && comp
+      ? boundedDesignerAdorners(comp) : [];
+    var n = 0;
+    for (; n < adorners.length; n++) {
+      var a = adorners[n], el = designerAdornerEl(n);
+      el._designerAdorner = { controlId: current, adorner: a };
+      el._designerAdornerHitToken = null;
+      el.classList.remove('pending'); el.classList.remove('hit');
+      el.style.display = 'flex';
+      el.style.left = ((c.x + a.left) * zoom) + 'px';
+      el.style.top = ((c.y + a.top) * zoom) + 'px';
+      el.style.width = Math.max(1, a.width * zoom) + 'px';
+      el.style.height = Math.max(1, a.height * zoom) + 'px';
+      el.title = a.displayName || a.id;
+      el.setAttribute('aria-label', a.displayName || a.id);
+    }
+    for (; n < designerAdornerEls.length; n++) {
+      designerAdornerEls[n].style.display = 'none';
+      designerAdornerEls[n]._designerAdorner = null;
+      designerAdornerEls[n]._designerAdornerHitToken = null;
+      designerAdornerEls[n].classList.remove('pending'); designerAdornerEls[n].classList.remove('hit');
+    }
   }
   // ---- container outlines: a persistent dashed border around every control that HOLDS children (VS shows layout
   // containers this way). "Is a parent of >=1 visible control" is robust across control libraries (no type list);
@@ -314,6 +443,114 @@
       if (px >= it.x && px < it.x + it.width && py >= it.y && py < it.y + it.height) return it;
     }
     return null;
+  }
+
+  var stripDropEl = null;
+  function ensureStripDropEl() {
+    if (!stripDropEl) { stripDropEl = document.createElement('div'); stripDropEl.className = 'stripdropindicator'; stripDropEl.style.display = 'none'; surfaceWrap.appendChild(stripDropEl); }
+    return stripDropEl;
+  }
+  function clearStripDropFeedback() {
+    if (stripDropEl) stripDropEl.style.display = 'none';
+  }
+  function ancestorWithClass(n, cls) {
+    while (n && n !== document) {
+      if (n.className && String(n.className).split(/\s+/).indexOf(cls) >= 0) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+  function stripTopItems(ownerId) {
+    var r = [];
+    for (var i = 0; i < stripItems.length; i++) {
+      var it = stripItems[i];
+      if (it.ownerId === ownerId && !it.isTypeHere && !it.overflow && it.itemId) r.push(it);
+    }
+    return r;
+  }
+  function stripTopAppendIndex(ownerId) {
+    return stripTopItems(ownerId).length;
+  }
+  function rectFromElement(el) {
+    var wrap = surfaceWrap.getBoundingClientRect(), rr = el.getBoundingClientRect(), z = zoom || 1;
+    return { x: (rr.left - wrap.left) / z, y: (rr.top - wrap.top) / z, w: rr.width / z, h: rr.height / z };
+  }
+  function showStripDropFeedback(target) {
+    if (!target || !target.rect) { clearStripDropFeedback(); return; }
+    var el = ensureStripDropEl(), r = target.rect;
+    el.style.display = 'block';
+    if (target.mode === 'append') {
+      el.className = 'stripdropindicator append';
+      el.style.left = (r.x * zoom) + 'px'; el.style.top = (r.y * zoom) + 'px';
+      el.style.width = Math.max(8, r.w * zoom) + 'px'; el.style.height = Math.max(8, r.h * zoom) + 'px';
+    } else if (target.mode === 'vline') {
+      el.className = 'stripdropindicator vline';
+      el.style.left = (r.x * zoom) + 'px'; el.style.top = (r.y * zoom) + 'px';
+      el.style.width = '0px'; el.style.height = Math.max(8, r.h * zoom) + 'px';
+    } else {
+      el.className = 'stripdropindicator hline';
+      el.style.left = (r.x * zoom) + 'px'; el.style.top = (r.y * zoom) + 'px';
+      el.style.width = Math.max(8, r.w * zoom) + 'px'; el.style.height = '0px';
+    }
+  }
+  function stripMoveTarget(clientX, clientY, eventTarget) {
+    if (!stripDrag) return null;
+    var ownerId = stripDrag.ownerId;
+    var rowSlot = ancestorWithClass(eventTarget, 'stripflyouttypehere');
+    if (rowSlot && rowSlot._smOwnerId === ownerId) {
+      var rrSlot = rectFromElement(rowSlot);
+      return {
+        targetParentItemId: rowSlot._smParentItemId || null,
+        targetIndex: Math.max(0, rowSlot._smIndex || 0),
+        mode: 'append',
+        rect: { x: rrSlot.x, y: rrSlot.y, w: rrSlot.w || SUBMENU_W, h: rrSlot.h || SUBMENU_ROW_H }
+      };
+    }
+    var row = ancestorWithClass(eventTarget, 'stripflyoutrow');
+    if (row && row._smItem && row._smOwnerId === ownerId && row._smItem.itemId && !row._smItem.overflow) {
+      var rr = rectFromElement(row);
+      var after = rr.h > 0 ? ((clientY - surfaceWrap.getBoundingClientRect().top) / (zoom || 1) >= rr.y + rr.h / 2) : false;
+      return {
+        targetParentItemId: row._smParentItemId || null,
+        targetIndex: Math.max(0, (row._smIndex || 0) + (after ? 1 : 0)),
+        mode: 'hline',
+        rect: { x: rr.x, y: rr.y + (after ? (rr.h || SUBMENU_ROW_H) : 0), w: rr.w || SUBMENU_W, h: 0 }
+      };
+    }
+    var topSlot = ancestorWithClass(eventTarget, 'typehereslot');
+    if (topSlot && topSlot.__slot && topSlot.__slot.ownerId === ownerId) {
+      var ts = topSlot.__slot;
+      return {
+        targetParentItemId: null,
+        targetIndex: stripTopAppendIndex(ownerId),
+        mode: 'append',
+        rect: { x: ts.x, y: ts.y, w: ts.width, h: ts.height }
+      };
+    }
+    var cr = bandRect();
+    var px = (clientX - cr.left) / (zoom || 1), py = (clientY - cr.top) / (zoom || 1);
+    var hit = stripItemHit(px, py);
+    if (hit && hit.ownerId === ownerId && hit.itemId) {
+      var top = stripTopItems(ownerId);
+      var idx = 0;
+      for (; idx < top.length; idx++) if (top[idx].itemId === hit.itemId) break;
+      if (idx < top.length) {
+        var afterTop = px >= hit.x + hit.width / 2;
+        return {
+          targetParentItemId: null,
+          targetIndex: idx + (afterTop ? 1 : 0),
+          mode: 'vline',
+          rect: { x: hit.x + (afterTop ? hit.width : 0), y: hit.y, w: 0, h: hit.height }
+        };
+      }
+    }
+    return null;
+  }
+  function startStripDrag(item, e, level, rowEl) {
+    if (!item || !item.ownerId || !item.itemId || item.overflow) return false;
+    stripDrag = { ownerId: item.ownerId, itemId: item.itemId, itemType: item.itemType, text: item.text, startX: e.clientX, startY: e.clientY, active: false, target: null, level: level, rowEl: rowEl || null };
+    e.preventDefault(); e.stopPropagation();
+    return true;
   }
 
   // ---- on-canvas strip ITEM selection (Slice D): a single clicked top-level item, highlighted with a solid box and
@@ -429,16 +666,17 @@
         var row = document.createElement('div');
         row.className = 'stripflyoutrow' + (interactive ? '' : ' inert') + (submenuSel && it.itemId && it.itemId === submenuSel.itemId ? ' sel' : '');
         row.style.height = (SUBMENU_ROW_H * zoom) + 'px';
-        row._smItem = it; row._smLevel = lvl; // read by onSubmenuCtx (right-click has no per-row closure of its own)
+        row._smItem = it; row._smLevel = lvl; row._smOwnerId = L.ownerId; row._smParentItemId = L.parentItemId || null; row._smIndex = r; // read by ctx + drag/drop
         var cap = document.createElement('span'); cap.className = 'stripflyoutcap'; cap.textContent = it.text || it.itemId || '—';
         row.appendChild(cap);
         if (hasKids) { var arr = document.createElement('span'); arr.className = 'stripflyoutarrow'; arr.textContent = '▸'; row.appendChild(arr); }
         if (interactive) {
-          (function (item, level, rowEl) {
+          (function (item, level, rowEl, ownerId) {
             rowEl.addEventListener('click', function (e) { e.stopPropagation(); onSubmenuRow(item, level, rowEl); });
+            rowEl.addEventListener('mousedown', function (e) { if (e.button === 0 && item.itemId) startStripDrag({ ownerId: item.ownerId || ownerId, itemId: item.itemId, itemType: item.itemType, text: item.text }, e, level, rowEl); });
             // double-click a nested row → rename it (mirrors the top-level dblclick; a separator has no Text so it's inert)
             rowEl.addEventListener('dblclick', function (e) { e.stopPropagation(); if (item.itemId && !isSeparatorType(item.itemType)) { selectSubmenuRow(item, level, rowEl); renameSubmenuSel(); } });
-          })(it, lvl, row);
+          })(it, lvl, row, L.ownerId);
         }
         box.appendChild(row);
       }
@@ -450,6 +688,7 @@
       // the editor at that anchor.
       if (L.parentItemId || L.isStripRoot) {
         var slot = document.createElement('div'); slot.className = 'stripflyouttypehere';
+        slot._smOwnerId = L.ownerId; slot._smParentItemId = L.parentItemId || null; slot._smIndex = L.items.length;
         slot.style.height = (SUBMENU_ROW_H * zoom) + 'px';
         var scap = document.createElement('span'); scap.className = 'stripflyoutcap'; scap.textContent = T('designer.typeHere');
         slot.appendChild(scap);
@@ -648,8 +887,17 @@
   // (a net48 live edit / a skipReselect render) wrongly disarmed it; and an id-only match swallowed a LEGITIMATE later
   // select of the SAME owner. A host-authoritative select (fullRender / a Properties-panel pick) carries NO token → always applied.
   var pickToken = 0, pendingPick = null, suppressPickTokens = new Set();
+  function postGenerationBoundCanvasIntent(message) {
+    if (lastDrawnGen >= 0) message.gen = lastDrawnGen;
+    vscode.postMessage(message);
+  }
   // Post a canvas-origin pick AND record it as the pending (not-yet-echoed) pick for select-echo correlation.
-  function postPick(id) { pendingPick = { token: ++pickToken, id: id }; vscode.postMessage({ type: 'pick', id: id, token: pickToken }); }
+  function postPick(id) {
+    pendingPick = { token: ++pickToken, id: id };
+    // The Properties host needs the complete ordered set for v1.10 multi-object intersection/transactions. The canvas
+    // remains the selection authority; the host validates every id against the current rendered layout and bounds it.
+    postGenerationBoundCanvasIntent({ type: 'pick', id: id, ids: selection.slice(), token: pickToken });
+  }
   function isSeparatorType(t) { return /Separator$/.test(t || ''); }
   function syncSlotEditText() {
     // a separator has no Text → hide the text field (and its width no longer matters); other types show + focus it
@@ -853,10 +1101,16 @@
     trayEl.innerHTML = '';
     if (!tray.length) { trayEl.style.display = 'none'; return; }
     trayEl.style.display = '';
+    trayEl.setAttribute('role', 'list');
+    trayEl.setAttribute('aria-label', T('designer.tray.aria'));
     tray.forEach(function (t) {
       var chip = document.createElement('div');
       chip._trayId = t.id;                       // lets updateTraySelClasses() re-highlight without a rebuild
       chip.className = 'trayItem' + (t.id === current ? ' sel' : '');
+      chip.tabIndex = 0;
+      chip.setAttribute('role', 'listitem');
+      chip.setAttribute('aria-label', (t.name || t.id) + ' : ' + shortType(t.type));
+      chip.setAttribute('aria-selected', t.id === current ? 'true' : 'false');
       if (t.iconPng) {
         var icon = document.createElement('img'); icon.className = 'trayIcon'; icon.alt = ''; icon.draggable = false;
         icon.src = 'data:image/png;base64,' + t.iconPng; chip.appendChild(icon);
@@ -872,6 +1126,11 @@
         // Items (Properties / rename / delete / add), the tray-chip counterpart of a menu-bar item's dropdown. A
         // non-strip chip (Timer/ImageList/…) has no items → openTrayStripFlyout closes any open flyout instead.
         openTrayStripFlyout(t);
+      });
+      chip.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        ev.preventDefault();
+        chip.click();
       });
       chip.addEventListener('dblclick', function (ev) {
         ev.preventDefault(); ev.stopPropagation();
@@ -891,6 +1150,7 @@
       var chip = trayEl.children[i];
       if (!chip._trayId) continue;
       chip.className = 'trayItem' + (chip._trayId === current ? ' sel' : '');
+      chip.setAttribute('aria-selected', chip._trayId === current ? 'true' : 'false');
     }
   }
   function beginTrayRename(chip, item) {
@@ -919,11 +1179,24 @@
   function selectableIds() { var r = []; for (var i = 0; i < selection.length; i++) { if (selection[i] && selection[i] !== 'this') r.push(selection[i]); } return r; }
 
   var lastDrawnGen = -1;
+  var latestRenderGen = -1;
+  function canvasHasPendingRender() { return latestRenderGen > lastDrawnGen; }
+  function setStaleCanvasStatus() { setStatus('STALE_CANVAS'); }
+  function ignorePendingRenderInput(e) {
+    if (!canvasHasPendingRender()) return false;
+    if (e) {
+      if (e.preventDefault) e.preventDefault();
+      if (e.stopPropagation) e.stopPropagation();
+    }
+    setStaleCanvasStatus();
+    return true;
+  }
   function drawPng(b64, dx, dy, dw, dh, full, gen) {
     var g = (typeof gen === 'number') ? gen : (lastDrawnGen + 1);
+    if (g > latestRenderGen) latestRenderGen = g;
     var img = new Image();
     img.onload = function () {
-      if (g < lastDrawnGen) return;
+      if (g < lastDrawnGen || g < latestRenderGen) return;
       lastDrawnGen = g;
       if (full) {
         // Backing store = the PNG's REAL pixel size (the engine uses a safe integer capture scale, so text is crisp on
@@ -934,7 +1207,12 @@
         natW = dw; natH = dh; natScale = (dw > 0 && img.naturalWidth) ? (img.naturalWidth / dw) : 1;
         applyZoomStyles(); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       }
-      else { ctx.clearRect(dx, dy, dw, dh); ctx.drawImage(img, dx, dy); }
+      else {
+        // Patch coordinates are always logical form pixels; the backing canvas can be a 2x DPI capture. Composite in
+        // backing pixels so the scaled PNG replaces exactly the same logical dirty rectangle without blur or drift.
+        var px = dx * natScale, py = dy * natScale, pw = dw * natScale, ph = dh * natScale;
+        ctx.clearRect(px, py, pw, ph); ctx.drawImage(img, px, py, pw, ph);
+      }
     };
     img.onerror = function () { /* leave the prior frame; a later event refreshes */ };
     img.src = 'data:image/png;base64,' + b64;
@@ -987,9 +1265,10 @@
     if (zoomLabelEl) zoomLabelEl.textContent = Math.round(zoom * 100) + '%';
     renderSelection();
     renderRuler();
+    renderGrid();
   }
   function setZoom(z) {
-    closeSlotEditor(); closeSubmenu(); zoom = clampZoom(z);
+    closeSlotEditor(); closeSubmenu(); clearStripDropFeedback(); zoom = clampZoom(z);
     try { var s = (vscode.getState && vscode.getState()) || {}; s.zoom = zoom; if (vscode.setState) vscode.setState(s); } catch (_e) {}
     queueCanvasState();
     applyZoomStyles();
@@ -1141,26 +1420,47 @@
     renderStripSlots();
     renderTabBadges();
     renderAnchors();
+    renderDesignerAdorners();
     renderSmartTag();
     updateRulerMarks(pc && !pc.isRoot ? { x: pc.x, y: pc.y, w: pc.width, h: pc.height } : null);
   }
 
   // ---- on-canvas smart-tag "Tasks" flyout (VS/DevExpress-style): a chevron glyph pinned to the selected control's
-  // top-right corner; clicking it opens a flyout OF THE CONTROL'S common properties edited inline (through the SAME
-  // 'edit' message the property grid uses), plus All Properties / Learn More. Curated set = a name heuristic. ----
+  // top-right corner; clicking it opens the property items supplied by the control's real ComponentDesigner /
+  // DesignerActionList, edited inline through the SAME source-first 'edit' message as the property grid. ----
   var tasksState = null;   // { id, comp } for the current single selection (from the host 'tasks' message)
   var smartTagEl = null;
   var flyoutEl = null;
   var flyoutOwner = null;  // the control id the open flyout edits
-  var TASK_PROP_NAMES = ['Text', 'Caption', 'AutoSizeMode', 'AutoSize', 'Image', 'ImageIndex', 'UseMnemonic',
-    'LineVisible', 'ShowCloseButton', 'PageEnabled', 'PageVisible', 'Enabled', 'Visible', 'ReadOnly', 'Checked',
-    'CheckState', 'Value', 'Multiline', 'Dock', 'Anchor', 'BackColor', 'ForeColor'];
   function taskListFor(comp) {
-    if (!comp || !comp.properties) return [];
-    var rank = {};
-    for (var i = 0; i < TASK_PROP_NAMES.length; i++) rank[TASK_PROP_NAMES[i].toLowerCase()] = i;
-    var found = comp.properties.filter(function (p) { return p && !p.readOnly && rank[String(p.name).toLowerCase()] !== undefined; });
-    found.sort(function (a, b) { return rank[a.name.toLowerCase()] - rank[b.name.toLowerCase()]; });
+    if (!comp || !Array.isArray(comp.properties) || !Array.isArray(comp.designerActions)) return [];
+    var properties = {};
+    for (var i = 0; i < comp.properties.length; i++) {
+      var p = comp.properties[i];
+      if (p && !p.readOnly && typeof p.name === 'string' && properties[p.name] === undefined) properties[p.name] = p;
+    }
+    var found = [];
+    for (var j = 0; j < comp.designerActions.length; j++) {
+      var action = comp.designerActions[j];
+      var property = action && properties[action.propertyName];
+      if (!property) continue;
+      found.push(Object.assign({}, property, {
+        taskDisplayName: action.displayName || property.name,
+        taskCategory: action.category || '',
+        taskDescription: action.description || '',
+      }));
+    }
+    return found;
+  }
+  function commandListFor(comp) {
+    if (!comp || !Array.isArray(comp.designerActions)) return [];
+    var found = [];
+    for (var i = 0; i < comp.designerActions.length; i++) {
+      var action = comp.designerActions[i];
+      if (!action || typeof action.commandId !== 'string' || !action.commandId
+        || typeof action.certificationId !== 'string' || !action.certificationId) continue;
+      found.push(action);
+    }
     return found;
   }
   function sameSet(arr, want) {
@@ -1205,7 +1505,7 @@
     var comp = (tasksState && tasksState.id === current) ? tasksState.comp : null;
     var c = current ? findControl(current) : null;
     var show = !tabOrderMode && !drag && selection.length === 1 && !!c && !!comp &&
-      (taskListFor(comp).length > 0 || vendorTagsNow().length > 0);
+      (taskListFor(comp).length > 0 || commandListFor(comp).length > 0 || vendorTagsNow().length > 0);
     if (!smartTagEl) {
       smartTagEl = document.createElement('div'); smartTagEl.className = 'smarttag'; smartTagEl.textContent = '▸'; // ▸
       smartTagEl.title = 'Tasks';
@@ -1253,14 +1553,16 @@
     flyoutEl.appendChild(title);
     // the vendor's own verbs first (as its panel orders them), then our curated property rows
     var vtags = vendorTagsNow();
-    if (vtags.length) {
+    var commands = commandListFor(comp);
+    if (vtags.length || commands.length) {
       var vbox = document.createElement('div'); vbox.className = 'tfVerbs';
       for (var vi = 0; vi < vtags.length; vi++) vbox.appendChild(vendorRow(vtags[vi]));
+      for (var ci = 0; ci < commands.length; ci++) vbox.appendChild(commandRow(commands[ci]));
       flyoutEl.appendChild(vbox);
     }
     var tasks = taskListFor(comp);
     if (!tasks.length) {
-      if (!vtags.length) {
+      if (!vtags.length && !commands.length) {
         var note = document.createElement('div'); note.className = 'tfNote'; note.textContent = T('designer.smartTag.noTasks'); flyoutEl.appendChild(note);
       }
     } else {
@@ -1310,8 +1612,29 @@
     });
     return row;
   }
+  /** One engine-certified DesignerActionMethodItem. Unlike property rows, the browser supplies no edit proposal:
+   * it posts only the opaque command/certificate pair and the host re-authorizes both against current metadata. */
+  function commandRow(action) {
+    var owner = current;
+    var row = document.createElement('div'); row.className = 'tfVerb tfCommand';
+    row.textContent = action.displayName || action.commandId;
+    if (action.description) row.title = action.description;
+    row.addEventListener('click', function () {
+      if (owner !== current || !tasksState || tasksState.id !== owner
+        || commandListFor(tasksState.comp).indexOf(action) < 0) { closeFlyout(); return; }
+      closeFlyout();
+      vscode.postMessage({
+        type: 'designerActionCommand',
+        id: owner,
+        commandId: action.commandId,
+        certificationId: action.certificationId,
+      });
+    });
+    return row;
+  }
   function taskRow(comp, p) {
     var owner = current;
+    var taskLabel = p.taskDisplayName || p.name;
     function send(value) { vscode.postMessage({ type: 'edit', id: owner, prop: p.name, propType: p.type, isEnum: !!p.isEnum, value: value }); }
     var cur = p.value == null ? '' : String(p.value);
     var isBool = /(^|\.)Boolean$/.test(p.type || '') || sameSet(p.standardValues, ['True', 'False']);
@@ -1320,11 +1643,11 @@
       row = document.createElement('label'); row.className = 'tfRow tfCheck';
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = cur === 'True';
       cb.addEventListener('change', function () { send(cb.checked ? 'True' : 'False'); });
-      var lb = document.createElement('span'); lb.className = 'tfLabel'; lb.textContent = p.name;
+      var lb = document.createElement('span'); lb.className = 'tfLabel'; lb.textContent = taskLabel;
       row.appendChild(cb); row.appendChild(lb);
     } else if (p.standardValues && p.standardValues.length) {
       row = document.createElement('div'); row.className = 'tfRow';
-      var l1 = document.createElement('span'); l1.className = 'tfLabel'; l1.textContent = p.name;
+      var l1 = document.createElement('span'); l1.className = 'tfLabel'; l1.textContent = taskLabel;
       var sel = document.createElement('select'); var has = false;
       for (var k = 0; k < p.standardValues.length; k++) {
         var o = document.createElement('option'); o.value = p.standardValues[k]; o.textContent = p.standardValues[k];
@@ -1335,12 +1658,13 @@
       row.appendChild(l1); row.appendChild(sel);
     } else {
       row = document.createElement('div'); row.className = 'tfRow';
-      var l2 = document.createElement('span'); l2.className = 'tfLabel'; l2.textContent = p.name;
+      var l2 = document.createElement('span'); l2.className = 'tfLabel'; l2.textContent = taskLabel;
       var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'tfText'; inp.value = cur;
       inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
       inp.addEventListener('blur', function () { if (inp.value !== cur) send(inp.value); });
       row.appendChild(l2); row.appendChild(inp);
     }
+    if (p.taskDescription) row.title = p.taskDescription;
     return row;
   }
 
@@ -1429,9 +1753,13 @@
       var c = findControl(id); if (c) sel.push(c);
     }
     if (sel.length < 3) { setStatus(T('designer.status.distSelectMore')); return; }
+    var parentId = sel[0].parentId;
+    for (var pi = 1; pi < sel.length; pi++) {
+      if (sel[pi].parentId !== parentId) { setStatus(T('designer.status.spacingSameParent')); return; }
+    }
     var sk = (axis === 'h') ? 'x' : 'y';            // start coord
     var zk = (axis === 'h') ? 'width' : 'height';   // size along the axis
-    sel.sort(function (a, b) { return a[sk] - b[sk]; });
+    sel.sort(function (a, b) { return (a[sk] - b[sk]) || String(a.id).localeCompare(String(b.id)); });
     var first = sel[0], last = sel[sel.length - 1];
     var span = (last[sk] + last[zk]) - first[sk];
     var sumSize = 0; for (var i = 0; i < sel.length; i++) sumSize += sel[i][zk];
@@ -1450,6 +1778,39 @@
   [['distH', 'h'], ['distV', 'v']].forEach(function (pair) {
     var el = document.getElementById(pair[0]);
     if (el) el.addEventListener('click', function () { distributeSelected(pair[1]); });
+  });
+
+  // VS Format → Horizontal/Vertical Spacing → Increase/Decrease/Remove. The first control is the stable
+  // anchor and each following control is placed recursively, so a repeated command is deterministic.
+  function adjustSpacing(axis, operation) {
+    var sel = [];
+    for (var i = 0; i < selection.length; i++) {
+      var c = selection[i] === 'this' ? null : findControl(selection[i]); if (c) sel.push(c);
+    }
+    if (sel.length < 2) { setStatus(T('designer.status.spacingSelectMore')); return; }
+    var parentId = sel[0].parentId;
+    for (var p = 1; p < sel.length; p++) {
+      if (sel[p].parentId !== parentId) { setStatus(T('designer.status.spacingSameParent')); return; }
+    }
+    var sk = axis === 'h' ? 'x' : 'y', zk = axis === 'h' ? 'width' : 'height';
+    sel.sort(function (a, b) { return (a[sk] - b[sk]) || String(a.id).localeCompare(String(b.id)); });
+    var edits = [], cursor = sel[0][sk] + sel[0][zk], previousOriginalEnd = cursor;
+    for (var j = 1; j < sel.length; j++) {
+      var item = sel[j], oldGap = item[sk] - previousOriginalEnd;
+      var gap = operation === 'remove' ? 0 : operation === 'increase'
+        ? Math.max(0, oldGap) + placementGridSize
+        : Math.max(0, oldGap - placementGridSize);
+      var target = Math.round(cursor + gap), delta = target - item[sk];
+      if (delta) edits.push(axis === 'h' ? { id: item.id, dx: delta, dy: 0 } : { id: item.id, dx: 0, dy: delta });
+      cursor = target + item[zk];
+      previousOriginalEnd = item[sk] + item[zk];
+    }
+    if (edits.length) vscode.postMessage({ type: 'alignControls', edits: edits });
+  }
+  [['spaceHInc', 'h', 'increase'], ['spaceHDec', 'h', 'decrease'], ['spaceHRemove', 'h', 'remove'],
+   ['spaceVInc', 'v', 'increase'], ['spaceVDec', 'v', 'decrease'], ['spaceVRemove', 'v', 'remove']].forEach(function (entry) {
+    var el = document.getElementById(entry[0]);
+    if (el) el.addEventListener('click', function () { adjustSpacing(entry[1], entry[2]); });
   });
 
   // ---- make-same-size (Phase 2): resize every selected control to the primary selection's width/height/both. ----
@@ -1492,6 +1853,95 @@
       if (px >= c.x && px < c.x + c.width && py >= c.y && py < c.y + c.height) return c.id;
     }
     return null;
+  }
+  function sortControlsForHitTest(items) {
+    return (items || []).slice().sort(function (a, b) {
+      var d = (b.depth || 0) - (a.depth || 0);
+      if (d) return d;
+      var az = typeof a.zOrder === 'number' && isFinite(a.zOrder) ? a.zOrder : 2147483647;
+      var bz = typeof b.zOrder === 'number' && isFinite(b.zOrder) ? b.zOrder : 2147483647;
+      if (az !== bz) return az - bz;
+      var area = ((a.width || 0) * (a.height || 0)) - ((b.width || 0) * (b.height || 0));
+      if (area) return area;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    });
+  }
+  function isContainerControl(id) {
+    if (!id) return false;
+    var control = findControl(id);
+    if (control && (control.isRoot || /Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(control.type || ''))) return true;
+    for (var i = 0; i < controls.length; i++) if (controls[i].parentId === id) return true;
+    return false;
+  }
+
+  function toolboxContainerFor(id) {
+    var c = id ? findControl(id) : null;
+    while (c) {
+      if (c.id === 'this' || c.isRoot) return findControl('this') || c;
+      if (/Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type || '')) return c;
+      c = c.parentId ? findControl(c.parentId) : null;
+    }
+    return findControl('this');
+  }
+
+  function clearToolboxDropFeedback() {
+    if (toolboxDropEl) toolboxDropEl.style.display = 'none';
+  }
+
+  function showToolboxDropFeedback(hitId, x, y) {
+    var target = toolboxContainerFor(hitId || 'this');
+    if (!target) { clearToolboxDropFeedback(); return; }
+    if (!toolboxDropEl) {
+      toolboxDropEl = document.createElement('div');
+      toolboxDropEl.className = 'toolboxdroptarget';
+      var label = document.createElement('span'); label.className = 'toolboxdroplabel';
+      toolboxDropEl.appendChild(label); surfaceWrap.appendChild(toolboxDropEl);
+    }
+    var rect = clientRect(target);
+    toolboxDropEl.style.display = 'block';
+    toolboxDropEl.style.left = (rect.x * zoom) + 'px'; toolboxDropEl.style.top = (rect.y * zoom) + 'px';
+    toolboxDropEl.style.width = Math.max(1, rect.w * zoom) + 'px'; toolboxDropEl.style.height = Math.max(1, rect.h * zoom) + 'px';
+    var labelEl = toolboxDropEl.firstChild;
+    if (labelEl) labelEl.textContent = (target.name || target.id) + '  ' + Math.max(0, Math.round(x - rect.x)) + ', ' + Math.max(0, Math.round(y - rect.y));
+  }
+
+  function finiteOr(value, fallback) { return typeof value === 'number' && isFinite(value) ? value : fallback; }
+  function spacingSide(value, side) { return value && typeof value[side] === 'number' ? value[side] : 0; }
+  function clientRect(c) {
+    return {
+      x: finiteOr(c && c.clientX, c ? c.x : 0), y: finiteOr(c && c.clientY, c ? c.y : 0),
+      w: finiteOr(c && c.clientWidth, c ? c.width : 0), h: finiteOr(c && c.clientHeight, c ? c.height : 0)
+    };
+  }
+  function placementParent(c) { return c && c.parentId != null ? findControl(c.parentId) : null; }
+  function renderGrid() {
+    if (!gridEl) return;
+    var root = findControl('this');
+    if (!placementShowGrid || !root) { gridEl.style.display = 'none'; return; }
+    var r = clientRect(root), step = placementGridSize * zoom;
+    gridEl.style.display = 'block';
+    gridEl.style.left = (r.x * zoom) + 'px'; gridEl.style.top = (r.y * zoom) + 'px';
+    gridEl.style.width = Math.max(0, r.w * zoom) + 'px'; gridEl.style.height = Math.max(0, r.h * zoom) + 'px';
+    gridEl.style.backgroundSize = step + 'px ' + step + 'px';
+  }
+
+  function snapMoveToGrid(nx, ny, moving) {
+    var parent = placementParent(moving), r = clientRect(parent || findControl('this'));
+    return {
+      x: r.x + Math.round((nx - r.x) / placementGridSize) * placementGridSize,
+      y: r.y + Math.round((ny - r.y) / placementGridSize) * placementGridSize,
+      guides: []
+    };
+  }
+
+  function alignSelectionToGrid() {
+    var ids = selectableIds(), edits = [];
+    for (var i = 0; i < ids.length; i++) {
+      var c = findControl(ids[i]); if (!c || isLocked(c.id)) continue;
+      var snapped = snapMoveToGrid(c.x, c.y, c), dx = Math.round(snapped.x - c.x), dy = Math.round(snapped.y - c.y);
+      if (dx || dy) edits.push({ id: c.id, dx: dx, dy: dy });
+    }
+    if (edits.length) vscode.postMessage({ type: 'alignControls', edits: edits });
   }
 
   // ---- snaplines: align the moving control's edges/centers to siblings within a threshold ----
@@ -1539,16 +1989,60 @@
     var parentId = moving ? moving.parentId : null;
     var ax = [nx, nx + w / 2, nx + w], ay = [ny, ny + h / 2, ny + h];
     var bestX = null, bestY = null;
+    function choose(best, candidate) {
+      if (Math.abs(candidate.delta) > SNAP_T) return best;
+      // Actual VS gives a compatible text Baseline snapline precedence over ordinary edge/center candidates even
+      // when an ordinary candidate is fractionally closer (S025: center +0.5px versus baseline -1px). The engine
+      // supplies these baselines from the real live Font/DPI, so browser geometry must not demote that authority.
+      if (candidate.baseline && (!best || !best.baseline)) return candidate;
+      if (best && best.baseline && !candidate.baseline) return best;
+      if (!best || Math.abs(candidate.delta) < Math.abs(best.delta)
+          || (Math.abs(candidate.delta) === Math.abs(best.delta) && candidate.priority > best.priority)
+          || (Math.abs(candidate.delta) === Math.abs(best.delta) && candidate.priority === best.priority
+              && String(candidate.s && candidate.s.id || '').localeCompare(String(best.s && best.s.id || '')) < 0)) return candidate;
+      return best;
+    }
     for (var i = 0; i < controls.length; i++) {
       var s = controls[i];
       if (s.id === movingId || s.parentId !== parentId || selection.indexOf(s.id) >= 0) continue; // siblings only, not the group
       var tx = [s.x, s.x + s.width / 2, s.x + s.width], ty = [s.y, s.y + s.height / 2, s.y + s.height];
       for (var a = 0; a < 3; a++) {
         for (var b = 0; b < 3; b++) {
-          var dX = tx[b] - ax[a]; if (Math.abs(dX) <= SNAP_T && (!bestX || Math.abs(dX) < Math.abs(bestX.delta))) bestX = { delta: dX, line: tx[b], s: s };
-          var dY = ty[b] - ay[a]; if (Math.abs(dY) <= SNAP_T && (!bestY || Math.abs(dY) < Math.abs(bestY.delta))) bestY = { delta: dY, line: ty[b], s: s };
+          bestX = choose(bestX, { delta: tx[b] - ax[a], line: tx[b], s: s, priority: 1 });
+          bestY = choose(bestY, { delta: ty[b] - ay[a], line: ty[b], s: s, priority: 1 });
         }
       }
+      // WinForms snapline spacing is Margin-aware: adjacent controls stop at the larger of the two declared margins.
+      if (overlap1d(ny, ny + h, s.y, s.y + s.height)) {
+        var rightGap = Math.max(spacingSide(s.margin, 'right'), spacingSide(moving && moving.margin, 'left'));
+        var leftGap = Math.max(spacingSide(s.margin, 'left'), spacingSide(moving && moving.margin, 'right'));
+        bestX = choose(bestX, { delta: s.x + s.width + rightGap - nx, line: s.x + s.width + rightGap, s: s, priority: 3 });
+        bestX = choose(bestX, { delta: s.x - leftGap - w - nx, line: s.x - leftGap, s: s, priority: 3 });
+      }
+      if (overlap1d(nx, nx + w, s.x, s.x + s.width)) {
+        var bottomGap = Math.max(spacingSide(s.margin, 'bottom'), spacingSide(moving && moving.margin, 'top'));
+        var topGap = Math.max(spacingSide(s.margin, 'top'), spacingSide(moving && moving.margin, 'bottom'));
+        bestY = choose(bestY, { delta: s.y + s.height + bottomGap - ny, line: s.y + s.height + bottomGap, s: s, priority: 3 });
+        bestY = choose(bestY, { delta: s.y - topGap - h - ny, line: s.y - topGap, s: s, priority: 3 });
+      }
+      // Baselines are measured by the engine from the live Font/DPI. The browser only translates the absolute
+      // baseline by the proposed move delta, so zoom never enters the measurement.
+      if (moving && finiteOr(moving.textBaseline, -1) >= 0 && finiteOr(s.textBaseline, -1) >= 0) {
+        var baseline = ny + (moving.textBaseline - moving.y);
+        bestY = choose(bestY, { delta: s.textBaseline - baseline, line: s.textBaseline, s: s, priority: 4, baseline: true });
+      }
+    }
+    var parent = placementParent(moving);
+    if (parent) {
+      var pr = clientRect(parent), pad = parent.padding || {}, mar = moving.margin || {};
+      var left = pr.x + spacingSide(pad, 'left') + spacingSide(mar, 'left');
+      var right = pr.x + pr.w - spacingSide(pad, 'right') - spacingSide(mar, 'right');
+      var top = pr.y + spacingSide(pad, 'top') + spacingSide(mar, 'top');
+      var bottom = pr.y + pr.h - spacingSide(pad, 'bottom') - spacingSide(mar, 'bottom');
+      bestX = choose(bestX, { delta: left - nx, line: left, s: parent, priority: 2 });
+      bestX = choose(bestX, { delta: right - (nx + w), line: right, s: parent, priority: 2 });
+      bestY = choose(bestY, { delta: top - ny, line: top, s: parent, priority: 2 });
+      bestY = choose(bestY, { delta: bottom - (ny + h), line: bottom, s: parent, priority: 2 });
     }
     // equal-spacing wins an axis only when it is at least as close as the best edge/center snap on that axis
     var eqX = equalSpaceX(nx, ny, w, h, movingId, parentId);
@@ -1588,6 +2082,14 @@
       xl.push({ v: s.x, s: s }, { v: s.x + s.width / 2, s: s }, { v: s.x + s.width, s: s });
       yl.push({ v: s.y, s: s }, { v: s.y + s.height / 2, s: s }, { v: s.y + s.height, s: s });
     }
+    var parent = placementParent(moving);
+    if (parent) {
+      var pr = clientRect(parent), pad = parent.padding || {}, mar = moving.margin || {};
+      xl.push({ v: pr.x + spacingSide(pad, 'left') + spacingSide(mar, 'left'), s: parent },
+              { v: pr.x + pr.w - spacingSide(pad, 'right') - spacingSide(mar, 'right'), s: parent });
+      yl.push({ v: pr.y + spacingSide(pad, 'top') + spacingSide(mar, 'top'), s: parent },
+              { v: pr.y + pr.h - spacingSide(pad, 'bottom') - spacingSide(mar, 'bottom'), s: parent });
+    }
     function nearest(val, lines) {
       var best = null;
       for (var i = 0; i < lines.length; i++) { var d = lines[i].v - val; if (Math.abs(d) <= SNAP_T && (!best || Math.abs(d) < Math.abs(best.d))) best = { d: d, line: lines[i].v, s: lines[i].s }; }
@@ -1599,6 +2101,27 @@
     if (dir.indexOf('s') >= 0) { var bs = nearest(ry + rh, yl); if (bs) { rh = Math.max(4, rh + bs.d); guides.push({ vert: false, y: bs.line, a: Math.min(rx, bs.s.x), b: Math.max(rx + rw, bs.s.x + bs.s.width) }); } }
     if (dir.indexOf('n') >= 0) { var bn = nearest(ry, yl); if (bn) { var bottom = ry + rh; ry = ry + bn.d; rh = Math.max(4, bottom - ry); guides.push({ vert: false, y: bn.line, a: Math.min(rx, bn.s.x), b: Math.max(rx + rw, bn.s.x + bn.s.width) }); } }
     return { x: rx, y: ry, w: rw, h: rh, guides: guides };
+  }
+  function gridResizeSnap(o, dir, movingId) {
+    var moving = findControl(movingId), parent = placementParent(moving), pr = clientRect(parent || findControl('this'));
+    var rx = o.x, ry = o.y, rw = o.w, rh = o.h;
+    function gx(v) { return pr.x + Math.round((v - pr.x) / placementGridSize) * placementGridSize; }
+    function gy(v) { return pr.y + Math.round((v - pr.y) / placementGridSize) * placementGridSize; }
+    if (dir.indexOf('e') >= 0) rw = Math.max(4, gx(rx + rw) - rx);
+    if (dir.indexOf('w') >= 0) { var right = rx + rw; rx = Math.min(right - 4, gx(rx)); rw = right - rx; }
+    if (dir.indexOf('s') >= 0) rh = Math.max(4, gy(ry + rh) - ry);
+    if (dir.indexOf('n') >= 0) { var bottom = ry + rh; ry = Math.min(bottom - 4, gy(ry)); rh = bottom - ry; }
+    return { x: rx, y: ry, w: rw, h: rh, guides: [] };
+  }
+  function computePlacementMove(nx, ny, w, h, movingId) {
+    if (placementLayoutMode === 'none') return { x: nx, y: ny, guides: [] };
+    if (placementLayoutMode === 'snapToGrid') return snapMoveToGrid(nx, ny, findControl(movingId));
+    return computeSnap(nx, ny, w, h, movingId);
+  }
+  function computePlacementResize(o, dir, movingId) {
+    if (placementLayoutMode === 'none') return { x: o.x, y: o.y, w: o.w, h: o.h, guides: [] };
+    if (placementLayoutMode === 'snapToGrid') return gridResizeSnap(o, dir, movingId);
+    return computeResizeSnap(o, dir, movingId);
   }
   function drawGuides(guides) {
     clearGuides();
@@ -1612,6 +2135,12 @@
     }
   }
 
+  function clearToolboxBand() {
+    toolboxBand = null;
+    if (bandEl) bandEl.style.display = 'none';
+    clearToolboxDropFeedback();
+  }
+
   // ---- selection (click / Ctrl-click) ----
   function selectSingle(id) {
     selectedItem = null; // a control selection supersedes any on-canvas strip-item selection
@@ -1622,13 +2151,14 @@
     selectedItem = null; // a control selection supersedes any on-canvas strip-item selection
     var idx = selection.indexOf(id);
     if (idx >= 0) { if (selection.length > 1) { selection.splice(idx, 1); if (current === id) current = selection[selection.length - 1]; } }
-    else { selection.push(id); current = id; }
+    else { selection.push(id); if (!current || selection.length === 1) current = id; }
     canMove = false; canResize = false;
     renderSelection(); postPick(current);
   }
 
   canvas.addEventListener('click', function (e) {
     if (suppressClick) { suppressClick = false; return; }
+    if (ignorePendingRenderInput(e)) return;
     if (!controls.length) return;
     var px = e.offsetX / zoom, py = e.offsetY / zoom;
     if (tabOrderMode) {
@@ -1668,6 +2198,7 @@
   // Double-click keeps tab-header/item rename priority; an ordinary component invokes its real DefaultEvent through
   // the host's existing signature-aware handler pipeline.
   canvas.addEventListener('dblclick', function (e) {
+    if (ignorePendingRenderInput(e)) return;
     if (!controls.length) return;
     var px = e.offsetX / zoom, py = e.offsetY / zoom;
     // double-click a top-level ToolStrip/MenuStrip/StatusStrip item → rename it inline (editor prefilled with its
@@ -1684,34 +2215,67 @@
     vscode.postMessage({ type: 'createDefaultHandler', id: id });
   });
 
-  // cross-webview drop: a control dragged from the toolbox webview (custom MIME) lands here → add at cursor
+  // cross-webview drop: a control or an engine-discovered data schema dragged from the shared panel lands here.
   var TOOLBOX_MIME = 'application/vnd.winforms-toolbox-item';
+  var DATA_SOURCE_MIME = 'application/vnd.winforms-data-source';
   function dragHasToolboxItem(e) {
     return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], TOOLBOX_MIME) >= 0;
   }
+  function dragHasDataSource(e) {
+    return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], DATA_SOURCE_MIME) >= 0;
+  }
   canvas.addEventListener('dragover', function (e) {
-    if (!dragHasToolboxItem(e)) return;
+    if (!dragHasToolboxItem(e) && !dragHasDataSource(e)) return;
     e.preventDefault(); // allow the drop
     e.dataTransfer.dropEffect = 'copy';
+    var x = e.offsetX / zoom, y = e.offsetY / zoom;
+    showToolboxDropFeedback(controls.length ? hitTest(x, y) : 'this', x, y);
+  });
+  canvas.addEventListener('dragleave', function (e) {
+    if (!e.relatedTarget || e.relatedTarget !== canvas) clearToolboxDropFeedback();
   });
   canvas.addEventListener('drop', function (e) {
-    if (!dragHasToolboxItem(e)) return;
+    if (!dragHasToolboxItem(e) && !dragHasDataSource(e)) return;
+    clearToolboxDropFeedback();
+    if (ignorePendingRenderInput(e)) return;
     e.preventDefault();
-    var controlType = e.dataTransfer.getData(TOOLBOX_MIME);
-    if (!controlType) return;
     var x = e.offsetX / zoom, y = e.offsetY / zoom;
     var hitId = controls.length ? hitTest(x, y) : 'this';
-    vscode.postMessage({ type: 'dropControl', controlType: controlType, hitId: hitId || 'this', x: Math.round(x), y: Math.round(y) });
+    if (dragHasDataSource(e)) {
+      var raw = e.dataTransfer.getData(DATA_SOURCE_MIME), data = null;
+      try { data = JSON.parse(raw); } catch (_e) { return; }
+      if (!data || typeof data.schemaKey !== 'string' || !data.schemaKey || data.schemaKey.length > 1024
+          || (data.mode !== 'detail' && data.mode !== 'grid')) return;
+      vscode.postMessage({
+        type: 'dropDataSource', schemaKey: data.schemaKey, mode: data.mode,
+        includeNavigator: !!data.includeNavigator,
+        existingBindingSourceId: typeof data.existingBindingSourceId === 'string' ? data.existingBindingSourceId : null,
+        hitId: hitId || 'this', x: Math.round(x), y: Math.round(y)
+      });
+      return;
+    }
+    var controlType = e.dataTransfer.getData(TOOLBOX_MIME);
+    if (controlType) vscode.postMessage({ type: 'dropControl', controlType: controlType, hitId: hitId || 'this', x: Math.round(x), y: Math.round(y) });
   });
 
   canvas.addEventListener('mousedown', function (e) {
     if (e.button !== 0) return; // left-button only — right-click opens the context menu
+    if (ignorePendingRenderInput(e)) return;
     if (nudge) flushNudge(); // a new gesture ends the current nudge series (commit before selection can change)
     if (tabOrderMode) return; // no drag/select in tab-order mode
-    if (!controls.length || drag || band) return;
+    if (!controls.length || drag || band || toolboxBand || stripDrag) return;
     hideHover(); // a new gesture starts — drop the pre-select hint
     var sx = e.offsetX / zoom, sy = e.offsetY / zoom;
     var id = hitTest(sx, sy);
+    if (selectedToolboxControl && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
+      toolboxBand = { controlType: selectedToolboxControl, startX: e.clientX, startY: e.clientY, sx: sx, sy: sy, hitId: id || 'this', active: false };
+      e.preventDefault();
+      return;
+    }
+    if (!(e.ctrlKey || e.metaKey || e.shiftKey)) {
+      var dragItem = stripItemHit(sx, sy);
+      if (dragItem && startStripDrag(dragItem, e, null, null)) return;
+    }
     var mdc = id ? findControl(id) : null;
     // a tab host never starts a move-drag: its header must stay clickable so tab-switching (tabClick) fires
     if (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove && !selectionHasLocked() && !(mdc && mdc.isTabHost)) {
@@ -1720,18 +2284,21 @@
       for (var i = 0; i < selection.length; i++) { var c = findControl(selection[i]); if (c) items.push({ id: c.id, x: c.x, y: c.y, w: c.width, h: c.height }); }
       var pc = findControl(current);
       drag = { mode: 'move', group: selection.length > 1, ids: selection.slice(), items: items, primaryId: current,
-               orig: { x: pc.x, y: pc.y, w: pc.width, h: pc.height }, startX: e.clientX, startY: e.clientY, delta: { dx: 0, dy: 0 } };
+               orig: { x: pc.x, y: pc.y, w: pc.width, h: pc.height }, startX: e.clientX, startY: e.clientY,
+               delta: { dx: 0, dy: 0 }, duplicate: !!(e.ctrlKey || e.metaKey) };
       e.preventDefault();
-    } else if (id === 'this' || id === null) {
-      // rubber-band on the form background (the form itself isn't movable)
-      band = { startX: e.clientX, startY: e.clientY, sx: sx, sy: sy, active: false };
+    } else if (id === 'this' || id === null || (isContainerControl(id) && selection.indexOf(id) < 0)) {
+      // Rubber-band selection is scoped to the active container. Starting on a panel/group background selects only
+      // fully enclosed direct children of that container; starting on the form background selects form-level controls.
+      band = { startX: e.clientX, startY: e.clientY, sx: sx, sy: sy, active: false, parentId: id || 'this' };
       e.preventDefault();
     }
     // mousedown on an unselected control: let the click handler select it (select-then-drag, like before)
   });
 
   canvas.addEventListener('mousemove', function (e) {
-    if (drag || band) return;
+    if (canvasHasPendingRender()) { canvas.style.cursor = 'default'; hideHover(); return; }
+    if (drag || band || toolboxBand || stripDrag) return;
     var id = hitTest(e.offsetX / zoom, e.offsetY / zoom);
     canvas.style.cursor = (id && id !== 'this' && selection.indexOf(id) >= 0 && canMove && !selectionHasLocked()) ? 'move' : 'default';
     showHover(id);
@@ -1744,12 +2311,38 @@
   }
 
   document.addEventListener('mousemove', function (e) {
+    if (stripDrag) {
+      if (!stripDrag.active && (Math.abs(e.clientX - stripDrag.startX) >= 3 || Math.abs(e.clientY - stripDrag.startY) >= 3)) stripDrag.active = true;
+      if (stripDrag.active) {
+        stripDrag.target = stripMoveTarget(e.clientX, e.clientY, e.target);
+        showStripDropFeedback(stripDrag.target);
+        setStatus(stripDrag.target ? T('designer.status.committing') : '');
+      }
+      return;
+    }
+    if (toolboxBand) {
+      var tr = bandRect();
+      var tx = (e.clientX - tr.left) / zoom, ty = (e.clientY - tr.top) / zoom;
+      if (!toolboxBand.active && (Math.abs(e.clientX - toolboxBand.startX) >= 3 || Math.abs(e.clientY - toolboxBand.startY) >= 3)) toolboxBand.active = true;
+      if (toolboxBand.active) {
+        if (!bandEl) { bandEl = document.createElement('div'); bandEl.className = 'rubberband toolboxplace'; surfaceWrap.appendChild(bandEl); }
+        else bandEl.className = 'rubberband toolboxplace';
+        var x1t = Math.min(toolboxBand.sx, tx), y1t = Math.min(toolboxBand.sy, ty), x2t = Math.max(toolboxBand.sx, tx), y2t = Math.max(toolboxBand.sy, ty);
+        toolboxBand.rect = { x1: x1t, y1: y1t, x2: x2t, y2: y2t };
+        bandEl.style.display = 'block';
+        bandEl.style.left = (x1t * zoom) + 'px'; bandEl.style.top = (y1t * zoom) + 'px';
+        bandEl.style.width = ((x2t - x1t) * zoom) + 'px'; bandEl.style.height = ((y2t - y1t) * zoom) + 'px';
+        setStatus(geometryStatus({ x: x1t, y: y1t, w: x2t - x1t, h: y2t - y1t }));
+      }
+      return;
+    }
     if (drag) {
       var dx = (e.clientX - drag.startX) / zoom, dy = (e.clientY - drag.startY) / zoom;
       if (drag.mode === 'move') {
         var nx = drag.orig.x + dx, ny = drag.orig.y + dy;
-        var snapOverride = placementSnapOverrideActive(e);
-        var snap = snapOverride ? { x: nx, y: ny, guides: [] } : computeSnap(nx, ny, drag.orig.w, drag.orig.h, drag.primaryId);
+        var ctrlDrag = !!(e.ctrlKey || e.metaKey); drag.duplicate = drag.duplicate || ctrlDrag;
+        var snapOverride = placementSnapOverrideActive(e, ctrlDrag);
+        var snap = snapOverride ? { x: nx, y: ny, guides: [] } : computePlacementMove(nx, ny, drag.orig.w, drag.orig.h, drag.primaryId);
         nx = snap.x; ny = snap.y;
         var sdx = nx - drag.orig.x, sdy = ny - drag.orig.y;
         drag.delta = { dx: sdx, dy: sdy };
@@ -1765,7 +2358,8 @@
           b.style.left = ((it.x + sdx) * zoom) + 'px'; b.style.top = ((it.y + sdy) * zoom) + 'px';
           b.style.width = Math.max(0, it.w * zoom - 2) + 'px'; b.style.height = Math.max(0, it.h * zoom - 2) + 'px';
         }
-        setStatus(snapOverride ? rawPlacementStatus(drag.cur)
+        setStatus(ctrlDrag ? T('designer.status.duplicateDrag', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) })
+                             : snapOverride ? rawPlacementStatus(drag.cur)
                              : drag.group ? T('designer.status.moveGroup', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) }) + ' · ' + geometryStatus(drag.cur)
                              : geometryStatus(drag.cur));
       } else {
@@ -1775,8 +2369,8 @@
         if (dir.indexOf('s') >= 0) rh = Math.max(4, o.h + dy);
         if (dir.indexOf('w') >= 0) { rw = Math.max(4, o.w - dx); rx = o.x + (o.w - rw); }
         if (dir.indexOf('n') >= 0) { rh = Math.max(4, o.h - dy); ry = o.y + (o.h - rh); }
-        var resizeSnapOverride = placementSnapOverrideActive(e);
-        var rsnap = resizeSnapOverride ? { x: rx, y: ry, w: rw, h: rh, guides: [] } : computeResizeSnap({ x: rx, y: ry, w: rw, h: rh }, dir, current);
+        var resizeSnapOverride = placementSnapOverrideActive(e, false);
+        var rsnap = resizeSnapOverride ? { x: rx, y: ry, w: rw, h: rh, guides: [] } : computePlacementResize({ x: rx, y: ry, w: rw, h: rh }, dir, current);
         rx = rsnap.x; ry = rsnap.y; rw = rsnap.w; rh = rsnap.h;
         if (resizeSnapOverride) clearGuides(); else drawGuides(rsnap.guides);
         drag.cur = { x: rx, y: ry, w: rw, h: rh };
@@ -1793,6 +2387,7 @@
       if (!band.active && (Math.abs(e.clientX - band.startX) >= 3 || Math.abs(e.clientY - band.startY) >= 3)) band.active = true;
       if (band.active) {
         if (!bandEl) { bandEl = document.createElement('div'); bandEl.className = 'rubberband'; surfaceWrap.appendChild(bandEl); }
+        else bandEl.className = 'rubberband';
         bandEl.style.display = 'block';
         var x1 = Math.min(band.sx, cx), y1 = Math.min(band.sy, cy), x2 = Math.max(band.sx, cx), y2 = Math.max(band.sy, cy);
         band.rect = { x1: x1, y1: y1, x2: x2, y2: y2 };
@@ -1803,35 +2398,79 @@
   });
 
   document.addEventListener('mouseup', function (e) {
+    if (stripDrag) {
+      var sd = stripDrag; stripDrag = null; clearStripDropFeedback();
+      if (sd.active && sd.target && Number.isFinite(sd.target.targetIndex)) {
+        suppressClick = true;
+        vscode.postMessage({
+          type: 'stripMove',
+          hostId: sd.ownerId,
+          itemId: sd.itemId,
+          targetParentItemId: sd.target.targetParentItemId || null,
+          targetIndex: Math.max(0, Math.round(sd.target.targetIndex))
+        });
+        setStatus(T('designer.status.committing'));
+      }
+      return;
+    }
+    if (toolboxBand) {
+      var tb = toolboxBand, rectTb = tb.rect; clearToolboxBand();
+      suppressClick = true;
+      if (tb.active && rectTb && rectTb.x2 > rectTb.x1 && rectTb.y2 > rectTb.y1) {
+        vscode.postMessage({
+          type: 'dropControl',
+          controlType: tb.controlType,
+          hitId: tb.hitId || 'this',
+          x: Math.round(rectTb.x1),
+          y: Math.round(rectTb.y1),
+          width: Math.round(rectTb.x2 - rectTb.x1),
+          height: Math.round(rectTb.y2 - rectTb.y1)
+        });
+      }
+      return;
+    }
     if (drag) {
       var d = drag; drag = null; clearGuides();
       var cdx = e.clientX - d.startX, cdy = e.clientY - d.startY;
       if (Math.abs(cdx) < 2 && Math.abs(cdy) < 2) { renderSelection(); return; }
       suppressClick = true;
       if (d.mode === 'move') {
-        if (d.group) {
-          vscode.postMessage({ type: 'manipulateGroup', ids: d.ids, dx: d.delta.dx, dy: d.delta.dy });
+        if (d.duplicate || e.ctrlKey || e.metaKey) {
+          var ddx = d.delta ? d.delta.dx : cdx / zoom, ddy = d.delta ? d.delta.dy : cdy / zoom;
+          vscode.postMessage({ type: 'duplicateDrag', ids: d.ids, dx: Math.round(ddx), dy: Math.round(ddy) });
+        } else if (d.group) {
+          postGenerationBoundCanvasIntent({ type: 'manipulateGroup', ids: d.ids, dx: d.delta.dx, dy: d.delta.dy });
         } else {
           var m = d.cur || { x: d.orig.x + cdx / zoom, y: d.orig.y + cdy / zoom, w: d.orig.w, h: d.orig.h };
-          vscode.postMessage({ type: 'manipulate', id: current, mode: 'move', x: m.x, y: m.y, width: m.w, height: m.h });
+          // Layout-owned children do not persist free Location. Preserve the actual release point as a separate
+          // window-space intent so the host can resolve a TableLayoutPanel cell or FlowLayoutPanel insertion slot
+          // against the exact live layout metadata. Ordinary controls keep using the candidate bounds as before.
+          var canvasRect = canvas.getBoundingClientRect();
+          postGenerationBoundCanvasIntent({
+            type: 'manipulate', id: current, mode: 'move', x: m.x, y: m.y, width: m.w, height: m.h,
+            dropX: (e.clientX - canvasRect.left) / zoom,
+            dropY: (e.clientY - canvasRect.top) / zoom
+          });
         }
       } else {
         var r = d.cur || { x: d.orig.x, y: d.orig.y, w: Math.max(4, d.orig.w + cdx / zoom), h: Math.max(4, d.orig.h + cdy / zoom) };
-        vscode.postMessage({ type: 'manipulate', id: current, mode: 'resize', x: r.x, y: r.y, width: r.w, height: r.h });
+        postGenerationBoundCanvasIntent({ type: 'manipulate', id: current, mode: 'resize', x: r.x, y: r.y, width: r.w, height: r.h });
       }
       setStatus(T('designer.status.committing'));
       return;
     }
     if (band) {
-      var bandWasActive = band.active, rect = band.rect; band = null;
+      var bandWasActive = band.active, rect = band.rect, bandParentId = band.parentId || 'this'; band = null;
       if (bandEl) bandEl.style.display = 'none';
       if (bandWasActive && rect) {
         suppressClick = true;
-        // select every non-root control intersecting the band rectangle
+        // Visual Studio selects every direct child that intersects the marquee, not only fully enclosed children.
+        // Keep the active-container boundary strict: a Panel-scope marquee must not leak to overlapping Form siblings.
         var hits = [];
         for (var i = 0; i < controls.length; i++) {
           var c = controls[i]; if (c.isRoot || c.id === 'this') continue;
-          if (!(c.x + c.width < rect.x1 || c.x > rect.x2 || c.y + c.height < rect.y1 || c.y > rect.y2)) hits.push(c.id);
+          if (c.parentId !== bandParentId) continue;
+          if (c.x < rect.x2 && c.x + c.width > rect.x1 && c.y < rect.y2 && c.y + c.height > rect.y1) hits.push(c.id);
         }
         selectedItem = null; // a marquee selects controls → drop any on-canvas strip-item selection
         if (hits.length) { selection = hits; current = hits[hits.length - 1]; canMove = false; canResize = false; renderSelection(); postPick(current); }
@@ -1844,7 +2483,7 @@
   // View Code / Save toolbar buttons were removed: F7 opens the code-behind, Ctrl+S saves (native custom editor).
   function doDelete() {
     if (nudge) flushNudge(); // commit a pending keyboard-nudge before it races this action's document change
-    if (drag) return;
+    if (drag || stripDrag) return;
     if (submenuSel) { deleteSubmenuSel(); return; } // a selected nested flyout item is the delete target
     if (selectedItem) { deleteStripItem(); return; } // an on-canvas strip item is the delete target
     var ids = selectableIds();
@@ -1879,20 +2518,28 @@
       var af2 = document.activeElement;
       if (af2 && /^(INPUT|SELECT|TEXTAREA)$/.test(af2.tagName)) return;
       if (submenuSel) { // a selected nested flyout item renames via the same inline editor (separator = inert)
-        if (!(drag || band || tabOrderMode || isSeparatorType(submenuSel.itemType))) { e.preventDefault(); renameSubmenuSel(); }
+        if (!(drag || band || stripDrag || tabOrderMode || isSeparatorType(submenuSel.itemType))) { e.preventDefault(); renameSubmenuSel(); }
         return;
       }
       if (selectedItem) {
-        if (drag || band || tabOrderMode || isSeparatorType(selectedItem.itemType)) return;
+        if (drag || band || stripDrag || tabOrderMode || isSeparatorType(selectedItem.itemType)) return;
         e.preventDefault(); openItemRenameEditor(selectedItem);
         return;
       }
-      if (drag || band || tabOrderMode || !current || current === 'this') return;
+      if (drag || band || stripDrag || tabOrderMode || !current || current === 'this') return;
       var renameTarget = findControl(current) || findTray(current);
       if (!renameTarget || renameTarget.readOnly || renameTarget.editable === false
           || renameTarget.inherited || renameTarget.isInherited
           || renameTarget.ownership === 'inherited' || renameTarget.ownership === 'unresolved') return;
       e.preventDefault(); vscode.postMessage({ type: 'renameComponent', id: current });
+      return;
+    }
+    if (e.key === 'Escape' && selectedToolboxControl) {
+      selectedToolboxControl = null;
+      clearToolboxBand();
+      e.preventDefault();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      vscode.postMessage({ type: 'cancelToolboxSelection' });
       return;
     }
     if (e.key !== 'Delete' && e.key !== 'Del') return;
@@ -1906,10 +2553,23 @@
   // key series as ONE edit through the existing manipulate/manipulateGroup paths → one undo, one re-render.
   // VS selection traversal: Tab/Shift+Tab cycle siblings, Esc selects the parent container, and Ctrl+A selects
   // every sibling in the current design scope. These are selection-only gestures; source is untouched.
+  function controlTabIndex(c) {
+    var n = Number(c && c.tabIndex);
+    return isFinite(n) ? n : 0;
+  }
+  function controlLayoutIndex(id) {
+    for (var i = 0; i < controls.length; i++) { if (controls[i].id === id) return i; }
+    return controls.length;
+  }
+  function compareTabTraversal(a, b) {
+    return (controlTabIndex(a) - controlTabIndex(b))
+      || (controlLayoutIndex(a.id) - controlLayoutIndex(b.id))
+      || String(a.id).localeCompare(String(b.id));
+  }
   document.addEventListener('keydown', function (e) {
     var ae = document.activeElement;
     if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
-    if (drag || band || tabOrderMode || slotEditEl) return;
+    if (drag || band || stripDrag || tabOrderMode || slotEditEl) return;
 
     var c = current ? findControl(current) : null;
     if (!c) return;
@@ -1918,8 +2578,9 @@
       var scopeParent = c.isRoot || c.id === 'this' ? c.id : c.parentId;
       var scoped = controls.filter(function (candidate) {
         return !candidate.isRoot && candidate.id !== 'this' && candidate.parentId === scopeParent;
-      });
+      }).sort(compareTabTraversal);
       if (!scoped.length) return;
+      if (ignorePendingRenderInput(e)) return;
       e.preventDefault(); flushNudge(); selectedItem = null;
       selection = scoped.map(function (candidate) { return candidate.id; });
       if (selection.indexOf(current) < 0) current = selection[selection.length - 1];
@@ -1931,11 +2592,12 @@
       var parentId = c.isRoot || c.id === 'this' ? c.id : c.parentId;
       var siblings = controls.filter(function (candidate) {
         return !candidate.isRoot && candidate.id !== 'this' && candidate.parentId === parentId;
-      });
+      }).sort(compareTabTraversal);
       if (!siblings.length) return;
       var index = siblings.findIndex(function (candidate) { return candidate.id === current; });
       var nextIndex = index < 0 ? (e.shiftKey ? siblings.length - 1 : 0)
         : (index + (e.shiftKey ? -1 : 1) + siblings.length) % siblings.length;
+      if (ignorePendingRenderInput(e)) return;
       e.preventDefault(); flushNudge(); selectSingle(siblings[nextIndex].id);
       return;
     }
@@ -1944,6 +2606,7 @@
       if ((ctxEl && ctxEl.classList.contains('open')) || submenuLevels.length) return;
       var parent = c.parentId ? findControl(c.parentId) : null;
       if (!parent) return;
+      if (ignorePendingRenderInput(e)) return;
       e.preventDefault(); flushNudge(); selectSingle(parent.id);
     }
   });
@@ -1953,26 +2616,32 @@
     var n = nudge; nudge = null;
     if (n.timer) { clearTimeout(n.timer); n.timer = null; }
     if (n.mode === 'move') {
-      if (n.ids.length > 1) vscode.postMessage({ type: 'manipulateGroup', ids: n.ids, dx: n.dx, dy: n.dy });
-      else { var c = findControl(n.ids[0]); if (c) vscode.postMessage({ type: 'manipulate', id: n.ids[0], mode: 'move', x: c.x, y: c.y, width: c.width, height: c.height }); }
+      if (n.ids.length > 1) postGenerationBoundCanvasIntent({ type: 'manipulateGroup', ids: n.ids, dx: n.dx, dy: n.dy });
+      else { var c = findControl(n.ids[0]); if (c) postGenerationBoundCanvasIntent({ type: 'manipulate', id: n.ids[0], mode: 'move', x: c.x, y: c.y, width: c.width, height: c.height }); }
     } else { // resize — single selection only
-      var rc = findControl(n.ids[0]); if (rc) vscode.postMessage({ type: 'manipulate', id: n.ids[0], mode: 'resize', x: rc.x, y: rc.y, width: rc.width, height: rc.height });
+      var rc = findControl(n.ids[0]); if (rc) postGenerationBoundCanvasIntent({ type: 'manipulate', id: n.ids[0], mode: 'resize', x: rc.x, y: rc.y, width: rc.width, height: rc.height });
     }
     setStatus(T('designer.status.committing'));
+  }
+  function cancelNudge() {
+    if (!nudge) return;
+    if (nudge.timer) clearTimeout(nudge.timer);
+    nudge = null;
   }
   document.addEventListener('keydown', function (e) {
     if (e.key.indexOf('Arrow') !== 0) return; // ArrowLeft/Right/Up/Down
     var ae = document.activeElement;
     if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return; // don't hijack arrows while typing
-    if (drag || band || tabOrderMode) return;
+    if (drag || band || stripDrag || tabOrderMode) return;
     var ids = selectableIds();
     if (!ids.length) return;
     for (var li = 0; li < ids.length; li++) { if (isLocked(ids[li])) return; } // a locked control can't be nudged
     var resize = e.shiftKey;
     if (resize) { if (ids.length > 1 || !canResize) return; }  // resize: single, resizable selection only
     else if (!canMove) return;                                 // move: respect the host's movability gate
+    if (ignorePendingRenderInput(e)) return;
     e.preventDefault();
-    var step = (e.ctrlKey || e.metaKey) ? NUDGE_GRID : 1;
+    var step = (e.ctrlKey || e.metaKey) ? placementGridSize : 1;
     var dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
     var dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
     if (!dx && !dy) return;
@@ -2058,7 +2727,7 @@
     menu.push({ label: T('designer.menu.bringToFront'), disabled: !canZ, act: function () { zorder(true); } });
     menu.push({ label: T('designer.menu.sendToBack'), disabled: !canZ, act: function () { zorder(false); } });
     menu.push({ sep: 1 });
-    menu.push({ label: T('designer.menu.alignToGrid'), disabled: true });   // no snap-to-grid → disabled, as in VS
+    menu.push({ label: T('designer.menu.alignToGrid'), disabled: !canDelete || selectionHasLocked(), act: alignSelectionToGrid });
     // Lock Controls (VS): toggles ALL controls on the form. Per-form view state (outside source/.resx), checked when
     // every control is already locked. Disabled on an empty form (nothing to lock).
     var lockable = [];
@@ -2138,7 +2807,8 @@
   // right-click a control / the form background → select it (unless already in a multi-selection), then menu
   surfaceWrap.addEventListener('contextmenu', function (e) {
     e.preventDefault();
-    if (!controls.length || drag || band) return;
+    if (ignorePendingRenderInput(e)) return;
+    if (!controls.length || drag || band || stripDrag) return;
     // a flyout-ROW right-click is handled by onSubmenuCtx (which stopPropagation's) — so any contextmenu that reaches
     // here is OUTSIDE the flyout. Close it + clear submenuSel now, else a KEYBOARD menu (Menu key / Shift+F10, no
     // preceding mousedown to trigger onSubmenuDocDown) would build the nested item menu for a control the user targeted.
@@ -2151,6 +2821,17 @@
     var id = hitTest(px, py) || 'this';
     if (selection.indexOf(id) < 0) selectSingle(id);
     renderCtx(e.clientX, e.clientY);
+  });
+  document.addEventListener('keydown', function (e) {
+    var menuKey = e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
+    if (!menuKey) return;
+    var ae = document.activeElement;
+    if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
+    if (ignorePendingRenderInput(e) || !controls.length || drag || band || stripDrag) return;
+    e.preventDefault();
+    var c = current ? findControl(current) : null;
+    if (c) renderCtx(Math.round((c.x + Math.max(8, c.width / 2)) * zoom), Math.round((c.y + Math.max(8, c.height / 2)) * zoom));
+    else renderCtx(16, 16);
   });
   // right-click a tray component (non-visual) → select it, then menu
   if (trayEl) trayEl.addEventListener('contextmenu', function (e) {
@@ -2188,16 +2869,27 @@
       applyZoomStyles();
     } else if (m.type === 'placementSettings') {
       placementSnapOverrideModifier = sanitizePlacementSnapOverrideModifier(m.snapOverrideModifier);
+      placementLayoutMode = sanitizeLayoutMode(m.layoutMode);
+      placementGridSize = sanitizeGridSize(m.gridSize);
+      placementShowGrid = m.showGrid === true;
+      renderGrid();
+    } else if (m.type === 'toolboxSelection') {
+      selectedToolboxControl = m.controlType || null;
+      clearToolboxBand();
     } else if (m.type === 'render') {
+      // A host render can be the result of native Undo while a keyboard nudge is still inside its debounce window.
+      // The incoming document state wins: never let the stale timer post its optimistic coordinates afterwards.
+      cancelNudge();
       hasRendered = true; hideOverlay();
       drawPng(m.png, 0, 0, m.width, m.height, true, m.gen);
     } else if (m.type === 'layout') {
       // strip/item geometry may have moved → dismiss a drifting inline add-editor and the synthetic submenu flyout
       // (its anchor item may have moved/vanished). Done HERE (and in setZoom), NOT in renderSelection: a 'manip'/'select'
       // push re-renders selection WITHOUT moving the slot/flyout, and must not eat typed text or snap the menu shut.
-      closeSlotEditor(); closeSubmenu();
-      controls = m.controls || [];
+      closeSlotEditor(); closeSubmenu(); clearStripDropFeedback(); stripDrag = null;
+      controls = sortControlsForHitTest(m.controls || []);
       stripItems = m.toolStripItems || [];
+      renderGrid();
       // drop any selected ids that no longer exist (e.g. after a remove), keeping tray ids
       selection = selection.filter(function (id) { return findControl(id) || findTray(id); });
       for (var lid in lockedIds) { if (Object.prototype.hasOwnProperty.call(lockedIds, lid) && !findControl(lid)) delete lockedIds[lid]; } // prune locks for removed controls
@@ -2237,7 +2929,8 @@
         // also survives a rapid chip-to-chip switch, where a stale `select` echo for the PREVIOUS strip would otherwise
         // arrive after the NEW flyout opened and wrongly close it. A real control select → findTray null → closes it.
         if (!(submenuLevels.length && submenuLevels[0].isStripRoot && findTray(m.id))) closeSubmenu();
-        if (selection.indexOf(m.id) < 0) selection = [m.id];
+        if (Array.isArray(m.ids) && m.ids.indexOf(m.id) >= 0) selection = m.ids.slice();
+        else if (selection.indexOf(m.id) < 0) selection = [m.id];
         if (m.id !== current) { canMove = false; canResize = false; }
         current = m.id;
         renderSelection(); updateTraySelClasses();
@@ -2248,7 +2941,15 @@
       // the selected control's property descriptors + the vendor's own declared Tasks menu (net48 only; [] elsewhere,
       // which also clears a stale vendor menu when selection moves to a framework control) — feeds the smart-tag flyout
       tasksState = m.component ? { id: m.id, comp: m.component, vendorTags: m.vendorTags || [] } : null;
+      renderDesignerAdorners();
       renderSmartTag();
+    } else if (m.type === 'designerAdornerHit') {
+      for (var ai = 0; ai < designerAdornerEls.length; ai++) {
+        var ae = designerAdornerEls[ai], state = ae._designerAdorner;
+        if (!state || state.controlId !== m.id || state.adorner.id !== m.adornerId
+          || ae._designerAdornerHitToken !== m.token) continue;
+        ae.classList.remove('pending'); ae.classList.toggle('hit', m.ok === true && m.hit === true);
+      }
     } else if (m.type === 'loading') {
       // hide the align tools while (re)loading — the retained-context DOM can still show them from a prior
       // multi-selection; they'll reappear via renderSelection only if a 2+ selection survives the render

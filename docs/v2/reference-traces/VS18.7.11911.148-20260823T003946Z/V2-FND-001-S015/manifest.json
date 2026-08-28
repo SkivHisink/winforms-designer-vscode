@@ -1,0 +1,143 @@
+{
+    "schemaVersion":  1,
+    "traceId":  "VS18.7.11911.148-20260823T003946Z-S015",
+    "scenarioId":  "V2-FND-001-S015",
+    "referenceTraceSource":  "VisualStudioWinFormsDesigner",
+    "authority":  {
+                      "product":  "Visual Studio Enterprise 2026",
+                      "dteVersion":  "18.0",
+                      "installationVersion":  "18.7.11911.148",
+                      "edition":  "Enterprise",
+                      "executable":  "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+                      "dteProgId":  "VisualStudio.DTE.18.0",
+                      "captureHost":  "Microsoft Windows NT 10.0.26100.0; AMD64"
+                  },
+    "status":  "PASS",
+    "setup":  "A net10.0-windows Form contains bottomLabel and topLabel at identical bounds; topLabel is the first Controls.Add sibling, WinForms z-order index 0, with distinct Text.",
+    "actionLog":  [
+                      "Build solution in actual Visual Studio",
+                      "Open S015OverlapForm.cs with the WinForms Designer",
+                      "Locate both real designer Label automation elements and compute their exact overlap",
+                      "Post one click through the real designer InputShield/capture HWND at the center of the shared pixel rectangle",
+                      "Open View.PropertiesWindow and verify the visible Text row equals Top z-order",
+                      "Verify source, Designer, and project bytes remain exact"
+                  ],
+    "expected":  "The shared pixel selects topLabel, the first Controls.Add sibling and frontmost WinForms z-order element, while source, Designer, and project bytes remain byte-identical.",
+    "before":  {
+                   "sourceSha256":  "28e5e38f6e07d4a1716c2f4ce63b34d1d638204e438519c0ce7ea4327bedbf85",
+                   "designerSha256":  "13bf49f557caf3c0ea2a4361caebc32de3e07b30639746038d74450ed2a171aa",
+                   "projectSha256":  "a6c6eeb100f8038132dd69dcc556b43f5fb54463794986e148a9317fe8bf748a"
+               },
+    "after":  {
+                  "sourceSha256":  "28e5e38f6e07d4a1716c2f4ce63b34d1d638204e438519c0ce7ea4327bedbf85",
+                  "designerSha256":  "13bf49f557caf3c0ea2a4361caebc32de3e07b30639746038d74450ed2a171aa",
+                  "projectSha256":  "a6c6eeb100f8038132dd69dcc556b43f5fb54463794986e148a9317fe8bf748a"
+              },
+    "sourceByteIdentical":  true,
+    "designerByteIdentical":  true,
+    "projectByteIdentical":  true,
+    "runtimeArchitecture":  "actual Visual Studio x64 reference; physical ARM64 remains an independent external gate",
+    "visualStudioWindow":  {
+                         "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\790cbc06e4b14a9c9be7b4f1bf77950b\\Modern\\S015OverlapForm.cs",
+                         "command":  "Click overlapping designer pixel + View.PropertiesWindow",
+                         "topAutomationId":  "topLabel",
+                         "bottomAutomationId":  "bottomLabel",
+                         "expectedTopText":  "Top z-order",
+                         "clickedWindow":  104990382,
+                         "windowChain":  "L0 hwnd=104990382 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield \u003c- L1 hwnd=52959546 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView \u003c- L2 hwnd=31462664 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface \u003c- L3 hwnd=39982420 class=GenericPane text=S015OverlapForm.cs [Design] \u003c- L4 hwnd=25435140 class=HwndWrapper[DefaultDomain;;3fa81caa-1da9-4cf3-a53d-add16437479b] text=VisualStudioReference - S015OverlapForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                         "topBounds":  {
+                                           "x":  782,
+                                           "y":  195,
+                                           "width":  158,
+                                           "height":  46
+                                       },
+                         "bottomBounds":  {
+                                              "x":  782,
+                                              "y":  195,
+                                              "width":  158,
+                                              "height":  46
+                                          },
+                         "overlap":  {
+                                         "left":  782,
+                                         "top":  195,
+                                         "right":  940,
+                                         "bottom":  241
+                                     },
+                         "click":  {
+                                       "x":  861,
+                                       "y":  218
+                                   },
+                         "selectedTextRows":  [
+                                                  {
+                                                      "name":  "Text",
+                                                      "automationId":  "61600059",
+                                                      "controlType":  "ControlType.TreeItem",
+                                                      "localizedControlType":  "tree item",
+                                                      "value":  "Top z-order",
+                                                      "helpText":  "The text associated with the control.",
+                                                      "itemStatus":  "",
+                                                      "accessKey":  "",
+                                                      "className":  "",
+                                                      "frameworkId":  "",
+                                                      "nativeWindowHandle":  0,
+                                                      "enabled":  true,
+                                                      "focusable":  true,
+                                                      "offscreen":  false,
+                                                      "bounds":  {
+                                                                     "x":  1593,
+                                                                     "y":  497,
+                                                                     "width":  266,
+                                                                     "height":  18
+                                                                 },
+                                                      "ancestors":  [
+                                                                        {
+                                                                            "name":  "Appearance",
+                                                                            "controlType":  "ControlType.TreeItem"
+                                                                        },
+                                                                        {
+                                                                            "name":  "Properties Window",
+                                                                            "controlType":  "ControlType.Table"
+                                                                        },
+                                                                        {
+                                                                            "name":  "PropertyGrid",
+                                                                            "controlType":  "ControlType.Pane"
+                                                                        },
+                                                                        {
+                                                                            "name":  "Property Browser",
+                                                                            "controlType":  "ControlType.Pane"
+                                                                        },
+                                                                        {
+                                                                            "name":  "Properties",
+                                                                            "controlType":  "ControlType.Pane"
+                                                                        },
+                                                                        {
+                                                                            "name":  "",
+                                                                            "controlType":  "ControlType.Pane"
+                                                                        },
+                                                                        {
+                                                                            "name":  "Properties",
+                                                                            "controlType":  "ControlType.Pane"
+                                                                        },
+                                                                        {
+                                                                            "name":  "",
+                                                                            "controlType":  "ControlType.Pane"
+                                                                        },
+                                                                        {
+                                                                            "name":  "VisualStudioReference - S015OverlapForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                            "controlType":  "ControlType.Window"
+                                                                        }
+                                                                    ]
+                                                  }
+                                              ],
+                         "propertiesCommandAvailable":  true,
+                         "capture":  {
+                                         "hwnd":  25435140,
+                                         "x":  0,
+                                         "y":  0,
+                                         "width":  1920,
+                                         "height":  1080,
+                                         "dpi":  96,
+                                         "sha256":  "b63e7abb10791952eb565c6547dbfd3e6d06f12a383048297d3090859012eb49"
+                                     }
+                     }
+}

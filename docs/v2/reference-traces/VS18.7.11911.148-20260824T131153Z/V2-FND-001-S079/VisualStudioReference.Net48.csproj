@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>Library</OutputType>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>VisualStudioReference.Net48</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Update="S024ClipboardCollisionForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S024ClipboardCollisionForm.Designer.cs">
+      <DependentUpon>S024ClipboardCollisionForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S027AltDragForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S027AltDragForm.Designer.cs">
+      <DependentUpon>S027AltDragForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S079RtlLayoutForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S079RtlLayoutForm.Designer.cs">
+      <DependentUpon>S079RtlLayoutForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S011ConcreteCustomerForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S011ConcreteCustomerForm.Designer.cs">
+      <DependentUpon>S011ConcreteCustomerForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S014TextBoxForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S014TextBoxForm.Designer.cs">
+      <DependentUpon>S014TextBoxForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S019CtrlMultiSelectForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S019CtrlMultiSelectForm.Designer.cs">
+      <DependentUpon>S019CtrlMultiSelectForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S028GridVisibilityForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S028GridVisibilityForm.Designer.cs">
+      <DependentUpon>S028GridVisibilityForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S031CenterPanelForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S031CenterPanelForm.Designer.cs">
+      <DependentUpon>S031CenterPanelForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S039ResetPropertyForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S039ResetPropertyForm.Designer.cs">
+      <DependentUpon>S039ResetPropertyForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S051EventRevisionForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S051EventRevisionForm.Designer.cs">
+      <DependentUpon>S051EventRevisionForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="S063OutlineReparentForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="S063OutlineReparentForm.Designer.cs">
+      <DependentUpon>S063OutlineReparentForm.cs</DependentUpon>
+    </Compile>
+    <Compile Update="ReparentForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="ReparentForm.Designer.cs">
+      <DependentUpon>ReparentForm.cs</DependentUpon>
+    </Compile>
+  </ItemGroup>
+</Project>

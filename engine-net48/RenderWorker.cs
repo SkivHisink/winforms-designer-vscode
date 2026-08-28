@@ -8,8 +8,10 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
 
@@ -39,6 +41,8 @@ namespace WinFormsDesigner.Engine.Net48
             /// <summary>Per-instance visual-inheritance ownership. Every editable route consults this map; a missing
             /// entry is <see cref="InheritedOwnershipPolicy.Unresolved"/> and therefore fails closed.</summary>
             public Dictionary<object, string> Ownership = default!;
+            /// <summary>Server-authoritative inherited override metadata. Missing means no derived-source override route.</summary>
+            public Dictionary<object, InheritedOverrideInfo> InheritedOverrides = default!;
             /// <summary>1.0.0 fail-closed — identity of THIS compiled instance, stamped once at construction and
             /// reported to the host on every response (<see cref="RenderLayoutResult.LiveInstanceId"/>).
             ///
@@ -107,6 +111,18 @@ namespace WinFormsDesigner.Engine.Net48
             /// <summary>The design-time container owning this graph's sited components (interpreted path only).
             /// Cached alongside the form so eviction disposes both, in reverse order.</summary>
             public IDisposable? Container = null;
+        }
+
+        private sealed class InheritedOverrideInfo
+        {
+            public bool PropertyOverrideEditable;
+            public bool GeometryOverrideEditable;
+            public string GeometryReason = "";
+            public string BaseIdentityToken = "";
+            public string FieldTypeName = "";
+            public string EffectiveAccessibility = "";
+            public Type FieldType = default!;
+            public Type RuntimeType = default!;
         }
 
         /// <summary>The build identity the host compares across renders — see <see cref="LiveDesign.BuildId"/>.
@@ -202,7 +218,7 @@ namespace WinFormsDesigner.Engine.Net48
         /// the host which it got. NOT cached — it reflects the exact source buffer on every call (the whole point).</summary>
         public RenderLayoutResult RenderInterpretedWithLayout(string designerFilePath, string assemblyPath, IrDocument? doc,
             string rootTypeName, int reqWidth, int reqHeight, string[]? selectedTabs = null, int renderScale = 1,
-            string sourceKey = "")
+            string sourceKey = "", string currentSourceBase = "")
         {
             return _sta.Invoke(() =>
             {
@@ -260,12 +276,14 @@ namespace WinFormsDesigner.Engine.Net48
                     if (designedType != null)
                     {
                         baseType = designedType.BaseType;
-                        if (doc != null && baseType != null && !string.IsNullOrEmpty(doc.BaseTypeSyntaxName)
-                            && !SameBase(doc.BaseTypeSyntaxName, baseType))
+                        if (baseType != null && !SameBase(currentSourceBase, baseType))
                         {
                             return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
                                 RenderFallbackReason.BaseTypeChanged,
-                                "source base '" + doc.BaseTypeSyntaxName + "' != compiled base '" + baseType.FullName + "' (rebuild)");
+                                (string.IsNullOrWhiteSpace(currentSourceBase)
+                                    ? "current source base could not be resolved"
+                                    : "source base '" + currentSourceBase + "' != compiled base '" + RuntimeTypeIdentity.Of(baseType) + "'")
+                                + " (rebuild)");
                         }
                     }
 
@@ -279,7 +297,7 @@ namespace WinFormsDesigner.Engine.Net48
                     var rootCtl = (Control)plan.Root!;
                     ApplyTabViewState(plan.Execution!, selectedTabs); // transient selected-tab override
                     builtForm = HostOffscreen(rootCtl, reqWidth, reqHeight);
-                    for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    PumpRealizedGraph(rootCtl);
                     // …and again AFTER the pump: a form can re-stage itself from a posted message (BeginInvoke, Shown,
                     // a vendor layout continuation), which lands here rather than inside Show.
                     ReassertRootWindow(builtForm, reqWidth, reqHeight);
@@ -309,6 +327,7 @@ namespace WinFormsDesigner.Engine.Net48
                         }
                         if (!ownership.ContainsKey(kv.Value)) ownership[kv.Value] = value;
                     }
+                    var inheritedOverrides = BuildInheritedOverrideMap(rootCtl, designedType ?? rootCtl.GetType());
 
                     var live = new LiveDesign
                     {
@@ -319,6 +338,7 @@ namespace WinFormsDesigner.Engine.Net48
                         ByField = byField,
                         AmbiguousIds = ambiguousIds,
                         Ownership = ownership,
+                        InheritedOverrides = inheritedOverrides,
                         BuildId = ComputeBuildId(assemblyPath),
                         Mode = "interpreted",
                         DesignedTypeName = plan.DesignedTypeName,
@@ -611,12 +631,28 @@ namespace WinFormsDesigner.Engine.Net48
                 }
 
                 _renderScale = renderScale;
+                Control? textPatchTarget = null;
+                List<PatchGeometrySnapshot>? beforePatchGeometry = null;
+                if (edits.Length == 1 && !edits[0].Reset
+                    && string.Equals(edits[0].PropName, "Text", StringComparison.Ordinal)
+                    && ResolveLiveTarget(live, edits[0].ComponentId ?? "this") is Control candidate
+                    && !ReferenceEquals(candidate, live.Root))
+                {
+                    beforePatchGeometry = CapturePatchGeometry(live.Root);
+                    textPatchTarget = candidate;
+                }
                 live.Mutated = true; // set BEFORE touching anything: a throw mid-batch must not leave it reusable
                 var notes = new List<string>();
                 try
                 {
                     foreach (var e in edits)
-                        if (!TryApply(live, e.ComponentId ?? "this", e.PropName ?? "", e.RawValue ?? "", out string reason)) notes.Add(reason);
+                    {
+                        string reason;
+                        bool ok = e.Reset
+                            ? TryReset(live, e.ComponentId ?? "this", e.PropName ?? "", out reason)
+                            : TryApply(live, e.ComponentId ?? "this", e.PropName ?? "", e.RawValue ?? "", out reason);
+                        if (!ok) notes.Add(reason);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -634,8 +670,28 @@ namespace WinFormsDesigner.Engine.Net48
                 }
                 live.Root.PerformLayout();
                 Application.DoEvents();
-                var r = Snapshot(live);
+                var r = textPatchTarget != null && beforePatchGeometry != null
+                    ? SnapshotTextPatchOrFrame(live, textPatchTarget, beforePatchGeometry)
+                    : Snapshot(live);
                 r.Applied = true;
+                // A single ordinary Text setter is the narrow case where the provisional live graph can also answer
+                // the grid without semantic guessing: the same TypeDescriptor setter just succeeded, identity and
+                // ownership come from the cached interpreter plan, and Program applies source-explicit/event metadata
+                // from the exact AFTER buffer. Broader batches remain null and force the established fresh describe.
+                if (edits.Length == 1 && !edits[0].Reset
+                    && string.Equals(edits[0].PropName, "Text", StringComparison.Ordinal)
+                    && live.Plan != null)
+                {
+                    r.Component = DescribeInterpretedOn(
+                        live.Plan,
+                        live.Root,
+                        edits[0].ComponentId ?? "this",
+                        live.InheritedOverrides)
+                        // A graph may contain a field-backed control omitted from Execution.Instances by an inherited
+                        // identity edge. ResolveLiveTarget is the same authoritative map the setter just used, so the
+                        // compiled-live describer is an exact same-instance fallback rather than a fresh/stale graph.
+                        ?? DescribeOn(live, edits[0].ComponentId ?? "this");
+                }
                 live.PictureKey = SourceStamp(designerFilePath, cultureName, newSourceKey, selectedTabs, renderScale, reqWidth, reqHeight);
                 return r;
             });
@@ -665,7 +721,24 @@ namespace WinFormsDesigner.Engine.Net48
             r.RenderMode = "compiledFallback";
             r.FallbackReason = reason ?? "";
             if (!string.IsNullOrEmpty(detail)) r.Diagnostics = detail;
+            if (string.Equals(reason, RenderFallbackReason.BaseTypeChanged, StringComparison.Ordinal))
+                RemoveInheritedOverrideCapabilities(r, detail);
             return r;
+        }
+
+        private static void RemoveInheritedOverrideCapabilities(RenderLayoutResult result, string detail)
+        {
+            string refusal = string.IsNullOrWhiteSpace(detail)
+                ? "current source base does not match the compiled preview; rebuild required"
+                : detail;
+            foreach (var control in result.Controls ?? new List<LayoutControl>())
+            {
+                control.InheritedOverrideEditable = false;
+                control.InheritedGeometryOverrideEditable = false;
+                control.BaseIdentityToken = "";
+                if (control.Ownership == InheritedOwnershipPolicy.Inherited)
+                    control.ReadOnlyReason = refusal;
+            }
         }
 
         /// <summary>describe one component of the INTERPRETED live-source instance (not the
@@ -677,7 +750,8 @@ namespace WinFormsDesigner.Engine.Net48
         /// component — the host then leaves the panel UNAVAILABLE (it must NEVER substitute compiled values under an
         /// interpreted canvas). NOT cached, like the interpreted render.</summary>
         public ComponentDesc? DescribeInterpretedComponent(string designerFilePath, string assemblyPath, IrDocument? doc,
-            string rootTypeName, string componentId, int reqWidth, int reqHeight, string sourceKey = "")
+            string rootTypeName, string componentId, int reqWidth, int reqHeight, string sourceKey = "",
+            string currentSourceBase = "")
         {
             return _sta.Invoke(() =>
             {
@@ -699,7 +773,7 @@ namespace WinFormsDesigner.Engine.Net48
                     else if (cached.BufferKey == BufferStamp(designerFilePath, cultureName, sourceKey)
                         && cached.Plan != null && cached.BuildId == ComputeBuildId(assemblyPath))
                     {
-                        try { return DescribeInterpretedOn(cached.Plan, (Control)cached.Root, componentId ?? ""); }
+                        try { return DescribeInterpretedOn(cached.Plan, (Control)cached.Root, componentId ?? "", cached.InheritedOverrides); }
                         catch { /* fall through to a fresh graph — a describe must never take the picture down with it */ }
                     }
                 }
@@ -717,20 +791,20 @@ namespace WinFormsDesigner.Engine.Net48
                     // Stale-base handshake (parity with RenderInterpretedWithLayout): a source whose base changed since the
                     // last build must NOT be replayed onto the stale compiled base — describe returns null (panel
                     // unavailable), exactly as render falls back rather than describing the wrong graph.
-                    if (doc != null && baseType != null && !string.IsNullOrEmpty(doc.BaseTypeSyntaxName)
-                        && !SameBase(doc.BaseTypeSyntaxName, baseType))
+                    if (baseType != null && !SameBase(currentSourceBase, baseType))
                         return null;
                     plan = InterpretedRenderPlan.Plan(doc, host, baseType);
                     if (!plan.Interpreted || plan.Execution == null) return null; // not interpreted → panel stays unavailable
                     var rootCtl = (Control)plan.Root!;
                     builtForm = HostOffscreen(rootCtl, reqWidth, reqHeight);
-                    for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    PumpRealizedGraph(rootCtl);
                     // …and again AFTER the pump: a form can re-stage itself from a posted message (BeginInvoke, Shown,
                     // a vendor layout continuation), which lands here rather than inside Show.
                     ReassertRootWindow(builtForm, reqWidth, reqHeight);
                     rootCtl.PerformLayout();
                     Application.DoEvents();
-                    return DescribeInterpretedOn(plan, rootCtl, componentId ?? "");
+                    return DescribeInterpretedOn(plan, rootCtl, componentId ?? "",
+                        BuildInheritedOverrideMap(rootCtl, designedType ?? rootCtl.GetType()));
                 }
                 catch { return null; }
                 finally
@@ -746,14 +820,18 @@ namespace WinFormsDesigner.Engine.Net48
         /// ("" / "this") → the LOGICAL designed type's short name (NOT the base runtime type); a named component →
         /// Execution.Instances[id]. Reference-dropdown siblings are the current-source components
         /// (Origins == DeclaredInCurrentSource) — the ones the derived .Designer.cs can actually spell as this.&lt;field&gt;
-        /// — never reflection over the base-type runtime root (which would surface the wrong base fields). An
-        /// inherited/absent target returns null (the host keeps that selection read-only/unavailable).</summary>
-        private ComponentDesc? DescribeInterpretedOn(InterpretedRenderPlan plan, Control root, string componentId)
+        /// — never reflection over the base-type runtime root (which would surface the wrong base fields). An absent
+        /// target returns null; an inherited identity may be described only when the interpreter itself materialized it,
+        /// after which the compiled-base field map stamps the same narrow token-checked override capability as compiled
+        /// describe.</summary>
+        private ComponentDesc? DescribeInterpretedOn(InterpretedRenderPlan plan, Control root, string componentId,
+            Dictionary<object, InheritedOverrideInfo> inheritedOverrides)
         {
             // Identity-model resolution (target + current-source siblings + logical root/parent) lives in the shared,
-            // unit-tested InterpretedDescribeResolver; a null result means the id is inherited/unknown → the panel stays
-            // unavailable. The one net48-only step — turning the resolved target into a ComponentDesc through the real
-            // TypeDescriptor — stays here.
+            // unit-tested InterpretedDescribeResolver. Its normal result covers root/current-source identities. A null
+            // result is allowed through only when Execution.Instances independently resolves the id; ownership below
+            // then distinguishes inherited from unknown. Turning the target into a ComponentDesc through the real
+            // TypeDescriptor remains the net48-only step.
             var exec = plan.Execution!;
             componentId = componentId ?? "";
             bool isRoot = componentId == "this" || componentId.Length == 0;
@@ -778,7 +856,8 @@ namespace WinFormsDesigner.Engine.Net48
             string ownership = InterpretedOwnership(exec, root, componentId, target);
             var desc = CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent,
                 siblings ?? new List<KeyValuePair<string, IComponent>>(), root);
-            return StampDescription(desc, ownership, target);
+            inheritedOverrides.TryGetValue(target, out var inheritedOverride);
+            return StampDescription(desc, ownership, target, inheritedOverride);
         }
 
         private static List<KeyValuePair<string, IComponent>> CurrentSourceSiblings(IrExecutionResult exec, IComponent target)
@@ -841,7 +920,7 @@ namespace WinFormsDesigner.Engine.Net48
                     var rootCtl = (Control)plan.Root!;
                     ApplyTabViewState(plan.Execution, selectedTabs);
                     builtForm = HostOffscreen(rootCtl, 0, 0);
-                    for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(10); }
+                    PumpRealizedGraph(rootCtl);
                     ReassertRootWindow(builtForm, 0, 0); // a form can re-stage itself from a posted message — see above
                     rootCtl.PerformLayout();
                     Application.DoEvents();
@@ -974,6 +1053,26 @@ namespace WinFormsDesigner.Engine.Net48
             return form;
         }
 
+        /// <summary>
+        /// Drain handle/layout work posted by Show. Standard WinForms graphs become stable after the immediate message
+        /// queue is drained; sleeping 200 ms for them only delays the first interactive frame. Third-party or nested
+        /// custom controls retain the established 20 x 10 ms window because vendor skins and BeginInvoke continuations
+        /// commonly settle asynchronously. The user form root is deliberately excluded from that classification: every
+        /// designed Form is application-defined, while its ordinary Button/Label/etc. child graph needs no timer wait.
+        /// </summary>
+        private static void PumpRealizedGraph(Control root)
+        {
+            bool hasCustomDescendant = DescendantControls(root)
+                .Skip(1)
+                .Any(control => control.GetType().Assembly != typeof(Control).Assembly);
+            int rounds = hasCustomDescendant ? 20 : 2;
+            for (int i = 0; i < rounds; i++)
+            {
+                Application.DoEvents();
+                if (hasCustomDescendant) Thread.Sleep(10);
+            }
+        }
+
         /// <summary>Remember a preview window as OURS, so the stray-window diagnostic never reports it as something a
         /// form opened. Every realized design stays alive on the render desktop for as long as it is cached.</summary>
         private static void RegisterHostWindow(Form form)
@@ -1094,17 +1193,47 @@ namespace WinFormsDesigner.Engine.Net48
             catch { /* best-effort: a vendor form that refuses is still confined to the render desktop */ }
         }
 
-        /// <summary>Whether the source's declared base name refers to the same type as the compiled base. A QUALIFIED
-        /// source base (has a namespace) must match the FULL name — a short-name match across DIFFERENT namespaces
-        /// (OldVendor.BaseForm vs NewVendor.BaseForm) is a real base change, not a match, and must NOT be silently
-        /// rendered from the stale compiled base. A short-name match is only trusted for an UNQUALIFIED
-        /// source base (a `using`-imported name the front-end can't fully qualify). A false mismatch merely forces a
-        /// safe compiled fallback.</summary>
+        /// <summary>Whether the host-domain semantic resolver proved the current source base is the exact compiled
+        /// runtime type. Unqualified short-name fallback is intentionally forbidden: two namespaces can contain the
+        /// same name, and treating those as equal lends stale inherited capabilities to a changed source graph.</summary>
         private static bool SameBase(string sourceBaseSyntax, Type compiledBase)
         {
-            if (sourceBaseSyntax == compiledBase.FullName) return true;
-            if (sourceBaseSyntax.IndexOf('.') >= 0) return false; // qualified → require full-name equality
-            return sourceBaseSyntax == compiledBase.Name; // unqualified → short-name match is all we have
+            const string globalPrefix = "global::";
+            if (sourceBaseSyntax.StartsWith(globalPrefix, StringComparison.Ordinal))
+                sourceBaseSyntax = sourceBaseSyntax.Substring(globalPrefix.Length);
+            return !string.IsNullOrWhiteSpace(sourceBaseSyntax)
+                && string.Equals(sourceBaseSyntax, RuntimeTypeIdentity.Of(compiledBase), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Authoritative stale-build handshake for every COMPILED inherited-override path. The current source base is
+        /// resolved in the host/default domain (Roslyn stays there) and only its bounded name crosses into this render
+        /// domain. Empty means the source base was not proven, which is a refusal rather than a guess from the build.
+        /// </summary>
+        public string ValidateCurrentSourceBase(string assemblyPath, string rootTypeName, string sourceBaseSyntax)
+        {
+            return _sta.Invoke(() =>
+            {
+                if (string.IsNullOrWhiteSpace(sourceBaseSyntax))
+                    return "current source base type could not be resolved; rebuild before editing inherited controls";
+                try
+                {
+                    var asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath));
+                    var designedType = asm.GetType(rootTypeName, throwOnError: false);
+                    if (designedType == null)
+                        return "compiled designed type was not found; rebuild before editing inherited controls";
+                    var compiledBase = designedType.BaseType;
+                    if (compiledBase == null)
+                        return "compiled base type was not found; rebuild before editing inherited controls";
+                    if (SameBase(sourceBaseSyntax, compiledBase)) return "";
+                    return "source base '" + sourceBaseSyntax + "' != compiled base '"
+                        + RuntimeTypeIdentity.Of(compiledBase) + "' (rebuild before editing inherited controls)";
+                }
+                catch (Exception ex)
+                {
+                    return "could not validate current source base: " + ex.GetBaseException().Message;
+                }
+            });
         }
 
         /// <summary>Describe one control of the live instance ("this" = root, else its .Designer.cs field name).
@@ -1178,7 +1307,11 @@ namespace WinFormsDesigner.Engine.Net48
                 var notes = new List<string>();
                 foreach (var e in edits)
                 {
-                    if (!TryApply(live, e.ComponentId ?? "this", e.PropName ?? "", e.RawValue ?? "", out string reason)) notes.Add(reason);
+                    string reason;
+                    bool ok = e.Reset
+                        ? TryReset(live, e.ComponentId ?? "this", e.PropName ?? "", out reason)
+                        : TryApply(live, e.ComponentId ?? "this", e.PropName ?? "", e.RawValue ?? "", out reason);
+                    if (!ok) notes.Add(reason);
                 }
                 live.Root.PerformLayout();
                 Application.DoEvents();
@@ -1186,6 +1319,46 @@ namespace WinFormsDesigner.Engine.Net48
                 r.Applied = notes.Count == 0;
                 if (notes.Count > 0) r.Diagnostics = string.Join("; ", notes);
                 return r;
+            });
+        }
+
+        public InheritedOverrideTargetInfo GetInheritedOverrideTargetInfo(string assemblyPath, string rootTypeName,
+            string componentId, string propertyName, string expectedBaseIdentityToken)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                return ValidateInheritedPropertyOverride(live, componentId ?? "", propertyName ?? "",
+                    expectedBaseIdentityToken ?? "");
+            });
+        }
+
+        public InheritedGeometryOverrideAuthorization AuthorizeInheritedGeometryOverride(string assemblyPath,
+            string rootTypeName, string componentId, string expectedBaseIdentityToken)
+        {
+            return _sta.Invoke(() =>
+            {
+                var live = GetOrCreate(assemblyPath, rootTypeName, 0, 0);
+                var info = ValidateInheritedTarget(live, componentId ?? "", expectedBaseIdentityToken ?? "");
+                if (!info.Safe)
+                    return new InheritedGeometryOverrideAuthorization
+                    {
+                        Safe = false,
+                        Reason = info.Reason,
+                        BaseIdentityToken = info.BaseIdentityToken,
+                    };
+                if (!info.GeometryOverrideEditable)
+                    return new InheritedGeometryOverrideAuthorization
+                    {
+                        Safe = false,
+                        Reason = info.Reason.Length > 0 ? info.Reason : "inherited geometry override is not allowed for this control",
+                        BaseIdentityToken = info.BaseIdentityToken,
+                    };
+                return new InheritedGeometryOverrideAuthorization
+                {
+                    Safe = true,
+                    BaseIdentityToken = info.BaseIdentityToken,
+                };
             });
         }
 
@@ -1685,7 +1858,7 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>Instantiate a control of the given type, add it to the parent's Controls at (locX,locY), and
         /// register it under the field name the host generated — so subsequent describe/edit/layout find it. The
         /// persisted declaration + InitializeComponent lines are the host's job (net9); this is the live preview.</summary>
-        public RenderLayoutResult AddControl(string assemblyPath, string rootTypeName, string parentId, string controlTypeKey, string newId, int locX, int locY)
+        public RenderLayoutResult AddControl(string assemblyPath, string rootTypeName, string parentId, string controlTypeKey, string newId, int locX, int locY, int width = -1, int height = -1)
         {
             return _sta.Invoke(() =>
             {
@@ -1697,12 +1870,20 @@ namespace WinFormsDesigner.Engine.Net48
 
                 Type? ct = ResolveControlType(controlTypeKey);
                 if (ct == null) return Note(live, "control type not found: " + controlTypeKey);
+                if (!TryValidateRequestedSize(width, height, out int requestedWidth, out int requestedHeight, out string sizeReason))
+                    return Note(live, sizeReason);
+                bool hasRequestedSize = requestedWidth > 0 && requestedHeight > 0;
 
                 try
                 {
                     var ctl = (Control)Activator.CreateInstance(ct);
                     if (!string.IsNullOrEmpty(newId)) ctl.Name = newId;
                     if (locX >= 0 && locY >= 0) ctl.Location = new Point(locX, locY);
+                    if (hasRequestedSize)
+                    {
+                        ctl.AutoSize = false;
+                        ctl.Size = new Size(requestedWidth, requestedHeight);
+                    }
                     parent.Controls.Add(ctl);
                     if (!string.IsNullOrEmpty(newId))
                     {
@@ -1717,6 +1898,34 @@ namespace WinFormsDesigner.Engine.Net48
                 // unwrap TargetInvocationException (Activator.CreateInstance) so the note names the real ctor failure
                 catch (Exception ex) { return Note(live, "could not add: " + ex.GetBaseException().Message); }
             });
+        }
+
+        private const int MaximumDesignedControlSize = 100000;
+
+        private static bool TryValidateRequestedSize(int width, int height, out int validWidth, out int validHeight, out string reason)
+        {
+            validWidth = 0;
+            validHeight = 0;
+            reason = "";
+            if (width == -1 && height == -1) return true;
+            if (width == -1 || height == -1)
+            {
+                reason = "explicit control size requires both width and height";
+                return false;
+            }
+            if (width <= 0 || height <= 0)
+            {
+                reason = "explicit control size must be positive";
+                return false;
+            }
+            if (width > MaximumDesignedControlSize || height > MaximumDesignedControlSize)
+            {
+                reason = "explicit control size exceeds the supported range";
+                return false;
+            }
+            validWidth = width;
+            validHeight = height;
+            return true;
         }
 
         /// <summary>Enumerate the project/vendor assembly's own toolbox-eligible controls — the net48 counterpart of
@@ -2508,6 +2717,7 @@ namespace WinFormsDesigner.Engine.Net48
 
             var fieldNames = BuildFieldNameMap(instance, type);
             var ownership = BuildOwnershipMap(instance, type);
+            var inheritedOverrides = BuildInheritedOverrideMap(instance, type);
             ownership[rootCtl] = InheritedOwnershipPolicy.Root;
 
             Form form;
@@ -2568,6 +2778,7 @@ namespace WinFormsDesigner.Engine.Net48
                 ByField = byField,
                 AmbiguousIds = ambiguousIds,
                 Ownership = ownership,
+                InheritedOverrides = inheritedOverrides,
                 BuildId = ComputeBuildId(assemblyPath),
             };
         }
@@ -2578,6 +2789,7 @@ namespace WinFormsDesigner.Engine.Net48
         /// reversible, which matters for the CACHED compiled instance (the interpreted tree is fresh each render).</summary>
         private static byte[] CaptureScaledPng(Control root, int w, int h, int scale)
         {
+            PrepareForDesignSurfaceCapture(root);
             if (scale > 1)
             {
                 root.Scale(new SizeF(scale, scale));
@@ -2587,6 +2799,7 @@ namespace WinFormsDesigner.Engine.Net48
                     {
                         big.SetResolution(96, 96);
                         root.DrawToBitmap(big, new Rectangle(0, 0, w * scale, h * scale));
+                        OverlayProgressBarState(root, big);
                         using (var ms = new MemoryStream()) { big.Save(ms, ImageFormat.Png); return ms.ToArray(); }
                     }
                 }
@@ -2595,8 +2808,224 @@ namespace WinFormsDesigner.Engine.Net48
             using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
             {
                 root.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
+                OverlayProgressBarState(root, bmp);
                 using (var ms = new MemoryStream()) { bmp.Save(ms, ImageFormat.Png); return ms.ToArray(); }
             }
+        }
+
+        /// <summary>A render-desktop host window may automatically focus the first child even though Visual Studio's
+        /// design surface does not. Remove that transient state so TextBox text is not painted as selected in the PNG.
+        /// Selection/focus are not serialized designer properties.</summary>
+        private static void PrepareForDesignSurfaceCapture(Control root)
+        {
+            var form = root.FindForm();
+            if (form != null) form.ActiveControl = null;
+            foreach (var control in DescendantControls(root))
+            {
+                var textBox = control as TextBoxBase;
+                if (textBox == null) continue;
+                textBox.Select(0, 0);
+            }
+        }
+
+        /// <summary>DrawToBitmap omits the native ProgressBar position. Overlay the actual live Value with the same
+        /// themed renderer used by WinForms so net48 and modern previews do not collapse Value=0 and Value&gt;0 into the
+        /// same bitmap. Other controls remain on their real native/custom DrawToBitmap path.</summary>
+        private static void OverlayProgressBarState(Control captureRoot, Bitmap bitmap)
+        {
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                foreach (var control in DescendantControls(captureRoot))
+                {
+                    var progress = control as ProgressBar;
+                    if (progress == null) continue;
+                    var offset = ReferenceEquals(progress, captureRoot) ? (0, 0) : ComputeWindowOffset(progress, captureRoot);
+                    var bounds = Rectangle.Intersect(
+                        new Rectangle(offset.Item1, offset.Item2, Math.Max(progress.Width, 1), Math.Max(progress.Height, 1)),
+                        new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+                    if (bounds.Width <= 0 || bounds.Height <= 0) continue;
+
+                    int range = Math.Max(1, progress.Maximum - progress.Minimum);
+                    double ratio = Math.Max(0d, Math.Min(1d, (progress.Value - progress.Minimum) / (double)range));
+                    try
+                    {
+                        if (ProgressBarRenderer.IsSupported)
+                        {
+                            ProgressBarRenderer.DrawHorizontalBar(graphics, bounds);
+                            if (progress.Style != ProgressBarStyle.Marquee && ratio > 0)
+                            {
+                                var inner = Rectangle.Inflate(bounds, -3, -3);
+                                inner.Width = Math.Max(0, (int)Math.Round(inner.Width * ratio));
+                                if (inner.Width > 0 && inner.Height > 0)
+                                    ProgressBarRenderer.DrawHorizontalChunks(graphics, inner);
+                            }
+                            continue;
+                        }
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // Visual styles can disappear between IsSupported and the draw call; fall back to classic.
+                    }
+
+                    graphics.FillRectangle(SystemBrushes.Control, bounds);
+                    ControlPaint.DrawBorder3D(graphics, bounds, Border3DStyle.SunkenOuter);
+                    if (progress.Style != ProgressBarStyle.Marquee && ratio > 0)
+                    {
+                        var inner = Rectangle.Inflate(bounds, -2, -2);
+                        inner.Width = Math.Max(0, (int)Math.Round(inner.Width * ratio));
+                        if (inner.Width > 0 && inner.Height > 0) graphics.FillRectangle(SystemBrushes.Highlight, inner);
+                    }
+                }
+            }
+        }
+
+        private static IEnumerable<Control> DescendantControls(Control root)
+        {
+            yield return root;
+            foreach (Control child in root.Controls)
+                foreach (var descendant in DescendantControls(child))
+                    yield return descendant;
+        }
+
+        /// <summary>
+        /// Dirty-region snapshot for one fixed-geometry leaf Text edit. Layout is still rebuilt and compared with the
+        /// pre-set graph; any movement, resize, client/spacing/baseline drift, or child surface falls back to the full
+        /// frame. The patch uses the same window-space transform and native/custom DrawToBitmap path as Snapshot.
+        /// </summary>
+        private RenderLayoutResult SnapshotTextPatchOrFrame(
+            LiveDesign live,
+            Control target,
+            IReadOnlyList<PatchGeometrySnapshot> beforeGeometry)
+        {
+            Control root = live.Root;
+            int frameWidth = Math.Max(root.Width, 1), frameHeight = Math.Max(root.Height, 1);
+            if (target.Controls.Count != 0 || !SamePatchGeometry(beforeGeometry, root))
+                return Snapshot(live);
+
+            PrepareForDesignSurfaceCapture(root);
+            int patchWidth = Math.Max(target.Width, 1), patchHeight = Math.Max(target.Height, 1);
+            var offset = ComputeWindowOffset(target, root);
+            int captureScale = live.Scale > 0 ? live.Scale : _renderScale;
+            byte[] png;
+            if (captureScale > 1)
+            {
+                // This fast path is certified only for a geometry-stable leaf. Scale that one invalidated control,
+                // not the complete interpreted/vendor graph, so dirty-region capture stays flat in corpus size.
+                Rectangle logicalBounds = target.Bounds;
+                Padding logicalMargin = target.Margin;
+                Padding logicalPadding = target.Padding;
+                Size logicalMinimumSize = target.MinimumSize;
+                Size logicalMaximumSize = target.MaximumSize;
+                Font logicalFont = target.Font;
+                target.Scale(new SizeF(captureScale, captureScale));
+                try
+                {
+                    using (var scaled = new Bitmap(
+                        patchWidth * captureScale, patchHeight * captureScale, PixelFormat.Format32bppArgb))
+                    {
+                        target.DrawToBitmap(scaled, new Rectangle(
+                            0, 0, patchWidth * captureScale, patchHeight * captureScale));
+                        OverlayProgressBarState(target, scaled);
+                        using (var stream = new MemoryStream())
+                        {
+                            scaled.Save(stream, ImageFormat.Png);
+                            png = stream.ToArray();
+                        }
+                    }
+                }
+                finally
+                {
+                    target.Bounds = logicalBounds;
+                    target.Margin = logicalMargin;
+                    target.Padding = logicalPadding;
+                    target.MinimumSize = logicalMinimumSize;
+                    target.MaximumSize = logicalMaximumSize;
+                    if (!ReferenceEquals(target.Font, logicalFont)) target.Font = logicalFont;
+                }
+            }
+            else
+            {
+                using (var bitmap = new Bitmap(patchWidth, patchHeight, PixelFormat.Format32bppArgb))
+                {
+                    target.DrawToBitmap(bitmap, new Rectangle(0, 0, patchWidth, patchHeight));
+                    OverlayProgressBarState(target, bitmap);
+                    using (var stream = new MemoryStream())
+                    {
+                        bitmap.Save(stream, ImageFormat.Png);
+                        png = stream.ToArray();
+                    }
+                }
+            }
+            return new RenderLayoutResult
+            {
+                RenderMode = live.Mode,
+                FallbackReason = live.FallbackReason,
+                LiveInstanceId = live.InstanceId,
+                LiveBuildId = live.BuildId,
+                Png = png,
+                IsPatch = true,
+                LayoutUnchanged = true,
+                PatchX = offset.X,
+                PatchY = offset.Y,
+                PatchWidth = patchWidth,
+                PatchHeight = patchHeight,
+                Width = frameWidth,
+                Height = frameHeight,
+                ClientWidth = root.ClientSize.Width,
+                ClientHeight = root.ClientSize.Height,
+                RootType = live.DesignedTypeName ?? live.Type.FullName ?? live.Type.Name,
+                TotalStatements = beforeGeometry.Count,
+                Representable = beforeGeometry.Count,
+                // Exact geometry equality above proves these already-published models are still authoritative. Omitting
+                // them is the dirty-region protocol: the host retains its existing 301-node model and only composites
+                // the changed native control bitmap, just as a VS design surface invalidates one control rectangle.
+                Controls = new List<LayoutControl>(),
+                Tray = new List<TrayComponent>(),
+                ToolStripItems = new List<ToolStripItemBounds>(),
+                AutoScaleDimensions = SerializedAutoScaleDimensions(root),
+            };
+        }
+
+        private sealed class PatchGeometrySnapshot
+        {
+            public Control Control { get; set; } = null!;
+            public Control? Parent { get; set; }
+            public Rectangle Bounds { get; set; }
+            public Size ClientSize { get; set; }
+            public Padding Margin { get; set; }
+            public Padding Padding { get; set; }
+            public bool Visible { get; set; }
+            public int ChildCount { get; set; }
+        }
+
+        private static List<PatchGeometrySnapshot> CapturePatchGeometry(Control root)
+            => DescendantControls(root).Select(control => new PatchGeometrySnapshot
+            {
+                Control = control,
+                Parent = control.Parent,
+                Bounds = control.Bounds,
+                ClientSize = control.ClientSize,
+                Margin = control.Margin,
+                Padding = control.Padding,
+                Visible = control.Visible,
+                ChildCount = control.Controls.Count,
+            }).ToList();
+
+        private static bool SamePatchGeometry(IReadOnlyList<PatchGeometrySnapshot> before, Control root)
+        {
+            var after = DescendantControls(root).ToList();
+            if (before.Count != after.Count) return false;
+            for (int i = 0; i < after.Count; i++)
+            {
+                Control current = after[i];
+                PatchGeometrySnapshot prior = before[i];
+                if (!ReferenceEquals(prior.Control, current) || !ReferenceEquals(prior.Parent, current.Parent)
+                    || prior.Bounds != current.Bounds || prior.ClientSize != current.ClientSize
+                    || prior.Margin != current.Margin || prior.Padding != current.Padding
+                    || prior.Visible != current.Visible || prior.ChildCount != current.Controls.Count)
+                    return false;
+            }
+            return true;
         }
 
         private RenderLayoutResult Snapshot(LiveDesign live)
@@ -2687,26 +3116,65 @@ namespace WinFormsDesigner.Engine.Net48
                 if (val is IComponent comp && !ReferenceEquals(comp, live.Root) && seenSib.Add(comp))
                     siblings.Add(new KeyValuePair<string, IComponent>(f.Name, comp));
             }
+            live.InheritedOverrides.TryGetValue(target, out var inheritedOverride);
             return StampDescription(
                 CompiledDescriber.Describe(target, isRoot ? "this" : componentId, name, isRoot, parent, siblings, live.Root),
-                OwnershipOf(live, target), target);
+                OwnershipOf(live, target), target, inheritedOverride);
         }
 
-        private static ComponentDesc StampDescription(ComponentDesc desc, string ownership, IComponent target)
+        private static ComponentDesc StampDescription(ComponentDesc desc, string ownership, IComponent target, InheritedOverrideInfo? inheritedOverride)
         {
             desc.Ownership = ownership;
             desc.Editable = InheritedOwnershipPolicy.IsEditable(ownership);
             desc.ReadOnlyReason = InheritedOwnershipPolicy.ReadOnlyReason(ownership);
-            EnrichPropertyMetadata(desc, target, desc.Editable);
+            if (inheritedOverride != null && inheritedOverride.PropertyOverrideEditable)
+            {
+                desc.InheritedOverrideEditable = true;
+                desc.BaseIdentityToken = inheritedOverride.BaseIdentityToken;
+                desc.InheritedFieldType = inheritedOverride.FieldTypeName;
+                desc.EffectiveAccessibility = inheritedOverride.EffectiveAccessibility;
+                desc.ReadOnlyReason = "Component belongs to an inherited base type. Structural edits remain read-only; allowlisted properties may be overridden in the derived source.";
+            }
+            EnrichPropertyMetadata(desc, target, desc.Editable, desc.InheritedOverrideEditable,
+                inheritedOverride?.GeometryOverrideEditable ?? false);
+            EnrichCertifiedHostedServiceActions(desc, target);
             if (!desc.Editable && desc.Properties != null)
                 foreach (var property in desc.Properties)
                     if (property != null)
                     {
-                        property.ReadOnly = true;
-                        property.UiTypeEditor = null;
-                        ForceExpandableReadOnly(property.Properties);
+                        if (!property.InheritedOverrideEditable)
+                        {
+                            property.ReadOnly = true;
+                            ClearUiTypeEditorMetadata(property);
+                            ForceExpandableReadOnly(property.Properties);
+                        }
                     }
             return desc;
+        }
+
+        private static void EnrichCertifiedHostedServiceActions(ComponentDesc desc, IComponent target)
+        {
+            desc.DesignerActions.Clear();
+            if (!desc.Editable
+                || !string.Equals(target.GetType().Assembly.GetName().Name, "FakeVendor", StringComparison.Ordinal)
+                || !string.Equals(target.GetType().FullName, "FakeVendor.HostedServiceControl", StringComparison.Ordinal))
+                return;
+            desc.DesignerActions.Add(new DesignerActionDesc
+            {
+                DisplayName = "Apply Service Preset",
+                CommandId = "applyServicePreset",
+                CertificationId = "repo.fakevendor.hosted-service-kernel.v1",
+                Category = "FakeVendor",
+                Description = "Changes Text and Size through one hosted DesignerTransaction.",
+            });
+            desc.DesignerActions.Add(new DesignerActionDesc
+            {
+                DisplayName = "Cancel Reentrant Service Action",
+                CommandId = "cancelReentrantServiceAction",
+                CertificationId = "repo.fakevendor.hosted-service-kernel.v1",
+                Category = "FakeVendor",
+                Description = "Proves that a nested hosted transaction cancels without a source proposal.",
+            });
         }
 
         private static readonly HashSet<string> GenericListSupportedItemTypes = new HashSet<string>(StringComparer.Ordinal)
@@ -2731,7 +3199,20 @@ namespace WinFormsDesigner.Engine.Net48
             "System.Windows.Forms.Padding", "System.Drawing.Font", "System.Windows.Forms.Cursor",
         };
 
-        private static void EnrichPropertyMetadata(ComponentDesc desc, IComponent target, bool componentEditable)
+        private const string CertifiedFakeVendorCertificationId = "repo.fakevendor.complex-value.v1";
+        private const string CertifiedFakeVendorAssemblyName = "FakeVendor";
+        private const string CertifiedFakeVendorAssemblyFileName = "FakeVendor.dll";
+        private const string CertifiedFakeVendorComponentTypeName = "FakeVendor.VendorEdit";
+        private const string CertifiedFakeVendorPropertyName = "ComplexValue";
+        private const string CertifiedFakeVendorValueTypeName = "System.String";
+        private const string CertifiedFakeVendorEditorTypeName = "FakeVendor.VendorComplexValueEditor";
+        private const string CertifiedFakeVendorCollectionCertificationId = "repo.fakevendor.thresholds.v1";
+        private const string CertifiedFakeVendorCollectionPropertyName = "Thresholds";
+        private const string CertifiedFakeVendorCollectionEditorTypeName = "FakeVendor.VendorThresholdsEditor";
+        private const string FrameworkCollectionEditorTypeName = "System.ComponentModel.Design.CollectionEditor";
+
+        private static void EnrichPropertyMetadata(ComponentDesc desc, IComponent target, bool componentEditable,
+            bool inheritedOverrideEditable, bool inheritedGeometryOverrideEditable)
         {
             if (desc.Properties == null || desc.Properties.Count == 0) return;
             PropertyDescriptorCollection descriptors;
@@ -2741,6 +3222,7 @@ namespace WinFormsDesigner.Engine.Net48
             foreach (var property in desc.Properties)
             {
                 if (property == null || string.IsNullOrEmpty(property.Name)) continue;
+                ClearUiTypeEditorMetadata(property);
                 PropertyDescriptor? descriptor;
                 try { descriptor = descriptors[property.Name]; } catch { descriptor = null; }
                 if (descriptor == null) continue; // extender/source pseudo-property, not a live descriptor
@@ -2771,21 +3253,161 @@ namespace WinFormsDesigner.Engine.Net48
                     }
                 }
 
-                property.UiTypeEditor = componentEditable && !property.ReadOnly
+                string propertyTypeName = descriptor.PropertyType.FullName ?? descriptor.PropertyType.Name;
+                bool inheritedPropertySupported = inheritedOverrideEditable
+                    && !descriptor.IsReadOnly
+                    && !property.TableCell
+                    && !property.IsCollection
+                    && !property.IsImage
+                    && !property.ReferenceValues
+                    && !property.IsDataSource
+                    && DesignerInheritedOverrideEditor.SupportsProperty(descriptor.Name, propertyTypeName);
+                bool inheritedPropertyEditable = inheritedPropertySupported
+                    && (!DesignerInheritedOverrideEditor.IsGeometryProperty(descriptor.Name)
+                        || inheritedGeometryOverrideEditable);
+                property.InheritedOverrideEditable = inheritedPropertyEditable;
+                property.InheritedOverrideResettable = inheritedPropertySupported;
+                if (inheritedPropertyEditable) property.ReadOnly = false;
+
+                bool editorEligible = (componentEditable || inheritedPropertyEditable) && !property.ReadOnly;
+                string? advertisedEditor = editorEligible ? AdvertisedUiTypeEditor(descriptor) : null;
+                property.UiTypeEditor = editorEligible
                     && descriptor.PropertyType == typeof(System.Drawing.Color)
                         ? "System.Drawing.Design.ColorEditor"
-                        : componentEditable && !property.ReadOnly
+                        : editorEligible
                             && descriptor.PropertyType == typeof(System.Drawing.Font)
                                 ? "System.Drawing.Design.FontEditor"
                                 : null;
+                if (property.UiTypeEditor == null && property.GenericCollection
+                    && string.Equals(advertisedEditor, FrameworkCollectionEditorTypeName, StringComparison.Ordinal))
+                    property.UiTypeEditor = advertisedEditor;
+                if (editorEligible && property.UiTypeEditor == null
+                    && TryDescribeCertifiedVendorEditor(target.GetType(), descriptor, advertisedEditor,
+                        out string certifiedEditor, out string certifiedPath, out string certifiedSha,
+                        out string certifiedId))
+                {
+                    property.UiTypeEditor = certifiedEditor;
+                    property.UiTypeEditorAssemblyPath = certifiedPath;
+                    property.UiTypeEditorAssemblySha256 = certifiedSha;
+                    property.UiTypeEditorCertificationId = certifiedId;
+                }
 
                 bool suppressExpansion = property.TableCell || property.IsCollection || property.IsImage
-                    || property.ReferenceValues || property.IsDataSource;
+                    || property.ReferenceValues || property.IsDataSource || inheritedPropertyEditable;
                 var expansion = ExpandablePropertiesOf(descriptor, target, raw, descriptor.Name,
-                    suppressExpansion, componentEditable);
+                    suppressExpansion, componentEditable || inheritedPropertyEditable);
                 property.Properties = expansion.Properties;
                 property.PropertiesTruncated = expansion.Truncated;
             }
+        }
+
+        private static void ClearUiTypeEditorMetadata(PropertyDesc property)
+        {
+            property.UiTypeEditor = null;
+            property.UiTypeEditorAssemblyPath = null;
+            property.UiTypeEditorAssemblySha256 = null;
+            property.UiTypeEditorCertificationId = null;
+        }
+
+        private static string? AdvertisedUiTypeEditor(PropertyDescriptor descriptor)
+        {
+            try
+            {
+                foreach (EditorAttribute attribute in descriptor.Attributes.OfType<EditorAttribute>())
+                {
+                    if (!string.Equals(UnqualifiedMetadataTypeName(attribute.EditorBaseTypeName),
+                            "System.Drawing.Design.UITypeEditor", StringComparison.Ordinal)) continue;
+                    string editorTypeName = UnqualifiedMetadataTypeName(attribute.EditorTypeName);
+                    if (editorTypeName.Length > 0) return editorTypeName;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string UnqualifiedMetadataTypeName(string? assemblyQualifiedName)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyQualifiedName)) return "";
+            int separator = assemblyQualifiedName.IndexOf(',');
+            return (separator < 0 ? assemblyQualifiedName : assemblyQualifiedName.Substring(0, separator)).Trim();
+        }
+
+        private static bool TryDescribeCertifiedVendorEditor(Type componentType, PropertyDescriptor descriptor,
+            string? advertisedEditorTypeName,
+            out string editorTypeName, out string assemblyPath, out string assemblySha256, out string certificationId)
+        {
+            editorTypeName = "";
+            assemblyPath = "";
+            assemblySha256 = "";
+            certificationId = "";
+
+            if (!string.Equals(componentType.FullName, CertifiedFakeVendorComponentTypeName, StringComparison.Ordinal))
+                return false;
+            string valueTypeName = descriptor.PropertyType.FullName ?? descriptor.PropertyType.Name;
+            bool scalarEditor = string.Equals(descriptor.Name, CertifiedFakeVendorPropertyName, StringComparison.Ordinal)
+                && string.Equals(valueTypeName, CertifiedFakeVendorValueTypeName, StringComparison.Ordinal)
+                && string.Equals(advertisedEditorTypeName, CertifiedFakeVendorEditorTypeName, StringComparison.Ordinal);
+            bool collectionEditor = string.Equals(
+                    descriptor.Name, CertifiedFakeVendorCollectionPropertyName, StringComparison.Ordinal)
+                && descriptor.PropertyType.IsGenericType
+                && descriptor.PropertyType.GetGenericTypeDefinition() == typeof(IList<>)
+                && descriptor.PropertyType.GetGenericArguments().Length == 1
+                && descriptor.PropertyType.GetGenericArguments()[0] == typeof(int)
+                && string.Equals(advertisedEditorTypeName,
+                    CertifiedFakeVendorCollectionEditorTypeName, StringComparison.Ordinal);
+            if (!scalarEditor && !collectionEditor) return false;
+
+            Assembly assembly = componentType.Assembly;
+            string location;
+            try { location = assembly.Location; } catch { return false; }
+            if (string.IsNullOrWhiteSpace(location)) return false;
+
+            string fullPath;
+            try { fullPath = Path.GetFullPath(location); } catch { return false; }
+            if (!Path.IsPathRooted(fullPath) || !File.Exists(fullPath)) return false;
+            if (!string.Equals(Path.GetFileName(fullPath), CertifiedFakeVendorAssemblyFileName,
+                    StringComparison.OrdinalIgnoreCase)) return false;
+
+            AssemblyName assemblyName;
+            try { assemblyName = AssemblyName.GetAssemblyName(fullPath); } catch { return false; }
+            if (!string.Equals(assemblyName.Name, CertifiedFakeVendorAssemblyName, StringComparison.Ordinal))
+                return false;
+
+            Type? editorType;
+            string expectedEditorType = collectionEditor
+                ? CertifiedFakeVendorCollectionEditorTypeName
+                : CertifiedFakeVendorEditorTypeName;
+            try { editorType = assembly.GetType(expectedEditorType, throwOnError: false); }
+            catch { return false; }
+            if (editorType == null
+                || !typeof(System.Drawing.Design.UITypeEditor).IsAssignableFrom(editorType))
+                return false;
+
+            string sha;
+            try { sha = Sha256FileHex(fullPath); } catch { return false; }
+            if (sha.Length == 0) return false;
+
+            editorTypeName = expectedEditorType;
+            assemblyPath = fullPath;
+            assemblySha256 = sha;
+            certificationId = collectionEditor
+                ? CertifiedFakeVendorCollectionCertificationId
+                : CertifiedFakeVendorCertificationId;
+            return true;
+        }
+
+        private static string Sha256FileHex(string path)
+        {
+            using (var sha = SHA256.Create())
+            using (var stream = File.OpenRead(path))
+                return HexLower(sha.ComputeHash(stream));
+        }
+
+        private static string HexLower(byte[] bytes)
+        {
+            var sb = new StringBuilder(bytes.Length * 2);
+            foreach (byte value in bytes) sb.Append(value.ToString("x2", CultureInfo.InvariantCulture));
+            return sb.ToString();
         }
 
         private static bool IsGenericListShape(Type type)
@@ -2841,6 +3463,7 @@ namespace WinFormsDesigner.Engine.Net48
         private const int ExpandableMaxValueChars = 1024;
         private const int ExpandableMaxDescriptionChars = 1024;
         private const int ExpandableMaxCategoryChars = 128;
+        private static readonly TimeSpan ConverterQueryTimeout = TimeSpan.FromMilliseconds(200);
 
         private sealed class ExpandableResult
         {
@@ -2921,6 +3544,7 @@ namespace WinFormsDesigner.Engine.Net48
                         Description = description,
                         StandardValues = standards.Values,
                         StandardValuesExclusive = standards.Exclusive,
+                        MetadataDiagnosticCode = standards.DiagnosticCode,
                         Properties = nested,
                         PropertiesTruncated = nestedTruncated,
                     });
@@ -2935,15 +3559,17 @@ namespace WinFormsDesigner.Engine.Net48
 
         private static bool ConverterPropertiesSupported(TypeConverter converter, ITypeDescriptorContext context)
         {
-            try { return converter.GetPropertiesSupported(context); }
-            catch { try { return converter.GetPropertiesSupported(); } catch { return false; } }
+            if (TryRunConverterQuery(() => converter.GetPropertiesSupported(context), out bool supported)) return supported;
+            return TryRunConverterQuery(() => converter.GetPropertiesSupported(), out supported) && supported;
         }
 
         private static PropertyDescriptorCollection? ConverterProperties(TypeConverter converter,
             ITypeDescriptorContext context, object value)
         {
-            try { return converter.GetProperties(context, value, Array.Empty<Attribute>()); }
-            catch { try { return converter.GetProperties(value); } catch { return null; } }
+            if (TryRunConverterQuery(
+                () => converter.GetProperties(context, value, Array.Empty<Attribute>()), out PropertyDescriptorCollection? descriptors))
+                return descriptors;
+            return TryRunConverterQuery(() => converter.GetProperties(value), out descriptors) ? descriptors : null;
         }
 
         private static bool ShouldSurfaceExpandableChild(PropertyDescriptor descriptor)
@@ -2962,6 +3588,7 @@ namespace WinFormsDesigner.Engine.Net48
         {
             public List<string>? Values;
             public bool Exclusive;
+            public string? DiagnosticCode;
         }
 
         private static ExpandableStandardValuesResult ExpandableStandardValues(PropertyDescriptor descriptor, object owner)
@@ -2974,9 +3601,10 @@ namespace WinFormsDesigner.Engine.Net48
                 try { converter = descriptor.Converter; } catch { converter = null; }
                 if (converter == null) return new ExpandableStandardValuesResult();
                 var context = new ExpandableDescribeContext(owner, descriptor);
-                System.Collections.ICollection? collection;
-                try { collection = converter.GetStandardValuesSupported(context) ? converter.GetStandardValues(context) : null; }
-                catch { try { collection = converter.GetStandardValuesSupported() ? converter.GetStandardValues() : null; } catch { collection = null; } }
+                System.Collections.ICollection? collection = StandardValuesCollection(
+                    converter, context, out string? metadataDiagnosticCode);
+                if (metadataDiagnosticCode != null)
+                    return new ExpandableStandardValuesResult { DiagnosticCode = metadataDiagnosticCode };
                 if (collection == null) return new ExpandableStandardValuesResult();
 
                 var values = new List<string>();
@@ -2994,9 +3622,55 @@ namespace WinFormsDesigner.Engine.Net48
                 bool exclusive;
                 try { exclusive = converter.GetStandardValuesExclusive(context); }
                 catch { try { exclusive = converter.GetStandardValuesExclusive(); } catch { exclusive = false; } }
-                return new ExpandableStandardValuesResult { Values = values, Exclusive = exclusive };
+                return new ExpandableStandardValuesResult
+                {
+                    Values = values,
+                    Exclusive = exclusive,
+                    DiagnosticCode = metadataDiagnosticCode,
+                };
             }
             catch { return new ExpandableStandardValuesResult(); }
+        }
+
+        private static System.Collections.ICollection? StandardValuesCollection(TypeConverter converter,
+            ITypeDescriptorContext context, out string? metadataDiagnosticCode)
+        {
+            metadataDiagnosticCode = null;
+            bool supportedQuery = TryRunConverterQuery(
+                () => converter.GetStandardValuesSupported(context), out bool supported, out bool supportedTimedOut);
+            if (supportedTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            System.Collections.ICollection? values = null;
+            bool valuesTimedOut = false;
+            bool valuesQuery = supportedQuery && supported
+                && TryRunConverterQuery(() => converter.GetStandardValues(context), out values, out valuesTimedOut);
+            if (valuesTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            if (valuesQuery && values != null) return values;
+
+            bool contextlessSupportedQuery = TryRunConverterQuery(
+                () => converter.GetStandardValuesSupported(), out bool contextlessSupported, out bool contextlessSupportedTimedOut);
+            if (contextlessSupportedTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            System.Collections.ICollection? contextlessValues = null;
+            bool contextlessValuesTimedOut = false;
+            bool contextlessValuesQuery = contextlessSupportedQuery && contextlessSupported
+                && TryRunConverterQuery(() => converter.GetStandardValues(), out contextlessValues, out contextlessValuesTimedOut);
+            if (contextlessValuesTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            return contextlessValuesQuery ? contextlessValues : null;
         }
 
         private static string? StringifyInvariant(PropertyDescriptor descriptor, object? value)
@@ -3004,8 +3678,56 @@ namespace WinFormsDesigner.Engine.Net48
             if (value == null) return null;
             TypeConverter? converter;
             try { converter = descriptor.Converter; } catch { converter = null; }
-            if (converter == null || !converter.CanConvertTo(typeof(string))) return null;
-            return converter.ConvertToInvariantString(value);
+            if (converter == null
+                || !TryRunConverterQuery(() => converter.CanConvertTo(typeof(string)), out bool canConvert)
+                || !canConvert
+                || !TryRunConverterQuery(() => converter.ConvertToInvariantString(value), out string? converted)) return null;
+            return converted;
+        }
+
+        private static bool TryRunConverterQuery<T>(Func<T> query, out T? result)
+        {
+            return TryRunConverterQuery(query, out result, out _);
+        }
+
+        private static bool TryRunConverterQuery<T>(Func<T> query, out T? result, out bool timedOut)
+        {
+            timedOut = false;
+            Task<T> task;
+            try { task = Task.Run(query); }
+            catch
+            {
+                result = default;
+                return false;
+            }
+
+            try
+            {
+                if (task.Wait(ConverterQueryTimeout))
+                {
+                    result = task.GetAwaiter().GetResult();
+                    return true;
+                }
+            }
+            catch
+            {
+                result = default;
+                return false;
+            }
+
+            ObserveLateConverterFault(task);
+            timedOut = true;
+            result = default;
+            return false;
+        }
+
+        private static void ObserveLateConverterFault(Task task)
+        {
+            _ = task.ContinueWith(
+                completed => { var ignored = completed.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
         }
 
         private static bool SourceEditableThroughExistingValueConversion(Type type, string? value, bool readOnly)
@@ -3132,12 +3854,26 @@ namespace WinFormsDesigner.Engine.Net48
         {
             if (componentId == "this" || componentId.Length == 0) return live.Root;
             if (live.AmbiguousIds != null && live.AmbiguousIds.Contains(componentId)) return null;
+            int separator = componentId.LastIndexOf('.');
+            if (separator > 0 && separator < componentId.Length - 1)
+            {
+                string splitId = componentId.Substring(0, separator);
+                string panelName = componentId.Substring(separator + 1);
+                if ((panelName == "Panel1" || panelName == "Panel2")
+                    && (live.AmbiguousIds == null || !live.AmbiguousIds.Contains(splitId))
+                    && live.ByField.TryGetValue(splitId, out var splitControl)
+                    && splitControl is SplitContainer split)
+                    return panelName == "Panel1" ? split.Panel1 : split.Panel2;
+            }
             return live.ByField.TryGetValue(componentId, out var c) ? c : ResolveComponentByFieldName(live, componentId);
         }
 
         private static string OwnershipOf(LiveDesign live, object target)
         {
             if (ReferenceEquals(target, live.Root)) return InheritedOwnershipPolicy.Root;
+            if (target is SplitterPanel panel && panel.Parent is SplitContainer split
+                && live.Ownership != null && live.Ownership.TryGetValue(split, out var splitOwnership))
+                return splitOwnership;
             return live.Ownership != null && live.Ownership.TryGetValue(target, out var ownership)
                 ? ownership
                 : InheritedOwnershipPolicy.Unresolved;
@@ -3173,6 +3909,80 @@ namespace WinFormsDesigner.Engine.Net48
             }
             control = value;
             return true;
+        }
+
+        private InheritedOverrideTargetInfo ValidateInheritedPropertyOverride(LiveDesign live, string componentId,
+            string propertyName, string expectedBaseIdentityToken)
+        {
+            var info = ValidateInheritedTarget(live, componentId, expectedBaseIdentityToken);
+            if (!info.Safe) return info;
+            if (string.IsNullOrEmpty(propertyName))
+                return RefusedInheritedTarget(info, "property name is empty");
+            if (!(ResolveLiveTarget(live, componentId) is Control control))
+                return RefusedInheritedTarget(info, "no control '" + componentId + "'");
+
+            PropertyDescriptor? descriptor;
+            try { descriptor = TypeDescriptor.GetProperties(control)[propertyName]; } catch { descriptor = null; }
+            if (descriptor == null) return RefusedInheritedTarget(info, "no property '" + propertyName + "' on " + componentId);
+            if (descriptor.IsReadOnly) return RefusedInheritedTarget(info, propertyName + " is read-only");
+
+            string propertyTypeName = descriptor.PropertyType.FullName ?? descriptor.PropertyType.Name;
+            if (!DesignerInheritedOverrideEditor.SupportsProperty(propertyName, propertyTypeName))
+                return RefusedInheritedTarget(info, "property/type is not supported for inherited overrides: " + propertyName);
+
+            info.PropertyName = propertyName;
+            info.PropertyTypeName = propertyTypeName;
+            return info;
+        }
+
+        private InheritedOverrideTargetInfo ValidateInheritedTarget(LiveDesign live, string componentId,
+            string expectedBaseIdentityToken)
+        {
+            var target = ResolveLiveTarget(live, componentId ?? "");
+            if (!(target is Control control))
+                return new InheritedOverrideTargetInfo { Safe = false, Reason = "no control '" + componentId + "'" };
+
+            string ownership = OwnershipOf(live, target);
+            if (ownership != InheritedOwnershipPolicy.Inherited)
+                return new InheritedOverrideTargetInfo
+                {
+                    Safe = false,
+                    Reason = "component is not an inherited base control",
+                };
+
+            if (!live.InheritedOverrides.TryGetValue(target, out var inherited) || !inherited.PropertyOverrideEditable)
+                return new InheritedOverrideTargetInfo
+                {
+                    Safe = false,
+                    Reason = "inherited component is not eligible for derived-source overrides",
+                };
+
+            string expected = (expectedBaseIdentityToken ?? "").Trim();
+            if (expected.Length == 0 || !string.Equals(expected, inherited.BaseIdentityToken, StringComparison.Ordinal))
+                return new InheritedOverrideTargetInfo
+                {
+                    Safe = false,
+                    Reason = "base identity token is empty, unknown, or stale",
+                    BaseIdentityToken = inherited.BaseIdentityToken,
+                };
+
+            return new InheritedOverrideTargetInfo
+            {
+                Safe = true,
+                FieldId = componentId ?? "",
+                FieldTypeName = inherited.FieldTypeName,
+                EffectiveAccessibility = inherited.EffectiveAccessibility,
+                BaseIdentityToken = inherited.BaseIdentityToken,
+                GeometryOverrideEditable = inherited.GeometryOverrideEditable,
+                Reason = inherited.GeometryOverrideEditable ? "" : inherited.GeometryReason,
+            };
+        }
+
+        private static InheritedOverrideTargetInfo RefusedInheritedTarget(InheritedOverrideTargetInfo source, string reason)
+        {
+            source.Safe = false;
+            source.Reason = reason;
+            return source;
         }
 
         /// <summary>Resolve a component id for a live property EDIT / RESET — like <see cref="ResolveLiveTarget"/> (the
@@ -3235,7 +4045,8 @@ namespace WinFormsDesigner.Engine.Net48
         private static Dictionary<object, string> BuildFieldNameMap(object instance, Type type)
         {
             var map = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
-            for (Type? t = type; t != null && t != typeof(object); t = t.BaseType)
+            for (Type? t = type; t != null && t != typeof(Form) && t != typeof(UserControl)
+                 && t != typeof(Control) && t != typeof(Component) && t != typeof(object); t = t.BaseType)
             {
                 foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                 {
@@ -3267,13 +4078,17 @@ namespace WinFormsDesigner.Engine.Net48
             return index;
         }
 
-        /// <summary>Classify the same reflection identities as <see cref="BuildFieldNameMap"/> by the field's declaring
-        /// type. The loops and first-instance-wins rule intentionally match that method exactly, including hidden-field
-        /// collisions; an object whose identity cannot be tied to a field is absent and therefore unresolved.</summary>
+        /// <summary>Classify the same source-declared reflection identities as <see cref="BuildFieldNameMap"/> by the
+        /// field's declaring type. Framework implementation fields are not designer source identities.</summary>
         private static Dictionary<object, string> BuildOwnershipMap(object instance, Type designedType)
         {
             var map = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
-            for (Type? t = designedType; t != null && t != typeof(object); t = t.BaseType)
+            // Stop before framework implementation classes. Their private runtime fields (for example
+            // ContainerControl's active-control cache) can legitimately point at the same Button as the
+            // user-declared base field; counting those implementation references as source aliases would make a
+            // focused inherited control spuriously lose its unique, source-addressable identity.
+            for (Type? t = designedType; t != null && t != typeof(Form) && t != typeof(UserControl)
+                 && t != typeof(Control) && t != typeof(Component) && t != typeof(object); t = t.BaseType)
             {
                 foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                 {
@@ -3285,6 +4100,137 @@ namespace WinFormsDesigner.Engine.Net48
                 }
             }
             return map;
+        }
+
+        private static Dictionary<object, InheritedOverrideInfo> BuildInheritedOverrideMap(object instance, Type designedType)
+        {
+            var map = new Dictionary<object, InheritedOverrideInfo>(ReferenceEqualityComparer.Instance);
+            foreach (var kv in ReflectedComponentFields(instance, designedType))
+            {
+                if (kv.Value.Count != 1) continue;
+                var field = kv.Value[0];
+                if (InheritedOwnershipPolicy.FromDeclaration(designedType, field.DeclaringType) != InheritedOwnershipPolicy.Inherited)
+                    continue;
+                if (!(kv.Key is Control control)) continue;
+
+                string accessibility = EffectiveAccessibilityOf(field);
+                bool resolvedControl = !field.IsStatic
+                    && typeof(Control).IsAssignableFrom(field.FieldType)
+                    && field.FieldType.IsInstanceOfType(control)
+                    && DesignerInheritedOverrideEditor.SupportsInheritedField(field.Name, field.FieldType, control.GetType());
+                bool propertyOverrideEditable = resolvedControl && AccessibleFromDerivedDesigner(accessibility);
+                if (!propertyOverrideEditable) continue;
+
+                string token = BaseIdentityToken(field, accessibility);
+                if (token.Length == 0) continue;
+
+                bool geometryEditable = InheritedGeometryOverrideAllowed(control, out string geometryReason);
+                map[kv.Key] = new InheritedOverrideInfo
+                {
+                    PropertyOverrideEditable = true,
+                    GeometryOverrideEditable = geometryEditable,
+                    GeometryReason = geometryReason,
+                    BaseIdentityToken = token,
+                    FieldTypeName = field.FieldType.FullName ?? field.FieldType.Name,
+                    EffectiveAccessibility = accessibility,
+                    FieldType = field.FieldType,
+                    RuntimeType = control.GetType(),
+                };
+            }
+            return map;
+        }
+
+        private static Dictionary<object, List<FieldInfo>> ReflectedComponentFields(object instance, Type designedType)
+        {
+            var map = new Dictionary<object, List<FieldInfo>>(ReferenceEqualityComparer.Instance);
+            // Keep this boundary identical to BuildFieldNameMap/BuildOwnershipMap. Framework runtime caches may point
+            // at a user's control and are not additional C# designer fields.
+            for (Type? t = designedType; t != null && t != typeof(Form) && t != typeof(UserControl)
+                 && t != typeof(Control) && t != typeof(Component) && t != typeof(object); t = t.BaseType)
+            {
+                foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    if (!typeof(IComponent).IsAssignableFrom(field.FieldType)) continue;
+                    try
+                    {
+                        if (field.GetValue(instance) is IComponent component)
+                        {
+                            if (!map.TryGetValue(component, out var fields))
+                                map[component] = fields = new List<FieldInfo>();
+                            fields.Add(field);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            return map;
+        }
+
+        private static string EffectiveAccessibilityOf(FieldInfo field)
+        {
+            if (field.IsPublic) return "public";
+            if (field.IsFamily) return "protected";
+            if (field.IsFamilyOrAssembly) return "protected internal";
+            if (field.IsFamilyAndAssembly) return "private protected";
+            if (field.IsAssembly) return "internal";
+            if (field.IsPrivate) return "private";
+            return "unknown";
+        }
+
+        private static bool AccessibleFromDerivedDesigner(string accessibility) =>
+            accessibility == "public" || accessibility == "protected" || accessibility == "protected internal";
+
+        private static string BaseIdentityToken(FieldInfo field, string accessibility)
+        {
+            try
+            {
+                string identity = string.Join("\n", new[]
+                {
+                    field.DeclaringType?.Assembly.FullName ?? "",
+                    field.Module.ModuleVersionId.ToString("D"),
+                    field.DeclaringType?.FullName ?? "",
+                    field.MetadataToken.ToString(CultureInfo.InvariantCulture),
+                    field.Name,
+                    field.FieldType.AssemblyQualifiedName ?? field.FieldType.FullName ?? field.FieldType.Name,
+                    accessibility,
+                });
+                using (var sha = SHA256.Create())
+                    return "sha256:" + Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(identity)));
+            }
+            catch { return ""; }
+        }
+
+        private static string Hex(byte[] bytes)
+        {
+            var sb = new StringBuilder(bytes.Length * 2);
+            foreach (byte value in bytes) sb.Append(value.ToString("X2", CultureInfo.InvariantCulture));
+            return sb.ToString();
+        }
+
+        private static bool InheritedGeometryOverrideAllowed(Control control, out string reason)
+        {
+            if (control.Parent is TableLayoutPanel)
+            {
+                reason = "inherited geometry is controlled by a TableLayoutPanel parent";
+                return false;
+            }
+            if (control.Parent is FlowLayoutPanel)
+            {
+                reason = "inherited geometry is controlled by a FlowLayoutPanel parent";
+                return false;
+            }
+            if (control.Dock != DockStyle.None)
+            {
+                reason = "inherited geometry is controlled by Dock";
+                return false;
+            }
+            if (control.AutoSize)
+            {
+                reason = "inherited geometry is controlled by AutoSize";
+                return false;
+            }
+            reason = "";
+            return true;
         }
 
         private static List<LayoutControl> BuildLayoutControls(LiveDesign live, string rootClassName, int frameW, int frameH)
@@ -3299,9 +4245,23 @@ namespace WinFormsDesigner.Engine.Net48
             {
                 bool isRoot = ReferenceEquals(ctrl, root);
                 string id = isRoot ? "this" : IdOf(ctrl, fieldNames);
+                bool syntheticSplitterPanel = false;
+                SplitContainer? syntheticSplit = null;
+                if (!isRoot && id.Length == 0 && ctrl is SplitterPanel candidatePanel
+                    && candidatePanel.Parent is SplitContainer candidateSplit)
+                {
+                    string splitId = IdOf(candidateSplit, fieldNames);
+                    if (splitId.Length > 0)
+                    {
+                        if (ReferenceEquals(candidatePanel, candidateSplit.Panel1)) id = splitId + ".Panel1";
+                        else if (ReferenceEquals(candidatePanel, candidateSplit.Panel2)) id = splitId + ".Panel2";
+                        if (id.Length > 0) { syntheticSplitterPanel = true; syntheticSplit = candidateSplit; }
+                    }
+                }
                 // Only the controls DECLARED in the .Designer.cs (field-backed) are designer components. Skip the
                 // internal sub-parts DevExpress editors build at runtime — they aren't selectable and would swamp
-                // the hit-test map. Matches the net9 engine's sited-components-only semantics.
+                // the hit-test map. SplitContainer's two framework-owned panels are the one deliberate exception:
+                // Visual Studio exposes them as container surfaces under synthetic `split.Panel1|Panel2` identities.
                 if (!isRoot && id.Length == 0) continue;
                 // A field-backed control on a NON-active tab page (or otherwise hidden) is not on the visible surface.
                 // Its rect is stacked under the active page, so including it lets it STEAL a hit-test from the control
@@ -3317,29 +4277,55 @@ namespace WinFormsDesigner.Engine.Net48
                     for (Control? p = ctrl.Parent; p != null; p = p.Parent)
                     {
                         if (ReferenceEquals(p, root)) { parentId = "this"; break; }
+                        if (p is SplitterPanel splitterPanel && splitterPanel.Parent is SplitContainer split)
+                        {
+                            string splitId = IdOf(split, fieldNames);
+                            if (splitId.Length > 0)
+                            {
+                                if (ReferenceEquals(splitterPanel, split.Panel1)) parentId = splitId + ".Panel1";
+                                else if (ReferenceEquals(splitterPanel, split.Panel2)) parentId = splitId + ".Panel2";
+                                if (parentId != null) break;
+                            }
+                        }
                         string pid = IdOf(p, fieldNames);
                         if (pid.Length > 0) { parentId = pid; break; }
                     }
                 }
 
                 var (x, y) = ComputeWindowOffset(ctrl, root);
+                int outerX = isRoot ? 0 : x;
+                int outerY = isRoot ? 0 : y;
+                Rectangle client = ComputeClientWindowBounds(ctrl, root, outerX, outerY);
                 string ownership = !isRoot && live.AmbiguousIds.Contains(id)
                     ? InheritedOwnershipPolicy.Unresolved
-                    : OwnershipOf(live, ctrl);
+                    : syntheticSplitterPanel && syntheticSplit != null
+                        ? OwnershipOf(live, syntheticSplit)
+                        : OwnershipOf(live, ctrl);
+                live.InheritedOverrides.TryGetValue(ctrl, out var inheritedOverride);
                 list.Add(new LayoutControl
                 {
                     Id = id,
-                    Name = isRoot ? rootClassName : id,
+                    Name = isRoot ? rootClassName : syntheticSplitterPanel ? id.Substring(id.LastIndexOf('.') + 1) : id,
                     Type = ctrl.GetType().FullName ?? ctrl.GetType().Name,
                     ParentId = parentId,
                     IsRoot = isRoot,
                     Ownership = ownership,
                     Editable = InheritedOwnershipPolicy.IsEditable(ownership),
                     ReadOnlyReason = InheritedOwnershipPolicy.ReadOnlyReason(ownership),
+                    InheritedOverrideEditable = inheritedOverride?.PropertyOverrideEditable ?? false,
+                    InheritedGeometryOverrideEditable = inheritedOverride?.GeometryOverrideEditable ?? false,
+                    BaseIdentityToken = inheritedOverride?.BaseIdentityToken ?? "",
                     X = isRoot ? 0 : x,
                     Y = isRoot ? 0 : y,
                     Width = isRoot ? frameW : Math.Max(ctrl.Width, 1),
                     Height = isRoot ? frameH : Math.Max(ctrl.Height, 1),
+                    ClientX = client.X,
+                    ClientY = client.Y,
+                    ClientWidth = client.Width,
+                    ClientHeight = client.Height,
+                    Margin = LayoutSpacingOf(ctrl.Margin),
+                    Padding = LayoutSpacingOf(ctrl.Padding),
+                    TextBaseline = MeasureTextBaseline(ctrl, client),
                     Depth = depth,
                     TabIndex = isRoot ? -1 : ctrl.TabIndex,
                     Anchor = isRoot ? "None" : ctrl.Anchor.ToString(),
@@ -3546,19 +4532,114 @@ namespace WinFormsDesigner.Engine.Net48
         private static (int X, int Y) ComputeWindowOffset(Control ctrl, Control root)
         {
             if (ReferenceEquals(ctrl, root)) return (0, 0);
+            var origin = RootClientOrigin(root);
+            try
+            {
+                root.CreateControl();
+                if (ctrl.Parent != null)
+                {
+                    ctrl.Parent.CreateControl();
+                    Rectangle rootClientScreen = PhysicalClientScreenBounds(root);
+                    Point outerA = ctrl.Parent.PointToScreen(ctrl.Location);
+                    Point outerB = ctrl.Parent.PointToScreen(new Point(ctrl.Right, ctrl.Bottom));
+                    int outerX = Math.Min(outerA.X, outerB.X);
+                    int outerY = Math.Min(outerA.Y, outerB.Y);
+                    return (outerX - rootClientScreen.Left + origin.X,
+                        outerY - rootClientScreen.Top + origin.Y);
+                }
+            }
+            catch { /* keep the hierarchy fallback for a hostile/unrealized vendor handle */ }
+
             int x = 0, y = 0;
             for (Control? c = ctrl; c != null && !ReferenceEquals(c, root); c = c.Parent)
             {
                 x += c.Left;
                 y += c.Top;
             }
-            int originX = Math.Max(0, (root.Width - root.ClientSize.Width) / 2);
-            int originY = Math.Max(0, (root.Height - root.ClientSize.Height) - originX);
             // RightToLeftLayout mirrors the Form's client DC while leaving serialized Control.Left values logical.
             // Return painted/window coordinates so the webview overlays and hit testing line up with DrawToBitmap.
             if (root is Form form && form.RightToLeft == RightToLeft.Yes && form.RightToLeftLayout)
                 x = root.ClientSize.Width - x - ctrl.Width;
-            return (x + originX, y + originY);
+            return (x + origin.X, y + origin.Y);
+        }
+
+        private static Point RootClientOrigin(Control root)
+        {
+            int x = Math.Max(0, (root.Width - root.ClientSize.Width) / 2);
+            int y = Math.Max(0, (root.Height - root.ClientSize.Height) - x);
+            return new Point(x, y);
+        }
+
+        private static Rectangle PhysicalClientScreenBounds(Control control)
+        {
+            Point a = control.PointToScreen(Point.Empty);
+            Point b = control.PointToScreen(new Point(control.ClientSize.Width, control.ClientSize.Height));
+            return Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+        }
+
+        private static Rectangle ComputeClientWindowBounds(Control ctrl, Control root, int outerX, int outerY)
+        {
+            Point rootOrigin = RootClientOrigin(root);
+            try
+            {
+                root.CreateControl();
+                ctrl.CreateControl();
+                Rectangle rootClientScreen = PhysicalClientScreenBounds(root);
+                Rectangle clientScreen = PhysicalClientScreenBounds(ctrl);
+                return new Rectangle(clientScreen.Left - rootClientScreen.Left + rootOrigin.X,
+                    clientScreen.Top - rootClientScreen.Top + rootOrigin.Y,
+                    Math.Max(ctrl.ClientSize.Width, 1), Math.Max(ctrl.ClientSize.Height, 1));
+            }
+            catch
+            {
+                int insetX = Math.Max(0, (ctrl.Width - ctrl.ClientSize.Width) / 2);
+                int insetY = Math.Max(0, ctrl.Height - ctrl.ClientSize.Height - insetX);
+                return new Rectangle(outerX + insetX, outerY + insetY,
+                    Math.Max(ctrl.ClientSize.Width, 1), Math.Max(ctrl.ClientSize.Height, 1));
+            }
+        }
+
+        private static LayoutSpacing LayoutSpacingOf(Padding value)
+        {
+            return new LayoutSpacing { Left = value.Left, Top = value.Top, Right = value.Right, Bottom = value.Bottom };
+        }
+
+        private static int MeasureTextBaseline(Control ctrl, Rectangle clientWindow)
+        {
+            if (!(ctrl is Label) && !(ctrl is TextBoxBase)) return -1;
+            try
+            {
+                using (Graphics graphics = ctrl.CreateGraphics())
+                {
+                    Font font = ctrl.Font;
+                    int em = font.FontFamily.GetEmHeight(font.Style);
+                    int ascentDesign = font.FontFamily.GetCellAscent(font.Style);
+                    float emPixels = font.SizeInPoints * graphics.DpiY / 72f;
+                    float ascent = em > 0 ? ascentDesign * emPixels / em : font.GetHeight(graphics) * 0.8f;
+                    float lineHeight = font.GetHeight(graphics);
+                    Rectangle display = ctrl.DisplayRectangle;
+                    int top = Math.Max(0, display.Top);
+                    int available = Math.Max(1, Math.Min(clientWindow.Height - top, display.Height));
+                    Label label = ctrl as Label;
+                    TextBoxBase textBox = ctrl as TextBoxBase;
+                    if (label != null)
+                    {
+                        bool middle = label.TextAlign == ContentAlignment.MiddleLeft
+                            || label.TextAlign == ContentAlignment.MiddleCenter || label.TextAlign == ContentAlignment.MiddleRight;
+                        bool bottom = label.TextAlign == ContentAlignment.BottomLeft
+                            || label.TextAlign == ContentAlignment.BottomCenter || label.TextAlign == ContentAlignment.BottomRight;
+                        if (bottom) top += Math.Max(0, (int)Math.Floor(available - lineHeight));
+                        else if (middle) top += Math.Max(0, (int)Math.Floor((available - lineHeight) / 2f));
+                    }
+                    else if (textBox != null && !textBox.Multiline)
+                    {
+                        top += Math.Max(0, (int)Math.Floor((available - lineHeight) / 2f));
+                    }
+                    int baseline = clientWindow.Y + top + (int)Math.Round(ascent, MidpointRounding.AwayFromZero);
+                    return Math.Max(clientWindow.Y, Math.Min(clientWindow.Bottom - 1, baseline));
+                }
+            }
+            catch { return -1; }
         }
 
         private static List<TrayComponent> BuildTray(LiveDesign live)

@@ -50,6 +50,39 @@ public sealed class DesignerLocalizedResxEditorTests
         Assert.Equal(new[] { "button1.Text", "$this.RightToLeftLayout" }, result.Keys);
     }
 
+    [Theory]
+    [InlineData("\n", true)]
+    [InlineData("\n", false)]
+    [InlineData("\r\n", true)]
+    [InlineData("\r\n", false)]
+    public void ApplyScalarEdits_PreservesInputLineEndingAndTerminalNewline(string newLine, bool terminalNewline)
+    {
+        string existing = string.Join(newLine, new[]
+        {
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+            "<root>",
+            "  <!-- keep exact structure -->",
+            "  <data name=\"label1.Text\" xml:space=\"preserve\">",
+            "    <value>Old</value>",
+            "  </data>",
+            "</root>",
+        }) + (terminalNewline ? newLine : "");
+
+        var result = DesignerLocalizedResxEditor.ApplyScalarEdits(existing, new[]
+        {
+            new LocalizedResourceEdit
+            {
+                ComponentId = "label1",
+                PropertyName = "Text",
+                ValueTypeName = "System.String",
+                ScalarValue = "New",
+            },
+        });
+
+        Assert.True(result.Ok, result.Reason);
+        Assert.Equal(existing.Replace("<value>Old</value>", "<value>New</value>", StringComparison.Ordinal), result.ResxText);
+    }
+
     [Fact]
     public void RemoveOverride_RemovesOnlyTargetDataNode()
     {
@@ -152,6 +185,31 @@ public sealed class DesignerLocalizedResxEditorTests
         });
         Assert.False(bad.Ok);
         Assert.Contains("not a valid image", bad.Reason);
+    }
+
+    [Fact]
+    public void StructuralDelete_RemovesEveryTargetKeyAndPreservesOtherComponents()
+    {
+        string text = MinimalResx("""
+  <data name="button1.Text" xml:space="preserve"><value>Delete</value></data>
+  <data name="button1.Location" type="System.Drawing.Point, System.Drawing"><value>1, 2</value></data>
+  <data name="button2.Text" xml:space="preserve"><value>Keep</value></data>
+  <!-- opaque vendor node stays -->
+""");
+
+        var result = DesignerLocalizedResxEditor.RemoveComponents(text, new[] { "button1" });
+
+        Assert.True(result.Ok, result.Reason);
+        Assert.DoesNotContain("button1.", result.ResxText);
+        Assert.Contains("button2.Text", result.ResxText);
+        Assert.Contains("opaque vendor node stays", result.ResxText);
+        Assert.Equal(new[] { "button1.Text", "button1.Location" }, result.Keys);
+
+        var noMatch = DesignerLocalizedResxEditor.RemoveComponents(text, new[] { "missing" });
+        Assert.True(noMatch.Ok, noMatch.Reason);
+        Assert.Equal(text, noMatch.ResxText);
+        Assert.False(DesignerLocalizedResxEditor.RemoveComponents("<root><data", new[] { "button1" }).Ok);
+        Assert.False(DesignerLocalizedResxEditor.RemoveComponents(text, new[] { "button1.evil" }).Ok);
     }
 
     private static string MinimalResx(string body) => """

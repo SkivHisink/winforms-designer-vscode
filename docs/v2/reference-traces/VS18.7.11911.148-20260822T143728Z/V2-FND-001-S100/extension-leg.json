@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "V2-FND-001-S100",
+  "producer": "WinForms Designer for VS Code CustomEditor Extension Host",
+  "vscodeVersion": "1.134.0",
+  "adapter": {
+    "id": "acme.winforms.adapter",
+    "version": "2.0.0",
+    "vendorCodeLoaded": false
+  },
+  "action": {
+    "kind": "property",
+    "componentId": "button1",
+    "propertyName": "Text",
+    "value": "Extension + Visual Studio round-trip"
+  },
+  "artifacts": {
+    "S100AdapterRoundTripForm.cs": "1d8ada4a90c15df6b742dd702fd3790696834ad67bb7da4a52dd121c013e9cd2",
+    "S100AdapterRoundTripForm.Designer.cs": "4353500be0ffd58cfcc9e84db781f452863441033fc52ca04e5b744cc0aa6172",
+    "adapter-manifest.json": "58d006fd18aef197295dded8d80b70b6aa748fb832ea056625c04679865e0c74"
+  }
+}

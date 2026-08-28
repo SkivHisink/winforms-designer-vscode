@@ -20,13 +20,16 @@ const MEDIA_DIR = path.resolve(__dirname, '..', 'media');
 /** A no-op 2D canvas context — jsdom returns null from getContext without the native `canvas` package, but
  *  designer.js dereferences ctx (drawImage/clearRect/ruler drawing). Every method is a no-op; measureText
  *  returns a zero-width metric so ruler code doesn't NaN. */
-function noopCtx(): unknown {
+function noopCtx(calls: { method: string; args: unknown[] }[]): unknown {
   return new Proxy(
     {},
     {
       get(_t, prop) {
         if (prop === 'measureText') return () => ({ width: 0 });
-        return () => undefined;
+        return (...args: unknown[]) => {
+          calls.push({ method: String(prop), args });
+          return undefined;
+        };
       },
       set() {
         return true;
@@ -41,6 +44,8 @@ export interface Harness {
   document: any;
   /** Messages the webview posted to the host (vscode.postMessage), in order. Cleared with resetPosted(). */
   posted: any[];
+  /** Canvas calls emitted by the real media script; used to prove physical/logical DPI compositing. */
+  canvasCalls: { method: string; args: unknown[] }[];
   /** The webview's persisted state store (vscode.getState/setState). */
   state: Record<string, any>;
   /** Deliver a host -> webview message (window 'message' event with {data}). */
@@ -56,6 +61,9 @@ export interface Harness {
   /** Give the canvas a non-zero client rect so tests can exercise the client→surface coordinate transform
    *  (jsdom's getBoundingClientRect is all-zeros by default, which masks a dropped `- rect.left` correction). */
   setCanvasRect(left: number, top: number): void;
+  /** Control and flush synthetic Image loads for render-generation race tests. */
+  setImageAutoLoad(enabled: boolean): void;
+  flushImages(width?: number, height?: number): void;
   /** Empty the posted-message log (handy between phases of one test). */
   resetPosted(): void;
   /** Tear down the jsdom window (cancels pending timers). Idempotent. */
@@ -87,7 +95,7 @@ export const DESIGNER_SCAFFOLD = `
   </div>
   <div id="stage">
     <div id="overlay">Loading</div>
-    <div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="sel"></div></div>
+    <div id="surfaceWrap" style="position:relative"><canvas id="surface" width="1" height="1"></canvas><div id="designerGrid"></div><div id="sel"></div></div>
   </div>
   <div id="tray" style="display:none"></div>
   <div id="status"></div>
@@ -98,11 +106,14 @@ export const DESIGNER_SCAFFOLD = `
       <button id="alignLeft"></button><button id="alignRight"></button><button id="alignTop"></button><button id="alignBottom"></button>
       <button id="alignCenterH"></button><button id="alignCenterV"></button>
       <button id="distH"></button><button id="distV"></button>
+      <button id="spaceHInc"></button><button id="spaceHDec"></button><button id="spaceHRemove"></button>
+      <button id="spaceVInc"></button><button id="spaceVDec"></button><button id="spaceVRemove"></button>
       <button id="sameW"></button><button id="sameH"></button><button id="sameWH"></button>
     </span>
     <span id="centerForm" style="display:none"><button id="centerFormH"></button><button id="centerFormV"></button></span>
     <button id="tabOrder">Tab Order</button>
     <button id="rulerToggle">Ruler</button>
+    <button id="deleteCtl">Delete</button>
     <span id="dirty"></span>
   </div>
   <div id="ctxMenu" class="ctxmenu"></div>
@@ -131,11 +142,20 @@ export const PANEL_SCAFFOLD = `
       <div id="tbEmpty" class="paneEmpty">Empty</div>
       <div id="tbBody" style="display:none"><div id="tbHeader"><input id="tbSearch" type="text"></div><div id="tbList"></div></div>
     </div>
+    <div id="dataPane" class="pane" style="display:none">
+      <div id="dataToolbar">
+        <button id="dataRefresh" type="button">Refresh</button>
+        <label><input id="dataNavigator" type="checkbox">Navigator</label>
+      </div>
+      <div id="dataStatus">Loading</div>
+      <div id="dataList"></div>
+    </div>
   </div>
   <div id="bottomTabs">
     <button id="mainTabProps" class="active">Properties</button>
     <button id="mainTabOutline">Outline</button>
     <button id="mainTabToolbox">Toolbox</button>
+    <button id="mainTabData">Data Sources</button>
   </div>
   <div id="tbMenu" class="ctxmenu" style="display:none"></div>
   <div id="tbPrompt" class="modal" style="display:none">
@@ -169,11 +189,22 @@ function load(scriptFile: string, bodyHtml: string, needCanvas: boolean): Harnes
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const win: any = dom.window;
   const posted: any[] = [];
+  const canvasCalls: { method: string; args: unknown[] }[] = [];
+  const pendingImages: any[] = [];
+  let imageAutoLoad = true;
   let closed = false;
+  function flushImage(img: any, width?: number, height?: number): void {
+    if (!img || img.__wfdLoaded) return;
+    img.__wfdLoaded = true;
+    img.naturalWidth = width ?? img.naturalWidth ?? 1;
+    img.naturalHeight = height ?? img.naturalHeight ?? 1;
+    if (typeof img.onload === 'function') img.onload(new win.Event('load'));
+  }
   const harness: Harness = {
     window: win,
     document: win.document,
     posted,
+    canvasCalls,
     state: {},
     send(msg: any) {
       win.dispatchEvent(new win.MessageEvent('message', { data: msg }));
@@ -209,6 +240,12 @@ function load(scriptFile: string, bodyHtml: string, needCanvas: boolean): Harnes
         toJSON() {},
       });
     },
+    setImageAutoLoad(enabled: boolean) {
+      imageAutoLoad = enabled;
+    },
+    flushImages(width?: number, height?: number) {
+      for (const img of pendingImages) flushImage(img, width, height);
+    },
     resetPosted() {
       posted.length = 0;
     },
@@ -230,7 +267,25 @@ function load(scriptFile: string, bodyHtml: string, needCanvas: boolean): Harnes
       harness.state = s;
     },
   });
-  if (needCanvas) win.HTMLCanvasElement.prototype.getContext = () => noopCtx();
+  if (needCanvas) win.HTMLCanvasElement.prototype.getContext = () => noopCtx(canvasCalls);
+  if (needCanvas) {
+    win.Image = class {
+      onload: ((event?: Event) => void) | null = null;
+      onerror: ((event?: Event) => void) | null = null;
+      naturalWidth = 1;
+      naturalHeight = 1;
+      __wfdLoaded = false;
+      private _src = '';
+      get src(): string {
+        return this._src;
+      }
+      set src(value: string) {
+        this._src = value;
+        pendingImages.push(this);
+        if (imageAutoLoad) flushImage(this);
+      }
+    };
+  }
 
   // Inject the REAL media script into the window realm (executes its IIFE synchronously; it posts {type:'ready'}).
   const code = fs.readFileSync(path.join(MEDIA_DIR, scriptFile), 'utf8');

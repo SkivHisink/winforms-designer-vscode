@@ -84,6 +84,29 @@ public sealed class SaveSafetyTests
     }
 
     [Fact]
+    public void RemoveControl_CanonicalApplyResources_RemovesOnlyTarget_LocalizableShape()
+    {
+        string source = BaseSource.Replace(
+            "this.button1.Name = \"button1\";",
+            "resources.ApplyResources(this.button1, \"button1\");\n                    this.button1.Name = \"button1\";")
+            .Replace(
+                "this.button1 = new System.Windows.Forms.Button();",
+                "System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));\n                    this.button1 = new System.Windows.Forms.Button();");
+
+        var result = DesignerControlEditor.RemoveControl(source, "button1");
+
+        Assert.True(result.Safe, result.Reason);
+        Assert.DoesNotContain("this.button1", result.NewText);
+        Assert.DoesNotContain("\"button1\"", result.NewText);
+        Assert.Contains("ComponentResourceManager resources", result.NewText);
+
+        string nonCanonical = source.Replace(
+            "resources.ApplyResources(this.button1, \"button1\");",
+            "vendor.ApplyResources(this.button1, \"button1\");");
+        Assert.False(DesignerControlEditor.RemoveControl(nonCanonical, "button1").Safe);
+    }
+
+    [Fact]
     public void MissingOriginalStatements_EquivalentCollectionAndLocalSpelling_Accepts()
     {
         string original = WrapInit("""
@@ -128,6 +151,28 @@ public sealed class SaveSafetyTests
 
         Assert.Equal(SaveSafetyReason.Localizable, reason);
         Assert.Equal("localizable", SaveSafety.CategoryName(reason));
+    }
+
+    // The render CLIs used to call any non-empty bitmap a PASS, so a form whose ActiveX/vendor control could not be
+    // created rendered without it and still exited 0. DropsControls is what makes that fail closed — and it must
+    // stay narrow: the interpreter emits "AddRange: unknown element" for EVERY collection (ListBox Items, ListView
+    // Columns, ToolStrip Items, TabPages), so matching it would report a lost list entry as a lost control.
+    [Fact]
+    public void DropsControls_OnlyFiresForAControlsAddThatLostItsChild()
+    {
+        Assert.True(SaveSafety.DropsControls(new[] { "Controls.Add unknown child: this.axWindowsMediaPlayer1" }));
+
+        Assert.True(SaveSafety.DropsControls(new[] { "Controls.AddRange unknown element this.axWindowsMediaPlayer1" }));
+        Assert.False(SaveSafety.DropsControls(new[] { "AddRange: unknown element \"Alpha\"" }));
+        Assert.False(SaveSafety.DropsControls(new[]
+        {
+            "this.x.Prop = new decimal(...);  [InvalidOperationException: unresolved type decimal]",
+        }));
+        Assert.False(SaveSafety.DropsControls(System.Array.Empty<string>()));
+
+        // Classify already buckets this signal as UnresolvedType, so the CLI's category token stays one vocabulary.
+        Assert.Equal(SaveSafetyReason.UnresolvedType,
+            SaveSafety.Classify(new[] { "Controls.Add unknown child: this.axMSComm1" }, System.Array.Empty<string>()));
     }
 
     private static string WrapInit(string body) => $$"""

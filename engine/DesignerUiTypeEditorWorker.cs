@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Design;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
@@ -21,6 +23,7 @@ namespace WinFormsDesigner.Engine
         public bool Applied { get; init; }
         public bool Dismissed { get; init; }
         public string? InvariantValue { get; init; }
+        public List<string>? CollectionItems { get; init; }
         public string? ErrorCode { get; init; }
     }
 
@@ -38,7 +41,7 @@ namespace WinFormsDesigner.Engine
     /// </summary>
     public static class DesignerUiTypeEditorWorker
     {
-        private const int MaximumRequestJsonLength = 32 * 1024;
+        private const int MaximumRequestJsonLength = 256 * 1024;
 
         public static Task<int> RunStandardIoAsync(
             TextReader input,
@@ -110,8 +113,8 @@ namespace WinFormsDesigner.Engine
             && !string.IsNullOrEmpty(request.ValueTypeName)
             && request.EditorTypeName.Length <= DesignerUiTypeEditorPolicy.MaximumTypeNameLength
             && request.ValueTypeName.Length <= DesignerUiTypeEditorPolicy.MaximumTypeNameLength
-            && DesignerUiTypeEditorPolicy.IsSupported(request.EditorTypeName, request.ValueTypeName)
-            && DesignerUiTypeEditorPolicy.IsSafeInvariantValue(request.ValueTypeName, request.InvariantValue);
+            && DesignerUiTypeEditorPolicy.TryGetRequestContract(request, out _, out _, out _)
+            && DesignerUiTypeEditorPolicy.IsSafeRequestValue(request, request.InvariantValue);
 
         private static DesignerUiTypeEditorWorkerResponse ToWorkerResponse(
             DesignerUiTypeEditorRequest request,
@@ -120,8 +123,24 @@ namespace WinFormsDesigner.Engine
             if (invocation?.Applied == true
                 && !invocation.Dismissed
                 && string.IsNullOrEmpty(invocation.ErrorCode)
+                && IsCollectionContract(request)
+                && invocation.InvariantValue == null
+                && DesignerUiTypeEditorPolicy.IsSafeCollectionItems(request.CollectionItemTypeName, invocation.CollectionItems))
+            {
+                return new DesignerUiTypeEditorWorkerResponse
+                {
+                    RequestId = request.RequestId,
+                    Status = "applied",
+                    CollectionItems = invocation.CollectionItems,
+                };
+            }
+
+            if (invocation?.Applied == true
+                && !invocation.Dismissed
+                && string.IsNullOrEmpty(invocation.ErrorCode)
+                && invocation.CollectionItems == null
                 && invocation.InvariantValue != null
-                && DesignerUiTypeEditorPolicy.IsSafeInvariantValue(request.ValueTypeName, invocation.InvariantValue))
+                && DesignerUiTypeEditorPolicy.IsSafeWorkerResultValue(request, invocation.InvariantValue))
             {
                 return new DesignerUiTypeEditorWorkerResponse
                 {
@@ -134,6 +153,7 @@ namespace WinFormsDesigner.Engine
             if (invocation?.Dismissed == true
                 && !invocation.Applied
                 && invocation.InvariantValue == null
+                && invocation.CollectionItems == null
                 && string.IsNullOrEmpty(invocation.ErrorCode))
             {
                 return new DesignerUiTypeEditorWorkerResponse
@@ -148,6 +168,7 @@ namespace WinFormsDesigner.Engine
                 "runtime_unsupported" => "runtime_unsupported",
                 "worker_cancelled" => "worker_cancelled",
                 "conversion_failed" => "conversion_failed",
+                DesignerUiTypeEditorPolicy.InvalidEditorResultCode => DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
                 _ => "editor_failed",
             };
             return new DesignerUiTypeEditorWorkerResponse
@@ -156,6 +177,14 @@ namespace WinFormsDesigner.Engine
                 Status = "error",
                 ErrorCode = errorCode,
             };
+        }
+
+        private static bool IsCollectionContract(DesignerUiTypeEditorRequest request)
+        {
+            if (!DesignerUiTypeEditorPolicy.TryGetRequestContract(
+                    request, out DesignerUiTypeEditorContract contract, out _, out _)) return false;
+            return contract.Kind is DesignerUiTypeEditorContractKind.FrameworkCollection
+                or DesignerUiTypeEditorContractKind.CertifiedVendorCollection;
         }
 
         private static Task<DesignerUiTypeEditorInvocationResult> InvokeOnStaAsync(
@@ -204,6 +233,198 @@ namespace WinFormsDesigner.Engine
     {
         public DesignerUiTypeEditorInvocationResult Invoke(DesignerUiTypeEditorRequest request)
         {
+            if (!DesignerUiTypeEditorPolicy.TryGetRequestContract(
+                    request,
+                    out DesignerUiTypeEditorContract contract,
+                    out _,
+                    out _))
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+
+            return contract.Kind == DesignerUiTypeEditorContractKind.CertifiedVendor
+                ? InvokeCertifiedVendor(request, contract)
+                : contract.Kind == DesignerUiTypeEditorContractKind.CertifiedVendorCollection
+                    ? InvokeCertifiedVendorCollection(request, contract)
+                : contract.Kind == DesignerUiTypeEditorContractKind.FrameworkCollection
+                    ? InvokeFrameworkCollection(request)
+                    : InvokeFramework(request);
+        }
+
+        private static DesignerUiTypeEditorInvocationResult InvokeFrameworkCollection(DesignerUiTypeEditorRequest request)
+        {
+            if (!DesignerUiTypeEditorPolicy.IsSafeCollectionItems(request.CollectionItemTypeName, request.CollectionItems))
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+            Type? itemType = ResolveCollectionItemType(request.CollectionItemTypeName!);
+            if (itemType == null) return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+
+            IList current;
+            Type listType;
+            try
+            {
+                listType = typeof(List<>).MakeGenericType(itemType);
+                current = (IList)Activator.CreateInstance(listType)!;
+                TypeConverter converter = TypeDescriptor.GetConverter(itemType);
+                foreach (string invariant in request.CollectionItems!)
+                {
+                    object? value = converter.ConvertFromInvariantString(invariant);
+                    if (value == null || !itemType.IsInstanceOfType(value))
+                        return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+                    current.Add(value);
+                }
+            }
+            catch { return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" }; }
+
+            object? edited;
+            try
+            {
+                Application.EnableVisualStyles();
+                using var service = new FrameworkEditorService();
+                edited = CreateFrameworkCollectionEditor(listType).EditValue(context: null, provider: service, value: current);
+            }
+            catch { return new DesignerUiTypeEditorInvocationResult { ErrorCode = "editor_failed" }; }
+            if (edited is not IList editedItems || editedItems.Count > DesignerUiTypeEditorPolicy.MaximumCollectionItems)
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+
+            var invariants = new List<string>(editedItems.Count);
+            try
+            {
+                TypeConverter converter = TypeDescriptor.GetConverter(itemType);
+                foreach (object? value in editedItems)
+                {
+                    if (value == null || !itemType.IsInstanceOfType(value))
+                        return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+                    string? invariant = converter.ConvertToInvariantString(value);
+                    if (invariant == null) return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+                    invariants.Add(invariant);
+                }
+            }
+            catch { return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" }; }
+            if (!DesignerUiTypeEditorPolicy.IsSafeCollectionItems(request.CollectionItemTypeName, invariants))
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+            if (invariants.SequenceEqual(request.CollectionItems!, StringComparer.Ordinal))
+                return new DesignerUiTypeEditorInvocationResult { Dismissed = true };
+            return new DesignerUiTypeEditorInvocationResult { Applied = true, CollectionItems = invariants };
+        }
+
+        private static DesignerUiTypeEditorInvocationResult InvokeCertifiedVendorCollection(
+            DesignerUiTypeEditorRequest request,
+            DesignerUiTypeEditorContract contract)
+        {
+            if (!DesignerUiTypeEditorPolicy.IsSafeCollectionItems(
+                    request.CollectionItemTypeName, request.CollectionItems))
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+            Type? itemType = ResolveCollectionItemType(request.CollectionItemTypeName!);
+            if (itemType == null) return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+
+            IList current;
+            Type listType;
+            UITypeEditor editor;
+            try
+            {
+                listType = typeof(List<>).MakeGenericType(itemType);
+                current = (IList)Activator.CreateInstance(listType)!;
+                TypeConverter converter = TypeDescriptor.GetConverter(itemType);
+                foreach (string invariant in request.CollectionItems!)
+                {
+                    object? value = converter.ConvertFromInvariantString(invariant);
+                    if (value == null || !itemType.IsInstanceOfType(value))
+                        return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
+                    current.Add(value);
+                }
+
+                Assembly assembly = Assembly.LoadFrom(contract.AssemblyPath);
+                Type? editorType = assembly.GetType(request.EditorTypeName, throwOnError: false, ignoreCase: false);
+                if (editorType == null || !typeof(UITypeEditor).IsAssignableFrom(editorType))
+                    return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+                editor = Activator.CreateInstance(editorType) as UITypeEditor
+                    ?? throw new InvalidOperationException("Certified collection editor could not be created.");
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+            }
+
+            object? edited;
+            try
+            {
+                using var service = new FrameworkEditorService();
+                edited = editor.EditValue(context: null, provider: service, value: current);
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "editor_failed" };
+            }
+
+            if (edited is not IList editedItems || editedItems.Count > DesignerUiTypeEditorPolicy.MaximumCollectionItems)
+                return new DesignerUiTypeEditorInvocationResult
+                {
+                    ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
+                };
+
+            var invariants = new List<string>(editedItems.Count);
+            try
+            {
+                TypeConverter converter = TypeDescriptor.GetConverter(itemType);
+                foreach (object? value in editedItems)
+                {
+                    if (value == null || !itemType.IsInstanceOfType(value))
+                        return new DesignerUiTypeEditorInvocationResult
+                        {
+                            ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
+                        };
+                    string? invariant = converter.ConvertToInvariantString(value);
+                    if (invariant == null) return new DesignerUiTypeEditorInvocationResult
+                    {
+                        ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
+                    };
+                    invariants.Add(invariant);
+                }
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorInvocationResult
+                {
+                    ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
+                };
+            }
+            if (!DesignerUiTypeEditorPolicy.IsSafeCollectionItems(request.CollectionItemTypeName, invariants))
+                return new DesignerUiTypeEditorInvocationResult
+                {
+                    ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
+                };
+            if (invariants.SequenceEqual(request.CollectionItems!, StringComparer.Ordinal))
+                return new DesignerUiTypeEditorInvocationResult { Dismissed = true };
+            return new DesignerUiTypeEditorInvocationResult { Applied = true, CollectionItems = invariants };
+        }
+
+        internal static UITypeEditor CreateFrameworkCollectionEditor(Type collectionType)
+        {
+            Assembly assembly = Assembly.Load(new AssemblyName("System.Windows.Forms.Design"));
+            Type? editorType = assembly.GetType(
+                DesignerUiTypeEditorPolicy.CollectionEditorTypeName,
+                throwOnError: false,
+                ignoreCase: false);
+            if (editorType == null || !typeof(UITypeEditor).IsAssignableFrom(editorType))
+                throw new InvalidOperationException("Framework CollectionEditor is unavailable.");
+            object? editor = Activator.CreateInstance(editorType, new object[] { collectionType });
+            return editor as UITypeEditor
+                ?? throw new InvalidOperationException("Framework CollectionEditor could not be created.");
+        }
+
+        private static Type? ResolveCollectionItemType(string typeName)
+        {
+            if (!DesignerGenericListEditor.SupportsItemType(typeName)) return null;
+            try
+            {
+                return Type.GetType(typeName, throwOnError: false, ignoreCase: false)
+                    ?? typeof(Form).Assembly.GetType(typeName, throwOnError: false, ignoreCase: false)
+                    ?? typeof(Color).Assembly.GetType(typeName, throwOnError: false, ignoreCase: false)
+                    ?? typeof(object).Assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
+            }
+            catch { return null; }
+        }
+
+        private static DesignerUiTypeEditorInvocationResult InvokeFramework(DesignerUiTypeEditorRequest request)
+        {
             UITypeEditor editor;
             Type valueType;
             if (request.EditorTypeName == "System.Drawing.Design.ColorEditor"
@@ -248,6 +469,50 @@ namespace WinFormsDesigner.Engine
             {
                 return new DesignerUiTypeEditorInvocationResult { ErrorCode = "editor_failed" };
             }
+        }
+
+        private static DesignerUiTypeEditorInvocationResult InvokeCertifiedVendor(
+            DesignerUiTypeEditorRequest request,
+            DesignerUiTypeEditorContract contract)
+        {
+            UITypeEditor editor;
+            try
+            {
+                Assembly assembly = Assembly.LoadFrom(contract.AssemblyPath);
+                Type? editorType = assembly.GetType(request.EditorTypeName, throwOnError: false, ignoreCase: false);
+                if (editorType == null || !typeof(UITypeEditor).IsAssignableFrom(editorType))
+                    return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+                object? created = Activator.CreateInstance(editorType);
+                if (created is not UITypeEditor typedEditor)
+                    return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+                editor = typedEditor;
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
+            }
+
+            object? edited;
+            try
+            {
+                using var service = new FrameworkEditorService();
+                edited = editor.EditValue(context: null, provider: service, value: request.InvariantValue);
+            }
+            catch
+            {
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "editor_failed" };
+            }
+
+            if (edited is not string invariant
+                || !DesignerUiTypeEditorPolicy.IsSafeWorkerResultValue(request, invariant))
+                return new DesignerUiTypeEditorInvocationResult
+                {
+                    ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
+                };
+
+            if (string.Equals(invariant, request.InvariantValue, StringComparison.Ordinal))
+                return new DesignerUiTypeEditorInvocationResult { Dismissed = true };
+            return new DesignerUiTypeEditorInvocationResult { Applied = true, InvariantValue = invariant };
         }
 
         private sealed class FrameworkEditorService : IWindowsFormsEditorService, IServiceProvider, IDisposable

@@ -32,9 +32,9 @@ namespace WinFormsDesigner.Engine
 
         public ComponentCollection Components => new ComponentCollection(_components.ToArray());
 
-        public void Add(IComponent component) => Add(component, null);
+        public void Add(IComponent? component) => Add(component, null);
 
-        public void Add(IComponent component, string? name)
+        public void Add(IComponent? component, string? name)
         {
             if (component == null) throw new ArgumentNullException(nameof(component));
             if (_disposed) throw new ObjectDisposedException(nameof(DesignTimeContainer));
@@ -44,7 +44,7 @@ namespace WinFormsDesigner.Engine
             _components.Add(component);
         }
 
-        public void Remove(IComponent component)
+        public void Remove(IComponent? component)
         {
             if (component == null) return;
             if (component.Site is DesignTimeSite s && ReferenceEquals(s.Container, this))

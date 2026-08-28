@@ -168,12 +168,29 @@ export function projectReferencesAssembly(csprojText: string, csprojPath: string
   return false;
 }
 
-/** The project's <TargetFramework> (or first of <TargetFrameworks>), or null. e.g. "net48", "net9.0-windows". */
+/**
+ * The project's target framework (or first multi-target entry), normalized to an SDK-style TFM.
+ *
+ * Modern/SDK projects spell this as `<TargetFramework>` / `<TargetFrameworks>`. Classic Visual Studio
+ * WinForms projects instead use `<TargetFrameworkVersion>v4.8</TargetFrameworkVersion>` (and may put a
+ * `Condition` on the element). Routing must understand both: treating an unbuilt classic project as modern
+ * sends it to the .NET engine, which cannot load its output and produces an empty/misleading preview.
+ */
 export function projectTargetFramework(csprojText: string): string | null {
-  const single = /<TargetFramework>\s*([^<]+?)\s*<\/TargetFramework>/i.exec(csprojText);
+  const live = stripXmlComments(csprojText);
+  const single = /<TargetFramework(?:\s[^>]*)?>\s*([^<]+?)\s*<\/TargetFramework>/i.exec(live);
   if (single) return single[1].trim();
-  const multi = /<TargetFrameworks>\s*([^<]+?)\s*<\/TargetFrameworks>/i.exec(csprojText);
+  const multi = /<TargetFrameworks(?:\s[^>]*)?>\s*([^<]+?)\s*<\/TargetFrameworks>/i.exec(live);
   if (multi) return multi[1].split(';').map((s) => s.trim()).filter(Boolean)[0] ?? null;
+  const classic = /<TargetFrameworkVersion(?:\s[^>]*)?>\s*v?(\d+)\.(\d+)(?:\.(\d+))?\s*<\/TargetFrameworkVersion>/i.exec(live);
+  if (classic) {
+    const major = Number(classic[1]);
+    const minor = Number(classic[2]);
+    const patch = classic[3] === undefined ? '' : String(Number(classic[3]));
+    if ((major === 2 || major === 3 || major === 4) && Number.isInteger(minor)) {
+      return `net${major}${minor}${patch}`;
+    }
+  }
   return null;
 }
 

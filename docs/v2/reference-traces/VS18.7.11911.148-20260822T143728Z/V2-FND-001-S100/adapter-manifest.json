@@ -1,0 +1,70 @@
+{
+  "schemaId": "winforms-designer.v2.adapter-manifest",
+  "schemaVersion": 1,
+  "adapter": {
+    "id": "acme.winforms.adapter",
+    "version": "2.0.0",
+    "displayName": "Acme WinForms Adapter",
+    "publisher": {
+      "id": "acme",
+      "displayName": "Acme"
+    }
+  },
+  "protocol": {
+    "id": "designer-protocol-v2",
+    "supportedVersions": [1, 2],
+    "requiredCapabilities": [
+      "protocol.envelope-v2",
+      "protocol.n-minus-one",
+      "payload.byte-limit"
+    ]
+  },
+  "compatibility": {
+    "productId": "winforms-designer-vscode",
+    "cohorts": [
+      {
+        "productId": "winforms-designer-vscode",
+        "minProductVersion": "2.0.0",
+        "maxProductVersionExclusive": "3.0.0",
+        "runtimes": ["modern", "net48"],
+        "architectures": ["x64", "arm64"]
+      }
+    ]
+  },
+  "capabilities": [
+    "adapter.manifest-v1",
+    "adapter.compatibility-v1",
+    "diagnostics.machine-readable",
+    "toolbox.discovery",
+    "control.render-metadata",
+    "property-grid.metadata",
+    "property-editor.bounded",
+    "smart-tags.readonly",
+    "resource.readonly",
+    "source.mutation.source-first"
+  ],
+  "trust": {
+    "signature": "unsigned-local",
+    "workspaceTrust": "trusted",
+    "loadVendorCode": false,
+    "mutationAuthority": "sourceFirst"
+  },
+  "bounds": {
+    "maxPayloadBytes": 65536,
+    "maxPathLength": 260,
+    "allowAbsolutePaths": false,
+    "allowParentDirectoryTraversal": false
+  },
+  "unsupportedFeatures": [
+    "vs-designer-sdk-rehost",
+    "vendor-smart-tag-actions",
+    "custom-uitypeeditor-hosting",
+    "licensed-designtime-code",
+    "com-activex",
+    "x86-worker"
+  ],
+  "diagnostics": {
+    "format": "v2-adapter-diagnostics",
+    "deterministic": true
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "V2-FND-001-S120",
+  "producer": "WinForms Designer for VS Code CustomEditor Extension Host",
+  "extensionVersion": "2.0.0",
+  "vscodeVersion": "1.134.0",
+  "action": {
+    "kind": "move",
+    "componentId": "button1",
+    "delta": {
+      "x": 11,
+      "y": 7
+    },
+    "resultingLocation": {
+      "x": 21,
+      "y": 27
+    }
+  },
+  "artifacts": {
+    "GroupMoveForm.cs": "db7a11be903988516bed60bd727127bf48a6c54bea54e1b155877f54c0acb850",
+    "GroupMoveForm.Designer.cs": "8159fa7f93b10b7086e725304478c0909e7921491f07d52636ac4c8676348f39"
+  }
+}

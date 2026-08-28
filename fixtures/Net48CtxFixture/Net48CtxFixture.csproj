@@ -6,10 +6,12 @@
        build (it lives outside engine/ and engine-net48/); built on demand by extension/src/e2e.ts. -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>Net48CtxFixture</AssemblyName>
     <RootNamespace>SampleApp</RootNamespace>
+    <!-- VendorLike deliberately models a legacy vendor property without modern source-generation metadata. -->
+    <NoWarn Condition="'$(TargetFramework)' == 'net10.0-windows'">$(NoWarn);WFO1000</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -47,6 +49,13 @@
          them implicitly, like the other local fixtures here) — a form that maximizes itself AND opens another window
          from Load, the two ways a real application's form used to put windows on the user's screen when the preview
          realized it. Not in engine/samples because only the compiled (net48) engine instantiates the real type. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- S079 intentionally exercises the product's live-source/localizable overlay. Keep these neighboring resources
+         out of the compiled fixture so the net48 route cannot satisfy the scenario from a stale satellite assembly. -->
+    <EmbeddedResource Remove="LocalizableForm.resx" />
+    <EmbeddedResource Remove="LocalizableForm.ar-SA.resx" />
   </ItemGroup>
 
 </Project>

@@ -6,12 +6,17 @@ import { designerDpiScale, displayDprChanged } from './dpiScale';
 import {
   EngineHandle,
   LayoutControl,
+  TrayComponent,
   ToolStripItemBounds,
   GeometryRect,
   GeometryDragStartResult,
   ComponentDesc,
+  DesignerAdornerHitResult,
+  HostedDesignerProbeResult,
+  HostedServiceKernelProductResult,
   VendorSmartTag,
   renderWithLayout,
+  applyCachedTextPropertyEdit,
   renderCompiledWithLayout,
   renderInterpretedWithLayout,
   describeCompiledComponent,
@@ -32,6 +37,7 @@ import {
   hitTestTab,
   hitTestCompiledTab,
   hitTestInterpretedTab,
+  hitTestDesignerAdorner,
   CompiledEdit,
   RenderLayout,
   ColumnItem,
@@ -49,9 +55,18 @@ import {
   describeComponent,
   renderControl,
   setProperty,
+  setPropertyViaProvenOwnedRegion,
+  applyInheritedPropertyOverride,
+  removeInheritedPropertyOverride,
+  authorizeInheritedGeometryOverride,
+  setProperties,
   setModifier,
   convertValue,
   editSupportedUiTypeEditor,
+  SupportedUiTypeEditorResult,
+  editSupportedCollectionEditor,
+  editCertifiedVendorCollectionEditor,
+  planBoundedComponentPatch,
   setTableCell,
   listCollectionItems,
   setCollectionItems,
@@ -64,13 +79,23 @@ import {
   listGridColumns,
   setGridColumns,
   BindingItem,
+  BindingItems,
   listBindings,
   setBindings,
   getDataSource,
   setDataSource,
+  listDataSources,
+  generateDataSource,
+  bindApplicationSetting,
+  DataSourcesResult,
+  DataSourceGenerationResult,
   setExtender,
   resetProperty,
+  resetProperties,
   setImageResource,
+  listProjectImageResources,
+  setProjectImageResource,
+  ProjectResourceCandidate,
   makeLocalizable,
   LocalizeFormResult,
   setLocalizationCulture,
@@ -84,8 +109,11 @@ import {
   setImageList,
   generateEventHandler,
   listHandlerCandidates,
+  findEventHandlerSourceIndex,
   setEventWiring,
   addControl,
+  addLocalizedControl,
+  removeLocalizedComponentResources,
   addComponent,
   listToolboxItems,
   listCompiledToolboxControls,
@@ -95,12 +123,18 @@ import {
   listToolboxCandidates,
   scanToolboxAssembly,
   ToolboxCandidate,
+  resolveDesignerDocumentOwner,
+  DesignerDocumentOwnerResolution,
+  resolveAssembly,
   removeControl,
   renameComponent,
   copyControl,
   pasteControl,
+  pasteControlAtOffset,
   moveZOrder,
   moveTabPage,
+  listTabPages,
+  setTabPageOrder,
   reparentControl,
   addTabPage,
   addCompiledTab,
@@ -108,6 +142,9 @@ import {
   removeCompiledTab,
   moveCompiledTab,
   listCompiledVendorSmartTags,
+  inspectCertifiedHostedDesigner,
+  inspectCertifiedHostedServiceKernel,
+  invokeCertifiedHostedServiceAction,
 } from './engineClient';
 import { COMPLEX_TYPE_SET, toCSharpExpression, shortName } from './valueExpr';
 import { findNearestCsproj, findOwningCsproj, projectAssemblyName, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, isFrameworkTfm, multiTargetHasFramework } from './csprojRef';
@@ -118,7 +155,10 @@ import {
   discoverProjectBuildOutputRoots,
   discoverProbeAssemblies,
   discoverRegisteredAssemblies,
+  filterToolboxByRuntime,
   isUserEditDocument,
+  refuseTierDToolboxRequest,
+  ToolboxRuntimeFilter,
   uniqueAssemblyPaths,
 } from './toolboxDiscovery';
 
@@ -130,7 +170,18 @@ interface VendorTagView {
   verb: 'addTab' | 'deleteTab' | 'showProperties' | null;
   closesPanel: boolean;
 }
+
+const CERTIFIED_HOSTED_DESIGNER_COMPONENT = 'FakeVendor.CrashOnInitializeControl';
+const CERTIFIED_HOSTED_DESIGNER_ID = 'repo.fakevendor.hosted-designer.v1';
+const CERTIFIED_HOSTED_SERVICE_COMPONENT = 'FakeVendor.HostedServiceControl';
+const CERTIFIED_HOSTED_SERVICE_ID = 'repo.fakevendor.hosted-service-kernel.v1';
+const CERTIFIED_HOSTED_SERVICE_ACTION = 'applyServicePreset';
+const CERTIFIED_HOSTED_SERVICE_REENTRANT_ACTION = 'cancelReentrantServiceAction';
 import { atomicWriteLocalFile } from './atomicFile';
+import { formSiblingsToDelete } from './formSiblings';
+import { collectProjectEventSourcePaths } from './projectEventSources';
+import { projectPathsFromSolutionFile } from './solutionProjects';
+import { fileHasInlineInitializeComponent, mergeInlineEventEdits } from './inlineDesigner';
 import { isLocalizableDesigner } from './localizable';
 import { vendorTasksAvailable } from './vendorTasks';
 import { chooseFormNoticeKind, FormNoticeKind } from './formNotice';
@@ -140,7 +191,28 @@ import { refuseWhileRenderFailed } from './renderGate';
 import { sanitizeSelectedTabs, selectedTabsFromEntries } from './tabViewState';
 import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
+import {
+  conventionalProjectResourcePair,
+  isCanonicalProjectResourcePath,
+  ProjectResourceFilePair,
+  publishedProjectImagePropertyType,
+  requestedProjectResourceAccessorRefusal,
+} from './projectResources';
 import { transitionResourceSetAtomic } from './resourceTransaction';
+import { intersectMultiProperties, normalizeMultiSelection } from './multiProperty';
+import {
+  planWinFormsSaveAs,
+  sha256Hex,
+} from './documentStore';
+import {
+  DesignerResourceTransactionTarget,
+  isPathInsideOrSame,
+  runDesignerResourceTransaction,
+} from './resourceTransactionCoordinator';
+import { TransactionRunnerResult, TransactionUndoRegistration } from './transactionRunner';
+import { TransactionJournalState } from './transactionJournal';
+import { activeXControlsInDesignerSource, assemblyRequiresX86 } from './tierDCompatibility';
+import { planAddFormMembership, resolveFormMembershipProject } from './formProjectMembership';
 
 export type EngineKind = 'modern' | 'net48';
 type EnsureEngine = (kind?: EngineKind) => Promise<EngineHandle>;
@@ -195,27 +267,58 @@ function net48OutputKey(assemblyPath: string): string {
 const STALE_RENDER_BLOCKED = new Set<string>([
   // canvas (designer.js → onMessage)
   'manipulate', 'manipulateGroup', 'edit', 'alignControls', 'centerInForm', 'resizeControls',
-  'dropControl', 'removeControl', 'removeControls', 'cut', 'cutControls', 'paste', 'duplicate',
+  'dropControl', 'dropDataSource', 'removeControl', 'removeControls', 'cut', 'cutControls', 'paste', 'duplicate', 'duplicateDrag',
   'bringToFront', 'bringToFrontGroup', 'sendToBack', 'sendToBackGroup', 'tabRename',
-  'stripAdd', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'renameComponent', 'createDefaultHandler', 'addTab', 'deleteTab', 'moveTab',
+  'stripAdd', 'stripMove', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'renameComponent', 'createDefaultHandler', 'addTab', 'deleteTab', 'moveTab',
+  'designerActionCommand',
   // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
-  'importImage', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
-  'setGenericList', 'uiTypeEditor',
-  'setColumns', 'setGridColumns', 'setBindings', 'setDataSource', 'setExtender', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
-  'addControl', 'addComponent', 'deleteSelected', 'outlineReparent', 'outlineMoveZOrder',
+  'importImage', 'pickProjectImageResource', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
+  'setGenericList', 'uiTypeEditor', 'uiCollectionEditor',
+  'setColumns', 'setTabPages', 'setGridColumns', 'setBindings', 'setDataSource', 'setExtender', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
+  'addControl', 'addComponent', 'generateDataSource', 'bindApplicationSetting', 'deleteSelected', 'outlineReparent', 'outlineMoveZOrder',
 ]);
+
+// Canvas messages in this set describe geometry/selection from one concrete rendered bitmap. The browser blocks input
+// while a newer image is decoding, and the host independently checks the exact generation so a delayed or forged
+// message cannot act on the newer authoritative graph.
+const CANVAS_GENERATION_GUARDED = new Set<string>(['pick', 'manipulate', 'manipulateGroup']);
 
 const LOCALIZABLE_SOURCE_BLOCKED = new Set<string>(
   [...STALE_RENDER_BLOCKED].filter((type) => ![
     'edit', 'manipulate', 'manipulateGroup', 'alignControls', 'centerInForm', 'resizeControls',
+    'dropControl', 'addControl',
+    'removeControl', 'removeControls', 'deleteSelected',
+    'outlineReparent',
+    'setHandler', 'createHandler', 'createDefaultHandler',
     'importImage', 'clearImage', 'resetProperty', 'uiTypeEditor',
   ].includes(type)),
 );
 
 type PlacementSnapOverrideModifier = 'alt' | 'control' | 'shift' | 'disabled';
+type LayoutMode = 'snapLines' | 'snapToGrid' | 'none';
 function placementSnapOverrideModifier(resource?: vscode.Uri): PlacementSnapOverrideModifier {
   const raw = vscode.workspace.getConfiguration('winformsDesigner', resource).get<string>('placementSnapOverrideModifier', 'alt');
   return raw === 'control' || raw === 'shift' || raw === 'disabled' ? raw : 'alt';
+}
+
+interface ProjectEventSourceSnapshot {
+  primaryPath: string | null;
+  primaryDocument: vscode.TextDocument | null;
+  paths: string[];
+  documents: vscode.TextDocument[];
+  versions: number[];
+  texts: string[];
+}
+function placementLayoutMode(resource?: vscode.Uri): LayoutMode {
+  const raw = vscode.workspace.getConfiguration('winformsDesigner', resource).get<string>('layoutMode', 'snapLines');
+  return raw === 'snapToGrid' || raw === 'none' ? raw : 'snapLines';
+}
+function placementGridSize(resource?: vscode.Uri): number {
+  const raw = vscode.workspace.getConfiguration('winformsDesigner', resource).get<number>('gridSize', 8);
+  return Math.min(128, Math.max(2, Number.isFinite(raw) ? Math.round(raw) : 8));
+}
+function placementShowGrid(resource?: vscode.Uri): boolean {
+  return vscode.workspace.getConfiguration('winformsDesigner', resource).get<boolean>('showGrid', false);
 }
 /** One row the Choose-Items dialog sends back on OK: its identity + whether the user has it checked. The host
 * diffs these against the current toolbox membership to add/remove/hide items. */
@@ -232,10 +335,10 @@ interface DesignerCanvasState {
   selectedTabs?: Record<string, string>;
 }
 
-/** Per-form state of the shared Properties / Outline / Toolbox view. Custom toolbox tabs are intentionally NOT
+/** Per-form state of the shared Properties / Outline / Toolbox / Data Sources view. Custom toolbox tabs are intentionally NOT
  * stored here: they are user-wide customization and live in globalState (ToolboxUiState below). */
 interface DesignerPanelState {
-  activeTab?: 'props' | 'outline' | 'toolbox';
+  activeTab?: 'props' | 'outline' | 'toolbox' | 'data';
   toolboxCollapsed?: Record<string, boolean>;
   outlineCollapsed?: string[];
 }
@@ -305,6 +408,31 @@ function cultureName(value: unknown): string | undefined {
   return /^[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8}){0,4}$/.test(text) ? text.replace(/_/g, '-') : undefined;
 }
 
+function isResolvedDocumentOwner(owner: DesignerDocumentOwnerResolution | undefined): boolean {
+  if (!owner) return false;
+  return owner.diagnosticCode === 'NONE'
+    || owner.status === 'Resolved'
+    || owner.status === 0;
+}
+
+function documentOwnerFailureMessage(owner: DesignerDocumentOwnerResolution | undefined): string {
+  const code = owner?.diagnosticCode || 'UNKNOWN';
+  if (code === 'MISSING_INITIALIZE_COMPONENT') {
+    return t('designer.owner.missingInitializeComponent');
+  }
+  if (code === 'AMBIGUOUS_OWNER') {
+    const owners = owner?.owners?.map((file) => path.basename(file)).join(', ') || 'multiple projects';
+    return t('designer.owner.ambiguous', { owners });
+  }
+  if (code === 'NESTED_DESIGNER_UNSUPPORTED') {
+    return t('designer.owner.nestedUnsupported', { type: owner?.typeName || 'nested Form' });
+  }
+  if (code === 'NO_PROJECT') {
+    return t('designer.owner.noProject');
+  }
+  return t('designer.owner.failed', { code });
+}
+
 function sanitizeDesignerViewState(value: unknown): DesignerViewState {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const hasCanvas = !!raw.canvas && typeof raw.canvas === 'object';
@@ -313,7 +441,7 @@ function sanitizeDesignerViewState(value: unknown): DesignerViewState {
   const panelRaw = hasPanel ? raw.panel as Record<string, unknown> : {};
   const zoom = typeof canvasRaw.zoom === 'number' && Number.isFinite(canvasRaw.zoom)
     ? Math.max(0.1, Math.min(8, canvasRaw.zoom)) : undefined;
-  const activeTab = panelRaw.activeTab === 'outline' || panelRaw.activeTab === 'toolbox'
+  const activeTab = panelRaw.activeTab === 'outline' || panelRaw.activeTab === 'toolbox' || panelRaw.activeTab === 'data'
     ? panelRaw.activeTab : 'props';
   return {
     canvas: hasCanvas ? {
@@ -358,7 +486,7 @@ function sanitizeToolboxUi(value: unknown): ToolboxUiState {
 * designer" mapping (the .Designer.cs is the generated partner, like in Visual Studio).
 * Foo.cs → Foo.Designer.cs (only when that sibling exists)
 * Foo.Designer.cs → itself (graceful: reopened the generated file directly)
-* Foo.cs (no sibling)→ null
+ * Foo.cs (no sibling, inline InitializeComponent) → itself
 */
 export function resolveDesignerFile(opened: string): string | null {
   if (/\.Designer\.cs$/i.test(opened)) {
@@ -366,22 +494,24 @@ export function resolveDesignerFile(opened: string): string | null {
   }
   if (/\.cs$/i.test(opened)) {
     const sibling = opened.slice(0, -'.cs'.length) + '.Designer.cs';
-    return fs.existsSync(sibling) ? sibling : null;
+    if (fs.existsSync(sibling)) return sibling;
+    return fileHasInlineInitializeComponent(opened) ? opened : null;
   }
   return null;
 }
 
-/** True when `file` is a .cs that has a sibling .Designer.cs — the gate for AUTO-opening the designer. */
+/** True when `file` is a conventional generated pair or a conservatively-recognized inline WinForms form. */
 export function hasDesignerSibling(file: string): boolean {
   return /\.cs$/i.test(file) && !/\.Designer\.cs$/i.test(file)
-    && fs.existsSync(file.slice(0, -'.cs'.length) + '.Designer.cs');
+    && (fs.existsSync(file.slice(0, -'.cs'.length) + '.Designer.cs')
+      || fileHasInlineInitializeComponent(file, true));
 }
 
 /**
 * The file the "Open Designer" action should open the custom editor on.
 * Foo.cs (+ sibling) → Foo.cs
 * Foo.Designer.cs → Foo.cs if it exists, else Foo.Designer.cs itself
-* Foo.cs (no sibling) → null
+ * Foo.cs (inline InitializeComponent) → itself
 */
 export function resolveOpenTarget(file: string): string | null {
   if (/\.Designer\.cs$/i.test(file)) {
@@ -390,7 +520,8 @@ export function resolveOpenTarget(file: string): string | null {
     return fs.existsSync(file) ? file : null;
   }
   if (/\.cs$/i.test(file)) {
-    return fs.existsSync(file.slice(0, -'.cs'.length) + '.Designer.cs') ? file : null;
+    return fs.existsSync(file.slice(0, -'.cs'.length) + '.Designer.cs')
+      || fileHasInlineInitializeComponent(file) ? file : null;
   }
   return null;
 }
@@ -421,6 +552,12 @@ export function neutralResxPathForDesigner(file: string): string {
 export function localizedResxPathForDesigner(file: string, culture: string): string {
   const name = cultureName(culture) ?? '';
   return name ? `${designerBasePath(file)}.${name}.resx` : neutralResxPathForDesigner(file);
+}
+
+function imageResourceAssignable(resourceType: string, targetType: string): boolean {
+  const rt = resourceType.replace(/^global::/, '').replace(/\?.*$/, '');
+  const tt = targetType.replace(/^global::/, '').replace(/\?.*$/, '');
+  return rt === tt || (tt === 'System.Drawing.Image' && rt === 'System.Drawing.Bitmap');
 }
 
 export function discoverLocalizationCultures(file: string): LocalizationCultureChoice[] {
@@ -473,6 +610,10 @@ export class DesignerHub {
   private panelExtensionUri: vscode.Uri | undefined;
   /** Every open designer canvas session — so a live language switch can re-emit them all (not just the active). */
   private readonly openSessions = new Set<DesignerSession>();
+  private readonly _onSessionCount = new vscode.EventEmitter<number>();
+  /** Product lifecycle signal: the extension owns engine residency, while the hub owns the exact open-session count. */
+  readonly onDidChangeSessionCount = this._onSessionCount.event;
+  get openSessionCount(): number { return this.openSessions.size; }
 
   private memento: vscode.Memento | undefined;
   private workspaceMemento: vscode.Memento | undefined;
@@ -645,8 +786,14 @@ export class DesignerHub {
     this.panel = webview;
     this.panelExtensionUri = extensionUri;
   }
-  registerSession(s: DesignerSession): void { this.openSessions.add(s); }
-  unregisterSession(s: DesignerSession): void { this.openSessions.delete(s); }
+  registerSession(s: DesignerSession): void {
+    const before = this.openSessions.size;
+    this.openSessions.add(s);
+    if (this.openSessions.size !== before) this._onSessionCount.fire(this.openSessions.size);
+  }
+  unregisterSession(s: DesignerSession): void {
+    if (this.openSessions.delete(s)) this._onSessionCount.fire(this.openSessions.size);
+  }
   /** Live language switch (`winformsDesigner.language` changed): re-emit the panel + every open designer canvas so
    * their injected catalog + host-built HTML pick up the new locale immediately. Each reloaded webview re-sends
    * `ready`, which rehydrates it (panel → refreshViews, canvas → fullRender). The manifest "chrome" (command
@@ -761,7 +908,8 @@ const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 /** True when `e` is a VS Code "file not found" filesystem error (a delete of an already-absent file). Used so a
 * resx-undo delete treats "already gone" as success but lets a real lock/permission failure propagate. */
 function isFileNotFound(e: unknown): boolean {
-  return e instanceof vscode.FileSystemError && e.code === 'FileNotFound';
+  return (e instanceof vscode.FileSystemError && e.code === 'FileNotFound')
+    || (!!e && typeof e === 'object' && (e as NodeJS.ErrnoException).code === 'ENOENT');
 }
 
 /**
@@ -807,6 +955,32 @@ async function readDesignerBytesUri(uri: vscode.Uri): Promise<{ text: string; ha
 * (Foo.cs) is the dirty/undoable thing and `.Designer.cs` is only written on save, like Visual Studio.
 * One document ⇄ one DesignerSession (supportsMultipleEditorsPerDocument is false).
 */
+class DesignerSourceConflictError extends Error {
+  readonly code = 'STALE_SOURCE';
+
+  constructor() {
+    super(t('status.designerDiskConflict'));
+    this.name = 'DesignerSourceConflictError';
+  }
+}
+
+function saveAsTypeName(designerText: string, destinationStem: string): { sourceType: string; destinationType: string } {
+  const sourceType = /\bpartial\s+class\s+([\p{L}_][\p{L}\p{N}_]*)/u.exec(designerText)?.[1];
+  if (!sourceType || !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(destinationStem)) {
+    throw new Error(`Save As refused: ${destinationStem} is not a valid C# form type name`);
+  }
+  return { sourceType, destinationType: destinationStem };
+}
+
+function renameSavedFormType(text: string, sourceType: string, destinationType: string): string {
+  if (sourceType === destinationType) return text;
+  const escaped = sourceType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(
+    new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'gu'),
+    destinationType,
+  );
+}
+
 export class WinFormsDesignDocument implements vscode.CustomDocument {
   /** Live designer text the engine renders/edits (BOM-less, matching VS Code's getText() semantics). */
   designerText: string;
@@ -831,6 +1005,13 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
    * refuse until a successful read establishes one, otherwise an unreadable EXISTING file is indistinguishable
    * from an absent one and the deletion/conflict guards are simply bypassed. */
   private _baselineUnknown: boolean;
+  /** Exact dirty localizable source image authorized by the engine's bounded event-wiring gate. A recovered/manual
+   * ApplyResources-backed edit has no token and remains unsavable; equality makes the capability non-transferable. */
+  private authorizedLocalizableEventText: string | null = null;
+  /** A hot-exit backup restores the current bytes, but VS Code cannot recreate extension-owned undo closures.
+   * Register exactly one recovered edit for the frozen S003 contract (one unsaved move / one undo unit), so the
+   * native stack again has the saved disk image below the recovered image instead of a permanently dirty dead end. */
+  private recoveredUndoRegistered = false;
 
   constructor(
     readonly uri: vscode.Uri,
@@ -841,6 +1022,8 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     hadBom: boolean,
     savedExisted = false,
     baselineUnknown = false,
+    private readonly saveWholeFormAs?: (document: WinFormsDesignDocument, destination: vscode.Uri) => Promise<void>,
+    private readonly recoveredFromBackup = false,
   ) {
     this.designerText = initialText;
     this.savedDesignerText = savedText;
@@ -859,6 +1042,23 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
   /** The BOM of the baseline we hold — so a clean BOM-only external change can be adopted rather than refused later. */
   get bom(): boolean { return this.hadBom; }
 
+  /** Exact generated-source disk baseline used when the document participates as an explicit transaction target. */
+  transactionBaseline(): { text: string | null; bom: boolean } {
+    return { text: this.savedExisted ? this.savedDesignerText : null, bom: this.hadBom };
+  }
+
+  /** A journaled transaction has already moved the generated source on disk to this state. Keep subsequent native
+   * save/undo conflict checks aligned with those bytes instead of treating our own transaction as an external writer. */
+  adoptTransactionBaseline(text: string | null, bom: boolean): void {
+    this.savedDesignerText = text ?? '';
+    this.savedExisted = text !== null;
+    this.hadBom = bom;
+    this._baselineUnknown = false;
+  }
+
+  authorizeLocalizableEventText(text: string | null): void { this.authorizedLocalizableEventText = text; }
+  isAuthorizedLocalizableEventText(text: string): boolean { return this.authorizedLocalizableEventText === text; }
+
   private bytesOf(text: string): Uint8Array {
     const body = Buffer.from(text, 'utf8');
     return this.hadBom ? Buffer.concat([UTF8_BOM, body]) : body;
@@ -867,8 +1067,9 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
   /** Adopt the on-disk text as the new clean baseline (revert / external change while clean). */
   adoptDiskBaseline(text: string, hadBom: boolean): void {
     this.designerText = text; this.savedDesignerText = text; this.hadBom = hadBom; this.rev++;
-  this.savedExisted = true; // we just read it off disk …
-  this._baselineUnknown = false; // … so the baseline is trustworthy again
+    this.savedExisted = true; // we just read it off disk …
+    this._baselineUnknown = false; // … so the baseline is trustworthy again
+    this.authorizedLocalizableEventText = null;
   }
 
   /** Persist to the .Designer.cs on disk (called by VS Code's save), preserving the original BOM. */
@@ -884,7 +1085,9 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // source boundary forbids. Throw so VS Code keeps the document dirty and surfaces the reason — the user
     // must revert the file (or hand-resolve the recovered content). A CLEAN localizable form is never dirty
     // (isDirty === false → this is a no-op), so this never spuriously fails an ordinary save.
-    if (this.isDirty && isLocalizableDesigner(snapshot)) throw new Error(t('status.localizableSaveRefused'));
+    if (this.isDirty && isLocalizableDesigner(snapshot) && !this.isAuthorizedLocalizableEventText(snapshot)) {
+      throw new Error(t('status.localizableSaveRefused'));
+    }
     await this.flushToDisk(snapshot);
   }
 
@@ -899,7 +1102,12 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
    */
   async persistLocalizableConversion(): Promise<void> {
     if (!this.designerFile) return;
-    await this.flushToDisk(this.designerText);
+    await this.persistLocalizableConversionText(this.designerText);
+  }
+
+  async persistLocalizableConversionText(snapshot: string): Promise<void> {
+    if (!this.designerFile) return;
+    await this.flushToDisk(snapshot);
   }
 
   /** The write itself, with the on-disk conflict guards — shared by save() and the localizable conversion. */
@@ -916,7 +1124,7 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // conflict-guarded; this closes the same gap on the primary artifact.
     // No trustworthy baseline (the opening read failed for something other than "not there") → we cannot tell an
     // external change from our own, so there is nothing to compare against and writing would be a blind overwrite.
-    if (this.baselineUnknown) throw new Error(t('status.designerDiskConflict'));
+    if (this.baselineUnknown) throw new DesignerSourceConflictError();
     let onDisk: { text: string; hadBom: boolean } | null = null;
     try {
       onDisk = await readDesignerBytesUri(vscode.Uri.file(this.designerFile));
@@ -925,12 +1133,12 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
       // baseline and is gone now was deleted by someone else — an external change, not permission to recreate it.
       // Any other read failure (locked, permissions, transient) must surface rather than become a blind write.
       if (!isFileNotFound(e)) throw e;
-      if (this.savedExisted) throw new Error(t('status.designerDiskConflict'));
+      if (this.savedExisted) throw new DesignerSourceConflictError();
     }
     // Compare the BOM too: readDesignerBytesUri strips it, so a rewrite that only added/removed the BOM has identical
     // text and would otherwise slip through — and bytesOf would then write OUR old byte form back over it.
     if (onDisk !== null && (onDisk.text !== this.savedDesignerText || onDisk.hadBom !== this.hadBom)) {
-      throw new Error(t('status.designerDiskConflict'));
+      throw new DesignerSourceConflictError();
     }
     // Atomic (temp+rename): an interrupted write must never truncate the user's form. The read→compare→write window
     // above is inherent — VS Code's FS API has no compare-and-swap — but nothing awaits between the comparison and
@@ -938,12 +1146,14 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     await atomicWrite(vscode.Uri.file(this.designerFile), this.bytesOf(snapshot));
     this.savedDesignerText = snapshot;
     this.savedExisted = true;
+    this.authorizedLocalizableEventText = null;
     this.session?.notifySaved();
   }
   async saveAs(dest: vscode.Uri): Promise<void> {
     // 0.10.0 trust-floor — same recovered-dirty-buffer guard as save(): don't copy a divergent localizable
     // buffer to a new file. A clean localizable form (isDirty === false) still saves-as a faithful copy.
-    if (this.isDirty && isLocalizableDesigner(this.designerText)) throw new Error(t('status.localizableSaveRefused'));
+    if (this.isDirty && isLocalizableDesigner(this.designerText)
+      && !this.isAuthorizedLocalizableEventText(this.designerText)) throw new Error(t('status.localizableSaveRefused'));
     // Without a trustworthy baseline we don't know what this buffer is relative to — don't copy it anywhere.
     if (this._baselineUnknown) throw new Error(t('status.designerDiskConflict'));
     // Save As on a designer writes the GENERATED partner, not generated code into a hand-edited .cs.
@@ -960,6 +1170,43 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // turns a conflict into a successful-looking no-op.) A user who really means to replace a known .Designer.cs
     // can pick that exact file, and VS Code's own overwrite prompt then covers it.
     if (remapped) {
+      if (this.saveWholeFormAs) {
+        await this.saveWholeFormAs(this, dest);
+        return;
+      }
+      // Save As represents the whole nested form item, even though the custom document's editable payload is the
+      // generated source. Check EVERY destination belonging to an existing source artifact up front so a neutral or
+      // localized .resx collision cannot be discovered only after another sidecar was created. The platform dialog
+      // only knows about `dest`; it cannot authorize overwriting CopyOfForm.resx/CopyOfForm.Designer.cs on the user's
+      // behalf. Aggregate all collisions into one refusal, matching the catalog's fail-closed VS-style contract.
+      const sourceDir = path.dirname(this.uri.fsPath);
+      const sourceStem = path.basename(this.uri.fsPath).replace(/\.cs$/i, '');
+      const destinationStem = path.basename(dest.fsPath).replace(/\.cs$/i, '');
+      const destinationDir = path.dirname(dest.fsPath);
+      let sourceEntries: string[] = [];
+      try { sourceEntries = fs.readdirSync(sourceDir); } catch { /* the main/generated targets are still checked */ }
+      const companionTargets = formSiblingsToDelete(this.uri.fsPath, sourceEntries)
+        .map((source) => {
+          const name = path.basename(source);
+          const suffix = name.slice(sourceStem.length);
+          return vscode.Uri.file(path.join(destinationDir, destinationStem + suffix));
+        });
+      const candidates = [dest, target, ...companionTargets];
+      const unique = new Map<string, vscode.Uri>();
+      for (const candidate of candidates) unique.set(candidate.fsPath.toLocaleLowerCase('en-US'), candidate);
+      const collisions: vscode.Uri[] = [];
+      for (const candidate of unique.values()) {
+        try {
+          await vscode.workspace.fs.stat(candidate);
+          collisions.push(candidate);
+        } catch (error) {
+          if (!isFileNotFound(error)) throw error;
+        }
+      }
+      if (collisions.length > 0) {
+        const names = collisions.map((candidate) => path.basename(candidate.fsPath)).join(', ');
+        throw new Error(`${t('status.designerDiskConflict')} (${names})`);
+      }
       const create = new vscode.WorkspaceEdit();
       create.createFile(target, { overwrite: false, ignoreIfExists: false, contents: this.bytesOf(this.designerText) });
       if (!await vscode.workspace.applyEdit(create)) throw new Error(t('status.designerDiskConflict'));
@@ -983,6 +1230,37 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     await vscode.workspace.fs.writeFile(dest, this.bytesOf(this.designerText));
     return { id: dest.toString(), delete: async () => { try { await vscode.workspace.fs.delete(dest); } catch { /* ignore */ } } };
   }
+
+  /** Recreate the one source-only native undo unit represented by a recovered hot-exit backup.
+   *
+   * The backup itself remains the exact generated-source byte image for backward compatibility. The on-disk image is
+   * the edit's before state, and the recovered backup is its after state. Firing this only after the real session is
+   * attached lets native Undo/Redo perform the same rerender/net48 reconciliation as an ordinary live designer edit. */
+  registerRecoveredUndo(
+    fireEdit: (event: vscode.CustomDocumentEditEvent<WinFormsDesignDocument>) => void,
+  ): void {
+    if (!this.recoveredFromBackup || this.recoveredUndoRegistered || !this.isDirty) return;
+    this.recoveredUndoRegistered = true;
+    const before = this.savedDesignerText;
+    const after = this.designerText;
+    fireEdit({
+      document: this,
+      label: 'Restore unsaved designer changes',
+      undo: async () => {
+        this.rev++;
+        this.designerText = before;
+        this.authorizeLocalizableEventText(null);
+        await this.session?.rerenderFromDoc();
+      },
+      redo: async () => {
+        this.rev++;
+        this.designerText = after;
+        this.authorizeLocalizableEventText(null);
+        await this.session?.rerenderFromDoc();
+      },
+    });
+  }
+
   dispose(): void { this._onDispose.fire(); this._onDispose.dispose(); }
 }
 
@@ -1000,6 +1278,11 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
   private readonly _onDidChangeCustomDocument =
     new vscode.EventEmitter<vscode.CustomDocumentEditEvent<WinFormsDesignDocument>>();
   readonly onDidChangeCustomDocument = this._onDidChangeCustomDocument.event;
+  private readonly openDocuments = new Map<string, WinFormsDesignDocument>();
+  /** Serializes updates from concurrent CustomDocument backups. VS Code normally persists the backup id as part of
+   * its editor input; this small workspace-local index is a fallback for a host restart followed by an explicit
+   * "Open Designer" when the host could not persist editor state (notably Extension Development Host test profiles). */
+  private hotExitRegistryQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -1009,6 +1292,864 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     private readonly onViewCode: (uri: vscode.Uri, position?: vscode.Position) => void,
     private readonly setAssemblyOverride: SetAssemblyOverride,
   ) {}
+
+  private documentKey(uri: vscode.Uri): string {
+    return process.platform === 'win32' ? uri.fsPath.toLocaleLowerCase('en-US') : uri.toString();
+  }
+
+  private hotExitRegistryUri(): vscode.Uri | undefined {
+    return this.context.storageUri
+      ? vscode.Uri.joinPath(this.context.storageUri, 'hot-exit-recovery-v1.json')
+      : undefined;
+  }
+
+  private async readHotExitRegistry(): Promise<{
+    version: 1;
+    entries: Record<string, { documentUri: string; backupId: string }>;
+  }> {
+    const registryUri = this.hotExitRegistryUri();
+    if (!registryUri) return { version: 1, entries: {} };
+    try {
+      const parsed = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(registryUri)).toString('utf8')) as {
+        version?: unknown;
+        entries?: unknown;
+      };
+      if (parsed.version !== 1 || !parsed.entries || typeof parsed.entries !== 'object' || Array.isArray(parsed.entries)) {
+        return { version: 1, entries: {} };
+      }
+      const entries: Record<string, { documentUri: string; backupId: string }> = {};
+      for (const [key, candidate] of Object.entries(parsed.entries)) {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+        const entry = candidate as { documentUri?: unknown; backupId?: unknown };
+        if (typeof entry.documentUri === 'string' && typeof entry.backupId === 'string') {
+          entries[key] = { documentUri: entry.documentUri, backupId: entry.backupId };
+        }
+      }
+      return { version: 1, entries };
+    } catch {
+      return { version: 1, entries: {} };
+    }
+  }
+
+  private async writeHotExitRegistry(registry: {
+    version: 1;
+    entries: Record<string, { documentUri: string; backupId: string }>;
+  }): Promise<void> {
+    const registryUri = this.hotExitRegistryUri();
+    if (!registryUri) return;
+    if (Object.keys(registry.entries).length === 0) {
+      try { await vscode.workspace.fs.delete(registryUri); } catch { /* absent */ }
+      return;
+    }
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(registryUri, '..'));
+    await atomicWrite(registryUri, Buffer.from(`${JSON.stringify(registry, null, 2)}\n`, 'utf8'));
+  }
+
+  private updateHotExitRegistry(
+    update: (entries: Record<string, { documentUri: string; backupId: string }>) => void,
+  ): Promise<void> {
+    const operation = this.hotExitRegistryQueue.catch(() => undefined).then(async () => {
+      const registry = await this.readHotExitRegistry();
+      update(registry.entries);
+      await this.writeHotExitRegistry(registry);
+    });
+    // A failed optional fallback update must not poison later VS Code-owned backup calls. The returned operation still
+    // rejects so the caller can log it, while the internal serialization chain remains usable.
+    this.hotExitRegistryQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private persistHotExitBackup(documentUri: vscode.Uri, backupId: string): Promise<void> {
+    const key = this.documentKey(documentUri);
+    return this.updateHotExitRegistry((entries) => {
+      entries[key] = { documentUri: documentUri.toString(), backupId };
+    });
+  }
+
+  private removeHotExitBackup(documentUri: vscode.Uri, backupId?: string): Promise<void> {
+    const key = this.documentKey(documentUri);
+    return this.updateHotExitRegistry((entries) => {
+      if (!backupId || entries[key]?.backupId === backupId) delete entries[key];
+    });
+  }
+
+  private async takeHotExitBackup(documentUri: vscode.Uri): Promise<string | undefined> {
+    await this.hotExitRegistryQueue;
+    const registry = await this.readHotExitRegistry();
+    const key = this.documentKey(documentUri);
+    const entry = registry.entries[key];
+    if (!entry || entry.documentUri !== documentUri.toString()) return undefined;
+    const storageUri = this.context.storageUri;
+    let backupUri: vscode.Uri;
+    try { backupUri = vscode.Uri.parse(entry.backupId); } catch { return undefined; }
+    // Only consume backup destinations that VS Code allocated inside this extension's current workspace storage.
+    // This prevents a malformed/tampered registry from turning an explicit designer reopen into an arbitrary read.
+    const storagePrefix = storageUri?.path.endsWith('/') ? storageUri.path : `${storageUri?.path ?? ''}/`;
+    const localRelative = storageUri?.scheme === 'file' && backupUri.scheme === 'file'
+      ? path.relative(
+        storageUri.fsPath.toLocaleLowerCase('en-US'),
+        backupUri.fsPath.toLocaleLowerCase('en-US'),
+      )
+      : undefined;
+    const ownedByWorkspaceStorage = localRelative !== undefined
+      ? localRelative.length > 0 && localRelative !== '..'
+        && !localRelative.startsWith(`..${path.sep}`) && !path.isAbsolute(localRelative)
+      : !!storageUri && backupUri.scheme === storageUri.scheme
+        && backupUri.authority === storageUri.authority && backupUri.path.startsWith(storagePrefix);
+    if (!ownedByWorkspaceStorage) {
+      await this.removeHotExitBackup(documentUri, entry.backupId);
+      return undefined;
+    }
+    await this.removeHotExitBackup(documentUri, entry.backupId);
+    return entry.backupId;
+  }
+
+  private async clearHotExitBackupIfClean(document: WinFormsDesignDocument): Promise<void> {
+    if (document.isDirty) return;
+    try { await this.removeHotExitBackup(document.uri); }
+    catch (error) { this.output.appendLine(`[hot-exit] Clean-document recovery index could not be cleared: ${String(error)}`); }
+  }
+
+  private fireDocumentEdit(event: vscode.CustomDocumentEditEvent<WinFormsDesignDocument>): void {
+    this._onDidChangeCustomDocument.fire({
+      document: event.document,
+      label: event.label,
+      undo: async () => {
+        await event.undo();
+        await this.clearHotExitBackupIfClean(event.document);
+      },
+      redo: async () => {
+        await event.redo();
+        await this.clearHotExitBackupIfClean(event.document);
+      },
+    });
+  }
+
+  openDocumentState(uri: vscode.Uri): {
+    dirty: boolean;
+    designerFile: string | null;
+    designerText: string;
+    /** Bumped by every text mutation (commit/undo/redo/revert). A deterministic "the history callback actually ran
+     * on THIS document" signal, so a test can tell an undo that was never delivered from one that restored the
+     * wrong text — the two used to be indistinguishable behind one timeout. */
+    revision: number;
+    /** VS Code considers this designer's webview panel the ACTIVE editor. Custom-editor Undo/Redo routing keys on
+     * the active editor pane, which is a different mirror from the tab model the suite waits on; recorded so a
+     * failure can say which one disagreed. */
+    panelActive: boolean;
+    renderReady: boolean;
+    engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
+    ownerDiagnosticCode: string | null;
+    ownerTypeName: string | null;
+    ownerProjectPath: string | null;
+    ownerPaths: readonly string[];
+    emptyInitializeComponentSurface: boolean;
+    renderFailureCause: string | null;
+    renderFailureMessage: string | null;
+    lastPropertyPersistenceLane: 'ownedRegion' | 'sourceFirst' | null;
+    lastNet48PropertyEditTelemetry: {
+      plannerMs: number;
+      commitMs: number;
+      reconcileMs: number;
+      liveMs: number;
+      snapshotComponentId: string | null;
+      componentInSnapshot: boolean;
+      propertiesReconciled: boolean;
+      trailingPropertiesMs: number;
+    } | null;
+    lastModernPropertyEditTelemetry: {
+      plannerMs: number;
+      commitMs: number;
+      reconcileMs: number;
+      retainedApplied: boolean;
+      trailingPropertiesMs: number;
+    } | null;
+    lastFullRenderTelemetry: ProductRenderTelemetry | null;
+    lastHostedDesignerProbe: HostedDesignerProbeResult | null;
+    lastHostedServiceKernelResult: HostedServiceKernelProductResult | null;
+    renderGeneration: number;
+    currentId: string;
+    currentSelectionIds: readonly string[];
+    controls: readonly { id: string; parentId?: string | null; ownership?: LayoutControl['ownership']; editable?: boolean }[];
+    tray: readonly { id: string; name: string; type: string; isStrip?: boolean }[];
+    selectedPropertyComponent: {
+      id: string;
+      name: string;
+      type: string;
+      properties: readonly { name: string; value: string | null }[];
+    } | null;
+  } | undefined {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    const session = document?.session?.extensionHostTestState();
+    return document ? {
+      dirty: document.isDirty,
+      designerFile: document.designerFile,
+      designerText: document.designerText,
+      revision: document.rev,
+      panelActive: session?.panelActive ?? false,
+      renderReady: session?.renderReady ?? false,
+      engineKind: session?.engineKind ?? null, net48RenderMode: session?.net48RenderMode ?? null,
+      ownerDiagnosticCode: session?.ownerDiagnosticCode ?? null,
+      ownerTypeName: session?.ownerTypeName ?? null,
+      ownerProjectPath: session?.ownerProjectPath ?? null,
+      ownerPaths: session?.ownerPaths ?? [],
+      emptyInitializeComponentSurface: session?.emptyInitializeComponentSurface ?? false,
+      renderFailureCause: session?.renderFailureCause ?? null,
+      renderFailureMessage: session?.renderFailureMessage ?? null,
+      lastPropertyPersistenceLane: session?.lastPropertyPersistenceLane ?? null,
+      lastNet48PropertyEditTelemetry: session?.lastNet48PropertyEditTelemetry ?? null,
+      lastModernPropertyEditTelemetry: session?.lastModernPropertyEditTelemetry ?? null,
+      lastFullRenderTelemetry: session?.lastFullRenderTelemetry ?? null,
+      lastHostedDesignerProbe: session?.lastHostedDesignerProbe ?? null,
+      lastHostedServiceKernelResult: session?.lastHostedServiceKernelResult ?? null,
+      renderGeneration: session?.renderGeneration ?? 0,
+      currentId: session?.currentId ?? 'this',
+      currentSelectionIds: session?.currentSelectionIds ?? ['this'],
+      controls: session?.controls ?? [],
+      tray: session?.tray ?? [],
+      selectedPropertyComponent: session?.selectedPropertyComponent ?? null,
+    } : undefined;
+  }
+
+  /** Extension Host E2E reads the exact revision-bound metadata sent to the Properties panel. This stays separate
+   * from openDocumentState so its intentionally small snapshot contract remains stable for existing lifecycle tests. */
+  openDocumentProperties(uri: vscode.Uri): ComponentDesc | null | undefined {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    return document?.session?.extensionHostTestPublishedPropertyComponent();
+  }
+
+  /** Extension Host E2E reaches the exact DataBindings popup read side. */
+  async listOpenDocumentBindings(uri: vscode.Uri, id: string): Promise<BindingItems> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestListBindings(id);
+  }
+
+  /** Extension Host E2E reaches the exact atomic DataBindings popup OK transaction. */
+  async setOpenDocumentBindings(uri: vscode.Uri, id: string, bindings: BindingItem[]): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetBindings(id, bindings);
+  }
+
+  /** Extension Host E2E reaches the exact parse-only Data Sources refresh used by the dedicated panel. */
+  async listOpenDocumentDataSources(uri: vscode.Uri): Promise<DataSourcesResult> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestListDataSources();
+  }
+
+  /** Extension Host E2E drives the same opaque-schema Data Sources drop transaction as the panel/canvas. */
+  async generateOpenDocumentDataSource(
+    uri: vscode.Uri,
+    schemaKey: string,
+    mode: 'detail' | 'grid',
+    parentId: string,
+    x: number,
+    y: number,
+    includeNavigator: boolean,
+    existingBindingSourceId: string | null,
+    existingGridId: string | null,
+  ): Promise<DataSourceGenerationResult> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestGenerateDataSource(
+      schemaKey, mode, parentId, x, y, includeNavigator, existingBindingSourceId, existingGridId);
+  }
+
+  /** Extension Host E2E reaches the exact project-resource picker commit after deterministic candidate selection. */
+  async setOpenDocumentProjectImageResource(uri: vscode.Uri, id: string, propertyName: string,
+    accessor: string): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetProjectImageResource(id, propertyName, accessor);
+  }
+
+  /** Extension Host security E2E receives the typed refusal produced by the same deterministic picker ingress. */
+  async tryOpenDocumentProjectImageResource(uri: vscode.Uri, id: string, propertyName: string,
+    accessor: string): Promise<{ applied: boolean; refusalCode: string | null; reason: string | null }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestTryProjectImageResource(id, propertyName, accessor);
+  }
+
+  async importOpenDocumentLocalImage(uri: vscode.Uri, id: string, propertyName: string,
+    propertyType: string, imageUri: vscode.Uri): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestImportLocalImage(id, propertyName, propertyType, imageUri);
+  }
+
+  async setOpenDocumentImageListImages(uri: vscode.Uri, id: string,
+    images: readonly { image: vscode.Uri; key?: string }[]): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetImageListImages(id, images);
+  }
+
+  async setOpenDocumentImageListWithPostconditionFailure(uri: vscode.Uri, id: string,
+    images: readonly { image: vscode.Uri; key?: string }[]): Promise<{
+      applied: boolean;
+      failureObserved: boolean;
+      refusalCode: 'POSTCONDITION_FAILED_ROLLED_BACK' | null;
+    }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetImageListWithPostconditionFailure(id, images);
+  }
+
+  /** Extension Host E2E selects one Language through the same normalization, state, and render path as QuickPick. */
+  async setOpenDocumentLocalizationCulture(uri: vscode.Uri, culture: string): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetLocalizationCulture(culture);
+  }
+
+  /** Extension Host E2E reads the full live layout through a dedicated surface so the stable open-state snapshot
+   * remains intentionally small and exact-comparison friendly. */
+  openDocumentLayout(uri: vscode.Uri): readonly LayoutControl[] {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestLayout();
+  }
+
+  async saveOpenDocument(uri: vscode.Uri): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document) throw new Error(`No open WinForms designer document for ${uri.fsPath}`);
+    const cancellation = new vscode.CancellationTokenSource();
+    try { await this.saveCustomDocument(document, cancellation.token); }
+    finally { cancellation.dispose(); }
+  }
+
+  async saveOpenDocumentAs(uri: vscode.Uri, destination: vscode.Uri): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document) throw new Error(`No open WinForms designer document for ${uri.fsPath}`);
+    const cancellation = new vscode.CancellationTokenSource();
+    try { await this.saveCustomDocumentAs(document, destination, cancellation.token); }
+    finally { cancellation.dispose(); }
+  }
+
+  private async saveWholeFormAs(document: WinFormsDesignDocument, destination: vscode.Uri): Promise<void> {
+    if (!document.designerFile || document.uri.scheme !== 'file' || destination.scheme !== 'file') {
+      throw new Error(t('status.designerDiskConflict'));
+    }
+    const workspace = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (!workspace || !isPathInsideOrSame(workspace.uri.fsPath, destination.fsPath)) {
+      throw new Error(t('status.designerDiskConflict'));
+    }
+    const workspaceRoot = path.resolve(workspace.uri.fsPath);
+    const storagePath = this.context.globalStorageUri.fsPath;
+    if (!['file', 'vscode-userdata'].includes(this.context.globalStorageUri.scheme)
+      || !path.isAbsolute(storagePath)) {
+      throw new Error('durable transaction storage is unavailable');
+    }
+
+    const sourceMain = document.uri.fsPath;
+    const sourceDirectory = path.dirname(sourceMain);
+    const sourceStem = path.basename(sourceMain).replace(/\.cs$/i, '');
+    const destinationDirectory = path.dirname(destination.fsPath);
+    const destinationStem = path.basename(destination.fsPath).replace(/\.cs$/i, '');
+    const typeRename = saveAsTypeName(document.designerText, destinationStem);
+    let sourceEntries: string[];
+    try { sourceEntries = await fs.promises.readdir(sourceDirectory); }
+    catch (error) { throw new Error(`cannot enumerate form companions: ${errMsg(error)}`); }
+
+    const sourceArtifacts = [sourceMain, ...formSiblingsToDelete(sourceMain, sourceEntries)];
+    if (!sourceArtifacts.some((candidate) => normalize(candidate) === normalize(document.designerFile!))) {
+      sourceArtifacts.push(document.designerFile);
+    }
+    const artifactPairs = sourceArtifacts.map((source) => {
+      const name = path.basename(source);
+      const suffix = normalize(source) === normalize(sourceMain) ? '.cs' : name.slice(sourceStem.length);
+      return { source, destination: path.join(destinationDirectory, destinationStem + suffix) };
+    });
+    const destinationPaths = artifactPairs.map((pair) => pair.destination);
+
+    // The picker only authorizes the main .cs name. Sidecars were not covered by an overwrite prompt, so the
+    // operation is create-only and reports all collisions before the durable transaction begins.
+    let destinationEntries: string[];
+    try { destinationEntries = await fs.promises.readdir(destinationDirectory); }
+    catch (error) {
+      if (!isFileNotFound(error)) throw error;
+      destinationEntries = [];
+    }
+    const saveAsPlan = planWinFormsSaveAs(
+      destinationPaths.map((candidate) => path.basename(candidate)),
+      destinationEntries,
+    );
+    if (!saveAsPlan.accepted) {
+      throw new Error(`${t('status.designerDiskConflict')} (${saveAsPlan.collisions.join(', ')})`);
+    }
+
+    const membershipProject = resolveFormMembershipProject(destination.fsPath, workspaceRoot);
+    if (!membershipProject) throw new Error('Save As refused: no unambiguous destination project membership file');
+    const openProject = vscode.workspace.textDocuments.find(
+      (candidate) => normalize(candidate.uri.fsPath) === normalize(membershipProject),
+    );
+    if (openProject?.isDirty) throw new Error('Save As refused: the destination project has unsaved changes');
+    const projectBytes = await fs.promises.readFile(membershipProject);
+    const projectHadBom = projectBytes.length >= 3
+      && projectBytes[0] === 0xef && projectBytes[1] === 0xbb && projectBytes[2] === 0xbf;
+    const projectText = projectBytes.subarray(projectHadBom ? 3 : 0).toString('utf8');
+    if (openProject && openProject.getText() !== projectText) {
+      throw new Error('Save As refused: the destination project changed on disk');
+    }
+    const projectEdit = planAddFormMembership(
+      membershipProject,
+      projectText,
+      destination.fsPath,
+      destinationPaths,
+    );
+
+    const targets: DesignerResourceTransactionTarget[] = [];
+    for (const pair of artifactPairs) {
+      if (normalize(pair.source) === normalize(document.designerFile)) {
+        targets.push({
+          filePath: pair.destination,
+          before: null,
+          after: renameSavedFormType(document.designerText, typeRename.sourceType, typeRename.destinationType),
+          bom: document.bom,
+        });
+        continue;
+      }
+      const openSource = vscode.workspace.textDocuments.find(
+        (candidate) => normalize(candidate.uri.fsPath) === normalize(pair.source),
+      );
+      if (openSource?.isDirty) throw new Error(`Save As refused: ${path.basename(pair.source)} has unsaved changes`);
+      const source = await readDesignerBytesUri(vscode.Uri.file(pair.source));
+      targets.push({
+        filePath: pair.destination,
+        before: null,
+        after: normalize(pair.source) === normalize(sourceMain)
+          ? renameSavedFormType(source.text, typeRename.sourceType, typeRename.destinationType)
+          : source.text,
+        bom: source.hadBom,
+      });
+    }
+    if (projectEdit) {
+      targets.push({
+        filePath: membershipProject,
+        before: projectEdit.before,
+        after: projectEdit.after,
+        bom: projectHadBom,
+      });
+    }
+
+    const journalRoot = path.join(storagePath, 'v2-transactions', sha256Hex(workspaceRoot).slice(0, 16));
+    const result = await runDesignerResourceTransaction({
+      label: `Save As ${path.basename(destination.fsPath)}`,
+      workspaceRoot,
+      journalRoot,
+      targets,
+      readBytes: async (filePath) => {
+        try { return await fs.promises.readFile(filePath); }
+        catch (error) { if (isFileNotFound(error)) return null; throw error; }
+      },
+      writeBytes: (filePath, bytes) => atomicWrite(vscode.Uri.file(filePath), bytes),
+      deleteFile: async (filePath) => {
+        try { await vscode.workspace.fs.delete(vscode.Uri.file(filePath)); }
+        catch (error) { if (!isFileNotFound(error)) throw error; }
+      },
+      registerUndo: () => true,
+    });
+    if (result.status !== 'committed') {
+      throw new Error(result.error ?? `Save As transaction failed: ${result.status}`);
+    }
+    this.output.appendLine(
+      `[save-as] created ${destinationPaths.length} form artifact(s); project=${membershipProject}; journal=${result.journal.transactionId}`,
+    );
+  }
+
+  async moveOpenDocumentGroup(uri: vscode.Uri, ids: readonly string[], dx: number, dy: number): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestMoveGroup(ids, dx, dy);
+  }
+
+  async editOpenDocumentProperty(
+    uri: vscode.Uri,
+    id: string,
+    propertyName: string,
+    propertyType: string,
+    isEnum: boolean,
+    value: string,
+  ): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestEditProperty(id, propertyName, propertyType, isEnum, value);
+  }
+
+  /** Extension Host E2E replaces only the undriveable framework modal result; metadata authorization, the normal
+   * UITypeEditor ingress, conversion/source planning, CustomDocument commit, and native history stay in product code. */
+  async editOpenDocumentColorUiTypeEditor(
+    uri: vscode.Uri,
+    id: string,
+    propertyName: string,
+    outcome: 'apply-blue' | 'dismiss',
+  ): Promise<{
+      applied: boolean;
+      dismissed: boolean;
+      resultConsumed: boolean;
+      editorType: string | null;
+      refusalCode: 'CANCELLED' | null;
+    }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestColorUiTypeEditor(id, propertyName, outcome);
+  }
+
+  /** Drive the real certified vendor editor worker from live net48 metadata; no modal-result seam is injected. */
+  async editOpenDocumentCertifiedVendorUiTypeEditor(
+    uri: vscode.Uri,
+    id: string,
+    propertyName: string,
+  ): Promise<{
+      applied: boolean;
+      brokerApplied: boolean;
+      dismissed: boolean;
+      ok: boolean;
+      errorCode: string | null;
+      invariantValue: string | null;
+      editorType: string | null;
+      assemblyPath: string | null;
+      assemblySha256: string | null;
+      certificationId: string | null;
+    }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestCertifiedVendorUiTypeEditor(id, propertyName);
+  }
+
+  /** Drive the actual certified vendor collection worker and the bounded component-owned persistence transaction. */
+  async editOpenDocumentCertifiedVendorCollectionEditor(
+    uri: vscode.Uri,
+    id: string,
+    propertyName: string,
+    tamperOutsideOwnedComponent: boolean,
+  ): Promise<{
+      applied: boolean;
+      brokerApplied: boolean;
+      dismissed: boolean;
+      ok: boolean;
+      errorCode: string | null;
+      collectionItems: string[];
+      editorType: string | null;
+      assemblyPath: string | null;
+      assemblySha256: string | null;
+      certificationId: string | null;
+      persistenceLane: 'ownedRegion' | 'sourceFirst' | null;
+      refusalReason: string | null;
+    }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestCertifiedVendorCollectionEditor(
+      id, propertyName, tamperOutsideOwnedComponent);
+  }
+
+  /** Drive the same engine-published DesignerActionList mapping used by the on-canvas smart-tag flyout. */
+  async editOpenDocumentDesignerActionProperty(
+    uri: vscode.Uri,
+    id: string,
+    displayName: string,
+    value: string,
+  ): Promise<{
+      applied: boolean;
+      displayName: string | null;
+      category: string | null;
+      propertyName: string | null;
+      propertyType: string | null;
+    }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestDesignerActionProperty(id, displayName, value);
+  }
+
+  /** Drive the same fresh-graph ControlDesigner adorner confirmation used by an on-canvas hover. */
+  async hitOpenDocumentDesignerAdorner(
+    uri: vscode.Uri,
+    id: string,
+    adornerId: string,
+    x: number,
+    y: number,
+  ): Promise<DesignerAdornerHitResult> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestDesignerAdornerHit(id, adornerId, x, y);
+  }
+
+  async editOpenDocumentPropertyWithResourceInterleave(
+    uri: vscode.Uri,
+    id: string,
+    propertyName: string,
+    propertyType: string,
+    isEnum: boolean,
+    value: string,
+    interleave: () => Promise<void>,
+  ): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestEditPropertyWithResourceInterleave(
+      id, propertyName, propertyType, isEnum, value, interleave);
+  }
+
+  async alignOpenDocumentControls(
+    uri: vscode.Uri,
+    edits: readonly { id: string; dx: number; dy: number }[],
+  ): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestAlignControls(edits);
+  }
+
+  async centerOpenDocumentControls(uri: vscode.Uri, axis: 'h' | 'v', ids: readonly string[]): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestCenterInForm(axis, ids);
+  }
+
+  async reparentOpenDocumentControl(uri: vscode.Uri, id: string, parentId: string): Promise<string | null> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestReparent(id, parentId);
+  }
+
+  async addOpenDocumentControl(uri: vscode.Uri, controlType: string, parentId: string,
+    x?: number, y?: number, width?: number, height?: number): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestAddControl(controlType, parentId, x, y, width, height);
+  }
+
+  async removeOpenDocumentControl(uri: vscode.Uri, id: string): Promise<number> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestRemoveControl(id);
+  }
+
+  async renameOpenDocumentControl(uri: vscode.Uri, id: string, newName: string): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestRenameControl(id, newName);
+  }
+
+  async selectOpenDocumentControl(uri: vscode.Uri, id: string): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestSelectControl(id);
+  }
+
+  /** Extension Host S095 repeats the real product activation after it arms the disposable hostile fixture. */
+  async probeOpenDocumentHostedDesigner(uri: vscode.Uri, id: string): Promise<HostedDesignerProbeResult> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestProbeHostedDesigner(id);
+  }
+
+  /** Extension Host S089/S090 invokes the exact command currently published by the real DesignerActionList. */
+  async invokeOpenDocumentHostedServiceAction(
+    uri: vscode.Uri,
+    id: string,
+    commandId: string,
+    certificationId: string,
+  ): Promise<HostedServiceKernelProductResult> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestInvokeHostedServiceAction(id, commandId, certificationId);
+  }
+
+  /** Begin a real product rerender; callers may intentionally leave the promise pending to race a stale canvas token. */
+  async rerenderOpenDocument(uri: vscode.Uri): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestRerender();
+  }
+
+  /** Drive one S122 logical-DPI performance leg through the same session/full-render path as a webview DPR update. */
+  async setOpenDocumentDpi(uri: vscode.Uri, displayDpr: number): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestSetDpi(displayDpr);
+  }
+
+  /** Send the generation-bound canvas intent used by the real webview after hit-testing or keyboard nudge. */
+  async sendOpenDocumentCanvasInput(
+    uri: vscode.Uri,
+    kind: 'pick' | 'nudge',
+    id: string,
+    generation: number,
+  ): Promise<{ accepted: boolean; refusalCode: 'STALE_CANVAS' | null; renderGeneration: number }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestCanvasInput(kind, id, generation);
+  }
+
+  /** Extension Host E2E reaches the same layout-managed canvas drop path as a real drag release. */
+  async moveOpenDocumentLayoutChild(uri: vscode.Uri, id: string, dropX: number, dropY: number): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestMoveLayoutChild(id, dropX, dropY);
+  }
+
+  /** Extension Host E2E reaches the exact ListView.Columns panel read side and its stale-write baseline. */
+  async listOpenDocumentColumns(uri: vscode.Uri, id: string): Promise<{
+    ok: boolean;
+    columns: ColumnItem[];
+    reason: string;
+  }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestListColumns(id);
+  }
+
+  /** Extension Host E2E reaches the same atomic ListView.Columns OK path as the property panel. */
+  async setOpenDocumentColumns(uri: vscode.Uri, id: string, columns: ColumnItem[]): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetColumns(id, columns);
+  }
+
+  /** Extension Host E2E reaches the exact TabPages collection read side and its stale-write baseline. */
+  async listOpenDocumentTabPages(uri: vscode.Uri, hostId: string): Promise<{
+    ok: boolean;
+    pages: string[];
+    reason: string;
+  }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestListTabPages(hostId);
+  }
+
+  /** Extension Host E2E reaches the atomic TabPages collection-editor OK path (one commit for the full order). */
+  async setOpenDocumentTabPages(uri: vscode.Uri, hostId: string, pageIds: string[]): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetTabPages(hostId, pageIds);
+  }
+
+  /** Extension Host E2E uses the same read side as the open Items editor, including its document-revision baseline. */
+  async listOpenDocumentToolStripItems(uri: vscode.Uri, id: string): Promise<{
+    ok: boolean;
+    items: ToolStripItemModel[];
+    reason: string;
+  }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestListToolStripItems(id);
+  }
+
+  /** Extension Host E2E reaches the same panel write side after listOpenDocumentToolStripItems established a baseline. */
+  async setOpenDocumentToolStripItems(uri: vscode.Uri, id: string, items: ToolStripItemModel[]): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestSetToolStripItems(id, items);
+  }
+
+  /** Extension Host E2E reaches the same on-canvas drag/reparent ingress as a real ToolStrip/MenuStrip item drop. */
+  async moveOpenDocumentToolStripItem(
+    uri: vscode.Uri,
+    hostId: string,
+    itemId: string,
+    targetParentItemId: string | null,
+    targetIndex: number,
+  ): Promise<{ applied: boolean; reason: string | null }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestMoveToolStripItem(hostId, itemId, targetParentItemId, targetIndex);
+  }
+
+  async copyOpenDocumentControls(uri: vscode.Uri, ids: readonly string[]): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestCopyControls(ids);
+  }
+
+  async pasteOpenDocumentControls(uri: vscode.Uri, targetId?: string): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestPaste(targetId);
+  }
+
+  async setOpenDocumentHandler(uri: vscode.Uri, id: string, eventName: string, handlerName: string): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.setHandler(id, eventName, handlerName);
+  }
+
+  async setOpenDocumentHandlerWithInterleave(
+    uri: vscode.Uri,
+    id: string,
+    eventName: string,
+    handlerName: string,
+    interleave: () => Promise<void>,
+  ): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestSetHandlerWithInterleave(id, eventName, handlerName, interleave);
+  }
+
+  async createOpenDocumentHandler(uri: vscode.Uri, id: string, eventName: string): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.createHandler(id, eventName);
+  }
+
+  async createOpenDocumentHandlerWithInterleave(
+    uri: vscode.Uri,
+    id: string,
+    eventName: string,
+    interleave: () => Promise<void>,
+  ): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestCreateHandlerWithInterleave(id, eventName, interleave);
+  }
+
+  async createOpenDocumentDefaultHandler(uri: vscode.Uri, id: string): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestCreateDefaultHandler(id);
+  }
+
+  async focusOpenDocument(uri: vscode.Uri): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    document.session.extensionHostTestFocus();
+  }
+
+  async runOpenDocumentResourceRace(
+    uri: vscode.Uri,
+    kind: 'journaled' | 'ordinary',
+    resourceUri: vscode.Uri,
+    interleave: () => Promise<void>,
+  ): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestResourceRace(kind, resourceUri, interleave);
+  }
+
+  async makeOpenDocumentLocalizableWithJournalFailure(
+    uri: vscode.Uri,
+    state: 'applied' | 'undoRegistered' | 'committed',
+  ): Promise<{ result: boolean; failureObserved: boolean }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestMakeLocalizableJournalFailure(state);
+  }
+
+  async resizeOpenDocumentControl(uri: vscode.Uri, id: string, width: number, height: number): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestResizeControl(id, width, height);
+  }
+
+  async resizeOpenDocumentControls(
+    uri: vscode.Uri,
+    sizeEdits: readonly { id: string; width: number; height: number }[],
+  ): Promise<void> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    await document.session.extensionHostTestResizeControls(sizeEdits);
+  }
 
   async openCustomDocument(
     uri: vscode.Uri,
@@ -1034,12 +2175,41 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
       }
     }
     // designerText = recovered hot-exit backup if present (else disk); savedDesignerText = the REAL on-disk
-    // text — so a recovered backup that differs from disk is correctly DIRTY, not silently "saved".
+    // text — so a recovered backup that differs from disk is correctly DIRTY, not silently "saved". In a normal
+    // workbench restore VS Code supplies backupId. If only the Extension Host restarted and the user explicitly
+    // reopens the designer, consume the workspace-local fallback index written by backupCustomDocument instead.
     let text = diskText;
-    if (openContext.backupId) {
-      try { const r = await readDesignerBytesUri(vscode.Uri.parse(openContext.backupId)); text = r.text; if (!designerFile) hadBom = r.hadBom; } catch { /* fall back to disk */ }
+    const fallbackBackupId = openContext.backupId ? undefined : await this.takeHotExitBackup(uri);
+    const backupId = openContext.backupId ?? fallbackBackupId;
+    let recoveredFromBackup = false;
+    if (backupId) {
+      try {
+        const r = await readDesignerBytesUri(vscode.Uri.parse(backupId));
+        text = r.text;
+        if (!designerFile) hadBom = r.hadBom;
+        recoveredFromBackup = true;
+        // A native VS Code restore can coexist with our fallback index. Consume the duplicate after a successful read
+        // so a later ordinary reopen cannot resurrect the same stale dirty image.
+        if (openContext.backupId) await this.removeHotExitBackup(uri, backupId);
+      } catch { /* fall back to disk; a consumed fallback with an unreadable payload must not retry forever */ }
     }
-    return new WinFormsDesignDocument(uri, designerFile, text, diskText, hadBom, diskExisted, baselineUnknown);
+    const document = new WinFormsDesignDocument(
+      uri,
+      designerFile,
+      text,
+      diskText,
+      hadBom,
+      diskExisted,
+      baselineUnknown,
+      (openDocument, destination) => this.saveWholeFormAs(openDocument, destination),
+      recoveredFromBackup,
+    );
+    const key = this.documentKey(uri);
+    this.openDocuments.set(key, document);
+    document.onDidDispose(() => {
+      if (this.openDocuments.get(key) === document) this.openDocuments.delete(key);
+    });
+    return document;
   }
 
   resolveCustomEditor(
@@ -1048,15 +2218,49 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     _token: vscode.CancellationToken,
   ): void {
     document.session = new DesignerSession(
-      this.context.extensionUri, this.ensureEngine, this.getAssemblyOverride, this.output, this.onViewCode,
-      document, panel, (e) => this._onDidChangeCustomDocument.fire(e), this.setAssemblyOverride,
+      this.context.extensionUri, this.context.globalStorageUri, this.ensureEngine, this.getAssemblyOverride, this.output, this.onViewCode,
+      document, panel, (event) => this.fireDocumentEdit(event), this.setAssemblyOverride,
     );
+    document.registerRecoveredUndo((event) => this.fireDocumentEdit(event));
   }
 
-  saveCustomDocument(document: WinFormsDesignDocument, _c: vscode.CancellationToken): Thenable<void> { return document.save(); }
-  saveCustomDocumentAs(document: WinFormsDesignDocument, dest: vscode.Uri, _c: vscode.CancellationToken): Thenable<void> { return document.saveAs(dest); }
-  revertCustomDocument(document: WinFormsDesignDocument, _c: vscode.CancellationToken): Thenable<void> { return document.revert(); }
-  backupCustomDocument(document: WinFormsDesignDocument, context: vscode.CustomDocumentBackupContext, _c: vscode.CancellationToken): Thenable<vscode.CustomDocumentBackup> { return document.backup(context.destination); }
+  async saveCustomDocument(document: WinFormsDesignDocument, _c: vscode.CancellationToken): Promise<void> {
+    await document.save();
+    await this.clearHotExitBackupIfClean(document);
+  }
+  async saveCustomDocumentAs(document: WinFormsDesignDocument, dest: vscode.Uri, _c: vscode.CancellationToken): Promise<void> {
+    await document.saveAs(dest);
+    await this.clearHotExitBackupIfClean(document);
+  }
+  async revertCustomDocument(document: WinFormsDesignDocument, _c: vscode.CancellationToken): Promise<void> {
+    await document.revert();
+    await this.clearHotExitBackupIfClean(document);
+  }
+  async backupCustomDocument(
+    document: WinFormsDesignDocument,
+    context: vscode.CustomDocumentBackupContext,
+    _c: vscode.CancellationToken,
+  ): Promise<vscode.CustomDocumentBackup> {
+    const backup = await document.backup(context.destination);
+    try {
+      // Older hosts can deliver a debounced backup callback after Save/Undo already made the document clean. The
+      // VS Code-owned backup object still has to be returned, but indexing it would resurrect a completed edit on the
+      // next explicit reopen. Re-check current state after the async write and only retain genuinely dirty recovery.
+      if (document.isDirty) await this.persistHotExitBackup(document.uri, backup.id);
+      else await this.removeHotExitBackup(document.uri);
+    } catch (error) {
+      // VS Code still owns and records the returned backup id; this index is only the explicit-reopen fallback.
+      this.output.appendLine(`[hot-exit] Fallback recovery index could not be written: ${String(error)}`);
+    }
+    return {
+      id: backup.id,
+      delete: async () => {
+        await backup.delete();
+        try { await this.removeHotExitBackup(document.uri, backup.id); }
+        catch (error) { this.output.appendLine(`[hot-exit] Fallback recovery index could not be cleared: ${String(error)}`); }
+      },
+    };
+  }
 }
 
 /**
@@ -1075,12 +2279,15 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage(async (m: {
       type?: string; id?: string; prop?: string; propType?: string; isEnum?: boolean; value?: string; ownerId?: string;
       providerId?: string; extenderProperty?: string;
-      refEdit?: boolean; designTime?: boolean; kind?: 'none' | 'component' | 'type';
+      refEdit?: boolean; designTime?: boolean; multi?: boolean; kind?: 'none' | 'component' | 'type';
       event?: string; handler?: string | null; controlType?: string; tab?: string; cell?: string; componentType?: string;
-      parentId?: string; toFront?: boolean;
+      parentId?: string; toFront?: boolean; x?: number; y?: number; width?: number; height?: number;
       items?: string[]; columns?: ColumnItem[]; gridColumns?: GridColumnItem[]; bindings?: BindingItem[]; nodes?: TreeNodeItem[];
+      pageIds?: string[];
       itemType?: string; editorType?: string;
       toolStripItems?: ToolStripItemModel[];
+      schemaKey?: string; mode?: 'detail' | 'grid'; includeNavigator?: boolean;
+      existingBindingSourceId?: string | null; existingGridId?: string | null; settingKey?: string;
       state?: unknown; toolboxUi?: unknown;
     }) => {
       const s = DesignerHub.instance.activeSession;
@@ -1097,15 +2304,16 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
           // an `ownerId` marks this as a ToolStripItem edit (the grid is showing item→Properties) → route to the
           // item-edit path (targets the item field, refreshes via itemProps, keeps the canvas item highlight).
           if (m.ownerId) await s?.editItemFromGrid(m.ownerId, m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '');
-          else await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '', !!m.refEdit, !!m.designTime);
+          else await s?.editFromGrid(m.id, m.prop, m.propType, !!m.isEnum, m.value ?? '', !!m.refEdit, !!m.designTime, !!m.multi);
         }
+        else if (m?.type === 'pickProjectImageResource' && m.id && m.prop) { await s?.pickProjectImageResourceFromGrid(m.id, m.prop); }
         else if (m?.type === 'importImage' && m.id && m.prop && m.propType) { await s?.importImageFromGrid(m.id, m.prop, m.propType); }
         else if (m?.type === 'clearImage' && m.id && m.prop) { await s?.clearImageFromGrid(m.id, m.prop); }
         else if (m?.type === 'resetProperty' && m.id && m.prop) {
           // an `ownerId` marks this as a ToolStripItem reset (the grid is showing item→Properties) → route to the
           // item-reset path (targets the item field, refreshes via itemProps, keeps the canvas item highlight).
           if (m.ownerId) await s?.resetItemFromGrid(m.ownerId, m.id, m.prop);
-          else await s?.resetFromGrid(m.id, m.prop);
+          else await s?.resetFromGrid(m.id, m.prop, !!m.multi);
         }
         else if (m?.type === 'setTableCell' && m.id && m.cell) { await s?.tableCellFromGrid(m.id, m.cell, m.value ?? ''); }
         else if (m?.type === 'listCollection' && m.id && m.prop) { await s?.sendCollectionItems(m.id, m.prop); }
@@ -1113,16 +2321,27 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'listGenericList' && m.id && m.prop && m.itemType) { await s?.sendGenericListItems(m.id, m.prop, m.itemType); }
         else if (m?.type === 'setGenericList' && m.id && m.prop && m.itemType && Array.isArray(m.items)) { await s?.genericListFromGrid(m.id, m.prop, m.itemType, m.items as string[]); }
         else if (m?.type === 'uiTypeEditor' && m.id && m.prop && m.propType && m.editorType) { await s?.uiTypeEditorFromGrid(m.id, m.prop, m.propType, m.editorType); }
+        else if (m?.type === 'uiCollectionEditor' && m.id && m.prop && m.itemType && m.editorType) { await s?.uiCollectionEditorFromGrid(m.id, m.prop, m.itemType, m.editorType); }
         else if (m?.type === 'listStringArray' && m.id && m.prop) { await s?.sendStringArray(m.id, m.prop); }
         else if (m?.type === 'setStringArray' && m.id && m.prop && Array.isArray(m.items)) { await s?.stringArrayFromGrid(m.id, m.prop, m.items as string[]); }
         else if (m?.type === 'listColumns' && m.id) { await s?.sendColumnItems(m.id); }
         else if (m?.type === 'setColumns' && m.id && Array.isArray(m.columns)) { await s?.columnsFromGrid(m.id, m.columns as ColumnItem[]); }
+        else if (m?.type === 'listTabPages' && m.id) { await s?.sendTabPages(m.id); }
+        else if (m?.type === 'setTabPages' && m.id && Array.isArray(m.pageIds)) { await s?.tabPagesFromGrid(m.id, m.pageIds); }
         else if (m?.type === 'listGridColumns' && m.id) { await s?.sendGridColumnItems(m.id); }
         else if (m?.type === 'setGridColumns' && m.id && Array.isArray(m.gridColumns)) { await s?.gridColumnsFromGrid(m.id, m.gridColumns as GridColumnItem[]); }
         else if (m?.type === 'listBindings' && m.id) { await s?.sendBindingItems(m.id); }
         else if (m?.type === 'setBindings' && m.id && Array.isArray(m.bindings)) { await s?.bindingsFromGrid(m.id, m.bindings as BindingItem[]); }
         else if (m?.type === 'getDataSource' && m.id) { await s?.sendDataSourceInfo(m.id); }
         else if (m?.type === 'setDataSource' && m.id && m.kind) { await s?.dataSourceFromGrid(m.id, m.kind, m.value ?? ''); }
+        else if (m?.type === 'refreshDataSources') { await s?.refreshDataSources(); }
+        else if (m?.type === 'generateDataSource' && m.schemaKey && (m.mode === 'detail' || m.mode === 'grid')) {
+          await s?.generateFromDataSource(m.schemaKey, m.mode, m.parentId ?? 'this', m.x, m.y,
+            !!m.includeNavigator, m.existingBindingSourceId ?? null, m.existingGridId ?? null);
+        }
+        else if (m?.type === 'bindApplicationSetting' && m.settingKey && m.id) {
+          await s?.bindSelectedApplicationSetting(m.settingKey, m.id);
+        }
         else if (m?.type === 'setExtender' && m.id && m.providerId && m.extenderProperty && m.propType) {
           await s?.extenderFromGrid(m.providerId, m.id, m.extenderProperty, m.propType, m.value ?? '');
         }
@@ -1136,6 +2355,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'createHandler' && m.id && m.event) { await s?.createHandler(m.id, m.event, m.handler || undefined, m.ownerId); }
         else if (m?.type === 'navigateHandler' && m.id) { await s?.navigateToHandler(m.id, m.event ?? '', m.handler ?? undefined, m.ownerId); }
         else if (m?.type === 'listHandlers' && m.id) { await s?.sendCandidates(m.id); }
+        else if (m?.type === 'selectToolboxControl' && m.controlType) { await s?.selectToolboxControl(m.controlType); }
         else if (m?.type === 'addControl' && m.controlType) { await s?.addControlFromToolbox(m.controlType); }
         else if (m?.type === 'outlineReparent' && m.id && m.parentId) { await s?.reparentFromOutline(m.id, m.parentId); }
         else if (m?.type === 'outlineMoveZOrder' && m.id && typeof m.toFront === 'boolean') { await s?.zOrderFromOutline(m.id, m.toFront); }
@@ -1159,15 +2379,74 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
 interface ResxTx { uri: vscode.Uri; before: string | null; after: string; bom: boolean; }
 type ResourceTxSet = ResxTx | ResxTx[];
 
+/** One ordinary source buffer that participates in a CustomDocument edit. Visual Studio treats generated-source
+ * wiring and the code-behind stub as one designer transaction; VS Code has no public cross-editor undo primitive,
+ * so the custom-document undo/redo callback replays this exact, conflict-guarded buffer transition itself. */
+interface CompanionTextTx {
+  document: vscode.TextDocument;
+  before: string;
+  after: string;
+}
+
 /** A .resx read: its text with any leading UTF-8 BOM stripped, plus whether that BOM was there — so every write
 * back can restore it byte-for-byte instead of silently rewriting the whole file's encoding signature. */
 interface ResxRead { text: string; hadBom: boolean; }
+
+interface ProductRenderTelemetry {
+  modelMs: number;
+  captureMs: number;
+  previewMs: number;
+  reconciliationMs: number;
+  totalMeasuredMs: number;
+  displayDpr: number;
+  captureScale: 1 | 2;
+  controlCount: number;
+}
+
+/** Exact, mutation-free source proposal produced by the High-DPI advisor. The command host renders these two
+ * byte images through a read-only TextDocumentContentProvider; accepting the proposal must still match this
+ * revision and these bytes before the normal CustomDocument commit funnel can create one native history unit. */
+export type HighDpiQuickFixPreviewResult =
+  | {
+    status: 'previewed';
+    designerFile: string;
+    before: string;
+    after: string;
+    beforeSha256: string;
+    afterSha256: string;
+    persistenceLane: 'ownedRegion' | 'sourceFirst';
+  }
+  | { status: 'notApplicable' | 'refused'; reason: string };
+
+export type HighDpiQuickFixApplyResult =
+  | {
+    status: 'applied';
+    designerFile: string;
+    beforeSha256: string;
+    afterSha256: string;
+    persistenceLane: 'ownedRegion' | 'sourceFirst';
+  }
+  | { status: 'refused'; reason: string };
+
+interface PendingHighDpiQuickFix {
+  designerFile: string;
+  before: string;
+  after: string;
+  revision: number;
+  beforeSha256: string;
+  afterSha256: string;
+  persistenceLane: 'ownedRegion' | 'sourceFirst';
+}
 
 /** Manages one open designer editor: render, selection, property edits, and live-update. */
 class DesignerSession {
   private readonly designerFile: string | null;
   private readonly disposables: vscode.Disposable[] = [];
   private currentId = 'this';
+  /** Canvas control selection in deterministic order, with currentId (the primary) last. The side panel can request a
+   * multi-object transaction only for this exact, revision-bound set. */
+  private currentSelectionIds: string[] = ['this'];
+  private selectedToolboxControl: string | null = null;
   // The strip item currently shown in the Properties panel (item→Properties), or null when a control is selected. Set by
   // the `selectItem` gesture, cleared on a control `pick`. A delayed item refresh (loadItemProps after a reset/wire/edit)
   // checks this before pushing `itemProps`, so a stale refresh for item A can't overwrite a newer selection of item B
@@ -1176,7 +2455,41 @@ class DesignerSession {
   /** Bumped by every pick(); captured by loadProps so a load whose awaits outlive its selection publishes nothing. */
   private selectionGen = 0;
   private renderSeq = 0;
+  private lastCanvasInputRefusalCode: 'STALE_CANVAS' | null = null;
+  /** Extension Host S016 phase telemetry; null outside a net48 property-edit attempt. */
+  private lastNet48PropertyEditTelemetry: {
+    plannerMs: number;
+    commitMs: number;
+    reconcileMs: number;
+    liveMs: number;
+    snapshotComponentId: string | null;
+    componentInSnapshot: boolean;
+    propertiesReconciled: boolean;
+    trailingPropertiesMs: number;
+  } | null = null;
+  /** Extension Host S016 phase telemetry for the modern source-plan -> commit -> retained-graph path. */
+  private lastModernPropertyEditTelemetry: {
+    plannerMs: number;
+    commitMs: number;
+    reconcileMs: number;
+    retainedApplied: boolean;
+    trailingPropertiesMs: number;
+  } | null = null;
+  /** S122: accepted phase timings from the latest real full-render product path. Engine startup/toolbox warm-up is
+   * deliberately outside these frozen steady-state phases; capture owns the engine's inseparable model+pixel RPC. */
+  private lastFullRenderTelemetry: ProductRenderTelemetry | null = null;
+  /** Last product-hosted ComponentDesigner activation for the current certified selection. A worker fault is kept
+   * separate from renderOk: the generic form/property surface intentionally remains usable after quarantine. */
+  private lastHostedDesignerProbe: HostedDesignerProbeResult | null = null;
+  /** Last inspection or invocation of the exact repository-certified hosted service command for this session. */
+  private lastHostedServiceKernelResult: HostedServiceKernelProductResult | null = null;
+  private lastModernRetainedApplied = false;
+  /** A later Data Sources refresh supersedes an older project scan; source revision is checked separately. */
+  private dataSourcesSeq = 0;
   private controls: LayoutControl[] = [];
+  /** Engine-authoritative non-visual component tray from the latest accepted render. Retained so selection validation
+   * and Extension Host parity evidence can distinguish a real Timer/BindingSource from a forged non-control id. */
+  private trayComponents: TrayComponent[] = [];
   // 0.10.0 trust-floor S5 — false = the last render FAILED (or nothing has rendered yet). A hard load/render failure
   // leaves a STALE preview on the canvas; while this is false, mutating gestures are refused fail-closed so an edit
   // can't splice against a graph the designer couldn't load. Set true only at fullRender's clean success exit; set
@@ -1199,9 +2512,19 @@ class DesignerSession {
   // liveInstanceId / liveBuildId remain for diagnostics + the release/rebuild e2e, but grant no editing authority.
   /** Monotonic id per reloadFromDiskIfClean run; a read that resumes after a newer one started is discarded. */
   private reloadEpoch = 0;
+  /** Exact forward source images currently being written by the durable source+resource transaction runner.
+   * The generated-source watcher is allowed to observe one of these images before the runner registers the native
+   * CustomDocument edit (notably on VS Code 1.84). Treating that self-write as an external clean-file change bumps the
+   * document revision, makes the final commit fail its own stale guard, and rolls an otherwise valid transaction back.
+   * Keep the comparison exact (text + BOM) and scoped to the runner lifetime; every other watcher image still follows
+   * the normal external-change path. An array deliberately supports two concurrently dispatched webview commands. */
+  private readonly pendingSourceTransactionImages: Array<{ text: string; bom: boolean }> = [];
   private toolStripItems: ToolStripItemBounds[] = []; // per-item geometry from the last render (on-canvas "Type Here")
   /** Live CurrentAutoScaleDimensions of the last render ("6F, 13F"), reported by whichever engine drew it. */
   private renderedAutoScale = '';
+  /** Opaque modern-engine token for the exact live DesignSurface behind the accepted 1x frame. Never interpreted
+   * client-side; a property edit only echoes it with exact old/new source bytes for engine-side revalidation. */
+  private modernGraphToken: string | undefined;
   private rootClient: { w: number; h: number } | null = null;
   private rootFrame: { w: number; h: number } | null = null;
   /** Which engine renders THIS form — detected per render from the resolved control assembly's runtime
@@ -1214,6 +2537,7 @@ class DesignerSession {
    * graph therefore sees only the exactly reversible 2x/0.5x path, never a cumulative fractional Scale cycle. */
   private renderScale: 1 | 2 = 1;
   private debounce?: ReturnType<typeof setTimeout>;
+  private codeBehindDebounce?: ReturnType<typeof setTimeout>;
   private disposed = false;
   private gotReady = false;
   /** Signature of the last #formNotice payload actually posted — so composeFormNotice skips a re-post identical to
@@ -1306,6 +2630,22 @@ class DesignerSession {
   private readonly offeredReferences = new Set<string>();
   /** The toolbox tab the open Choose-Items window targets (checked items land here); undefined = none. */
   private chooseItemsTab: string | undefined;
+  /** One-shot v2 document-owner gate. A refused owner is render-failed/read-only until the document is reopened. */
+  private documentOwnerChecked = false;
+  private lastDocumentOwner: DesignerDocumentOwnerResolution | undefined;
+  /** Visual Studio opens a proven empty Form/UserControl partial even when its generated method is absent. We render
+   * the same blank surface from a transient engine-only method, but keep every mutation fail-closed until the real
+   * generated method returns; no placeholder is ever written into the user's source. */
+  private emptyInitializeComponentSurface = false;
+  /** Product persistence lane used by the latest ordinary scalar property edit. Retained for diagnostics and the
+   * real Extension Host assertion that the owned-region route is not merely an orphaned engine endpoint. */
+  private lastPropertyPersistenceLane: 'ownedRegion' | 'sourceFirst' | null = null;
+  /** Certified vendor collection proposals never fall back after this proof fails. Retained for the real Extension
+   * Host refusal assertion and reset before every certified collection transaction. */
+  private lastOwnedRegionRefusal: string | null = null;
+  /** Last read-only High-DPI advisor proposal. It is deliberately session-local and revision-bound: any intervening
+   * edit (including edit then Undo back to byte-identical source) makes Apply refuse instead of silently replanning. */
+  private pendingHighDpiQuickFix: PendingHighDpiQuickFix | undefined;
 
   private readonly documentUri: vscode.Uri;
   /** The custom document whose in-memory .Designer.cs text this session renders and edits (issue #2). */
@@ -1313,12 +2653,31 @@ class DesignerSession {
   /** One isolated modal editor at a time per designer session. The engine broker is cancellable/fail-closed, but
    * serialising this ingress also prevents two dialogs racing to apply values against the same document revision. */
   private uiTypeEditorBusy = false;
+  private extensionHostUiTypeEditorResult: SupportedUiTypeEditorResult | undefined;
+  private extensionHostUiTypeEditorResultConsumed = false;
+  /** Extension Host-only S072 seam. The actual vendor worker still runs; only its otherwise-valid proposed source is
+   * made malicious before the product owned-region authority sees it. Undefined in normal product operation. */
+  private extensionHostVendorCollectionProposalTransform: ((source: string) => string) | undefined;
   /** Last property metadata actually published to the panel. Mutating editor messages are untrusted webview input;
    * they must match this exact component/revision before an engine adapter is invoked. */
-  private publishedPropertyComponent: { id: string; rev: number; component: ComponentDesc | null } | undefined;
+  private publishedPropertyComponent: { ids: string[]; rev: number; component: ComponentDesc | null } | undefined;
+  /** Deterministic Extension Host-only interleaving points for the W0 data-loss regression. Undefined in product. */
+  private extensionHostBeforeJournaledResourceCommit: (() => Promise<void>) | undefined;
+  private extensionHostAfterJournaledResourceBaseline: (() => Promise<void>) | undefined;
+  private extensionHostFailJournalState: TransactionJournalState | undefined;
+  private extensionHostJournalFailureObserved = false;
+  private extensionHostFailForwardResourcePostcondition = false;
+  private extensionHostResourcePostconditionFailureObserved = false;
+  /** Bridges VS Code's global ordering when a composite event Undo leaves the ordinary code editor's Redo above the
+   * CustomDocument Redo. The first user Redo restores code; this bridge immediately completes the designer half. */
+  private companionHistoryBridge: {
+    tx: CompanionTextTx;
+    phase: 'awaitingCodeRedo' | 'autoRedoingDesigner';
+  } | undefined;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
+    private readonly globalStorageUri: vscode.Uri,
     private readonly ensureEngine: EnsureEngine,
     private readonly getAssemblyOverride: AssemblyOverride,
     private readonly output: vscode.OutputChannel,
@@ -1369,10 +2728,16 @@ class DesignerSession {
     // checkout, another tool, or our own save) reloads the in-memory text when clean, or is kept-with-note
     // when the user has unsaved designer edits — see reloadFromDiskIfClean.
     const key = normalize(this.designerFile);
+    const codePath = this.codeFile();
+    const codeKey = codePath ? normalize(codePath) : '';
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(path.dirname(this.designerFile), '*'),
     );
-    const onFs = (uri: vscode.Uri) => { if (normalize(uri.fsPath) === key) this.scheduleRerender(); };
+    const onFs = (uri: vscode.Uri) => {
+      const changed = normalize(uri.fsPath);
+      if (changed === key) this.scheduleRerender();
+      else if (codeKey && changed === codeKey) this.scheduleCodeBehindRerender();
+    };
     watcher.onDidChange(onFs);
     watcher.onDidCreate(onFs);
     watcher.onDidDelete(onFs);
@@ -1381,11 +2746,13 @@ class DesignerSession {
     // Auto-discovery is session-triggered, never activation-triggered. Yield/cancel as soon as the user starts
     // editing or leaves VS Code; returning focus schedules a fresh bounded pass after the interaction settles.
     this.disposables.push(vscode.workspace.onDidChangeTextDocument((event) => {
+      this.onCompanionHistoryTextChanged(event.document);
       // Only real editing yields: this event also fires for VS Code's own output-channel documents, so an open
       // extension log would keep rescheduling discovery, whose every pass appends another line to that same log.
       if (!isUserEditDocument(event.document.uri.scheme)) return;
       this.cancelAutoToolboxDiscovery();
       this.scheduleAutoToolboxDiscovery(1200);
+      if (codeKey && normalize(event.document.uri.fsPath) === codeKey) this.scheduleCodeBehindRerender();
     }));
     this.disposables.push(vscode.window.onDidChangeWindowState((state) => {
       if (!state.focused) this.cancelAutoToolboxDiscovery();
@@ -1393,6 +2760,935 @@ class DesignerSession {
     }));
 
     panel.onDidDispose(() => this.dispose());
+  }
+
+  /** @vscode/test-electron cannot synthesize a canvas pointer drag. The extension's test-only activation API reaches
+   * this narrow wrapper so the real session executes the same engine-authorized group transaction and emits the same
+   * native CustomDocumentEditEvent as a webview drag. It is never returned by activate() outside the E2E host. */
+  async extensionHostTestMoveGroup(ids: readonly string[], dx: number, dy: number): Promise<void> {
+    await this.applyGroupMove([...ids], dx, dy);
+  }
+
+  /** S020: start the same render path used after source/view changes, without awaiting it in the test caller. */
+  async extensionHostTestRerender(): Promise<void> {
+    await this.fullRender();
+  }
+
+  /** S122 only: run the real full-render path at one catalog logical-DPI leg. This forces a capture even when two
+   * adjacent logical DPRs share the same safe 2x backing, because the performance matrix records each leg. */
+  async extensionHostTestSetDpi(displayDpr: number): Promise<void> {
+    const dpi = designerDpiScale(displayDpr);
+    this.displayDpr = dpi.displayDpr;
+    this.renderScale = dpi.captureScale;
+    await this.fullRender();
+  }
+
+  /** V2-FND-001-S126 — plan the same exact AutoScaleMode edit the normal Properties path would persist, but do not
+   * mutate the CustomDocument. The command host displays the returned before/after bytes in a read-only VS Code diff. */
+  async previewHighDpiQuickFix(): Promise<HighDpiQuickFixPreviewResult> {
+    this.pendingHighDpiQuickFix = undefined;
+    if (!this.designerFile || this.disposed) {
+      return { status: 'notApplicable', reason: 'no active WinForms designer document' };
+    }
+
+    const before = this.doc.designerText;
+    const revision = this.doc.rev;
+    const component = await this.describeFor('this');
+    if (this.doc.rev !== revision || this.doc.designerText !== before) {
+      return { status: 'refused', reason: 'designer source changed while the advisor was inspecting it' };
+    }
+    const property = component?.properties.find((candidate) => candidate.name === 'AutoScaleMode');
+    if (!component || component.id !== 'this' || component.editable === false
+      || !property || property.type !== 'System.Windows.Forms.AutoScaleMode'
+      || property.readOnly || !property.sourceExplicit) {
+      return { status: 'notApplicable', reason: 'the root AutoScaleMode assignment is not an editable source value' };
+    }
+    if (property.value !== 'None') {
+      return {
+        status: 'notApplicable',
+        reason: property.value === 'Font'
+          ? 'AutoScaleMode is already Font'
+          : `AutoScaleMode is ${property.value ?? 'unavailable'}, not None`,
+      };
+    }
+
+    const planner = await this.ensureEngine('modern');
+    const planned = await setPropertyViaProvenOwnedRegion(
+      planner,
+      this.designerFile,
+      'this',
+      'AutoScaleMode',
+      'System.Windows.Forms.AutoScaleMode.Font',
+      before,
+      this.engineKind === 'modern' ? this.modernGraphToken : undefined,
+    );
+    if (!planned.safe || planned.text === null || planned.text === before) {
+      return { status: 'refused', reason: planned.reason || 'the exact AutoScaleMode source patch was not safe' };
+    }
+    if (this.doc.rev !== revision || this.doc.designerText !== before) {
+      return { status: 'refused', reason: 'designer source changed while the advisor was planning the patch' };
+    }
+    if (!this.preflightCommit(before, planned.text, 'Apply High-DPI AutoScaleMode quick fix', [], revision)) {
+      return { status: 'refused', reason: 'the normal designer commit safety gates refused this source patch' };
+    }
+
+    const pending: PendingHighDpiQuickFix = {
+      designerFile: this.designerFile,
+      before,
+      after: planned.text,
+      revision,
+      beforeSha256: sha256Hex(before),
+      afterSha256: sha256Hex(planned.text),
+      persistenceLane: planned.persistenceLane,
+    };
+    this.pendingHighDpiQuickFix = pending;
+    return { status: 'previewed', ...pending };
+  }
+
+  /** Accept only the exact preview currently retained by this session. The ordinary commit firewall is re-run at
+   * the final boundary; success therefore participates in native Undo/Redo exactly like a Properties-grid edit. */
+  async applyPendingHighDpiQuickFix(): Promise<HighDpiQuickFixApplyResult> {
+    const pending = this.pendingHighDpiQuickFix;
+    this.pendingHighDpiQuickFix = undefined;
+    if (!pending || !this.designerFile || this.disposed) {
+      return { status: 'refused', reason: 'there is no current High-DPI quick-fix preview' };
+    }
+    if (this.designerFile !== pending.designerFile
+      || this.doc.rev !== pending.revision
+      || this.doc.designerText !== pending.before
+      || sha256Hex(this.doc.designerText) !== pending.beforeSha256) {
+      return { status: 'refused', reason: 'the High-DPI preview is stale; preview the fix again' };
+    }
+    if (!this.commit(
+      pending.before,
+      pending.after,
+      'Apply High-DPI AutoScaleMode quick fix',
+      undefined,
+      pending.revision,
+    )) {
+      return { status: 'refused', reason: 'the normal designer commit safety gates refused the previewed patch' };
+    }
+
+    let propertiesReconciled = false;
+    if (this.engineKind === 'net48') {
+      propertiesReconciled = await this.liveEdit48('this', 'AutoScaleMode', 'Font');
+    } else {
+      propertiesReconciled = await this.patchOrRerender('this', 'AutoScaleMode', {
+        beforeSourceText: pending.before,
+        afterSourceText: pending.after,
+        newValueExpr: 'System.Windows.Forms.AutoScaleMode.Font',
+      });
+    }
+    if (!propertiesReconciled) await this.loadProps('this');
+    this.postDirty();
+    this.output.appendLine('[advisor] applied this.AutoScaleMode = Font (previewed exact patch, unsaved)');
+    return {
+      status: 'applied',
+      designerFile: pending.designerFile,
+      beforeSha256: pending.beforeSha256,
+      afterSha256: pending.afterSha256,
+      persistenceLane: pending.persistenceLane,
+    };
+  }
+
+  /** S020: reach the exact onMessage generation gate with the real current layout and document session. */
+  async extensionHostTestCanvasInput(
+    kind: 'pick' | 'nudge',
+    id: string,
+    generation: number,
+  ): Promise<{ accepted: boolean; refusalCode: 'STALE_CANVAS' | null; renderGeneration: number }> {
+    this.lastCanvasInputRefusalCode = null;
+    if (kind === 'pick') {
+      await this.onMessage({ type: 'pick', id, ids: [id], gen: generation });
+    } else {
+      const control = this.controls.find((candidate) => candidate.id === id);
+      if (!control) throw new Error(`Canvas test control is not in the current layout: ${id}`);
+      await this.onMessage({
+        type: 'manipulate', id, mode: 'move', gen: generation,
+        x: control.x + 1, y: control.y, width: control.width, height: control.height,
+      });
+    }
+    return {
+      accepted: this.lastCanvasInputRefusalCode === null,
+      refusalCode: this.lastCanvasInputRefusalCode,
+      renderGeneration: this.renderSeq,
+    };
+  }
+
+  /** Real Extension Host E2E reaches the same default-event discovery path as a canvas double-click. */
+  async extensionHostTestCreateDefaultHandler(id: string): Promise<void> {
+    await this.createDefaultHandler(id);
+  }
+
+  /** Deterministic real-host ingress for the code-behind revision race after engine validation but before commit. */
+  async extensionHostTestSetHandlerWithInterleave(
+    id: string,
+    eventName: string,
+    handlerName: string,
+    interleave: () => Promise<void>,
+  ): Promise<void> {
+    await this.applyEventWiring(id, eventName, handlerName, undefined, interleave);
+  }
+
+  /** Deterministic real-host ingress for a code-behind change after handler generation but before either artifact. */
+  async extensionHostTestCreateHandlerWithInterleave(
+    id: string,
+    eventName: string,
+    interleave: () => Promise<void>,
+  ): Promise<void> {
+    await this.createHandler(id, eventName, undefined, undefined, interleave);
+  }
+
+  /** Real Extension Host E2E reaches the same per-control alignment ingress as the canvas toolbar. */
+  async extensionHostTestAlignControls(
+    edits: readonly { id: string; dx: number; dy: number }[],
+  ): Promise<void> {
+    await this.applyAlign(edits.map((edit) => ({ ...edit })));
+  }
+
+  /** Real Extension Host E2E reaches the same client-rectangle centering ingress as the canvas Format toolbar. */
+  async extensionHostTestCenterInForm(axis: 'h' | 'v', ids: readonly string[]): Promise<void> {
+    await this.applyCenterInForm(axis, [...ids]);
+  }
+
+  extensionHostTestFocus(): void {
+    this.panel.reveal(this.panel.viewColumn, false);
+  }
+
+  async extensionHostTestEditProperty(
+    id: string,
+    propertyName: string,
+    propertyType: string,
+    isEnum: boolean,
+    value: string,
+  ): Promise<void> {
+    await this.applyEdit(id, propertyName, propertyType, isEnum, value);
+  }
+
+  /** S045/S046: preserve the entire real Properties/UITypeEditor product path while replacing only the native modal
+   * interaction with the already-validated result shape covered by the isolated broker tests. */
+  async extensionHostTestColorUiTypeEditor(
+    id: string,
+    propertyName: string,
+    outcome: 'apply-blue' | 'dismiss',
+  ): Promise<{
+      applied: boolean;
+      dismissed: boolean;
+      resultConsumed: boolean;
+      editorType: string | null;
+      refusalCode: 'CANCELLED' | null;
+    }> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    const metadata = this.publishedEditableProperty(id, propertyName);
+    if (!metadata || metadata.type !== 'System.Drawing.Color'
+      || metadata.uiTypeEditor !== 'System.Drawing.Design.ColorEditor') {
+      return {
+        applied: false,
+        dismissed: false,
+        resultConsumed: false,
+        editorType: metadata?.uiTypeEditor ?? null,
+        refusalCode: null,
+      };
+    }
+    const before = this.doc.designerText;
+    this.extensionHostUiTypeEditorResultConsumed = false;
+    this.extensionHostUiTypeEditorResult = outcome === 'apply-blue'
+      ? { ok: true, applied: true, dismissed: false, invariantValue: 'Blue', errorCode: '', reason: '' }
+      : { ok: true, applied: false, dismissed: true, invariantValue: null, errorCode: '', reason: '' };
+    try {
+      await this.uiTypeEditorFromGrid(id, propertyName, metadata.type, metadata.uiTypeEditor);
+      return {
+        applied: this.doc.designerText !== before,
+        dismissed: outcome === 'dismiss' && this.doc.designerText === before,
+        resultConsumed: this.extensionHostUiTypeEditorResultConsumed,
+        editorType: metadata.uiTypeEditor,
+        refusalCode: outcome === 'dismiss' && this.doc.designerText === before ? 'CANCELLED' : null,
+      };
+    } finally {
+      this.extensionHostUiTypeEditorResult = undefined;
+      this.extensionHostUiTypeEditorResultConsumed = false;
+    }
+  }
+
+  /** S047/S048: invoke the actual broker/child worker using only the currently published certified metadata. */
+  async extensionHostTestCertifiedVendorUiTypeEditor(
+    id: string,
+    propertyName: string,
+  ): Promise<{
+      applied: boolean;
+      brokerApplied: boolean;
+      dismissed: boolean;
+      ok: boolean;
+      errorCode: string | null;
+      invariantValue: string | null;
+      editorType: string | null;
+      assemblyPath: string | null;
+      assemblySha256: string | null;
+      certificationId: string | null;
+    }> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    const metadata = this.publishedEditableProperty(id, propertyName);
+    const before = this.doc.designerText;
+    if (!metadata?.uiTypeEditor || !metadata.uiTypeEditorAssemblyPath
+      || !metadata.uiTypeEditorAssemblySha256 || !metadata.uiTypeEditorCertificationId) {
+      return {
+        applied: false,
+        brokerApplied: false,
+        dismissed: false,
+        ok: false,
+        errorCode: 'UNPUBLISHED_EDITOR',
+        invariantValue: null,
+        editorType: metadata?.uiTypeEditor ?? null,
+        assemblyPath: metadata?.uiTypeEditorAssemblyPath ?? null,
+        assemblySha256: metadata?.uiTypeEditorAssemblySha256 ?? null,
+        certificationId: metadata?.uiTypeEditorCertificationId ?? null,
+      };
+    }
+    const result = await this.uiTypeEditorFromGrid(id, propertyName, metadata.type, metadata.uiTypeEditor);
+    return {
+      applied: this.doc.designerText !== before,
+      brokerApplied: result?.applied === true,
+      dismissed: result?.dismissed === true,
+      ok: result?.ok === true,
+      errorCode: result?.errorCode || null,
+      invariantValue: result?.invariantValue ?? null,
+      editorType: metadata.uiTypeEditor,
+      assemblyPath: metadata.uiTypeEditorAssemblyPath,
+      assemblySha256: metadata.uiTypeEditorAssemblySha256,
+      certificationId: metadata.uiTypeEditorCertificationId,
+    };
+  }
+
+  /** S071/S072: invoke the actual certified vendor collection editor, then exercise the product-owned bounded source
+   * transaction. The malicious variant changes one root statement after the worker returns so the same authority must
+   * refuse it without a document or history mutation. */
+  async extensionHostTestCertifiedVendorCollectionEditor(
+    id: string,
+    propertyName: string,
+    tamperOutsideOwnedComponent: boolean,
+  ): Promise<{
+      applied: boolean;
+      brokerApplied: boolean;
+      dismissed: boolean;
+      ok: boolean;
+      errorCode: string | null;
+      collectionItems: string[];
+      editorType: string | null;
+      assemblyPath: string | null;
+      assemblySha256: string | null;
+      certificationId: string | null;
+      persistenceLane: 'ownedRegion' | 'sourceFirst' | null;
+      refusalReason: string | null;
+    }> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    const metadata = this.publishedEditableProperty(id, propertyName);
+    const before = this.doc.designerText;
+    if (!metadata?.genericCollection || metadata.collectionItemType !== 'System.Int32'
+      || !metadata.uiTypeEditor || !metadata.uiTypeEditorAssemblyPath
+      || !metadata.uiTypeEditorAssemblySha256 || !metadata.uiTypeEditorCertificationId) {
+      return {
+        applied: false,
+        brokerApplied: false,
+        dismissed: false,
+        ok: false,
+        errorCode: 'UNPUBLISHED_EDITOR',
+        collectionItems: [],
+        editorType: metadata?.uiTypeEditor ?? null,
+        assemblyPath: metadata?.uiTypeEditorAssemblyPath ?? null,
+        assemblySha256: metadata?.uiTypeEditorAssemblySha256 ?? null,
+        certificationId: metadata?.uiTypeEditorCertificationId ?? null,
+        persistenceLane: null,
+        refusalReason: null,
+      };
+    }
+
+    this.extensionHostVendorCollectionProposalTransform = tamperOutsideOwnedComponent
+      ? (source) => source.replace(
+          'this.Text = "Vendor collection";',
+          'this.Text = "Tampered outside vendorEdit1";',
+        )
+      : undefined;
+    this.lastOwnedRegionRefusal = null;
+    this.lastPropertyPersistenceLane = null;
+    try {
+      const result = await this.uiCollectionEditorFromGrid(
+        id, propertyName, metadata.collectionItemType, metadata.uiTypeEditor);
+      const refused = this.lastOwnedRegionRefusal !== null;
+      const applied = this.doc.designerText !== before;
+      return {
+        applied,
+        brokerApplied: result?.applied === true,
+        dismissed: result?.dismissed === true,
+        ok: result?.ok === true && !refused && applied,
+        errorCode: refused ? 'OWNED_REGION_VIOLATION' : (result?.errorCode || null),
+        collectionItems: Array.isArray(result?.collectionItems) ? result.collectionItems.slice() : [],
+        editorType: metadata.uiTypeEditor,
+        assemblyPath: metadata.uiTypeEditorAssemblyPath,
+        assemblySha256: metadata.uiTypeEditorAssemblySha256,
+        certificationId: metadata.uiTypeEditorCertificationId,
+        persistenceLane: this.lastPropertyPersistenceLane,
+        refusalReason: this.lastOwnedRegionRefusal,
+      };
+    } finally {
+      this.extensionHostVendorCollectionProposalTransform = undefined;
+    }
+  }
+
+  /** S094: use the live ComponentDesigner/DesignerActionList descriptor as the only authority for the same
+   * source-first edit that the real on-canvas Tasks flyout posts. No vendor setter executes in the Extension Host. */
+  async extensionHostTestDesignerActionProperty(
+    id: string,
+    displayName: string,
+    value: string,
+  ): Promise<{
+      applied: boolean;
+      displayName: string | null;
+      category: string | null;
+      propertyName: string | null;
+      propertyType: string | null;
+    }> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    const published = this.publishedPropertyComponent;
+    const component = published?.ids.length === 1 && published.ids[0] === id && published.rev === this.doc.rev
+      ? published.component
+      : null;
+    const matches = component?.designerActions?.filter((candidate) => candidate.displayName === displayName) ?? [];
+    const action = matches.length === 1 ? matches[0] : undefined;
+    const property = action ? this.publishedEditableProperty(id, action.propertyName) : undefined;
+    if (!action || !property) {
+      return {
+        applied: false,
+        displayName: action?.displayName ?? null,
+        category: action?.category ?? null,
+        propertyName: action?.propertyName ?? null,
+        propertyType: property?.type ?? null,
+      };
+    }
+    const before = this.doc.designerText;
+    await this.editFromGrid(id, property.name, property.type, property.isEnum, value);
+    return {
+      applied: this.doc.designerText !== before,
+      displayName: action.displayName,
+      category: action.category,
+      propertyName: property.name,
+      propertyType: property.type,
+    };
+  }
+
+  /** S093: confirm one displayed hosted adorner through the exact revision-bound metadata and fresh engine graph that
+   * own the real canvas hover. No ControlDesigner object or callback runs in the Extension Host. */
+  async extensionHostTestDesignerAdornerHit(
+    id: string,
+    adornerId: string,
+    x: number,
+    y: number,
+  ): Promise<DesignerAdornerHitResult> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    return this.confirmDesignerAdornerHit(id, adornerId, x, y);
+  }
+
+  private designerAdornerHitRefusal(
+    id: string,
+    adornerId: string,
+    errorCode: string,
+    reason: string,
+  ): DesignerAdornerHitResult {
+    return {
+      ok: false,
+      hit: false,
+      componentId: id,
+      adornerId,
+      componentType: '',
+      designerType: '',
+      errorCode,
+      reason,
+    };
+  }
+
+  /** Product hover authority: accept only the exact single-selection/revision descriptor already published to the
+   * canvas, then ask the modern engine to rebuild the graph and let the live ControlDesigner confirm the local point. */
+  private async confirmDesignerAdornerHit(
+    id: string,
+    adornerId: string,
+    x: number,
+    y: number,
+  ): Promise<DesignerAdornerHitResult> {
+    if (this.engineKind !== 'modern') {
+      return this.designerAdornerHitRefusal(id, adornerId, 'runtime_unavailable',
+        'Hosted ControlDesigner adorners are available only on the modern product route.');
+    }
+    if (!Number.isInteger(x) || !Number.isInteger(y) || Math.abs(x) > 16_384 || Math.abs(y) > 16_384) {
+      return this.designerAdornerHitRefusal(id, adornerId, 'invalid_point',
+        'The hosted adorner point is invalid.');
+    }
+
+    const published = this.publishedPropertyComponent;
+    const component = published?.ids.length === 1 && published.ids[0] === id
+      && published.rev === this.doc.rev && this.currentId === id
+      && this.currentSelectionIds.length === 1 && this.currentSelectionIds[0] === id
+      ? published.component
+      : null;
+    const matches = component?.designerAdorners?.filter((candidate) => candidate.id === adornerId) ?? [];
+    const adorner = matches.length === 1 ? matches[0] : undefined;
+    if (!component || !adorner || adorner.hitTestable !== true
+      || !Number.isInteger(adorner.left) || !Number.isInteger(adorner.top)
+      || !Number.isInteger(adorner.width) || !Number.isInteger(adorner.height)
+      || adorner.width <= 0 || adorner.height <= 0
+      || x < adorner.left || x >= adorner.left + adorner.width
+      || y < adorner.top || y >= adorner.top + adorner.height) {
+      return this.designerAdornerHitRefusal(id, adornerId, 'adorner_unavailable',
+        'The hosted adorner is not available at this point for the current selection and source revision.');
+    }
+
+    const selectionGen = this.selectionGen;
+    const sourceRev = this.doc.rev;
+    const sourceText = await this.currentEngineText();
+    const engine = await this.ensureEngine('modern');
+    const result = await hitTestDesignerAdorner(
+      engine, this.designerFile!, id, adornerId, x, y, this.asm(), sourceText);
+    if (this.disposed || selectionGen !== this.selectionGen || sourceRev !== this.doc.rev
+      || this.currentId !== id || this.currentSelectionIds.length !== 1 || this.currentSelectionIds[0] !== id) {
+      return this.designerAdornerHitRefusal(id, adornerId, 'stale_request',
+        'The hosted adorner hover was superseded by a newer selection or source revision.');
+    }
+    if (result.componentId !== id || result.adornerId !== adornerId) {
+      return this.designerAdornerHitRefusal(id, adornerId, 'invalid_engine_response',
+        'The engine returned an unrelated hosted adorner result.');
+    }
+    return result;
+  }
+
+  /** Pause a real Properties resource edit after its durable baseline is captured but before its first write. */
+  async extensionHostTestEditPropertyWithResourceInterleave(
+    id: string,
+    propertyName: string,
+    propertyType: string,
+    isEnum: boolean,
+    value: string,
+    interleave: () => Promise<void>,
+  ): Promise<boolean> {
+    let interleaveObserved = false;
+    this.extensionHostAfterJournaledResourceBaseline = async () => {
+      interleaveObserved = true;
+      await interleave();
+    };
+    try {
+      await this.applyEdit(id, propertyName, propertyType, isEnum, value);
+      return interleaveObserved;
+    } finally {
+      this.extensionHostAfterJournaledResourceBaseline = undefined;
+    }
+  }
+
+  async extensionHostTestReparent(id: string, parentId: string): Promise<string | null> {
+    const refusal = this.outlineReparentReason(id, parentId) || null;
+    await this.applyReparent(id, parentId);
+    return refusal;
+  }
+
+  async extensionHostTestAddControl(controlType: string, parentId: string,
+    x?: number, y?: number, width?: number, height?: number): Promise<void> {
+    await this.applyAddControl(controlType, parentId, x, y, width, height);
+  }
+
+  async extensionHostTestRemoveControl(id: string): Promise<number> {
+    if (this.localizable) return this.applyLocalizedStructuralRemove([id], `Remove localized ${id}`);
+    await this.applyRemoveControl(id);
+    return 1;
+  }
+
+  /** Real Extension Host E2E reaches the same validated component-rename transaction as the Properties surface. */
+  async extensionHostTestRenameControl(id: string, newName: string): Promise<void> {
+    await this.applyComponentRename(id, newName);
+  }
+
+  /** Real Extension Host E2E selects through the same session state transition as a canvas/outline pick. */
+  async extensionHostTestSelectControl(id: string): Promise<void> {
+    await this.pick(id, undefined, [id]);
+  }
+
+  /** S095: repeat the exact product hosted-designer activation for the currently published certified component. The
+   * test controls only the hostile fixture's marker; assembly/type/certificate authority and quarantine stay engine-owned. */
+  async extensionHostTestProbeHostedDesigner(id: string): Promise<HostedDesignerProbeResult> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    const published = this.publishedPropertyComponent;
+    const component = published?.ids.length === 1 && published.ids[0] === id
+      && published.rev === this.doc.rev ? published.component : null;
+    if (!component || component.type !== CERTIFIED_HOSTED_DESIGNER_COMPONENT) {
+      return {
+        ok: false,
+        status: 'refused',
+        errorCode: 'UNPUBLISHED_DESIGNER',
+        reason: 'The current selection has no repository-certified hosted designer.',
+        componentType: component?.type ?? '',
+        designerType: '',
+        certificationId: '',
+        assemblySha256: '',
+        mainEnginePid: 0,
+        workerPid: 0,
+        exitCode: 0,
+        workerStarted: false,
+        quarantined: false,
+        privateDesktop: false,
+      };
+    }
+    const result = await this.inspectHostedDesignerProduct(component);
+    if (!result) throw new Error('The certified hosted-designer product route is unavailable.');
+    this.publishHostedDesignerProbe(result);
+    return result;
+  }
+
+  /** S089/S090: drive the same revision-bound product command as a click in the visible smart-tag flyout. */
+  async extensionHostTestInvokeHostedServiceAction(
+    id: string,
+    commandId: string,
+    certificationId: string,
+  ): Promise<HostedServiceKernelProductResult> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    return this.applyHostedServiceKernelCommand(id, commandId, certificationId);
+  }
+
+  /** Return a detached copy of the exact component metadata published for the current selection and document
+   * revision. Engine payloads are JSON data; cloning prevents an E2E assertion from mutating session authority. */
+  extensionHostTestPublishedPropertyComponent(): ComponentDesc | null {
+    const published = this.publishedPropertyComponent;
+    if (!published || published.ids.length !== 1 || published.ids[0] !== this.currentId
+      || published.rev !== this.doc.rev || !published.component) return null;
+    return JSON.parse(JSON.stringify(published.component)) as ComponentDesc;
+  }
+
+  /** Real Extension Host E2E uses the same DataBindings read side as the open Properties popup. */
+  async extensionHostTestListBindings(id: string): Promise<BindingItems> {
+    return this.readBindingItems(id);
+  }
+
+  /** Real Extension Host E2E uses the same DataBindings write side as the popup's single OK action. */
+  async extensionHostTestSetBindings(id: string, bindings: BindingItem[]): Promise<boolean> {
+    return this.bindingsFromGrid(id, bindings.map((binding) => ({ ...binding })));
+  }
+
+  async extensionHostTestListDataSources(): Promise<DataSourcesResult> {
+    return this.refreshDataSources();
+  }
+
+  async extensionHostTestGenerateDataSource(
+    schemaKey: string,
+    mode: 'detail' | 'grid',
+    parentId: string,
+    x: number,
+    y: number,
+    includeNavigator: boolean,
+    existingBindingSourceId: string | null,
+    existingGridId: string | null,
+  ): Promise<DataSourceGenerationResult> {
+    return this.generateFromDataSource(
+      schemaKey, mode, parentId, x, y, includeNavigator, existingBindingSourceId, existingGridId);
+  }
+
+  /** Real Extension Host E2E uses the same project-resource enumeration, freshness checks, and commit as QuickPick. */
+  async extensionHostTestSetProjectImageResource(id: string, propertyName: string,
+    accessor: string): Promise<boolean> {
+    return this.pickProjectImageResourceFromGrid(id, propertyName, accessor);
+  }
+
+  /** Real Extension Host E2E drives an untrusted picker result through the product validation boundary. */
+  async extensionHostTestTryProjectImageResource(id: string, propertyName: string,
+    accessor: string): Promise<{ applied: boolean; refusalCode: string | null; reason: string | null }> {
+    const reason = requestedProjectResourceAccessorRefusal(accessor);
+    const applied = await this.pickProjectImageResourceFromGrid(id, propertyName, accessor);
+    return {
+      applied,
+      refusalCode: !applied && reason ? 'INVALID_RESOURCE_SYMBOL' : null,
+      reason: !applied ? reason : null,
+    };
+  }
+
+  /** Real Extension Host E2E bypasses only the native file picker and retains the complete Import resource path. */
+  async extensionHostTestImportLocalImage(id: string, propertyName: string,
+    propertyType: string, imageUri: vscode.Uri): Promise<boolean> {
+    return this.importImageFromGrid(id, propertyName, propertyType, imageUri);
+  }
+
+  /** Real Extension Host E2E bypasses native pickers but retains the complete ImageList resource transaction. */
+  async extensionHostTestSetImageListImages(id: string,
+    images: readonly { image: vscode.Uri; key?: string }[]): Promise<boolean> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    return this.editImageListImages(images.map((item) => ({ imageUri: item.image, key: item.key })));
+  }
+
+  /** V2-FND-001-S118: force only the final verified forward postcondition to fail; the shipped runner must compensate. */
+  async extensionHostTestSetImageListWithPostconditionFailure(id: string,
+    images: readonly { image: vscode.Uri; key?: string }[]): Promise<{
+      applied: boolean;
+      failureObserved: boolean;
+      refusalCode: 'POSTCONDITION_FAILED_ROLLED_BACK' | null;
+    }> {
+    if (this.currentId !== id) await this.pick(id, undefined, [id]);
+    this.extensionHostFailForwardResourcePostcondition = true;
+    this.extensionHostResourcePostconditionFailureObserved = false;
+    try {
+      const applied = await this.editImageListImages(images.map((item) => ({ imageUri: item.image, key: item.key })));
+      const failureObserved = this.extensionHostResourcePostconditionFailureObserved;
+      return {
+        applied,
+        failureObserved,
+        refusalCode: !applied && failureObserved ? 'POSTCONDITION_FAILED_ROLLED_BACK' : null,
+      };
+    } finally {
+      this.extensionHostFailForwardResourcePostcondition = false;
+    }
+  }
+
+  /** Real Extension Host E2E bypasses only QuickPick and retains the product culture-selection path. */
+  async extensionHostTestSetLocalizationCulture(culture: string): Promise<boolean> {
+    return this.selectLocalizationCulture(culture);
+  }
+
+  /** Real Extension Host E2E reaches the exact Table/Flow canvas-drop transaction after webview hit testing. */
+  async extensionHostTestMoveLayoutChild(id: string, dropX: number, dropY: number): Promise<boolean> {
+    return (await this.applyManagedLayoutMove(id, dropX, dropY)) ?? false;
+  }
+
+  extensionHostTestLayout(): readonly LayoutControl[] {
+    return this.controls.map((control) => ({ ...control }));
+  }
+
+  /** Real Extension Host E2E reaches the exact ListView.Columns panel read side. */
+  async extensionHostTestListColumns(id: string): Promise<{
+    ok: boolean;
+    columns: ColumnItem[];
+    reason: string;
+  }> {
+    return this.readColumnItems(id);
+  }
+
+  /** Real Extension Host E2E reaches the exact atomic ListView.Columns panel write side. */
+  async extensionHostTestSetColumns(id: string, columns: ColumnItem[]): Promise<boolean> {
+    return this.columnsFromGrid(id, columns);
+  }
+
+  /** Real Extension Host E2E reaches the exact typed TabPages collection read side. */
+  async extensionHostTestListTabPages(hostId: string): Promise<{
+    ok: boolean;
+    pages: string[];
+    reason: string;
+  }> {
+    return this.readTabPages(hostId);
+  }
+
+  /** Real Extension Host E2E reaches the exact atomic TabPages collection OK transaction. */
+  async extensionHostTestSetTabPages(hostId: string, pageIds: string[]): Promise<boolean> {
+    return this.tabPagesFromGrid(hostId, pageIds);
+  }
+
+  /** Real Extension Host E2E reaches the exact Items-editor read side and establishes its stale-write revision. */
+  async extensionHostTestListToolStripItems(id: string): Promise<{
+    ok: boolean;
+    items: ToolStripItemModel[];
+    reason: string;
+  }> {
+    return this.readToolStripItems(id);
+  }
+
+  /** Real Extension Host E2E reaches the exact Items-editor write side, including revision gate + native history. */
+  async extensionHostTestSetToolStripItems(id: string, items: ToolStripItemModel[]): Promise<boolean> {
+    return this.toolStripFromGrid(id, items);
+  }
+
+  /** Real Extension Host E2E reaches the exact on-canvas item drag/reparent transaction. */
+  async extensionHostTestMoveToolStripItem(
+    hostId: string,
+    itemId: string,
+    targetParentItemId: string | null,
+    targetIndex: number,
+  ): Promise<{ applied: boolean; reason: string | null }> {
+    return this.applyStripMove(hostId, itemId, targetParentItemId, targetIndex);
+  }
+
+  /** Real Extension Host E2E reaches the same opaque product clipboard path as Ctrl+C. */
+  async extensionHostTestCopyControls(ids: readonly string[]): Promise<void> {
+    await this.applyCopy([...ids]);
+  }
+
+  /** Real Extension Host E2E reaches the same collision-safe product paste transaction as Ctrl+V. */
+  async extensionHostTestPaste(targetId?: string): Promise<void> {
+    await this.applyPaste(targetId);
+  }
+
+  async extensionHostTestResourceRace(
+    kind: 'journaled' | 'ordinary',
+    resourceUri: vscode.Uri,
+    interleave: () => Promise<void>,
+  ): Promise<boolean> {
+    const existing = await this.readResx(resourceUri);
+    const beforeResource = existing?.text ?? null;
+    const afterResource = `${beforeResource ?? '<root />'}\n<!-- W0 race candidate -->\n`;
+    const tx: ResxTx = {
+      uri: resourceUri,
+      before: beforeResource,
+      after: afterResource,
+      bom: existing?.hadBom ?? false,
+    };
+    if (kind === 'journaled') {
+      let interleaveObserved = false;
+      this.extensionHostBeforeJournaledResourceCommit = async () => {
+        interleaveObserved = true;
+        await interleave();
+      };
+      try {
+        const beforeDesigner = this.doc.designerText;
+        const expectedRevision = this.doc.rev;
+        const result = await this.commitResourceSetThroughRunner(
+          'W0 journaled resource race',
+          [tx],
+          beforeDesigner,
+          beforeDesigner,
+          { expectedDesignerRevision: expectedRevision },
+        );
+        if (!interleaveObserved) {
+          throw new Error([
+            `journaled race stopped before final commit: ${result?.status ?? 'unavailable'} ${result?.error ?? ''}`,
+            `designer=${this.designerFile ?? '<none>'}`,
+            `workspace=${this.wsRoot() ?? '<none>'}`,
+            `resource=${resourceUri.fsPath}`,
+            `storage=${this.globalStorageUri.toString()} fsPath=${this.globalStorageUri.fsPath} path=${this.globalStorageUri.path}`,
+          ].join(' | '));
+        }
+        return result?.status === 'committed';
+      }
+      finally { this.extensionHostBeforeJournaledResourceCommit = undefined; }
+    }
+    const beforeDesigner = this.doc.designerText;
+    const expectedRevision = this.doc.rev;
+    this.extensionHostBeforeJournaledResourceCommit = interleave;
+    try {
+      return await this.commitOrdinaryResourceEdit(
+        beforeDesigner,
+        beforeDesigner,
+        'W0 ordinary image resource race',
+        tx,
+        expectedRevision,
+      );
+    } finally {
+      this.extensionHostBeforeJournaledResourceCommit = undefined;
+    }
+  }
+
+  async extensionHostTestMakeLocalizableJournalFailure(
+    state: 'applied' | 'undoRegistered' | 'committed',
+  ): Promise<{ result: boolean; failureObserved: boolean }> {
+    this.extensionHostFailJournalState = state;
+    this.extensionHostJournalFailureObserved = false;
+    try {
+      const result = await this.makeFormLocalizable();
+      return { result, failureObserved: this.extensionHostJournalFailureObserved };
+    } finally {
+      this.extensionHostFailJournalState = undefined;
+    }
+  }
+
+  extensionHostTestState(): {
+    renderReady: boolean;
+    /** See openDocumentState.panelActive. Read through the disposed flag: WebviewPanel.active throws once the panel
+     * is gone, and this getter is polled by every waitFor predicate. */
+    panelActive: boolean;
+    engineKind: EngineKind; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
+    ownerDiagnosticCode: string | null;
+    ownerTypeName: string | null;
+    ownerProjectPath: string | null;
+    ownerPaths: readonly string[];
+    emptyInitializeComponentSurface: boolean;
+    renderFailureCause: string | null;
+    renderFailureMessage: string | null;
+    lastPropertyPersistenceLane: 'ownedRegion' | 'sourceFirst' | null;
+    lastNet48PropertyEditTelemetry: {
+      plannerMs: number;
+      commitMs: number;
+      reconcileMs: number;
+      liveMs: number;
+      snapshotComponentId: string | null;
+      componentInSnapshot: boolean;
+      propertiesReconciled: boolean;
+      trailingPropertiesMs: number;
+    } | null;
+    lastModernPropertyEditTelemetry: {
+      plannerMs: number;
+      commitMs: number;
+      reconcileMs: number;
+      retainedApplied: boolean;
+      trailingPropertiesMs: number;
+    } | null;
+    lastFullRenderTelemetry: ProductRenderTelemetry | null;
+    lastHostedDesignerProbe: HostedDesignerProbeResult | null;
+    lastHostedServiceKernelResult: HostedServiceKernelProductResult | null;
+    renderGeneration: number;
+    currentId: string;
+    currentSelectionIds: readonly string[];
+    controls: readonly { id: string; parentId?: string | null; ownership?: LayoutControl['ownership']; editable?: boolean }[];
+    tray: readonly { id: string; name: string; type: string; isStrip?: boolean }[];
+    selectedPropertyComponent: {
+      id: string;
+      name: string;
+      type: string;
+      properties: readonly { name: string; value: string | null }[];
+    } | null;
+  } {
+    const published = this.publishedPropertyComponent;
+    const selectedPropertyComponent = published?.ids.length === 1
+      && published.ids[0] === this.currentId
+      && published.rev === this.doc.rev
+      ? published.component
+      : null;
+    return {
+      renderReady: this.renderOk,
+      panelActive: !this.disposed && this.panel.active,
+      engineKind: this.engineKind, net48RenderMode: this.engineKind === 'net48' ? this.net48RenderMode as 'interpreted' | 'compiledFallback' | 'compiled' : null,
+      ownerDiagnosticCode: this.lastDocumentOwner?.diagnosticCode ?? null,
+      ownerTypeName: this.lastDocumentOwner?.typeName ?? null,
+      ownerProjectPath: this.lastDocumentOwner?.projectPath ?? null,
+      ownerPaths: this.lastDocumentOwner?.owners ?? [],
+      emptyInitializeComponentSurface: this.emptyInitializeComponentSurface,
+      renderFailureCause: this.lastRenderDiagnostic?.kind === 'failure'
+        ? this.lastRenderDiagnostic.cause
+        : null,
+      renderFailureMessage: this.lastRenderDiagnostic?.kind === 'failure'
+        ? this.lastRenderDiagnostic.message
+        : null,
+      lastPropertyPersistenceLane: this.lastPropertyPersistenceLane,
+      lastNet48PropertyEditTelemetry: this.lastNet48PropertyEditTelemetry,
+      lastModernPropertyEditTelemetry: this.lastModernPropertyEditTelemetry,
+      lastFullRenderTelemetry: this.lastFullRenderTelemetry,
+      lastHostedDesignerProbe: this.lastHostedDesignerProbe
+        ? { ...this.lastHostedDesignerProbe }
+        : null,
+      lastHostedServiceKernelResult: this.lastHostedServiceKernelResult
+        ? { ...this.lastHostedServiceKernelResult, capabilities: [...this.lastHostedServiceKernelResult.capabilities], edits: this.lastHostedServiceKernelResult.edits.map((edit) => ({ ...edit })) }
+        : null,
+      renderGeneration: this.renderSeq,
+      currentId: this.currentId,
+      currentSelectionIds: this.currentSelectionIds.slice(),
+      controls: this.controls.map((control) => ({
+        id: control.id,
+        parentId: control.parentId,
+        ownership: control.ownership,
+        editable: control.editable,
+      })),
+      tray: this.trayComponents.map((component) => ({
+        id: component.id,
+        name: component.name,
+        type: component.type,
+        isStrip: component.isStrip,
+      })),
+      selectedPropertyComponent: selectedPropertyComponent ? {
+        id: selectedPropertyComponent.id,
+        name: selectedPropertyComponent.name,
+        type: selectedPropertyComponent.type,
+        properties: selectedPropertyComponent.properties.map((property) => ({
+          name: property.name,
+          value: property.value,
+        })),
+      } : null,
+    };
   }
 
   private dispose(): void {
@@ -1403,6 +3699,7 @@ class DesignerSession {
     DesignerHub.instance.unregisterSession(this);
     DesignerHub.instance.clearIfActive(this);
     if (this.debounce) clearTimeout(this.debounce);
+    if (this.codeBehindDebounce) clearTimeout(this.codeBehindDebounce);
     if (this.interpretedReconcileTimer) clearTimeout(this.interpretedReconcileTimer);
     // Hand back the interpreted graph this form left in the engine. Its off-screen Form, HWND tree, sited components
     // and any vendor timers live until something drops them, and the output-release below is deliberately suppressed
@@ -1438,13 +3735,21 @@ class DesignerSession {
   handleEngineCrash(kind: EngineKind, delayMs: number | null): void {
     if (this.disposed || this.engineKind !== kind) return;
     this.renderOk = false; // a render failed → read-only until the next successful render (S5)
+    this.selectionGen++; // reject in-flight describes from the lost process before stale metadata can be published
+    this.publishedPropertyComponent = undefined;
     if (delayMs == null) {
       this.postRenderFailure(t('host.engineCrashLoop'), this.currentId || 'this', t('host.engineCrashLoop'));
       return;
     }
     this.post({ type: 'loading', message: t('host.loading.restarting', { ms: delayMs }) });
     setTimeout(() => {
-      if (!this.disposed && this.engineKind === kind) void this.fullRender();
+      if (!this.disposed && this.engineKind === kind) {
+        void this.fullRender().catch((error) => {
+          // fullRender normally reports and returns false. Keep an outer lifecycle guard because an auxiliary RPC can
+          // reject after worker loss; never leak that as VS Code's "rejected promise not handled" notification.
+          if (!this.disposed) this.output.appendLine(`[designer] recovery render rejected: ${errMsg(error)}`);
+        });
+      }
     }, delayMs);
   }
 
@@ -1502,52 +3807,65 @@ class DesignerSession {
     return culture || t('localization.default');
   }
 
-  async selectLocalizationCulture(): Promise<void> {
-    if (!this.designerFile || this.disposed) return;
+  async selectLocalizationCulture(requestedCulture?: string): Promise<boolean> {
+    if (!this.designerFile || this.disposed) return false;
     // A culture selects WHICH resource set the designer reads and writes, and only a localizable form has any:
     // its generated source applies properties through a ComponentResourceManager. On an ordinary form every
     // property lives in InitializeComponent, so a culture would silently change nothing and create no file —
     // exactly the dead end this refusal replaces with an explanation.
     if (!this.localizable) {
+      if (requestedCulture !== undefined) return false;
       const form = path.basename(designerBasePath(this.designerFile));
       // Offer the conversion itself rather than an explanation: what the user wants from a culture picker on a
       // plain form is for the form to become localizable. Declining leaves the file untouched.
       const add = t('localization.addAction');
       const choice = await vscode.window.showWarningMessage(
         t('localization.notLocalizable', { form }), { modal: false }, add);
-      if (choice !== add) return;
-      if (!await this.makeFormLocalizable()) return;
+      if (choice !== add) return false;
+      if (!await this.makeFormLocalizable()) return false;
       // Converted: fall through into the picker the user originally asked for.
     }
-    const current = this.localizationCulture;
-    const picks: Array<vscode.QuickPickItem & { cultureName?: string; create?: boolean }> =
-      discoverLocalizationCultures(this.designerFile).map((choice) => ({
-      label: choice.neutral ? `$(globe) ${t('localization.default')}` : choice.label,
-      description: choice.description,
-      detail: choice.neutral ? t('localization.defaultDetail') : choice.resxPath,
-      cultureName: choice.cultureName,
-      picked: choice.cultureName.toLowerCase() === current.toLowerCase(),
-    }));
-    picks.push({
-      label: `$(add) ${t('localization.create')}`,
-      detail: t('localization.createDetail'),
-      create: true,
-    });
-    const pick = await vscode.window.showQuickPick(picks, {
-      title: t('localization.pickTitle'),
-      placeHolder: t('localization.pickPlaceholder'),
-    });
-    if (!pick) return;
-    let requested = pick.cultureName ?? '';
-    if (pick.create) {
-      const entered = await vscode.window.showInputBox({
-        title: t('localization.createTitle'),
-        prompt: t('localization.createPrompt'),
-        placeHolder: 'fr-FR',
-        validateInput: (value) => cultureName(value) === undefined ? t('localization.invalidCulture') : null,
+    let requested: string;
+    if (requestedCulture !== undefined) {
+      const normalizedRequest = cultureName(requestedCulture);
+      const discovered = discoverLocalizationCultures(this.designerFile);
+      if (normalizedRequest === undefined || !discovered.some((choice) =>
+        choice.cultureName.toLowerCase() === normalizedRequest.toLowerCase())) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'localization culture is not discovered' }) });
+        return false;
+      }
+      requested = normalizedRequest;
+    } else {
+      const current = this.localizationCulture;
+      const picks: Array<vscode.QuickPickItem & { cultureName?: string; create?: boolean }> =
+        discoverLocalizationCultures(this.designerFile).map((choice) => ({
+        label: choice.neutral ? `$(globe) ${t('localization.default')}` : choice.label,
+        description: choice.description,
+        detail: choice.neutral ? t('localization.defaultDetail') : choice.resxPath,
+        cultureName: choice.cultureName,
+        picked: choice.cultureName.toLowerCase() === current.toLowerCase(),
+      }));
+      picks.push({
+        label: `$(add) ${t('localization.create')}`,
+        detail: t('localization.createDetail'),
+        create: true,
       });
-      if (entered === undefined) return;
-      requested = entered;
+      const pick = await vscode.window.showQuickPick(picks, {
+        title: t('localization.pickTitle'),
+        placeHolder: t('localization.pickPlaceholder'),
+      });
+      if (!pick) return false;
+      requested = pick.cultureName ?? '';
+      if (pick.create) {
+        const entered = await vscode.window.showInputBox({
+          title: t('localization.createTitle'),
+          prompt: t('localization.createPrompt'),
+          placeHolder: 'fr-FR',
+          validateInput: (value) => cultureName(value) === undefined ? t('localization.invalidCulture') : null,
+        });
+        if (entered === undefined) return false;
+        requested = entered;
+      }
     }
     let normalized: string;
     try {
@@ -1555,7 +3873,7 @@ class DesignerSession {
         await this.ensureEngine('modern'), this.designerFile, requested);
     } catch (error) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: errMsg(error) }) });
-      return;
+      return false;
     }
     const state = DesignerHub.instance.formViewState(this.designerFile);
     DesignerHub.instance.updateFormViewState(this.designerFile, {
@@ -1577,6 +3895,7 @@ class DesignerSession {
     }
     await this.fullRender();
     this.refreshViews();
+    return true;
   }
 
   /** Re-render after the user changed the control source (Select Control Assembly): drop the cached toolbox so
@@ -1603,7 +3922,15 @@ class DesignerSession {
 
   /** Post to THIS editor's canvas webview (render/layout/patch/select/manip/status/dirty/error/loading). */
   private post(message: unknown): void {
-    void this.panel.webview.postMessage(message);
+    if (this.disposed) return;
+    try {
+      // A render/describe RPC may settle after the user closes the tab. Older VS Code hosts throw synchronously when
+      // the disposed webview getter is touched; newer hosts can instead reject postMessage. Closing a designer is a
+      // normal lifecycle transition, so absorb both forms without leaking an unhandled Extension Host rejection.
+      void this.panel.webview.postMessage(message).then(undefined, () => undefined);
+    } catch {
+      // The panel was disposed between the guard and the getter. No UI remains to receive this best-effort message.
+    }
   }
 
   /** Layout goes to the canvas (hit-test/overlay + on-canvas strip-item geometry) AND the Properties view (tree
@@ -1618,7 +3945,8 @@ class DesignerSession {
    * host-authoritative pushSelect callers (fullRender/refreshProperties/duplicate/partial) omit it → the canvas always
    * applies those. The Properties view never needs it. */
   private pushSelect(id: string, token?: number): void {
-    this.post({ type: 'select', id, token });
+    const ids = id === this.currentId ? this.currentSelectionIds.slice() : [id];
+    this.post({ type: 'select', id, ids, token });
     DesignerHub.instance.pushPanel(this, { type: 'select', id });
   }
 
@@ -1958,13 +4286,20 @@ class DesignerSession {
         try { project = await listCompiledToolboxControls(await this.ensureEngine('net48'), asm); } catch { /* project best-effort */ }
       }
       if (this.disposed || this.engineKind !== kind || this.toolboxItems) return; // kind flipped / already loaded under us
-      this.toolboxItems = [...framework, ...project];
+      this.toolboxItems = filterToolboxByRuntime([...framework, ...project], kind, this.toolboxRuntimeFilter());
     } else {
       let items: ToolboxItemInfo[];
       try { items = await listToolboxItems(await this.ensureEngine('modern'), this.designerFile, this.asm()); } catch { return; }
       if (this.disposed || this.engineKind !== kind || this.toolboxItems) return;
-      this.toolboxItems = items;
+      this.toolboxItems = filterToolboxByRuntime(items, kind, this.toolboxRuntimeFilter());
     }
+  }
+
+  /** `winformsDesigner.toolbox.runtimeFilter` — which runtime's controls the palette offers. Read per load so a
+   * settings change takes effect on the next palette refresh rather than needing a window reload. */
+  private toolboxRuntimeFilter(): ToolboxRuntimeFilter {
+    const raw = vscode.workspace.getConfiguration('winformsDesigner').get<string>('toolbox.runtimeFilter', 'auto');
+    return raw === 'all' || raw === 'modern' || raw === 'net48' ? raw : 'auto';
   }
 
   // ----- view refresh (when this session becomes the focused one, or a view (re)opens) -----
@@ -1991,7 +4326,9 @@ class DesignerSession {
     if (this.controls.length) {
       DesignerHub.instance.pushPanel(this, { type: 'layout', controls: this.controls });
       DesignerHub.instance.pushPanel(this, { type: 'select', id: this.currentId });
-      void this.loadProps(this.currentId);
+      void this.loadProps(this.currentId).catch((error) => {
+        if (!this.disposed) this.output.appendLine(`[designer] background property refresh failed: ${errMsg(error)}`);
+      });
     } else {
       DesignerHub.instance.pushPanel(this, { type: 'clear' }); // not rendered yet → blank until fullRender
     }
@@ -2034,7 +4371,9 @@ class DesignerSession {
   refreshViews(): void {
     this.refreshPlacementSettings();
     this.pushPersistedViewState();
-    void this.refreshToolbox();
+    void this.refreshToolbox().catch((error) => {
+      if (!this.disposed) this.output.appendLine(`[designer] background toolbox refresh failed: ${errMsg(error)}`);
+    });
     this.refreshProperties();
     this.pushClipboardState();
   }
@@ -2043,6 +4382,9 @@ class DesignerSession {
     if (!this.disposed) this.post({
       type: 'placementSettings',
       snapOverrideModifier: placementSnapOverrideModifier(this.documentUri),
+      layoutMode: placementLayoutMode(this.documentUri),
+      gridSize: placementGridSize(this.documentUri),
+      showGrid: placementShowGrid(this.documentUri),
     });
   }
 
@@ -2091,6 +4433,13 @@ class DesignerSession {
       return;
     }
     if (epoch !== this.reloadEpoch || this.disposed) return; // a newer reload superseded this read
+    // A journaled source+resource transaction writes the generated source before it can register the native custom
+    // document edit. Older VS Code hosts can deliver that watcher read inside the narrow gap. The transaction runner
+    // owns this exact byte image and verifies it again before reporting success, so it is neither an external change
+    // nor a new document revision. After the runner leaves this scope, an identical watcher delivery is a no-op because
+    // applyPreflightedCommit has already adopted the same source baseline and in-memory text.
+    if (this.pendingSourceTransactionImages.some((image) =>
+      image.text === onDisk.text && image.bom === onDisk.hadBom)) return;
     // Decide what actually changed BEFORE touching the document: adopting first would make the text comparison
     // trivially true and skip the re-render, leaving the canvas showing the OLD source while the buffer holds the
     // new one — an edit would then be spliced into text the user never saw.
@@ -2128,14 +4477,57 @@ class DesignerSession {
   // prior bytes) and Ctrl+Y re-applies it. If a fail-closed gate REFUSES here, no edit is fired — the caller then
   // rolls the resx back (revertResx) so neither half lands. The gates run before anything is mutated, so a refusal
   // never leaves a half-applied transaction.
-  private commit(before: string, after: string, label: string, resx?: ResourceTxSet): boolean {
+  private commit(
+    before: string,
+    after: string,
+    label: string,
+    resx?: ResourceTxSet,
+    expectedRevision?: number,
+    durableUndo?: TransactionUndoRegistration,
+    localizableSourceCapability?: 'event',
+    companionText?: CompanionTextTx,
+  ): boolean {
+    const resxList = Array.isArray(resx) ? resx : resx ? [resx] : [];
+    const companionChanged = !!companionText && companionText.before !== companionText.after;
+    if (!this.preflightCommit(
+      before, after, label, resxList, expectedRevision, localizableSourceCapability, companionChanged,
+    )) return false;
+    return this.applyPreflightedCommit(
+      before, after, label, resxList, expectedRevision, durableUndo, localizableSourceCapability, companionText);
+  }
+
+  private commitPreconditionMatches(before: string, expectedRevision: number | undefined, label: string): boolean {
+    if (this.doc.designerText === before
+      && (expectedRevision === undefined || this.doc.rev === expectedRevision)) return true;
+    this.output.appendLine(`[designer] edit refused — document changed while ${label} was awaiting I/O`);
+    this.post({ type: 'status', message: t('status.docChanged') });
+    return false;
+  }
+
+  private preflightCommit(
+    before: string,
+    after: string,
+    label: string,
+    resxList: ResxTx[],
+    expectedRevision?: number,
+    localizableSourceCapability?: 'event',
+    companionChanged = false,
+  ): boolean {
+    if (this.emptyInitializeComponentSurface) {
+      this.output.appendLine('[designer] edit refused — empty InitializeComponent compatibility surface is read-only (' + label + ')');
+      this.post({ type: 'status', message: t('designer.owner.emptyInitializeComponentReadOnly') });
+      return false;
+    }
     // No-op edit → nothing to persist. But if a resx transaction is attached whose bytes actually CHANGED (a
     // re-import of a new image into a property whose `resources.GetObject("key")` assignment is byte-identical —
     // designer text unchanged, base64 payload different), we must still fire an undo entry so Ctrl+Z reverts the
     // resource. Fall through in that case.
-    const resxList = Array.isArray(resx) ? resx : resx ? [resx] : [];
     const resxChanged = resxList.some((tx) => tx.before !== tx.after);
-    if (after === before && !resxChanged) return true;
+    if (after === before && !resxChanged && !companionChanged) return true;
+    // W0.1/W0.2 — every async mutation must still own the exact document snapshot it started from at the FINAL
+    // commit boundary. Text catches an ordinary intervening drag/property edit; revision also catches edit→undo back
+    // to byte-identical text. Without both, a stale resource operation could write its old snapshot over newer work.
+    if (!this.commitPreconditionMatches(before, expectedRevision, label)) return false;
     // 0.10.0 trust-floor S4 — byte-local firewall. Every persisted edit is a targeted net9 splice of `before`, which
     // preserves the file outside the edited span by construction (net48 never writes source — it persists the SAME
     // net9 splice). If `after` is NOT a confined edit of `before`, a non-splice path reached this funnel (a future
@@ -2165,24 +4557,60 @@ class DesignerSession {
       this.post({ type: 'status', message: t('status.designerDiskConflict') });
       return false;
     }
-    // Airtight localizable-source backstop. A resource-only edit has identical before/after designer text and an
-    // attached resource transaction, so it is allowed. Any generated-source mutation would diverge from ApplyResources
-    // and is refused even if a message slipped past the LOCALIZABLE_SOURCE_BLOCKED dispatch gate.
+    // Airtight localizable-source backstop. A resource-only edit has identical before/after designer text. The one
+    // structural exception is a journaled source+resource edit whose exact source target and at least one distinct
+    // .resx target are both in the transaction (currently toolbox add). Anything else can diverge from ApplyResources.
     // Classified FRESH from the buffer (the getter), so it is correct even during a render race — the
     // firewall never trusts a stale render-populated flag. (undo/redo set designerText directly, NOT via
     // commit, so reverting a pre-lock edit still works.)
-    if (this.localizable && !(after === before && resxChanged)) {
+    const persistedSource = this.designerFile
+      ? resxList.find((tx) => normalize(tx.uri.fsPath) === normalize(this.designerFile!))
+      : undefined;
+    const hasDistinctResourceTarget = resxList.some((tx) =>
+      !this.designerFile || normalize(tx.uri.fsPath) !== normalize(this.designerFile));
+    const journaledLocalizedStructure = !!persistedSource && persistedSource.after === after && hasDistinctResourceTarget;
+    const boundedLocalizedEvent = localizableSourceCapability === 'event';
+    if (this.localizable && !(after === before && resxChanged)
+      && !journaledLocalizedStructure && !boundedLocalizedEvent) {
       this.output.appendLine('[designer] edit refused — generated-source mutation is unsupported for a localizable form (' + label + ')');
       return false;
     }
+    return true;
+  }
+
+  private applyPreflightedCommit(
+    before: string,
+    after: string,
+    label: string,
+    resxList: ResxTx[],
+    expectedRevision?: number,
+    durableUndo?: TransactionUndoRegistration,
+    localizableSourceCapability?: 'event',
+    companionText?: CompanionTextTx,
+  ): boolean {
+    const resxChanged = resxList.some((tx) => tx.before !== tx.after);
+    const companionChanged = !!companionText && companionText.before !== companionText.after;
+    if (after === before && !resxChanged && !companionChanged) return true;
+    // Recheck even though ordinary commit() calls preflight synchronously. Journal-backed paths used to await a
+    // generated-source flush between these two functions; retaining the second gate makes that entire class of race
+    // fail closed if a future adapter introduces another await.
+    if (!this.commitPreconditionMatches(before, expectedRevision, label)) return false;
+    const persistedDesigner = this.designerFile
+      ? resxList.find((tx) => normalize(tx.uri.fsPath) === normalize(this.designerFile!))
+      : undefined;
+    const beforeEventAuthorized = this.doc.isAuthorizedLocalizableEventText(before);
+    const afterEventAuthorized = localizableSourceCapability === 'event' && isLocalizableDesigner(after);
     this.doc.rev++;
     this.doc.designerText = after;
+    this.doc.authorizeLocalizableEventText(afterEventAuthorized ? after : null);
+    if (persistedDesigner) this.doc.adoptTransactionBaseline(persistedDesigner.after, persistedDesigner.bom);
     // 1.0.0 — reflect the new dirty state in the net48 "last build" banner IMMEDIATELY, at
     // the mutation point, before the caller's awaited loadProps / render. Those can stall or reject (a nonvisual
     // Modifiers edit hydrates via loadProps, whose rejection is caught without reaching the trailing postDirty), which
     // would otherwise leave the banner showing the stale clean wording over a now-dirty source. Idempotent — the notice
     // is deduped, so the caller's later postDirty is a no-op when nothing changed.
     this.postDirty();
+    let durableRegistration = durableUndo;
     this.fireEdit({
       document: this.doc,
       label,
@@ -2190,14 +4618,39 @@ class DesignerSession {
       // designerText is left untouched and the undo/redo promise rejects, so the two halves never split (
       // mutating text before a fallible resx op leaves the code reverted while the resource didn't move).
       undo: async () => {
-        await this.transitionResourceSet(resxList, 'undo');
+        const companionTransition = companionText
+          ? await this.prepareCompanionTextHistory(companionText, 'undo')
+          : undefined;
+        if (durableRegistration) {
+          const result = await durableRegistration.undo();
+          if (result.status !== 'rolledBack') throw new Error(result.error ?? `durable undo failed: ${result.status}`);
+        } else {
+          await this.transitionResourceSet(resxList, 'undo');
+        }
+        if (persistedDesigner) this.doc.adoptTransactionBaseline(persistedDesigner.before, persistedDesigner.bom);
         this.doc.rev++; this.doc.designerText = before;
+        this.doc.authorizeLocalizableEventText(beforeEventAuthorized ? before : null);
         await this.rerenderFromDoc();
+        companionTransition?.();
       },
       redo: async () => {
-        await this.transitionResourceSet(resxList, 'redo');
+        const companionTransition = companionText
+          ? await this.prepareCompanionTextHistory(companionText, 'redo')
+          : undefined;
+        if (durableRegistration) {
+          const result = await durableRegistration.redo();
+          if (result.status !== 'committed' || !result.undoRegistration) {
+            throw new Error(result.error ?? `durable redo failed: ${result.status}`);
+          }
+          durableRegistration = result.undoRegistration;
+        } else {
+          await this.transitionResourceSet(resxList, 'redo');
+        }
+        if (persistedDesigner) this.doc.adoptTransactionBaseline(persistedDesigner.after, persistedDesigner.bom);
         this.doc.rev++; this.doc.designerText = after;
+        this.doc.authorizeLocalizableEventText(afterEventAuthorized ? after : null);
         await this.rerenderFromDoc();
+        companionTransition?.();
       },
     });
     return true;
@@ -2271,6 +4724,10 @@ class DesignerSession {
    * in the user's .cs. Callers that write a file themselves must gate up front.
    */
   private refuseStaleRenderMutation(): boolean {
+    if (this.emptyInitializeComponentSurface) {
+      this.post({ type: 'status', message: t('designer.owner.emptyInitializeComponentReadOnly') });
+      return true;
+    }
     if (this.renderOk) return false;
     this.post({ type: 'status', message: t('status.renderFailedReadonly') });
     return true;
@@ -2291,8 +4748,22 @@ class DesignerSession {
    * backstops persistence. A subsequent successful render flips renderOk true and re-enables editing.
    */
   public refuseStaleRenderEdit(type: string | undefined): boolean {
+    if (this.emptyInitializeComponentSurface && !!type && STALE_RENDER_BLOCKED.has(type)) {
+      this.post({ type: 'status', message: t('designer.owner.emptyInitializeComponentReadOnly') });
+      return true;
+    }
     if (!refuseWhileRenderFailed(type, STALE_RENDER_BLOCKED, this.renderOk)) return false;
     this.post({ type: 'status', message: t('status.renderFailedReadonly') });
+    return true;
+  }
+
+  /** Host-authoritative counterpart of designer.js' pending-image gate. */
+  private refuseStaleCanvasGeneration(type: string | undefined, generation: number | undefined): boolean {
+    if (!type || !CANVAS_GENERATION_GUARDED.has(type)) return false;
+    this.lastCanvasInputRefusalCode = null;
+    if (Number.isInteger(generation) && generation === this.renderSeq) return false;
+    this.lastCanvasInputRefusalCode = 'STALE_CANVAS';
+    this.post({ type: 'status', message: 'STALE_CANVAS' });
     return true;
   }
 
@@ -2301,10 +4772,14 @@ class DesignerSession {
     ids?: string[]; dx?: number; dy?: number; prop?: string; propType?: string; isEnum?: boolean; value?: string;
     edits?: Array<{ id: string; dx: number; dy: number }>; controlType?: string; hitId?: string; typeName?: string;
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
-    axis?: 'h' | 'v'; direction?: 'left' | 'right'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; token?: number; reopenToken?: number;
+    axis?: 'h' | 'v'; direction?: 'left' | 'right'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; targetParentItemId?: string | null; targetIndex?: number; token?: number; reopenToken?: number;
+    schemaKey?: string; includeNavigator?: boolean; existingBindingSourceId?: string | null;
+    commandId?: string; certificationId?: string;
     dpr?: number; newName?: string; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy';
+    dropX?: number; dropY?: number; adornerId?: string; gen?: number;
   }): Promise<void> {
     try {
+      if (this.refuseStaleCanvasGeneration(m.type, m.gen)) return;
       // Route supported localizable value edits later in the handler; refuse only structural/source gestures
       // up front so they cannot diverge from ApplyResources. commit() backstops persistence.
       if (this.refuseLocalizableEdit(m.type)) return;
@@ -2348,11 +4823,18 @@ class DesignerSession {
       } else if (m.type === 'pick' && m.id) {
         // thread the canvas-origin pick's correlation token so the echoed `select` can be matched to THIS exact pick
         // (the canvas suppresses only the echo of a pick whose selection an add-editor deliberately dropped.
-        await this.pick(m.id, m.token);
+        await this.pick(m.id, m.token, m.ids);
+      } else if (m.type === 'designerAdornerHit' && m.id && m.adornerId) {
+        const result = await this.confirmDesignerAdornerHit(m.id, m.adornerId, m.x ?? NaN, m.y ?? NaN);
+        this.post({ type: 'designerAdornerHit', id: m.id, token: m.token, ...result });
       } else if (m.type === 'manipulate' && m.id && m.mode) {
-        await this.applyManipulate(m.id, m.mode, m.x ?? 0, m.y ?? 0, m.width ?? 0, m.height ?? 0);
+        await this.applyManipulate(
+          m.id, m.mode, m.x ?? 0, m.y ?? 0, m.width ?? 0, m.height ?? 0, m.dropX, m.dropY,
+        );
       } else if (m.type === 'manipulateGroup' && Array.isArray(m.ids)) {
         await this.applyGroupMove(m.ids, m.dx ?? 0, m.dy ?? 0);
+      } else if (m.type === 'designerActionCommand' && m.id && m.commandId && m.certificationId) {
+        await this.applyHostedServiceKernelCommand(m.id, m.commandId, m.certificationId);
       } else if (m.type === 'edit' && m.id && m.prop) {
         // tab-order editing (Phase 2) commits a TabIndex from the canvas through the proven grid-edit path
         await this.editFromGrid(m.id, m.prop, m.propType ?? '', !!m.isEnum, m.value ?? '');
@@ -2364,7 +4846,12 @@ class DesignerSession {
         await this.applyResize(m.sizeEdits);
       } else if (m.type === 'dropControl' && m.controlType) {
         // toolbox drag → canvas drop: place into the container under the cursor (or the form) at the drop point
-        await this.applyAddControl(m.controlType, this.containerParentFor(m.hitId ?? 'this'), m.x, m.y);
+        await this.applyAddControl(m.controlType, this.containerParentFor(m.hitId ?? 'this'), m.x, m.y, m.width, m.height);
+      } else if (m.type === 'dropDataSource' && m.schemaKey && (m.mode === 'detail' || m.mode === 'grid')) {
+        await this.generateFromDataSource(m.schemaKey, m.mode, this.containerParentFor(m.hitId ?? 'this'),
+          m.x, m.y, !!m.includeNavigator, m.existingBindingSourceId ?? null, null);
+      } else if (m.type === 'cancelToolboxSelection') {
+        this.setToolboxSelection(null);
       } else if (m.type === 'save') {
         await this.saveDesigner();
       } else if (m.type === 'removeControl' && m.id) {
@@ -2389,6 +4876,8 @@ class DesignerSession {
         await this.applyPaste(m.id);
       } else if (m.type === 'duplicate' && Array.isArray(m.ids)) {
         await this.applyDuplicate(m.ids);
+      } else if (m.type === 'duplicateDrag' && Array.isArray(m.ids)) {
+        await this.applyDuplicateDrag(m.ids, m.dx ?? 0, m.dy ?? 0);
       } else if (m.type === 'bringToFront' && m.id) {
         await this.applyZOrder([m.id], true);
       } else if (m.type === 'bringToFrontGroup' && Array.isArray(m.ids)) {
@@ -2403,6 +4892,8 @@ class DesignerSession {
         await this.applyTabRename(m.hostId, m.x ?? 0, m.y ?? 0);
       } else if (m.type === 'stripAdd' && m.hostId) {
         await this.applyStripAdd(m.hostId, typeof m.itemType === 'string' ? m.itemType : '', typeof m.text === 'string' ? m.text : '', typeof m.parentItemId === 'string' ? m.parentItemId : undefined, typeof m.reopenToken === 'number' ? m.reopenToken : undefined);
+      } else if (m.type === 'stripMove' && m.hostId && m.itemId) {
+        await this.applyStripMove(m.hostId, m.itemId, typeof m.targetParentItemId === 'string' ? m.targetParentItemId : null, typeof m.targetIndex === 'number' ? m.targetIndex : NaN);
       } else if (m.type === 'stripRename' && m.hostId && m.itemId) {
         await this.applyStripRename(m.hostId, m.itemId, typeof m.text === 'string' ? m.text : '');
       } else if (m.type === 'stripRetype' && m.hostId && m.itemId && m.itemType) {
@@ -2436,9 +4927,10 @@ class DesignerSession {
   /** Select a component (from a canvas click or the Properties tree): move the overlay + load its grid. `token` is the
    * canvas-origin pick's correlation id (undefined for a Properties-tree pick) — echoed back on `select` so the canvas
    * can match the reply to its exact pick. */
-  async pick(id: string, token?: number): Promise<void> {
+  async pick(id: string, token?: number, selectedIds?: string[]): Promise<void> {
     if (this.disposed) return;
     this.currentId = id;
+    this.currentSelectionIds = normalizeMultiSelection(id, selectedIds, this.controls.map((control) => control.id));
     // Any load still in flight for the PREVIOUS pick is now stale: its awaits can resolve after this one's and would
     // otherwise publish the old control's grid/tasks over the new selection. Bumping the generation here (before the
     // awaits below) lets loadProps drop such a load. Ids alone can't do this — select A, B, A again would let the
@@ -2447,6 +4939,35 @@ class DesignerSession {
     this.currentSelItem = null; // a control selection supersedes any item→Properties selection (drops the item-refresh guard)
     this.pushSelect(id, token);
     await this.loadProps(id);
+  }
+
+  /** A dirty/saved sibling partial can change the form's base without touching .Designer.cs. Re-render from the
+   * combined current snapshot so stale compiled inheritance is disclosed immediately, including unsaved edits. */
+  private scheduleCodeBehindRerender(): void {
+    // The modern renderer consumes only .Designer.cs. A delayed create/change notification for the code-behind
+    // can arrive just after a newly-created form opens; invalidating the modern render here made that first picture
+    // lose its sequence gate, while the timer below deliberately scheduled no replacement for modern sessions.
+    if (this.disposed || this.engineKind !== 'net48') return;
+    // Invalidate authority immediately, not after the debounce: an in-flight render/describe was based on the previous
+    // partial and must never publish a stale inherited capability during the 120 ms coalescing window.
+    this.renderSeq++;
+    this.selectionGen++;
+    this.publishedPropertyComponent = undefined;
+    this.renderOk = false;
+    if (this.codeBehindDebounce) clearTimeout(this.codeBehindDebounce);
+    this.codeBehindDebounce = setTimeout(() => {
+      this.codeBehindDebounce = undefined;
+      if (this.disposed) return;
+      void this.fullRender(true).catch(() => { /* fullRender reports its own failure */ });
+    }, 120);
+  }
+
+  /** A refresh for the selected primary describes the full multi-set; a background refresh of any other id remains
+   * strictly single-target so it cannot overwrite the panel with an unrelated synthetic selection. */
+  private propertySelectionIds(id: string): string[] {
+    return id === this.currentId && this.currentSelectionIds.includes(id)
+      ? this.currentSelectionIds.slice()
+      : [id];
   }
 
   /**
@@ -2779,6 +5300,24 @@ class DesignerSession {
     const seq = ++this.renderSeq;
     this.output.appendLine(`[designer] render #${seq} starting: ${this.designerFile}`);
     this.post({ type: 'loading', message: t('host.loading.starting') });
+    try {
+      if (!await this.ensureDocumentOwnerBeforeRender()) return false;
+    } catch (err) {
+      if (seq === this.renderSeq && !this.disposed) this.fail(err);
+      return false;
+    }
+    if (seq !== this.renderSeq || this.disposed) return false;
+
+    const activeXControls = activeXControlsInDesignerSource(this.doc.designerText);
+    if (activeXControls.length > 0) {
+      const refusal = refuseTierDToolboxRequest('registered-activex');
+      const named = activeXControls.slice(0, 3).map(({ control, type }) => `${control} (${type})`).join(', ')
+        + (activeXControls.length > 3 ? ', …' : '');
+      const message = t('host.tierD.activeXRefused', { controls: named });
+      this.output.appendLine(`[designer] ${refusal.reasonCode}: ${message}`);
+      this.postRenderFailure(message, activeXControls[0].control, refusal.reasonCode);
+      return false;
+    }
 
     // Route by the control assembly's runtime: a Framework/DevExpress assembly (no .deps.json sidecar) renders
     // on the net48 compiled-preview engine; everything else on net9. When no control source is chosen we
@@ -2790,6 +5329,13 @@ class DesignerSession {
     // reuse it via asm(); a net9 form / explicit source leaves it undefined so nothing stale leaks into asm().
     this.autoAsm = explicit ? undefined : route.asm;
     const asm = route.asm;
+    if (asm && assemblyRequiresX86(asm)) {
+      const refusal = refuseTierDToolboxRequest('registered-activex');
+      const message = t('host.tierD.x86Refused', { assembly: path.basename(asm) });
+      this.output.appendLine(`[designer] ${refusal.reasonCode}: ${message}`);
+      this.postRenderFailure(message, path.basename(asm), refusal.reasonCode);
+      return false;
+    }
     const prevKind = this.engineKind;
     this.engineKind = route.kind;
     if (this.engineKind !== prevKind) {
@@ -2844,7 +5390,12 @@ class DesignerSession {
     // selection/property refresh the original render was doing.
     if (this.interpretedReconcileTimer) { clearTimeout(this.interpretedReconcileTimer); this.interpretedReconcileTimer = undefined; }
     const renderRev = this.doc.rev; // the buffer revision this picture will represent (see renderedRev)
-    const text = await this.currentText();
+    // The engine builds its object graph and captures pixels in one indivisible RPC, so the frozen capture phase owns
+    // both. The model phase is the real host-side source/model preparation immediately before that RPC.
+    const modelStartedAt = Date.now();
+    const text = await this.currentEngineText();
+    const codeBehindText = this.engineKind === 'net48' ? await this.currentCodeText() : undefined;
+    const modelMs = Date.now() - modelStartedAt;
     // LAST gate before the RPC leaves the host. The engine-kind/task check above happens BEFORE several awaits
     // (engine start, localization, toolbox, buffer read), and a build can start inside that window: the release
     // unloads the net48 domains, and this render — already past the earlier gate — would immediately recreate one and
@@ -2860,6 +5411,7 @@ class DesignerSession {
       return false;
     }
     let result: Awaited<ReturnType<typeof renderWithLayout>>;
+    const captureStartedAt = Date.now();
     try {
       if (this.engineKind === 'net48') {
         // Render the LIVE .Designer.cs source through the IR interpreter (VS model — instantiate
@@ -2869,7 +5421,8 @@ class DesignerSession {
         // edit RPCs are unchanged — for an interpreted, unedited form they read the same build, so selection/props line
         // up; unifying edits onto the interpreted picture is a later step.
         const ir = await this.withTimeout(
-          renderInterpretedWithLayout(eng, this.designerFile, asm as string, text ?? '', undefined, undefined, 0, 0, this.tabViewState(), this.renderScale),
+          renderInterpretedWithLayout(eng, this.designerFile, asm as string, text ?? '', undefined, undefined,
+            0, 0, this.tabViewState(), this.renderScale, codeBehindText),
           20000, 'engine render timed out — it may be stuck (first-run)');
         result = ir;
       } else {
@@ -2881,7 +5434,9 @@ class DesignerSession {
       if (seq === this.renderSeq && !this.disposed) this.fail(err);
       return false;
     }
+    const captureMs = Date.now() - captureStartedAt;
     if (seq !== this.renderSeq || this.disposed) return false;
+    const previewStartedAt = Date.now();
     // Persist the net48 render mode ONLY after the sequence gate — mirroring how all other shared state below is
     // mutated post-gate. Assigning it earlier (inside the try) let a SUPERSEDED interpreted render resolve last,
     // overwrite this.net48RenderMode with its stale mode, then bail at the gate without recomposing the banner —
@@ -2896,18 +5451,29 @@ class DesignerSession {
       this.renderedText = ir.renderMode === 'interpreted' ? (text ?? '') : undefined;
       this.renderedRev = ir.renderMode === 'interpreted' ? renderRev : -1;
     }
+    this.modernGraphToken = this.engineKind === 'modern' && result.graphToken
+      ? result.graphToken
+      : undefined;
     this.output.appendLine(`[designer] render #${seq} ok: ${result.png.length}B, ${result.controls.length} controls`);
 
-    this.controls = result.controls;
+    const emptySurfaceReason = t('designer.owner.emptyInitializeComponentReadOnly');
+    this.controls = this.emptyInitializeComponentSurface
+      ? result.controls.map((control) => ({
+          ...control,
+          editable: false,
+          readOnlyReason: emptySurfaceReason,
+        }))
+      : result.controls;
     // Kept from the LIVE render so a first control drop can persist the pair this runtime actually scales by —
     // 6,13 on .NET Framework, 7,15 on modern .NET. See addControl's autoScaleDimensions.
     this.renderedAutoScale = result.autoScaleDimensions ?? '';
-    if (this.engineKind === 'modern' || this.net48RenderMode === 'interpreted') this.pruneSelectedTabs(result.controls);
+    if (this.engineKind === 'modern' || this.net48RenderMode === 'interpreted') this.pruneSelectedTabs(this.controls);
     this.toolStripItems = result.toolStripItems ?? [];
     this.rootClient = { w: result.clientWidth, h: result.clientHeight };
     this.rootFrame = { w: result.width, h: result.height };
     this.post({ type: 'render', png: result.png.toString('base64'), width: result.width, height: result.height, gen: seq });
-    this.postLayout(result.controls, this.toolStripItems);
+    this.postLayout(this.controls, this.toolStripItems);
+    this.trayComponents = result.tray.slice();
     this.post({ type: 'tray', items: result.tray }); // component tray (canvas strip)
     // 1.0.0 — post the persistent notice SYNCHRONOUSLY here, right after the render/layout/
     // tray posts and BEFORE the awaited loadProps below. Composing it only after loadProps let a clean net48 first
@@ -2924,11 +5490,20 @@ class DesignerSession {
     if (seq === this.renderSeq && !this.disposed) {
     this.renderOk = true; // the canvas faithfully reflects this render → edits allowed (net48 disclosure aside)
     }
+    const previewMs = Date.now() - previewStartedAt;
     // Keep the selection across a full re-render only if it still exists — as a visual control OR a tray component
     // (a ContextMenuStrip, Timer, …); otherwise fall back to the root form. Consulting the tray too matters after
     // editing a tray component's collection (e.g. a ContextMenuStrip's Items commits via this net9 fullRender):
     // without it the selection would snap to the form. See retainSelectionId (unit-tested in e2e.ts).
+    const reconciliationStartedAt = Date.now();
     this.currentId = retainSelectionId(this.currentId, result.controls, result.tray);
+    const liveSelectionIds = new Set<string>([
+      'this',
+      ...this.controls.map((control) => control.id),
+      ...result.tray.map((component) => component.id),
+    ]);
+    this.currentSelectionIds = this.currentSelectionIds.filter((id) => liveSelectionIds.has(id) && id !== this.currentId);
+    this.currentSelectionIds.push(this.currentId);
     // an on-canvas strip-item op / item edit keeps the canvas item highlight authoritative — do not snap the selection
     // back to the (stale) container control (which would lose the highlight + make a follow-up Delete target the wrong
     // thing) NOR reload the control's props over the item grid. The caller reloads the right props (strip or item).
@@ -2944,6 +5519,17 @@ class DesignerSession {
     // state, so this was UI dishonesty rather than an edit bypass — but a banner that says the wrong thing about
     // read-only-ness is exactly what 1.0 cannot ship.
     if (seq !== this.renderSeq || this.disposed) return true;
+    const reconciliationMs = Date.now() - reconciliationStartedAt;
+    this.lastFullRenderTelemetry = {
+      modelMs,
+      captureMs,
+      previewMs,
+      reconciliationMs,
+      totalMeasuredMs: modelMs + captureMs + previewMs + reconciliationMs,
+      displayDpr: this.displayDpr,
+      captureScale: this.renderScale,
+      controlCount: result.controls.length,
+    };
     this.maybePromptForControlSource(result.unrepresentable, asm);
     // T2.2: surface WHAT the (partial) render skipped — controls whose ctor threw, unresolved types, unsupported
     // constructs — as a dismissible canvas banner. The engine already renders resiliently and records each dropped
@@ -2951,6 +5537,14 @@ class DesignerSession {
     // Empty items hide any stale banner. A net48 interpreter fallback is also a degraded render: the canvas is usable
     // but build-based, so expose its named reason through the same target/cause/actions surface as modern partials.
     const diagnostics = categorizeUnrepresentable(result.unrepresentable);
+    if (this.emptyInitializeComponentSurface) {
+      diagnostics.unshift({
+        category: 'unsupported',
+        target: 'this',
+        text: t('designer.owner.emptyInitializeComponentReadOnly'),
+        detail: '',
+      });
+    }
     if (this.engineKind === 'net48' && this.net48RenderMode === 'compiledFallback') {
       diagnostics.unshift({
         category: 'unsupported',
@@ -3043,7 +5637,9 @@ class DesignerSession {
    */
   private maybeOfferFrameworkPreview(unresolved: string[]): boolean {
     if (!this.designerFile) return false;
-    const csproj = findOwningCsproj(path.dirname(this.designerFile), this.wsRoot());
+    const csproj = isResolvedDocumentOwner(this.lastDocumentOwner) && this.lastDocumentOwner?.projectPath
+      ? this.lastDocumentOwner.projectPath
+      : findOwningCsproj(path.dirname(this.designerFile), this.wsRoot());
     if (!csproj) return false;
     let text = '';
     try { text = fs.readFileSync(csproj, 'utf8'); } catch { return false; }
@@ -3105,12 +5701,66 @@ class DesignerSession {
     return vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.designerFile))?.uri.fsPath;
   }
 
+  private async ensureDocumentOwnerBeforeRender(): Promise<boolean> {
+    if (this.documentOwnerChecked || !this.designerFile) return true;
+    const [projects, solutions, solutionXml] = await Promise.all([
+      vscode.workspace.findFiles('**/*.csproj', '**/{bin,obj,node_modules}/**', 200),
+      vscode.workspace.findFiles('**/*.sln', '**/{bin,obj,node_modules}/**', 50),
+      vscode.workspace.findFiles('**/*.slnx', '**/{bin,obj,node_modules}/**', 50),
+    ]);
+    const projectPaths: string[] = [];
+    const seenProjects = new Set<string>();
+    const addProject = (projectPath: string): void => {
+      const key = normalize(projectPath);
+      if (!seenProjects.has(key) && projectPaths.length < 512) {
+        seenProjects.add(key);
+        projectPaths.push(projectPath);
+      }
+    };
+    projects.forEach((project) => addProject(project.fsPath));
+    for (const solution of [...solutions, ...solutionXml])
+      projectPathsFromSolutionFile(solution.fsPath).forEach(addProject);
+    const eng = await this.withTimeout(
+      this.ensureEngine('modern'),
+      12000,
+      'engine did not start for designer document ownership validation',
+    );
+    const sourceText = await this.currentText();
+    const codeBehindSourceText = await this.currentCodeText();
+    const owner = await this.withTimeout(
+      resolveDesignerDocumentOwner(
+        eng,
+        this.designerFile,
+        projectPaths,
+        sourceText ?? this.doc.designerText,
+        codeBehindSourceText,
+      ),
+      12000,
+      'designer document ownership validation timed out',
+    );
+    this.lastDocumentOwner = owner;
+    if (isResolvedDocumentOwner(owner)) {
+      this.documentOwnerChecked = true;
+      this.emptyInitializeComponentSurface = owner.emptyInitializeComponentSurface === true;
+      this.output.appendLine(
+        `[designer] document owner resolved: ${this.designerFile} → ${owner.projectPath || owner.owners?.[0] || '<unknown>'}`,
+      );
+      return true;
+    }
+    const message = documentOwnerFailureMessage(owner);
+    this.output.appendLine(`[designer] document owner refused: ${this.designerFile}: ${message}`);
+    this.postRenderFailure(message, 'this', owner?.diagnosticCode || message);
+    return false;
+  }
+
   private resolveRouting(explicitAsm: string | undefined): { kind: EngineKind; asm: string | undefined; frameworkUnbuilt: boolean } {
     if (explicitAsm) return { kind: detectEngineKind(explicitAsm), asm: explicitAsm, frameworkUnbuilt: false };
     // findOwningCsproj, not findNearestCsproj: a form living in a SHARED PROJECT (.shproj/.projitems) has no .csproj
     // above it, so the walk returned null and everything below — the net48 routing AND every "pick an assembly"
     // offer — was skipped. The form then went to the .NET 9 renderer with no assembly and came back empty.
-    const csproj = this.designerFile ? findOwningCsproj(path.dirname(this.designerFile), this.wsRoot()) : null;
+    const csproj = isResolvedDocumentOwner(this.lastDocumentOwner) && this.lastDocumentOwner?.projectPath
+      ? this.lastDocumentOwner.projectPath
+      : this.designerFile ? findOwningCsproj(path.dirname(this.designerFile), this.wsRoot()) : null;
     if (csproj) {
       // A discovered Framework output (no .deps.json sidecar) is definitive — a net4x assembly can only load
       // on the net48 host. A .NET (Core) output has the sidecar, so detectEngineKind returns net9 and we fall
@@ -3130,9 +5780,323 @@ class DesignerSession {
     return { kind: 'modern', asm: undefined, frameworkUnbuilt: false };
   }
 
+  /**
+   * Activate the exact repository-certified net48 ComponentDesigner through the product broker. This is an optional
+   * fidelity layer over a component the generic compiled/interpreted surface has already described: any refusal,
+   * exception, or OS-process crash is diagnostic state only and must never revoke the ordinary source-first editor.
+   */
+  private async inspectHostedDesignerProduct(
+    component: ComponentDesc,
+    engine?: EngineHandle,
+  ): Promise<HostedDesignerProbeResult | null> {
+    const asm = this.asm();
+    if (this.engineKind !== 'net48' || !asm
+      || component.type !== CERTIFIED_HOSTED_DESIGNER_COMPONENT) return null;
+    try {
+      const result = await inspectCertifiedHostedDesigner(
+        engine ?? await this.ensureEngine('net48'),
+        asm,
+        component.type,
+        CERTIFIED_HOSTED_DESIGNER_ID,
+      );
+      this.output.appendLine(
+        `[hosted-designer] ${component.id} ${result.status}; code=${result.errorCode || 'none'}; `
+        + `main=${result.mainEnginePid}; worker=${result.workerPid}; started=${result.workerStarted}; `
+        + `quarantined=${result.quarantined}; privateDesktop=${result.privateDesktop}`,
+      );
+      return result;
+    } catch (error) {
+      const reason = errMsg(error);
+      this.output.appendLine(`[hosted-designer] ${component.id} RPC failed: ${reason}`);
+      return {
+        ok: false,
+        status: 'refused',
+        errorCode: 'WORKER_UNAVAILABLE',
+        reason,
+        componentType: component.type,
+        designerType: '',
+        certificationId: CERTIFIED_HOSTED_DESIGNER_ID,
+        assemblySha256: '',
+        mainEnginePid: 0,
+        workerPid: 0,
+        exitCode: 0,
+        workerStarted: false,
+        quarantined: false,
+        privateDesktop: false,
+      };
+    }
+  }
+
+  private publishHostedDesignerProbe(result: HostedDesignerProbeResult | null): void {
+    this.lastHostedDesignerProbe = result;
+    if (!result || result.ok) return;
+    const reason = result.errorCode === 'DESIGNER_QUARANTINED'
+      ? 'The vendor designer is quarantined for this build; generic Properties and source-first editing remain available.'
+      : result.errorCode === 'DESIGNER_CRASH'
+        ? 'The vendor designer crashed in its isolated worker and was quarantined; generic Properties and source-first editing remain available.'
+        : result.reason;
+    this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+  }
+
+  private hostedServiceKernelRefusal(
+    errorCode: string,
+    reason: string,
+    componentType = '',
+    assemblySha256 = '',
+  ): HostedServiceKernelProductResult {
+    return {
+      ok: false,
+      status: 'refused',
+      errorCode,
+      reason,
+      componentType,
+      designerType: '',
+      certificationId: CERTIFIED_HOSTED_SERVICE_ID,
+      assemblySha256,
+      apartmentState: '',
+      capabilities: [],
+      completeHostAdvertised: false,
+      incompleteHostWithheld: false,
+      incompleteHostReason: '',
+      unsupportedServiceRefused: false,
+      unsupportedServiceReason: '',
+      actionId: '',
+      actionInvoked: false,
+      transactionsOpened: 0,
+      transactionsCommitted: 0,
+      transactionsCancelled: 0,
+      changeEvents: 0,
+      edits: [],
+    };
+  }
+
+  private hasCertifiedHostedServiceAction(
+    component: ComponentDesc,
+    commandId = CERTIFIED_HOSTED_SERVICE_ACTION,
+  ): boolean {
+    return component.type === CERTIFIED_HOSTED_SERVICE_COMPONENT
+      && component.designerActions?.some((action) =>
+        action.commandId === commandId
+        && action.certificationId === CERTIFIED_HOSTED_SERVICE_ID) === true;
+  }
+
+  private hostedServiceKernelIdentityIsComplete(result: HostedServiceKernelProductResult): boolean {
+    const requiredCapabilities = [
+      'ContainerSiting', 'Naming', 'ComponentChange', 'Selection', 'Transactions', 'MenuCommands',
+    ];
+    return result.componentType === CERTIFIED_HOSTED_SERVICE_COMPONENT
+      && result.designerType === 'FakeVendor.HostedServiceControlDesigner'
+      && result.certificationId === CERTIFIED_HOSTED_SERVICE_ID
+      && /^[0-9a-f]{64}$/i.test(result.assemblySha256)
+      && result.apartmentState === 'STA'
+      && result.capabilities.length === requiredCapabilities.length
+      && requiredCapabilities.every((capability) => result.capabilities.includes(capability))
+      && result.completeHostAdvertised
+      && result.incompleteHostWithheld
+      && result.incompleteHostReason.includes('Selection')
+      && result.unsupportedServiceRefused
+      && result.unsupportedServiceReason.length > 0;
+  }
+
+  private hostedServiceKernelContractIsComplete(result: HostedServiceKernelProductResult): boolean {
+    return result.ok && this.hostedServiceKernelIdentityIsComplete(result);
+  }
+
+  /** Inspect the product service contract only after the engine has published the exact certified action metadata. */
+  private async inspectHostedServiceKernelProduct(
+    component: ComponentDesc,
+    engine: EngineHandle,
+  ): Promise<HostedServiceKernelProductResult | null> {
+    if ((this.engineKind !== 'modern' && this.engineKind !== 'net48')
+      || component.type !== CERTIFIED_HOSTED_SERVICE_COMPONENT) return null;
+    const asm = this.asm()
+      ?? (this.designerFile ? await resolveAssembly(engine, this.designerFile) ?? undefined : undefined);
+    if (!asm || !this.hasCertifiedHostedServiceAction(component)) {
+      return this.hostedServiceKernelRefusal(
+        'UNPUBLISHED_COMMAND',
+        'The current component does not publish the repository-certified hosted service command.',
+        component.type,
+      );
+    }
+    try {
+      const result = await inspectCertifiedHostedServiceKernel(
+        engine, asm, component.type, CERTIFIED_HOSTED_SERVICE_ID);
+      this.output.appendLine(
+        `[hosted-service] ${component.id} ${result.status}; complete=${result.completeHostAdvertised}; `
+        + `incompleteWithheld=${result.incompleteHostWithheld}; unsupportedRefused=${result.unsupportedServiceRefused}`,
+      );
+      return this.hostedServiceKernelContractIsComplete(result)
+        && result.status === 'ready'
+        && result.actionId === ''
+        && result.actionInvoked === false
+        && result.transactionsOpened === 0
+        && result.transactionsCommitted === 0
+        && result.transactionsCancelled === 0
+        && result.changeEvents === 0
+        && result.edits.length === 0
+        ? result
+        : this.hostedServiceKernelRefusal(
+          'INVALID_PRODUCT_RESULT',
+          result.ok ? 'The hosted service inspection returned an overbroad or incomplete contract.' : result.reason,
+          component.type,
+          result.assemblySha256,
+        );
+    } catch (error) {
+      return this.hostedServiceKernelRefusal(
+        'WORKER_UNAVAILABLE', errMsg(error), component.type);
+    }
+  }
+
+  private publishHostedServiceKernelResult(result: HostedServiceKernelProductResult | null): void {
+    this.lastHostedServiceKernelResult = result;
+    if (result && !result.ok)
+      this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason }) });
+  }
+
+  /** Run one exact hosted DesignerAction against a disposable component graph. The preset result is independently
+   * source-planned as one native Undo unit; the reentrant-cancellation result must carry no proposal or mutation. */
+  private async applyHostedServiceKernelCommand(
+    id: string,
+    commandId: string,
+    certificationId: string,
+  ): Promise<HostedServiceKernelProductResult> {
+    const refuse = (code: string, reason: string, componentType = '', sha = '') => {
+      const result = this.hostedServiceKernelRefusal(code, reason, componentType, sha);
+      this.publishHostedServiceKernelResult(result);
+      return result;
+    };
+    if (!this.designerFile || this.disposed)
+      return refuse('DOCUMENT_UNAVAILABLE', 'The designer document is unavailable.');
+    if (this.engineKind !== 'modern' && this.engineKind !== 'net48')
+      return refuse('UNSUPPORTED_RUNTIME', 'The certified hosted service command is unavailable for this runtime.');
+    if (this.localizable)
+      return refuse('LOCALIZABLE_SOURCE_REFUSED', 'The certified command has no resource-only representation.');
+    if (!this.renderOk || this.emptyInitializeComponentSurface)
+      return refuse('RENDER_UNAVAILABLE', 'The current designer surface is not authorized for source mutation.');
+    if ((commandId !== CERTIFIED_HOSTED_SERVICE_ACTION
+        && commandId !== CERTIFIED_HOSTED_SERVICE_REENTRANT_ACTION)
+      || certificationId !== CERTIFIED_HOSTED_SERVICE_ID)
+      return refuse('CERTIFIED_COMMAND_MISMATCH', 'The hosted service command identity is not allowlisted.');
+
+    const published = this.publishedPropertyComponent;
+    const component = published?.ids.length === 1
+      && published.ids[0] === id
+      && this.currentId === id
+      && this.currentSelectionIds.length === 1
+      && this.currentSelectionIds[0] === id
+      && published.rev === this.doc.rev
+      ? published.component
+      : null;
+    if (!component || component.id !== id || component.editable === false
+      || !this.hasCertifiedHostedServiceAction(component, commandId)) {
+      return refuse(
+        'UNPUBLISHED_COMMAND',
+        'The current revision-bound selection does not publish the certified hosted service command.',
+        component?.type ?? '',
+      );
+    }
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+    try {
+      const hostedEngine = await this.ensureEngine(this.engineKind);
+      const asm = this.asm()
+        ?? await resolveAssembly(hostedEngine, this.designerFile) ?? undefined;
+      if (!asm)
+        return refuse('CERTIFIED_ASSEMBLY_MISSING', 'The certified component assembly is unavailable.', component.type);
+      const result = await invokeCertifiedHostedServiceAction(
+        hostedEngine, asm, component.type, certificationId, commandId);
+      if (commandId === CERTIFIED_HOSTED_SERVICE_REENTRANT_ACTION) {
+        const cancelledExactly = this.hostedServiceKernelIdentityIsComplete(result)
+          && !result.ok
+          && result.status === 'cancelled'
+          && result.errorCode === 'REENTRANT_CANCELLED'
+          && result.actionId === commandId
+          && result.actionInvoked
+          && result.transactionsOpened === 1
+          && result.transactionsCommitted === 0
+          && result.transactionsCancelled === 1
+          && result.changeEvents === 4
+          && result.edits.length === 0;
+        if (!cancelledExactly) {
+          return refuse(
+            'INVALID_PRODUCT_RESULT',
+            result.reason || 'The reentrant hosted action did not return an exact cancellation result.',
+            component.type,
+            result.assemblySha256,
+          );
+        }
+        if (this.doc.rev !== revBefore || this.doc.designerText !== before)
+          return refuse('DOCUMENT_CHANGED', t('status.docChanged'), component.type, result.assemblySha256);
+        this.output.appendLine(
+          `[hosted-service] cancelled ${id}.${commandId}: nested transaction refused; no source proposal`,
+        );
+        this.publishHostedServiceKernelResult(result);
+        return result;
+      }
+      const editsAreExact = result.edits.length === 2
+        && result.edits[0].propertyName === 'Text'
+        && result.edits[0].propertyType === 'System.String'
+        && result.edits[0].invariantValue === 'Hosted service preset'
+        && result.edits[1].propertyName === 'Size'
+        && result.edits[1].propertyType === 'System.Drawing.Size'
+        && result.edits[1].invariantValue === '180, 42';
+      if (!this.hostedServiceKernelContractIsComplete(result)
+        || result.status !== 'applied'
+        || result.actionId !== commandId
+        || !result.actionInvoked
+        || result.transactionsOpened !== 1
+        || result.transactionsCommitted !== 1
+        || result.transactionsCancelled !== 0
+        || result.changeEvents !== 4
+        || !editsAreExact) {
+        return refuse(
+          'INVALID_PRODUCT_RESULT',
+          result.ok ? 'The hosted action returned an overbroad or incomplete transaction result.' : result.reason,
+          component.type,
+          result.assemblySha256,
+        );
+      }
+      if (this.doc.rev !== revBefore)
+        return refuse('DOCUMENT_CHANGED', t('status.docChanged'), component.type, result.assemblySha256);
+
+      const plannerEngine = this.engineKind === 'modern'
+        ? hostedEngine
+        : await this.ensureEngine('modern');
+      let text = before;
+      for (const edit of result.edits) {
+        const expression = COMPLEX_TYPE_SET.has(edit.propertyType)
+          ? await convertValue(plannerEngine, edit.propertyType, edit.invariantValue)
+          : toCSharpExpression(edit.propertyType, false, edit.invariantValue);
+        if (expression === null)
+          return refuse('SOURCE_PLAN_REFUSED', `Cannot serialize ${edit.propertyName}.`, component.type, result.assemblySha256);
+        const preview = await setProperty(
+          plannerEngine, this.designerFile, id, edit.propertyName, expression, text);
+        if (!preview.safe || preview.text === null)
+          return refuse('SOURCE_PLAN_REFUSED', preview.reason || 'The source planner refused the command.', component.type, result.assemblySha256);
+        text = preview.text;
+      }
+      if (this.doc.rev !== revBefore)
+        return refuse('DOCUMENT_CHANGED', t('status.docChanged'), component.type, result.assemblySha256);
+      if (!this.commit(before, text, `Apply ${component.name} service preset`))
+        return refuse('SOURCE_COMMIT_REFUSED', 'The source transaction produced no authorized change.', component.type, result.assemblySha256);
+
+      this.output.appendLine(
+        `[hosted-service] applied ${id}.${commandId}: Text+Size in one source transaction (unsaved)`,
+      );
+      await this.fullRender();
+      await this.postDirty();
+      this.publishHostedServiceKernelResult(result);
+      this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Text + Size' }) });
+      return result;
+    } catch (error) {
+      return refuse('HOSTED_SERVICE_FAILED', errMsg(error), component.type);
+    }
+  }
+
   /** Describe the selected component → push its grid to the Properties view + its manipulability to the canvas. */
   private async loadProps(id: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
+    const selectionIds = this.propertySelectionIds(id);
     // Snapshot the selection generation: if a newer pick() lands while the describe is in flight, this load's replies
     // are stale and must publish nothing — otherwise the late reply repaints the PREVIOUS control's grid and tasks over
     // the current selection. Callers that refresh a non-selected id (e.g. a strip host after an item edit) are
@@ -3148,7 +6112,11 @@ class DesignerSession {
     if (this.engineKind === 'net48') { // compiled preview: describe the LIVE instance, not the net9 graph
       const asm48 = this.asm();
       let comp: ComponentDesc | null = null;
+      let panelComp: ComponentDesc | null = null;
       let vendorTags: VendorTagView[] = [];
+      let net48Engine: EngineHandle | null = null;
+      let hostedDesignerProbe: HostedDesignerProbeResult | null = null;
+      let hostedServiceKernelResult: HostedServiceKernelProductResult | null = null;
       if (asm48) {
         // pass the UNSAVED buffer so the net48 source-metadata pass (bold / wired-handler) reflects an unsaved reset /
         // wiring on a CONTROL too (parity with the item path — the same pre-existing disk-staleness, closed here).
@@ -3158,49 +6126,102 @@ class DesignerSession {
         // `tasks` post can be overtaken by this older one. Both are best-effort — a failure degrades to no vendor menu.
         srcRev = this.doc.rev; // bind the SOURCE revision (bumps on edit/undo/load, not a view render) BEFORE the sync text sample
         const text = await this.currentText();
+        const codeBehindText = await this.currentCodeText();
       const eng48 = await this.ensureEngine('net48');
+      net48Engine = eng48;
       await this.applyEngineLocalizationCulture(eng48);
         // when the net48 CANVAS is interpreted (live source), describe the SAME interpreted
         // instance so the panel matches the canvas on an unsaved edit; a null (unknown/inherited/non-interpreted) leaves
         // the panel UNAVAILABLE — it must NEVER fall back to compiled values under an interpreted canvas. Only a
         // compiled/fallback canvas describes the cached compiled instance.
         const interpreted = this.net48RenderMode === 'interpreted';
-        const describeP = interpreted
-          ? describeInterpretedComponent(eng48, this.designerFile, asm48, text ?? '', id).catch(() => null)
-          : describeCompiledComponent(eng48, this.designerFile, asm48, id, undefined, undefined, text).catch(() => null);
-        const [c, v] = await Promise.all([describeP, this.vendorTagsFor(id)]);
-        comp = c;
+        const descriptionsP = Promise.all(selectionIds.map((selectionId) => interpreted
+          ? describeInterpretedComponent(eng48, this.designerFile!, asm48, text ?? '', selectionId,
+            undefined, undefined, undefined, undefined, codeBehindText).catch(() => null)
+          : describeCompiledComponent(eng48, this.designerFile!, asm48, selectionId,
+            undefined, undefined, text, codeBehindText).catch(() => null)));
+        const [descriptions, v] = await Promise.all([descriptionsP, this.vendorTagsFor(id)]);
+        comp = descriptions.find((description) => description?.id === id) ?? null;
+        panelComp = selectionIds.length > 1
+          ? (descriptions.every((description): description is ComponentDesc => description !== null)
+            ? intersectMultiProperties(descriptions, id)
+            : null)
+          : comp;
         vendorTags = v;
+        if (selectionIds.length === 1 && comp?.type === CERTIFIED_HOSTED_DESIGNER_COMPONENT)
+          hostedDesignerProbe = await this.inspectHostedDesignerProduct(comp, eng48);
+        if (selectionIds.length === 1 && comp)
+          hostedServiceKernelResult = await this.inspectHostedServiceKernelProduct(comp, eng48);
       }
       if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return; // a newer pick OR SOURCE edit superseded this load
-      this.publishedPropertyComponent = { id, rev: srcRev, component: comp };
-      DesignerHub.instance.pushPanel(this, { type: 'props', id, component: comp });
+      this.publishHostedDesignerProbe(hostedDesignerProbe);
+      this.publishHostedServiceKernelResult(hostedServiceKernelResult);
+      this.publishedPropertyComponent = { ids: selectionIds, rev: srcRev, component: panelComp };
+      DesignerHub.instance.pushPanel(this, { type: 'props', id, component: panelComp });
       this.post({ type: 'tasks', id, component: comp, vendorTags }); // canvas smart-tag flyout data
-      // A null describe under an INTERPRETED canvas means the selection is unavailable (unknown/inherited) — disable
-      // move/resize too, else the canvas would offer manipulation of a component the panel can't describe.
-      const manip = (comp === null && this.net48RenderMode === 'interpreted')
+      // A null describe under an INTERPRETED canvas means the selection is unavailable — disable move/resize too.
+      // An inherited component is the other narrow exception: ordinary component editability remains false, and the
+      // canvas receives an affordance only when layout + describe agree on the same engine-issued token AND the net48
+      // authority revalidates the live compiled base's geometry gate. Commit repeats this authorization.
+      let manip = (comp === null && this.net48RenderMode === 'interpreted')
         ? { move: false, resize: false }
       : this.manipFor(id, comp); // single drag/resize is live (net9 splices Location/Size, net48 mutates)
+      if (comp?.ownership === 'inherited') {
+        manip = { move: false, resize: false };
+        const layout = this.controls.find((candidate) => candidate.id === id);
+        const token = comp.baseIdentityToken ?? '';
+        if (net48Engine && asm48 && comp.inheritedOverrideEditable === true
+          && layout?.ownership === 'inherited' && layout.inheritedGeometryOverrideEditable === true
+          && token.length > 0 && layout.baseIdentityToken === token) {
+          try {
+            const authorization = await authorizeInheritedGeometryOverride(
+              net48Engine, this.designerFile!, id, token, asm48);
+            if (authorization.safe && authorization.baseIdentityToken === token)
+              manip = this.manipFor(id, comp);
+            else
+              this.output.appendLine(`[designer] inherited geometry unavailable for ${id}: ${authorization.reason || 'invalid engine response'}`);
+          } catch (e) {
+            this.output.appendLine(`[designer] inherited geometry authorization failed for ${id}: ${(e as Error).message}`);
+          }
+        }
+      }
+      if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return;
       this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
       return;
     }
     const eng = await this.ensureEngine();
     srcRev = this.doc.rev; // bind the SOURCE revision BEFORE the sync text sample — see the net48 path above
-    const text9 = await this.currentText();
-    const component = await describeComponent(eng, this.designerFile, id, this.asm(), text9);
+    const text9 = await this.currentEngineText();
+    const descriptions = await Promise.all(selectionIds.map((selectionId) =>
+      describeComponent(eng, this.designerFile!, selectionId, this.asm(), text9).catch(() => null)));
+    const describedComponent = descriptions.find((description) => description?.id === id) ?? null;
+    const component = describedComponent && this.emptyInitializeComponentSurface
+      ? { ...describedComponent, editable: false, readOnlyReason: t('designer.owner.emptyInitializeComponentReadOnly') }
+      : describedComponent;
+    const panelComponent = selectionIds.length > 1
+      ? (descriptions.every((description): description is ComponentDesc => description !== null)
+        ? intersectMultiProperties(descriptions, id)
+        : null)
+      : component;
+    const hostedServiceKernelResult = selectionIds.length === 1 && component
+      ? await this.inspectHostedServiceKernelProduct(component, eng)
+      : null;
     if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return; // a newer pick OR SOURCE edit superseded this load
-    this.publishedPropertyComponent = { id, rev: srcRev, component };
-    DesignerHub.instance.pushPanel(this, { type: 'props', id, component });
+    this.publishHostedServiceKernelResult(hostedServiceKernelResult);
+    this.publishedPropertyComponent = { ids: selectionIds, rev: srcRev, component: panelComponent };
+    DesignerHub.instance.pushPanel(this, { type: 'props', id, component: panelComponent });
     // No vendor tags on net9: reading them needs the real compiled vendor type, which this engine can't load (a form
     // that uses vendor controls doesn't render here at all). Sent explicitly so the canvas clears a stale net48 menu.
     this.post({ type: 'tasks', id, component, vendorTags: [] }); // canvas smart-tag flyout data
     // Modern direct manipulation is permitted only by the live engine graph. If the RPC is absent, fails, resolves
     // another component, or reports a layout/inheritance/custom-control refusal, publish no canvas affordance. The
     // commit path repeats authorization against the then-current source, so this probe is UX metadata, not a stale grant.
-    let manip = (id === 'this' || this.controls.find((c) => c.id === id)?.isRoot)
+    let manip = this.emptyInitializeComponentSurface
+      ? { move: false, resize: false }
+      : (id === 'this' || this.controls.find((c) => c.id === id)?.isRoot)
       ? this.manipFor(id, component)
       : { move: false, resize: false };
-    if (id !== 'this' && !this.controls.find((c) => c.id === id)?.isRoot) {
+    if (!this.emptyInitializeComponentSurface && id !== 'this' && !this.controls.find((c) => c.id === id)?.isRoot) {
       try {
         const geometry = await beginGeometryDrag(eng, this.designerFile, id, this.asm(), text9);
         if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return;
@@ -3275,10 +6296,13 @@ class DesignerSession {
         try {
           srcRev = this.doc.rev; // bind the SOURCE revision BEFORE the sync text sample (atomic rev/text snapshot)
           const text48 = await this.currentText();
+          const codeBehindText48 = await this.currentCodeText();
           const eng48i = await this.ensureEngine('net48');
           component = this.net48RenderMode === 'interpreted'
-            ? await describeInterpretedComponent(eng48i, this.designerFile, asm48, text48 ?? '', itemId)
-            : await describeCompiledComponent(eng48i, this.designerFile, asm48, itemId, undefined, undefined, text48);
+            ? await describeInterpretedComponent(eng48i, this.designerFile, asm48, text48 ?? '', itemId,
+              undefined, undefined, undefined, undefined, codeBehindText48)
+            : await describeCompiledComponent(eng48i, this.designerFile, asm48, itemId,
+              undefined, undefined, text48, codeBehindText48);
         }
         catch { component = null; }
       }
@@ -3314,18 +6338,141 @@ class DesignerSession {
     const props = component?.properties ?? [];
     const val = (n: string): string | null => { const p = props.find((q) => q.name === n); return p ? (p.value ?? null) : null; };
     const dock = val('Dock');
-    if (dock && dock !== 'None') return { move: false, resize: false };
+    if (dock && dock !== 'None') {
+      return { move: false, resize: dock !== 'Fill' && String(val('AutoSize')) !== 'True' };
+    }
     if (c?.parentId) {
       const par = this.controls.find((x) => x.id === c.parentId);
-      if (par && /TableLayoutPanel|FlowLayoutPanel/.test(par.type)) return { move: false, resize: false };
+      if (par && /TableLayoutPanel/.test(par.type)) {
+        const liveGrid = this.engineKind === 'modern'
+          && (par.tableColumnWidths?.length ?? 0) > 0 && (par.tableRowHeights?.length ?? 0) > 0;
+        return { move: liveGrid, resize: false };
+      }
+      if (par && /FlowLayoutPanel/.test(par.type)) {
+        return { move: this.engineKind === 'modern' && !!par.flowDirection, resize: false };
+      }
     }
     return { move: true, resize: String(val('AutoSize')) !== 'True' };
   }
 
+  /**
+   * Commit one net48 canvas geometry transaction into source. Current-source controls keep the existing Roslyn
+   * SetProperty path. Inherited controls instead require matching describe/layout capabilities, a fresh compiled-base
+   * authorization, and the dedicated derived-source override writer. Every edit is prepared against a local text
+   * snapshot first, so a refusal or stale document publishes no partial source.
+   */
+  private async applyNet48GeometryEdits(
+    label: string,
+    edits: Array<{ id: string; prop: 'Location' | 'Size'; propType: 'System.Drawing.Point' | 'System.Drawing.Size'; value: string }>,
+  ): Promise<boolean> {
+    if (!this.designerFile || this.disposed || this.engineKind !== 'net48' || !edits.length) return false;
+    if (this.localizable) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'localized inherited geometry overrides are not supported' }) });
+      await this.loadProps(this.currentId);
+      return false;
+    }
+    const assemblyPath = this.asm();
+    if (!assemblyPath) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'control assembly not found' }) });
+      return false;
+    }
+
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const codeBehindBefore = await this.currentCodeText();
+    const converter = await this.ensureEngine('modern');
+    const authority = await this.ensureEngine('net48');
+    let text = before;
+    let hasInherited = false;
+    const liveEdits: CompiledEdit[] = [];
+    const authorizedInherited = new Set<string>();
+
+    const refuse = async (reason: string): Promise<boolean> => {
+      this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+      await this.loadProps(this.currentId);
+      return false;
+    };
+
+    for (const edit of edits) {
+      const component = await this.describeFor(edit.id);
+      if (this.doc.rev !== rev) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(this.currentId);
+        return false;
+      }
+      const property = component?.properties.find((candidate) => candidate.name === edit.prop) ?? null;
+      if (!component || !property || property.type !== edit.propType || property.readOnly)
+        return refuse(`${edit.id}.${edit.prop} is not editable in the current net48 description`);
+
+      const expression = await convertValue(converter, edit.propType, edit.value);
+      if (expression === null)
+        return refuse(`cannot convert ${edit.id}.${edit.prop} to ${edit.propType}`);
+
+      if (component.ownership === 'inherited') {
+        const layout = this.controls.find((candidate) => candidate.id === edit.id);
+        const token = component.baseIdentityToken ?? '';
+        const metadataSafe = component.editable === false && component.inheritedOverrideEditable === true
+          && property.inheritedOverrideEditable === true
+          && layout?.ownership === 'inherited' && layout.inheritedGeometryOverrideEditable === true
+          && token.length > 0 && layout.baseIdentityToken === token;
+        if (!metadataSafe)
+          return refuse(`stale or incompatible inherited geometry metadata for ${edit.id}`);
+
+        if (!authorizedInherited.has(edit.id)) {
+          const authorization = await authorizeInheritedGeometryOverride(
+            authority, this.designerFile, edit.id, token, assemblyPath);
+          if (!authorization.safe || authorization.baseIdentityToken !== token)
+            return refuse(authorization.reason || `inherited geometry authorization failed for ${edit.id}`);
+          authorizedInherited.add(edit.id);
+        }
+
+        const result = await applyInheritedPropertyOverride(
+          authority, this.designerFile, edit.id, edit.prop, expression, token, assemblyPath, text,
+          codeBehindBefore);
+        if (!result.safe || result.text === null)
+          return refuse(result.reason || `unsafe inherited override for ${edit.id}.${edit.prop}`);
+        text = result.text;
+        hasInherited = true;
+        continue;
+      }
+
+      if (component.ownership !== 'currentSource' || component.editable === false)
+        return refuse(`${edit.id} is not a current-source editable control`);
+      const result = await setProperty(converter, this.designerFile, edit.id, edit.prop, expression, text);
+      if (!result.safe || result.text === null)
+        return refuse(result.reason || `unsafe geometry edit for ${edit.id}.${edit.prop}`);
+      text = result.text;
+      liveEdits.push({ componentId: edit.id, propName: edit.prop, rawValue: edit.value });
+    }
+
+    if (this.doc.rev !== rev) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(this.currentId);
+      return false;
+    }
+    if (await this.currentCodeText() !== codeBehindBefore)
+      return refuse('the code-behind changed while inherited geometry was being authorized');
+    if (text === before) {
+      await this.loadProps(this.currentId);
+      return false;
+    }
+    if (!this.commit(before, text, label)) return false;
+    if (hasInherited) await this.fullRender();
+    else await this.live48((engine) => applyCompiledEdits(
+      engine, this.designerFile!, assemblyPath, liveEdits), true, { skipReselect: true, edits: liveEdits });
+    await this.loadProps(this.currentId);
+    await this.postDirty();
+    return true;
+  }
+
   /** The container a toolbox-added control should go into: the selected Panel/GroupBox/… or the form. */
   private containerParentFor(id: string): string {
-    const c = id ? this.controls.find((x) => x.id === id) : null;
-    if (c && !c.isRoot && /Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type)) return id;
+    let c = id ? this.controls.find((x) => x.id === id) : null;
+    while (c) {
+      if (c.id === 'this' || c.isRoot) return 'this';
+      if (/Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type)) return c.id;
+      c = c.parentId ? this.controls.find((x) => x.id === c?.parentId) ?? null : null;
+    }
     return 'this';
   }
 
@@ -3375,21 +6522,84 @@ class DesignerSession {
 
   private async applyReparent(id: string, parentId: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
+    if (this.localizable && this.localizationCulture !== '') {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'switch Language to (Default) before reparenting controls' }) });
+      return;
+    }
     const reason = this.outlineReparentReason(id, parentId);
     if (reason) { this.post({ type: 'status', message: t('status.editRejected', { reason }) }); return; }
     const eng = await this.ensureEngine();
     await this.applyEngineLocalizationCulture(eng);
     const before = this.doc.designerText;
     const rev = this.doc.rev;
-    const res = await reparentControl(eng, this.designerFile, id, parentId, before);
+    // VS preserves the control's full-frame position when it moves between containers, which means the serialized
+    // Location must be rebased to the destination's client origin. The outline only sends the two identities; the
+    // current engine layout is the authority for geometry, never a client-authored source value.
+    const child = this.controls.find((control) => control.id === id)!;
+    const parent = this.controls.find((control) => control.id === parentId)!;
+    const locX = Math.round(child.x - (parent.clientX ?? parent.x));
+    const locY = Math.round(child.y - (parent.clientY ?? parent.y));
+    // A Localizable=true form has no direct Location assignment to rewrite: VS keeps the membership change in
+    // generated source and the rebased point in the neutral resource set. Ask the source engine for membership-only
+    // reparenting in that lane; ordinary forms keep the existing atomic membership+Location source edit.
+    const res = this.localizable
+      ? await reparentControl(eng, this.designerFile, id, parentId, before)
+      : await reparentControl(eng, this.designerFile, id, parentId, before, locX, locY);
     if (!res.safe || res.newText === null) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe reparent' }) });
       return;
     }
     if (res.newText === before) { this.post({ type: 'status', message: t('status.editRejected', { reason: 'already in that container' }) }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
+    if (this.localizable) {
+      const localizedSource = res.newText;
+      if (new RegExp('\\bthis\\.' + escapeRegex(id) + '\\.Location\\s*=').test(localizedSource)) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'localized Location remained in generated source' }) });
+        return;
+      }
+      const resxUri = this.localizedResxUri('');
+      const resxRead = await this.readResx(resxUri);
+      if (resxRead == null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'neutral resource file is unavailable' }) });
+        return;
+      }
+      const resource = await setLocalizedResources(eng, this.designerFile, '', resxRead.text, [{
+        componentId: id,
+        propertyName: 'Location',
+        propertyTypeName: 'System.Drawing.Point',
+        invariantValue: `${locX}, ${locY}`,
+      }]);
+      if (!resource.safe || resource.resxText == null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: resource.reason || 'localized Location update was refused' }) });
+        return;
+      }
+      if (this.doc.rev !== rev || this.localizationCulture !== '' || !this.localizable) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        return;
+      }
+      const tx: ResxTx = { uri: resxUri, before: resxRead.text, after: resource.resxText, bom: resxRead.hadBom };
+      try {
+        const committed = await this.commitResourceSetThroughRunner(`Reparent localized ${id}`, [tx], before, localizedSource, {
+          persistDesignerTextBeforeCommit: true,
+          expectedDesignerRevision: rev,
+        });
+        if (!committed || committed.status !== 'committed')
+          throw new Error(committed?.error ?? committed?.status ?? 'journal unavailable');
+      } catch (error) {
+        this.output.appendLine('[designer] localized reparent refused: ' + errMsg(error));
+        this.post({ type: 'status', message: t('status.editRejected', { reason: errMsg(error) }) });
+        return;
+      }
+      this.currentId = id;
+      this.currentSelectionIds = [id];
+      this.output.appendLine(`reparented localized ${id} to ${parentId}; Location=${locX},${locY}`);
+      await this.fullRender();
+      this.post({ type: 'status', message: `Moved ${id}` });
+      return;
+    }
     if (!this.commit(before, res.newText, `Reparent ${id}`)) return;
     this.currentId = id;
+    this.currentSelectionIds = [id];
     this.output.appendLine(`reparented ${id} to ${parentId} (unsaved)`);
     await this.fullRender();
     this.post({ type: 'status', message: `Moved ${id}` });
@@ -3473,7 +6683,16 @@ class DesignerSession {
     return authorized.appliedCount;
   }
 
-  private async applyManipulate(id: string, mode: string, winX: number, winY: number, w: number, h: number): Promise<void> {
+  private async applyManipulate(
+    id: string,
+    mode: string,
+    winX: number,
+    winY: number,
+    w: number,
+    h: number,
+    dropX?: number,
+    dropY?: number,
+  ): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const old = this.controls.find((c) => c.id === id);
     if (!old) return;
@@ -3485,6 +6704,14 @@ class DesignerSession {
       const nh = Math.max(1, this.rootClient.h + Math.round(h - old.height));
       await this.applyEdit(id, 'ClientSize', 'System.Drawing.Size', false, `${nw}, ${nh}`);
       return;
+    }
+    if (mode === 'move' && this.engineKind === 'modern') {
+      const managed = await this.applyManagedLayoutMove(
+        id,
+        Number.isFinite(dropX) ? dropX! : winX + w / 2,
+        Number.isFinite(dropY) ? dropY! : winY + h / 2,
+      );
+      if (managed !== null) return;
     }
     if (this.engineKind === 'modern') {
       if (mode !== 'move' && mode !== 'resize') return;
@@ -3499,7 +6726,23 @@ class DesignerSession {
       }
       return;
     }
+    if (old.ownership === 'inherited' && this.localizable) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'localized inherited geometry overrides are not supported' }) });
+      await this.loadProps(id);
+      return;
+    }
     if (mode === 'resize') {
+      const resizeComponent = await this.describeFor(id);
+      const dock = resizeComponent?.properties?.find((p) => p.name === 'Dock')?.value ?? 'None';
+      // WinForms keeps one author-sized dimension for docked controls. Mirror the modern engine's live correction on
+      // net48: Left/Right persist Width, Top/Bottom persist Height, while layout-owned position/other axis stay intact.
+      if (dock === 'Left' || dock === 'Right') {
+        winX = old.x; winY = old.y; h = old.height;
+      } else if (dock === 'Top' || dock === 'Bottom') {
+        winX = old.x; winY = old.y; w = old.width;
+      } else if (dock === 'Fill') {
+        return;
+      }
       const movedTopLeft = Math.round(winX) !== Math.round(old.x) || Math.round(winY) !== Math.round(old.y);
       if (movedTopLeft) {
         const comp = await this.describeFor(id);
@@ -3507,21 +6750,46 @@ class DesignerSession {
         if (loc) {
           const nx = loc[0] + Math.round(winX - old.x);
           const ny = loc[1] + Math.round(winY - old.y);
-          await this.applyEdits(id, [
-            { prop: 'Location', propType: 'System.Drawing.Point', value: `${nx}, ${ny}` },
-            { prop: 'Size', propType: 'System.Drawing.Size', value: `${Math.round(w)}, ${Math.round(h)}` },
-          ]);
+          if (this.localizable) {
+            await this.applyEdits(id, [
+              { prop: 'Location', propType: 'System.Drawing.Point', value: `${nx}, ${ny}` },
+              { prop: 'Size', propType: 'System.Drawing.Size', value: `${Math.round(w)}, ${Math.round(h)}` },
+            ]);
+          } else {
+            const applied = await this.applyNet48GeometryEdits(`Resize ${id}`, [
+              { id, prop: 'Location', propType: 'System.Drawing.Point', value: `${nx}, ${ny}` },
+              { id, prop: 'Size', propType: 'System.Drawing.Size', value: `${Math.round(w)}, ${Math.round(h)}` },
+            ]);
+            if (applied) {
+              this.output.appendLine(`resized ${id} through token-checked net48 source geometry (unsaved)`);
+              this.post({ type: 'status', message: tn('status.resized', 1) });
+            }
+          }
           return;
         }
       }
-      await this.applyEdit(id, 'Size', 'System.Drawing.Size', false, `${Math.round(w)}, ${Math.round(h)}`);
+      if (this.localizable)
+        await this.applyEdit(id, 'Size', 'System.Drawing.Size', false, `${Math.round(w)}, ${Math.round(h)}`);
+      else if (await this.applyNet48GeometryEdits(`Resize ${id}`, [
+        { id, prop: 'Size', propType: 'System.Drawing.Size', value: `${Math.round(w)}, ${Math.round(h)}` },
+      ])) {
+        this.output.appendLine(`resized ${id} through token-checked net48 source geometry (unsaved)`);
+        this.post({ type: 'status', message: tn('status.resized', 1) });
+      }
     } else {
       const comp = await this.describeFor(id);
       const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
       if (!loc) return;
       const nx = loc[0] + Math.round(winX - old.x);
       const ny = loc[1] + Math.round(winY - old.y);
-      await this.applyEdit(id, 'Location', 'System.Drawing.Point', false, `${nx}, ${ny}`);
+      if (this.localizable)
+        await this.applyEdit(id, 'Location', 'System.Drawing.Point', false, `${nx}, ${ny}`);
+      else if (await this.applyNet48GeometryEdits(`Move ${id}`, [
+        { id, prop: 'Location', propType: 'System.Drawing.Point', value: `${nx}, ${ny}` },
+      ])) {
+        this.output.appendLine(`moved ${id} through token-checked net48 source geometry (unsaved)`);
+        this.post({ type: 'status', message: tn('status.moved', 1) });
+      }
     }
   }
 
@@ -3559,6 +6827,10 @@ class DesignerSession {
       return;
     }
     if (this.localizable) {
+      if (movable.some((id) => this.controls.find((control) => control.id === id)?.ownership === 'inherited')) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'localized inherited geometry overrides are not supported' }) });
+        return;
+      }
       const revBefore = this.doc.rev;
       const localized: LocalizedResourceEdit[] = [];
       for (const id of movable) {
@@ -3579,28 +6851,18 @@ class DesignerSession {
       }
       return;
     }
-    const eng = await this.ensureEngine();
-    const before = this.doc.designerText;
-    const rev = this.doc.rev;
-    let text = before;
-    const live48Edits: CompiledEdit[] = [];
-    let applied = 0;
+    const sourceEdits: Array<{ id: string; prop: 'Location'; propType: 'System.Drawing.Point'; value: string }> = [];
     for (const id of movable) {
-      const comp = this.engineKind === 'net48' ? await this.describeFor(id) : await describeComponent(eng, this.designerFile, id, this.asm(), text);
+      const comp = await this.describeFor(id);
       const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
       if (!loc) continue; // layout-managed / no representable Location → skip
       const value = `${loc[0] + Math.round(dx)}, ${loc[1] + Math.round(dy)}`;
-      const expr = await convertValue(eng, 'System.Drawing.Point', value);
-      if (expr === null) continue;
-      const res = await setProperty(eng, this.designerFile, id, 'Location', expr, text);
-      if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: id, propName: 'Location', rawValue: value }); }
+      sourceEdits.push({ id, prop: 'Location', propType: 'System.Drawing.Point', value });
     }
+    const applied = sourceEdits.length;
     if (!applied) { this.post({ type: 'status', message: t('status.nothingMoved') }); await this.loadProps(this.currentId); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
-    if (!this.commit(before, text, `Move ${applied} control${applied > 1 ? 's' : ''}`)) return;
-    this.output.appendLine(`moved ${applied} controls by (${Math.round(dx)}, ${Math.round(dy)}) (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => applyCompiledEdits(e, this.designerFile!, this.asm()!, live48Edits), true, { edits: live48Edits });
-    else await this.fullRender();
+    if (!await this.applyNet48GeometryEdits(`Move ${applied} control${applied > 1 ? 's' : ''}`, sourceEdits)) return;
+    this.output.appendLine(`moved ${applied} controls by (${Math.round(dx)}, ${Math.round(dy)}) through token-checked net48 source geometry (unsaved)`);
     this.post({ type: 'status', message: tn('status.moved', applied) });
   }
 
@@ -3608,10 +6870,8 @@ class DesignerSession {
    * Center-in-form (VS Format → Center Horizontally / Vertically): shift the selection's bounding box to the
    * center of its container's CLIENT area along one axis, preserving relative offsets (the same window-space
    * delta for every selected control → reuses applyAlign for the actual Location edits, so it's one undo,
-   * cross-runtime, and layout-managed controls are skipped). Computed host-side because only the host knows the
-   * form's exact client origin within the window chrome (asymmetric caption vs border) — a webview window-space
-   * center would put a vertical center ~half-a-caption too high. The root client rect is exact; a child container
-   * uses its window rect (its own client inset is a minor approximation, per the engine's ComputeWindowOffset).
+   * cross-runtime, and layout-managed controls are skipped). The engine supplies exact client rectangles for the
+   * root and every nested container, so captions, borders, DPI and nesting do not enter the browser calculation.
    */
   private async applyCenterInForm(axis: 'h' | 'v', ids: string[]): Promise<void> {
     if (!this.designerFile || this.disposed) return;
@@ -3622,25 +6882,28 @@ class DesignerSession {
     // container reference rect in window space
     const primary = sel.find((c) => c.id === this.currentId) ?? sel[0];
     const parentId = primary.parentId ?? 'this';
-    let cx: number, cy: number, cw: number, ch: number;
-    if ((parentId === 'this' || parentId === '') && this.rootFrame && this.rootClient) {
-      const ox = (this.rootFrame.w - this.rootClient.w) / 2; // symmetric side borders
-      const oy = (this.rootFrame.h - this.rootClient.h) - ox; // caption = total vertical chrome − bottom border
-      cx = ox; cy = oy; cw = this.rootClient.w; ch = this.rootClient.h;
-    } else {
-      const cont = this.controls.find((c) => c.id === parentId);
-      if (!cont) return;
-      cx = cont.x; cy = cont.y; cw = cont.width; ch = cont.height;
-    }
+    if (sel.some((c) => (c.parentId ?? 'this') !== parentId)) return;
+    const cont = this.controls.find((c) => c.id === (parentId || 'this'));
+    if (!cont) return;
+    // Visual Studio's Format.CenterHorizontally/Vertically uses the parent's complete ClientRectangle. Padding
+    // constrains layout engines and DisplayRectangle, but does not offset or shrink these explicit Format commands.
+    // The actual VS 18.7 S031 trace proves a 241px Panel and 80px Button center at X=80 even with asymmetric
+    // Padding(10,0,20,0): floor((241 - 80) / 2), not the former padding-adjusted X=76 hypothesis.
+    const cx = cont.clientX ?? cont.x;
+    const cy = cont.clientY ?? cont.y;
+    const cw = Math.max(0, cont.clientWidth ?? cont.width);
+    const ch = Math.max(0, cont.clientHeight ?? cont.height);
     // bounding box of the selection (window space) → the single delta that centers it in the container
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const c of sel) { minX = Math.min(minX, c.x); minY = Math.min(minY, c.y); maxX = Math.max(maxX, c.x + c.width); maxY = Math.max(maxY, c.y + c.height); }
     const edits: Array<{ id: string; dx: number; dy: number }> = [];
     if (axis === 'h') {
-      const dx = Math.round(cx + (cw - (maxX - minX)) / 2 - minX);
+      // WinForms rectangle arithmetic is integer arithmetic: an odd remainder is truncated toward zero (80.5 -> 80),
+      // not rounded away from zero as JavaScript Math.round would do.
+      const dx = Math.round(cx + Math.trunc((cw - (maxX - minX)) / 2) - minX);
       if (dx !== 0) for (const c of sel) edits.push({ id: c.id, dx, dy: 0 });
     } else {
-      const dy = Math.round(cy + (ch - (maxY - minY)) / 2 - minY);
+      const dy = Math.round(cy + Math.trunc((ch - (maxY - minY)) / 2) - minY);
       if (dy !== 0) for (const c of sel) edits.push({ id: c.id, dx: 0, dy });
     }
     if (edits.length) await this.applyAlign(edits);
@@ -3678,6 +6941,10 @@ class DesignerSession {
       return;
     }
     if (this.localizable) {
+      if (wanted.some((edit) => this.controls.find((control) => control.id === edit.id)?.ownership === 'inherited')) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'localized inherited geometry overrides are not supported' }) });
+        return;
+      }
       const revBefore = this.doc.rev;
       const localized: LocalizedResourceEdit[] = [];
       for (const edit of wanted) {
@@ -3698,28 +6965,18 @@ class DesignerSession {
       }
       return;
     }
-    const eng = await this.ensureEngine();
-    const before = this.doc.designerText;
-    const rev = this.doc.rev;
-    let text = before;
-    const live48Edits: CompiledEdit[] = [];
-    let applied = 0;
+    const sourceEdits: Array<{ id: string; prop: 'Location'; propType: 'System.Drawing.Point'; value: string }> = [];
     for (const e of wanted) {
-      const comp = this.engineKind === 'net48' ? await this.describeFor(e.id) : await describeComponent(eng, this.designerFile, e.id, this.asm(), text);
+      const comp = await this.describeFor(e.id);
       const loc = parsePair(comp?.properties?.find((p) => p.name === 'Location')?.value);
       if (!loc) continue; // layout-managed / no representable Location → skip
       const value = `${loc[0] + Math.round(e.dx)}, ${loc[1] + Math.round(e.dy)}`;
-      const expr = await convertValue(eng, 'System.Drawing.Point', value);
-      if (expr === null) continue;
-      const res = await setProperty(eng, this.designerFile, e.id, 'Location', expr, text);
-      if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: e.id, propName: 'Location', rawValue: value }); }
+      sourceEdits.push({ id: e.id, prop: 'Location', propType: 'System.Drawing.Point', value });
     }
+    const applied = sourceEdits.length;
     if (!applied) { this.post({ type: 'status', message: t('status.nothingAligned') }); await this.loadProps(this.currentId); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
-    if (!this.commit(before, text, `Align ${applied} control${applied > 1 ? 's' : ''}`)) return;
-    this.output.appendLine(`aligned ${applied} controls (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, { edits: live48Edits });
-    else await this.fullRender();
+    if (!await this.applyNet48GeometryEdits(`Align ${applied} control${applied > 1 ? 's' : ''}`, sourceEdits)) return;
+    this.output.appendLine(`aligned ${applied} controls through token-checked net48 source geometry (unsaved)`);
     this.post({ type: 'status', message: tn('status.aligned', applied) });
   }
 
@@ -3755,6 +7012,10 @@ class DesignerSession {
       return;
     }
     if (this.localizable) {
+      if (wanted.some((edit) => this.controls.find((control) => control.id === edit.id)?.ownership === 'inherited')) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'localized inherited geometry overrides are not supported' }) });
+        return;
+      }
       const revBefore = this.doc.rev;
       const localized = wanted.map((edit): LocalizedResourceEdit => ({
         componentId: edit.id,
@@ -3768,25 +7029,15 @@ class DesignerSession {
       }
       return;
     }
-    const eng = await this.ensureEngine();
-    const before = this.doc.designerText;
-    const rev = this.doc.rev;
-    let text = before;
-    const live48Edits: CompiledEdit[] = [];
-    let applied = 0;
-    for (const e of wanted) {
-      const value = `${Math.round(e.width)}, ${Math.round(e.height)}`;
-      const expr = await convertValue(eng, 'System.Drawing.Size', value);
-      if (expr === null) continue;
-      const res = await setProperty(eng, this.designerFile, e.id, 'Size', expr, text);
-      if (res.safe && res.text !== null) { text = res.text; applied++; live48Edits.push({ componentId: e.id, propName: 'Size', rawValue: value }); }
-    }
-    if (!applied) { this.post({ type: 'status', message: t('status.nothingResized') }); await this.loadProps(this.currentId); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); await this.loadProps(this.currentId); return; }
-    if (!this.commit(before, text, `Resize ${applied} control${applied > 1 ? 's' : ''}`)) return;
-    this.output.appendLine(`resized ${applied} controls (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((ee) => applyCompiledEdits(ee, this.designerFile!, this.asm()!, live48Edits), true, { edits: live48Edits });
-    else await this.fullRender();
+    const sourceEdits = wanted.map((edit) => ({
+      id: edit.id,
+      prop: 'Size' as const,
+      propType: 'System.Drawing.Size' as const,
+      value: `${Math.round(edit.width)}, ${Math.round(edit.height)}`,
+    }));
+    const applied = sourceEdits.length;
+    if (!await this.applyNet48GeometryEdits(`Resize ${applied} control${applied > 1 ? 's' : ''}`, sourceEdits)) return;
+    this.output.appendLine(`resized ${applied} controls through token-checked net48 source geometry (unsaved)`);
     this.post({ type: 'status', message: tn('status.resized', applied) });
   }
 
@@ -3798,6 +7049,10 @@ class DesignerSession {
     if (!this.designerFile || this.disposed) return;
     const removable = ids.filter((id) => id && id !== 'this');
     if (!removable.length) return;
+    if (this.localizable) {
+      await this.applyLocalizedStructuralRemove(removable, `Remove ${removable.length} localized controls`);
+      return;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -3812,6 +7067,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, text, `Remove ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = 'this';
+    this.currentSelectionIds = ['this'];
     this.output.appendLine(`removed ${applied} controls (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, removed), true, {});
     else await this.fullRender();
@@ -3819,8 +7075,19 @@ class DesignerSession {
   }
 
   /** Grid edit from the Properties view, with its own error/restore handling. */
-  async editFromGrid(id: string, prop: string, propType: string, isEnum: boolean, value: string, refEdit = false, designTime = false): Promise<void> {
+  async editFromGrid(id: string, prop: string, propType: string, isEnum: boolean, value: string,
+    refEdit = false, designTime = false, multi = false): Promise<void> {
     try {
+      if (multi) {
+        const published = this.publishedMultiProperty(id, prop);
+        if (!published || published.property.type !== propType || !!published.property.isEnum !== isEnum || refEdit || designTime) {
+          this.post({ type: 'status', message: t('status.editRejected', { reason: 'stale or incompatible multi-object property metadata' }) });
+          await this.loadProps(id);
+          return;
+        }
+        await this.applyMultiEdit(published.ids, prop, propType, isEnum, value);
+        return;
+      }
       await this.applyEdit(id, prop, propType, isEnum, value, refEdit, designTime);
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
@@ -3844,6 +7111,69 @@ class DesignerSession {
     // (non-compiling save). Capturing here makes the rev-check below catch any edit during describe/convert/splice.
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
+    const codeBehindBefore = this.engineKind === 'net48' ? await this.currentCodeText() : undefined;
+
+    // An inherited row is the one deliberately narrow exception to component-level read-only. Its capability and
+    // opaque base token must come from the exact describe payload published for this source revision; the webview may
+    // not invent either one. All other inherited messages fail here instead of falling through to SetProperty.
+    const publishedInheritedComponent = this.publishedPropertyComponent?.ids.length === 1
+      && this.publishedPropertyComponent.ids[0] === id
+      && this.publishedPropertyComponent.rev === revBefore
+      && this.publishedPropertyComponent.component?.ownership === 'inherited'
+      ? this.publishedPropertyComponent.component : null;
+    const inheritedProperty = publishedInheritedComponent?.properties.find((candidate) => candidate.name === prop) ?? null;
+    if (publishedInheritedComponent) {
+      const token = publishedInheritedComponent.baseIdentityToken ?? '';
+      const authorized = publishedInheritedComponent.inheritedOverrideEditable === true
+        && inheritedProperty?.inheritedOverrideEditable === true && !inheritedProperty.readOnly
+        && inheritedProperty.type === propType && !!inheritedProperty.isEnum === isEnum
+        && !refEdit && !designTime && token.length > 0;
+      if (!authorized) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'stale or incompatible inherited override metadata' }) });
+        await this.loadProps(id);
+        return;
+      }
+      if (this.localizable) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'localized inherited overrides are not supported' }) });
+        await this.loadProps(id);
+        return;
+      }
+
+      const converter = await this.ensureEngine('modern');
+      const inheritedExpr = COMPLEX_TYPE_SET.has(propType)
+        ? await convertValue(converter, propType, raw)
+        : toCSharpExpression(propType, isEnum, raw);
+      if (inheritedExpr === null) {
+        this.post({ type: 'status', message: t('status.cannotSet', { prop, value: raw }) });
+        await this.loadProps(id);
+        return;
+      }
+      const authority = await this.ensureEngine(this.engineKind);
+      const res = await applyInheritedPropertyOverride(
+        authority, this.designerFile, id, prop, inheritedExpr, token, this.asm(), before, codeBehindBefore);
+      if (!res.safe || res.text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe inherited override' }) });
+        await this.loadProps(id);
+        return;
+      }
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(id);
+        return;
+      }
+      if (this.engineKind === 'net48' && await this.currentCodeText() !== codeBehindBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(id);
+        return;
+      }
+      if (res.text !== before && !this.commit(before, res.text, `Override inherited ${id}.${prop}`)) return;
+      this.output.appendLine(`overrode inherited ${id}.${prop} = ${inheritedExpr} (${res.mode}, unsaved)`);
+      this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
+      await this.fullRender();
+      await this.loadProps(id);
+      await this.postDirty();
+      return;
+    }
 
     if (designTime && prop === '(Name)') {
       if (this.refuseLocalizableMutation()) return;
@@ -3957,7 +7287,25 @@ class DesignerSession {
       }
     }
 
-    const res = await setProperty(eng, this.designerFile, id, prop, expr, before);
+    // Modern scalar edits, plus the one fixed-contract certified vendor scalar, use the independently proven
+    // InitializeComponent-owned region when it is byte-for-byte equivalent to Lane A. The certified net48 property is
+    // planned by the modern source-only engine after its live metadata has authorized the exact assembly/hash/editor;
+    // arbitrary net48 properties remain source-first. Any unsupported shape falls back to the minimal source splice.
+    let res;
+    const certifiedVendorScalar = !!this.publishedEditableProperty(id, prop)?.uiTypeEditorCertificationId;
+    const plannerStartedAt = Date.now();
+    if (this.engineKind === 'modern' || certifiedVendorScalar) {
+      const planner = this.engineKind === 'modern' ? eng : await this.ensureEngine('modern');
+      const planned = await setPropertyViaProvenOwnedRegion(
+        planner, this.designerFile, id, prop, expr, before,
+        this.engineKind === 'modern' ? this.modernGraphToken : undefined);
+      this.lastPropertyPersistenceLane = planned.persistenceLane;
+      res = planned;
+    } else {
+      res = await setProperty(eng, this.designerFile, id, prop, expr, before);
+      this.lastPropertyPersistenceLane = 'sourceFirst';
+    }
+    const propertyPlannerMs = Date.now() - plannerStartedAt;
     if (!res.safe || res.text === null) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
       await this.loadProps(id);
@@ -3986,18 +7334,222 @@ class DesignerSession {
       return;
     }
 
+    const commitStartedAt = Date.now();
     if (!this.commit(before, finalText, `Set ${id}.${prop}`)) return;
-    this.output.appendLine(`set ${id}.${prop} = ${expr} (${res.mode}, unsaved)`);
+    const commitMs = Date.now() - commitStartedAt;
+    const persistenceLane = 'persistenceLane' in res ? `, ${res.persistenceLane}` : '';
+    this.output.appendLine(`set ${id}.${prop} = ${expr} (${res.mode}${persistenceLane}, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
 
     // net9 re-renders the interpreted graph from the edited text; net48 can't (it renders the compiled assembly),
     // so it mutates the LIVE instance for an immediate picture — the text edit above is what persists on save.
+    let propertiesReconciled = false;
+    const reconcileStartedAt = Date.now();
     if (this.engineKind === 'net48') {
-      await this.liveEdit48(id, prop, liveRaw);
+      propertiesReconciled = await this.liveEdit48(id, prop, liveRaw);
     } else {
-      await this.patchOrRerender(id, prop);
+      propertiesReconciled = await this.patchOrRerender(id, prop, {
+        beforeSourceText: before,
+        afterSourceText: finalText,
+        newValueExpr: expr,
+      });
     }
-    await this.loadProps(id);
+    const reconcileMs = Date.now() - reconcileStartedAt;
+    if (this.engineKind === 'modern') {
+      this.lastModernPropertyEditTelemetry = {
+        plannerMs: propertyPlannerMs,
+        commitMs,
+        reconcileMs,
+        retainedApplied: this.lastModernRetainedApplied,
+        trailingPropertiesMs: propertiesReconciled ? 0 : -1,
+      };
+    }
+    if (this.engineKind === 'net48' && this.lastNet48PropertyEditTelemetry) {
+      this.lastNet48PropertyEditTelemetry.plannerMs = propertyPlannerMs;
+      this.lastNet48PropertyEditTelemetry.commitMs = commitMs;
+      this.lastNet48PropertyEditTelemetry.reconcileMs = reconcileMs;
+    }
+    if (!propertiesReconciled) {
+      const propertiesStartedAt = Date.now();
+      await this.loadProps(id);
+      if (this.engineKind === 'net48' && this.lastNet48PropertyEditTelemetry) {
+        this.lastNet48PropertyEditTelemetry.trailingPropertiesMs = Date.now() - propertiesStartedAt;
+      }
+      if (this.engineKind === 'modern' && this.lastModernPropertyEditTelemetry) {
+        this.lastModernPropertyEditTelemetry.trailingPropertiesMs = Date.now() - propertiesStartedAt;
+      }
+    }
+    await this.postDirty();
+  }
+
+  /** Delete current-source controls from an ApplyResources-backed form and remove every id.* resource from neutral
+   * and discovered satellite files. Source and all resource snapshots are one durable transaction/undo unit. */
+  private async applyLocalizedStructuralRemove(ids: string[], label: string): Promise<number> {
+    if (!this.designerFile || this.disposed || !ids.length) return 0;
+    if (this.localizationCulture !== '') {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'switch Language to (Default) before deleting controls' }) });
+      return 0;
+    }
+    const eng = await this.ensureEngine('modern');
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    let text = before;
+    const removed: string[] = [];
+    for (const id of ids) {
+      const result = await removeControl(eng, this.designerFile, id, text);
+      if (result.safe && result.newText !== null) {
+        text = result.newText;
+        removed.push(id);
+      }
+    }
+    if (!removed.length) {
+      this.post({ type: 'status', message: t('status.removeRejectedNothing') });
+      return 0;
+    }
+    if (this.doc.rev !== rev || this.localizationCulture !== '' || !this.localizable) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      return 0;
+    }
+
+    const txs: ResxTx[] = [];
+    const seen = new Set<string>();
+    for (const choice of discoverLocalizationCultures(this.designerFile)) {
+      const key = normalize(choice.resxPath);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (choice.exists) {
+        try {
+          if (fs.lstatSync(choice.resxPath).isSymbolicLink())
+            throw new Error('localized resource symlinks are not editable');
+        } catch (error) {
+          this.post({ type: 'status', message: t('status.removeRejected', { reason: errMsg(error) }) });
+          return 0;
+        }
+      }
+      const uri = vscode.Uri.file(choice.resxPath);
+      const current = await this.readResx(uri);
+      if (current == null) continue;
+      const resourceEdit = await removeLocalizedComponentResources(eng, current?.text ?? null, removed);
+      if (!resourceEdit.ok || resourceEdit.resxText == null) {
+        this.post({ type: 'status', message: t('status.removeRejected', { reason: resourceEdit.reason || 'unsafe resource cleanup' }) });
+        return 0;
+      }
+      txs.push({ uri, before: current?.text ?? null, after: resourceEdit.resxText, bom: current?.hadBom ?? false });
+    }
+    if (!txs.length) {
+      this.post({ type: 'status', message: t('status.removeRejected', { reason: 'neutral resource target is unavailable' }) });
+      return 0;
+    }
+    try {
+      const committed = await this.commitResourceSetThroughRunner(label, txs, before, text, {
+        persistDesignerTextBeforeCommit: true,
+        expectedDesignerRevision: rev,
+      });
+      if (!committed || committed.status !== 'committed')
+        throw new Error(committed?.error ?? committed?.status ?? 'journal unavailable');
+    } catch (error) {
+      this.output.appendLine('[designer] localized structural remove refused: ' + errMsg(error));
+      this.post({ type: 'status', message: t('status.removeRejected', { reason: errMsg(error) }) });
+      return 0;
+    }
+    this.currentId = 'this';
+    this.currentSelectionIds = ['this'];
+    this.output.appendLine(`removed ${removed.length} localized control(s) and their neutral/satellite resource keys`);
+    if (this.engineKind === 'net48')
+      await this.live48((engine) => removeCompiledControls(engine, this.designerFile!, this.asm()!, removed), true, {});
+    else await this.fullRender();
+    this.post({ type: 'status', message: tn('status.removed', removed.length) });
+    return removed.length;
+  }
+
+  /** Apply one scalar value across the exact revision-bound selection published to the panel. The modern source
+   * engine returns no text unless every target passes ownership/expression/minimal-diff preflight; the host then makes
+   * exactly one commit/undo unit. net48 mirrors that committed batch into its live picture in one snapshot. */
+  private async applyMultiEdit(ids: string[], prop: string, propType: string, isEnum: boolean, raw: string): Promise<void> {
+    if (!this.designerFile || ids.length < 2) return;
+    if (COMPLEX_TYPE_SET.has(propType) && raw.trim() === '') {
+      this.post({ type: 'status', message: t('status.enterValue', { type: shortName(propType) }) });
+      await this.loadProps(this.currentId);
+      return;
+    }
+
+    const before = this.doc.designerText;
+    const revBefore = this.doc.rev;
+
+    const conjugate = prop === 'Dock' ? 'Anchor' : prop === 'Anchor' ? 'Dock' : null;
+    const clearConjugate = prop === 'Anchor' || (prop === 'Dock' && raw.trim() !== '' && raw.trim() !== 'None');
+
+    if (this.localizable) {
+      const edits: LocalizedResourceEdit[] = ids.map((componentId) => ({
+        componentId,
+        propertyName: prop,
+        propertyTypeName: propType,
+        invariantValue: raw,
+      }));
+      if (conjugate && clearConjugate) {
+        for (const componentId of ids) edits.push({
+          componentId,
+          propertyName: conjugate,
+          propertyTypeName: 'System.String',
+          invariantValue: '',
+          removeOverride: true,
+        });
+      }
+      if (await this.applyLocalizedResourceEdits(
+        `Set ${prop} on ${ids.length} localized controls`, edits, revBefore)) {
+        this.output.appendLine(`set localized ${prop} on ${ids.length} controls (${this.localizationCultureLabel()})`);
+        this.post({ type: 'status', message: tn('status.multiPropSet', ids.length, { prop }) });
+        await this.loadProps(this.currentId);
+      }
+      return;
+    }
+
+    const eng = await this.ensureEngine('modern');
+    const expr = COMPLEX_TYPE_SET.has(propType)
+      ? await convertValue(eng, propType, raw)
+      : toCSharpExpression(propType, isEnum, raw);
+    if (expr === null) {
+      this.post({ type: 'status', message: t('status.invalidValue', { raw, type: shortName(propType) }) });
+      await this.loadProps(this.currentId);
+      return;
+    }
+
+    const result = await setProperties(eng, this.designerFile, ids, prop, expr, before);
+    if (!result.safe || result.text === null) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || 'unsafe' }) });
+      await this.loadProps(this.currentId);
+      return;
+    }
+    let finalText = result.text;
+    if (conjugate && clearConjugate) {
+      const reset = await resetProperties(eng, this.designerFile, ids, conjugate, finalText);
+      if (!reset.safe) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: reset.reason || 'unsafe conjugate reset' }) });
+        await this.loadProps(this.currentId);
+        return;
+      }
+      if (reset.text != null) finalText = reset.text;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(this.currentId);
+      return;
+    }
+    if (!this.commit(before, finalText, `Set ${prop} on ${ids.length} controls`)) return;
+
+    const liveEdits: CompiledEdit[] = ids.map((componentId) => ({ componentId, propName: prop, rawValue: raw }));
+    if (conjugate && clearConjugate) {
+      for (const componentId of ids) liveEdits.push({ componentId, propName: conjugate, rawValue: '', reset: true });
+    }
+    this.output.appendLine(`set ${prop} on ${ids.length} controls (${result.mode}, one undo unit, unsaved)`);
+    this.post({ type: 'status', message: tn('status.multiPropSet', ids.length, { prop }) });
+    if (this.engineKind === 'net48') {
+      await this.live48((engine) => applyCompiledEdits(engine, this.designerFile!, this.asm()!, liveEdits), true,
+        { skipReselect: true, edits: liveEdits });
+      await this.loadProps(this.currentId);
+    } else {
+      await this.fullRender();
+    }
     await this.postDirty();
   }
 
@@ -4096,9 +7648,9 @@ class DesignerSession {
    * immediately (the net9 interpreter path can't render this DevExpress/Framework control). Best-effort — an
    * unconvertible/read-only value leaves the picture on the built value with a note; the committed text still
    * renders after a rebuild. */
-  private async liveEdit48(id: string, prop: string, raw: string): Promise<void> {
+  private async liveEdit48(id: string, prop: string, raw: string): Promise<boolean> {
     const asm = this.asm();
-    if (!asm || !this.designerFile) return;
+    if (!asm || !this.designerFile) return false;
     // a property edit IS a committed source-backed edit, so opt into interpreted re-render: under
     // an interpreted canvas re-interpret the committed source (fullRender) instead of mutating the compiled instance.
     // ALWAYS skipReselect: this matches the earlier net48 `show48`, which posted NO host control selection — so the
@@ -4106,8 +7658,36 @@ class DesignerSession {
     // control select instead breaks a visibility-changing edit (Visible=false leaves the control out of the layout →
     // selection snaps to the form → the hidden control's grid is dropped and can't be set back) and clears an item/nested
     // highlight — both are visibility contracts (CONTROL-visibility + ITEM-highlight).
+    let propertiesReconciled = false;
+    let componentInSnapshot = false;
+    let snapshotComponentId: string | null = null;
+    const liveStartedAt = Date.now();
     await this.live48((eng) => setCompiledPropertyLive(eng, this.designerFile!, asm, id, prop, raw), true,
-      { skipReselect: true, edits: [{ componentId: id, propName: prop, rawValue: raw }] });
+      {
+        skipReselect: true,
+        edits: [{ componentId: id, propName: prop, rawValue: raw }],
+        onInterpretedSnapshot: (res) => {
+          const component = res.component;
+          snapshotComponentId = component?.id ?? null;
+          componentInSnapshot = component?.id === id;
+          if (component?.id !== id || this.currentId !== id
+            || this.currentSelectionIds.length !== 1 || this.currentSelectionIds[0] !== id) return;
+          this.publishedPropertyComponent = { ids: [id], rev: this.doc.rev, component };
+          DesignerHub.instance.pushPanel(this, { type: 'props', id, component });
+          propertiesReconciled = true;
+        },
+      });
+    this.lastNet48PropertyEditTelemetry = {
+      plannerMs: 0,
+      commitMs: 0,
+      reconcileMs: Date.now() - liveStartedAt,
+      liveMs: Date.now() - liveStartedAt,
+      snapshotComponentId,
+      componentInSnapshot,
+      propertiesReconciled,
+      trailingPropertiesMs: propertiesReconciled ? 0 : -1,
+    };
+    return propertiesReconciled;
   }
 
   /** net48 compiled preview for a typed "…" collection edit: after the text edit is committed, reconstruct the
@@ -4187,7 +7767,11 @@ class DesignerSession {
    * never a NEW break. `interp.skipReselect` threads through to fullRender for callers that must preserve a non-control
    * selection. */
   private async live48(op: (eng: EngineHandle) => Promise<RenderLayout>, notifyOnNotApplied = true,
-    interp?: { skipReselect?: boolean; edits?: CompiledEdit[] }): Promise<boolean> {
+    interp?: {
+      skipReselect?: boolean;
+      edits?: CompiledEdit[];
+      onInterpretedSnapshot?: (result: RenderLayout) => void;
+    }): Promise<boolean> {
     if (!this.designerFile || !this.asm()) return false;
     if (interp && this.net48RenderMode === 'interpreted') {
       // 1.2.x — the same edits the compiled path would apply, applied to the cached INTERPRETED graph instead. That
@@ -4198,7 +7782,8 @@ class DesignerSession {
       // assignment from the source in the same commit, so the live batch would carry half the change and the
       // provisional picture (and any burst edit chained from it) would show a form the buffer no longer describes.
       const fullyDescribed = !interp.edits?.some((e) => e.propName === 'Dock' || e.propName === 'Anchor');
-      if (fullyDescribed && interp.edits?.length && await this.liveInterpreted48(interp.edits)) return true;
+      if (fullyDescribed && interp.edits?.length
+        && await this.liveInterpreted48(interp.edits, interp.onInterpretedSnapshot)) return true;
       return this.fullRender(interp.skipReselect ?? false);
     }
     const seq = ++this.renderSeq;
@@ -4223,7 +7808,10 @@ class DesignerSession {
    * assembly was rebuilt under it, or an edit did not apply. The engine drops its cache in that last case, so the
    * fallback render starts from source.
    */
-  private async liveInterpreted48(edits: CompiledEdit[]): Promise<boolean> {
+  private async liveInterpreted48(
+    edits: CompiledEdit[],
+    onSnapshot?: (result: RenderLayout) => void,
+  ): Promise<boolean> {
     const before = this.renderedText;
     if (before === undefined || !this.designerFile || !this.asm()) return false;
     const rev = this.doc.rev;
@@ -4236,19 +7824,19 @@ class DesignerSession {
     }
     const after = await this.currentText();
     if (after === undefined || after === null) return false;
+    const codeBehindText = await this.currentCodeText();
     const seq = ++this.renderSeq;
     try {
       const eng = await this.ensureEngine('net48');
       const res = await applyInterpretedEditsLive(eng, this.designerFile, this.asm()!, edits, before, after,
-        undefined, undefined, this.tabViewState(), this.renderScale);
-      // The buffer moved WHILE the edit was in flight (another writer, a second editor on the same file). The engine
-      // has now keyed its graph to a buffer that also carries that other change, which the graph never received — so
-      // a later render of that same text would reuse a picture missing it. Throw the graph away and re-interpret.
-      if (this.doc.rev !== rev) {
+        undefined, undefined, this.tabViewState(), this.renderScale, codeBehindText);
+      // Either source half moved WHILE the edit was in flight. The engine has now keyed its graph to a document that
+      // also carries that other change, which the graph never received — drop it before any later reuse.
+      if (this.doc.rev !== rev || await this.currentCodeText() !== codeBehindText) {
         this.renderedText = undefined;
         try { await discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, this.asm()!); }
         catch { /* best effort: the stamp mismatch on the next render is the backstop */ }
-        this.output.appendLine('[designer] buffer changed during an interpreted live edit — dropping the cached graph');
+        this.output.appendLine('[designer] designer/code-behind buffer changed during an interpreted live edit — dropping the cached graph');
         return false;
       }
       if (res.applied === false) {
@@ -4258,13 +7846,26 @@ class DesignerSession {
       if (seq !== this.renderSeq || this.disposed) return true; // superseded by a newer render; it owns the picture
       this.renderedText = after; // the picture now corresponds to the committed buffer
       this.renderedRev = rev;
-      this.controls = res.controls;
-      this.toolStripItems = res.toolStripItems ?? [];
-      this.rootClient = { w: res.clientWidth, h: res.clientHeight };
-      this.rootFrame = { w: res.width, h: res.height };
-      this.post({ type: 'render', png: res.png.toString('base64'), width: res.width, height: res.height, gen: seq });
-      this.postLayout(res.controls, this.toolStripItems);
-      this.post({ type: 'tray', items: res.tray });
+      if (!res.layoutUnchanged) {
+        this.controls = res.controls;
+        this.toolStripItems = res.toolStripItems ?? [];
+        this.rootClient = { w: res.clientWidth, h: res.clientHeight };
+        this.rootFrame = { w: res.width, h: res.height };
+      }
+      if (res.isPatch && (res.patchWidth ?? 0) > 0 && (res.patchHeight ?? 0) > 0) {
+        this.post({
+          type: 'patch', png: res.png.toString('base64'),
+          x: res.patchX ?? 0, y: res.patchY ?? 0,
+          width: res.patchWidth ?? 0, height: res.patchHeight ?? 0, gen: seq,
+        });
+      } else {
+        this.post({ type: 'render', png: res.png.toString('base64'), width: res.width, height: res.height, gen: seq });
+      }
+      if (!res.layoutUnchanged) {
+        this.postLayout(res.controls, this.toolStripItems);
+        this.post({ type: 'tray', items: res.tray });
+      }
+      onSnapshot?.(res);
       // Deliberately NOT show48: that flips the canvas to 'compiled' (it exists for build-based live ops). This
       // picture is still the interpreted live source, so the mode — and the absence of the "last build" disclosure —
       // must stay exactly as it was.
@@ -4306,11 +7907,14 @@ class DesignerSession {
       // the SAME identity model the canvas + panel use.
       try {
         const textR = await this.currentText();
+        const codeBehindTextR = await this.currentCodeText();
         const eng48r = await this.ensureEngine('net48');
         await this.applyEngineLocalizationCulture(eng48r);
         return this.net48RenderMode === 'interpreted'
-          ? await describeInterpretedComponent(eng48r, this.designerFile, asm, textR ?? '', id)
-          : await describeCompiledComponent(eng48r, this.designerFile, asm, id, undefined, undefined, textR);
+          ? await describeInterpretedComponent(eng48r, this.designerFile, asm, textR ?? '', id,
+            undefined, undefined, undefined, undefined, codeBehindTextR)
+          : await describeCompiledComponent(eng48r, this.designerFile, asm, id,
+            undefined, undefined, textR, codeBehindTextR);
       }
       catch { return null; }
     }
@@ -4322,6 +7926,31 @@ class DesignerSession {
   /** The sibling .resx for the current designer file (Foo.Designer.cs / Foo.cs → Foo.resx). */
   private resxUri(): vscode.Uri {
     return vscode.Uri.file(neutralResxPathForDesigner(this.designerFile!));
+  }
+
+  private async projectResourcePairs(): Promise<ProjectResourceFilePair[]> {
+    if (!this.designerFile) return [];
+    const root = this.wsRoot();
+    const owning = findOwningCsproj(path.dirname(this.designerFile), root);
+    if (!owning) return []; // never scan a whole workspace and guess ownership
+    const projectRoot = path.dirname(owning);
+    const maxFiles = 128;
+    const found = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(projectRoot, '**/*.resx'),
+      '**/{bin,obj,node_modules,.git,.vs,packages,artifacts}/**',
+      maxFiles + 1,
+    );
+    if (found.length > maxFiles) throw new Error(`project has more than ${maxFiles} resource files`);
+    const lexicalPairs = found
+      .map((uri) => conventionalProjectResourcePair(projectRoot, uri.fsPath, this.designerFile!))
+      .filter((pair): pair is ProjectResourceFilePair => pair !== null)
+      .sort((a, b) => a.resxPath.localeCompare(b.resxPath));
+    const checked = await Promise.all(lexicalPairs.map(async (pair) =>
+      await isCanonicalProjectResourcePath(projectRoot, pair.resxPath)
+        && await isCanonicalProjectResourcePath(projectRoot, pair.designerPath)
+        ? pair
+        : null));
+    return checked.filter((pair): pair is ProjectResourceFilePair => pair !== null);
   }
 
   private localizedResxUri(culture = this.localizationCulture): vscode.Uri {
@@ -4358,6 +7987,26 @@ class DesignerSession {
     const hadBom = s.charCodeAt(0) === 0xFEFF;
     if (hadBom) s = s.slice(1); // strip a leading BOM so the XML parser is happy
     return { text: s, hadBom };
+  }
+
+  /** Project-resource picker input boundary: ordinary local UTF-8 files only, no symlink escape and no unbounded read. */
+  private async readProjectResourceText(uri: vscode.Uri, projectRoot: string): Promise<string> {
+    const maxBytes = 64 * 1024 * 1024;
+    if (!await isCanonicalProjectResourcePath(projectRoot, uri.fsPath))
+      throw new Error('project resource input escapes its canonical project root');
+    const stat = await vscode.workspace.fs.stat(uri);
+    if ((stat.type & vscode.FileType.SymbolicLink) !== 0 || (stat.type & vscode.FileType.File) === 0)
+      throw new Error('project resource input is not a regular file');
+    if (stat.size > maxBytes) throw new Error('project resource input is too large');
+    const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri));
+    if (bytes.length > maxBytes) throw new Error('project resource input is too large');
+    if (!await isCanonicalProjectResourcePath(projectRoot, uri.fsPath))
+      throw new Error('project resource input changed canonical identity while being read');
+    if (bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)))
+      throw new Error('project resource input must be UTF-8');
+    const text = this.stripBom(bytes).text;
+    if (text.includes('\ufffd')) throw new Error('project resource input is not valid UTF-8');
+    return text;
   }
 
   /** Re-attach the BOM the .resx came with. VS writes .resx files WITH a UTF-8 BOM, and the engine round-trips the
@@ -4423,6 +8072,35 @@ class DesignerSession {
     catch (error) { if (!isFileNotFound(error)) throw error; }
   }
 
+  private async readResxBytes(uri: vscode.Uri): Promise<Uint8Array | null> {
+    try {
+      return Buffer.from(await vscode.workspace.fs.readFile(uri));
+    } catch (error) {
+      if (isFileNotFound(error)) return null;
+      throw error;
+    }
+  }
+
+  /** Shared final boundary for ordinary Image/ImageList writes. The resource reaches disk first because the engine
+   * renders it from there; the exact document revision is then revalidated after that await. A concurrent canvas or
+   * property edit wins, while this stale operation compensates its resource bytes and reports refusal. */
+  private async commitOrdinaryResourceEdit(
+    beforeDesignerText: string,
+    afterDesignerText: string,
+    label: string,
+    tx: ResxTx,
+    expectedDesignerRevision: number,
+  ): Promise<boolean> {
+    const result = await this.commitResourceSetThroughRunner(
+      label,
+      [tx],
+      beforeDesignerText,
+      afterDesignerText,
+      { expectedDesignerRevision },
+    );
+    return result?.status === 'committed';
+  }
+
   /**
    * Atomically-at-the-set-level transition every .resx in an edit. VS Code exposes no filesystem transaction, so
    * this uses the strongest available protocol: preflight ALL exact source states, write sequentially, and on a
@@ -4444,9 +8122,298 @@ class DesignerSession {
     });
   }
 
+  /** Move an ordinary code-behind buffer between the exact two images owned by a designer transaction. After the exact
+   * source-image check, apply only the single common-prefix/suffix-confined span (normally the generated method insert
+   * or its inverse), never a whole-document replace. A later edit outside that span therefore survives even in the
+   * narrow applyEdit race; the exact postcondition then reports the conflict instead of wiring over it. */
+  private async transitionCompanionText(tx: CompanionTextTx, direction: 'undo' | 'redo'): Promise<void> {
+    const source = direction === 'undo' ? tx.after : tx.before;
+    const target = direction === 'undo' ? tx.before : tx.after;
+    const document = tx.document.isClosed
+      ? await vscode.workspace.openTextDocument(tx.document.uri)
+      : tx.document;
+    if (document.getText() !== source) {
+      throw new Error(`code-behind transaction conflict: ${document.uri.fsPath} changed before ${direction}`);
+    }
+    let prefix = 0;
+    while (prefix < source.length && prefix < target.length && source[prefix] === target[prefix]) prefix++;
+    let suffix = 0;
+    while (suffix < source.length - prefix && suffix < target.length - prefix
+      && source[source.length - 1 - suffix] === target[target.length - 1 - suffix]) suffix++;
+    const sourceEnd = source.length - suffix;
+    const targetEnd = target.length - suffix;
+    // TextEditor.edit gives the code buffer its own native undo entry. A WorkspaceEdit is registered as a bulk edit
+    // and cannot reliably be replayed by the ordinary editor's Undo command on VS Code 1.84.
+    // Mark this as an explicit code-view transition before revealing it; otherwise the extension's VS-style auto-open
+    // listener can immediately redirect Foo.cs back into the designer and steal the edit target.
+    this.onViewCode(document.uri);
+    const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+    const applied = await editor.edit((edit) => edit.replace(
+      new vscode.Range(document.positionAt(prefix), document.positionAt(sourceEnd)),
+      target.slice(prefix, targetEnd),
+    ), { undoStopBefore: true, undoStopAfter: true });
+    if (!applied || document.getText() !== target) {
+      throw new Error(`code-behind transaction failed: ${document.uri.fsPath} did not reach the ${direction} image`);
+    }
+  }
+
+  /** Prepare replay of the ordinary editor's own history after the CustomDocument callback returns. VS Code 1.84
+   * suppresses a re-entrant `undo` command while it is already awaiting a custom editor's undo callback, whereas a
+   * fresh WorkspaceEdit would clear the redo branch. Validate synchronously with the callback, then enqueue the native
+   * code-editor history command for the next turn and re-check both images around it. */
+  private async prepareCompanionTextHistory(
+    tx: CompanionTextTx,
+    direction: 'undo' | 'redo',
+  ): Promise<() => void> {
+    const source = direction === 'undo' ? tx.after : tx.before;
+    const target = direction === 'undo' ? tx.before : tx.after;
+    const document = tx.document.isClosed
+      ? await vscode.workspace.openTextDocument(tx.document.uri)
+      : tx.document;
+    const bridge = this.companionHistoryBridge;
+    if (direction === 'redo'
+      && bridge?.phase === 'autoRedoingDesigner'
+      && normalize(bridge.tx.document.uri.fsPath) === normalize(document.uri.fsPath)
+      && document.getText() === target) {
+      return () => { if (this.companionHistoryBridge === bridge) this.companionHistoryBridge = undefined; };
+    }
+    if (document.getText() !== source) {
+      throw new Error(`code-behind transaction conflict: ${document.uri.fsPath} changed before ${direction}`);
+    }
+    return () => {
+      setTimeout(() => {
+        void (async () => {
+          const liveDocument = document.isClosed
+            ? await vscode.workspace.openTextDocument(document.uri)
+            : document;
+          if (liveDocument.getText() !== source) {
+            throw new Error(`code-behind transaction conflict: ${liveDocument.uri.fsPath} changed before deferred ${direction}`);
+          }
+          this.onViewCode(liveDocument.uri);
+          await vscode.window.showTextDocument(liveDocument, { preview: false, preserveFocus: false });
+          await vscode.commands.executeCommand(direction);
+          if (liveDocument.getText() !== target) {
+            throw new Error(`code-behind native ${direction} did not restore the expected transaction image: ${liveDocument.uri.fsPath}`);
+          }
+          if (direction === 'undo') {
+            this.companionHistoryBridge = { tx, phase: 'awaitingCodeRedo' };
+          } else {
+            this.companionHistoryBridge = undefined;
+          }
+          this.panel.reveal(this.panel.viewColumn, false);
+        })().catch((error) => {
+          this.output.appendLine(`[designer] composite event ${direction} failed: ${errMsg(error)}`);
+          this.post({ type: 'status', message: t('status.docChanged') });
+        });
+      }, 50);
+    };
+  }
+
+  private onCompanionHistoryTextChanged(document: vscode.TextDocument): void {
+    const bridge = this.companionHistoryBridge;
+    if (!bridge || normalize(bridge.tx.document.uri.fsPath) !== normalize(document.uri.fsPath)) return;
+    const text = document.getText();
+    if (text === bridge.tx.before) return;
+    if (text !== bridge.tx.after) {
+      this.companionHistoryBridge = undefined;
+      this.output.appendLine('[designer] composite event Redo bridge cancelled: code-behind changed independently');
+      return;
+    }
+    if (bridge.phase !== 'awaitingCodeRedo') return;
+    bridge.phase = 'autoRedoingDesigner';
+    setTimeout(() => {
+      void (async () => {
+        if (this.disposed || this.companionHistoryBridge !== bridge) return;
+        this.panel.reveal(this.panel.viewColumn, false);
+        await vscode.commands.executeCommand('redo');
+        if (this.companionHistoryBridge === bridge) {
+          throw new Error('the CustomDocument Redo did not consume the code-behind bridge');
+        }
+      })().catch((error) => {
+        this.output.appendLine('[designer] composite event Redo bridge failed: ' + errMsg(error));
+        this.post({ type: 'status', message: t('status.docChanged') });
+      });
+    }, 75);
+  }
+
+  private resourceTransactionWorkspaceRoot(txs: ResxTx[]): string | null {
+    if (!this.designerFile || txs.some((tx) => tx.uri.scheme !== 'file')) return null;
+    const root = this.wsRoot() ?? path.dirname(this.designerFile);
+    if (!path.isAbsolute(root)) return null;
+    const normalizedRoot = path.resolve(root);
+    return txs.every((tx) => isPathInsideOrSame(normalizedRoot, tx.uri.fsPath)) ? normalizedRoot : null;
+  }
+
+  private resourceTransactionJournalRoot(workspaceRoot: string): string | null {
+    // VS Code 1.84 exposes the extension's on-disk global storage through the `vscode-userdata` scheme, while newer
+    // hosts may expose a normal `file` URI. Both carry a real absolute fsPath; rejecting the former silently disabled
+    // every durable resource transaction on the oldest supported host.
+    if (!['file', 'vscode-userdata'].includes(this.globalStorageUri.scheme)) return null;
+    const storagePath = this.globalStorageUri.fsPath;
+    if (!path.isAbsolute(storagePath)) return null;
+    return path.join(storagePath, 'v2-transactions', sha256Hex(path.resolve(workspaceRoot)).slice(0, 16));
+  }
+
+  private async commitResourceSetThroughRunner(
+    label: string,
+    txs: ResxTx[],
+    beforeDesignerText: string,
+    afterDesignerText: string = beforeDesignerText,
+    options: { persistDesignerTextBeforeCommit?: boolean; expectedDesignerRevision?: number } = {},
+  ): Promise<TransactionRunnerResult | null> {
+    const sourceBaseline = options.persistDesignerTextBeforeCommit && this.designerFile
+      ? this.doc.transactionBaseline()
+      : null;
+    // W0.4 — Make Localizable's generated source is a first-class journal target. It must never be written as a
+    // side effect of undo registration: a later journal failure then knows how to compensate BOTH source and resx.
+    const sourceTx: ResxTx | null = sourceBaseline && this.designerFile
+      ? {
+        uri: vscode.Uri.file(this.designerFile),
+        before: sourceBaseline.text,
+        after: afterDesignerText,
+        bom: sourceBaseline.bom,
+      }
+      : null;
+    const transactionTxs = sourceTx ? [...txs, sourceTx] : txs;
+    const workspaceRoot = this.resourceTransactionWorkspaceRoot(transactionTxs);
+    const journalRoot = workspaceRoot ? this.resourceTransactionJournalRoot(workspaceRoot) : null;
+    if (!workspaceRoot || !journalRoot) return null;
+    const pendingImage = sourceTx ? { text: sourceTx.after, bom: sourceTx.bom } : null;
+    // The runner invokes this adapter again when replaying its durable registration. That replay is already owned by
+    // the existing CustomDocument history entry and revalidates every resource baseline/postcondition itself; applying
+    // the original document revision here would make every legitimate Redo refuse after Undo incremented the revision.
+    // Only the first forward transaction authorizes creation of the native history entry.
+    let initialUndoRegistrationAuthorized = false;
+    if (pendingImage) this.pendingSourceTransactionImages.push(pendingImage);
+    try {
+      const result = await runDesignerResourceTransaction({
+        label,
+        workspaceRoot,
+        journalRoot,
+        targets: transactionTxs.map((tx) => ({
+          filePath: tx.uri.fsPath,
+          before: tx.before,
+          after: tx.after,
+          bom: tx.bom,
+        })),
+        readBytes: (filePath) => this.readResxBytes(vscode.Uri.file(filePath)),
+        writeBytes: (filePath, bytes) => this.atomicWriteFile(vscode.Uri.file(filePath), bytes),
+        deleteFile: async (filePath) => {
+          try { await vscode.workspace.fs.delete(vscode.Uri.file(filePath)); }
+          catch (error) { if (!isFileNotFound(error)) throw error; }
+        },
+        beforePersistJournal: async (record) => {
+          if (record.state === 'prepared' && this.extensionHostAfterJournaledResourceBaseline) {
+            const interleave = this.extensionHostAfterJournaledResourceBaseline;
+            this.extensionHostAfterJournaledResourceBaseline = undefined;
+            await interleave();
+          }
+          if (record.state !== this.extensionHostFailJournalState) return;
+          this.extensionHostJournalFailureObserved = true;
+          throw new Error(`forced Extension Host journal failure: ${record.state}`);
+        },
+        afterVerifiedPostconditions: this.extensionHostFailForwardResourcePostcondition
+          ? (phase) => {
+            if (phase !== 'forward') return true;
+            this.extensionHostResourcePostconditionFailureObserved = true;
+            return false;
+          }
+          : undefined,
+        registerUndo: async () => {
+          if (initialUndoRegistrationAuthorized) return true;
+          await this.extensionHostBeforeJournaledResourceCommit?.();
+          const authorized = this.preflightCommit(
+            beforeDesignerText,
+            afterDesignerText,
+            label,
+            transactionTxs,
+            options.expectedDesignerRevision,
+          );
+          if (authorized) initialUndoRegistrationAuthorized = true;
+          return authorized;
+        },
+      });
+      if (result.status !== 'committed') {
+        if (result.status === 'rolledBack' && sourceTx) {
+          await this.reconcileRolledBackSourceTransaction(sourceTx, beforeDesignerText, afterDesignerText);
+        }
+        return result;
+      }
+
+      // Register the native CustomDocument edit only AFTER every journal state is durable. A late journal failure can
+      // therefore compensate source/resources without leaving a phantom dirty tab or an undo item for a refused edit.
+      // Recheck the exact text+revision once more; if another command won after authorization, use the runner's own
+      // journal-backed rollback rather than overwriting that newer command.
+      if (!this.commit(
+        beforeDesignerText,
+        afterDesignerText,
+        label,
+        transactionTxs,
+        options.expectedDesignerRevision,
+        result.undoRegistration,
+      )) {
+        const rollback = await result.undoRegistration?.undo();
+        if (!rollback) throw new Error('journaled resource commit lost its rollback registration');
+        if (rollback.status === 'rolledBack' && sourceTx) {
+          await this.reconcileRolledBackSourceTransaction(sourceTx, beforeDesignerText, afterDesignerText);
+        }
+        return rollback;
+      }
+      return result;
+    } finally {
+      if (pendingImage) {
+        const index = this.pendingSourceTransactionImages.indexOf(pendingImage);
+        if (index >= 0) this.pendingSourceTransactionImages.splice(index, 1);
+      }
+    }
+  }
+
+  private async reconcileRolledBackSourceTransaction(
+    sourceTx: ResxTx,
+    beforeDesignerText: string,
+    afterDesignerText: string,
+  ): Promise<void> {
+    if (!this.designerFile || normalize(sourceTx.uri.fsPath) !== normalize(this.designerFile)) return;
+
+    // The transaction runner has already verified the restored fingerprint. Verify the host-visible byte image too
+    // before touching CustomDocument state: this closes the short watcher race where the forward source write was
+    // adopted as a clean external edit just before the runner compensated it on disk.
+    let restored = false;
+    if (sourceTx.before === null) {
+      try { await vscode.workspace.fs.stat(sourceTx.uri); }
+      catch (error) { restored = isFileNotFound(error); }
+    } else {
+      try {
+        const disk = await readDesignerBytesUri(sourceTx.uri);
+        restored = disk.text === sourceTx.before && disk.hadBom === sourceTx.bom;
+      } catch { /* runner result remains authoritative; do not rewrite an unverifiable document */ }
+    }
+    if (!restored) return;
+
+    // Invalidate an in-flight read of the transient forward image and cancel a queued one. A later watcher delivery
+    // will observe the same restored baseline and become a no-op (or preserve a genuinely newer dirty edit).
+    if (this.debounce) { clearTimeout(this.debounce); this.debounce = undefined; }
+    this.reloadEpoch++;
+    const hostOwnedImage = this.doc.designerText === beforeDesignerText
+      || this.doc.designerText === afterDesignerText;
+    this.doc.adoptTransactionBaseline(sourceTx.before, sourceTx.bom);
+    const transientForwardImage = this.doc.designerText === afterDesignerText;
+    if (transientForwardImage) {
+      this.doc.designerText = beforeDesignerText;
+      this.doc.rev++;
+    }
+    this.postDirty();
+
+    // The forward image may already have completed a render and set Localizable/Language state even if the compensating
+    // watcher replaced its text first. Re-render whenever the buffer is still one of this transaction's exact images;
+    // a genuinely newer dirty edit is neither and is deliberately left alone. No native edit is fired on refusal.
+    if (hostOwnedImage) await this.rerenderFromDoc();
+  }
+
   private async commitResourceSet(label: string, txs: ResxTx[], statusTarget?: string): Promise<boolean> {
     if (!this.designerFile || !txs.length) return false;
     const before = this.doc.designerText;
+    const expectedRevision = this.doc.rev;
     for (const tx of txs) {
       const fresh = await this.readResx(tx.uri);
       if ((fresh?.text ?? null) !== tx.before || (fresh?.hadBom ?? false) !== tx.bom) {
@@ -4460,14 +8427,18 @@ class DesignerSession {
       }
     }
     try {
-      await this.transitionResourceSet(txs, 'forward');
+      const result = await this.commitResourceSetThroughRunner(label, txs, before, before, {
+        expectedDesignerRevision: expectedRevision,
+      });
+      if (!result || result.status !== 'committed') {
+        const reason = result?.error ?? result?.status ?? 'journal unavailable';
+        this.output.appendLine(`[designer] localized resource transaction refused: ${reason}`);
+        this.post({ type: 'status', message: t('status.docChangedImport') });
+        return false;
+      }
     } catch (error) {
       this.output.appendLine(`[designer] localized resource transaction refused: ${errMsg(error)}`);
       this.post({ type: 'status', message: t('status.docChangedImport') });
-      return false;
-    }
-    if (!this.commit(before, before, label, txs)) {
-      await this.transitionResourceSet(txs, 'undo');
       return false;
     }
     if (statusTarget) this.output.appendLine(`${label} -> ${statusTarget} (.resx written)`);
@@ -4509,25 +8480,20 @@ class DesignerSession {
       uri: resxUri, before: resxRead?.text ?? null, after: res.resxText, bom: resxRead?.hadBom ?? false,
     };
     try {
-      await this.transitionResourceSet([tx], 'forward');
+      const result = await this.commitResourceSetThroughRunner('Make localizable', [tx], before, res.newText, {
+        persistDesignerTextBeforeCommit: true,
+        expectedDesignerRevision: rev,
+      });
+      if (!result || result.status !== 'committed') {
+        throw new Error(result?.error ?? result?.status ?? 'journal unavailable');
+      }
     } catch (error) {
       this.output.appendLine(`[designer] localizable conversion refused: ${errMsg(error)}`);
       void vscode.window.showWarningMessage(t('status.localizeRejected', { reason: errMsg(error) }));
       return false;
     }
-    if (!this.commit(before, res.newText, 'Make localizable', [tx])) {
-      await this.transitionResourceSet([tx], 'undo');
-      return false;
-    }
-    // Flush the converted source right away, next to the .resx that was just written: a localizable form must not
-    // be left dirty, because the save path refuses to flush exactly that state (it cannot tell it from a recovered
-    // pre-1.5 buffer that diverges from the resources). If this write fails, Ctrl+Z reverts the whole conversion.
-    try {
-      await this.doc.persistLocalizableConversion();
-    } catch (error) {
-      this.output.appendLine(`[designer] localizable conversion could not be written: ${errMsg(error)}`);
-      void vscode.window.showWarningMessage(t('status.localizeNotWritten', { reason: errMsg(error) }));
-    }
+    // Both generated source and neutral resources were explicit journal targets. Any late failure compensates both
+    // before this method can claim success.
     this.lastNoticeSig = undefined;
     this.output.appendLine(`[designer] made localizable: ${this.designerFile} (${res.keys.length} resource(s))`);
     await this.fullRender();
@@ -4575,6 +8541,168 @@ class DesignerSession {
     }]);
   }
 
+  /** Bind an image/icon property to an existing strongly typed project resource. Discovery is bounded to conventional
+   * project-local `.resx` + adjacent `.Designer.cs` pairs. The engine cross-checks both texts and is the final authority
+   * for what is losslessly representable; neither resource file is written. The chosen inputs and form revision are
+   * revalidated after the user-length picker and after the engine round-trip before the one source-only commit. */
+  async pickProjectImageResourceFromGrid(id: string, prop: string, requestedAccessor?: string): Promise<boolean> {
+    if (!this.designerFile || this.disposed) return false;
+    if (this.refuseLocalizableMutation() || this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation()) return false;
+
+    // postMessage is untrusted. Re-resolve the property against engine metadata published for this exact component and
+    // document revision; never use the webview-supplied propType as authorization for an arbitrary source assignment.
+    const published = this.publishedEditableProperty(id, prop);
+    const propType = publishedProjectImagePropertyType(prop, published);
+    if (!propType) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'property metadata changed' }) });
+      await this.loadProps(id);
+      return false;
+    }
+
+    // V2-FND-001-S076: a picker result is untrusted even after real engine metadata authorized the target property.
+    if (requestedAccessor !== undefined) {
+      const reason = requestedProjectResourceAccessorRefusal(requestedAccessor);
+      if (reason) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+        await this.loadProps(id);
+        return false;
+      }
+    }
+
+    try {
+      const revAtStart = this.doc.rev;
+      const pairs = await this.projectResourcePairs();
+      if (!pairs.length) {
+        this.post({ type: 'status', message: t('status.projectResourcesNone') });
+        await this.loadProps(id);
+        return false;
+      }
+
+      const eng = await this.ensureEngine('modern');
+      const picks: Array<vscode.QuickPickItem & {
+        candidate: ProjectResourceCandidate;
+        pair: ProjectResourceFilePair;
+        resxUri: vscode.Uri;
+        designerUri: vscode.Uri;
+        resxText: string;
+        resourcesDesignerSource: string;
+      }> = [];
+      for (const pair of pairs) {
+        const resxUri = vscode.Uri.file(pair.resxPath);
+        const designerUri = vscode.Uri.file(pair.designerPath);
+        try {
+          const [resxText, resourcesDesignerSource] = await Promise.all([
+            this.readProjectResourceText(resxUri, pair.projectRoot),
+            this.readProjectResourceText(designerUri, pair.projectRoot),
+          ]);
+          const listed = await listProjectImageResources(eng, resxText, resourcesDesignerSource);
+          if (!listed.ok) {
+            this.output.appendLine(`[designer] project resource picker skipped ${pair.label}: ${listed.reason || 'unsafe'}`);
+            continue;
+          }
+          for (const candidate of listed.candidates) {
+            if (!imageResourceAssignable(candidate.valueTypeName, propType)) continue;
+            picks.push({
+              label: '$(symbol-property) ' + candidate.propertyName,
+              description: candidate.resourceClassFullName,
+              detail: `${candidate.valueTypeName} | ${candidate.storageKind} | ${pair.label}`,
+              candidate,
+              pair,
+              resxUri,
+              designerUri,
+              resxText,
+              resourcesDesignerSource,
+            });
+          }
+        } catch (error) {
+          this.output.appendLine(`[designer] project resource picker skipped ${pair.label}: ${errMsg(error)}`);
+        }
+      }
+
+      // A duplicate fully-qualified accessor is not a valid tie-break by file order: omit every occurrence.
+      const counts = new Map<string, number>();
+      for (const choice of picks) {
+        const key = `${choice.candidate.resourceClassFullName}.${choice.candidate.propertyName}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const unique = picks.filter((choice) =>
+        counts.get(`${choice.candidate.resourceClassFullName}.${choice.candidate.propertyName}`) === 1);
+      if (!unique.length) {
+        this.post({ type: 'status', message: t('status.projectResourcesNone') });
+        await this.loadProps(id);
+        return false;
+      }
+      if (this.doc.rev !== revAtStart) {
+        this.post({ type: 'status', message: t('status.docChangedShort') });
+        return false;
+      }
+
+      const picked = requestedAccessor
+        ? unique.find((choice) => `${choice.candidate.resourceClassFullName}.${choice.candidate.propertyName}`
+          === requestedAccessor)
+        : await vscode.window.showQuickPick(unique, {
+          title: t('panel.image.projectTip'),
+          placeHolder: `${id}.${prop}`,
+          matchOnDescription: true,
+          matchOnDetail: true,
+        });
+      if (!picked) return false;
+
+      // User-length picker TOCTOU close: the exact files that authorized this accessor must still be unchanged.
+      const [freshResx, freshDesigner] = await Promise.all([
+        this.readProjectResourceText(picked.resxUri, picked.pair.projectRoot),
+        this.readProjectResourceText(picked.designerUri, picked.pair.projectRoot),
+      ]);
+      if (freshResx !== picked.resxText || freshDesigner !== picked.resourcesDesignerSource
+        || this.doc.rev !== revAtStart || this.refuseLocalizableMutation()
+        || this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation()) {
+        this.post({ type: 'status', message: t('status.docChangedImport') });
+        return false;
+      }
+
+      const before = this.doc.designerText;
+      const result = await setProjectImageResource(
+        eng,
+        this.designerFile,
+        id,
+        prop,
+        propType,
+        freshResx,
+        freshDesigner,
+        picked.candidate.resourceClassFullName,
+        picked.candidate.propertyName,
+        before);
+      if (!result.safe || result.text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || 'unsafe' }) });
+        await this.loadProps(id);
+        return false;
+      }
+
+      const [commitResx, commitDesigner] = await Promise.all([
+        this.readProjectResourceText(picked.resxUri, picked.pair.projectRoot),
+        this.readProjectResourceText(picked.designerUri, picked.pair.projectRoot),
+      ]);
+      if (commitResx !== freshResx || commitDesigner !== freshDesigner || this.doc.rev !== revAtStart
+        || this.refuseLocalizableMutation() || this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation()) {
+        this.post({ type: 'status', message: t('status.docChangedImport') });
+        await this.loadProps(id);
+        return false;
+      }
+      if (result.text === before) { await this.loadProps(id); return false; }
+      if (!this.commit(before, result.text, `Set ${id}.${prop} project resource`)) return false;
+      this.output.appendLine(`assigned ${id}.${prop} -> ${picked.candidate.resourceClassFullName}.${picked.candidate.propertyName} (${picked.pair.label}; project resources unchanged)`);
+      this.post({ type: 'status', message: t('status.projectResourceSet', { id, prop }) });
+      await this.fullRender();
+      await this.loadProps(id);
+      await this.postDirty();
+      return true;
+    } catch (error) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: errMsg(error) }) });
+      try { await this.loadProps(id); } catch { /* best effort */ }
+      return false;
+    }
+  }
+
   /**
    * Import an image into a resx-backed image/icon property ("Import…"): pick a file, embed it into the form's
    * sibling .resx and write the `resources.GetObject` assignment. The .resx is written to disk immediately (a
@@ -4584,19 +8712,19 @@ class DesignerSession {
    * its prior bytes), and Ctrl+Y re-applies both. The resx revert is conflict-guarded (a concurrent external
    * change is left alone). Existing forward guards stay: localizable re-check, on-disk .resx conflict, binary-node drop.
    */
-  async importImageFromGrid(id: string, prop: string, propType: string): Promise<void> {
-    if (!this.designerFile) return;
-    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
+  async importImageFromGrid(id: string, prop: string, propType: string, requestedImage?: vscode.Uri): Promise<boolean> {
+    if (!this.designerFile) return false;
+    if (this.refuseUnknownBaselineMutation()) return false; // no trustworthy baseline → no file write
     const isIcon = propType === 'System.Drawing.Icon';
-    const picked = await vscode.window.showOpenDialog({
-      canSelectMany: false, openLabel: 'Import',
-      title: `Import ${isIcon ? 'an icon' : 'an image'} for ${id}.${prop}`,
-      filters: isIcon ? { Icons: ['ico'] } : { Images: ['png', 'jpg', 'jpeg', 'bmp', 'gif'] },
-    });
-    if (!picked || !picked.length) return; // cancelled
+    const picked = requestedImage ? [requestedImage] : await vscode.window.showOpenDialog({
+        canSelectMany: false, openLabel: 'Import',
+        title: `Import ${isIcon ? 'an icon' : 'an image'} for ${id}.${prop}`,
+        filters: isIcon ? { Icons: ['ico'] } : { Images: ['png', 'jpg', 'jpeg', 'bmp', 'gif'] },
+      });
+    if (!picked || !picked.length) return false; // cancelled
     try {
       const bytes = await vscode.workspace.fs.readFile(picked[0]);
-      if (bytes.byteLength > 16 * 1024 * 1024) { this.post({ type: 'status', message: t('status.imageTooLarge') }); return; }
+      if (bytes.byteLength > 16 * 1024 * 1024) { this.post({ type: 'status', message: t('status.imageTooLarge') }); return false; }
       const imageBase64 = Buffer.from(bytes).toString('base64');
       if (this.localizable) {
         const revBefore = this.doc.rev;
@@ -4610,12 +8738,12 @@ class DesignerSession {
         if (!localized.safe || localized.resxText === null) {
           this.post({ type: 'status', message: t('status.importRejected', { reason: localized.reason || 'unsafe' }) });
           await this.loadProps(id);
-          return;
+          return false;
         }
         if (this.doc.rev !== revBefore || this.localizationCulture !== culture
           || this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation()) {
           await this.loadProps(id);
-          return;
+          return false;
         }
         const tx: ResxTx = {
           uri: resxUri,
@@ -4627,8 +8755,9 @@ class DesignerSession {
           this.output.appendLine(`imported localized image into ${id}.${prop} -> ${localized.resxKey} (${culture || '(Default)'})`);
           this.post({ type: 'status', message: t('status.imageImported', { id, prop }) });
           await this.loadProps(id);
+          return true;
         }
-        return;
+        return false;
       }
       const eng = await this.ensureEngine();
       const resxUri = this.resxUri();
@@ -4642,12 +8771,12 @@ class DesignerSession {
       if (!res.safe || res.designerText === null || res.resxText === null) {
         this.post({ type: 'status', message: t('status.importRejected', { reason: res.reason || 'unsafe' }) });
         await this.loadProps(id);
-        return;
+        return false;
       }
       if (this.doc.rev !== revBefore) {
         this.post({ type: 'status', message: t('status.docChangedImport') });
         await this.loadProps(id);
-        return;
+        return false;
       }
 
       // 0.10.0 trust-floor TOCTOU close: the form could have turned localizable DURING the file picker /
@@ -4656,9 +8785,9 @@ class DesignerSession {
       // The render can equally have FAILED, or the baseline gone unknown, across that same (user-length!) window:
       // commit() would then refuse and revertResx would roll the file back, so this was never a lost write — but
       // refusing here means the user's .resx is never written-then-unwritten at all.
-      if (this.refuseLocalizableMutation()) { await this.loadProps(id); return; }
-      if (this.refuseUnknownBaselineMutation()) { await this.loadProps(id); return; }
-      if (this.refuseStaleRenderMutation()) { await this.loadProps(id); return; }
+      if (this.refuseLocalizableMutation()) { await this.loadProps(id); return false; }
+      if (this.refuseUnknownBaselineMutation()) { await this.loadProps(id); return false; }
+      if (this.refuseStaleRenderMutation()) { await this.loadProps(id); return false; }
       // 0.10.0 S3 fail-closed regenerate guard — two checks at the write boundary (the engine transformed the
       // `resxText` SNAPSHOT read before the file-picker/engine round-trip):
       // (1) CONCURRENCY: re-read the .resx FRESH; if it changed on disk since the snapshot (VS, git, another
@@ -4674,26 +8803,30 @@ class DesignerSession {
         this.output.appendLine('import refused: the .resx changed on disk during the import (stale engine output would clobber it)');
         this.post({ type: 'status', message: t('status.docChangedImport') });
         await this.loadProps(id);
-        return; // never write a .resx built from a now-stale snapshot
+        return false; // never write a .resx built from a now-stale snapshot
       }
       const droppedN = binaryResxCount(resxText) - binaryResxCount(res.resxText);
       if (droppedN > 0) {
         this.output.appendLine(`import refused: it would drop ${droppedN} binary resx resource(s)`);
         this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: droppedN }) });
         await this.loadProps(id);
-        return; // never write a .resx that dropped a binary node
+        return false; // never write a .resx that dropped a binary node
       }
       // 0.11.0 write-safety — write the .resx to disk ATOMICALLY (temp+rename; the engine reads it from disk on the
       // render below), then commit the designer edit as ONE undoable transaction. The resx before/after is threaded
       // into commit() so Ctrl+Z reverts the resource too (deleting a .resx this import created, or restoring its
       // prior bytes) rather than leaving a permanent orphan. If a fail-closed gate refuses the designer edit AFTER
       // the resx hit disk, roll the resx back so neither half lands (never a resx entry with no assignment).
-      await this.atomicWriteFile(resxUri, this.resxBytesOf(res.resxText, resxBom));
       const resxTx: ResxTx = { uri: resxUri, before: resxText, after: res.resxText, bom: resxBom };
-      if (!this.commit(before, res.designerText, `Import ${id}.${prop} image`, resxTx)) {
-        await this.revertResx(resxUri, resxText, res.resxText, resxBom);
+      if (!await this.commitOrdinaryResourceEdit(
+        before,
+        res.designerText,
+        `Import ${id}.${prop} image`,
+        resxTx,
+        revBefore,
+      )) {
         await this.loadProps(id);
-        return;
+        return false;
       }
       this.output.appendLine(`imported image into ${id}.${prop} → ${res.resxKey} (${res.mode}; .resx written, designer unsaved)`);
       this.post({ type: 'status', message: t('status.imageImported', { id, prop }) });
@@ -4701,9 +8834,11 @@ class DesignerSession {
       await this.fullRender(); // a new resx image + assignment → full re-render (not a single-control patch)
       await this.loadProps(id);
       await this.postDirty();
+      return true;
     } catch (err) {
       this.post({ type: 'status', message: t('status.importFailed', { error: errMsg(err) }) });
       try { await this.loadProps(id); } catch { /* best effort */ }
+      return false;
     }
   }
 
@@ -4748,21 +8883,24 @@ class DesignerSession {
    * CURRENT images by deserializing the existing .resx ImageStream blob (net48) and pairing them by index with the
    * keys parsed from the designer. Works for ANY project — the bundled net48 engine owns the binary (de)serialization.
    */
-  async editImageListImages(): Promise<void> {
-    if (!this.designerFile) return;
-    if (this.refuseLocalizableMutation()) return; // writes the .resx (irreversible pre-commit) — guard up front
-    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
-    if (!this.renderOk) { this.post({ type: 'status', message: t('status.renderFailedReadonly') }); return; }
+  async editImageListImages(
+    requestedImages?: readonly { imageUri: vscode.Uri; key?: string }[],
+  ): Promise<boolean> {
+    if (!this.designerFile) return false;
+    if (this.refuseLocalizableMutation()) return false; // writes the .resx (irreversible pre-commit) — guard up front
+    if (this.refuseUnknownBaselineMutation()) return false; // no trustworthy baseline → no file write
+    if (!this.renderOk) { this.post({ type: 'status', message: t('status.renderFailedReadonly') }); return false; }
     const id = this.currentId;
-    if (!id || id === 'this') { this.post({ type: 'status', message: t('status.selectImageListFirst') }); return; }
+    if (!id || id === 'this') { this.post({ type: 'status', message: t('status.selectImageListFirst') }); return false; }
     try {
       const eng9 = await this.ensureEngine('modern');
       const asm = this.asm();
       // confirm the current selection really is an ImageList (else the SetKeyName/ImageStream rewrite is meaningless).
       const desc = this.engineKind === 'net48' && asm
-        ? await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm, id, undefined, undefined, this.doc.designerText)
+        ? await describeCompiledComponent(await this.ensureEngine('net48'), this.designerFile, asm, id,
+          undefined, undefined, this.doc.designerText, await this.currentCodeText())
         : await describeComponent(eng9, this.designerFile, id, asm, this.doc.designerText);
-      if (!desc || !/(^|\.)ImageList$/.test(desc.type)) { this.post({ type: 'status', message: t('status.selectImageListFirst') }); return; }
+      if (!desc || !/(^|\.)ImageList$/.test(desc.type)) { this.post({ type: 'status', message: t('status.selectImageListFirst') }); return false; }
 
       // read the CURRENT images: deserialize the existing .resx ImageStream blob (net48), pair with designer keys.
       const resxUri = this.resxUri();
@@ -4799,38 +8937,45 @@ class DesignerSession {
       const unresolvedBinary = blob === null && binaryResxCount(resxText) > 0;
       if (images.length === 0 && (blob !== null || hasInCodeImages || unresolvedBinary)) {
         this.post({ type: 'status', message: t('status.imageListUnreadable', { id }) });
-        return;
+        return false;
       }
 
-      const edited = await this.manageImagesUi(id, images);
-      if (!edited) return; // cancelled or unchanged
+      const edited = requestedImages
+        ? await this.loadRequestedImageListImages(images, requestedImages)
+        : await this.manageImagesUi(id, images);
+      if (!edited) return false; // cancelled, invalid, or unchanged
       const oldKeys = images.map((image) => image.key);
       const oldIndexForNew = edited.map((image) => image.originalIndex ?? -1);
 
       // serialize the full set (net48) → VS-format ImageStream blob (+ validated round-trip count).
       const ser = await serializeImageList(eng48, { images: edited, width, height, colorDepth, transparentColor });
-      if (!ser.ok) { this.post({ type: 'status', message: t('status.importRejected', { reason: ser.reason || 'unsafe' }) }); return; }
+      if (!ser.ok) { this.post({ type: 'status', message: t('status.importRejected', { reason: ser.reason || 'unsafe' }) }); return false; }
 
       // rewrite the designer + embed the blob (net9) — returns both new texts.
       const before = this.doc.designerText;
       const revBefore = this.doc.rev;
       const set = await setImageList(
         eng9, this.designerFile, id, ser.base64, ser.keys, resxText, before, oldKeys, oldIndexForNew);
-      if (!set.safe || set.designerText === null || set.resxText === null) { this.post({ type: 'status', message: t('status.importRejected', { reason: set.reason || 'unsafe' }) }); return; }
-      if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
+      if (!set.safe || set.designerText === null || set.resxText === null) { this.post({ type: 'status', message: t('status.importRejected', { reason: set.reason || 'unsafe' }) }); return false; }
+      if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedImport') }); return false; }
       // TOCTOU close + S3 fail-closed guards, identical to importImageFromGrid (the .resx write is irreversible).
-      if (this.refuseLocalizableMutation()) return;
-      if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
-      if (this.refuseStaleRenderMutation()) return; // a render that failed across the images dialog → no file write
+      if (this.refuseLocalizableMutation()) return false;
+      if (this.refuseUnknownBaselineMutation()) return false; // no trustworthy baseline → no file write
+      if (this.refuseStaleRenderMutation()) return false; // a render that failed across the images dialog → no file write
       const freshResx = await this.readResx(resxUri);
-      if ((freshResx?.text ?? null) !== resxText || (freshResx?.hadBom ?? false) !== resxBom) { this.post({ type: 'status', message: t('status.docChangedImport') }); return; }
+      if ((freshResx?.text ?? null) !== resxText || (freshResx?.hadBom ?? false) !== resxBom) { this.post({ type: 'status', message: t('status.docChangedImport') }); return false; }
       const droppedN = binaryResxCount(resxText) - binaryResxCount(set.resxText);
-      if (droppedN > 0) { this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: droppedN }) }); return; }
+      if (droppedN > 0) { this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: droppedN }) }); return false; }
 
       // atomic + undoable write: .resx to disk (temp+rename), designer as one undoable transaction.
-      await this.atomicWriteFile(resxUri, this.resxBytesOf(set.resxText, resxBom));
       const resxTx: ResxTx = { uri: resxUri, before: resxText, after: set.resxText, bom: resxBom };
-      if (!this.commit(before, set.designerText, `Edit ${id} images`, resxTx)) { await this.revertResx(resxUri, resxText, set.resxText, resxBom); return; }
+      if (!await this.commitOrdinaryResourceEdit(
+        before,
+        set.designerText,
+        `Edit ${id} images`,
+        resxTx,
+        revBefore,
+      )) return false;
       this.output.appendLine(`edited ImageList ${id} → ${ser.count} image(s) (.resx written, designer unsaved)`);
       this.post({ type: 'status', message: t('status.imageListSaved', { id, n: ser.count }) });
       if (this.engineKind === 'net48' && asm) {
@@ -4841,9 +8986,34 @@ class DesignerSession {
       }
       await this.loadProps(id);
       await this.postDirty();
+      return true;
     } catch (err) {
       this.post({ type: 'status', message: t('status.importFailed', { error: errMsg(err) }) });
+      return false;
     }
+  }
+
+  /** Deterministic file-dialog substitute for the Extension Host suite. It deliberately shares the user path's
+   * byte limits, key rules, engine serialization, source/resource planner, and commit boundary. */
+  private async loadRequestedImageListImages(
+    images: Array<{ dataBase64: string; key: string; originalIndex: number | null }>,
+    requested: readonly { imageUri: vscode.Uri; key?: string }[],
+  ): Promise<Array<{ dataBase64: string; key: string; originalIndex: number | null }> | null> {
+    if (!requested.length) return null;
+    const cur = images.slice();
+    for (const item of requested) {
+      let bytes: Uint8Array;
+      try { bytes = await vscode.workspace.fs.readFile(item.imageUri); }
+      catch { return null; }
+      if (bytes.byteLength > 16 * 1024 * 1024) return null;
+      const requestedKey = item.key?.trim();
+      if (item.key !== undefined && (!requestedKey || requestedKey.length > 256
+        || cur.some((image) => image.key === requestedKey))) return null;
+      const key = requestedKey
+        ?? uniqueImageKey(path.basename(item.imageUri.fsPath).replace(/\.[^.]+$/, ''), cur);
+      cur.push({ dataBase64: Buffer.from(bytes).toString('base64'), key, originalIndex: null });
+    }
+    return cur;
   }
 
   /** Native ImageList manage loop. Every add/remove/reorder/key rename stays in memory until Done, then the caller
@@ -4943,9 +9113,74 @@ class DesignerSession {
    * safe-save-gated, no-op-safe ResetProperty (a pure net9 text splice, engine-agnostic), then refresh the picture.
    * net9 re-renders the interpreted graph from the edited text; net48 renders the COMPILED assembly (stale after a
    * text-only edit), so it resets the LIVE instance (pd.ResetValue) for an immediate, matching picture. */
-  async resetFromGrid(id: string, prop: string): Promise<void> {
+  async resetFromGrid(id: string, prop: string, multi = false): Promise<void> {
     if (!this.designerFile) return;
     try {
+      if (multi) {
+        const published = this.publishedMultiProperty(id, prop);
+        if (!published || !published.property.multiResettable) {
+          this.post({ type: 'status', message: t('status.resetRejected', { reason: 'stale or non-resettable multi-object property metadata' }) });
+          await this.loadProps(id);
+          return;
+        }
+        await this.applyMultiReset(published.ids, prop);
+        return;
+      }
+      const before = this.doc.designerText;
+      const revBefore = this.doc.rev;
+      const codeBehindBefore = this.engineKind === 'net48' ? await this.currentCodeText() : undefined;
+      const publishedComponent = this.publishedPropertyComponent?.ids.length === 1
+        && this.publishedPropertyComponent.ids[0] === id
+        && this.publishedPropertyComponent.rev === revBefore
+        ? this.publishedPropertyComponent.component : null;
+      if (publishedComponent?.ownership === 'inherited') {
+        const property = publishedComponent.properties.find((candidate) => candidate.name === prop) ?? null;
+        const token = publishedComponent.baseIdentityToken ?? '';
+        const resettable = publishedComponent.inheritedOverrideEditable === true
+          && property?.inheritedOverrideResettable === true && property.sourceExplicit === true
+          && token.length > 0;
+        if (!resettable) {
+          this.post({ type: 'status', message: t('status.resetRejected', { reason: 'stale or non-resettable inherited override metadata' }) });
+          await this.loadProps(id);
+          return;
+        }
+        if (this.localizable) {
+          this.post({ type: 'status', message: t('status.resetRejected', { reason: 'localized inherited overrides are not supported' }) });
+          await this.loadProps(id);
+          return;
+        }
+
+        const authority = await this.ensureEngine(this.engineKind);
+        const res = await removeInheritedPropertyOverride(
+          authority, this.designerFile, id, prop, token, this.asm(), before, codeBehindBefore);
+        if (!res.safe || res.text === null) {
+          this.post({ type: 'status', message: t('status.resetRejected', { reason: res.reason || 'unsafe inherited reset' }) });
+          await this.loadProps(id);
+          return;
+        }
+        if (this.doc.rev !== revBefore) {
+          this.post({ type: 'status', message: t('status.docChangedShort') });
+          await this.loadProps(id);
+          return;
+        }
+        if (this.engineKind === 'net48' && await this.currentCodeText() !== codeBehindBefore) {
+          this.post({ type: 'status', message: t('status.docChangedShort') });
+          await this.loadProps(id);
+          return;
+        }
+        if (res.text === before) {
+          this.post({ type: 'status', message: t('status.alreadyDefault', { id, prop }) });
+          await this.loadProps(id);
+          return;
+        }
+        if (!this.commit(before, res.text, `Reset inherited ${id}.${prop}`)) return;
+        this.output.appendLine(`removed derived override ${id}.${prop} → inherited base value (unsaved)`);
+        this.post({ type: 'status', message: t('status.propReset', { id, prop }) });
+        await this.fullRender();
+        await this.loadProps(id);
+        await this.postDirty();
+        return;
+      }
       if (this.localizable) {
         if (await this.removeLocalizedOverride(id, prop, `Reset localized ${id}.${prop}`)) {
           this.output.appendLine(`reset localized ${id}.${prop} -> culture fallback (${this.localizationCultureLabel()})`);
@@ -4955,8 +9190,6 @@ class DesignerSession {
         return;
       }
       const eng = await this.ensureEngine();
-      const before = this.doc.designerText;
-      const revBefore = this.doc.rev;
       const res = await resetProperty(eng, this.designerFile, id, prop, before);
       if (!res.safe) { this.post({ type: 'status', message: t('status.resetRejected', { reason: res.reason || 'unsafe' }) }); await this.loadProps(id); return; }
       if (res.text == null) { this.post({ type: 'status', message: t('status.alreadyDefault', { id, prop }) }); await this.loadProps(id); return; }
@@ -4975,6 +9208,66 @@ class DesignerSession {
       this.post({ type: 'status', message: t('status.resetFailed', { error: errMsg(err) }) });
       try { await this.loadProps(id); } catch { /* best effort */ }
     }
+  }
+
+  /** Reset a shared scalar property to its default across the exact published selection. Source and localized-resource
+   * adapters both return a complete batch or no change, and the custom document receives one undo record. */
+  private async applyMultiReset(ids: string[], prop: string): Promise<void> {
+    if (!this.designerFile || ids.length < 2) return;
+    const revBefore = this.doc.rev;
+
+    if (this.localizable) {
+      const edits: LocalizedResourceEdit[] = ids.map((componentId) => ({
+        componentId,
+        propertyName: prop,
+        propertyTypeName: 'System.String',
+        invariantValue: '',
+        removeOverride: true,
+      }));
+      if (await this.applyLocalizedResourceEdits(`Reset ${prop} on ${ids.length} localized controls`, edits, revBefore)) {
+        this.output.appendLine(`reset localized ${prop} on ${ids.length} controls (${this.localizationCultureLabel()})`);
+        this.post({ type: 'status', message: tn('status.multiPropReset', ids.length, { prop }) });
+        await this.loadProps(this.currentId);
+      }
+      return;
+    }
+
+    const eng = await this.ensureEngine('modern');
+    const before = this.doc.designerText;
+    const result = await resetProperties(eng, this.designerFile, ids, prop, before);
+    if (!result.safe) {
+      this.post({ type: 'status', message: t('status.resetRejected', { reason: result.reason || 'unsafe' }) });
+      await this.loadProps(this.currentId);
+      return;
+    }
+    if (result.text == null) {
+      this.post({ type: 'status', message: t('status.alreadyDefault', { id: `${ids.length} controls`, prop }) });
+      await this.loadProps(this.currentId);
+      return;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChangedShort') });
+      await this.loadProps(this.currentId);
+      return;
+    }
+    if (!this.commit(before, result.text, `Reset ${prop} on ${ids.length} controls`)) return;
+
+    const liveEdits: CompiledEdit[] = ids.map((componentId) => ({
+      componentId,
+      propName: prop,
+      rawValue: '',
+      reset: true,
+    }));
+    this.output.appendLine(`reset ${prop} on ${ids.length} controls (one undo unit, unsaved)`);
+    this.post({ type: 'status', message: tn('status.multiPropReset', ids.length, { prop }) });
+    if (this.engineKind === 'net48') {
+      await this.live48((engine) => applyCompiledEdits(engine, this.designerFile!, this.asm()!, liveEdits), true,
+        { skipReselect: true, edits: liveEdits });
+      await this.loadProps(this.currentId);
+    } else {
+      await this.fullRender();
+    }
+    await this.postDirty();
   }
 
   /** Reset a ToolStrip item property to its default — the item-aware sibling of resetFromGrid (routed here when the
@@ -5045,32 +9338,176 @@ class DesignerSession {
       await this.loadProps(id);
       return;
     }
+    await this.applyTableCellPosition(
+      id,
+      cell === 'Column' ? n : null,
+      cell === 'Row' ? n : null,
+      `Set ${id}.${cell}`,
+      `set ${id}.${cell} = ${n} (table cell, unsaved)`,
+    );
+  }
+
+  /** Commit one or both TableLayoutPanel extender coordinates from one authoritative source snapshot. The grid uses
+   * one nullable axis; a canvas drop supplies both so moving to a different cell is one native Undo unit. */
+  private async applyTableCellPosition(
+    id: string,
+    column: number | null,
+    row: number | null,
+    label: string,
+    outputLine: string,
+  ): Promise<boolean> {
+    if (!this.designerFile || (column === null && row === null)) return false;
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const revBefore = this.doc.rev;
-
-    const column = cell === 'Column' ? n : null;
-    const row = cell === 'Row' ? n : null;
     const res = await setTableCell(eng, this.designerFile, id, column, row, before);
     if (!res.safe || res.text === null) {
       this.post({ type: 'status', message: t('status.cellEditRejected', { reason: res.reason || 'unsafe' }) });
       await this.loadProps(id);
-      return;
+      return false;
     }
     if (this.doc.rev !== revBefore) {
       this.post({ type: 'status', message: t('status.docChanged') });
       await this.loadProps(id);
-      return;
+      return false;
     }
-
-    if (!this.commit(before, res.text, `Set ${id}.${cell}`)) return;
-    this.output.appendLine(`set ${id}.${cell} = ${n} (table cell, unsaved)`);
-    this.post({ type: 'status', message: t('status.cellSet', { id, cell }) });
+    if (res.text === before) return false;
+    if (!this.commit(before, res.text, label)) return false;
+    this.output.appendLine(outputLine);
+    this.post({ type: 'status', message: column !== null && row !== null
+      ? `Moved ${id} to table cell ${column}, ${row}`
+      : t('status.cellSet', { id, cell: column !== null ? 'Column' : 'Row' }) });
 
     // a cell move repositions the control and can re-flow its siblings → full re-render, not a single-control patch
     await this.fullRender();
     await this.loadProps(id);
     await this.postDirty();
+    return true;
+  }
+
+  /** Route a move gesture for a layout-owned child. `null` means the child is not managed by a supported layout and
+   * ordinary geometry handling should continue; a boolean means the layout gesture was fully handled. */
+  private async applyManagedLayoutMove(id: string, dropX: number, dropY: number): Promise<boolean | null> {
+    const child = this.controls.find((control) => control.id === id);
+    const parent = child?.parentId
+      ? this.controls.find((control) => control.id === child.parentId) ?? null
+      : null;
+    if (!child || !parent) return null;
+    if (/TableLayoutPanel$/.test(parent.type)) {
+      const columns = parent.tableColumnWidths ?? [];
+      const rows = parent.tableRowHeights ?? [];
+      if (!columns.length || !rows.length) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'live table cell geometry is unavailable' }) });
+        await this.fullRender();
+        return false;
+      }
+      const axisIndex = (value: number, sizes: readonly number[]): number => {
+        if (!Number.isFinite(value) || value < 0) return -1;
+        let edge = 0;
+        for (let index = 0; index < sizes.length; index++) {
+          edge += Math.max(0, sizes[index] ?? 0);
+          if (value < edge || (index === sizes.length - 1 && value <= edge)) return index;
+        }
+        return -1;
+      };
+      const column = axisIndex(dropX - (parent.clientX ?? parent.x), columns);
+      const row = axisIndex(dropY - (parent.clientY ?? parent.y), rows);
+      if (column < 0 || row < 0) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'drop point is outside the live table grid' }) });
+        await this.fullRender();
+        return false;
+      }
+      return this.applyTableCellPosition(
+        id,
+        column,
+        row,
+        `Move ${id} to table cell ${column},${row}`,
+        `moved ${id} to TableLayoutPanel cell ${column},${row} (unsaved)`,
+      );
+    }
+    if (/FlowLayoutPanel$/.test(parent.type)) {
+      return this.applyFlowLayoutDrop(parent, id, dropX, dropY);
+    }
+    return null;
+  }
+
+  /** Convert a FlowLayoutPanel drop point into a complete visual sibling order, then realize that order against a
+   * still-local source snapshot. Each engine MoveZOrder step is only a planner operation; commit() runs once. */
+  private async applyFlowLayoutDrop(parent: LayoutControl, id: string, dropX: number, dropY: number): Promise<boolean> {
+    if (!this.designerFile) return false;
+    const direction = parent.flowDirection ?? '';
+    if (!['LeftToRight', 'RightToLeft', 'TopDown', 'BottomUp'].includes(direction)) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'live flow direction is unavailable' }) });
+      await this.fullRender();
+      return false;
+    }
+    const centerX = (control: LayoutControl): number => control.x + control.width / 2;
+    const centerY = (control: LayoutControl): number => control.y + control.height / 2;
+    const visualCompare = (left: LayoutControl, right: LayoutControl): number => {
+      if (direction === 'LeftToRight' || direction === 'RightToLeft') {
+        const row = centerY(left) - centerY(right);
+        if (Math.abs(row) > 1) return row;
+        return direction === 'LeftToRight' ? centerX(left) - centerX(right) : centerX(right) - centerX(left);
+      }
+      const column = centerX(left) - centerX(right);
+      if (Math.abs(column) > 1) return column;
+      return direction === 'TopDown' ? centerY(left) - centerY(right) : centerY(right) - centerY(left);
+    };
+    const siblings = this.controls
+      .filter((control) => control.parentId === parent.id)
+      .sort(visualCompare);
+    const dragged = siblings.find((control) => control.id === id);
+    if (!dragged || siblings.length < 2) return false;
+    const remaining = siblings.filter((control) => control.id !== id);
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    remaining.forEach((control, index) => {
+      const dx = dropX - centerX(control);
+      const dy = dropY - centerY(control);
+      const distance = dx * dx + dy * dy;
+      if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
+    });
+    const nearest = remaining[nearestIndex];
+    const before = direction === 'LeftToRight' ? dropX < centerX(nearest)
+      : direction === 'RightToLeft' ? dropX > centerX(nearest)
+        : direction === 'TopDown' ? dropY < centerY(nearest)
+          : dropY > centerY(nearest);
+    remaining.splice(nearestIndex + (before ? 0 : 1), 0, dragged);
+    const currentOrder = siblings.map((control) => control.id);
+    const desiredOrder = remaining.map((control) => control.id);
+    if (desiredOrder.every((controlId, index) => controlId === currentOrder[index])) {
+      await this.fullRender();
+      return false;
+    }
+
+    const eng = await this.ensureEngine('modern');
+    const beforeText = this.doc.designerText;
+    const rev = this.doc.rev;
+    let text = beforeText;
+    for (const controlId of desiredOrder) {
+      const result = await moveZOrder(eng, this.designerFile, controlId, false, text);
+      if (!result.safe || result.newText === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || 'unsafe flow reorder' }) });
+        await this.fullRender();
+        return false;
+      }
+      text = result.newText;
+    }
+    if (this.doc.rev !== rev) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.fullRender();
+      return false;
+    }
+    if (text === beforeText || !this.commit(beforeText, text, `Reorder ${parent.id}`)) {
+      await this.fullRender();
+      return false;
+    }
+    this.output.appendLine(`reordered ${id} in ${parent.id}: ${desiredOrder.join(', ')} (unsaved)`);
+    await this.fullRender();
+    await this.loadProps(id);
+    await this.postDirty();
+    this.post({ type: 'status', message: `Reordered ${id}` });
+    return true;
   }
 
   /** Read side of the string-collection editor: send the "…"-opened collection's current items to the webview.
@@ -5095,11 +9532,30 @@ class DesignerSession {
    * forged postMessage. */
   private publishedEditableProperty(id: string, prop: string): ComponentDesc['properties'][number] | null {
     const published = this.publishedPropertyComponent;
-    if (!published || published.id !== id || published.rev !== this.doc.rev) return null;
+    if (!published || published.ids.length !== 1 || published.ids[0] !== id || published.rev !== this.doc.rev) return null;
     const component = published.component;
-    if (!component || component.editable === false) return null;
+    if (!component) return null;
     const property = component.properties.find((p) => p.name === prop) ?? null;
-    return property && !property.readOnly ? property : null;
+    if (!property || property.readOnly) return null;
+    if (component.editable !== false) return property;
+    return component.ownership === 'inherited' && component.inheritedOverrideEditable === true
+      && property.inheritedOverrideEditable === true && !!component.baseIdentityToken
+      ? property : null;
+  }
+
+  /** Resolve an explicit panel multi-object request only against the exact synthetic intersection most recently
+   * published for the current source revision and the still-current canvas selection. */
+  private publishedMultiProperty(id: string, prop: string): { ids: string[]; property: ComponentDesc['properties'][number] } | null {
+    const published = this.publishedPropertyComponent;
+    if (!published || published.ids.length < 2 || published.rev !== this.doc.rev) return null;
+    if (published.ids[published.ids.length - 1] !== id || published.ids.length !== this.currentSelectionIds.length) return null;
+    for (let i = 0; i < published.ids.length; i++) if (published.ids[i] !== this.currentSelectionIds[i]) return null;
+    const component = published.component;
+    if (!component || component.editable === false || component.multiCount !== published.ids.length) return null;
+    const property = component.properties.find((candidate) => candidate.name === prop) ?? null;
+    return property && property.multi === true && !property.readOnly
+      ? { ids: published.ids.slice(), property }
+      : null;
   }
 
   /** Read side of the bounded generic IList/IList<T> source adapter. Like every source collection reader, this is
@@ -5159,12 +9615,44 @@ class DesignerSession {
       await this.loadProps(id);
       return;
     }
+    const certifiedVendorCollection = !!metadata.uiTypeEditor
+      && !!metadata.uiTypeEditorAssemblyPath
+      && !!metadata.uiTypeEditorAssemblySha256
+      && !!metadata.uiTypeEditorCertificationId;
+    let proposedText = res.text;
+    if (certifiedVendorCollection) {
+      this.lastPropertyPersistenceLane = null;
+      this.lastOwnedRegionRefusal = null;
+      if (this.extensionHostVendorCollectionProposalTransform) {
+        proposedText = this.extensionHostVendorCollectionProposalTransform(proposedText);
+      }
+      const bounded = await planBoundedComponentPatch(
+        eng,
+        before,
+        sha256Hex(before),
+        proposedText,
+        id,
+        `${id}.${prop}`,
+      );
+      if (!bounded.safe || !bounded.semanticEquivalence || !bounded.outsideRegionPreserved
+        || !bounded.plannedSourceText || bounded.plannedSourceText !== proposedText) {
+        this.lastOwnedRegionRefusal = bounded.reason || 'owned-region component proof was incomplete';
+        this.post({ type: 'status', message: t('status.editRejected', { reason: this.lastOwnedRegionRefusal }) });
+        await this.loadProps(id);
+        return;
+      }
+      proposedText = bounded.plannedSourceText;
+      this.lastPropertyPersistenceLane = 'ownedRegion';
+    } else {
+      this.lastPropertyPersistenceLane = 'sourceFirst';
+      this.lastOwnedRegionRefusal = null;
+    }
     if (this.doc.rev !== revBefore) {
       this.post({ type: 'status', message: t('status.docChanged') });
       await this.loadProps(id);
       return;
     }
-    if (!this.commit(before, res.text, `Set ${id}.${prop}`)) return;
+    if (!this.commit(before, proposedText, `Set ${id}.${prop}`)) return;
     this.output.appendLine(`set ${id}.${prop} = ${itemType}[${items.length}] (generic source collection, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop }) });
     // No broad live-mutation adapter exists for arbitrary vendor IList values. A full render is the only safe visual
@@ -5175,18 +9663,23 @@ class DesignerSession {
     await this.postDirty();
   }
 
-  /** Invoke one allowlisted framework UITypeEditor in the engine's isolated worker, then feed the returned invariant
-   * value through the existing scalar transaction (source-first on ordinary forms, selected .resx on localizable
-   * forms). The worker never writes files and a dismissal is a true no-op. */
-  async uiTypeEditorFromGrid(id: string, prop: string, propType: string, editorType: string): Promise<void> {
+  /** Invoke one allowlisted framework or certified vendor UITypeEditor in the engine's isolated worker, then feed the
+   * returned invariant value through the existing scalar transaction (source-first on ordinary forms, selected .resx
+   * on localizable forms). The worker never writes files and a dismissal is a true no-op. */
+  async uiTypeEditorFromGrid(
+    id: string,
+    prop: string,
+    propType: string,
+    editorType: string,
+  ): Promise<SupportedUiTypeEditorResult | null> {
     if (this.uiTypeEditorBusy) {
       this.post({ type: 'status', message: 'A property editor is already open.' });
-      return;
+      return null;
     }
     const metadata = this.publishedEditableProperty(id, prop);
     if (!metadata || metadata.type !== propType || metadata.uiTypeEditor !== editorType) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: 'property metadata changed' }) });
-      return;
+      return null;
     }
 
     const revBefore = this.doc.rev;
@@ -5195,35 +9688,41 @@ class DesignerSession {
       const eng = await this.ensureEngine('modern');
       if (this.doc.rev !== revBefore) {
         this.post({ type: 'status', message: t('status.docChanged') });
-        return;
+        return null;
       }
-      const result = await editSupportedUiTypeEditor(
-        eng,
-        `ui-${randomBytes(16).toString('hex')}`,
-        editorType,
-        propType,
-        metadata.value ?? '',
-      );
+      const result = this.extensionHostUiTypeEditorResult ?? await editSupportedUiTypeEditor(
+          eng,
+          `ui-${randomBytes(16).toString('hex')}`,
+          editorType,
+          propType,
+          metadata.value ?? '',
+          metadata.uiTypeEditorAssemblyPath ?? null,
+          metadata.uiTypeEditorAssemblySha256 ?? null,
+          metadata.uiTypeEditorCertificationId ?? null,
+        );
+      if (this.extensionHostUiTypeEditorResult) this.extensionHostUiTypeEditorResultConsumed = true;
       if (this.doc.rev !== revBefore) {
         this.post({ type: 'status', message: t('status.docChanged') });
         await this.loadProps(id);
-        return;
+        return result;
       }
       if (result.dismissed || !result.applied) {
         if (!result.ok && !result.dismissed) {
           this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || result.errorCode || 'editor failed' }) });
         }
-        return;
+        return result;
       }
       if (!result.ok || result.invariantValue == null) {
         this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || result.errorCode || 'editor returned no value' }) });
-        return;
+        return result;
       }
       // editFromGrid re-runs normal conversion/minimality/revision checks and creates exactly one undo entry. Calling
       // it (rather than committing broker output) keeps the source transaction authoritative.
       await this.editFromGrid(id, prop, propType, metadata.isEnum, result.invariantValue);
+      return result;
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
+      return null;
     } finally {
       this.uiTypeEditorBusy = false;
     }
@@ -5335,52 +9834,70 @@ class DesignerSession {
     await this.postDirty();
   }
 
-  /** Read side of the typed ListView.Columns editor: send the "…"-opened collection's current columns to the
-   * webview. Parses the unsaved buffer. PURE-TEXT → routed to the net9 engine even for a net48 form. */
-  async sendColumnItems(id: string): Promise<void> {
+  /** Revision at which each ListView.Columns forest was handed to the panel. A delayed OK must never splice a stale
+   * column list over an intervening canvas/property/undo edit. */
+  private columnReadRev = new Map<string, number>();
+
+  /** Shared read side of the typed ListView.Columns editor. Parses the unsaved buffer and records the exact revision
+   * represented by the returned rows. PURE-TEXT → routed to net9 even for a net48 form. */
+  private async readColumnItems(id: string): Promise<{
+    ok: boolean;
+    columns: ColumnItem[];
+    reason: string;
+  }> {
     if (!this.designerFile) {
-      this.post({ type: 'columnItems', id, ok: false, columns: [], reason: 'not available' });
-      return;
+      this.columnReadRev.delete(id);
+      return { ok: false, columns: [], reason: 'not available' };
     }
     try {
       const eng = await this.ensureEngine('modern');
+      const revAtRead = this.doc.rev;
       const res = await listColumns(eng, this.designerFile, id, this.doc.designerText);
-      this.post({ type: 'columnItems', id, ok: res.ok, columns: res.columns ?? [], reason: res.reason });
+      if (res.ok) this.columnReadRev.set(id, revAtRead);
+      else this.columnReadRev.delete(id);
+      return { ok: res.ok, columns: res.columns ?? [], reason: res.reason };
     } catch (err) {
-      this.post({ type: 'columnItems', id, ok: false, columns: [], reason: errMsg(err) });
+      this.columnReadRev.delete(id);
+      return { ok: false, columns: [], reason: errMsg(err) };
     }
+  }
+
+  /** Webview transport for the shared ListView.Columns read side. */
+  async sendColumnItems(id: string): Promise<void> {
+    this.post({ type: 'columnItems', id, ...(await this.readColumnItems(id)) });
   }
 
   /** Write side of the typed ListView.Columns editor (VS "Collection Editor"). Mirrors collectionFromGrid's
    * error/restore + single-undo commit. */
-  async columnsFromGrid(id: string, columns: ColumnItem[]): Promise<void> {
+  async columnsFromGrid(id: string, columns: ColumnItem[]): Promise<boolean> {
     try {
-      await this.applyColumns(id, columns);
+      return await this.applyColumns(id, columns, this.columnReadRev.get(id));
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
       try { await this.loadProps(id); } catch { /* best effort */ }
+      return false;
     }
   }
 
-  private async applyColumns(id: string, columns: ColumnItem[]): Promise<void> {
-    if (!this.designerFile) return;
+  private async applyColumns(id: string, columns: ColumnItem[], revAtRead?: number): Promise<boolean> {
+    if (!this.designerFile) return false;
     const eng = await this.ensureEngine('modern'); // PURE-TEXT splice — modern engine even on a net48 form
     const before = this.doc.designerText;
-    const revBefore = this.doc.rev;
+    const revBefore = revAtRead ?? this.doc.rev;
 
     const res = await setColumns(eng, this.designerFile, id, columns, before);
     if (!res.safe || res.text === null) {
       this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
       await this.loadProps(id);
-      return;
+      return false;
     }
     if (this.doc.rev !== revBefore) {
       this.post({ type: 'status', message: t('status.docChanged') });
       await this.loadProps(id);
-      return;
+      return false;
     }
 
-    if (!this.commit(before, res.text, `Set ${id}.Columns`)) return;
+    if (!this.commit(before, res.text, `Set ${id}.Columns`)) return false;
     this.output.appendLine(`set ${id}.Columns = ${columns.length} column(s) (collection, unsaved)`);
     this.post({ type: 'status', message: t('status.propSet', { id, prop: 'Columns' }) });
     if (this.engineKind === 'net48') {
@@ -5393,6 +9910,7 @@ class DesignerSession {
     }
     await this.loadProps(id);
     await this.postDirty();
+    return true;
   }
 
   /** Read side of the hierarchical TreeView.Nodes editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
@@ -5460,11 +9978,16 @@ class DesignerSession {
    * the panel never saw (or resurrecting one it still did). The canvas paths pass their own revAtRead. */
   private stripReadRev = new Map<string, number>();
 
-  /** Read side of the ToolStrip/MenuStrip item editor. Parses the unsaved buffer. PURE-TEXT → net9 even on net48. */
-  async sendToolStripItems(id: string): Promise<void> {
+  /** Shared read side of the ToolStrip/MenuStrip item editor. Parses the unsaved buffer and records the revision the
+   * returned forest belongs to. PURE-TEXT → net9 even on net48. */
+  private async readToolStripItems(id: string): Promise<{
+    ok: boolean;
+    items: ToolStripItemModel[];
+    reason: string;
+  }> {
     if (!this.designerFile) {
-      this.post({ type: 'toolStripItems', id, ok: false, items: [], reason: 'not available' });
-      return;
+      this.stripReadRev.delete(id);
+      return { ok: false, items: [], reason: 'not available' };
     }
     try {
       const eng = await this.ensureEngine('modern');
@@ -5472,21 +9995,28 @@ class DesignerSession {
       const res = await listToolStripItems(eng, this.designerFile, id, this.doc.designerText);
       if (res.ok) this.stripReadRev.set(id, revAtRead);
       else this.stripReadRev.delete(id);
-      this.post({ type: 'toolStripItems', id, ok: res.ok, items: res.items ?? [], reason: res.reason });
+      return { ok: res.ok, items: res.items ?? [], reason: res.reason ?? '' };
     } catch (err) {
       this.stripReadRev.delete(id);
-      this.post({ type: 'toolStripItems', id, ok: false, items: [], reason: errMsg(err) });
+      return { ok: false, items: [], reason: errMsg(err) };
     }
   }
 
+  /** Webview transport for the shared Items-editor read side. */
+  async sendToolStripItems(id: string): Promise<void> {
+    const result = await this.readToolStripItems(id);
+    this.post({ type: 'toolStripItems', id, ...result });
+  }
+
   /** Write side of the ToolStrip/MenuStrip item editor (reorder / add / remove). Mirrors treeNodesFromGrid's error/restore. */
-  async toolStripFromGrid(id: string, items: ToolStripItemModel[]): Promise<void> {
+  async toolStripFromGrid(id: string, items: ToolStripItemModel[]): Promise<boolean> {
     try {
       // Gate on the revision the panel's forest was READ at, not on "now" — see stripReadRev.
-      await this.applyToolStripItems(id, items, false, this.stripReadRev.get(id));
+      return await this.applyToolStripItems(id, items, false, this.stripReadRev.get(id));
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
       try { await this.loadProps(id); } catch { /* best effort */ }
+      return false;
     }
   }
 
@@ -5654,6 +10184,155 @@ class DesignerSession {
     return 'ToolStripButton';
   }
 
+  /** Read a canonical source-backed generic list, run either the allowlisted framework CollectionEditor or the exact
+   * certified vendor editor in the isolated STA worker, then route validated invariant items through the source
+   * transaction. Certified vendor output additionally requires the component-owned patch proof before commit. */
+  async uiCollectionEditorFromGrid(
+    id: string,
+    prop: string,
+    itemType: string,
+    editorType: string,
+  ): Promise<SupportedUiTypeEditorResult | null> {
+    if (this.uiTypeEditorBusy) {
+      this.post({ type: 'status', message: 'A property editor is already open.' });
+      return null;
+    }
+    if (!this.designerFile) return null;
+    const metadata = this.publishedEditableProperty(id, prop);
+    const frameworkCollectionEditor = editorType === 'System.ComponentModel.Design.CollectionEditor';
+    const certifiedVendorCollection = !!metadata?.uiTypeEditorAssemblyPath
+      && !!metadata.uiTypeEditorAssemblySha256
+      && !!metadata.uiTypeEditorCertificationId;
+    if (!metadata?.genericCollection || metadata.collectionItemType !== itemType
+        || metadata.uiTypeEditor !== editorType
+        || (!frameworkCollectionEditor && !certifiedVendorCollection)) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: 'property metadata changed' }) });
+      return null;
+    }
+
+    const revBefore = this.doc.rev;
+    this.uiTypeEditorBusy = true;
+    try {
+      const eng = await this.ensureEngine('modern');
+      const listed = await listGenericListItems(eng, this.designerFile, id, prop, itemType, this.doc.designerText);
+      if (!listed.ok || listed.itemTypeName !== itemType) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: listed.reason || 'collection is not source-representable' }) });
+        return null;
+      }
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        return null;
+      }
+      const requestId = `collection-${randomBytes(16).toString('hex')}`;
+      const result = certifiedVendorCollection
+        ? await editCertifiedVendorCollectionEditor(
+            eng,
+            requestId,
+            editorType,
+            itemType,
+            listed.items ?? [],
+            metadata.uiTypeEditorAssemblyPath!,
+            metadata.uiTypeEditorAssemblySha256!,
+            metadata.uiTypeEditorCertificationId!,
+          )
+        : await editSupportedCollectionEditor(
+            eng,
+            requestId,
+            itemType,
+            listed.items ?? [],
+          );
+      if (this.doc.rev !== revBefore) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.loadProps(id);
+        return result;
+      }
+      if (result.dismissed || !result.applied) {
+        if (!result.ok && !result.dismissed) {
+          this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || result.errorCode || 'collection editor failed' }) });
+        }
+        return result;
+      }
+      if (!result.ok || !Array.isArray(result.collectionItems)) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || result.errorCode || 'collection editor returned no items' }) });
+        return result;
+      }
+      await this.applyGenericList(id, prop, itemType, result.collectionItems);
+      return result;
+    } catch (err) {
+      this.post({ type: 'status', message: errMsg(err) });
+      return null;
+    } finally {
+      this.uiTypeEditorBusy = false;
+    }
+  }
+
+  /**
+   * On-canvas MOVE: reorder a field-backed existing ToolStrip/MenuStrip item within its current Items/DropDownItems
+   * collection, or reparent it into another dropdown's DropDownItems. The canvas sends only the owner strip id, source
+   * item id, target parent id (null = strip root) and target index; the host re-reads the current forest from the
+   * current unsaved buffer and applies one atomic setToolStripItems edit guarded by the same revision seam as add/delete.
+   */
+  private async applyStripMove(
+    hostId: string,
+    itemId: string,
+    targetParentItemId: string | null,
+    targetIndex: number,
+  ): Promise<{ applied: boolean; reason: string | null }> {
+    if (this.disposed || !this.designerFile) return { applied: false, reason: 'not available' };
+    if (!hostId || !itemId || !Number.isFinite(targetIndex) || targetIndex < 0) {
+      const reason = 'invalid strip move target';
+      this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+      return { applied: false, reason };
+    }
+    const insertAt = Math.floor(targetIndex);
+    const eng = await this.ensureEngine('modern'); // read + splice are pure-text → modern engine even on a net48 form
+    const revAtRead = this.doc.rev; // stale-guard the forest we are about to mutate
+    const cur = await listToolStripItems(eng, this.designerFile, hostId, this.doc.designerText);
+    if (!cur.ok) {
+      const reason = cur.reason || 'items not editable';
+      this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+      return { applied: false, reason };
+    }
+    const forest = cur.items.slice();
+    const source = findToolStripItemEntry(forest, itemId);
+    if (!source) {
+      const reason = 'strip item not found';
+      this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+      return { applied: false, reason };
+    }
+    if (targetParentItemId && (targetParentItemId === itemId || containsToolStripItem(source.item, targetParentItemId))) {
+      const reason = 'cannot move an item into its own submenu';
+      this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+      return { applied: false, reason };
+    }
+    const targetParent = targetParentItemId ? findToolStripItemEntry(forest, targetParentItemId) : null;
+    if (targetParentItemId) {
+      if (!targetParent) {
+        const reason = 'move target parent not found';
+        this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+        return { applied: false, reason };
+      }
+      if (!isDropDownStripItemType(targetParent.item.itemType)) {
+        const reason = `${targetParent.item.id} has no DropDownItems collection`;
+        this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+        return { applied: false, reason };
+      }
+    }
+
+    const sameParent = (source.parent?.id ?? null) === (targetParent?.item.id ?? null);
+    const originalIndex = source.index;
+    source.siblings.splice(source.index, 1);
+    const targetSiblings = targetParent ? (targetParent.item.children ??= []) : forest;
+    let adjustedIndex = Math.max(0, Math.min(insertAt, targetSiblings.length));
+    if (sameParent && originalIndex < insertAt) adjustedIndex = Math.max(0, adjustedIndex - 1);
+    if (sameParent && adjustedIndex === originalIndex) return { applied: false, reason: null }; // dropped back to the same slot
+    targetSiblings.splice(adjustedIndex, 0, source.item);
+
+    this.currentSelItem = { ownerId: hostId, itemId };
+    const applied = await this.applyToolStripItems(hostId, forest, true, revAtRead);
+    return { applied, reason: applied ? null : 'strip item edit did not reach a fresh render' };
+  }
+
   /**
    * On-canvas RENAME: set one existing top-level item's Text. Reads the current forest from the unsaved buffer
    * (pure-text → net9 even on a net48 form), finds the item by its field id, changes ONLY its Text, and reuses the
@@ -5818,30 +10497,31 @@ class DesignerSession {
   }
 
   /** Read one control's canonical DataBindings from the unsaved buffer. Pure text, including for net48 forms. */
-  async sendBindingItems(id: string): Promise<void> {
-    if (!this.designerFile) {
-      this.post({ type: 'bindingItems', id, ok: false, bindings: [], sources: [], reason: 'not available' });
-      return;
-    }
+  private async readBindingItems(id: string): Promise<BindingItems> {
+    if (!this.designerFile) return { ok: false, bindings: [], sources: [], reason: 'not available' };
     try {
       const eng = await this.ensureEngine('modern');
-      const res = await listBindings(eng, this.designerFile, id, this.doc.designerText);
-      this.post({
-        type: 'bindingItems',
-        id,
-        ok: res.ok,
-        bindings: res.bindings ?? [],
-        sources: res.sources ?? [],
-        reason: res.reason,
-      });
+      return await listBindings(eng, this.designerFile, id, this.doc.designerText);
     } catch (err) {
-      this.post({ type: 'bindingItems', id, ok: false, bindings: [], sources: [], reason: errMsg(err) });
+      return { ok: false, bindings: [], sources: [], reason: errMsg(err) };
     }
   }
 
+  async sendBindingItems(id: string): Promise<void> {
+    const res = await this.readBindingItems(id);
+    this.post({
+      type: 'bindingItems',
+      id,
+      ok: res.ok,
+      bindings: res.bindings ?? [],
+      sources: res.sources ?? [],
+      reason: res.reason,
+    });
+  }
+
   /** Commit the DataBindings popup atomically, then rebuild the picture from the edited source. */
-  async bindingsFromGrid(id: string, bindings: BindingItem[]): Promise<void> {
-    if (!this.designerFile) return;
+  async bindingsFromGrid(id: string, bindings: BindingItem[]): Promise<boolean> {
+    if (!this.designerFile) return false;
     try {
       const eng = await this.ensureEngine('modern');
       const before = this.doc.designerText;
@@ -5850,22 +10530,24 @@ class DesignerSession {
       if (!res.safe || res.text === null) {
         this.post({ type: 'status', message: t('status.editRejected', { reason: res.reason || 'unsafe' }) });
         await this.loadProps(id);
-        return;
+        return false;
       }
       if (this.doc.rev !== revBefore) {
         this.post({ type: 'status', message: t('status.docChanged') });
         await this.loadProps(id);
-        return;
+        return false;
       }
-      if (!this.commit(before, res.text, `Set ${id}.DataBindings`)) return;
+      if (!this.commit(before, res.text, `Set ${id}.DataBindings`)) return false;
       this.output.appendLine(`set ${id}.DataBindings = ${bindings.length} binding(s) (unsaved)`);
       this.post({ type: 'status', message: t('status.propSet', { id, prop: 'DataBindings' }) });
       await this.fullRender();
       await this.loadProps(id);
       await this.postDirty();
+      return true;
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
       try { await this.loadProps(id); } catch { /* best effort */ }
+      return false;
     }
   }
 
@@ -5917,6 +10599,132 @@ class DesignerSession {
     } catch (err) {
       this.post({ type: 'status', message: errMsg(err) });
       try { await this.loadProps(id); } catch { /* best effort */ }
+    }
+  }
+
+  /** Refresh the bounded project DTO/settings catalog shown by the dedicated Data Sources pane. Discovery is
+   * parse-only in the modern engine and consumes the current unsaved designer buffer for existing BindingSources. */
+  async refreshDataSources(): Promise<DataSourcesResult> {
+    if (!this.designerFile || this.disposed) {
+      const unavailable: DataSourcesResult = {
+        ok: false, schemas: [], settings: [], reason: 'not available', refusalCode: 'NOT_AVAILABLE',
+      };
+      DesignerHub.instance.pushPanel(this, { type: 'dataSources', ...unavailable });
+      return unavailable;
+    }
+    const seq = ++this.dataSourcesSeq;
+    const rev = this.doc.rev;
+    try {
+      const eng = await this.ensureEngine('modern');
+      const result: DataSourcesResult = await listDataSources(eng, this.designerFile, this.doc.designerText);
+      if (this.disposed || seq !== this.dataSourcesSeq || rev !== this.doc.rev) return result;
+      DesignerHub.instance.pushPanel(this, { type: 'dataSources', ...result });
+      return result;
+    } catch (error) {
+      const failed: DataSourcesResult = {
+        ok: false, schemas: [], settings: [], reason: errMsg(error), refusalCode: 'ENGINE_ERROR',
+      };
+      if (this.disposed || seq !== this.dataSourcesSeq || rev !== this.doc.rev) return failed;
+      DesignerHub.instance.pushPanel(this, { type: 'dataSources', ...failed });
+      return failed;
+    }
+  }
+
+  /** Apply one Data Sources generation plan as a single custom-document edit. The webview supplies only an opaque
+   * schema key and a gesture; the engine re-discovers the schema and owns every emitted type/member expression. */
+  async generateFromDataSource(
+    schemaKey: string,
+    mode: 'detail' | 'grid',
+    requestedParentId: string,
+    dropX: number | undefined,
+    dropY: number | undefined,
+    includeNavigator: boolean,
+    existingBindingSourceId: string | null,
+    existingGridId: string | null,
+  ): Promise<DataSourceGenerationResult> {
+    if (!this.designerFile || this.disposed) {
+      return {
+        safe: false, reason: 'not available', newText: null, createdIds: [], refusalCode: 'NOT_AVAILABLE',
+      };
+    }
+    const parentId = this.containerParentFor(requestedParentId || 'this');
+    let x = 13;
+    let y = 13;
+    if (Number.isFinite(dropX) && Number.isFinite(dropY)) {
+      const parent = this.controls.find((control) => control.id === parentId);
+      const clientX = parent?.clientX ?? parent?.x ?? 0;
+      const clientY = parent?.clientY ?? parent?.y ?? 0;
+      x = Math.max(0, Math.round((dropX as number) - clientX));
+      y = Math.max(0, Math.round((dropY as number) - clientY));
+    }
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    try {
+      const eng = await this.ensureEngine('modern');
+      const result = await generateDataSource(
+        eng, this.designerFile, schemaKey, mode, parentId, x, y, includeNavigator,
+        existingBindingSourceId, existingGridId, before);
+      const text = result.newText ?? result.text ?? null;
+      if (!result.safe || text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || 'unsafe data-source generation' }) });
+        await this.refreshDataSources();
+        return result;
+      }
+      if (this.doc.rev !== rev) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        await this.refreshDataSources();
+        return {
+          safe: false, reason: 'document changed', newText: null, createdIds: [], refusalCode: 'DOCUMENT_CHANGED',
+        };
+      }
+      if (!this.commit(before, text, `Generate ${mode} data source`)) {
+        return {
+          safe: false, reason: 'document commit refused', newText: null, createdIds: [], refusalCode: 'COMMIT_REFUSED',
+        };
+      }
+      const created = Array.isArray(result.createdIds) ? result.createdIds.filter((id) => typeof id === 'string' && id) : [];
+      const selected = created[created.length - 1] ?? existingGridId;
+      if (selected) {
+        this.currentId = selected;
+        this.currentSelectionIds = [selected];
+      }
+      this.output.appendLine(`generated ${mode} data source (${created.join(', ') || 'updated existing grid'}) (unsaved)`);
+      await this.fullRender();
+      await this.refreshDataSources();
+      return result;
+    } catch (error) {
+      const reason = errMsg(error);
+      this.post({ type: 'status', message: t('status.editRejected', { reason }) });
+      await this.refreshDataSources();
+      return { safe: false, reason, newText: null, createdIds: [], refusalCode: 'ENGINE_ERROR' };
+    }
+  }
+
+  /** Bind one engine-discovered conventional application setting to the selected current-source control. */
+  async bindSelectedApplicationSetting(settingKey: string, targetId: string): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    try {
+      const eng = await this.ensureEngine('modern');
+      const result = await bindApplicationSetting(eng, this.designerFile, settingKey, targetId, before);
+      const text = result.newText ?? result.text ?? null;
+      if (!result.safe || text === null) {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: result.reason || 'unsupported setting binding' }) });
+        return;
+      }
+      if (this.doc.rev !== rev) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        return;
+      }
+      if (!this.commit(before, text, `Bind ${targetId} to application setting`)) return;
+      this.currentId = targetId;
+      this.currentSelectionIds = [targetId];
+      this.output.appendLine(`bound ${targetId}.${result.boundProperty ?? '?'} to application setting (unsaved)`);
+      await this.fullRender();
+      await this.refreshDataSources();
+    } catch (error) {
+      this.post({ type: 'status', message: t('status.editRejected', { reason: errMsg(error) }) });
     }
   }
 
@@ -6020,6 +10828,32 @@ class DesignerSession {
     return this.designerFile ? this.doc.designerText : undefined;
   }
 
+  /** Engine-only source for Visual Studio's empty-surface behavior. The owner gate already proved that the actual
+   * designer file is one empty partial and the matching code-behind directly derives from Form/UserControl. Keeping
+   * this synthetic method out of WinFormsDesignDocument is the invariant: render/describe may consume it; every
+   * persistence operation continues to receive the exact original buffer and is independently refused. */
+  private async currentEngineText(): Promise<string | undefined> {
+    const text = await this.currentText();
+    if (!this.emptyInitializeComponentSurface) return text;
+    const identity = this.lastDocumentOwner?.typeName?.trim() ?? '';
+    const segments = identity.split('.');
+    if (segments.length === 0 || segments.some((segment) =>
+      !/^[_\p{L}\p{Nl}][_\p{L}\p{Nl}\p{Nd}\p{Pc}\p{Mn}\p{Mc}\p{Cf}]*$/u.test(segment)))
+      return text;
+    const typeName = segments.pop()!;
+    const namespaceName = segments.map((segment) => `@${segment}`).join('.');
+    const member = `partial class @${typeName}\n{\n    private void InitializeComponent() { }\n}\n`;
+    return namespaceName ? `namespace ${namespaceName}\n{\n${member}}\n` : member;
+  }
+
+  /** Current sibling partial text from VS Code's in-memory document, including unsaved base-clause edits. */
+  private async currentCodeText(): Promise<string | undefined> {
+    const codePath = this.codeFile();
+    if (!codePath) return undefined;
+    try { return (await vscode.workspace.openTextDocument(codePath)).getText(); }
+    catch { return ''; } // file exists but its current snapshot is unavailable: force engine-side fail-closed validation
+  }
+
   private async applyEngineLocalizationCulture(engine: EngineHandle): Promise<void> {
     if (!this.designerFile) return;
     await setLocalizationCulture(engine, this.designerFile, this.localizationCulture);
@@ -6035,14 +10869,92 @@ class DesignerSession {
 
   private codeFile(): string | null {
     if (!this.designerFile) return null;
+    // Inline InitializeComponent owns both generated wiring and handler body. createHandler detects this identity and
+    // merges the engine's two non-overlapping insertions into one CustomDocument edit instead of writing twice.
+    if (!/\.Designer\.cs$/i.test(this.designerFile)) return this.designerFile;
     const m = /\.Designer\.cs$/i.exec(this.designerFile);
     const partner = m ? this.designerFile.slice(0, m.index) + '.cs' : this.designerFile;
     return fs.existsSync(partner) ? partner : null;
   }
 
+  /** Snapshot every bounded C# source candidate in the owning project. The engine filters these by the exact partial
+   * form identity; keeping the TextDocuments here also gives the mutation path a version precondition across all
+   * partials, not only the conventional sibling Form1.cs. */
+  private async projectEventSourceSnapshot(): Promise<ProjectEventSourceSnapshot> {
+    const primaryPath = this.codeFile();
+    // A deterministic pick among co-owning projects is inert for the RENDER, but not here: this walks the owner
+    // project's whole .cs tree to discover and generate event handlers, and it version-preconditions a MUTATION.
+    // Scanning an arbitrarily chosen contender's tree is not the same as scanning the form's own project, so fall
+    // back to findOwningCsproj — which deliberately returns null for more than one importer — in that case.
+    const pickedAmongEquivalents = this.lastDocumentOwner?.selectedAmongEquivalentOwners === true;
+    const ownerProject = isResolvedDocumentOwner(this.lastDocumentOwner)
+      && this.lastDocumentOwner?.projectPath && !pickedAmongEquivalents
+      ? this.lastDocumentOwner.projectPath
+      : this.designerFile ? findOwningCsproj(path.dirname(this.designerFile), this.wsRoot()) : null;
+    const candidates = collectProjectEventSourcePaths(ownerProject, primaryPath);
+    const paths: string[] = [];
+    const documents: vscode.TextDocument[] = [];
+    const versions: number[] = [];
+    const texts: string[] = [];
+    for (const candidate of candidates) {
+      try {
+        const document = await vscode.workspace.openTextDocument(candidate);
+        paths.push(candidate);
+        documents.push(document);
+        versions.push(document.version);
+        texts.push(document.getText());
+      } catch {
+        // One unreadable project file must not hide handlers from every other valid partial.
+      }
+    }
+    const primaryIndex = primaryPath
+      ? paths.findIndex((candidate) => normalize(candidate) === normalize(primaryPath))
+      : -1;
+    return {
+      primaryPath,
+      primaryDocument: primaryIndex >= 0 ? documents[primaryIndex] : null,
+      paths,
+      documents,
+      versions,
+      texts,
+    };
+  }
+
+  private projectEventSnapshotUnchanged(snapshot: ProjectEventSourceSnapshot): boolean {
+    return snapshot.documents.every((document, index) => document.version === snapshot.versions[index]);
+  }
+
+  private async openProjectHandlerAt(handler: string, snapshot?: ProjectEventSourceSnapshot): Promise<void> {
+    if (!this.designerFile) return;
+    const sources = snapshot ?? await this.projectEventSourceSnapshot();
+    if (sources.texts.length === 0) {
+      this.post({ type: 'status', message: t('status.noCodeBehindNav') });
+      return;
+    }
+    try {
+      const engine = await this.ensureEngine();
+      const index = await findEventHandlerSourceIndex(
+        engine,
+        this.designerFile,
+        handler,
+        sources.texts,
+        (await this.currentText()) ?? null,
+        this.asm() ?? null,
+      );
+      if (index < 0 || index >= sources.paths.length) {
+        this.post({ type: 'status', message: t('status.handlerNotFound', { handler, file: path.basename(sources.primaryPath ?? this.designerFile) }) });
+        return;
+      }
+      await this.openHandlerAt(sources.paths[index], handler);
+    } catch (error) {
+      this.output.appendLine('[designer] project-wide handler navigation failed: ' + errMsg(error));
+      this.post({ type: 'status', message: t('status.handlerNotFound', { handler, file: path.basename(sources.primaryPath ?? this.designerFile) }) });
+    }
+  }
+
   async navigateToHandler(id: string, eventName: string, handler: string | undefined, ownerId?: string): Promise<void> {
     if (this.disposed || !this.designerFile) return;
-    if (handler) { await this.openHandlerAt(this.codeFile(), handler); return; }
+    if (handler) { await this.openProjectHandlerAt(handler); return; }
     await this.createHandler(id, eventName, undefined, ownerId);
   }
 
@@ -6055,75 +10967,117 @@ class DesignerSession {
     else await this.loadProps(id);
   }
 
-  async createHandler(id: string, eventName: string, handlerName?: string, ownerId?: string): Promise<void> {
+  async createHandler(
+    id: string,
+    eventName: string,
+    handlerName?: string,
+    ownerId?: string,
+    interleaveAfterGeneration?: () => Promise<void>,
+  ): Promise<void> {
     if (!this.designerFile) return;
-    // 0.10.0 trust-floor: reachable via navigateHandler (NOT a LOCALIZABLE_BLOCKED message) and the grid's
-    // "(new handler)" path — refuse here so a read-only localizable form can't gain a code-behind stub +
-    // event-wiring splice. Navigating to an EXISTING handler stays allowed (navigateToHandler's open branch).
-    if (this.refuseLocalizableMutation()) return;
+    // Event wiring is structural metadata, not a localizable value. Both ordinary and ApplyResources-backed forms use
+    // the same engine-verified wiring + signature gates, so localizable forms deliberately remain supported here.
     if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     // Same reasoning for the render gate: navigateHandler is not a LOCALIZABLE_BLOCKED message, so nothing stopped
     // this path on a failed-render form — the .cs stub was written and only the wiring was refused by commit(),
     // leaving an orphan handler behind. Navigating to an EXISTING handler is unaffected (that branch never gets here).
     if (this.refuseStaleRenderMutation()) return;
-    const codePath = this.codeFile();
-    if (!codePath) { this.post({ type: 'status', message: t('status.noCodeBehindHandler') }); return; }
+    const eventSources = await this.projectEventSourceSnapshot();
+    const codePath = eventSources.primaryPath;
+    const codeDoc = eventSources.primaryDocument;
     const eng = await this.ensureEngine();
 
     const designerBefore = this.doc.designerText;
     const designerRev = this.doc.rev;
+    const inlineDocument = !!codePath && normalize(codePath) === normalize(this.designerFile);
+    const codeBefore = inlineDocument ? designerBefore : codeDoc?.getText() ?? null;
+    const codeVer = codeDoc?.version ?? -1;
+    const projectTexts = eventSources.texts.map((text, index) =>
+      inlineDocument && normalize(eventSources.paths[index]) === normalize(this.designerFile!) ? designerBefore : text);
 
-    let codeDoc: vscode.TextDocument;
-    try { codeDoc = await vscode.workspace.openTextDocument(codePath); }
-    catch { this.post({ type: 'status', message: t('status.cannotOpen', { file: path.basename(codePath) }) }); return; }
-    const codeBefore = codeDoc.getText();
-    const codeVer = codeDoc.version;
-
-    const gen = await generateEventHandler(eng, this.designerFile, id, eventName, handlerName ?? null, designerBefore, codeBefore, this.asm() ?? null);
+    const gen = await generateEventHandler(
+      eng, this.designerFile, id, eventName, handlerName ?? null, designerBefore, codeBefore,
+      this.asm() ?? null, projectTexts,
+    );
     if (!gen.safe) { this.post({ type: 'status', message: t('status.createHandlerRejected', { reason: gen.reason || 'unsafe' }) }); return; }
     if (this.disposed) return;
+    if (interleaveAfterGeneration) await interleaveAfterGeneration();
 
-    if (this.doc.rev !== designerRev || codeDoc.version !== codeVer) {
+    if (this.doc.rev !== designerRev || (codeDoc && codeDoc.version !== codeVer)
+      || !this.projectEventSnapshotUnchanged(eventSources)) {
       this.post({ type: 'status', message: t('status.docChanged') });
       return;
     }
 
-    // 0.10.0 trust-floor TOCTOU close: the form could have turned localizable DURING the engine round-trip
-    // above (the entry guard ran before it). Re-check FRESH before writing the code-behind stub so a form
-    // that became localizable mid-operation can't gain a generated-source stub + wiring.
-    if (this.refuseLocalizableMutation()) return;
     if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
     // Same for the render gate: a concurrent fullRender can FAIL during the engine round-trip above without moving
     // doc.rev (a control-source reload, a webview reinit), so the rev check misses it. Without this fresh look the
     // stub still lands and only commit() refuses the wiring — recreating the orphan handler the entry guard exists
     // to prevent.
     if (this.refuseStaleRenderMutation()) return;
-    // Apply the code-behind .cs stub FIRST (a real text edit the user reads/writes); only then commit the
-    // in-memory .Designer.cs wiring — so we never wire an event to a handler stub that failed to write.
+    if (inlineDocument && gen.codeText != null) {
+      if (!codePath || codeBefore == null || gen.designerText == null
+        || gen.codeInsertText == null || gen.codeInsertOffset < 0) {
+        this.post({ type: 'status', message: t('status.couldNotWriteStub') });
+        return;
+      }
+      const combined = mergeInlineEventEdits(
+        designerBefore, gen.designerText, gen.codeInsertOffset, gen.codeInsertText, gen.codeText,
+      );
+      if (combined == null) {
+        this.post({ type: 'status', message: t('status.createHandlerRejected', { reason: 'inline wiring and handler edits overlap' }) });
+        return;
+      }
+      const combinedProjectTexts = eventSources.texts.map((text, index) =>
+        normalize(eventSources.paths[index]) === normalize(this.designerFile!) ? combined : text);
+      const validation = await setEventWiring(
+        eng, this.designerFile, id, eventName, gen.handlerName, combined, combined,
+        this.asm() ?? null, combinedProjectTexts,
+      );
+      if (!validation.safe || validation.designerText !== combined) {
+        this.post({ type: 'status', message: t('status.createHandlerRejected', { reason: validation.reason || 'combined inline event edit did not revalidate' }) });
+        return;
+      }
+      if (this.doc.rev !== designerRev || !this.projectEventSnapshotUnchanged(eventSources)) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        return;
+      }
+      if (!this.commit(designerBefore, combined, `Create inline handler ${id}.${eventName}`,
+        undefined, undefined, undefined, 'event')) return;
+      this.output.appendLine(`created inline handler ${gen.handlerName} for ${id}.${eventName} in one document edit (unsaved)`);
+      await this.refreshAfterWiring(id, ownerId);
+      await this.postDirty();
+      this.post({ type: 'status', message: t('status.wired', { event: eventName, handler: gen.handlerName }) });
+      return;
+    }
+    // Apply the code-behind .cs stub FIRST (a real unsaved text edit the user reads/writes); only then commit the
+    // in-memory .Designer.cs wiring. The exact before/after buffer pair is attached to that CustomDocument edit below,
+    // so one designer Undo/Redo transitions BOTH artifacts instead of leaving the code stub in a separate history.
+    let companionText: CompanionTextTx | undefined;
     if (gen.codeText != null) {
-      // Apply the stub as a ONE-POINT INSERT, never a whole-document replace. The replace was built from the
-      // `codeBefore` snapshot and spanned the entire file, so any edit that landed during the awaited applyEdit — a
-      // formatter, a source generator, the user typing — was silently erased: applyEdit carries no version
-      // precondition, and the version check above only covers the moment before the write. An insert touches
-      // one offset, so everything else in the user's .cs survives regardless.
-      const edit = new vscode.WorkspaceEdit();
-      if (gen.codeInsertText != null && gen.codeInsertOffset >= 0) {
-        edit.insert(codeDoc.uri, codeDoc.positionAt(gen.codeInsertOffset), gen.codeInsertText);
-      } else {
+      if (!codeDoc || !codePath || codeBefore == null) {
+        this.post({ type: 'status', message: t('status.noCodeBehindHandler') });
+        return;
+      }
+      if (gen.codeInsertText == null || gen.codeInsertOffset < 0) {
         // No minimal form offered (shouldn't happen — the engine always emits one for a stub); refuse rather than
         // fall back to overwriting the file wholesale.
         this.post({ type: 'status', message: t('status.couldNotWriteStub') });
         return;
       }
-      if (!(await vscode.workspace.applyEdit(edit))) { this.post({ type: 'status', message: t('status.couldNotWriteStub') }); return; }
-      // VERIFY the write landed where it was aimed. `gen.codeText` is exactly what the engine says the file becomes
-      // once this insert is applied to `codeBefore`, so any mismatch means something else changed the document across
-      // the awaited applyEdit — and our offset, computed against the snapshot, may have addressed a completely
-      // different place (inside a method body, a string, past EOF). The insert can't be taken back safely, but the
-      // WIRING must not be committed on top of it: that is what would turn a visibly misplaced method into a
-      // .Designer.cs that references a handler the form doesn't semantically have. Detect and refuse, loudly.
-      if (codeDoc.getText() !== gen.codeText) {
-        this.output.appendLine('[designer] handler wiring refused: the code-behind changed while the stub was being written');
+      // Revalidate the engine's minimal insert before handing its exact whole-buffer image to the transaction. This
+      // catches a malformed/misaligned engine result without applying anything to the user's document.
+      if (codeBefore.slice(0, gen.codeInsertOffset) + gen.codeInsertText + codeBefore.slice(gen.codeInsertOffset)
+        !== gen.codeText) {
+        this.output.appendLine('[designer] handler wiring refused: the engine returned an inconsistent code-behind insert');
+        this.post({ type: 'status', message: t('status.couldNotWriteStub') });
+        return;
+      }
+      companionText = { document: codeDoc, before: codeBefore, after: gen.codeText };
+      try {
+        await this.transitionCompanionText(companionText, 'redo');
+      } catch (error) {
+        this.output.appendLine('[designer] handler wiring refused: ' + errMsg(error));
         this.post({ type: 'status', message: t('status.docChanged') });
         return;
       }
@@ -6131,22 +11085,33 @@ class DesignerSession {
       // can FAIL (or the form turn localizable, or the baseline go unknown) WHILE the stub is landing. Re-check, so the
       // WIRING is refused with the real reason rather than by commit()'s generic backstop.
   //
-      // The stub itself stays — an unused empty method the user can Ctrl+Z. Taking it back would mean a read-then-
-      // replace of the whole .cs, and applyEdit carries no version precondition, so a concurrent edit landing in that
-      // gap would be erased by the rollback. Leaving a dead method is the smaller harm; refusing to roll back
-      // IS the fail-closed side here. (This is only defensible because the forward write above is a one-point insert —
-      // while it was a whole-document replace, the "harmless orphan" claim was simply false.)
-      if (this.refuseLocalizableMutation() || this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation()) return;
-      if (this.doc.rev !== designerRev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
+      // A gate can still flip while the code edit is being applied. The final commit below compensates this exact
+      // buffer image if it refuses; an intervening edit makes that compensation fail closed instead of overwriting it.
+      const gateRefused = this.refuseUnknownBaselineMutation() || this.refuseStaleRenderMutation();
+      const revisionChanged = this.doc.rev !== designerRev;
+      if (revisionChanged) this.post({ type: 'status', message: t('status.docChanged') });
+      if (gateRefused || revisionChanged) {
+        try { await this.transitionCompanionText(companionText, 'undo'); }
+        catch (error) { this.output.appendLine('[designer] handler stub compensation failed: ' + errMsg(error)); }
+        return;
+      }
     }
-    // if the designer wiring is refused by a fail-closed gate, don't claim success or navigate (the code-behind stub
-    // written above is the user's own .cs — undoable — and stays; the wiring just isn't persisted).
-    if (gen.designerText != null && !this.commit(designerBefore, gen.designerText, `Wire ${id}.${eventName}`)) return;
+    // Even when the designer text is already wired, a newly generated stub still needs a native composite undo unit.
+    // If the final designer gate refuses, remove the exact stub image immediately; conflict leaves the user's newer
+    // code untouched and is surfaced in the output channel.
+    if (!this.commit(designerBefore, gen.designerText ?? designerBefore, `Wire ${id}.${eventName}`,
+      undefined, undefined, undefined, 'event', companionText)) {
+      if (companionText) {
+        try { await this.transitionCompanionText(companionText, 'undo'); }
+        catch (error) { this.output.appendLine('[designer] handler stub compensation failed: ' + errMsg(error)); }
+      }
+      return;
+    }
 
     this.output.appendLine(`created handler ${gen.handlerName} for ${id}.${eventName}${gen.alreadyWired ? ' (already wired)' : ''} (unsaved)`);
     await this.refreshAfterWiring(id, ownerId);
     await this.postDirty();
-    await this.openHandlerAt(codePath, gen.handlerName);
+    await this.openProjectHandlerAt(gen.handlerName);
   }
 
   private async createDefaultHandler(id: string): Promise<void> {
@@ -6187,12 +11152,15 @@ class DesignerSession {
   /** Events dropdown candidates → the Properties view (lazy: only when the Events tab asks). */
   async sendCandidates(id: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
-    const codePath = this.codeFile();
-    if (!codePath) { DesignerHub.instance.pushPanel(this, { type: 'candidates', id, map: {} }); return; }
     try {
+      const sources = await this.projectEventSourceSnapshot();
+      if (sources.texts.length === 0) { DesignerHub.instance.pushPanel(this, { type: 'candidates', id, map: {} }); return; }
       const eng = await this.ensureEngine();
-      const codeText = (await vscode.workspace.openTextDocument(codePath)).getText();
-      const map = await listHandlerCandidates(eng, this.designerFile, id, (await this.currentText()) ?? null, codeText, this.asm() ?? null);
+      const codeText = sources.primaryDocument?.getText() ?? null;
+      const map = await listHandlerCandidates(
+        eng, this.designerFile, id, (await this.currentText()) ?? null, codeText,
+        this.asm() ?? null, sources.texts,
+      );
       if (this.disposed) return;
       DesignerHub.instance.pushPanel(this, { type: 'candidates', id, map });
     } catch {
@@ -6205,35 +11173,44 @@ class DesignerSession {
     await this.applyEventWiring(id, event, value === '' ? null : value, ownerId);
   }
 
-  private async applyEventWiring(id: string, event: string, handler: string | null, ownerId?: string): Promise<void> {
+  private async applyEventWiring(
+    id: string,
+    event: string,
+    handler: string | null,
+    ownerId?: string,
+    interleaveAfterValidation?: () => Promise<void>,
+  ): Promise<void> {
     if (!this.designerFile || this.disposed) return;
     const eng = await this.ensureEngine();
-    const codePath = this.codeFile();
-    // Keep the DOCUMENT, not just its text: the engine validates the handler against this snapshot, so the wiring is
-    // only sound if the code-behind still says the same thing when we commit.
-    const codeDoc = codePath ? await vscode.workspace.openTextDocument(codePath) : null;
-    const codeText = codeDoc ? codeDoc.getText() : null;
-    const codeVer = codeDoc ? codeDoc.version : -1;
+    // Keep every project-partial DOCUMENT, not just its text: the engine validates the handler against this snapshot,
+    // so the wiring is sound only if none of those partials changed before commit.
+    const eventSources = await this.projectEventSourceSnapshot();
+    const codeText = eventSources.primaryDocument?.getText() ?? null;
 
     const before = this.doc.designerText;
     const rev = this.doc.rev;
 
-    const res = await setEventWiring(eng, this.designerFile, id, event, handler, before, codeText, this.asm() ?? null);
+    const res = await setEventWiring(
+      eng, this.designerFile, id, event, handler, before, codeText,
+      this.asm() ?? null, eventSources.texts,
+    );
     if (!res.safe || res.designerText == null) {
       this.post({ type: 'status', message: t('status.wiringRejected', { reason: res.reason || 'unsafe' }) });
       await this.refreshAfterWiring(id, ownerId);
       return;
     }
+    if (interleaveAfterValidation) await interleaveAfterValidation();
     // The .Designer.cs revision was always checked here; the CODE-BEHIND was not checked at all. The engine had just
     // confirmed the handler exists in the snapshot above — but if it was renamed or deleted during the round-trip,
     // this committed `Click += new EventHandler(this.button1_Click)` against a method that no longer exists, and said
     // it wired successfully. createHandler guarded its own write and this sibling path stayed fail-open.
-    if (this.doc.rev !== rev || (codeDoc !== null && codeDoc.version !== codeVer)) {
+    if (this.doc.rev !== rev || !this.projectEventSnapshotUnchanged(eventSources)) {
       this.post({ type: 'status', message: t('status.docChanged') });
       await this.refreshAfterWiring(id, ownerId);
       return;
     }
-    if (!this.commit(before, res.designerText, `${handler ? 'Wire' : 'Unwire'} ${id}.${event}`)) return;
+    if (!this.commit(before, res.designerText, `${handler ? 'Wire' : 'Unwire'} ${id}.${event}`,
+      undefined, undefined, undefined, 'event')) return;
     this.output.appendLine(`${handler ? 'wired' : 'unwired'} ${id}.${event}${handler ? ' → ' + handler : ''} (unsaved)`);
     this.post({ type: 'status', message: handler ? t('status.wired', { event, handler }) : t('status.unwired', { event }) });
     await this.refreshAfterWiring(id, ownerId);
@@ -6245,28 +11222,57 @@ class DesignerSession {
     await this.applyAddControl(controlType, this.containerParentFor(this.currentId));
   }
 
-  private async applyAddControl(controlType: string, parentId: string, dropX?: number, dropY?: number): Promise<void> {
-    if (!this.designerFile || this.disposed) return;
+  async selectToolboxControl(controlType: string): Promise<void> {
+    const item = this.toolboxItemFor(controlType);
+    if (!item) {
+      this.setToolboxSelection(null);
+      this.post({ type: 'status', message: t('status.addRejected', { reason: 'unknown toolbox item: ' + controlType }) });
+      return;
+    }
+    this.setToolboxSelection(item.fromProject ? item.fqn : item.name);
+  }
+
+  private setToolboxSelection(controlType: string | null): void {
+    this.selectedToolboxControl = controlType;
+    this.post({ type: 'toolboxSelection', controlType });
+    DesignerHub.instance.pushPanel(this, { type: 'toolboxSelection', controlType });
+  }
+
+  private toolboxItemFor(controlType: string): ToolboxItemInfo | null {
+    return this.availableToolboxItems()
+      .find((item) => !item.isComponent && (item.fqn === controlType || item.name === controlType)) ?? null;
+  }
+
+  private async applyAddControl(controlType: string, parentId: string, dropX?: number, dropY?: number, width?: number, height?: number): Promise<boolean> {
+    if (!this.designerFile || this.disposed) return false;
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
     let locX: number | undefined;
     let locY: number | undefined;
     if (dropX !== undefined && dropY !== undefined) {
-      if ((parentId === 'this' || parentId === '') && this.rootFrame && this.rootClient) {
-        const ox = (this.rootFrame.w - this.rootClient.w) / 2;
-        const oy = (this.rootFrame.h - this.rootClient.h) - ox;
-        locX = Math.max(0, Math.round(dropX - ox));
-        locY = Math.max(0, Math.round(dropY - oy));
-      } else {
-        const par = this.controls.find((c) => c.id === parentId);
-        locX = Math.max(0, Math.round(dropX - (par ? par.x : 0)));
-        locY = Math.max(0, Math.round(dropY - (par ? par.y : 0)));
-      }
+      const par = this.controls.find((c) => c.id === (parentId || 'this'));
+      const clientX = par?.clientX ?? par?.x ?? 0;
+      const clientY = par?.clientY ?? par?.y ?? 0;
+      locX = Math.max(0, Math.round(dropX - clientX));
+      locY = Math.max(0, Math.round(dropY - clientY));
     }
+    const sizeProvided = width !== undefined || height !== undefined;
+    if (sizeProvided && (!Number.isFinite(width) || !Number.isFinite(height)
+      || !Number.isInteger(width) || !Number.isInteger(height)
+      || (width as number) <= 0 || (height as number) <= 0)) {
+      this.post({ type: 'status', message: t('status.addRejected', { reason: 'invalid placement size' }) });
+      return false;
+    }
+    const sizeW = sizeProvided ? width as number : undefined;
+    const sizeH = sizeProvided ? height as number : undefined;
     const asm = this.asm();
-    const toolboxItem = this.availableToolboxItems()
-      .find((item) => item.fqn === controlType || item.name === controlType);
+    const toolboxItem = this.toolboxItemFor(controlType);
+    if (!toolboxItem) {
+      this.post({ type: 'status', message: t('status.addRejected', { reason: 'unknown toolbox item: ' + controlType }) });
+      return false;
+    }
+    const addKey = toolboxItem.fromProject ? toolboxItem.fqn : toolboxItem.name;
     const sourceAssembly = toolboxItem?.assemblyPath && fs.existsSync(toolboxItem.assemblyPath)
       ? toolboxItem.assemblyPath : undefined;
     // The Roslyn text splice runs on net9. For a net48 form net9 can't load the vendor (DevExpress/net4x)
@@ -6277,19 +11283,81 @@ class DesignerSession {
       ? this.availableToolboxItems()
         .filter((it) => it.fromProject).map((it) => it.fqn)
       : undefined;
-    const res = await addControl(eng, this.designerFile, parentId || 'this', controlType, before, locX, locY, addAsm, projectFqns, this.renderedAutoScale);
-    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return; }
-    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
-    if (!this.commit(before, res.newText, `Add ${controlType}`)) return;
+    if (this.localizable) {
+      // Visual Studio permits structural editing only in the Default language. A satellite-culture view owns value
+      // overrides, not component identity; adding there would create a control absent from the neutral form graph.
+      if (this.localizationCulture !== '') {
+        this.post({ type: 'status', message: t('status.editRejected', { reason: 'switch Language to (Default) before adding controls' }) });
+        return false;
+      }
+      const resxUri = this.localizedResxUri('');
+      const resxRead = await this.readResx(resxUri);
+      const localized = await addLocalizedControl(
+        eng, this.designerFile, parentId || 'this', addKey, before, resxRead?.text ?? null,
+        locX, locY, addAsm, projectFqns, this.renderedAutoScale, sizeW, sizeH,
+      );
+      if (!localized.safe || localized.newText === null || localized.resxText == null) {
+        this.post({ type: 'status', message: t('status.addRejected', { reason: localized.reason || 'unsafe localized add' }) });
+        return false;
+      }
+      if (this.doc.rev !== rev || this.localizationCulture !== '' || !this.localizable) {
+        this.post({ type: 'status', message: t('status.docChanged') });
+        return false;
+      }
+      if (binaryResxCount(resxRead?.text ?? null) > binaryResxCount(localized.resxText)) {
+        this.post({ type: 'status', message: t('status.binaryResxRegenRefused', { n: binaryResxCount(resxRead?.text ?? null) - binaryResxCount(localized.resxText) }) });
+        return false;
+      }
+      const tx: ResxTx = {
+        uri: resxUri,
+        before: resxRead?.text ?? null,
+        after: localized.resxText,
+        bom: resxRead?.hadBom ?? false,
+      };
+      try {
+        const committed = await this.commitResourceSetThroughRunner(`Add localized ${addKey}`, [tx], before, localized.newText, {
+          persistDesignerTextBeforeCommit: true,
+          expectedDesignerRevision: rev,
+        });
+        if (!committed || committed.status !== 'committed')
+          throw new Error(committed?.error ?? committed?.status ?? 'journal unavailable');
+      } catch (error) {
+        this.output.appendLine('[designer] localized structural add refused: ' + errMsg(error));
+        this.post({ type: 'status', message: t('status.addRejected', { reason: errMsg(error) }) });
+        return false;
+      }
+      this.currentId = localized.name;
+      this.currentSelectionIds = [localized.name];
+      this.setToolboxSelection(null);
+      this.output.appendLine(`added localized ${addKey} → ${localized.name} (${localized.resourceKeys?.length ?? 0} resource values)`);
+      if (this.engineKind === 'net48') {
+        await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', addKey,
+          localized.name, locX, locY, undefined, undefined, sizeW, sizeH), true, {});
+      } else {
+        await this.fullRender();
+      }
+      this.post({ type: 'status', message: t('status.added', { name: localized.name }) });
+      if (this.engineKind !== 'net48' || (sourceAssembly && normalize(sourceAssembly) !== normalize(asm ?? '')))
+        await this.maybeOfferProjectReference(addKey, sourceAssembly ?? asm);
+      return true;
+    }
+
+    const res = await addControl(eng, this.designerFile, parentId || 'this', addKey, before, locX, locY, addAsm, projectFqns, this.renderedAutoScale, sizeW, sizeH);
+    if (!res.safe || res.newText === null) { this.post({ type: 'status', message: t('status.addRejected', { reason: res.reason || 'unsafe' }) }); return false; }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return false; }
+    if (!this.commit(before, res.newText, `Add ${addKey}`)) return false;
     this.currentId = res.name;
-    this.output.appendLine(`added ${controlType} → ${res.name} (unsaved)`);
-    if (this.engineKind === 'net48') await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', controlType, res.name, locX, locY), true, {});
+    this.currentSelectionIds = [res.name];
+    this.setToolboxSelection(null);
+    this.output.appendLine(`added ${addKey} → ${res.name} (unsaved)`);
+    if (this.engineKind === 'net48') await this.live48((e) => addCompiledControl(e, this.designerFile!, asm!, parentId || 'this', addKey, res.name, locX, locY, undefined, undefined, sizeW, sizeH), true, {});
     else await this.fullRender();
     this.post({ type: 'status', message: t('status.added', { name: res.name }) });
     // A control from the chosen control-source assembly won't compile until the project references it — offer to add
     // one. net48-only skip: its project controls live in the form's OWN compiled assembly, so no <Reference> is needed.
     if (this.engineKind !== 'net48' || (sourceAssembly && normalize(sourceAssembly) !== normalize(asm ?? '')))
-      await this.maybeOfferProjectReference(controlType, sourceAssembly ?? asm);
+      await this.maybeOfferProjectReference(addKey, sourceAssembly ?? asm);
+    return true;
   }
 
   /**
@@ -6369,6 +11437,9 @@ class DesignerSession {
    * No parent/position (unlike a control); mirrors applyAddControl's commit/rerender. */
   async addComponentFromToolbox(componentType: string): Promise<void> {
     if (!this.designerFile || this.disposed) return;
+    // A component click supersedes any armed visual toolbox item. Clear the host-owned state before awaiting the
+    // engine so the canvas cannot place the stale control while the component transaction is in flight or fails.
+    this.setToolboxSelection(null);
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -6377,6 +11448,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, res.newText, `Add ${componentType}`)) return;
     this.currentId = res.name;
+    this.currentSelectionIds = [res.name];
     this.output.appendLine(`added component ${componentType} → ${res.name} (unsaved)`);
     await this.fullRender();
     this.post({ type: 'status', message: t('status.addedTray', { name: res.name }) });
@@ -6463,6 +11535,7 @@ class DesignerSession {
     // doc.rev, so the revision check above cannot see it: without this guard a rename that lands after the user
     // clicked another control snaps the selection back and re-arms Delete on a target they no longer chose.
     if (this.currentId === oldId) this.currentId = res.name;
+    this.currentSelectionIds = this.currentSelectionIds.map((id) => id === oldId ? res.name : id);
     this.output.appendLine(`renamed component ${oldId} -> ${res.name} (unsaved)`);
     await this.fullRender();
     this.post({ type: 'status', message: t('status.trayRenamed', { old: oldId, new: res.name }) });
@@ -6470,6 +11543,10 @@ class DesignerSession {
 
   private async applyRemoveControl(id: string): Promise<void> {
     if (!this.designerFile || this.disposed || id === 'this') return;
+    if (this.localizable) {
+      await this.applyLocalizedStructuralRemove([id], `Remove localized ${id}`);
+      return;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -6478,6 +11555,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, res.newText, `Remove ${id}`)) return;
     this.currentId = 'this';
+    this.currentSelectionIds = ['this'];
     this.output.appendLine(`removed ${id} (unsaved)`);
     if (this.engineKind === 'net48') await this.live48((e) => removeCompiledControls(e, this.designerFile!, this.asm()!, [id]), true, {});
     else await this.fullRender();
@@ -6566,6 +11644,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, text, `Paste ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = last || this.currentId;
+    this.currentSelectionIds = [this.currentId];
     this.output.appendLine(`pasted ${applied} control(s) into ${parent} (unsaved)`);
     let net48Stale = false;
     if (this.engineKind === 'net48') {
@@ -6630,6 +11709,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
     if (!this.commit(before, text, `Duplicate ${applied} control${applied > 1 ? 's' : ''}`)) return;
     this.currentId = last || this.currentId;
+    this.currentSelectionIds = [this.currentId];
     this.output.appendLine(`duplicated ${applied} control(s) (unsaved)`);
     let net48Stale = false;
     if (this.engineKind === 'net48') {
@@ -6652,6 +11732,70 @@ class DesignerSession {
     }
     const skipped = refused ? tn('status.copiedSkipped', refused) : '';
     this.post({ type: 'status', message: (net48Stale ? tn('status.duplicatedStale', applied) : tn('status.duplicated', applied)) + skipped });
+  }
+
+  /** Ctrl+drag: copy every selected source and paste all clones at the exact preview delta in one transaction.
+   * Unlike Ctrl+D this path is all-or-nothing: a partial clone set would silently change the dragged group. */
+  private async applyDuplicateDrag(ids: string[], rawDx: number, rawDy: number): Promise<void> {
+    if (!this.designerFile || this.disposed) return;
+    const targets = [...new Set(ids)].filter((id) => id && id !== 'this');
+    const dx = Math.max(-100000, Math.min(100000, Math.round(rawDx)));
+    const dy = Math.max(-100000, Math.min(100000, Math.round(rawDy)));
+    if (!targets.length || !Number.isFinite(rawDx) || !Number.isFinite(rawDy)) return;
+    const eng = await this.ensureEngine();
+    const before = this.doc.designerText;
+    const rev = this.doc.rev;
+    const blobs: { clip: string; parent: string }[] = [];
+    for (const id of targets) {
+      const copied = await copyControl(eng, this.designerFile, id, before);
+      const source = this.controls.find((c) => c.id === id);
+      if (!copied.safe || !copied.clip || !source) {
+        this.post({ type: 'status', message: t('status.duplicateRejected') });
+        return;
+      }
+      blobs.push({ clip: copied.clip, parent: source.parentId ?? 'this' });
+    }
+
+    let text = before;
+    const cloneIds: string[] = [];
+    const live48Adds: { typeName: string; name: string; x: number; y: number; parent: string }[] = [];
+    for (const blob of blobs) {
+      const pasted = await pasteControlAtOffset(eng, this.designerFile, blob.clip, blob.parent, dx, dy, text);
+      if (!pasted.safe || pasted.newText === null) {
+        this.post({ type: 'status', message: t('status.duplicateRejected') });
+        return;
+      }
+      text = pasted.newText;
+      cloneIds.push(pasted.name);
+      if (this.engineKind === 'net48' && pasted.typeName) {
+        live48Adds.push({ typeName: pasted.typeName, name: pasted.name, x: pasted.x, y: pasted.y, parent: blob.parent });
+      }
+    }
+    if (this.doc.rev !== rev) { this.post({ type: 'status', message: t('status.docChanged') }); return; }
+    if (!this.commit(before, text, `Ctrl+drag duplicate ${cloneIds.length} control${cloneIds.length === 1 ? '' : 's'}`)) return;
+    this.currentId = cloneIds[cloneIds.length - 1];
+    this.currentSelectionIds = cloneIds;
+    this.output.appendLine(`Ctrl+drag duplicated ${cloneIds.length} control(s) by ${dx},${dy} (unsaved)`);
+
+    let net48Stale = false;
+    if (this.engineKind === 'net48') {
+      if (this.net48RenderMode === 'interpreted') {
+        await this.fullRender();
+      } else if (live48Adds.length && !this.asm()) {
+        net48Stale = true;
+      } else {
+        for (const a of live48Adds) {
+          await this.live48((e) => addCompiledControl(
+            e, this.designerFile!, this.asm()!, a.parent, a.typeName, a.name,
+            a.x >= 0 ? a.x : undefined, a.y >= 0 ? a.y : undefined,
+          ));
+        }
+        this.pushSelect(this.currentId);
+      }
+    } else {
+      await this.fullRender();
+    }
+    this.post({ type: 'status', message: net48Stale ? tn('status.duplicatedStale', cloneIds.length) : tn('status.duplicated', cloneIds.length) });
   }
 
   /**
@@ -6778,6 +11922,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     if (!this.commit(before, res.newText, `Add tab ${res.name}`)) return;
     this.currentId = res.name;
+    this.currentSelectionIds = [res.name];
     // The newly-added page must be visible on the very next source render. Persist before either modern or
     // interpreted-net48 re-renders; compiled net48 also records the state for a later interpreted render.
     this.setSelectedTab(hostId, res.name);
@@ -6788,6 +11933,99 @@ class DesignerSession {
     if (this.engineKind === 'modern') await this.fullRender();
     else await this.live48((e) => addCompiledTab(e, this.designerFile!, asm!, hostId, pageType, res.name), true, {});
     this.post({ type: 'status', message: `added tab ${res.name} — unsaved` });
+  }
+
+  /** Revision + order represented by the last TabPages collection handed to the panel. The atomic OK transaction is
+   * accepted only against this exact baseline, matching the stale-write rule used by other structural editors. */
+  private tabPageReadBaseline = new Map<string, { rev: number; pages: string[] }>();
+
+  /** Shared read side for the typed TabPages collection editor. */
+  private async readTabPages(hostId: string): Promise<{ ok: boolean; pages: string[]; reason: string }> {
+    if (!this.designerFile) {
+      this.tabPageReadBaseline.delete(hostId);
+      return { ok: false, pages: [], reason: 'not available' };
+    }
+    try {
+      const eng = await this.ensureEngine('modern');
+      const revAtRead = this.doc.rev;
+      const result = await listTabPages(eng, this.designerFile, hostId, this.doc.designerText);
+      const pages = result.pages ?? [];
+      if (result.ok) this.tabPageReadBaseline.set(hostId, { rev: revAtRead, pages: pages.slice() });
+      else this.tabPageReadBaseline.delete(hostId);
+      return { ok: result.ok, pages, reason: result.reason };
+    } catch (error) {
+      this.tabPageReadBaseline.delete(hostId);
+      return { ok: false, pages: [], reason: errMsg(error) };
+    }
+  }
+
+  /** Webview transport for the shared TabPages collection read side. */
+  async sendTabPages(hostId: string): Promise<void> {
+    this.post({ type: 'tabPageItems', id: hostId, ...(await this.readTabPages(hostId)) });
+  }
+
+  /** Atomic OK path for the typed TabPages collection editor. */
+  async tabPagesFromGrid(hostId: string, pageIds: string[]): Promise<boolean> {
+    try {
+      const baseline = this.tabPageReadBaseline.get(hostId);
+      return await this.applyTabPageOrder(hostId, pageIds, baseline?.rev, baseline?.pages);
+    } catch (error) {
+      this.post({ type: 'status', message: errMsg(error) });
+      try { await this.loadProps(hostId); } catch { /* best effort */ }
+      return false;
+    }
+  }
+
+  /** Apply a complete TabPages permutation as one source commit / one native Undo unit. On a net48 compiled canvas,
+   * mirror that one committed permutation with the existing adjacent live primitive; interpreted/modern canvases
+   * replay the committed source. */
+  private async applyTabPageOrder(
+    hostId: string,
+    pageIds: string[],
+    revAtRead?: number,
+    pagesAtRead?: string[],
+  ): Promise<boolean> {
+    if (this.disposed || !this.designerFile) return false;
+    const eng = await this.ensureEngine('modern');
+    const before = this.doc.designerText;
+    const revBefore = revAtRead ?? this.doc.rev;
+    const result = await setTabPageOrder(eng, this.designerFile, hostId, pageIds, before);
+    if (!result.safe || result.newText === null) {
+      this.post({ type: 'status', message: 'tab page order rejected: ' + (result.reason || 'unsafe') });
+      return false;
+    }
+    if (this.doc.rev !== revBefore) {
+      this.post({ type: 'status', message: t('status.docChanged') });
+      await this.loadProps(hostId);
+      return false;
+    }
+    if (result.newText === before) return true;
+    if (!this.commit(before, result.newText, `Set ${hostId}.TabPages order`)) return false;
+
+    const current = (pagesAtRead ?? []).slice();
+    if (this.engineKind === 'modern') {
+      await this.fullRender();
+    } else {
+      const asm = this.asm();
+      if (asm && current.length === pageIds.length) {
+        for (let target = 0; target < pageIds.length; target++) {
+          let at = current.indexOf(pageIds[target]);
+          while (at > target) {
+            const pageId = current[at];
+            await this.live48((engine) => moveCompiledTab(engine, this.designerFile!, asm, hostId, pageId, true), true, {});
+            [current[at - 1], current[at]] = [current[at], current[at - 1]];
+            at--;
+          }
+        }
+      } else {
+        await this.fullRender();
+      }
+    }
+    this.output.appendLine(`set ${hostId}.TabPages order = [${pageIds.join(', ')}] (collection, unsaved)`);
+    this.post({ type: 'status', message: `reordered ${hostId}.TabPages - unsaved` });
+    await this.loadProps(hostId);
+    await this.postDirty();
+    return true;
   }
 
   /** Move the active field-backed page one position left/right in the canonical source collection order. The engine
@@ -6812,6 +12050,7 @@ class DesignerSession {
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     if (!this.commit(before, res.newText, `Move tab ${pageId} ${left ? 'left' : 'right'}`)) return;
     this.currentId = pageId;
+    this.currentSelectionIds = [pageId];
     this.setSelectedTab(hostId, pageId);
     this.output.appendLine(`moved tab ${pageId} ${left ? 'left' : 'right'} in ${hostId} (unsaved)`);
     if (this.engineKind === 'modern') await this.fullRender();
@@ -6843,7 +12082,8 @@ class DesignerSession {
     if (!res.safe || res.newText === null) { this.post({ type: 'status', message: 'delete tab rejected: ' + (res.reason || 'unsafe') }); return; }
     if (this.doc.rev !== rev) { this.post({ type: 'status', message: 'document changed during edit — try again' }); return; }
     if (!this.commit(before, res.newText, `Delete tab ${pageId}`)) return;
-    if (this.currentId === pageId) this.currentId = hostId;
+    if (this.currentId === pageId || this.currentSelectionIds.includes(pageId)) this.currentId = hostId;
+    this.currentSelectionIds = [this.currentId];
     this.clearSelectedTab(hostId, pageId);
     this.output.appendLine(`deleted tab ${pageId} from ${hostId} (unsaved)`);
     // A deleted tab is a committed source-backed edit: opt into interpreted re-render (like a multi-property edit) so an
@@ -6876,18 +12116,22 @@ class DesignerSession {
     if (this.engineKind === 'net48') this.composeFormNotice({});
   }
 
-  private async patchOrRerender(id: string, prop: string): Promise<void> {
-    if (!this.designerFile || this.disposed) return;
+  private async patchOrRerender(
+    id: string,
+    prop: string,
+    edit?: Readonly<{ beforeSourceText: string; afterSourceText: string; newValueExpr: string }>,
+  ): Promise<boolean> {
+    this.lastModernRetainedApplied = false;
+    if (!this.designerFile || this.disposed) return false;
     const eng = await this.ensureEngine();
     await this.applyEngineLocalizationCulture(eng);
     const asm = this.asm();
     const text = await this.currentText();
     const seq = ++this.renderSeq;
 
-    // A dirty-region patch is a 1x single-control PNG at logical coords; under a >1 DPI capture the frame is scaled, so a
-    // 1x patch would land wrong-sized and blurry. Force the full (scaled) frame instead when rendering at high DPI.
-    //
-    // 1.2.x — and never even PROBE for a patch when the edit is one that moves or resizes the control. The probe is a
+    // A retained dirty-region patch carries the full frame's 1x/2x capture scale while its placement stays in logical
+    // form pixels; the webview maps it into the current backing store. Never even PROBE for a patch when the edit is
+    // one that moves or resizes the control. The probe is a
     // whole extra graph build in the engine (~53 ms on a small form, the dominant cost of a render), and the patch it
     // is probing for is refused a moment later anyway: a control that changed geometry leaves a hole at its old rect
     // that a single-control patch cannot repaint, so `geometryUnchanged` below always sends these to the full frame.
@@ -6897,16 +12141,73 @@ class DesignerSession {
     const tabHeaderText = prop === 'Text' && this.controls.some((page) => page.id === id
       && this.controls.some((host) => host.id === page.parentId && host.isTabHost));
     const patchPossible = id !== 'this' && prop !== 'Checked' && prop !== 'CheckState' && !tabHeaderText
-      && this.renderScale === 1 && !GeometryProps.has(prop);
+      && !GeometryProps.has(prop);
     if (patchPossible) {
+      // Visual Studio keeps one live designer host and applies a property-grid edit to that graph. Do the same for the
+      // bounded modern Text path: the engine-issued token, exact old bytes and independently-proven new bytes must all
+      // agree before the retained DesignSurface is touched. The reply carries pixels, full layout, exact property
+      // metadata and geometry authority from ONE post-edit graph. A refusal falls through to the established rebuild.
+      const retainedToken = this.modernGraphToken;
+      if (prop === 'Text' && edit && retainedToken
+        && this.currentSelectionIds.length === 1 && this.currentSelectionIds[0] === id) {
+        try {
+          const retained = await applyCachedTextPropertyEdit(
+            eng, retainedToken, this.designerFile, id, prop, edit.newValueExpr,
+            edit.beforeSourceText, edit.afterSourceText,
+          );
+          if (seq !== this.renderSeq || this.disposed) return false;
+          if (retained.applied && retained.graphToken && retained.component?.id === id
+            && retained.geometry?.componentId === id) {
+            this.modernGraphToken = retained.graphToken;
+            if (!retained.layoutUnchanged) {
+              this.controls = retained.controls;
+              this.toolStripItems = retained.toolStripItems ?? [];
+              this.rootClient = { w: retained.clientWidth, h: retained.clientHeight };
+              this.rootFrame = { w: retained.frameWidth, h: retained.frameHeight };
+            }
+            if (retained.fullFrame) {
+              this.post({
+                type: 'render', png: retained.png.toString('base64'),
+                width: retained.frameWidth, height: retained.frameHeight, gen: seq,
+              });
+            } else {
+              this.post({
+                type: 'patch', png: retained.png.toString('base64'),
+                x: retained.x, y: retained.y, width: retained.width, height: retained.height, gen: seq,
+              });
+            }
+            if (!retained.layoutUnchanged) this.postLayout(this.controls, this.toolStripItems);
+            const component = this.emptyInitializeComponentSurface
+              ? { ...retained.component, editable: false, readOnlyReason: t('designer.owner.emptyInitializeComponentReadOnly') }
+              : retained.component;
+            this.publishedPropertyComponent = { ids: [id], rev: this.doc.rev, component };
+            DesignerHub.instance.pushPanel(this, { type: 'props', id, component });
+            this.post({ type: 'tasks', id, component, vendorTags: [] });
+            const geometry = retained.geometry;
+            const manip = geometry.ok && geometry.logicalBounds && geometry.windowBounds
+              ? { move: geometry.canMove, resize: geometry.canResize }
+              : { move: false, resize: false };
+            this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
+            this.renderOk = true;
+            this.lastModernRetainedApplied = true;
+            return true;
+          }
+          this.output.appendLine(`[designer] retained Text edit refused for ${id}: ${retained.reason || 'incomplete snapshot'}`);
+        } catch (error) {
+          this.output.appendLine(`[designer] retained Text edit unavailable for ${id}: ${errMsg(error)}`);
+        }
+      }
+      // Any non-retained property edit advances the source beyond the token's graph. A following full frame installs a
+      // fresh token; a successful legacy dirty patch deliberately leaves this undefined instead of reusing stale state.
+      this.modernGraphToken = undefined;
       let layout: Awaited<ReturnType<typeof describeLayout>>;
       try {
         layout = await describeLayout(eng, this.designerFile, asm, text);
       } catch {
         if (seq === this.renderSeq && !this.disposed) this.renderOk = false; // S5: current source didn't render → read-only
-        return;
+        return false;
       }
-      if (seq !== this.renderSeq || this.disposed) return;
+      if (seq !== this.renderSeq || this.disposed) return false;
 
       const geometryUnchanged = sameLayout(this.controls, layout.controls);
       this.controls = layout.controls;
@@ -6928,17 +12229,18 @@ class DesignerSession {
         } catch {
         patch = undefined; // fall through to the full-frame render below
         }
-        if (seq !== this.renderSeq || this.disposed) return;
+        if (seq !== this.renderSeq || this.disposed) return false;
         if (patch?.found) {
           this.post({
             type: 'patch', png: patch.png.toString('base64'),
             x: patch.x, y: patch.y, width: patch.width, height: patch.height, gen: seq,
           });
-          return;
+          return false;
         }
       }
     }
 
+    this.modernGraphToken = undefined;
     let frame: Awaited<ReturnType<typeof renderWithLayout>>;
     try {
       frame = await renderWithLayout(eng, this.designerFile, asm, text, this.renderScale, this.tabViewState());
@@ -6949,9 +12251,10 @@ class DesignerSession {
         const message = t('status.renderFailed', { error: errMsg(err) });
         this.postRenderFailure(message, this.currentId || 'this', errMsg(err));
       }
-      return;
+      return false;
     }
-    if (seq !== this.renderSeq || this.disposed) return;
+    if (seq !== this.renderSeq || this.disposed) return false;
+    this.modernGraphToken = frame.graphToken || undefined;
     this.controls = frame.controls;
     this.pruneSelectedTabs(frame.controls);
     this.toolStripItems = frame.toolStripItems ?? [];
@@ -6963,6 +12266,21 @@ class DesignerSession {
     // keep the partial-render banner in lockstep with this whole-frame re-render (a value edit rarely changes which
     // constructs are unrepresentable, but if it does — e.g. fixing/breaking a control — refresh rather than go stale).
     this.postRenderDiagnostics(categorizeUnrepresentable(frame.unrepresentable));
+    return false;
+  }
+
+  /** Real Extension Host E2E reaches the same engine-authorized single-control resize ingress as the canvas. */
+  async extensionHostTestResizeControl(id: string, width: number, height: number): Promise<void> {
+    const control = this.controls.find((candidate) => candidate.id === id);
+    if (!control) throw new Error(`Unknown rendered control: ${id}`);
+    await this.applyManipulate(id, 'resize', control.x, control.y, width, height);
+  }
+
+  /** Real Extension Host E2E reaches the same multi-control size transaction as the canvas layout toolbar. */
+  async extensionHostTestResizeControls(
+    sizeEdits: readonly { id: string; width: number; height: number }[],
+  ): Promise<void> {
+    await this.applyResize(sizeEdits.map((edit) => ({ ...edit })));
   }
 }
 
@@ -6983,6 +12301,39 @@ function findToolStripItem(forest: ToolStripItemModel[], id: string): ToolStripI
     if (hit) return hit;
   }
   return null;
+}
+
+type ToolStripItemEntry = {
+  item: ToolStripItemModel;
+  parent: ToolStripItemModel | null;
+  siblings: ToolStripItemModel[];
+  index: number;
+};
+
+/** Locate an item plus the concrete sibling array that owns it so a move can detach/reinsert exactly one node. */
+function findToolStripItemEntry(forest: ToolStripItemModel[], id: string, parent: ToolStripItemModel | null = null): ToolStripItemEntry | null {
+  if (!id) return null;
+  for (let i = 0; i < forest.length; i++) {
+    const it = forest[i];
+    if (it.id === id) return { item: it, parent, siblings: forest, index: i };
+    const hit = findToolStripItemEntry(it.children ?? [], id, it);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** True when `item` contains `id` anywhere below it; used to reject cycle-creating reparent moves host-side. */
+function containsToolStripItem(item: ToolStripItemModel, id: string): boolean {
+  if (!id) return false;
+  for (const child of item.children ?? []) {
+    if (child.id === id || containsToolStripItem(child, id)) return true;
+  }
+  return false;
+}
+
+/** The item types that expose DropDownItems and may therefore be a nested move target. */
+function isDropDownStripItemType(itemType: string): boolean {
+  return /(?:^|\.)ToolStrip(?:MenuItem|DropDownButton|SplitButton)$/.test(itemType || '');
 }
 
 /** Return a new forest with the node whose field id is `id` (and its whole subtree) omitted, at any depth. Non-matching
@@ -7009,10 +12360,16 @@ const GeometryProps = new Set<string>([
   'Dock', 'Anchor', 'Padding', 'Margin', 'AutoSize', 'AutoSizeMode', 'Visible', 'TabIndex',
 ]);
 
-/** Two layouts describe the same geometry (same ids at the same window rects) — patch-safety gate. */
+/** Two layouts describe the same placement geometry and snap metadata — patch-safety gate. */
 function sameLayout(a: LayoutControl[], b: LayoutControl[]): boolean {
   if (a.length !== b.length) return false;
-  const key = (c: LayoutControl) => `${c.id}|${c.x}|${c.y}|${c.width}|${c.height}`;
+  const key = (c: LayoutControl) => [
+    c.id, c.parentId, c.x, c.y, c.width, c.height,
+    c.clientX, c.clientY, c.clientWidth, c.clientHeight,
+    c.margin?.left, c.margin?.top, c.margin?.right, c.margin?.bottom,
+    c.padding?.left, c.padding?.top, c.padding?.right, c.padding?.bottom,
+    c.textBaseline,
+  ].join('|');
   const set = new Set(a.map(key));
   return b.every((c) => set.has(key(c)));
 }
@@ -7118,7 +12475,10 @@ function chooseItemsHtml(webview: vscode.Webview, extensionUri: vscode.Uri): str
 <html><head><meta charset="utf-8">
 ${cspMeta(webview, nonce)}
 <style nonce="${nonce}">
-  html, body { height: 100%; margin: 0; }
+  /* VS Code injects a default body padding (0 20px) into every webview it hosts, so a surface that resets only the
+     margin still renders inside a frame of dead space — most visible in the narrow side panel, where it comes
+     straight out of the value column. Extensions that look edge-to-edge are the ones that zero this explicitly. */
+  html, body { height: 100%; margin: 0; padding: 0; }
   body { font: 12px var(--vscode-font-family, sans-serif); color: var(--vscode-foreground); display: flex; flex-direction: column; }
   #ciTabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--vscode-panel-border, #333); }
   #ciTabs .t { padding: 5px 12px; border: 1px solid var(--vscode-panel-border, #333); border-bottom: none; border-radius: 5px 5px 0 0;
@@ -7186,7 +12546,10 @@ function designerHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string
 <html><head><meta charset="utf-8">
 ${cspMeta(webview, nonce)}
 <style nonce="${nonce}">
-  html, body { height: 100%; margin: 0; }
+  /* VS Code injects a default body padding (0 20px) into every webview it hosts, so a surface that resets only the
+     margin still renders inside a frame of dead space — most visible in the narrow side panel, where it comes
+     straight out of the value column. Extensions that look edge-to-edge are the ones that zero this explicitly. */
+  html, body { height: 100%; margin: 0; padding: 0; }
   body { font: 12px var(--vscode-font-family, sans-serif); color: var(--vscode-foreground); display: flex; flex-direction: column; }
   #toolbar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-top: 1px solid var(--vscode-panel-border, #333); flex: 0 0 auto; }
   #toolbar .sel { color: var(--vscode-descriptionForeground); }
@@ -7244,7 +12607,9 @@ ${cspMeta(webview, nonce)}
   #diagActions button { padding: 2px 7px; }
   #surfaceWrap { position: relative; box-shadow: 0 4px 24px rgba(0,0,0,.5); }
   #surface { display: block; image-rendering: pixelated; }
-  #sel { position: absolute; border: 1px solid #4ea1ff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; display: none; }
+  #designerGrid { position: absolute; z-index: 1; pointer-events: none; display: none; box-sizing: border-box;
+    overflow: hidden; background-image: radial-gradient(circle, rgba(30,30,30,.48) 1px, transparent 1px); background-position: 0 0; }
+  #sel { position: absolute; z-index: 7; border: 1px solid #4ea1ff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; display: none; }
   #sel .handle { position: absolute; width: 8px; height: 8px; background: #4ea1ff; border: 1px solid #fff; box-sizing: border-box; pointer-events: auto; }
   #sel .h-nw { left: -4px; top: -4px; cursor: nwse-resize; }
   #sel .h-n  { left: 50%; top: -4px; margin-left: -4px; cursor: ns-resize; }
@@ -7259,7 +12624,7 @@ ${cspMeta(webview, nonce)}
   .lockbadge { position: absolute; z-index: 8; font-size: 11px; line-height: 13px; padding: 0 1px; pointer-events: none;
     background: rgba(43,43,43,.75); border-radius: 2px; user-select: none; }
   /* multi-select: outline boxes for the non-primary selected controls */
-  .selsec { position: absolute; border: 1px dashed #4ea1ff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); box-sizing: border-box; pointer-events: none; }
+  .selsec { position: absolute; z-index: 7; border: 1px dashed #4ea1ff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); box-sizing: border-box; pointer-events: none; }
   /* snaplines (alignment guides while dragging) */
   .snapguide { position: absolute; pointer-events: none; z-index: 6; }
   .snapguide.vert { border-left: 1px solid #ff4d9d; }
@@ -7277,6 +12642,15 @@ ${cspMeta(webview, nonce)}
   /* hover pre-selection hint — a thin outline over the control a click would select (sits above container
      outlines but below the active selection boxes so it never masks the current selection) */
   .hoverhint { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 3; border: 1px solid rgba(78,161,255,.55); background: rgba(78,161,255,.06); }
+  /* S093 hosted ControlDesigner adorner: the descriptor rectangle is visible on the selected control; hover first
+     enters a pending state and becomes solid only after the fresh engine graph confirms the point. */
+  .designeradorner { position: absolute; box-sizing: border-box; z-index: 6; pointer-events: auto; cursor: help;
+    align-items: center; justify-content: flex-end; padding: 0 3px; overflow: hidden; color: rgba(78,161,255,.95);
+    border: 1px dashed rgba(78,161,255,.85); background: rgba(78,161,255,.06); font-size: 8px; line-height: 1; }
+  .designeradorner.pending { border-style: dotted; background: rgba(255,186,84,.10); color: rgba(255,186,84,.95); }
+  .designeradorner.hit { border-style: solid; background: rgba(78,161,255,.18); box-shadow: inset 0 0 0 1px rgba(255,255,255,.22); }
+  .toolboxdroptarget { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 8; border: 2px solid var(--vscode-focusBorder, #4ea1ff); background: rgba(78,161,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.35); }
+  .toolboxdroplabel { position: absolute; left: 4px; top: 4px; max-width: calc(100% - 8px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 5px; border-radius: 2px; color: var(--vscode-badge-foreground, #fff); background: var(--vscode-badge-background, #3a78b5); font: 11px var(--vscode-font-family); }
   /* on-canvas "Type Here" add-slot at the end of a ToolStrip/MenuStrip/StatusStrip — a dashed placeholder cell that
      hints where a new item lands; clicking it opens the inline add-editor (.slotedit) */
   .typehereslot { position: absolute; box-sizing: border-box; pointer-events: auto; cursor: text; z-index: 4; border: 1px dashed rgba(78,161,255,.75);
@@ -7288,6 +12662,12 @@ ${cspMeta(webview, nonce)}
      intercepts pointer events so a second click / double-click still reaches the item. */
   .stripitemsel { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 5; border: 1px solid rgba(78,161,255,.95);
     background: rgba(78,161,255,.12); }
+  /* deterministic insertion/reparent feedback while dragging an existing ToolStrip/MenuStrip item. */
+  .stripdropindicator { position: absolute; box-sizing: border-box; pointer-events: none; z-index: 8; border-color: rgba(255,186,84,.95);
+    background: rgba(255,186,84,.12); box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+  .stripdropindicator.vline { border-left: 2px solid rgba(255,186,84,.95); }
+  .stripdropindicator.hline { border-top: 2px solid rgba(255,186,84,.95); }
+  .stripdropindicator.append { border: 1px dashed rgba(255,186,84,.95); }
   /* synthetic submenu flyout: a client-side dropdown for a top-level menu item's nested DropDownItems (a closed dropdown
      isn't painted on the surface). Clicking a row loads that nested item's Properties. One box per open submenu level. */
   .stripflyout { position: absolute; box-sizing: border-box; z-index: 6; padding: 2px 0; font-size: 11px; white-space: nowrap;
@@ -7322,6 +12702,7 @@ ${cspMeta(webview, nonce)}
   .tbsep { display: inline-block; width: 1px; align-self: stretch; margin: 1px 4px; background: var(--vscode-panel-border, #444); }
   /* rubber-band selection rectangle */
   .rubberband { position: absolute; border: 1px dashed #4ea1ff; background: rgba(78,161,255,.12); pointer-events: none; z-index: 6; box-sizing: border-box; }
+  .rubberband.toolboxplace { border-style: solid; background: rgba(78,161,255,.18); }
   #status { padding: 4px 8px; min-height: 1em; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-panel-border, #333); }
   /* component tray — non-visual components below the surface */
   #tray { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-top: 1px solid var(--vscode-panel-border, #333); background: var(--vscode-editorWidget-background, #252526); max-height: 88px; overflow: auto; }
@@ -7401,7 +12782,7 @@ ${cspMeta(webview, nonce)}
       <button id="diagCopy">${t('designer.diag.copy')}</button>
     </div>
   </div>
-  <div id="stage"><div id="overlay">${t('designer.overlay.loading')}<noscript>${t('designer.overlay.noscript')}</noscript></div><div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="sel"></div></div></div>
+  <div id="stage"><div id="overlay">${t('designer.overlay.loading')}<noscript>${t('designer.overlay.noscript')}</noscript></div><div id="surfaceWrap"><canvas id="surface" width="1" height="1"></canvas><div id="designerGrid"></div><div id="sel"></div></div></div>
   <div id="tray" style="display:none"></div>
   <div id="status"></div>
   <div id="toolbar">
@@ -7423,6 +12804,12 @@ ${cspMeta(webview, nonce)}
       <span class="tbsep"></span>
       <button id="distH" title="${t('designer.distribute.h')}">⇆</button>
       <button id="distV" title="${t('designer.distribute.v')}">⇅</button>
+      <button id="spaceHInc" title="${t('designer.spacing.hIncrease')}">H+</button>
+      <button id="spaceHDec" title="${t('designer.spacing.hDecrease')}">H−</button>
+      <button id="spaceHRemove" title="${t('designer.spacing.hRemove')}">H0</button>
+      <button id="spaceVInc" title="${t('designer.spacing.vIncrease')}">V+</button>
+      <button id="spaceVDec" title="${t('designer.spacing.vDecrease')}">V−</button>
+      <button id="spaceVRemove" title="${t('designer.spacing.vRemove')}">V0</button>
       <span class="tbsep"></span>
       <button id="sameW" title="${t('designer.same.width')}">=W</button>
       <button id="sameH" title="${t('designer.same.height')}">=H</button>
@@ -7443,8 +12830,8 @@ ${injectL10nScript(nonce)}
 }
 
 /**
-* The single dockable designer panel: a Properties pane (component selector + Properties/Events grid) and a
-* Toolbox pane (click-to-add palette), each full-size, switched by a tab strip at the BOTTOM of the view.
+* The single dockable designer panel: full-size Properties, Outline, Toolbox, and Data Sources panes switched by a
+* tab strip at the BOTTOM of the view.
 */
 function panelHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = randomBytes(16).toString('hex');
@@ -7460,14 +12847,22 @@ ${cspMeta(webview, nonce)}
   .ico-alpha::before { content: "\\eab1"; }
   .ico-props::before { content: "\\eb65"; }
   .ico-events::before { content: "\\ea86"; }
-  html, body { height: 100%; margin: 0; }
+  /* VS Code injects a default body padding (0 20px) into every webview it hosts, so a surface that resets only the
+     margin still renders inside a frame of dead space — most visible in the narrow side panel, where it comes
+     straight out of the value column. Extensions that look edge-to-edge are the ones that zero this explicitly. */
+  html, body { height: 100%; margin: 0; padding: 0; }
   body { font: 12px var(--vscode-font-family, sans-serif); color: var(--vscode-foreground); display: flex; flex-direction: column; }
-  /* the two full-size panes share #content; the bottom tab strip switches between them */
+  /* the full-size panes share #content; the bottom tab strip switches between them */
   #content { flex: 1; min-height: 0; position: relative; }
   .pane { position: absolute; inset: 0; display: flex; flex-direction: column; }
   .paneEmpty { padding: 10px 12px; color: var(--vscode-descriptionForeground); }
   #bottomTabs { flex: 0 0 auto; display: flex; border-top: 1px solid var(--vscode-panel-border, #333); }
-  #bottomTabs button { flex: 1 1 0; border: none; border-right: 1px solid var(--vscode-panel-border, #333); background: transparent; color: var(--vscode-descriptionForeground); padding: 5px 8px; cursor: pointer; font: inherit; }
+  /* min-width:0 is load-bearing: a flex item defaults to min-width:auto, which floors it at min-content, so these
+     four labels refuse to shrink. Below that floor they wrap to two lines (English "Data Sources" does this at any
+     panel under ~360px) and, once their sum exceeds the panel, the document itself overflows sideways — which grows
+     a root scrollbar and, because html/body are height:100%, leaves a dead strip under the tab row that reads as
+     bottom padding. Ellipsis instead; the full label stays available as a tooltip. */
+  #bottomTabs button { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: none; border-right: 1px solid var(--vscode-panel-border, #333); background: transparent; color: var(--vscode-descriptionForeground); padding: 5px 8px; cursor: pointer; font: inherit; }
   #bottomTabs button:last-child { border-right: none; }
   #bottomTabs button:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,.08)); }
   #bottomTabs button.active { color: var(--vscode-foreground); background: var(--vscode-tab-activeBackground, rgba(255,255,255,.10)); box-shadow: inset 0 2px 0 var(--vscode-focusBorder, #4ea1ff); }
@@ -7475,7 +12870,10 @@ ${cspMeta(webview, nonce)}
   #propsBody { display: flex; flex-direction: column; height: 100%; }
   #sideHeader { flex: 0 0 auto; padding: 8px 8px 4px; background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)); border-bottom: 1px solid var(--vscode-panel-border, #333); }
   #grid { flex: 1; min-height: 0; overflow: auto; }
-  #props, #events { padding: 0 8px 8px; }
+  /* The grid runs edge to edge, like VS Code's own tree views and the Visual Studio property window: the row's own
+     cell padding supplies the text inset. An extra container inset cost 16px of a panel that is often ~250px wide,
+     and it came straight out of the value column, which is exactly where values truncate. */
+  #props, #events { padding: 0; }
   /* VS-style description pane pinned to the bottom of the Properties view: bold name + summary of the active row */
   #propDesc { flex: 0 0 auto; border-top: 1px solid var(--vscode-panel-border, #333); padding: 6px 8px; min-height: 32px;
               max-height: 30%; overflow: auto; background: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)); }
@@ -7595,6 +12993,8 @@ ${cspMeta(webview, nonce)}
   .columnsAdd { margin: 0 6px 6px; padding: 2px 10px; cursor: pointer; color: var(--vscode-foreground);
     background: var(--vscode-button-secondaryBackground, rgba(255,255,255,.08)); border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
   .columnsAdd:hover { filter: brightness(1.15); }
+  .tabPagesPop .columnsList { min-width: 260px; }
+  .tabPageName { flex: 1 1 auto; min-width: 80px; padding: 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gridColumnsPop .columnsList { min-width: 560px; }
   .gridColumnCard { padding: 4px; margin-bottom: 5px; border: 1px solid var(--vscode-widget-border, #454545); border-radius: 3px; }
   .gridColumnCard .columnsRow:last-child { margin-bottom: 0; }
@@ -7667,6 +13067,29 @@ ${cspMeta(webview, nonce)}
   .treeNode.dragging { opacity: .55; }
   .treeNode.drop-ok { outline: 1px solid var(--vscode-focusBorder, #007acc); background: var(--vscode-list-hoverBackground, #2a2d2e); }
   .treeNode.drop-bad { outline: 1px solid var(--vscode-errorForeground, #f48771); }
+  /* 1.15 Data Sources pane — bounded project schemas/settings, with click or drag generation actions. */
+  #dataPane { overflow: hidden; }
+  #dataToolbar { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; padding: 6px 8px;
+    border-bottom: 1px solid var(--vscode-panel-border, #333); }
+  #dataToolbar .dsNav { display: inline-flex; align-items: center; gap: 4px; color: var(--vscode-descriptionForeground); }
+  #dataToolbar input { width: auto; }
+  #dataStatus { flex: 0 0 auto; min-height: 16px; padding: 3px 8px; color: var(--vscode-descriptionForeground); }
+  #dataList { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 7px 9px; }
+  .dsCard { margin-bottom: 7px; padding: 7px; border: 1px solid var(--vscode-panel-border, #444); border-radius: 4px;
+    background: var(--vscode-sideBar-background, var(--vscode-editor-background)); }
+  .dsHead { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dsProps { margin: 3px 0 6px; color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.35;
+    max-height: 3em; overflow: hidden; }
+  .dsSource { margin: 0 0 6px; padding: 2px 4px; }
+  .dsActions { display: flex; flex-wrap: wrap; gap: 4px; }
+  .dsAction[draggable="true"] { cursor: grab; }
+  .dsAction[draggable="true"]:active { cursor: grabbing; }
+  .dsSection { margin: 10px 0 4px; padding-bottom: 3px; font-weight: 600;
+    border-bottom: 1px solid var(--vscode-panel-border, #444); }
+  .settingRow { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+  .settingName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settingRow button { flex: 0 0 auto; }
+  .settingRow button:disabled { opacity: .5; cursor: default; }
   .treeNode .tw { white-space: pre; }
   /* toolbox pane — VS-style: vertical stack of collapsible category "tabs", right-click menu, custom tabs */
   #tbBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -7691,6 +13114,7 @@ ${cspMeta(webview, nonce)}
   .tbItem.ic::before { display: none; }
   .tbItem .tbIcon { position: absolute; left: 3px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; image-rendering: pixelated; pointer-events: none; }
   .tbItem:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+  .tbItem.selected { background: var(--vscode-list-activeSelectionBackground, #094771); color: var(--vscode-list-activeSelectionForeground, #fff); outline: 1px solid var(--vscode-focusBorder, #4ea1ff); outline-offset: -1px; }
   .tbItems.icons .tbItem { padding: 3px 6px 3px 18px; }
   .tbItems.icons .tbItem .tbIcon { left: 2px; }
   /* throwaway drag image for a toolbox item — a clean single-name chip (kept off-screen until the drag uses it) */
@@ -7760,11 +13184,20 @@ ${cspMeta(webview, nonce)}
         <div id="tbList"></div>
       </div>
     </div>
+    <div id="dataPane" class="pane" style="display:none">
+      <div id="dataToolbar">
+        <button id="dataRefresh" type="button">${t('panel.data.refresh')}</button>
+        <label class="dsNav"><input id="dataNavigator" type="checkbox">${t('panel.data.navigator')}</label>
+      </div>
+      <div id="dataStatus">${t('panel.data.loading')}</div>
+      <div id="dataList"></div>
+    </div>
   </div>
   <div id="bottomTabs">
-    <button id="mainTabProps" class="active">${t('panel.mainTab.props')}</button>
-    <button id="mainTabOutline">${t('panel.mainTab.outline')}</button>
-    <button id="mainTabToolbox">${t('panel.mainTab.toolbox')}</button>
+    <button id="mainTabProps" class="active" title="${t('panel.mainTab.props')}">${t('panel.mainTab.props')}</button>
+    <button id="mainTabOutline" title="${t('panel.mainTab.outline')}">${t('panel.mainTab.outline')}</button>
+    <button id="mainTabToolbox" title="${t('panel.mainTab.toolbox')}">${t('panel.mainTab.toolbox')}</button>
+    <button id="mainTabData" title="${t('panel.mainTab.data')}">${t('panel.mainTab.data')}</button>
   </div>
   <div id="tbMenu" class="ctxmenu" style="display:none"></div>
   <div id="tbPrompt" class="modal" style="display:none">

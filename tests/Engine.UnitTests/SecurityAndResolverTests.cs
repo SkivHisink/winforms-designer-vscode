@@ -1,4 +1,6 @@
 using System.Drawing;
+using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WinFormsDesigner.Engine;
 
@@ -31,6 +33,9 @@ public sealed class SecurityAndResolverTests
         Assert.True(DesignerAllowlists.IsConstructionAllowed(typeof(Point)));
         Assert.True(DesignerAllowlists.IsConstructionAllowed(typeof(Padding)));
         Assert.True(DesignerAllowlists.IsFactoryInvocationAllowed(typeof(Color), "FromArgb"));
+        Assert.True(DesignerAllowlists.IsFactoryInvocationAllowed(typeof(SystemIcons), "InformationToBitmap"));
+        Assert.True(DesignerAllowlists.TryGetSystemIconBitmapMember(typeof(SystemIcons), "InformationToBitmap", out string iconMember));
+        Assert.Equal("Information", iconMember);
         Assert.True(DesignerAllowlists.IsStaticReadAllowed(typeof(SystemColors)));
     }
 
@@ -72,5 +77,78 @@ public sealed class SecurityAndResolverTests
         Assert.Equal("net9.0-windows", ProjectResolver.ChooseTfm(
             "net48;net10.0;net8.0-windows;net9.0-windows;net11.0-windows", hostMajor: 10));
         Assert.Null(ProjectResolver.ChooseTfm("net48;netstandard2.0;net11.0-windows", hostMajor: 10));
+    }
+
+    [Fact]
+    public void ResolveOutputAssembly_IgnoresNewerForeignRidOutput()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "wfd-rid-resolver-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string project = Path.Combine(root, "Probe.csproj");
+            string compatible = Path.Combine(root, "bin", "Release", "net10.0-windows", "win-compatible", "Probe.dll");
+            string foreign = Path.Combine(root, "bin", "Release", "net10.0-windows", "win-foreign", "Probe.dll");
+            Directory.CreateDirectory(Path.GetDirectoryName(compatible)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);
+            File.WriteAllText(project, "<Project><PropertyGroup><AssemblyName>Probe</AssemblyName></PropertyGroup></Project>");
+            File.Copy(typeof(SecurityAndResolverTests).Assembly.Location, compatible);
+            File.Copy(compatible, foreign);
+
+            Machine incompatibleMachine = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                ? Machine.Amd64
+                : Machine.Arm64;
+            RewritePeMachine(foreign, incompatibleMachine);
+            File.SetLastWriteTimeUtc(compatible, DateTime.UtcNow.AddMinutes(-2));
+            File.SetLastWriteTimeUtc(foreign, DateTime.UtcNow);
+
+            Assert.Equal(Path.GetFullPath(compatible), ProjectResolver.ResolveOutputAssembly(project));
+        }
+        finally
+        {
+            try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void ResolveOutputAssembly_AcceptsManagedExeFallback()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "wfd-managed-exe-resolver-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string project = Path.Combine(root, "Probe.csproj");
+            string managedExe = Path.Combine(root, "bin", "Release", "net48", "Probe.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(managedExe)!);
+            File.WriteAllText(project, "<Project><PropertyGroup><AssemblyName>Probe</AssemblyName></PropertyGroup></Project>");
+            File.Copy(typeof(SecurityAndResolverTests).Assembly.Location, managedExe);
+
+            Assert.Equal(Path.GetFullPath(managedExe), ProjectResolver.ResolveOutputAssembly(project));
+        }
+        finally
+        {
+            try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Theory]
+    [InlineData(Machine.Amd64, CorFlags.ILOnly, Architecture.X64, true)]
+    [InlineData(Machine.Arm64, CorFlags.ILOnly, Architecture.X64, false)]
+    [InlineData(Machine.I386, CorFlags.ILOnly, Architecture.X64, true)]
+    [InlineData(Machine.I386, CorFlags.ILOnly | CorFlags.Requires32Bit, Architecture.X64, false)]
+    [InlineData(Machine.Arm64, CorFlags.ILOnly, Architecture.Arm64, true)]
+    [InlineData(Machine.Amd64, CorFlags.ILOnly, Architecture.Arm64, false)]
+    public void MachineCompatibility_IsProcessBounded(
+        Machine machine, CorFlags flags, Architecture architecture, bool expected) =>
+        Assert.Equal(expected, ProjectResolver.IsMachineCompatible(machine, flags, architecture));
+
+    private static void RewritePeMachine(string path, Machine machine)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+        stream.Position = 0x3c;
+        int peHeader = reader.ReadInt32();
+        stream.Position = peHeader + 4;
+        using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+        writer.Write((ushort)machine);
+        writer.Flush();
     }
 }

@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T160305Z-S021",
+  "scenarioId": "V2-FND-001-S021",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "The product-generated GroupMoveForm has two selected Buttons at (21,27) and (50,60), already accepted byte-for-byte by Visual Studio in S120.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open GroupMoveForm.cs with the WinForms Designer",
+    "Execute Edit.SelectAll",
+    "Drag button1 by +17,+9 physical pixels through the real designer input window",
+    "Execute File.SaveAll and record both Button locations",
+    "Execute exactly one Edit.Undo, save, and record both Button locations",
+    "Execute exactly one Edit.Redo, save, and record both Button locations"
+  ],
+  "expected": "One real group drag moves button1 (21,27)->(38,36) and button2 (50,60)->(67,69); one Undo restores both and one Redo reapplies both, while source/project bytes remain identical.",
+  "before": {
+    "sourceSha256": "db7a11be903988516bed60bd727127bf48a6c54bea54e1b155877f54c0acb850",
+    "designerSha256": "8159fa7f93b10b7086e725304478c0909e7921491f07d52636ac4c8676348f39",
+    "projectSha256": "0a94c8147ce2eb0d196ff3612f5dcb6ed55ac4c2dd3dd58f277942f51bd9ccc8",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 21,
+          "y": 27
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 50,
+          "y": 60
+        }
+      }
+    }
+  },
+  "afterDrag": {
+    "designerSha256": "7b1bdded9f147ab8b7fd1a8fb7aac61c3d0771bf2f9f51217f965de8a715c80f",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 38,
+          "y": 36
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 67,
+          "y": 69
+        }
+      }
+    }
+  },
+  "afterUndo": {
+    "designerSha256": "5d4c2372b90506bb06b2ca29def4490644422d1aecab47095fccefe61a3cfe23",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 21,
+          "y": 27
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 50,
+          "y": 60
+        }
+      }
+    }
+  },
+  "afterRedo": {
+    "designerSha256": "7b1bdded9f147ab8b7fd1a8fb7aac61c3d0771bf2f9f51217f965de8a715c80f",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 38,
+          "y": 36
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 67,
+          "y": 69
+        }
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "db7a11be903988516bed60bd727127bf48a6c54bea54e1b155877f54c0acb850",
+    "designerSha256": "7b1bdded9f147ab8b7fd1a8fb7aac61c3d0771bf2f9f51217f965de8a715c80f",
+    "projectSha256": "0a94c8147ce2eb0d196ff3612f5dcb6ed55ac4c2dd3dd58f277942f51bd9ccc8",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 38,
+          "y": 36
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 67,
+          "y": 69
+        }
+      }
+    }
+  },
+  "oneUndoBoundary": true,
+  "oneRedoBoundary": true,
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "finalDesignerArtifact": "GroupMoveForm.Designer.after-redo.cs.gz",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\bbd4497b03e446efb2da3dd3e98e60f3\\Modern\\GroupMoveForm.cs",
+    "command": "Edit.SelectAll + real designer drag + one Edit.Undo + one Edit.Redo",
+    "selectAllAvailable": true,
+    "undoAvailable": true,
+    "redoAvailable": true,
+    "input": {
+      "mode": "disconnected-desktop-window-offset",
+      "physicalInputFailure": "Exception calling \"PhysicalDragAtScreen\" with \"5\" argument(s): \"Physical input desktop drag failed: OpenInputDesktop failed: 5\"",
+      "dragWindow": 175508216,
+      "windowChain": "L0 hwnd=162470298 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield <- L1 hwnd=19275078 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView <- L2 hwnd=21896716 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface <- L3 hwnd=22813750 class=GenericPane text=GroupMoveForm.cs [Design] <- L4 hwnd=171840496 class=HwndWrapper[DefaultDomain;;9850557d-80a6-42a3-ad55-cd0cf360284d] text=VisualStudioReference - GroupMoveForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+      "disconnectedDesktopWindowShift": {
+        "x": -599,
+        "y": -193,
+        "originalWindow": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "syntheticStart": {
+          "x": -17,
+          "y": -9
+        },
+        "syntheticButtonCenter": {
+          "x": -16,
+          "y": -8
+        }
+      },
+      "syntheticBounds": {
+        "x": -53.0,
+        "y": -19.0,
+        "width": 75.0,
+        "height": 23.0
+      },
+      "delta": {
+        "x": 17,
+        "y": 9
+      }
+    },
+    "beforeBounds": {
+      "x": 545.0,
+      "y": 173.0,
+      "width": 75.0,
+      "height": 23.0
+    },
+    "afterBounds": {
+      "x": 562.0,
+      "y": 182.0,
+      "width": 75.0,
+      "height": 23.0
+    },
+    "afterDrag": {
+      "designerSha256": "7b1bdded9f147ab8b7fd1a8fb7aac61c3d0771bf2f9f51217f965de8a715c80f",
+      "shape": {
+        "button1": {
+          "location": {
+            "x": 38,
+            "y": 36
+          }
+        },
+        "button2": {
+          "location": {
+            "x": 67,
+            "y": 69
+          }
+        }
+      }
+    },
+    "afterUndo": {
+      "designerSha256": "5d4c2372b90506bb06b2ca29def4490644422d1aecab47095fccefe61a3cfe23",
+      "shape": {
+        "button1": {
+          "location": {
+            "x": 21,
+            "y": 27
+          }
+        },
+        "button2": {
+          "location": {
+            "x": 50,
+            "y": 60
+          }
+        }
+      }
+    },
+    "afterRedo": {
+      "designerSha256": "7b1bdded9f147ab8b7fd1a8fb7aac61c3d0771bf2f9f51217f965de8a715c80f",
+      "shape": {
+        "button1": {
+          "location": {
+            "x": 38,
+            "y": 36
+          }
+        },
+        "button2": {
+          "location": {
+            "x": 67,
+            "y": 69
+          }
+        }
+      }
+    },
+    "capture": {
+      "hwnd": 171840496,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "a1741c9472058f8d3b002d2df096d745e1b03fa0eadf9f0145d965d76df15e47"
+    }
+  }
+}

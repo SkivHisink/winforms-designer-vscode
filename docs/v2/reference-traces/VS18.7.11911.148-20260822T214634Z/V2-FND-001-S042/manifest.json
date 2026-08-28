@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T214634Z-S042",
+  "scenarioId": "V2-FND-001-S042",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains one Button with explicit Padding(3,4,5,6).",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S042PaddingForm.cs with the WinForms Designer",
+    "Select button1 in the actual designer",
+    "Open View.PropertiesWindow and expand the Padding row",
+    "Edit the real expanded Left subproperty from 3 to 8 and commit through the Property Grid",
+    "Execute File.SaveAll",
+    "Verify the exact generated-source patch and source/project byte identity"
+  ],
+  "expected": "Visual Studio changes only Padding.Left from 3 to 8, preserves Top=4, Right=5, Bottom=6 and every sibling semantic, canonicalizes the modern generated block, and leaves source/project byte-identical.",
+  "before": {
+    "sourceSha256": "e4fd70af55fb5e42d36e8c7a041147d72657c78af192d3c7d5313f2a933fc545",
+    "designerSha256": "b4bf66212b98de534c6466d51d57b824c0b08516fbc8493c55b4163779695701",
+    "projectSha256": "4ee0e57e12e097b77bf2c012284e34115082f47e9d50e714439f01784ad1ada3",
+    "shape": {
+      "left": 3,
+      "top": 4,
+      "right": 5,
+      "bottom": 6
+    }
+  },
+  "after": {
+    "sourceSha256": "e4fd70af55fb5e42d36e8c7a041147d72657c78af192d3c7d5313f2a933fc545",
+    "designerSha256": "7c2d864e23abfe2ee338c693eafa67f07d12a3961930fde5061704dbe3c86962",
+    "projectSha256": "4ee0e57e12e097b77bf2c012284e34115082f47e9d50e714439f01784ad1ada3",
+    "shape": {
+      "left": 8,
+      "top": 4,
+      "right": 5,
+      "bottom": 6
+    }
+  },
+  "exactDesignerPatch": true,
+  "designerBeforeArtifact": "S042PaddingForm.Designer.before.cs",
+  "designerAfterArtifact": "S042PaddingForm.Designer.after.cs.gz",
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\fb923b59c7de422088bbfbeed9989a55\\Modern\\S042PaddingForm.cs",
+    "controlAutomationId": "button1",
+    "clickedWindow": 50338006,
+    "valueWindow": 28710152,
+    "beforePadding": "3; 4; 5; 6",
+    "beforeLeft": "3",
+    "afterPadding": "3; 4; 5; 6",
+    "afterLeft": null,
+    "expandMethod": "PropertyGrid VK_RIGHT at 1648,975",
+    "editMethod": "Edit.ValuePattern.SetValue",
+    "paddingBounds": {
+      "x": 1593.0,
+      "y": 972.0,
+      "width": 266.0,
+      "height": 6.0
+    },
+    "leftBounds": {
+      "x": 1593.0,
+      "y": 877.0,
+      "width": 266.0,
+      "height": 18.0
+    },
+    "lineEndingDialog": {
+      "title": "Inconsistent Line Endings",
+      "choice": "No",
+      "observed": false,
+      "clickPosted": false,
+      "dismissed": false
+    },
+    "capture": {
+      "hwnd": 77599974,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "b8bf4d36d946161bc8a5afc2053686d702693b60de9c9af9b1679e16123c7983"
+    }
+  }
+}

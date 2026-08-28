@@ -1,0 +1,328 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260822T185223Z-S041",
+  "scenarioId": "V2-FND-001-S041",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains one Button whose FlatStyle assignment is omitted, leaving the framework default Standard value.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S041FlatStyleForm.cs with the WinForms Designer",
+    "Select button1 in the actual designer",
+    "Open View.PropertiesWindow",
+    "Open the FlatStyle standard-values dropdown",
+    "Capture the native ControlType.List child order and selected value",
+    "Dismiss with Escape and execute File.SaveAll",
+    "Verify source, Designer, and project bytes remain exact"
+  ],
+  "expected": "The native Visual Studio FlatStyle dropdown exposes Flat, Popup, Standard, System in that order with Standard selected and performs no source mutation.",
+  "before": {
+    "sourceSha256": "1cea8899cea976fd82c78404258a0ae187472f8cf4a3f93796e110cfbc147319",
+    "designerSha256": "a1a46686f3aee12f57a1bdc3dd1fa3c5760619e853d6ddf77a44b411c3a265f7",
+    "projectSha256": "594748dddf68a0ebf7ddcbe8a115d16ab8d3bb5ed65d7c365f015f69fab82253"
+  },
+  "after": {
+    "sourceSha256": "1cea8899cea976fd82c78404258a0ae187472f8cf4a3f93796e110cfbc147319",
+    "designerSha256": "a1a46686f3aee12f57a1bdc3dd1fa3c5760619e853d6ddf77a44b411c3a265f7",
+    "projectSha256": "594748dddf68a0ebf7ddcbe8a115d16ab8d3bb5ed65d7c365f015f69fab82253"
+  },
+  "items": [
+    {
+      "name": "Flat",
+      "controlType": "ControlType.ListItem",
+      "bounds": {
+        "x": 1730.0,
+        "y": 365.0,
+        "width": 129.0,
+        "height": 18.0
+      }
+    },
+    {
+      "name": "Popup",
+      "controlType": "ControlType.ListItem",
+      "bounds": {
+        "x": 1730.0,
+        "y": 383.0,
+        "width": 129.0,
+        "height": 18.0
+      }
+    },
+    {
+      "name": "Standard",
+      "controlType": "ControlType.ListItem",
+      "bounds": {
+        "x": "Infinity",
+        "y": "Infinity",
+        "width": "-Infinity",
+        "height": "-Infinity"
+      }
+    },
+    {
+      "name": "System",
+      "controlType": "ControlType.ListItem",
+      "bounds": {
+        "x": 1730.0,
+        "y": 419.0,
+        "width": 129.0,
+        "height": 18.0
+      }
+    }
+  ],
+  "itemNames": [
+    "Flat",
+    "Popup",
+    "Standard",
+    "System"
+  ],
+  "selectedNames": "Standard",
+  "selectionSource": "List.Current.Name",
+  "nativeList": {
+    "name": "Standard",
+    "bounds": {
+      "x": 1730.0,
+      "y": 365.0,
+      "width": 129.0,
+      "height": 82.0
+    },
+    "childItems": [
+      {
+        "name": "Flat",
+        "controlType": "ControlType.ListItem",
+        "bounds": {
+          "x": 1730.0,
+          "y": 365.0,
+          "width": 129.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Popup",
+        "controlType": "ControlType.ListItem",
+        "bounds": {
+          "x": 1730.0,
+          "y": 383.0,
+          "width": 129.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Standard",
+        "controlType": "ControlType.ListItem",
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        }
+      },
+      {
+        "name": "System",
+        "controlType": "ControlType.ListItem",
+        "bounds": {
+          "x": 1730.0,
+          "y": 419.0,
+          "width": 129.0,
+          "height": 18.0
+        }
+      }
+    ],
+    "childNames": [
+      "Flat",
+      "Popup",
+      "Standard",
+      "System"
+    ],
+    "selectedNames": []
+  },
+  "sourceByteIdentical": true,
+  "designerByteIdentical": true,
+  "projectByteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\a13158c8e935471092e9dc6883ab200f\\Modern\\S041FlatStyleForm.cs",
+    "controlAutomationId": "button1",
+    "propertyName": "FlatStyle",
+    "clickedWindow": 16848806,
+    "rowWindow": 23796236,
+    "dropdownWindow": 31922498,
+    "propertyBounds": {
+      "x": 1593.0,
+      "y": 345.0,
+      "width": 266.0,
+      "height": 18.0
+    },
+    "items": [
+      {
+        "name": "Standard",
+        "controlType": "ControlType.ToolBar",
+        "selected": null,
+        "bounds": {
+          "x": 14.0,
+          "y": 38.0,
+          "width": 889.0,
+          "height": 30.0
+        }
+      },
+      {
+        "name": "Flat",
+        "controlType": "ControlType.ListItem",
+        "selected": null,
+        "bounds": {
+          "x": 1730.0,
+          "y": 365.0,
+          "width": 129.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Standard",
+        "controlType": "ControlType.List",
+        "selected": null,
+        "bounds": {
+          "x": 1730.0,
+          "y": 365.0,
+          "width": 129.0,
+          "height": 82.0
+        }
+      },
+      {
+        "name": "Popup",
+        "controlType": "ControlType.ListItem",
+        "selected": null,
+        "bounds": {
+          "x": 1730.0,
+          "y": 383.0,
+          "width": 129.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "System",
+        "controlType": "ControlType.ListItem",
+        "selected": null,
+        "bounds": {
+          "x": 1730.0,
+          "y": 419.0,
+          "width": 129.0,
+          "height": 18.0
+        }
+      },
+      {
+        "name": "Standard",
+        "controlType": "ControlType.ListItem",
+        "selected": null,
+        "bounds": {
+          "x": "Infinity",
+          "y": "Infinity",
+          "width": "-Infinity",
+          "height": "-Infinity"
+        }
+      }
+    ],
+    "listInventories": [
+      {
+        "name": "Standard",
+        "bounds": {
+          "x": 1730.0,
+          "y": 365.0,
+          "width": 129.0,
+          "height": 82.0
+        },
+        "childItems": [
+          {
+            "name": "Flat",
+            "controlType": "ControlType.ListItem",
+            "bounds": {
+              "x": 1730.0,
+              "y": 365.0,
+              "width": 129.0,
+              "height": 18.0
+            }
+          },
+          {
+            "name": "Popup",
+            "controlType": "ControlType.ListItem",
+            "bounds": {
+              "x": 1730.0,
+              "y": 383.0,
+              "width": 129.0,
+              "height": 18.0
+            }
+          },
+          {
+            "name": "Standard",
+            "controlType": "ControlType.ListItem",
+            "bounds": {
+              "x": "Infinity",
+              "y": "Infinity",
+              "width": "-Infinity",
+              "height": "-Infinity"
+            }
+          },
+          {
+            "name": "System",
+            "controlType": "ControlType.ListItem",
+            "bounds": {
+              "x": 1730.0,
+              "y": 419.0,
+              "width": 129.0,
+              "height": 18.0
+            }
+          }
+        ],
+        "childNames": [
+          "Flat",
+          "Popup",
+          "Standard",
+          "System"
+        ],
+        "selectedNames": []
+      }
+    ],
+    "popupCaptures": [
+      {
+        "hwnd": 45160460,
+        "artifact": "visual-studio-dropdown-1.png",
+        "capture": {
+          "hwnd": 45160460,
+          "x": 1729,
+          "y": 364,
+          "width": 131,
+          "height": 84,
+          "dpi": 96,
+          "sha256": "6ff0514a6945b198ae76f597987e0426c7870a098d161e9ed0fd1859c4568361"
+        }
+      },
+      {
+        "hwnd": 25565876,
+        "artifact": "visual-studio-dropdown-2.png",
+        "capture": {
+          "hwnd": 25565876,
+          "x": 1729,
+          "y": 364,
+          "width": 136,
+          "height": 89,
+          "dpi": 96,
+          "sha256": "a39873dd83a37b6a56d6c6cdfc036266a0a770367ec20ed2a538ef35b640ce12"
+        }
+      }
+    ],
+    "capture": {
+      "hwnd": 232524376,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "1b4ebea8a2ff6df92ffd93e88b91d053ede2417fb28b92b678c6194c11e799f6"
+    }
+  }
+}

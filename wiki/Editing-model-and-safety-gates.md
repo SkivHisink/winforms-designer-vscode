@@ -26,6 +26,8 @@ re-parses both versions and proves the claim:
 | `OnlyControlAdded` | original statements intact; every added statement references the new control; exactly one new member |
 | `OnlyControlRemoved` | only the target's statements and field are gone; no dangling references |
 | `OnlyWiringAdded` | one event wiring added, nothing else |
+| batch preflight (`SetProperties` / `ResetProperties`) | every target of a multi-selection edit resolves and splices in memory first; a duplicate, missing, inherited, unrepresentable or stale target returns no text at all, so a valid prefix can never be committed |
+| exact-offset paste preflight | `Ctrl`+drag duplicate composes every clone against one immutable revision and returns without a document edit if any member cannot be represented safely |
 | localizable-source gate | on a localizable form, structural source edits are refused (values route to `.resx`) |
 | render gate | a form whose last render failed is read-only until it renders again |
 | baseline gate | the file on disk still matches what we last read — otherwise someone else edited it |

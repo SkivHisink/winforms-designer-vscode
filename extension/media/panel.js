@@ -1,5 +1,5 @@
-// WinForms designer — the single dockable panel WebviewView. Hosts TWO full-size panes (Properties grid +
-// Toolbox palette) switched by a tab strip at the bottom of the view, so each category gets the whole area
+// WinForms designer — the single dockable panel WebviewView. Hosts full-size Properties, Outline, Toolbox, and
+// Data Sources panes switched by a tab strip at the bottom of the view, so each category gets the whole area
 // (instead of two stacked views splitting it). Mirrors the active designer editor; edits/adds are posted to
 // the host, which applies them to the active .Designer.cs and live-updates the canvas. Kept in sync with the
 // host protocol in src/designerEditor.ts.
@@ -40,29 +40,128 @@
   };
   function fieldLabel(n) { return FIELD_KEY[n] ? T(FIELD_KEY[n]) : n; }
 
-  // ---- bottom tab switching (Properties / Outline / Toolbox panes) ----
+  // ---- bottom tab switching (Properties / Outline / Toolbox / Data Sources panes) ----
   var propsPane = document.getElementById('propsPane');
   var toolboxPane = document.getElementById('toolboxPane');
   var outlinePane = document.getElementById('outlinePane');
+  var dataPane = document.getElementById('dataPane');
   var mainTabProps = document.getElementById('mainTabProps');
   var mainTabToolbox = document.getElementById('mainTabToolbox');
   var mainTabOutline = document.getElementById('mainTabOutline');
+  var mainTabData = document.getElementById('mainTabData');
   var activeMainTab = 'props';
   function showMainTab(which, persist) {
-    activeMainTab = (which === 'outline' || which === 'toolbox') ? which : 'props';
+    activeMainTab = (which === 'outline' || which === 'toolbox' || which === 'data') ? which : 'props';
     which = activeMainTab;
     propsPane.style.display = which === 'props' ? '' : 'none';
     outlinePane.style.display = which === 'outline' ? '' : 'none';
     toolboxPane.style.display = which === 'toolbox' ? '' : 'none';
+    dataPane.style.display = which === 'data' ? '' : 'none';
     mainTabProps.className = which === 'props' ? 'active' : '';
     mainTabOutline.className = which === 'outline' ? 'active' : '';
     mainTabToolbox.className = which === 'toolbox' ? 'active' : '';
+    mainTabData.className = which === 'data' ? 'active' : '';
     if (which === 'outline') renderOutline();
+    if (which === 'data') vscode.postMessage({ type: 'refreshDataSources' });
     if (persist !== false) savePanelViewState();
   }
   mainTabProps.addEventListener('click', function () { showMainTab('props'); });
   mainTabOutline.addEventListener('click', function () { showMainTab('outline'); });
   mainTabToolbox.addEventListener('click', function () { showMainTab('toolbox'); });
+  mainTabData.addEventListener('click', function () { showMainTab('data'); });
+
+  // ---- Data Sources pane: engine-discovered project DTO/settings metadata. The schema key is opaque; all C#
+  // identities are rediscovered and authorized by the source engine at commit time. Detail/Grid buttons also act as
+  // cross-webview drag handles so a drop supplies the intended parent/position without trusting browser geometry. ----
+  var DATA_SOURCE_MIME = 'application/vnd.winforms-data-source';
+  var dataListEl = document.getElementById('dataList');
+  var dataStatusEl = document.getElementById('dataStatus');
+  var dataRefreshEl = document.getElementById('dataRefresh');
+  var dataNavigatorEl = document.getElementById('dataNavigator');
+  var dataCatalog = { ok: false, schemas: [], settings: [], reason: '' };
+  var dataSourceChoice = {};
+
+  function currentControl() {
+    for (var i = 0; i < controls.length; i++) if (controls[i].id === currentId) return controls[i];
+    return null;
+  }
+  function dataIntent(schema, mode) {
+    var chosen = dataSourceChoice[schema.key];
+    return {
+      schemaKey: schema.key, mode: mode, includeNavigator: !!dataNavigatorEl.checked,
+      existingBindingSourceId: chosen || null
+    };
+  }
+  function armDataDrag(button, schema, mode) {
+    button.draggable = true;
+    button.addEventListener('dragstart', function (ev) {
+      if (!ev.dataTransfer) return;
+      ev.dataTransfer.setData(DATA_SOURCE_MIME, JSON.stringify(dataIntent(schema, mode)));
+      ev.dataTransfer.effectAllowed = 'copy';
+    });
+  }
+  function dataButton(label, schema, mode, existingGridId) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'dsAction'; b.textContent = label;
+    b.title = T('panel.data.dragTip');
+    b.addEventListener('click', function () {
+      var intent = dataIntent(schema, mode);
+      vscode.postMessage({
+        type: 'generateDataSource', schemaKey: intent.schemaKey, mode: intent.mode, parentId: 'this',
+        includeNavigator: intent.includeNavigator, existingBindingSourceId: intent.existingBindingSourceId,
+        existingGridId: existingGridId || null
+      });
+    });
+    armDataDrag(b, schema, mode);
+    return b;
+  }
+  function renderDataSources() {
+    dataListEl.innerHTML = '';
+    var schemas = dataCatalog.schemas || [], settings = dataCatalog.settings || [];
+    dataStatusEl.textContent = dataCatalog.ok
+      ? (schemas.length || settings.length ? '' : T('panel.data.none'))
+      : (dataCatalog.reason || T('panel.data.unavailable'));
+    var selected = currentControl();
+    var selectedGrid = selected && /DataGridView/.test(selected.type || '') ? selected.id : null;
+    schemas.forEach(function (schema) {
+      var card = document.createElement('div'); card.className = 'dsCard';
+      var head = document.createElement('div'); head.className = 'dsHead'; head.textContent = schema.name || schema.typeName;
+      head.title = schema.typeName || '';
+      card.appendChild(head);
+      var props = document.createElement('div'); props.className = 'dsProps';
+      props.textContent = (schema.properties || []).map(function (p) { return p.name; }).join(', ');
+      card.appendChild(props);
+      var existing = schema.existingBindingSources || [];
+      if (existing.length) {
+        var source = document.createElement('select'); source.className = 'dsSource';
+        var fresh = document.createElement('option'); fresh.value = ''; fresh.textContent = T('panel.data.newBindingSource'); source.appendChild(fresh);
+        existing.forEach(function (id) { var o = document.createElement('option'); o.value = id; o.textContent = id; source.appendChild(o); });
+        source.value = dataSourceChoice[schema.key] || '';
+        source.addEventListener('change', function () { dataSourceChoice[schema.key] = source.value; });
+        card.appendChild(source);
+      }
+      var actions = document.createElement('div'); actions.className = 'dsActions';
+      actions.appendChild(dataButton(T('panel.data.details'), schema, 'detail', null));
+      actions.appendChild(dataButton(T('panel.data.grid'), schema, 'grid', null));
+      if (selectedGrid) actions.appendChild(dataButton(T('panel.data.addColumns'), schema, 'grid', selectedGrid));
+      card.appendChild(actions); dataListEl.appendChild(card);
+    });
+    if (settings.length) {
+      var title = document.createElement('div'); title.className = 'dsSection'; title.textContent = T('panel.data.settings');
+      dataListEl.appendChild(title);
+      settings.forEach(function (setting) {
+        var row = document.createElement('div'); row.className = 'settingRow';
+        var label = document.createElement('span'); label.className = 'settingName';
+        label.textContent = setting.name + ' · ' + setting.typeName; row.appendChild(label);
+        var bind = document.createElement('button'); bind.type = 'button'; bind.textContent = T('panel.data.bindSelected');
+        bind.disabled = !selected || selected.id === 'this' || selected.editable === false;
+        bind.addEventListener('click', function () {
+          if (currentId) vscode.postMessage({ type: 'bindApplicationSetting', settingKey: setting.key, id: currentId });
+        });
+        row.appendChild(bind); dataListEl.appendChild(row);
+      });
+    }
+  }
+  dataRefreshEl.addEventListener('click', function () { vscode.postMessage({ type: 'refreshDataSources' }); });
 
   // ---- Toolbox pane: VS-style vertical stack of collapsible category "tabs" + custom tabs + right-click menu.
   // In VS the toolbox "tabs" are these collapsible category headers; the right-click menu (Add/Rename/Delete/
@@ -74,6 +173,7 @@
   var tbSearchEl = document.getElementById('tbSearch');
   var tbMenuEl = document.getElementById('tbMenu');
   var toolboxItems = [];
+  var selectedToolboxControl = null;
 
   // The nine VS toolbox categories, in VS order. "All Windows Forms" is the catch-all (lists every item).
   var BUILTIN_TABS = ['All Windows Forms', 'Common Controls', 'Containers', 'Menus & Toolbars',
@@ -191,6 +291,17 @@
       tbListEl.appendChild(none);
     }
   }
+  function clearToolboxSelection() {
+    selectedToolboxControl = null;
+    Array.prototype.forEach.call(tbListEl.querySelectorAll('.tbItem.selected'), function (el) { el.classList.remove('selected'); });
+  }
+  function syncToolboxSelection(controlType) {
+    selectedToolboxControl = controlType || null;
+    Array.prototype.forEach.call(tbListEl.querySelectorAll('.tbItem'), function (el) {
+      if (selectedToolboxControl && el.getAttribute('data-add-key') === selectedToolboxControl) el.classList.add('selected');
+      else el.classList.remove('selected');
+    });
+  }
   function makeTbItem(it) {
     var b = document.createElement('div'); b.className = 'tbItem';
     // The control's own [ToolboxBitmap] (same icon VS shows), sent by the engine as a base64 PNG. When absent
@@ -206,20 +317,37 @@
     var lbl = document.createElement('span'); lbl.className = 'tbLabel'; lbl.textContent = it.name;
     b.appendChild(lbl);
     // non-visual components (Timer/ToolTip/dialog…) go to the component tray — click-to-add only (no position), via
-    // the AddComponent path. Visual controls support click-to-add AND drag onto the form at a position.
+    // the AddComponent path. Visual controls use single-click to arm rectangle placement, double-click for a
+    // default-size add into the active container, and ordinary cross-webview drag/drop for point placement.
     // For a PROJECT/vendor control send the FULLY-QUALIFIED name as the add key, not the short name: a vendor control
     // whose short name collides with a framework one (e.g. a project "Panel") would otherwise resolve to the stock
     // framework type, and two project controls sharing a short name would be ambiguous. A dotted FQN resolves exactly
     // in both engines (net9 ResolveSpec by Fqn; net48 ResolveControlType via Type.GetType). Framework/components keep
     // their short name (unchanged). See #5 DevExpress-add review.
     var addKey = it.fromProject ? it.fqn : it.name;
+    b.setAttribute('data-add-key', addKey);
+    if (selectedToolboxControl === addKey) b.classList.add('selected');
     b.title = it.fqn + (it.isComponent ? T('panel.tb.item.componentTip') : T('panel.tb.item.controlTip'));
     b.addEventListener('click', function () {
-      if (it.isComponent) vscode.postMessage({ type: 'addComponent', componentType: it.name });
-      else vscode.postMessage({ type: 'addControl', controlType: addKey });
+      if (it.isComponent) {
+        // Switching from an armed visual control to a tray component must disarm rectangle placement immediately.
+        // The host repeats this clear before its async add so the canvas and a re-rendered panel cannot retain stale state.
+        clearToolboxSelection();
+        vscode.postMessage({ type: 'addComponent', componentType: it.name });
+      }
+      else {
+        clearToolboxSelection();
+        selectedToolboxControl = addKey;
+        b.classList.add('selected');
+        vscode.postMessage({ type: 'selectToolboxControl', controlType: addKey });
+      }
+    });
+    b.addEventListener('dblclick', function () {
+      if (it.isComponent) return;
+      vscode.postMessage({ type: 'addControl', controlType: addKey });
     });
     if (it.isComponent) return b;   // components aren't draggable (no on-form position)
-    // cross-webview drag → canvas drop (custom MIME, NOT text/uri-list). Click-to-add is the reliable fallback.
+    // cross-webview drag → canvas drop (custom MIME, NOT text/uri-list). Double-click is the reliable fallback.
     b.draggable = true;
     b.addEventListener('dragstart', function (ev) {
       if (!ev.dataTransfer) return;
@@ -408,6 +536,9 @@
   function componentEditable(c) {
     return !!c && c.editable !== false && c.readOnly !== true;
   }
+  function propertyOwnerEditable(c, p) {
+    return componentEditable(c) || !!(c && c.inheritedOverrideEditable && p && p.inheritedOverrideEditable);
+  }
   // The engine's ShouldSerializeValue over-reports a few ambient/runtime props on the interpreted host, so an
   // untouched control would otherwise show them non-default (per DesignerDescribe.cs:17-21). Visible/Enabled are
   // ambient; TabIndex is assigned implicitly by the layout engine and ShouldSerialize reports any non-zero value —
@@ -442,7 +573,10 @@
   // The description pane text: the property's DescriptionAttribute, falling back to its type + edit hint when it
   // carries no description (so the pane is never blank for a selected row).
   function descFor(p) {
-    if (p.description && String(p.description).trim()) return p.description;
+    var diagnostic = p.metadataDiagnosticCode && String(p.metadataDiagnosticCode).trim();
+    var description = p.description && String(p.description).trim();
+    if (diagnostic) return diagnostic + (description ? ' — ' + description : '');
+    if (description) return description;
     var hint = editHint(p);
     return p.type + (hint ? ' — ' + hint : '');
   }
@@ -457,6 +591,10 @@
     var nm = document.createElement('div'); nm.className = 'pdName';
     var ds = document.createElement('div'); ds.className = 'pdText';
     if (p) { nm.textContent = p.name; ds.textContent = descFor(p); }
+    else if (currentComponent.multiCount > 1) {
+      nm.textContent = TN('panel.props.multiSelection', currentComponent.multiCount);
+      ds.textContent = T('panel.props.multiSelectionHint');
+    }
     else { nm.textContent = currentComponent.name || ''; ds.textContent = shortType(currentComponent.type || ''); }
     descEl.appendChild(nm); descEl.appendChild(ds);
   }
@@ -475,13 +613,16 @@
   // at its default and reset would be a no-op, so we grey it like VS. The engine reset is safe-save-gated + no-op-safe.
   function openPropMenu(x, y, c, p) {
     if (!tbMenuEl) return;
+    var resettable = p.multi ? !!p.multiResettable : !!p.sourceExplicit;
+    var inheritedResettable = !!(c && c.inheritedOverrideEditable && p.inheritedOverrideResettable && p.sourceExplicit);
     var items = [
       // Reset works for a ToolStrip item too, but only when it's editable (net9, or a resolved net48 item): the message
       // is tagged with the strip host id (ownerId) — mirroring the edit path — so the host routes it to the item-reset
       // path (splices the item field, refreshes via itemProps, keeps the canvas item highlight). A read-only item
       // (net48 unresolved placeholder, currentItemEditable=false) keeps reset greyed like a non-source-explicit prop.
-      { label: T('panel.menu.reset'), disabled: !componentEditable(c) || p.readOnly || !p.sourceExplicit || (!!currentItemId && !currentItemEditable), act: function () {
-        var rmsg = { type: 'resetProperty', id: c.id, prop: p.name };
+      { label: T('panel.menu.reset'), disabled: (!(componentEditable(c) || inheritedResettable))
+        || (p.readOnly && !inheritedResettable) || !resettable || (!!currentItemId && !currentItemEditable), act: function () {
+        var rmsg = { type: 'resetProperty', id: c.id, prop: p.name, multi: !!p.multi };
         if (currentItemId && c.id === currentItemId && currentItemOwner) rmsg.ownerId = currentItemOwner;
         vscode.postMessage(rmsg);
       } }
@@ -815,6 +956,7 @@
       return;
     }
     var msg = { type: 'edit', id: id, prop: prop.name, propType: prop.type, isEnum: prop.isEnum, value: value };
+    if (prop.multi) msg.multi = true;
     // a design-time pseudo-property (Modifiers): route to the field-declaration splice, not setProperty. Tag on the
     // engine's designTime flag, not the name, so a real control property named "Modifiers" stays on the normal path.
     if (prop.designTime) msg.designTime = true;
@@ -1176,10 +1318,11 @@
     });
   }
 
-  // ---- Image/Icon editor (Slice 2/5): a preview swatch + "Import…" (host opens a file picker → embeds the
-  // image into the form's sibling .resx and writes the resources.GetObject assignment) + "(none)" (clears the
-  // assignment via ResetProperty). The value isn't a literal, so there's no text field — engine sets p.isImage
-  // and p.imagePreview (a base64 thumbnail of the current value, or null when unset). ----
+  // ---- Image/Icon editor: a preview swatch + "Project…" (bind an existing strongly typed project resource),
+  // "Import…" (host opens a file picker → embeds the image into the form's sibling .resx and writes the
+  // resources.GetObject assignment), and "(none)" (clears the assignment via ResetProperty). The value isn't a
+  // literal, so there's no text field — engine sets p.isImage and p.imagePreview (a base64 thumbnail of the current
+  // value, or null when unset). ----
   function imageEditor(c, p) {
     var wrap = document.createElement('div'); wrap.className = 'imageEd';
     var sw = document.createElement('span'); sw.className = 'imgSwatch' + (p.imagePreview ? '' : ' none');
@@ -1194,6 +1337,11 @@
     lbl.textContent = p.imagePreview ? shortType(p.type) : T('common.none');
     wrap.appendChild(lbl);
     if (!p.readOnly) {
+      var project = document.createElement('button'); project.type = 'button'; project.className = 'imgBtn';
+      project.textContent = T('panel.image.project');
+      project.title = T('panel.image.projectTip');
+      project.addEventListener('click', function () { vscode.postMessage({ type: 'pickProjectImageResource', id: c.id, prop: p.name, propType: p.type }); });
+      wrap.appendChild(project);
       var imp = document.createElement('button'); imp.type = 'button'; imp.className = 'imgBtn'; imp.textContent = T('panel.image.import');
       imp.title = T('panel.image.importTip');
       imp.addEventListener('click', function () { vscode.postMessage({ type: 'importImage', id: c.id, prop: p.name, propType: p.type }); });
@@ -1214,6 +1362,7 @@
   // a one-item-per-line textarea. OK rewrites the owner's Add/AddRange calls via SetCollectionItems. A non-literal
   // (bound/complex) collection comes back ok:false → the popup shows a read-only note so items can't be dropped. ----
   var COLUMN_ITEM_TYPE = 'System.Windows.Forms.ColumnHeader';
+  var TABPAGE_ITEM_TYPE = 'System.Windows.Forms.TabPage';
   var GRIDCOLUMN_ITEM_TYPE = 'System.Windows.Forms.DataGridViewColumn';
   var BINDING_ITEM_TYPE = 'System.Windows.Forms.Binding';
   var TREENODE_ITEM_TYPE = 'System.Windows.Forms.TreeNode';
@@ -1228,9 +1377,39 @@
     if (t.indexOf('MenuStrip') >= 0) return [['ToolStripMenuItem', 'Menu Item'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripSeparator', 'Separator']];
     return [['ToolStripButton', 'Button'], ['ToolStripLabel', 'Label'], ['ToolStripSeparator', 'Separator'], ['ToolStripSplitButton', 'Split Button'], ['ToolStripDropDownButton', 'DropDown Button'], ['ToolStripComboBox', 'ComboBox'], ['ToolStripTextBox', 'TextBox'], ['ToolStripProgressBar', 'Progress Bar']];
   }
+  function shortWinFormsType(type) {
+    var s = String(type || '');
+    var i = s.lastIndexOf('.');
+    return i >= 0 ? s.substring(i + 1) : s;
+  }
+  function toolStripStandardNode(text, itemType, children) {
+    return { id: '', text: text || '', name: '', itemType: itemType || 'ToolStripMenuItem', children: children || [] };
+  }
+  function toolStripStandardMenuItems() {
+    function item(text) { return toolStripStandardNode(text, 'ToolStripMenuItem', []); }
+    function sep() { return toolStripStandardNode('', 'ToolStripSeparator', []); }
+    return [
+      toolStripStandardNode('File', 'ToolStripMenuItem', [item('New'), item('Open'), item('Save'), item('Save As'), sep(), item('Print'), item('Print Preview'), sep(), item('Exit')]),
+      toolStripStandardNode('Edit', 'ToolStripMenuItem', [item('Undo'), item('Redo'), sep(), item('Cut'), item('Copy'), item('Paste'), sep(), item('Select All')]),
+      toolStripStandardNode('Tools', 'ToolStripMenuItem', [item('Customize'), item('Options')]),
+      toolStripStandardNode('Help', 'ToolStripMenuItem', [item('Contents'), item('Index'), item('Search'), sep(), item('About')]),
+    ];
+  }
+  function toolStripStandardToolbarItems() {
+    function button(text) { return toolStripStandardNode(text, 'ToolStripButton', []); }
+    function sep() { return toolStripStandardNode('', 'ToolStripSeparator', []); }
+    return [button('New'), button('Open'), button('Save'), sep(), button('Print'), sep(), button('Cut'), button('Copy'), button('Paste'), sep(), button('Help')];
+  }
+  function toolStripStandardItems(ownerType) {
+    var shortType = shortWinFormsType(ownerType);
+    if (shortType === 'MenuStrip') return toolStripStandardMenuItems();
+    if (shortType === 'ToolStrip') return toolStripStandardToolbarItems();
+    return [];
+  }
   var STRINGARRAY_ITEM_TYPE = 'System.String[]'; // sentinel for a generic string[] property (TextBox/RichTextBox.Lines)
   var pendingCollection = null; // { id, prop, anchor } awaiting the host's collectionItems reply
   var pendingColumns = null;    // { id, anchor } awaiting the host's columnItems reply
+  var pendingTabPages = null;   // { id, anchor } awaiting the host's tabPageItems reply
   var pendingGridColumns = null; // { id, anchor } awaiting the host's gridColumnItems reply
   var pendingBindings = null;   // { id, anchor } awaiting the host's bindingItems reply
   var pendingDataSource = null; // { id, anchor } awaiting the host's dataSourceInfo reply
@@ -1261,6 +1440,17 @@
     btn.title = 'Edit ' + shortType(p.collectionItemType) + ' items…';
     btn.setAttribute('aria-label', 'Edit ' + p.name + ' (' + shortType(p.collectionItemType) + ' items)');
     btn.addEventListener('click', function () {
+      var certifiedVendorEditor = p.uiTypeEditor
+        && p.uiTypeEditorAssemblyPath
+        && p.uiTypeEditorAssemblySha256
+        && p.uiTypeEditorCertificationId;
+      if (p.uiTypeEditor === 'System.ComponentModel.Design.CollectionEditor' || certifiedVendorEditor) {
+        vscode.postMessage({
+          type: 'uiCollectionEditor', id: c.id, prop: p.name,
+          itemType: p.collectionItemType, editorType: p.uiTypeEditor
+        });
+        return;
+      }
       pendingGenericList = { id: c.id, prop: p.name, itemType: p.collectionItemType, anchor: btn };
       vscode.postMessage({ type: 'listGenericList', id: c.id, prop: p.name, itemType: p.collectionItemType });
     });
@@ -1415,6 +1605,72 @@
       cancel.addEventListener('click', function () { closePopup(); });
       bar.appendChild(okBtn); bar.appendChild(cancel);
       pop.appendChild(bar);
+    });
+  }
+
+  // Typed TabControl.TabPages collection editor. VS presents the page collection as one modal transaction; this
+  // bounded version exposes the same ordered field-backed pages and commits the complete permutation on OK. Structural
+  // Add/Delete remain on the designer surface, where their existing subtree safety/confirmation rules apply.
+  function tabPagesEditor(c, p) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    lbl.title = p.type;
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn tabPagesBtn'; btn.textContent = '…';
+    btn.title = 'Edit tab page order…';
+    btn.setAttribute('aria-label', 'Edit TabPages order');
+    btn.addEventListener('click', function () {
+      pendingTabPages = { id: c.id, anchor: btn };
+      vscode.postMessage({ type: 'listTabPages', id: c.id });
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  function openTabPagesPopup(anchor, id, ok, pages, reason) {
+    openPopup(anchor, function (pop) {
+      pop.classList.add('collectionPop'); pop.classList.add('columnsPop'); pop.classList.add('tabPagesPop');
+      var title = document.createElement('div'); title.className = 'collectionTitle'; title.textContent = 'TabPages'; pop.appendChild(title);
+      if (!ok) {
+        var note = document.createElement('div'); note.className = 'collectionNote';
+        note.textContent = 'This collection can’t be reordered here (' + (reason || 'unsupported page attachment') + ').';
+        pop.appendChild(note);
+        return;
+      }
+
+      var rows = (pages || []).slice();
+      var original = JSON.stringify(rows);
+      var list = document.createElement('div'); list.className = 'columnsList tabPagesList'; pop.appendChild(list);
+      function render() {
+        list.textContent = '';
+        if (!rows.length) {
+          var empty = document.createElement('div'); empty.className = 'columnsEmpty'; empty.textContent = '(no tab pages)';
+          list.appendChild(empty);
+        }
+        rows.forEach(function (pageId, i) {
+          var row = document.createElement('div'); row.className = 'columnsRow tabPageRow'; row.dataset.pageId = pageId;
+          var up = document.createElement('button'); up.type = 'button'; up.className = 'colMini tabPageUp'; up.textContent = '↑'; up.title = 'Move up'; up.disabled = i === 0;
+          up.setAttribute('aria-label', 'Move ' + pageId + ' up');
+          up.addEventListener('click', function () { var swap = rows[i - 1]; rows[i - 1] = rows[i]; rows[i] = swap; render(); });
+          var down = document.createElement('button'); down.type = 'button'; down.className = 'colMini tabPageDown'; down.textContent = '↓'; down.title = 'Move down'; down.disabled = i === rows.length - 1;
+          down.setAttribute('aria-label', 'Move ' + pageId + ' down');
+          down.addEventListener('click', function () { var swap = rows[i + 1]; rows[i + 1] = rows[i]; rows[i] = swap; render(); });
+          var name = document.createElement('span'); name.className = 'tabPageName'; name.textContent = pageId;
+          row.appendChild(up); row.appendChild(down); row.appendChild(name); list.appendChild(row);
+        });
+      }
+      render();
+
+      var bar = document.createElement('div'); bar.className = 'collectionBar';
+      var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      okBtn.addEventListener('click', function () {
+        closePopup();
+        if (JSON.stringify(rows) === original) return;
+        vscode.postMessage({ type: 'setTabPages', id: id, pageIds: rows.slice() });
+      });
+      cancel.addEventListener('click', function () { closePopup(); });
+      bar.appendChild(okBtn); bar.appendChild(cancel); pop.appendChild(bar);
     });
   }
 
@@ -1874,7 +2130,8 @@
   // ---- ToolStrip / MenuStrip item editor (read + REORDER + ADD "Type Here" + REMOVE + RENAME + item-TYPE picker). The
   // item tree renders recursively (menus have nested DropDownItems); ↑/↓ reorder within siblings, ✕ deletes, "+ Add item"
   // appends a NEW item whose type is chosen from a context-appropriate picker and whose Text is typed inline, and an
-  // existing item's Text can be edited to RENAME it. OK posts the resulting forest. ----
+  // existing item's Text can be edited to RENAME it. "Insert Standard Items" appends the standard menu/toolbar skeleton
+  // as empty-id nodes so the engine can mint names atomically. OK posts the resulting forest. ----
   function toolStripEditor(c, p) {
     var wrap = document.createElement('div'); wrap.className = 'collectionEd';
     var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)'; lbl.title = p.type;
@@ -1906,6 +2163,7 @@
       function clone(n) { return { _k: ++_tsKey, id: n.id || '', text: n.text || '', name: n.name || '', itemType: n.itemType || '', children: (n.children || []).map(clone) }; }
       function strip(a) { return a.map(function (n) { return { id: n.id || '', text: n.text || '', name: n.name || '', itemType: n.itemType || '', children: strip(n.children) }; }); }
       function fresh() { return { _k: ++_tsKey, id: '', text: '', name: '', itemType: defaultType, children: [] }; }
+      function expandAll(a) { a.forEach(function (n) { if (n.children.length) { expanded[n._k] = true; expandAll(n.children); } }); }
       var roots = (items || []).map(clone);
       var original = JSON.stringify(strip(roots));
       var expanded = {};
@@ -1978,6 +2236,18 @@
       var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'columnsAdd'; addBtn.textContent = '+ Add item';
       addBtn.addEventListener('click', function () { roots.push(fresh()); render(); });
       pop.appendChild(addBtn);
+      var standardItems = toolStripStandardItems(ownerType);
+      if (standardItems.length) {
+        var stdBtn = document.createElement('button'); stdBtn.type = 'button'; stdBtn.className = 'columnsAdd standardItemsBtn'; stdBtn.textContent = 'Insert Standard Items';
+        stdBtn.title = 'Append the standard Visual Studio menu/toolbar item skeleton';
+        stdBtn.addEventListener('click', function () {
+          var added = standardItems.map(clone);
+          Array.prototype.push.apply(roots, added);
+          expandAll(added);
+          render();
+        });
+        pop.appendChild(stdBtn);
+      }
       var bar = document.createElement('div'); bar.className = 'collectionBar';
       var okBtn = document.createElement('button'); okBtn.type = 'button'; okBtn.className = 'collectionOk'; okBtn.textContent = 'OK';
       var cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
@@ -2017,30 +2287,55 @@
     });
   }
 
+  function markMixedEditor(editor, mixed) {
+    if (!editor || !mixed) return editor;
+    var field = /^(INPUT|SELECT|TEXTAREA)$/.test(editor.tagName || '') ? editor
+      : (editor.querySelector ? editor.querySelector('input,select,textarea') : null);
+    if (field) {
+      field.classList.add('mixed');
+      field.setAttribute('data-mixed', 'true');
+      if (field.tagName === 'SELECT') {
+        // editSelect keeps an explicit blank option when the current value is outside the closed set. For a
+        // multi-object row that blank is not an unset value: it means the targets disagree, so say that visibly.
+        var selected = field.options && field.options[field.selectedIndex];
+        if (selected) selected.textContent = T('panel.grid.mixed');
+      } else field.placeholder = T('panel.grid.mixed');
+      field.title = T('panel.grid.mixed');
+      field.setAttribute('aria-label', T('panel.grid.mixed'));
+    }
+    return editor;
+  }
+
   function propRow(c, p, t) {
     var itemActive = !!currentItemId;
     var itemRO = itemActive && !currentItemEditable;
-    var canAct = componentEditable(c) && !p.readOnly && !itemRO;
+    var canAct = propertyOwnerEditable(c, p) && !p.readOnly && !itemRO;
     var propEditable = canAct && editable(p);
+    var mixed = !!p.mixed;
+    var shownValue = mixed ? '' : p.value;
     var comp = propEditable ? COMPOSITE[p.type] : null;
-    var parts = comp ? parseParts(p.value, comp.fields.length) : null;
+    var parts = comp && !mixed ? parseParts(shownValue, comp.fields.length) : null;
     // Anchor/Dock are expandable too: collapsed shows the visual glyph editor (value cell), expanded adds
     // combobox sub-rows — Anchor → a True/False <select> per edge, Dock → a single DockStyle <select>.
-    var isAnchor = propEditable && p.type === ANCHOR_TYPE;
-    var isDock = propEditable && p.type === DOCK_TYPE;
-    var isColor = propEditable && p.type === COLOR_TYPE;
-    var isFont = propEditable && p.type === FONT_TYPE;
+    var isAnchor = propEditable && !mixed && p.type === ANCHOR_TYPE;
+    var isDock = propEditable && !mixed && p.type === DOCK_TYPE;
+    var isColor = propEditable && !mixed && p.type === COLOR_TYPE;
+    var isFont = propEditable && !mixed && p.type === FONT_TYPE;
     // generic [Flags] enums (Anchor keeps its dedicated glyph editor) → checkbox dropdown
-    var isFlags = propEditable && p.isEnum && !isAnchor && p.flagsMembers && p.flagsMembers.length;
+    var isFlags = propEditable && !mixed && p.isEnum && !isAnchor && p.flagsMembers && p.flagsMembers.length;
     // Built-in Point/Size/Padding/Anchor/Dock/Font editors keep precedence. TypeConverter metadata is a bounded,
     // display-only fallback for every other expandable value; sourceEditable on a child is intentionally ignored
     // because no nested write adapter exists.
     var builtInExpand = !!parts || isAnchor || isDock || isFont;
-    var metadataExpand = !builtInExpand && ((p.properties && p.properties.length) || p.propertiesTruncated);
+    var metadataExpand = !mixed && !builtInExpand && ((p.properties && p.properties.length) || p.propertiesTruncated);
     var canExpand = builtInExpand || metadataExpand;
     var isOpen = canExpand && expandedProps.has(p.name);
 
     var tr = document.createElement('tr');
+    if (p.metadataDiagnosticCode) {
+      tr.setAttribute('data-diagnostic-code', String(p.metadataDiagnosticCode));
+      tr.setAttribute('aria-description', String(p.metadataDiagnosticCode));
+    }
     if (currentProp === p.name) tr.className = 'sel';
     // selecting a row (click or keyboard focus into its editor) drives the description pane + the active highlight
     tr.addEventListener('mousedown', function () { selectProp(p.name, tr); });
@@ -2086,6 +2381,7 @@
       valTd.appendChild(
         p.genericCollection && p.collectionItemType ? genericListEditor(c, p)
         : p.collectionItemType === COLUMN_ITEM_TYPE ? columnsEditor(c, p)
+        : p.collectionItemType === TABPAGE_ITEM_TYPE ? tabPagesEditor(c, p)
         : p.collectionItemType === GRIDCOLUMN_ITEM_TYPE ? gridColumnsEditor(c, p)
         : p.collectionItemType === BINDING_ITEM_TYPE ? bindingsEditor(c, p)
         : p.collectionItemType === TREENODE_ITEM_TYPE ? treeNodesEditor(c, p)
@@ -2095,22 +2391,22 @@
     } else if (propEditable) {
       valTd.className = 'val';
       if (isAnchor) {
-        valTd.appendChild(anchorEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
+        valTd.appendChild(anchorEditor(shownValue, function (v) { sendEdit(c.id, p, v); }));
       } else if (isDock) {
-        valTd.appendChild(dockEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
+        valTd.appendChild(dockEditor(shownValue, function (v) { sendEdit(c.id, p, v); }));
       } else if (isColor) {
-        valTd.appendChild(colorEditor(p.value, function (v) { sendEdit(c.id, p, v); }));
+        valTd.appendChild(colorEditor(shownValue, function (v) { sendEdit(c.id, p, v); }));
       } else if (isFlags) {
-        valTd.appendChild(flagsEditor(p, p.value, function (v) { sendEdit(c.id, p, v); }));
+        valTd.appendChild(flagsEditor(p, shownValue, function (v) { sendEdit(c.id, p, v); }));
       } else if (p.standardValues && p.standardValues.length && !isOpen) {
-        valTd.appendChild(editSelect(p.standardValues, !!p.standardValuesExclusive, p.value, p.type + editHint(p), function (v) { sendEdit(c.id, p, v); }));
+        valTd.appendChild(markMixedEditor(editSelect(p.standardValues, !!p.standardValuesExclusive, shownValue, p.type + editHint(p), function (v) { sendEdit(c.id, p, v); }), mixed));
       } else {
         // collapsed Font (and Point/Size/etc.) show the whole invariant string as a text input; expand for sub-rows
-        valTd.appendChild(editInput(p.type + editHint(p), p.value, function (v) { sendEdit(c.id, p, v); }));
+        valTd.appendChild(markMixedEditor(editInput(p.type + editHint(p), shownValue, function (v) { sendEdit(c.id, p, v); }), mixed));
       }
     } else {
       valTd.className = 'ro';
-      valTd.textContent = (p.value == null ? '' : p.value) + (p.readOnly ? T('panel.grid.readOnly') : '');
+      valTd.textContent = (mixed ? T('panel.grid.mixed') : (p.value == null ? '' : p.value)) + (p.readOnly ? T('panel.grid.readOnly') : '');
       valTd.title = p.type;
     }
     if (propEditable && !itemActive && p.uiTypeEditor) {
@@ -2340,11 +2636,22 @@
     sortAlphaEl.className = mode === 'alpha' ? 'active' : '';
     renderActiveTab();
   }
+  function focusFirstGridResult() {
+    var container = activeTab === 'props' ? propsEl : eventsEl;
+    var target = container && container.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])');
+    if (!target || !target.focus) return false;
+    target.focus();
+    return true;
+  }
 
   treeEl.addEventListener('change', function () { currentId = treeEl.value; vscode.postMessage({ type: 'pick', id: currentId }); });
   tabPropsEl.addEventListener('click', function () { setTab('props'); });
   tabEventsEl.addEventListener('click', function () { setTab('events'); });
   searchEl.addEventListener('input', renderActiveTab);
+  searchEl.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowDown' && e.key !== 'Enter') return;
+    if (focusFirstGridResult()) e.preventDefault();
+  });
   sortCatEl.addEventListener('click', function () { setSort('category'); });
   sortAlphaEl.addEventListener('click', function () { setSort('alpha'); });
 
@@ -2375,6 +2682,8 @@
       renderOutline();
     } else if (m.type === 'toolbox') {
       toolboxItems = m.items || []; renderToolbox();
+    } else if (m.type === 'toolboxSelection') {
+      syncToolboxSelection(m.controlType);
     } else if (m.type === 'palette') {
       applyPalette(m.palette);
       // a late palette (color swatches / font families) → close any popup opened before it arrived (its
@@ -2386,12 +2695,22 @@
     } else if (m.type === 'layout') {
       controls = m.controls || [];
       rebuildTree(); renderOutline();
+      if (activeMainTab === 'data') renderDataSources();
     } else if (m.type === 'select') {
       if (m.id !== currentId) closePopup(); // selection moved to another control → drop any open dropdown
       currentId = m.id;
       currentItemId = null; currentItemOwner = null; // a control selection supersedes any item→Properties view
       if (treeEl) treeEl.value = m.id;
       renderOutline();
+      if (activeMainTab === 'data') renderDataSources();
+    } else if (m.type === 'dataSources') {
+      dataCatalog = {
+        ok: !!m.ok,
+        schemas: Array.isArray(m.schemas) ? m.schemas : [],
+        settings: Array.isArray(m.settings) ? m.settings : [],
+        reason: m.reason || ''
+      };
+      renderDataSources();
     } else if (m.type === 'props') {
       if (m.id !== currentId) return;
       currentItemId = null; currentItemOwner = null; // control props arrived → leave item→Properties mode
@@ -2446,6 +2765,13 @@
         pendingColumns = null;
         if (colAnchor && colAnchor.isConnected) openColumnsPopup(colAnchor, m.id, !!m.ok, m.columns || [], m.reason);
       }
+    } else if (m.type === 'tabPageItems') {
+      // reply to a TabControl.TabPages "…" click - open the atomic reorder editor at the requesting button
+      if (pendingTabPages && pendingTabPages.id === m.id) {
+        var tabAnchor = pendingTabPages.anchor;
+        pendingTabPages = null;
+        if (tabAnchor && tabAnchor.isConnected) openTabPagesPopup(tabAnchor, m.id, !!m.ok, m.pages || [], m.reason);
+      }
     } else if (m.type === 'gridColumnItems') {
       // reply to a DataGridView.Columns "…" click — open the grid-column editor anchored to the requesting button
       if (pendingGridColumns && pendingGridColumns.id === m.id) {
@@ -2490,12 +2816,14 @@
       currentItemId = null; currentItemOwner = null;
       emptyEl.textContent = T('panel.props.empty'); // restore the default empty text (may have shown the item note)
       toolboxItems = []; renderToolbox();
+      dataCatalog = { ok: false, schemas: [], settings: [], reason: '' }; renderDataSources();
       rebuildTree(); renderOutline(); setEmpty(true);
     }
   });
 
   setEmpty(true);
   renderToolbox();
+  renderDataSources();
   // Deterministic initial state: show ONLY the Properties pane. The panes are position:absolute/inset:0 and
   // stack on top of each other; without this explicit call the first paint could show more than one pane's
   // text overlapping until the user clicked a tab. (Bug fix: "каша" on init.)

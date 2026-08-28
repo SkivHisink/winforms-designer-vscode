@@ -3,7 +3,8 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "1.9.0",
+  "version": "2.0.0",
+  "packageManager": "npm@11.9.0",
   "preview": false,
   "license": "MIT",
   "author": {
@@ -154,6 +155,11 @@
         "icon": "$(globe)"
       },
       {
+        "command": "winformsDesigner.previewHighDpiQuickFix",
+        "title": "%command.previewHighDpiQuickFix.title%",
+        "icon": "$(lightbulb)"
+      },
+      {
         "command": "winformsDesigner.editImageListImages",
         "title": "%command.editImageListImages.title%"
       },
@@ -226,6 +232,10 @@
           "when": "activeCustomEditorId == winformsDesigner.designer"
         },
         {
+          "command": "winformsDesigner.previewHighDpiQuickFix",
+          "when": "activeCustomEditorId == winformsDesigner.designer"
+        },
+        {
           "command": "winformsDesigner.editImageListImages",
           "when": "activeCustomEditorId == winformsDesigner.designer"
         },
@@ -291,6 +301,11 @@
           "command": "winformsDesigner.selectLocalizationCulture",
           "when": "activeCustomEditorId == winformsDesigner.designer",
           "group": "navigation"
+        },
+        {
+          "command": "winformsDesigner.previewHighDpiQuickFix",
+          "when": "activeCustomEditorId == winformsDesigner.designer",
+          "group": "navigation"
         }
       ]
     },
@@ -308,6 +323,36 @@
           "default": "",
           "scope": "resource",
           "markdownDescription": "%config.assemblyPath.description%"
+        },
+        "winformsDesigner.layoutMode": {
+          "type": "string",
+          "default": "snapLines",
+          "scope": "resource",
+          "enum": [
+            "snapLines",
+            "snapToGrid",
+            "none"
+          ],
+          "enumItemLabels": [
+            "SnapLines",
+            "Snap to Grid",
+            "None"
+          ],
+          "markdownDescription": "%config.layoutMode.description%"
+        },
+        "winformsDesigner.gridSize": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 2,
+          "maximum": 128,
+          "scope": "resource",
+          "markdownDescription": "%config.gridSize.description%"
+        },
+        "winformsDesigner.showGrid": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.showGrid.description%"
         },
         "winformsDesigner.placementSnapOverrideModifier": {
           "type": "string",
@@ -332,6 +377,24 @@
           "default": true,
           "scope": "resource",
           "markdownDescription": "%config.toolbox.autoDiscoverProjectControls.description%"
+        },
+        "winformsDesigner.toolbox.runtimeFilter": {
+          "type": "string",
+          "default": "auto",
+          "scope": "resource",
+          "enum": [
+            "auto",
+            "modern",
+            "net48",
+            "all"
+          ],
+          "enumItemLabels": [
+            "Match the open form",
+            "Modern .NET only",
+            ".NET Framework 4.8",
+            "Show everything"
+          ],
+          "markdownDescription": "%config.toolbox.runtimeFilter.description%"
         },
         "winformsDesigner.net48.probeDirectories": {
           "type": "array",
@@ -411,20 +474,22 @@
     "extension-host-e2e": "node ../scripts/run-extension-host-tests.mjs",
     "l10n:parity": "node ../scripts/ci-l10n-parity.mjs",
     "mojibake:scan": "node ../scripts/ci-mojibake-scan.mjs",
+    "v2:headless-validate": "node dist/v2-headless-validate.cjs",
+    "v2:soak": "node dist/v2-soak.cjs",
     "release:preflight": "node ../scripts/release-preflight.mjs",
     "perf:baseline": "node dist/performance-baseline.cjs",
-    "bundle-engine": "node -e \"const fs=require('fs'); const cp=require('child_process'); const rid=process.env.WFD_BUNDLE_RID||'win-x64'; if(!['win-x64','win-arm64'].includes(rid)){throw new Error('Unsupported WFD_BUNDLE_RID: '+rid);} fs.rmSync('engine',{recursive:true,force:true}); cp.execFileSync('dotnet',['publish','../engine','-c','Release','-f','net10.0-windows','-r',rid,'--self-contained','false','-o','engine'],{stdio:'inherit'});\"",
-    "bundle-engine:x64": "set WFD_BUNDLE_RID=win-x64&& npm run bundle-engine",
-    "bundle-engine:arm64": "set WFD_BUNDLE_RID=win-arm64&& npm run bundle-engine",
-    "bundle-engine-net48": "node -e \"const fs=require('fs'); const cp=require('child_process'); const rid=process.env.WFD_BUNDLE_RID||'win-x64'; const exe='engine-net48/WinFormsDesigner.Engine.Net48.exe'; if(rid==='win-arm64'&&fs.existsSync(exe)){console.log('Reusing x64 net48 compatibility engine for win-arm64 package.'); process.exit(0);} cp.execFileSync('dotnet',['publish','../engine-net48','-c','Release','-o','engine-net48'],{stdio:'inherit'});\"",
+    "bundle-engine": "node ../scripts/bundle-modern-engine.mjs",
+    "bundle-engine:x64": "node ../scripts/bundle-modern-engine.mjs --rid=win-x64",
+    "bundle-engine:arm64": "node ../scripts/bundle-modern-engine.mjs --rid=win-arm64",
+    "bundle-engine-net48": "node ../scripts/bundle-net48-engine.mjs",
     "copy-license": "node -e \"require('fs').copyFileSync('../LICENSE','LICENSE')\"",
     "copy-changelog": "node -e \"require('fs').copyFileSync('../CHANGELOG.md','CHANGELOG.md')\"",
     "copy-notices": "node -e \"require('fs').copyFileSync('../THIRD-PARTY-NOTICES.md','THIRD-PARTY-NOTICES.md')\"",
     "vscode:prepublish": "npm run build && npm run bundle-engine && npm run bundle-engine-net48 && npm run copy-license && npm run copy-changelog && npm run copy-notices"
   },
   "dependencies": {
-    "@vscode/codicons": "^0.0.45",
-    "vscode-jsonrpc": "^9.0.0"
+    "@vscode/codicons": "0.0.45",
+    "vscode-jsonrpc": "9.0.1"
   },
   "overrides": {
     "nanoid": "3.3.18",
@@ -432,12 +497,12 @@
     "undici": "7.29.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "20.19.43",
     "@types/vscode": "1.84.0",
     "@vscode/test-electron": "3.0.0",
-    "esbuild": "^0.28.0",
-    "jsdom": "^29.1.1",
-    "typescript": "^5.4.0",
-    "vitest": "^4.1.10"
+    "esbuild": "0.28.2",
+    "jsdom": "29.1.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
   }
 }

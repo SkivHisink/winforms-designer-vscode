@@ -1,0 +1,128 @@
+{
+  "schemaVersion": "1.1.0",
+  "protocolId": "designer-protocol-v2",
+  "protocolVersion": {
+    "current": 2,
+    "minimumSupported": 1
+  },
+  "generatedOutputs": [
+    "extension/src/v2Protocol.ts",
+    "engine/V2Protocol.cs",
+    "engine-net48/V2Protocol.cs"
+  ],
+  "limits": {
+    "maxPayloadBytes": 1048576,
+    "maxCapabilities": 64,
+    "maxResourceFingerprints": 64,
+    "maxIdentifierLength": 128,
+    "maxOutcomeMessageLength": 4096
+  },
+  "patterns": {
+    "identifier": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+    "sha256": "^[a-f0-9]{64}$",
+    "capability": "^[a-z][a-z0-9.-]{1,95}$"
+  },
+  "capabilities": [
+    "protocol.envelope-v2",
+    "protocol.outcome-v2",
+    "protocol.n-minus-one",
+    "document.source-fingerprint",
+    "document.resource-fingerprint",
+    "request.deadline",
+    "request.cancellation-token",
+    "payload.byte-limit",
+    "outcome.ok",
+    "outcome.partial",
+    "outcome.stale",
+    "outcome.cancelled",
+    "outcome.unsupported",
+    "outcome.refused",
+    "outcome.fault"
+  ],
+  "envelope": {
+    "closed": true,
+    "requiredFields": [
+      "protocolId",
+      "protocolVersion",
+      "messageKind",
+      "buildId",
+      "sessionId",
+      "documentId",
+      "requestId",
+      "traceId",
+      "documentRevision",
+      "renderGeneration",
+      "sourceFingerprint",
+      "resourceFingerprints",
+      "deadlineUnixMilliseconds",
+      "cancellationToken",
+      "capabilities",
+      "requiredCapabilities",
+      "payloadContentType",
+      "payloadBytes",
+      "payloadJson"
+    ],
+    "optionalFields": [
+      "commandId"
+    ],
+    "messageKinds": [
+      "request",
+      "response"
+    ],
+    "payloadContentType": "application/json"
+  },
+  "fingerprint": {
+    "closed": true,
+    "requiredFields": [
+      "algorithm",
+      "artifactId",
+      "value",
+      "byteLength"
+    ],
+    "algorithms": [
+      "sha256"
+    ]
+  },
+  "outcomes": {
+    "closed": true,
+    "kinds": [
+      "ok",
+      "partial",
+      "stale",
+      "cancelled",
+      "unsupported",
+      "refused",
+      "fault"
+    ],
+    "codes": {
+      "ok": [
+        "OK"
+      ],
+      "partial": [
+        "PARTIAL_RESULT",
+        "PARTIAL_UPDATE"
+      ],
+      "stale": [
+        "STALE_SOURCE",
+        "STALE_RESOURCE"
+      ],
+      "cancelled": [
+        "CANCELLED"
+      ],
+      "unsupported": [
+        "UNSUPPORTED_CAPABILITY",
+        "UNSUPPORTED_OPERATION"
+      ],
+      "refused": [
+        "UNKNOWN_REQUIRED_CAPABILITY",
+        "PROTOCOL_VERSION_UNSUPPORTED",
+        "PAYLOAD_TOO_LARGE",
+        "INVALID_ENVELOPE"
+      ],
+      "fault": [
+        "INTERNAL_ERROR",
+        "UNHANDLED_EXCEPTION"
+      ]
+    }
+  }
+}

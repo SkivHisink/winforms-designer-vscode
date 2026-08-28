@@ -3,8 +3,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
-import { releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, serializeDesigner, previewSave, setProperty, setModifier, setTableCell, resetProperty, setImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, setEventWiring, addControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, moveCompiledTab, hitTestCompiledTab, hitTestInterpretedTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, listCompiledVendorSmartTags, setLocalizationCulture, setLocalizedResources, makeLocalizable } from './engineClient';
-import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, multiTargetHasFramework } from './csprojRef';
+import { createHash } from 'crypto';
+import { EngineHandle, releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyCompiledEdits, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, beginGeometryDrag, commitGeometryBounds, serializeDesigner, previewSave, setProperty, previewOwnedRegionPropertySet, applyInheritedPropertyOverride, removeInheritedPropertyOverride, setProperties, setModifier, setTableCell, resetProperty, resetProperties, setImageResource, listProjectImageResources, setProjectImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, findEventHandlerSourceIndex, setEventWiring, addControl, addLocalizedControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, pasteControlAtOffset, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, listTabPages, setTabPageOrder, moveCompiledTab, hitTestCompiledTab, hitTestInterpretedTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, listDataSources, generateDataSource, bindApplicationSetting, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, listCompiledVendorSmartTags, setLocalizationCulture, setLocalizedResources, makeLocalizable } from './engineClient';
+import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, multiTargetHasFramework } from './csprojRef';
 import { hitTestTab } from './engineClient';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
 import { isLocalizableDesigner } from './localizable';
@@ -20,7 +21,7 @@ import { createScaffoldPlan, ScaffoldKind } from './scaffolding';
 * ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
 * missing or older than its inputs; any build failure (no net48 toolchain, locked output) → false, so the net48
 * e2e leg SKIPS instead of failing (the suite stays green on a net9-only box). */
-function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFiles: string[]): boolean {
+function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFiles: string[], requiredOutputs: string[] = [fixtureDll]): boolean {
   try {
     const csproj = path.join(fixtureDir, 'Net48CtxFixture.csproj');
     if (!fs.existsSync(csproj)) return false;
@@ -29,13 +30,13 @@ function ensureNet48Fixture(fixtureDir: string, fixtureDll: string, sampleFiles:
     const companions = fs.readdirSync(fixtureDir).filter((f) => f.endsWith('.cs')).map((f) => path.join(fixtureDir, f));
     const inputs = [csproj, ...companions, ...sampleFiles].filter((f) => fs.existsSync(f));
     const newestInput = inputs.reduce((m, f) => Math.max(m, fs.statSync(f).mtimeMs), 0);
-    if (fs.existsSync(fixtureDll) && fs.statSync(fixtureDll).mtimeMs >= newestInput) return true; // up to date
+    if (requiredOutputs.every((output) => fs.existsSync(output) && fs.statSync(output).mtimeMs >= newestInput)) return true; // up to date
     const res = spawnSync('dotnet', ['build', fixtureDir, '-c', 'Release', '--nologo', '-v', 'q'], { encoding: 'utf8' });
     if (res.status !== 0) {
       console.error('[e2e] net48 fixture build failed (skipping net48 ctx leg): ' + ((res.stderr || res.stdout || res.error?.message || '').trim().split('\n').slice(-3).join(' | ')));
       return false;
     }
-    return fs.existsSync(fixtureDll);
+    return requiredOutputs.every((output) => fs.existsSync(output));
   } catch (e) {
     console.error('[e2e] net48 fixture build error (skipping): ' + (e as Error).message);
     return false;
@@ -58,6 +59,12 @@ function samePath(a: string, b: string): boolean {
 
 const isPng = (b: Buffer): boolean =>
   b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+
+const sha256Hex = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+// Some engine project/renderer services retain Windows directory handles until the named-pipe process exits. Track
+// exact mkdtemp roots and remove them only after the engine shutdown barrier in main().
+const engineScopedTempRoots = new Set<string>();
 
 /** Build a minimal valid PNG declaring the given IHDR dimensions (header-only decodable). Used to craft a
 * "pixel bomb" (tiny file, huge declared dimensions) for the image-import DoS-guard regression test. */
@@ -277,6 +284,12 @@ function verifyCsprojHelpers(repo: string): void {
         throw new Error('csprojRef: resolveFrameworkOutput must stay freshest-overall (net9), got ' + freshest);
       }
 
+      // Classic non-SDK projects use TargetFrameworkVersion rather than TargetFramework. This value drives the
+      // unbuilt-project routing gate, so v4.8/v4.7.2 must normalize to the same TFMs the net48 host recognizes.
+      if (projectTargetFramework('<Project><PropertyGroup><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup></Project>') !== 'net48') throw new Error('csprojRef: classic v4.8 must normalize to net48');
+      if (projectTargetFramework('<TargetFrameworkVersion Condition="\'$(Configuration)\'==\'Debug\'">v4.7.2</TargetFrameworkVersion>') !== 'net472') throw new Error('csprojRef: conditioned classic v4.7.2 must normalize to net472');
+      if (projectTargetFramework('<!-- <TargetFramework>net9.0-windows</TargetFramework> --><TargetFrameworkVersion>v4.8</TargetFrameworkVersion>') !== 'net48') throw new Error('csprojRef: commented SDK TFM must not mask the live classic target');
+
       // multiTargetHasFramework: a plural tag with >1 TFM incl. a net4x → true; pure-.NET multi-target, a
       // single-target net4x, and a single TFM in a plural tag → false.
       if (!multiTargetHasFramework('<Project><PropertyGroup><TargetFrameworks>net48;net9.0-windows</TargetFrameworks></PropertyGroup></Project>')) throw new Error('csprojRef: multiTargetHasFramework should be true for net48;net9.0-windows');
@@ -298,7 +311,7 @@ function verifyCsprojHelpers(repo: string): void {
         if (resolveFrameworkOnlyOutput(c2) !== undefined) throw new Error('csprojRef: resolveFrameworkOnlyOutput should be undefined when nothing is built');
       } finally { try { fs.rmSync(empty, { recursive: true, force: true }); } catch { /* ignore */ } }
 
-      console.log('e2e: T1.3 cross-runtime helpers verified — resolveFrameworkOnlyOutput picks the net48 (no-sidecar) output over a NEWER net9 one; resolveFrameworkOutput stays freshest-overall; multiTargetHasFramework true for net48;net9 + conditioned tag (false for pure-.NET multi-target / single-target / single-TFM-plural / commented-out block); unbuilt project → no framework output');
+      console.log('e2e: T1.3 cross-runtime helpers verified — classic TargetFrameworkVersion v4.8/v4.7.2 routes to net48/net472; resolveFrameworkOnlyOutput picks the net48 (no-sidecar) output over a NEWER net9 one; resolveFrameworkOutput stays freshest-overall; multiTargetHasFramework true for net48;net9 + conditioned tag (false for pure-.NET multi-target / single-target / single-TFM-plural / commented-out block); unbuilt project → no framework output');
     } finally {
       try { fs.rmSync(mt, { recursive: true, force: true }); } catch { /* ignore */ }
     }
@@ -611,6 +624,262 @@ function verifyCsprojHelpers(repo: string): void {
   }
 }
 
+/** 1.15's Data Sources workflow crosses every release boundary that unit-only coverage can miss: project discovery,
+ * positional JSON-RPC, atomic source generation, actual interpreted render/layout, existing-column preservation, and
+ * application-settings namespace authority. Keep the project disposable and outside the repository so this proof can
+ * never rewrite a checked-in customer form. */
+async function verifyDataSources115(engine: EngineHandle): Promise<void> {
+  const probeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-data-sources-115-'));
+  engineScopedTempRoots.add(probeRoot);
+  const designerFile = path.join(probeRoot, 'ProbeForm.Designer.cs');
+  const settingsDir = path.join(probeRoot, 'Properties');
+  try {
+    fs.mkdirSync(settingsDir, { recursive: true });
+    fs.writeFileSync(path.join(probeRoot, 'DataSourceProbe.csproj'), `
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DataSourceProbe</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Customer.cs" />
+    <Compile Include="StoreDataSet.Designer.cs" />
+    <Compile Include="ProbeForm.cs" />
+    <Compile Include="ProbeForm.Designer.cs" />
+    <Compile Include="Properties/Settings.Designer.cs" />
+  </ItemGroup>
+</Project>
+`.trimStart(), 'utf8');
+    fs.writeFileSync(path.join(probeRoot, 'StoreDataSet.Designer.cs'), `
+namespace DataSourceProbe.Data
+{
+    public partial class StoreDataSet : System.Data.DataSet
+    {
+        private readonly CustomersDataTable tableCustomers;
+        public StoreDataSet()
+        {
+            this.tableCustomers = new CustomersDataTable();
+            this.Tables.Add(this.tableCustomers);
+        }
+        public CustomersDataTable Customers { get { return this.tableCustomers; } }
+
+        public sealed class CustomersDataTable : System.Data.TypedTableBase<CustomersRow>
+        {
+            public CustomersDataTable()
+            {
+                this.TableName = "Customers";
+                this.Columns.Add("Id", typeof(int));
+                this.Columns.Add("Name", typeof(string));
+            }
+            protected override System.Type GetRowType() { return typeof(CustomersRow); }
+            protected override System.Data.DataRow NewRowFromBuilder(System.Data.DataRowBuilder builder) { return new CustomersRow(builder); }
+        }
+
+        public sealed class CustomersRow : System.Data.DataRow
+        {
+            internal CustomersRow(System.Data.DataRowBuilder builder) : base(builder) { }
+            public int Id { get { return (int)this["Id"]; } set { this["Id"] = value; } }
+            public string Name { get { return (string)this["Name"]; } set { this["Name"] = value; } }
+        }
+    }
+}
+`.trimStart(), 'utf8');
+    fs.writeFileSync(path.join(probeRoot, 'Customer.cs'), `
+namespace DataSourceProbe.Domain
+{
+    public sealed class Customer
+    {
+        public string Name { get; set; } = "";
+        public decimal Amount { get; set; }
+        public bool Active { get; set; }
+        public System.DateTime CreatedOn { get; } = new System.DateTime(2026, 1, 1);
+        public object Unsupported { get; set; } = new object();
+    }
+}
+`.trimStart(), 'utf8');
+    // The file is beneath the project directory but deliberately absent from explicit Compile items. Discovery must
+    // model project membership, not recursively treat every .cs file on disk as an authoritative schema.
+    fs.writeFileSync(path.join(probeRoot, 'NotCompiled.cs'), `
+namespace DataSourceProbe.Domain
+{
+    public sealed class Ghost { public string Name { get; set; } = ""; }
+}
+`.trimStart(), 'utf8');
+    fs.writeFileSync(path.join(probeRoot, 'ProbeForm.cs'), `
+namespace DataSourceProbe.UI
+{
+    partial class ProbeForm : System.Windows.Forms.Form { }
+}
+`.trimStart(), 'utf8');
+    fs.writeFileSync(path.join(settingsDir, 'Settings.settings'), `
+<?xml version="1.0" encoding="utf-8"?>
+<SettingsFile xmlns="uri:settings" CurrentProfile="(Default)">
+  <Settings>
+    <Setting Name="WindowTitle" Type="System.String" Scope="User"><Value Profile="(Default)">DO_NOT_EXPOSE_DEFAULT</Value></Setting>
+    <Setting Name="UnsupportedObject" Type="System.Object" Scope="User"><Value Profile="(Default)" /></Setting>
+  </Settings>
+</SettingsFile>
+`.trimStart(), 'utf8');
+    // The form deliberately lives in DataSourceProbe.UI while the generated Settings type lives in the project's
+    // conventional DataSourceProbe.Properties namespace. Inferring it from the form would emit uncompilable source.
+    fs.writeFileSync(path.join(settingsDir, 'Settings.Designer.cs'), `
+namespace DataSourceProbe.Properties
+{
+    internal sealed partial class Settings
+    {
+        internal static Settings Default { get; } = new Settings();
+        public string WindowTitle { get; set; } = "";
+    }
+}
+`.trimStart(), 'utf8');
+    const original = `
+namespace DataSourceProbe.UI
+{
+    partial class ProbeForm
+    {
+        private System.ComponentModel.IContainer components;
+        private System.Windows.Forms.BindingSource existingBindingSource;
+        private System.Windows.Forms.DataGridView existingGrid;
+        private System.Windows.Forms.DataGridViewTextBoxColumn manualColumn;
+        private System.Windows.Forms.TextBox titleTextBox;
+
+        private void InitializeComponent()
+        {
+            this.components = new System.ComponentModel.Container();
+            this.existingBindingSource = new System.Windows.Forms.BindingSource(this.components);
+            this.existingGrid = new System.Windows.Forms.DataGridView();
+            this.manualColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.titleTextBox = new System.Windows.Forms.TextBox();
+            this.SuspendLayout();
+            this.existingBindingSource.DataSource = typeof(DataSourceProbe.Domain.Customer);
+            this.manualColumn.DataPropertyName = "Legacy";
+            this.manualColumn.HeaderText = "Hand written";
+            this.manualColumn.Name = "manualColumn";
+            this.existingGrid.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] { this.manualColumn });
+            this.existingGrid.DataSource = this.existingBindingSource;
+            this.existingGrid.Location = new System.Drawing.Point(12, 48);
+            this.existingGrid.Name = "existingGrid";
+            this.existingGrid.Size = new System.Drawing.Size(420, 180);
+            this.titleTextBox.Location = new System.Drawing.Point(12, 12);
+            this.titleTextBox.Name = "titleTextBox";
+            this.titleTextBox.Size = new System.Drawing.Size(220, 23);
+            this.ClientSize = new System.Drawing.Size(500, 320);
+            this.Controls.Add(this.existingGrid);
+            this.Controls.Add(this.titleTextBox);
+            this.Name = "ProbeForm";
+            this.Text = "Original";
+            this.ResumeLayout(false);
+            this.PerformLayout();
+        }
+    }
+}
+`.trimStart();
+    fs.writeFileSync(designerFile, original, 'utf8');
+
+    const catalog = await listDataSources(engine, designerFile, original);
+    if (!catalog.ok) throw new Error('1.15 data sources: project discovery rejected: ' + catalog.reason);
+    if (JSON.stringify(catalog).includes('DO_NOT_EXPOSE_DEFAULT'))
+      throw new Error('1.15 data sources: Settings default values must never leave the engine');
+    const schema = catalog.schemas.find((s) => s.typeName === 'DataSourceProbe.Domain.Customer');
+    if (!schema) throw new Error('1.15 data sources: Customer schema was not discovered: ' + JSON.stringify(catalog.schemas));
+    if (schema.properties.map((p) => p.name).join(',') !== 'Name,Amount,Active,CreatedOn'
+        || !schema.properties.find((p) => p.name === 'CreatedOn')?.readOnly)
+      throw new Error('1.15 data sources: scalar schema boundary is wrong: ' + JSON.stringify(schema.properties));
+    if (catalog.schemas.some((s) => s.typeName === 'DataSourceProbe.Domain.Ghost'
+        || s.typeName === 'DataSourceProbe.Properties.Settings'))
+      throw new Error('1.15 data sources: a non-compiled/generated settings class leaked into schemas: ' + JSON.stringify(catalog.schemas));
+    if (!schema.existingBindingSources.includes('existingBindingSource'))
+      throw new Error('1.15 data sources: matching existing BindingSource was not discovered');
+    const setting = catalog.settings.find((s) => s.name === 'WindowTitle');
+    if (!setting || catalog.settings.some((s) => s.name === 'UnsupportedObject'))
+      throw new Error('1.15 data sources: supported/unsupported settings boundary is wrong: ' + JSON.stringify(catalog.settings));
+
+    const detail = await generateDataSource(engine, designerFile, schema.key, 'detail', 'this', 24, 64, true, null, null, original);
+    const detailText = detail.newText ?? detail.text ?? '';
+    if (!detail.safe || !detailText || !/\.DataBindings\.Add\(new System\.Windows\.Forms\.Binding\("Text"/.test(detailText)
+        || !detailText.includes('"CreatedOn", true, System.Windows.Forms.DataSourceUpdateMode.Never')
+        || !detailText.includes('.BindingSource = this.') || !detailText.includes('this.Text = "Original";'))
+      throw new Error('1.15 data sources: detail/navigator generation failed or changed existing source: ' + detail.reason);
+    const detailLayout = await describeLayout(engine, designerFile, undefined, detailText);
+    if (!detail.createdIds.some((id) => detailLayout.controls.some((c) => c.id === id))
+        || !detail.createdIds.some((id) => detailLayout.tray.some((c) => c.id === id)))
+      throw new Error('1.15 data sources: generated detail controls/BindingSource did not survive real layout interpretation');
+
+    const grid = await generateDataSource(engine, designerFile, schema.key, 'grid', 'this', 32, 80, true, null, null, original);
+    const gridText = grid.newText ?? grid.text ?? '';
+    const generatedGridId = grid.createdIds.find((id) => /DataGridView/i.test(id));
+    if (!grid.safe || !gridText || !generatedGridId || !gridText.includes('.BindingSource = this.')
+        || !gridText.includes('.DataPropertyName = "Name";') || !gridText.includes('.DataPropertyName = "Amount";'))
+      throw new Error('1.15 data sources: grid/navigator generation failed: ' + grid.reason);
+    const readOnlyGridColumn = /this\.(\w+)\.DataPropertyName = "CreatedOn";/.exec(gridText)?.[1];
+    if (!readOnlyGridColumn || !gridText.includes(`this.${readOnlyGridColumn}.ReadOnly = true;`))
+      throw new Error('1.15 data sources: a read-only DTO property generated an editable grid column');
+    const renderedGrid = await renderWithLayout(engine, designerFile, undefined, gridText);
+    if (!isPng(renderedGrid.png) || !renderedGrid.controls.some((c) => c.id === generatedGridId)
+        || !renderedGrid.tray.some((c) => /BindingSource/i.test(c.type)))
+      throw new Error('1.15 data sources: generated grid did not survive real render/layout interpretation');
+
+    const append = await generateDataSource(engine, designerFile, schema.key, 'grid', 'this', 0, 0, false,
+      'existingBindingSource', 'existingGrid', original);
+    const appendText = append.newText ?? append.text ?? '';
+    if (!append.safe || !appendText || !appendText.includes('this.manualColumn.HeaderText = "Hand written";'))
+      throw new Error('1.15 data sources: append-to-existing-grid removed the hand-written column: ' + append.reason);
+    const appendedColumns = await listGridColumns(engine, designerFile, 'existingGrid', appendText);
+    if (!appendedColumns.ok || appendedColumns.columns[0]?.id !== 'manualColumn'
+        || !['Name', 'Amount', 'Active', 'CreatedOn'].every((name) => appendedColumns.columns.some((c) => c.dataPropertyName === name))
+        || appendedColumns.columns.find((c) => c.dataPropertyName === 'CreatedOn')?.readOnly !== true)
+      throw new Error('1.15 data sources: schema columns were not appended after the existing column: ' + JSON.stringify(appendedColumns));
+
+    const bound = await bindApplicationSetting(engine, designerFile, setting.key, 'titleTextBox', original);
+    const boundText = bound.newText ?? bound.text ?? '';
+    if (!bound.safe || bound.boundProperty !== 'Text'
+        || !boundText.includes('global::DataSourceProbe.Properties.Settings.Default')
+        || boundText.includes('global::DataSourceProbe.UI.Properties.Settings.Default'))
+      throw new Error('1.15 data sources: application setting used an unproven/wrong namespace: ' + bound.reason);
+    if ((await bindApplicationSetting(engine, designerFile, setting.key, 'titleTextBox', boundText)).safe)
+      throw new Error('1.15 data sources: a duplicate setting binding must refuse');
+    if ((await bindApplicationSetting(engine, designerFile, setting.key, 'existingGrid', original)).safe)
+      throw new Error('1.15 data sources: an incompatible setting/control binding must refuse');
+    if ((await generateDataSource(engine, designerFile, schema.key, 'detail', 'titleTextBox', 0, 0, false, null, null, original)).safe)
+      throw new Error('1.15 data sources: a non-container RPC parent must refuse');
+    if ((await generateDataSource(engine, designerFile, 'schema:forged', 'detail', 'this', 0, 0, false, null, null, original)).safe)
+      throw new Error('1.15 data sources: a forged/stale schema key must refuse');
+
+    // V2-FND-001-S081 — product named-pipe proof for the actual typed-DataSet shape, not a caller-synthesized DTO.
+    const typedSchema = catalog.schemas.find((s) => s.sourceKind === 'typedDataSetTable'
+      && s.typeName === 'DataSourceProbe.Data.StoreDataSet' && s.dataMember === 'Customers');
+    if (!typedSchema || typedSchema.properties.map((p) => p.name).join(',') !== 'Id,Name')
+      throw new Error('V2-FND-001-S081: typed DataSet table schema was not discovered: ' + JSON.stringify(catalog.schemas));
+    const typed = await generateDataSource(engine, designerFile, typedSchema.key, 'grid', 'this', 18, 42, true,
+      null, null, original);
+    const typedText = typed.newText ?? typed.text ?? '';
+    if (!typed.safe || !typedText.includes('private DataSourceProbe.Data.StoreDataSet storeDataSet1;')
+        || !typedText.includes('this.storeDataSet1 = new DataSourceProbe.Data.StoreDataSet();')
+        || !typedText.includes('this.customersBindingSource1.DataMember = "Customers";')
+        || !typedText.includes('this.customersBindingSource1.DataSource = this.storeDataSet1;')
+        || typedText.includes('typeof(DataSourceProbe.Data.StoreDataSet)'))
+      throw new Error('V2-FND-001-S081: typed DataSet source graph was not generated: ' + typed.reason);
+    fs.writeFileSync(designerFile, typedText, 'utf8');
+    const build = spawnSync('dotnet', ['build', path.join(probeRoot, 'DataSourceProbe.csproj'), '-c', 'Release',
+      '--nologo', '-v', 'q'], { encoding: 'utf8' });
+    if (build.status !== 0)
+      throw new Error('V2-FND-001-S081: generated typed DataSet project did not compile:\n' + (build.stdout || '') + (build.stderr || ''));
+    const typedRendered = await renderWithLayout(engine, designerFile, undefined, typedText);
+    if (!isPng(typedRendered.png)
+        || !typedRendered.tray.some((component) => component.type === 'DataSourceProbe.Data.StoreDataSet')
+        || !typedRendered.tray.some((component) => /BindingSource$/.test(component.type))
+        || !typedRendered.controls.some((control) => /DataGridView$/.test(control.type)))
+      throw new Error('V2-FND-001-S081: compiled generated DataSet/BindingSource/grid graph did not survive render');
+
+    console.log('e2e: V2-FND-001-S081 + 1.15 Data Sources verified — typed DataSet table generates and compiles a real DataSet/DataMember/BindingSource/grid graph; bounded DTO/settings discovery; detail/grid + BindingSource/BindingNavigator generation; actual render/layout; hand-written grid-column preservation; proven settings namespace; duplicate/incompatible/non-container/forged inputs fail closed');
+  } finally { /* cleaned after the engine process exits (see main's shutdown barrier) */ }
+}
+
 async function main(): Promise<void> {
   const repo = path.resolve(__dirname, '..', '..');
   // WFD_ENGINE_DLL lets a run point at a freshly-built engine in an alternate output dir (e.g. when the default
@@ -645,6 +914,55 @@ async function main(): Promise<void> {
   try {
     const pong = await ping(engine);
     console.log('e2e: ping ->', pong);
+
+    // V2-DOC-001 kill-spike API exposure: explicit opt-in, preview-only Lane B owned-region plan over real JSON-RPC.
+    // This must not replace the normal source-first SetProperty command path and must not write the workspace file.
+    {
+      const diskBefore = fs.readFileSync(designer, 'utf8');
+      const source = [
+        'namespace Demo',
+        '{',
+        '    partial class PreviewOnlyForm : System.Windows.Forms.Form',
+        '    {',
+        '        private System.Windows.Forms.Button button1;',
+        '',
+        '        private void InitializeComponent()',
+        '        {',
+        '            this.button1 = new System.Windows.Forms.Button();',
+        '            this.button1.Name = "button1";',
+        '            this.button1.Text = "Original";',
+        '            this.Controls.Add(this.button1);',
+        '        }',
+        '    }',
+        '}',
+        '',
+      ].join('\r\n');
+      const fingerprint = sha256Hex(source);
+      const refusedOptIn = await previewOwnedRegionPropertySet(
+        engine, designer, fingerprint, 'button1', 'Text', '"Renamed"', source, false);
+      if (refusedOptIn.safe || !/explicit opt-in/i.test(refusedOptIn.reason))
+        throw new Error('V2-DOC-001 owned-region preview must require explicit opt-in: ' + JSON.stringify(refusedOptIn));
+
+      const preview = await previewOwnedRegionPropertySet(
+        engine, designer, fingerprint, 'button1', 'Text', '"Renamed"', source, true);
+      if (!preview.safe || !preview.semanticEquivalence || !preview.outsideRegionPreserved)
+        throw new Error('V2-DOC-001 owned-region preview did not prove semantic/outside-region safety: ' + JSON.stringify(preview));
+      if (preview.plannedSourceText !== preview.laneASourceText)
+        throw new Error('V2-DOC-001 owned-region Lane B preview diverged from Lane A source-first text');
+      if (!preview.replacementText.includes('this.button1.Text = "Renamed";')
+          || !preview.normalizationPreview.includes('outsideRegionPreserved=true'))
+        throw new Error('V2-DOC-001 owned-region preview omitted the expected replacement/normalization proof');
+
+      const stale = await previewOwnedRegionPropertySet(
+        engine, designer, '0'.repeat(64), 'button1', 'Text', '"Changed"', source, true);
+      if (stale.safe || stale.reason !== 'stale source fingerprint' || stale.plannedSourceText)
+        throw new Error('V2-DOC-001 stale fingerprint must refuse without planned text: ' + JSON.stringify(stale));
+      if (fs.readFileSync(designer, 'utf8') !== diskBefore)
+        throw new Error('V2-DOC-001 owned-region preview must not write the workspace designer file');
+      console.log('e2e: V2-DOC-001 owned-region JSON-RPC preview verified — explicit opt-in, Lane A/B semantic equivalence, stale fingerprint refusal, no file write');
+    }
+
+    await verifyDataSources115(engine);
 
     // 1.9.0 Visual Studio template parity: the Add → Form output must RENDER, not merely compile. The template
     // now declares the base type the way Visual Studio does — unqualified `Form` bound through a using block whose
@@ -733,6 +1051,23 @@ async function main(): Promise<void> {
         if (!beforePng.equals(afterPng))
           throw new Error(`makeLocalizable: the conversion changed the rendered form (${beforePng.length}B → ${afterPng.length}B)`);
 
+        // Default-language structural add: source owns identity/parenting; neutral resources own visual values.
+        const localizedAdd = await addLocalizedControl(
+          engine, designer, 'this', 'Button', converted.newText, converted.resxText, 33, 44,
+        );
+        if (!localizedAdd.safe || localizedAdd.newText === null || localizedAdd.resxText == null)
+          throw new Error('localized add: refused a standard control — ' + localizedAdd.reason);
+        if (!localizedAdd.newText.includes(`resources.ApplyResources(this.${localizedAdd.name}, "${localizedAdd.name}");`)
+          || localizedAdd.newText.includes(`this.${localizedAdd.name}.Location =`)
+          || !localizedAdd.resxText.includes(`name="${localizedAdd.name}.Location"`))
+          throw new Error('localized add: source/resource split is not Visual Studio-shaped');
+        fs.writeFileSync(designer, localizedAdd.newText, 'utf8');
+        fs.writeFileSync(path.join(workDir, 'SampleForm.resx'), localizedAdd.resxText, 'utf8');
+        const localizedLayout = await renderWithLayout(engine, designer);
+        const localizedButton = localizedLayout.controls.find((control) => control.id === localizedAdd.name);
+        if (!localizedButton || localizedButton.parentId !== 'this')
+          throw new Error('localized add: persisted source/resource pair did not render the new root control');
+
         // A culture overlay now works on the converted form: an exact-culture .resx overrides a moved value.
         const ruResx = converted.resxText.replace('</root>', `  <data name="okButton.Text" xml:space="preserve">\n    <value>Кнопка</value>\n  </data>\n</root>`);
         fs.writeFileSync(path.join(workDir, 'SampleForm.ru-RU.resx'), ruResx, 'utf8');
@@ -747,7 +1082,7 @@ async function main(): Promise<void> {
         const again = await makeLocalizable(engine, designer, undefined, converted.newText);
         if (again.safe) throw new Error('makeLocalizable: converting an already-localizable form must be refused');
 
-        console.log(`e2e: 1.9.0 Add Localization verified — a plain form converts to ApplyResources + neutral .resx (${converted.keys.length} values), renders byte-identically (${beforePng.length}B), honors a ru-RU override, and refuses a second conversion`);
+        console.log(`e2e: localization structure verified — conversion renders byte-identically (${beforePng.length}B); Default-language toolbox add ${localizedAdd.name} persists source+neutral .resx and renders; ru-RU override works; duplicate conversion refuses`);
       } finally {
         try { fs.rmSync(workDir, { recursive: true, force: true }); } catch { /* ignore */ }
       }
@@ -830,6 +1165,33 @@ async function main(): Promise<void> {
     const before = await describeComponent(engine, designer, 'agreeCheck');
     const textBefore = before?.properties?.find((p) => p.name === 'Text')?.value;
     if (textBefore !== 'I agree to the terms') throw new Error('describe: unexpected agreeCheck.Text=' + textBefore);
+
+    // v1.10.0 multi-object grid source transaction: the RPC returns one preview containing every target edit. A bad
+    // member returns no text, so callers cannot accidentally commit the valid prefix. Reset uses the same contract.
+    {
+      const disk = fs.readFileSync(designer, 'utf8');
+      const ids = ['okButton', 'cancelButton'];
+      const batch = await setProperties(engine, designer, ids, 'Text', '"Shared caption"', disk);
+      if (!batch.safe || batch.text === null) throw new Error('v1.10 SetProperties rejected: ' + batch.reason);
+      for (const id of ids) {
+        if (!new RegExp(`this\\.${id}\\.Text\\s*=\\s*"Shared caption";`).test(batch.text))
+          throw new Error(`v1.10 SetProperties omitted ${id}.Text`);
+      }
+      if (!/this\.agreeCheck\.Text\s*=\s*"I agree to the terms";/.test(batch.text))
+        throw new Error('v1.10 SetProperties changed an unselected sibling');
+
+      const refused = await setProperties(engine, designer, ['okButton', 'missingControl'], 'Text', '"Never commit"', disk);
+      if (refused.safe || refused.text != null || !/missingControl/.test(refused.reason))
+        throw new Error('v1.10 SetProperties must return no partial text when any target is ineligible');
+
+      const reset = await resetProperties(engine, designer, ids, 'Text', batch.text);
+      if (!reset.safe || reset.text === null) throw new Error('v1.10 ResetProperties rejected: ' + reset.reason);
+      if (ids.some((id) => new RegExp(`this\\.${id}\\.Text\\s*=`).test(reset.text!)))
+        throw new Error('v1.10 ResetProperties did not remove every selected assignment');
+      if (!/this\.agreeCheck\.Text\s*=\s*"I agree to the terms";/.test(reset.text))
+        throw new Error('v1.10 ResetProperties changed an unselected sibling');
+      console.log('e2e: v1.10 multi-object source transaction verified — all-target set/reset + ineligible-target zero-partial refusal');
+    }
 
     // standard-values dropdowns: an enum property carries an EXCLUSIVE standard-values set; a Boolean is
     // an exclusive True/False set; a Color (BackColor) is a NON-exclusive set (named colors + free ARGB entry).
@@ -1188,6 +1550,90 @@ async function main(): Promise<void> {
       }
     }
 
+    // ---- project resource picker (existing project resource, no .resx mutation) ----
+    // Lists only resource keys that are both safely represented in .resx metadata and exposed by strongly typed
+    // Resources.Designer.cs accessors, then binds the chosen accessor expression through SetProperty.
+    {
+      const projectResx = [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<root>',
+        '  <data name="Logo" type="System.Drawing.Bitmap, System.Drawing.Common" mimetype="application/x-microsoft.net.object.bytearray.base64">',
+        '    <value>AQID</value>',
+        '  </data>',
+        '  <data name="OpenIcon" type="System.Resources.ResXFileRef, System.Windows.Forms">',
+        '    <value>..\\Resources\\open.ico;System.Drawing.Icon, System.Drawing.Common</value>',
+        '  </data>',
+        '  <data name="Serialized" mimetype="application/x-microsoft.net.object.binary.base64"><value>AQID</value></data>',
+        '</root>',
+      ].join('\n');
+      const resourcesDesigner = [
+        'namespace SampleApp.Properties {',
+        '  internal class Resources {',
+        '    private static global::System.Resources.ResourceManager resourceMan;',
+        '    private static global::System.Globalization.CultureInfo resourceCulture;',
+        '    internal static global::System.Resources.ResourceManager ResourceManager {',
+        '      get {',
+        '        if (object.ReferenceEquals(resourceMan, null)) {',
+        '          global::System.Resources.ResourceManager temp = new global::System.Resources.ResourceManager("SampleApp.Properties.Resources", typeof(Resources).Assembly);',
+        '          resourceMan = temp;',
+        '        }',
+        '        return resourceMan;',
+        '      }',
+        '    }',
+        '    internal static global::System.Drawing.Bitmap Logo {',
+        '      get { object obj = ResourceManager.GetObject("Logo", resourceCulture); return ((global::System.Drawing.Bitmap)(obj)); }',
+        '    }',
+        '    internal static global::System.Drawing.Icon OpenIcon {',
+        '      get { object obj = ResourceManager.GetObject("OpenIcon", resourceCulture); return ((global::System.Drawing.Icon)(obj)); }',
+        '    }',
+        '  }',
+        '}',
+      ].join('\n');
+      const formSource = [
+        'namespace SampleApp {',
+        '  partial class ProjectResourceForm {',
+        '    private System.Windows.Forms.PictureBox pictureBox1;',
+        '    private void InitializeComponent() {',
+        '      this.pictureBox1 = new System.Windows.Forms.PictureBox();',
+        '      this.pictureBox1.Name = "pictureBox1";',
+        '      this.pictureBox1.Size = new System.Drawing.Size(32, 32);',
+        '      this.Controls.Add(this.pictureBox1);',
+        '    }',
+        '  }',
+        '}',
+      ].join('\n');
+      const list = await listProjectImageResources(engine, projectResx, resourcesDesigner);
+      if (!list.ok) throw new Error(`project-resource: list rejected: ${list.reason}`);
+      if (list.candidates.length !== 2) throw new Error(`project-resource: expected 2 candidates, got ${list.candidates.length}`);
+      if (!list.candidates.some((c) => c.key === 'Logo' && c.storageKind === 'bytearray')) throw new Error('project-resource: bytearray bitmap was not listed');
+      if (!list.candidates.some((c) => c.key === 'OpenIcon' && c.storageKind === 'fileRef')) throw new Error('project-resource: fileRef icon metadata was not listed');
+
+      const bound = await setProjectImageResource(
+        engine, 'unused.Designer.cs', 'pictureBox1', 'Image', 'System.Drawing.Image',
+        projectResx, resourcesDesigner, 'SampleApp.Properties.Resources', 'Logo', formSource);
+      if (!bound.safe || bound.text === null) throw new Error(`project-resource: bind rejected: ${bound.reason}`);
+      if (!bound.text.includes('this.pictureBox1.Image = global::SampleApp.Properties.Resources.Logo;'))
+        throw new Error('project-resource: strongly typed resource expression not emitted');
+      if (bound.text.includes('ResourceManager.GetObject') || bound.text.includes('AQID'))
+        throw new Error('project-resource: binding copied resource data instead of referencing the generated property');
+
+      const mismatch = await setProjectImageResource(
+        engine, 'unused.Designer.cs', 'pictureBox1', 'Image', 'System.Drawing.Icon',
+        projectResx, resourcesDesigner, 'SampleApp.Properties.Resources', 'Logo', formSource);
+      if (mismatch.safe) throw new Error('project-resource: target/resource type mismatch must be refused');
+
+      const malformed = await listProjectImageResources(engine, '<root><data', resourcesDesigner);
+      if (malformed.ok) throw new Error('project-resource: malformed XML must be refused');
+
+      const staticCtor = resourcesDesigner.replace(
+        'internal class Resources {',
+        'internal class Resources { static Resources() { System.Console.WriteLine("side effect"); }');
+      if ((await listProjectImageResources(engine, projectResx, staticCtor)).ok)
+        throw new Error('project-resource: a resource class with a static constructor must be refused');
+
+      console.log('e2e: project resource picker verified — bytearray/fileRef metadata listed from canonical .resx + Resources.Designer.cs, strongly typed Image assignment emitted, binary/malformed/type-mismatch/static-init refused, no resource bytes copied');
+    }
+
     // ---- explicit control-assembly override (RPC asm fallback) ----
     // CustomForm references CustomControls.GaugeControl. Auto-discovery walks up to engine/Engine.csproj
     // and finds WinFormsDesigner.Engine.dll (which lacks GaugeControl), so WITHOUT the override the custom
@@ -1373,6 +1819,78 @@ async function main(): Promise<void> {
         }
       }
       console.log(`e2e: combined render+layout verified — RenderWithLayout png == renderDesigner (${combined.png.length}B), ${combined.controls.length} controls == describeLayout, one graph load`);
+
+      // ---- W5 visible parity: native-state capture + managed custom-control geometry ----
+      // WM_PRINT/DrawToBitmap omits the native ProgressBar position. The renderer overlays the live Value in both
+      // full-frame and dirty-region captures, so Value=90 must no longer hash exactly like Value=0 over named-pipe RPC.
+      const progressSource = (value: number): string => `namespace Demo { partial class ProgressForm : System.Windows.Forms.Form {
+        private System.Windows.Forms.ProgressBar progressBar1;
+        private void InitializeComponent() {
+          this.progressBar1 = new System.Windows.Forms.ProgressBar();
+          this.progressBar1.Location = new System.Drawing.Point(20, 20);
+          this.progressBar1.Size = new System.Drawing.Size(180, 24);
+          this.progressBar1.Value = ${value};
+          this.Controls.Add(this.progressBar1);
+          this.ClientSize = new System.Drawing.Size(240, 90);
+        }
+      } }`;
+      const progressPath = path.join(os.tmpdir(), 'WfdProgressForm.Designer.cs');
+      const progress0 = await renderWithLayout(engine, progressPath, undefined, progressSource(0));
+      const progress90 = await renderWithLayout(engine, progressPath, undefined, progressSource(90));
+      const progressPatch0 = await renderControl(engine, progressPath, 'progressBar1', undefined, progressSource(0));
+      const progressPatch90 = await renderControl(engine, progressPath, 'progressBar1', undefined, progressSource(90));
+      if (progress0.png.equals(progress90.png) || progressPatch0.png.equals(progressPatch90.png)) {
+        throw new Error('ProgressBar.Value=90 remained byte-identical to Value=0 in full or dirty-region capture');
+      }
+
+      const modernFakeVendorDll = path.join(repo, 'fixtures', 'FakeVendor', 'bin', 'Release', 'net10.0-windows', 'FakeVendor.dll');
+      const fakeVendorDesigner = path.join(repo, 'fixtures', 'FakeVendor', 'FakeVendorForm.Designer.cs');
+      if (!fs.existsSync(modernFakeVendorDll)) {
+        const built = spawnSync('dotnet', ['build', path.join(repo, 'fixtures', 'FakeVendor'), '-c', 'Release', '-f', 'net10.0-windows', '-p:PlatformTarget=x64', '--nologo', '-v', 'q'], { encoding: 'utf8' });
+        if (built.status !== 0 || !fs.existsSync(modernFakeVendorDll)) {
+          throw new Error('modern FakeVendor geometry fixture failed to build: ' + ((built.stderr || built.stdout || '').trim().split('\n').slice(-3).join(' | ')));
+        }
+      }
+      const fakeVendorText = fs.readFileSync(fakeVendorDesigner, 'utf8');
+      const customStart = await beginGeometryDrag(engine, fakeVendorDesigner, 'fancyButton1', modernFakeVendorDll, fakeVendorText);
+      if (!customStart.ok || !customStart.canMove || !customStart.canResize || !customStart.logicalBounds) {
+        throw new Error('managed custom-control geometry was not authorized by the live SetBounds/readback path: ' + customStart.reason);
+      }
+      const customCommit = await commitGeometryBounds(engine, fakeVendorDesigner, 'fancyButton1', {
+        x: customStart.logicalBounds.x + 9,
+        y: customStart.logicalBounds.y + 6,
+        width: customStart.logicalBounds.width + 15,
+        height: customStart.logicalBounds.height + 4,
+      }, modernFakeVendorDll, fakeVendorText);
+      if (!customCommit.ok || !customCommit.designerText
+          || !customCommit.sourceValues.some((value) => value.propertyName === 'Location')
+          || !customCommit.sourceValues.some((value) => value.propertyName === 'Size')) {
+        throw new Error('managed custom-control geometry did not return a bounded Location+Size source preview: ' + customCommit.reason);
+      }
+      const customDescription = await describeComponent(engine, fakeVendorDesigner, 'fancyButton1', modernFakeVendorDll, fakeVendorText);
+      const captionAction = customDescription?.designerActions?.find((action) => action.displayName === 'Caption');
+      if (captionAction?.propertyName !== 'Text' || captionAction.category !== 'FakeVendor') {
+        throw new Error('managed custom-control DesignerActionList was not read from the product DesignSurface/IDesignerHost path: '
+          + JSON.stringify(customDescription?.designerActions ?? []));
+      }
+      if ((customDescription?.designerActions ?? []).some((action) => action.propertyName === 'Enabled')) {
+        throw new Error('managed custom-control smart tags still contain a heuristic Enabled property');
+      }
+      const vendorEditDescription = await describeComponent(engine, fakeVendorDesigner, 'vendorEdit1', modernFakeVendorDll, fakeVendorText);
+      const thresholds = vendorEditDescription?.properties.find((property) => property.name === 'Thresholds');
+      if (!thresholds?.genericCollection || thresholds.collectionItemType !== 'System.Int32'
+          || thresholds.uiTypeEditor !== 'FakeVendor.VendorThresholdsEditor'
+          || thresholds.uiTypeEditorAssemblyPath !== modernFakeVendorDll
+          || thresholds.uiTypeEditorAssemblySha256 !== createHash('sha256').update(fs.readFileSync(modernFakeVendorDll)).digest('hex')
+          || thresholds.uiTypeEditorCertificationId !== 'repo.fakevendor.thresholds.v1') {
+        throw new Error('certified vendor collection editor metadata did not reach the modern product description: '
+          + JSON.stringify(thresholds ?? null));
+      }
+      const captionEdit = await setProperty(engine, fakeVendorDesigner, 'fancyButton1', captionAction.propertyName, '"Hosted caption"', fakeVendorText);
+      if (!captionEdit.safe || !captionEdit.text?.includes('this.fancyButton1.Text = "Hosted caption";')) {
+        throw new Error('DesignerActionList property target did not route through the ordinary source-first property edit: ' + captionEdit.reason);
+      }
+      console.log(`e2e: W5 visible parity verified — ProgressBar Value changes full+patch PNG; FakeVendor FancyButton move/resize is live-engine-authorized (${customStart.logicalBounds.width}x${customStart.logicalBounds.height}); real DesignerActionList Caption maps to source-first Text; certified vendor collection editor is product metadata`);
 
       // ---- on-canvas "Type Here" per-item geometry on a STRIP form ----
       // SampleForm has no strip, so the leg above never exercised BuildToolStripItems (which forces a per-strip
@@ -1791,9 +2309,12 @@ async function main(): Promise<void> {
       const net48Exe = process.env.WFD_ENGINE_NET48 || path.join(repo, 'engine-net48', 'bin', 'Release', 'net48', 'WinFormsDesigner.Engine.Net48.exe');
       const ctxFixtureDir = path.join(repo, 'fixtures', 'Net48CtxFixture');
       const ctxFixtureDll = path.join(ctxFixtureDir, 'bin', 'Release', 'net48', 'Net48CtxFixture.dll');
+      const ctxModernFixtureDll = path.join(ctxFixtureDir, 'bin', 'Release', 'net10.0-windows', 'Net48CtxFixture.dll');
       const inheritedBaseFormDes = path.join(repo, 'engine', 'samples', 'InheritedBaseForm.Designer.cs');
       const inheritedBaseFormCs = path.join(repo, 'engine', 'samples', 'InheritedBaseForm.cs');
       const derivedFormCs = path.join(repo, 'engine', 'samples', 'DerivedForm.cs');
+      const imageListFormCs = path.join(ctxFixtureDir, 'ImageListForm.cs');
+      const compRefForm48Cs = path.join(ctxFixtureDir, 'ComponentRefForm.cs');
       // Every LINKED sample must be a staleness input (ensureNet48Fixture covers the csproj + fixture-local companions
       // itself). NotifyIconForm.Designer.cs was linked but missing here, so editing it could serve a stale fixture DLL
       // on a local on-demand run (CI's unconditional build masked it).
@@ -1806,11 +2327,39 @@ async function main(): Promise<void> {
       // cross-runtime legs — including the S2 inherited-form parity proof — are never mistaken for having run. A fixture
       // COMPILE failure is separately logged to stderr by ensureNet48Fixture (a bad <Compile> link surfaces there).
       const net48FixtureReady = fs.existsSync(ctxForm) && fs.existsSync(net48Exe)
-        && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, [ctxForm, overflowForm, imageListForm, compRefForm48, notifyIconFormDes, derivedForm, derivedFormCs, inheritedBaseFormDes, inheritedBaseFormCs, treeFormDes, treeFormCs, tabFormDes, tabFormCs]);
+        && ensureNet48Fixture(ctxFixtureDir, ctxFixtureDll, [ctxForm, overflowForm, imageListForm, compRefForm48, notifyIconFormDes, derivedForm, derivedFormCs, inheritedBaseFormDes, inheritedBaseFormCs, treeFormDes, treeFormCs, tabFormDes, tabFormCs], [ctxFixtureDll, ctxModernFixtureDll]);
       if (!net48FixtureReady) {
         const message = 'net48 cross-runtime legs unavailable: build engine-net48 and install the .NET Framework 4.8 targeting toolchain';
         if (process.env.WFD_REQUIRE_NET48 === '1') throw new Error(message);
         console.log(`e2e: SKIPPED ${message}`);
+      }
+      if (net48FixtureReady) {
+        // 1.14 modern named-pipe parity. The net10 build of the same inheritance fixture proves the production RPC,
+        // real DesignSurface base graph, derived-source replay, stale-token gate, and exact Reset boundary together.
+        const derivedSrc = fs.readFileSync(derivedForm, 'utf8');
+        const baseSourceBefore = fs.readFileSync(inheritedBaseFormDes, 'utf8');
+        const inherited = await describeComponent(engine, derivedForm, 'baseButton', ctxModernFixtureDll, derivedSrc);
+        if (!inherited || inherited.ownership !== 'inherited' || !inherited.inheritedOverrideEditable)
+          throw new Error(`1.14 modern: protected baseButton must be an engine-authorized inherited override target — ${JSON.stringify({ ownership: inherited?.ownership, editable: inherited?.editable, inheritedOverrideEditable: inherited?.inheritedOverrideEditable, reason: inherited?.readOnlyReason, token: inherited?.baseIdentityToken })}`);
+        const token = inherited.baseIdentityToken ?? '';
+        if (!token.startsWith('sha256:')) throw new Error(`1.14 modern: missing compiled-base identity token (${JSON.stringify(token)})`);
+        const applied = await applyInheritedPropertyOverride(
+          engine, derivedForm, 'baseButton', 'Text', '"Modern derived source override"', token, ctxModernFixtureDll, derivedSrc);
+        if (!applied.safe || !applied.text) throw new Error(`1.14 modern: authority refused the derived override — ${applied.reason}`);
+        const replayed = await describeComponent(engine, derivedForm, 'baseButton', ctxModernFixtureDll, applied.text);
+        const textAfter = replayed?.properties.find((property) => property.name === 'Text');
+        if (textAfter?.value !== 'Modern derived source override' || !textAfter.sourceExplicit || !textAfter.inheritedOverrideResettable)
+          throw new Error('1.14 modern: DesignSurface replay/metadata did not reflect the derived inherited override');
+        const stale = await applyInheritedPropertyOverride(
+          engine, derivedForm, 'baseButton', 'Text', '"Stale"', token + '-stale', ctxModernFixtureDll, applied.text);
+        if (stale.safe) throw new Error('1.14 modern: a stale/forged base identity token must fail closed');
+        const removed = await removeInheritedPropertyOverride(
+          engine, derivedForm, 'baseButton', 'Text', token, ctxModernFixtureDll, applied.text);
+        if (!removed.safe || removed.text !== derivedSrc)
+          throw new Error(`1.14 modern: Reset must restore the exact original derived source bytes — ${removed.reason}`);
+        if (fs.readFileSync(inheritedBaseFormDes, 'utf8') !== baseSourceBefore)
+          throw new Error('1.14 modern: the base designer source was modified');
+        console.log('e2e: 1.14 modern visual-inheritance override verified — named-pipe apply/replay/reset passes, stale token refuses, derived bytes restore exactly, base source stays untouched');
       }
       if (net48FixtureReady) {
         // Keep the engine's own log: the off-screen containment leg below asserts on what the engine REPORTS about
@@ -1910,7 +2459,10 @@ async function main(): Promise<void> {
           // DerivedForm is the strongest proof: visual inheritance. The interpreter must surface baseButton (inherited,
           // from the compiled base instance) AND derivedButton (current source), matching the compiled control set.
           const derivedSrc = fs.readFileSync(derivedForm, 'utf8');
-          const di = await renderInterpretedWithLayout(n48, derivedForm, ctxFixtureDll, derivedSrc, 'SampleApp.DerivedForm');
+          const derivedCodeBehind = fs.readFileSync(derivedFormCs, 'utf8');
+          const di = await renderInterpretedWithLayout(
+            n48, derivedForm, ctxFixtureDll, derivedSrc, 'SampleApp.DerivedForm',
+            undefined, undefined, undefined, undefined, undefined, derivedCodeBehind);
           if (di.renderMode !== 'interpreted') throw new Error(`net48: DerivedForm must render INTERPRETED — got ${di.renderMode} (${di.fallbackReason})`);
           if (di.png.length === 0) throw new Error('net48: interpreted render produced no PNG');
           const diIds = di.controls.map((c) => c.id).sort();
@@ -1922,9 +2474,98 @@ async function main(): Promise<void> {
             if (Math.abs(c.x - b.x) > 2 || Math.abs(c.y - b.y) > 2 || Math.abs(c.width - b.width) > 2 || Math.abs(c.height - b.height) > 2)
               throw new Error(`net48: interpreted geometry diverges for ${c.id} — compiled (${c.x},${c.y},${c.width}x${c.height}) vs interpreted (${b.x},${b.y},${b.width}x${b.height})`);
           }
+
+          // ---- 1.14 visual inheritance: the named-pipe authority must edit ONLY the derived buffer, bind the
+          // request to the currently loaded base-field identity, replay that source override on the inherited live
+          // instance, and remove the one canonical assignment back to the exact original bytes.
+          {
+            const baseSourceBefore = fs.readFileSync(inheritedBaseFormDes, 'utf8');
+            const inherited = await describeInterpretedComponent(
+              n48, derivedForm, ctxFixtureDll, derivedSrc, 'baseButton', 'SampleApp.DerivedForm',
+              undefined, undefined, undefined, derivedCodeBehind);
+            if (!inherited || inherited.ownership !== 'inherited' || !inherited.inheritedOverrideEditable)
+              throw new Error(`1.14 net48: protected baseButton must be an engine-authorized inherited override target — ${JSON.stringify({ ownership: inherited?.ownership, editable: inherited?.editable, inheritedOverrideEditable: inherited?.inheritedOverrideEditable, reason: inherited?.readOnlyReason, token: inherited?.baseIdentityToken })}`);
+            const token = inherited.baseIdentityToken ?? '';
+            if (!token.startsWith('sha256:')) throw new Error(`1.14 net48: missing compiled-base identity token (${JSON.stringify(token)})`);
+            const textBefore = inherited.properties.find((p) => p.name === 'Text');
+            if (!textBefore?.inheritedOverrideEditable || textBefore.sourceExplicit)
+              throw new Error('1.14 net48: inherited Text must start writable and not source-explicit');
+
+            const applied = await applyInheritedPropertyOverride(
+              n48, derivedForm, 'baseButton', 'Text', '"Derived source override"', token,
+              ctxFixtureDll, derivedSrc, derivedCodeBehind);
+            if (!applied.safe || !applied.text || !applied.text.includes('this.baseButton.Text = "Derived source override";'))
+              throw new Error(`1.14 net48: authority refused/omitted the derived override — ${applied.reason}`);
+            const describedOverride = await describeInterpretedComponent(
+              n48, derivedForm, ctxFixtureDll, applied.text, 'baseButton', 'SampleApp.DerivedForm',
+              undefined, undefined, undefined, derivedCodeBehind);
+            const textAfter = describedOverride?.properties.find((p) => p.name === 'Text');
+            if (textAfter?.value !== 'Derived source override' || !textAfter.sourceExplicit || !textAfter.inheritedOverrideResettable)
+              throw new Error('1.14 net48: interpreted canvas/metadata did not replay the derived inherited override');
+
+            const stale = await applyInheritedPropertyOverride(
+              n48, derivedForm, 'baseButton', 'Text', '"Stale"', token + '-stale',
+              ctxFixtureDll, applied.text, derivedCodeBehind);
+            if (stale.safe) throw new Error('1.14 net48: a stale/forged base identity token must fail closed');
+            const removed = await removeInheritedPropertyOverride(
+              n48, derivedForm, 'baseButton', 'Text', token, ctxFixtureDll, applied.text, derivedCodeBehind);
+            if (!removed.safe || removed.text !== derivedSrc)
+              throw new Error(`1.14 net48: Reset must restore the exact original derived source bytes — ${removed.reason}`);
+            if (fs.readFileSync(inheritedBaseFormDes, 'utf8') !== baseSourceBefore)
+              throw new Error('1.14 net48: the base designer source was modified');
+            console.log('e2e: 1.14 visual-inheritance override verified — protected base control edits/replays/resets through named-pipe RPC, stale token refuses, derived bytes restore exactly, base source stays untouched');
+
+            // A DIRTY/UNSAVED base change in the ordinary sibling partial (the normal WinForms shape) must make the
+            // compiled fallback useful only as a picture. It must not lend the OLD base field's token/capability to
+            // the new source, and authority must independently refuse insert + Reset with a previously valid token.
+            const staleCodeBehind = derivedCodeBehind.replace(': InheritedBaseForm', ': System.Windows.Forms.Form');
+            if (staleCodeBehind === derivedCodeBehind)
+              throw new Error('1.14 net48 stale-base: could not craft the dirty code-behind base change');
+            const fallback = await renderInterpretedWithLayout(
+              n48, derivedForm, ctxFixtureDll, derivedSrc, 'SampleApp.DerivedForm',
+              undefined, undefined, undefined, undefined, undefined, staleCodeBehind);
+            if (fallback.renderMode !== 'compiledFallback' || !/base/i.test(fallback.fallbackReason ?? ''))
+              throw new Error(`1.14 net48 stale-base: expected named BaseTypeChanged fallback, got ${fallback.renderMode} (${fallback.fallbackReason})`);
+            const fallbackLayout = fallback.controls.find((control) => control.id === 'baseButton');
+            if (!fallbackLayout || fallbackLayout.ownership !== 'inherited'
+              || fallbackLayout.inheritedOverrideEditable || fallbackLayout.inheritedGeometryOverrideEditable
+              || fallbackLayout.baseIdentityToken)
+              throw new Error('1.14 net48 stale-base: fallback layout exposed an inherited override capability/token');
+            const fallbackDesc = await describeCompiledComponent(
+              n48, derivedForm, ctxFixtureDll, 'baseButton', 'SampleApp.DerivedForm',
+              undefined, derivedSrc, staleCodeBehind);
+            const fallbackText = fallbackDesc?.properties.find((property) => property.name === 'Text');
+            if (!fallbackDesc || fallbackDesc.ownership !== 'inherited')
+              throw new Error('1.14 net48 stale-base: the old compiled inherited control must remain visible in the disclosed fallback');
+            if (fallbackDesc.inheritedOverrideEditable || fallbackDesc.baseIdentityToken
+              || fallbackText?.inheritedOverrideEditable || fallbackText?.inheritedOverrideResettable
+              || fallbackText?.readOnly !== true)
+              throw new Error('1.14 net48 stale-base: compiled fallback exposed an inherited override capability/token after the current source changed base');
+            const staleBaseApply = await applyInheritedPropertyOverride(
+              n48, derivedForm, 'baseButton', 'Text', '"Must refuse"', token,
+              ctxFixtureDll, derivedSrc, staleCodeBehind);
+            if (staleBaseApply.safe || staleBaseApply.text)
+              throw new Error('1.14 net48 stale-base: apply accepted the old compiled base field after current source changed base');
+            const staleWithCanonicalOverride = derivedSrc.replace(
+              '            this.ResumeLayout(false);',
+              '            this.baseButton.Text = "Must remain untouched";\r\n            this.ResumeLayout(false);');
+            if (staleWithCanonicalOverride === derivedSrc)
+              throw new Error('1.14 net48 stale-base: could not craft the Reset refusal source');
+            const staleBaseRemove = await removeInheritedPropertyOverride(
+              n48, derivedForm, 'baseButton', 'Text', token, ctxFixtureDll,
+              staleWithCanonicalOverride, staleCodeBehind);
+            if (staleBaseRemove.safe || staleBaseRemove.text)
+              throw new Error('1.14 net48 stale-base: Reset accepted the old compiled base field after current source changed base');
+            if (fs.readFileSync(inheritedBaseFormDes, 'utf8') !== baseSourceBefore)
+              throw new Error('1.14 net48 stale-base: the base designer source was modified');
+            console.log('e2e: 1.14 net48 stale-base fail-closed verified — BaseTypeChanged fallback remains visible/read-only, capability/token are withheld, apply+Reset refuse, base source stays untouched');
+          }
           // and a form whose IC uses constructs the v1 IR doesn't cover FALLS BACK with a named reason (never silent).
           const ilSrc = fs.readFileSync(imageListForm, 'utf8');
-          const ilInterp = await renderInterpretedWithLayout(n48, imageListForm, ctxFixtureDll, ilSrc, 'SampleApp.ImageListForm');
+          const ilCodeBehind = fs.readFileSync(imageListFormCs, 'utf8');
+          const ilInterp = await renderInterpretedWithLayout(
+            n48, imageListForm, ctxFixtureDll, ilSrc, 'SampleApp.ImageListForm',
+            undefined, undefined, undefined, undefined, undefined, ilCodeBehind);
           if (ilInterp.renderMode !== 'compiledFallback') throw new Error(`net48: ImageListForm (ImageList images) must FALL BACK — got ${ilInterp.renderMode}`);
           if (!ilInterp.fallbackReason) throw new Error('net48: a fallback must carry a named reason (never silent)');
           if (ilInterp.png.length === 0) throw new Error('net48: a compiled fallback still renders a picture');
@@ -1988,7 +2629,9 @@ async function main(): Promise<void> {
             // describing it with nothing cached.
             await renderInterpretedWithLayout(n48, derivedForm, ctxFixtureDll, afterSrc, 'SampleApp.DerivedForm');
             const fromCache = await describeInterpretedComponent(n48, derivedForm, ctxFixtureDll, afterSrc, 'derivedButton', 'SampleApp.DerivedForm');
-            await renderInterpretedWithLayout(n48, imageListForm, ctxFixtureDll, ilSrc, 'SampleApp.ImageListForm'); // evict
+            await renderInterpretedWithLayout(
+              n48, imageListForm, ctxFixtureDll, ilSrc, 'SampleApp.ImageListForm',
+              undefined, undefined, undefined, undefined, undefined, ilCodeBehind); // evict
             const fromScratch = await describeInterpretedComponent(n48, derivedForm, ctxFixtureDll, afterSrc, 'derivedButton', 'SampleApp.DerivedForm');
             if (!fromCache || !fromScratch) throw new Error('net48 describe reuse: both describes must resolve derivedButton');
             const pick = (d: typeof fromCache) => (d!.properties ?? []).map((p) => `${p.name}=${p.value}`).sort().join('|');
@@ -2025,24 +2668,32 @@ async function main(): Promise<void> {
             const crEdited = crBase.replace('this.okButton.Text = "OK";', 'this.okButton.Text = "OK-EDITED";');
             if (crEdited === crBase) throw new Error('could not stage the okButton.Text edit');
             const crType = 'WinFormsDesigner.Samples.ComponentRefForm';
+            const crCodeBehind = fs.readFileSync(compRefForm48Cs, 'utf8');
 
-            const iOk = await describeInterpretedComponent(n48, compRefForm48, ctxFixtureDll, crEdited, 'okButton', crType);
+            const iOk = await describeInterpretedComponent(
+              n48, compRefForm48, ctxFixtureDll, crEdited, 'okButton', crType,
+              undefined, undefined, undefined, crCodeBehind);
             if (!iOk) throw new Error('interpreted describe of okButton returned null (must interpret)');
             const iText = iOk.properties.find((p) => p.name === 'Text')?.value;
             if (iText !== 'OK-EDITED') throw new Error(`interpreted describe must read the LIVE edited Text — got "${iText}"`);
 
-            const cOk = await describeCompiledComponent(n48, compRefForm48, ctxFixtureDll, 'okButton', crType);
+            const cOk = await describeCompiledComponent(
+              n48, compRefForm48, ctxFixtureDll, 'okButton', crType, undefined, crBase, crCodeBehind);
             const cText = cOk?.properties.find((p) => p.name === 'Text')?.value;
             if (cText !== 'OK') throw new Error(`compiled describe must read the BUILT Text — got "${cText}"`);
 
-            const iRoot = await describeInterpretedComponent(n48, compRefForm48, ctxFixtureDll, crBase, 'this', crType);
+            const iRoot = await describeInterpretedComponent(
+              n48, compRefForm48, ctxFixtureDll, crBase, 'this', crType,
+              undefined, undefined, undefined, crCodeBehind);
             if (iRoot?.name !== 'ComponentRefForm') throw new Error(`interpreted root name must be the LOGICAL type — got "${iRoot?.name}"`);
             if (iOk.parent !== 'ComponentRefForm') throw new Error(`interpreted child parent must be the LOGICAL root — got "${iOk.parent}"`);
             const acceptCand = iRoot.properties.find((p) => p.name === 'AcceptButton')?.standardValues ?? [];
             if (!acceptCand.includes('okButton') || !acceptCand.includes('cancelButton'))
               throw new Error(`interpreted reference candidates must come from the identity model — got [${acceptCand.join(', ')}]`);
 
-            const iBogus = await describeInterpretedComponent(n48, compRefForm48, ctxFixtureDll, crBase, 'no_such_field', crType);
+            const iBogus = await describeInterpretedComponent(
+              n48, compRefForm48, ctxFixtureDll, crBase, 'no_such_field', crType,
+              undefined, undefined, undefined, crCodeBehind);
             if (iBogus !== null) throw new Error('interpreted describe of an unknown id must be null (panel unavailable, never a compiled substitute)');
 
             console.log('e2e:  interpreted-describe RPC verified — the interpreted describe reads the LIVE source (okButton.Text "OK-EDITED" while the build says "OK"), reports the logical root identity (name + child.parent = ComponentRefForm, not the base Form), draws reference candidates from the interpreter identity model (okButton, cancelButton), and returns null (fail-closed) for an unknown id; the host loadProps/loadItemProps/describeFor route to this endpoint when the canvas is interpreted');
@@ -2329,6 +2980,11 @@ async function main(): Promise<void> {
           }
 
           const r48 = await renderCompiledWithLayout(n48, ctxForm, ctxFixtureDll);
+          const root48 = r48.controls.find((c) => c.id === 'this');
+          const panel48 = r48.controls.find((c) => c.id === 'panel1');
+          if (!root48 || root48.clientWidth !== r48.clientWidth || root48.clientHeight !== r48.clientHeight
+              || !panel48 || panel48.clientX == null || panel48.clientY == null || !panel48.margin || !panel48.padding)
+            throw new Error('v1.11 net48 layout metadata: exact client/Margin/Padding missing from compiled preview');
           if (r48.controls.some((c) => c.type.endsWith('ContextMenuStrip'))) throw new Error('net48 ctx: a ContextMenuStrip leaked into the compiled control layout (phantom rect)');
           const chip48 = r48.tray.find((t) => t.id === 'contextMenuStrip1');
           if (!chip48) throw new Error(`net48 ctx: contextMenuStrip1 missing from the compiled tray (got [${r48.tray.map((t) => t.id).join(', ')}])`);
@@ -2344,6 +3000,27 @@ async function main(): Promise<void> {
           const n48Leaked = r48.tray.filter((t) => ['fileMenu', 'editMenu', 'cutItem', 'pasteItem', 'pasteSpecialItem', 'undoItem', 'redoItem'].includes(t.id)).map((t) => t.id);
           if (n48Leaked.length) throw new Error(`net48 ctx: ToolStripItem(s) leaked into the compiled tray [${n48Leaked.join(', ')}] — VS never trays strip items (including nested ones)`);
           if (!r48.tray.some((t) => t.id === 'timer1')) throw new Error('net48 ctx: timer1 (a non-visual component) must stay in the compiled tray — the strip-item skip must not drop non-item components');
+          // v1.10.0: mirror one committed multi-object source transaction into the compiled preview with ONE batch
+          // snapshot. The reset flag must route every member through PropertyDescriptor.ResetValue, not parse an empty
+          // string as a new value. (The source transaction's zero-partial contract is proved in the net9 RPC leg.)
+          const liveTargets = ['panel1', 'menuStrip1'];
+          const liveSet = await applyCompiledEdits(n48, ctxForm, ctxFixtureDll,
+            liveTargets.map((componentId) => ({ componentId, propName: 'Enabled', rawValue: 'False' })));
+          if (!liveSet.applied) throw new Error('v1.10 net48 multi-object live set refused: ' + liveSet.diagnostics);
+          for (const componentId of liveTargets) {
+            const value = (await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, componentId))
+              ?.properties.find((property) => property.name === 'Enabled')?.value;
+            if (value !== 'False') throw new Error(`v1.10 net48 live set missed ${componentId}.Enabled (got ${value})`);
+          }
+          const liveReset = await applyCompiledEdits(n48, ctxForm, ctxFixtureDll,
+            liveTargets.map((componentId) => ({ componentId, propName: 'Enabled', rawValue: '', reset: true })));
+          if (!liveReset.applied) throw new Error('v1.10 net48 multi-object live reset refused: ' + liveReset.diagnostics);
+          for (const componentId of liveTargets) {
+            const value = (await describeCompiledComponent(n48, ctxForm, ctxFixtureDll, componentId))
+              ?.properties.find((property) => property.name === 'Enabled')?.value;
+            if (value !== 'True') throw new Error(`v1.10 net48 live reset missed ${componentId}.Enabled (got ${value})`);
+          }
+          console.log('e2e: v1.10 net48 multi-object live mirror verified — one batch set + reset-flag batch across two controls');
           // cross-runtime: the two engines must agree on the VISUAL control id set (net9 = source-interpreted).
           const net9Layout = await describeLayout(engine, ctxForm);
           const net9Ids = net9Layout.controls.map((c) => c.id).sort();
@@ -3564,13 +4241,51 @@ async function main(): Promise<void> {
       const bareRm = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [{ id: 'fileItem', text: 'File', name: '', itemType: 'ToolStripMenuItem', children: [] }], bareSrc);
       if (bareRm.safe) throw new Error('toolstrip: removing an item from a this-less designer file (dangling bare ref) must be refused (gate backstop)');
 
-      // SAFETY: reparenting an existing item and a submenu under a BRAND-NEW item are still refused.
+      // MOVE/REPARENT existing items: moving an existing field-backed submenu child from File.DropDownItems to the
+      // existing Edit.DropDownItems is one atomic Items edit. Existing construction/property statements stay intact;
+      // only the two modelled AddRange memberships change.
       const reparent: ToolStripItemModel[] = [{ ...file, children: [file.children[1]] }, { ...edit, children: [file.children[0]] }];
-      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', reparent, disk)).safe)
-        throw new Error('toolstrip: reparenting an existing item must be refused');
+      const rp = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', reparent, disk);
+      if (!rp.safe || rp.text === null) throw new Error('toolstrip: reparenting an existing field-backed item must be allowed: ' + rp.reason);
+      const rpRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', rp.text);
+      if (rpRt.items.find((i) => i.text === 'File')?.children.map((c) => c.text).join(',') !== 'Save')
+        throw new Error('toolstrip: after reparent, File must keep only Save');
+      if (rpRt.items.find((i) => i.text === 'Edit')?.children.map((c) => c.text).join(',') !== 'Open')
+        throw new Error('toolstrip: after reparent, Edit must own Open');
+      if (!/this\.openToolStripMenuItem\.Text = "Open";/.test(rp.text) || !/this\.saveToolStripMenuItem\.Text = "Save";/.test(rp.text))
+        throw new Error('toolstrip: reparent must preserve existing item property statements');
+      if (!/this\.editToolStripMenuItem\.DropDownItems\.AddRange\(/.test(rp.text))
+        throw new Error('toolstrip: reparent to a childless dropdown must create the target DropDownItems AddRange');
+
+      // FAIL-SAFE: if shrinking the source AddRange would drop an in-initializer comment, reparent refuses rather than
+      // silently deleting that hand-written trivia.
+      const moveCmtSrc = disk.replace('this.openToolStripMenuItem,', 'this.openToolStripMenuItem, // KEEP-MOVE');
+      const moveCmt = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', reparent, moveCmtSrc);
+      if (moveCmt.safe) throw new Error('toolstrip: reparent that would drop an in-AddRange comment from the source must be refused');
+
+      // FAIL-SAFE: reparenting an existing item under a brand-new non-dropdown item stays refused before emitting
+      // uncompilable DropDownItems code.
+      const badReparentToNewButton: ToolStripItemModel[] = [
+        { ...file, children: [file.children[1]] },
+        edit,
+        { id: '', text: 'Run', name: '', itemType: 'ToolStripButton', children: [file.children[0]] },
+      ];
+      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', badReparentToNewButton, disk)).safe)
+        throw new Error('toolstrip: reparenting an existing item under a brand-new non-dropdown item must be refused');
+
+      // A nested submenu under a BRAND-NEW dropdown item is allowed because Insert Standard Items needs one atomic
+      // forest, but a new non-dropdown item with children is still rejected before emitting uncompilable DropDownItems code.
       const nested: ToolStripItemModel[] = [file, edit, { id: '', text: 'Tools', name: '', itemType: 'ToolStripMenuItem', children: [{ id: '', text: 'Opt', name: '', itemType: 'ToolStripMenuItem', children: [] }] }];
-      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', nested, disk)).safe)
-        throw new Error('toolstrip: a submenu under a brand-new item must be refused (nested-new)');
+      const nestedNew = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', nested, disk);
+      if (!nestedNew.safe || nestedNew.text === null)
+        throw new Error('toolstrip: a submenu under a brand-new dropdown item must be allowed for Insert Standard Items: ' + nestedNew.reason);
+      const nestedRt = await listToolStripItems(engine, tsMenuForm, 'menuStrip1', nestedNew.text);
+      const tools = nestedRt.items.find((i) => i.text === 'Tools');
+      if (tools?.children.map((c) => c.text).join(',') !== 'Opt') throw new Error('toolstrip: nested-new dropdown item must round-trip its child: ' + JSON.stringify(tools));
+      if (!/this\.toolStripMenuItem1\.DropDownItems\.AddRange\(/.test(nestedNew.text)) throw new Error('toolstrip: nested-new dropdown item must synthesize its DropDownItems AddRange');
+      const badNestedNew: ToolStripItemModel[] = [file, edit, { id: '', text: 'Run', name: '', itemType: 'ToolStripButton', children: [{ id: '', text: 'Opt', name: '', itemType: 'ToolStripMenuItem', children: [] }] }];
+      if ((await setToolStripItems(engine, tsMenuForm, 'menuStrip1', badNestedNew, disk)).safe)
+        throw new Error('toolstrip: a submenu under a brand-new non-dropdown item must be refused');
 
       // ---- REGRESSION ----
       // Formatting-drift: a reorder must be a pure line-permutation — the rewritten AddRange element lines keep the
@@ -3681,7 +4396,7 @@ async function main(): Promise<void> {
       const addBad = await setToolStripItems(engine, tsMenuForm, 'menuStrip1', [file, edit, { id: '', text: 'X', name: '', itemType: 'System.Evil.Type', children: [] }], disk);
       if (addBad.safe) throw new Error('toolstrip: a non-allowlisted new item type must be refused (no arbitrary type injection)');
 
-      console.log('e2e: ToolStrip/MenuStrip item editor verified — Items flagged ToolStripItem; recursive read; reorder rewrites ONLY the AddRange as a pure indent-preserving permutation; ADD (Type Here) synthesizes a new field+ctor+Name/Text and grows/creates the AddRange (construction precedes it), round-trips, and combines with reorder; REMOVE deletes an item’s field+ctor+property block+AddRange membership (whole subtree for a parent; empties delete the AddRange; combines with add), leaves survivors byte-identical, and refuses when it would drop an in-AddRange comment or an item still referenced by non-item code; reparent/nested-new refused; intra-AddRange comment never silently dropped; a 3-arg Items.Add menu refused read-only; RENAME rewrites an existing item’s `.Text = "…"` literal in place (byte-identical elsewhere), round-trips, nests, combines with remove+reorder, never clears on an empty desired Text, and refuses an item with no Text literal; TYPE picker adds any allowlisted item type (separator/button/combobox, separator carries no Text) and refuses a non-allowlisted type');
+      console.log('e2e: ToolStrip/MenuStrip item editor verified — Items flagged ToolStripItem; recursive read; reorder rewrites ONLY the AddRange as a pure indent-preserving permutation; ADD (Type Here) synthesizes a new field+ctor+Name/Text and grows/creates the AddRange (construction precedes it), round-trips, allows nested-new dropdown trees for Insert Standard Items, and combines with reorder; MOVE/REPARENT existing field-backed items works within/between modelled Items/DropDownItems, creates a missing target dropdown AddRange, preserves item property statements, and refuses comment-dropping source shrinks or non-dropdown targets; REMOVE deletes an item’s field+ctor+property block+AddRange membership (whole subtree for a parent; empties delete the AddRange; combines with add), leaves survivors byte-identical, and refuses when it would drop an in-AddRange comment or an item still referenced by non-item code; nested-new under non-dropdown items refused; intra-AddRange comment never silently dropped; a 3-arg Items.Add menu refused read-only; RENAME rewrites an existing item’s `.Text = "…"` literal in place (byte-identical elsewhere), round-trips, nests, combines with remove+reorder, never clears on an empty desired Text, and refuses an item with no Text literal; TYPE picker adds any allowlisted item type (separator/button/combobox, separator carries no Text) and refuses a non-allowlisted type');
     } else {
       console.log('e2e: ToolStrip item editor SKIPPED — engine/samples/MenuForm.Designer.cs missing');
     }
@@ -3926,6 +4641,23 @@ async function main(): Promise<void> {
     const tabAddRange = path.join(repo, 'engine', 'samples', 'TabAddRangeForm.Designer.cs');
     if (fs.existsSync(tabAddRange)) {
       const arDisk = fs.readFileSync(tabAddRange, 'utf8');
+      const listedPages = await listTabPages(engine, tabAddRange, 'tabControl1', arDisk);
+      if (!listedPages.ok || listedPages.pages.join(',') !== 'tabPageA,tabPageB,tabPageC') {
+        throw new Error('ListTabPages(AddRange) did not expose canonical A,B,C: ' + JSON.stringify(listedPages));
+      }
+      const atomicOrder = await setTabPageOrder(
+        engine, tabAddRange, 'tabControl1', ['tabPageC', 'tabPageA', 'tabPageB'], arDisk,
+      );
+      if (!atomicOrder.safe || atomicOrder.newText === null) {
+        throw new Error('SetTabPageOrder(AddRange, C,A,B) rejected: ' + atomicOrder.reason);
+      }
+      const atomicListed = await listTabPages(engine, tabAddRange, 'tabControl1', atomicOrder.newText);
+      if (!atomicListed.ok || atomicListed.pages.join(',') !== 'tabPageC,tabPageA,tabPageB') {
+        throw new Error('atomic TabPages collection order did not round-trip C,A,B: ' + JSON.stringify(atomicListed));
+      }
+      if ((await setTabPageOrder(engine, tabAddRange, 'tabControl1', ['tabPageA', 'tabPageB'], arDisk)).safe) {
+        throw new Error('SetTabPageOrder must refuse a non-permutation that drops a page');
+      }
       const moveB = await moveTabPage(engine, tabAddRange, 'tabControl1', 'tabPageB', false, arDisk);
       if (!moveB.safe || moveB.newText === null) throw new Error('MoveTabPage(AddRange, tabPageB, right) rejected: ' + moveB.reason);
       const aPos = moveB.newText.indexOf('this.tabPageA,');
@@ -3945,7 +4677,7 @@ async function main(): Promise<void> {
         throw new Error('AddRange delete: trimmed array must still contain tabPageA and tabPageC');
       }
       if (fs.readFileSync(tabAddRange, 'utf8') !== arDisk) throw new Error('AddRange delete must NOT modify the file on disk');
-      console.log('e2e: AddRange tab order/delete verified — B moves right as A,C,B by adjacent expression swap; delete then trims B + subtree while A/C remain; disk untouched');
+      console.log('e2e: AddRange tab order/delete verified — typed collection reads A,B,C and atomically round-trips C,A,B; non-permutation refused; adjacent move + delete remain bounded; disk untouched');
     } else {
       console.log('e2e: delete-tab AddRange SKIPPED — engine/samples/TabAddRangeForm.Designer.cs missing');
     }
@@ -4127,13 +4859,50 @@ async function main(): Promise<void> {
     if (fs.existsSync(splitForm)) {
       const sl = await describeLayout(engine, splitForm);
       const sc = sl.controls.find((c) => c.id === 'splitContainer1');
+      const panel1 = sl.controls.find((c) => c.id === 'splitContainer1.Panel1');
+      const panel2 = sl.controls.find((c) => c.id === 'splitContainer1.Panel2');
       const lb = sl.controls.find((c) => c.id === 'leftButton');
       const rl = sl.controls.find((c) => c.id === 'rightLabel');
-      if (!sc || !lb || !rl) throw new Error('SplitContainer: controls missing from layout (Panel1/Panel2 Controls.Add not parented?)');
+      if (!sc || !panel1 || !panel2 || !lb || !rl) throw new Error('SplitContainer: controls or synthetic Panel1/Panel2 surfaces missing from layout');
+      if (panel1.parentId !== 'splitContainer1' || panel2.parentId !== 'splitContainer1') throw new Error('SplitContainer: synthetic panel parent identity is not the SplitContainer field');
       if (!(rl.x - lb.x > 100)) throw new Error(`SplitContainer: children must sit in opposite panels (well apart), got lb.x=${lb.x} rl.x=${rl.x} (bug piles both at the form origin)`);
       if (!(lb.x - sc.x < 60)) throw new Error(`SplitContainer: leftButton should be near Panel1 left: lb.x=${lb.x} sc.x=${sc.x}`);
       if (!(rl.x - sc.x >= 120 && rl.x - sc.x < 170)) throw new Error(`SplitContainer: rightLabel should sit just past SplitterDistance=120, not the ~50% (≈198) default: rl.x-sc.x=${rl.x - sc.x}`);
-      console.log(`e2e: SplitContainer verified — leftButton→Panel1 (x ${lb.x}), rightLabel→Panel2 (x ${rl.x}); SplitterDistance=120 applied (panel boundary ≈${rl.x - sc.x}px from container, not ~50%)`);
+      const panelDesc = await describeComponent(engine, splitForm, 'splitContainer1.Panel2');
+      if (!panelDesc || panelDesc.name !== 'Panel2' || panelDesc.parent !== 'splitContainer1' || !panelDesc.editable) {
+        throw new Error('SplitContainer: Panel2 must be selectable/describable as an editable synthetic component');
+      }
+      const splitSource = fs.readFileSync(splitForm, 'utf8');
+      const panelColor = await setProperty(engine, splitForm, 'splitContainer1.Panel2', 'BackColor', 'System.Drawing.Color.Red', splitSource);
+      if (!panelColor.safe || !panelColor.text?.includes('this.splitContainer1.Panel2.BackColor = System.Drawing.Color.Red;')) {
+        throw new Error('SplitContainer: selected Panel2 property edit was not persisted through the exact synthetic path: ' + panelColor.reason);
+      }
+      const splitCodePath = path.join(repo, 'engine', 'samples', 'SplitterForm.cs');
+      const splitCode = fs.readFileSync(splitCodePath, 'utf8');
+      const panelEvent = await generateEventHandler(
+        engine, splitForm, 'splitContainer1.Panel2', 'Click', null, splitSource, splitCode, null,
+      );
+      if (!panelEvent.safe || panelEvent.handlerName !== 'splitContainer1_Panel2_Click'
+        || !panelEvent.designerText?.includes('this.splitContainer1.Panel2.Click += new System.EventHandler(this.splitContainer1_Panel2_Click);')) {
+        throw new Error('SplitContainer: selected Panel2 default event did not generate through its exact source path: ' + panelEvent.reason);
+      }
+      const panelDrop = await addControl(engine, splitForm, 'splitContainer1.Panel2', 'Button', splitSource, 9, 11);
+      if (!panelDrop.safe || !panelDrop.newText?.includes(`this.splitContainer1.Panel2.Controls.Add(this.${panelDrop.name});`)) {
+        throw new Error('SplitContainer: toolbox drop into Panel2 was rejected or targeted the wrong Controls collection: ' + panelDrop.reason);
+      }
+      const droppedLayout = await renderWithLayout(engine, splitForm, undefined, panelDrop.newText);
+      const droppedPanel = droppedLayout.controls.find((c) => c.id === 'splitContainer1.Panel2');
+      const droppedButton = droppedLayout.controls.find((c) => c.id === panelDrop.name);
+      if (!droppedPanel || !droppedButton || droppedButton.parentId !== 'splitContainer1.Panel2') {
+        throw new Error('SplitContainer: product-rendered toolbox control is not parented to Panel2');
+      }
+      if (droppedPanel.clientX === undefined || droppedPanel.clientY === undefined) {
+        throw new Error('SplitContainer: Panel2 surface is missing its client origin');
+      }
+      if (droppedButton.x - droppedPanel.clientX !== 9 || droppedButton.y - droppedPanel.clientY !== 11) {
+        throw new Error(`SplitContainer: Panel2 toolbox drop lost client coordinates (expected 9,11; got ${droppedButton.x - droppedPanel.clientX},${droppedButton.y - droppedPanel.clientY})`);
+      }
+      console.log(`e2e: SplitContainer verified — Panel1/Panel2 are selectable surface nodes; Panel2 property/default-event edits persist; toolbox drop ${panelDrop.name}→Panel2 at client (9,11); SplitterDistance=120 applied`);
 
       // ---- 0.12.0 R1: ISupportInitialize BeginInit/EndInit now ROUND-TRIP (re-emitted verbatim, not dropped) ----
       // SplitterForm's SplitContainer emits ((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).BeginInit()/
@@ -4963,7 +5732,7 @@ namespace Product.CustomForms
       const wiredPng = await renderWithLayout(engine, eventForm, undefined, gen.designerText);
       if (!isPng(wiredPng.png)) throw new Error('GenerateEventHandler: form with the new wiring did not render');
 
-      // an already-wired event whose handler already exists in the .cs → change nothing (just navigate)
+      // V2-FND-001-S050 — an already-wired event whose handler already exists in the .cs changes nothing.
       const gen2 = await generateEventHandler(engine, eventForm, 'okButton', 'Click', null, dText, cText, null);
       if (!gen2.safe || !gen2.alreadyWired) throw new Error('GenerateEventHandler: Click should be already-wired');
       if (gen2.handlerName !== 'okButton_Click') throw new Error('GenerateEventHandler: already-wired handler=' + gen2.handlerName);
@@ -4982,6 +5751,26 @@ namespace Product.CustomForms
       // MouseDown is MouseEventHandler(object,MouseEventArgs) → the fixture has no such method → no candidates
       // (proves PRECISE type matching, not arity-only — an (object,EventArgs) method must NOT be offered).
       if (cands['MouseDown'] && cands['MouseDown'].length) throw new Error('ListHandlerCandidates: MouseDown must not match EventArgs-only methods; got ' + JSON.stringify(cands['MouseDown']));
+
+      const projectPartial = `namespace WinFormsDesigner.Samples
+{
+    public partial class EventForm
+    {
+        private void ProjectWideClick(object sender, System.EventArgs e) { }
+    }
+}`;
+      const projectCands = await listHandlerCandidates(engine, eventForm, 'okButton', dText, cText, null, [projectPartial]);
+      if (!projectCands['Click']?.includes('ProjectWideClick')) throw new Error('project-wide Events: handler from another partial was not listed');
+      const projectWire = await setEventWiring(engine, eventForm, 'okButton', 'MouseLeave', 'ProjectWideClick', dText, cText, null, [projectPartial]);
+      if (!projectWire.safe || !projectWire.designerText?.includes('this.okButton.MouseLeave += new System.EventHandler(this.ProjectWideClick);')) {
+        throw new Error('project-wide Events: handler from another partial was not accepted: ' + projectWire.reason);
+      }
+      const projectGenerate = await generateEventHandler(engine, eventForm, 'okButton', 'MouseLeave', 'ProjectWideClick', dText, cText, null, [projectPartial]);
+      if (!projectGenerate.safe || projectGenerate.stubCreated || projectGenerate.codeText != null) {
+        throw new Error('project-wide Events: existing partial handler should wire without generating a duplicate stub');
+      }
+      const projectHandlerIndex = await findEventHandlerSourceIndex(engine, eventForm, 'ProjectWideClick', [cText, projectPartial], dText, null);
+      if (projectHandlerIndex !== 1) throw new Error('project-wide Events: handler navigation resolved source index ' + projectHandlerIndex + ' instead of 1');
 
       // rewire Click → okButton_MouseEnter (existing compatible method) — only the Click RHS changes
       const rew = await setEventWiring(engine, eventForm, 'okButton', 'Click', 'okButton_MouseEnter', dText, cText, null);
@@ -5017,7 +5806,7 @@ namespace Product.CustomForms
       const stillOk = await setEventWiring(engine, eventForm, 'okButton', 'MouseLeave', 'okButton_Click', dText, withWrong, null);
       if (!stillOk.safe) throw new Error('SetEventWiring: a correctly-typed handler must still wire; got ' + stillOk.reason);
 
-      console.log(`e2e: events dropdown verified — candidates by precise signature (Click→${cands['Click'].length}, MouseDown→none), rewire/unwire/wire-to-existing safe, missing method rejected, wrong-signature handler rejected`);
+      console.log(`e2e: events dropdown verified — candidates by precise signature (Click→${cands['Click'].length}, MouseDown→none); project-partial list/wire/no-duplicate/navigation index PASS; rewire/unwire/wire-to-existing safe, missing/wrong-signature rejected`);
     } else {
       console.log('e2e: Events tab SKIPPED — engine/samples/EventForm.Designer.cs missing');
     }
@@ -5343,6 +6132,16 @@ namespace Product.CustomForms
     {
       const diskCp = fs.readFileSync(designer, 'utf8');
       const beforeLayout = await describeLayout(engine, designer, undefined, diskCp);
+      const rootLayout = beforeLayout.controls.find((c) => c.id === 'this');
+      const groupLayout = beforeLayout.controls.find((c) => c.id === 'optionsGroup');
+      const optionLayout = beforeLayout.controls.find((c) => c.id === 'optionA');
+      const labelLayout = beforeLayout.controls.find((c) => c.id === 'nameLabel');
+      if (!rootLayout || rootLayout.clientWidth !== beforeLayout.clientWidth || rootLayout.clientHeight !== beforeLayout.clientHeight)
+        throw new Error('v1.11 layout metadata: root client rectangle missing/wrong');
+      if (!groupLayout || !optionLayout || optionLayout.x !== groupLayout.clientX! + 16 || optionLayout.y !== groupLayout.clientY! + 24)
+        throw new Error('v1.11 layout metadata: nested client origin is not exact');
+      if (!groupLayout.margin || !groupLayout.padding || !labelLayout || (labelLayout.textBaseline ?? -1) < labelLayout.y)
+        throw new Error('v1.11 layout metadata: Margin/Padding/text baseline missing');
       const cp = await copyControl(engine, designer, 'okButton', diskCp);
       if (!cp.safe || !cp.clip) throw new Error('CopyControl(okButton) rejected: ' + cp.reason);
       const ps = await pasteControl(engine, designer, cp.clip, 'this', diskCp);
@@ -5357,6 +6156,12 @@ namespace Product.CustomForms
       if (ps.newText.indexOf('this.button1.Text = "OK";') < 0) throw new Error('paste did not clone the Text property');
       if (ps.newText.indexOf('new System.Drawing.Point(158, 212)') < 0) throw new Error('paste did not offset the Location (150,204 → 158,212)');
       if (ps.newText.indexOf('this.Controls.Add(this.button1);') < 0) throw new Error('paste did not parent the clone into the form');
+      const exact = await pasteControlAtOffset(engine, designer, cp.clip, 'this', 25, -300, diskCp);
+      if (!exact.safe || exact.newText === null || exact.x !== 175 || exact.y !== 0
+          || !exact.newText.includes('new System.Drawing.Point(175, 0)'))
+        throw new Error('v1.11 PasteControlAtOffset did not preserve the exact Ctrl+drag delta: ' + JSON.stringify(exact));
+      if ((await pasteControlAtOffset(engine, designer, cp.clip, 'this', 100001, 0, diskCp)).safe)
+        throw new Error('v1.11 PasteControlAtOffset must bound untrusted RPC offsets');
       // the clone renders, the original okButton survives, disk is untouched
       const afterPaste = await renderWithLayout(engine, designer, undefined, ps.newText);
       if (!isPng(afterPaste.png)) throw new Error('paste: form with the clone did not render');
@@ -5426,7 +6231,7 @@ namespace Product.CustomForms
       }
       if (litPaste.typeName !== 'System.Windows.Forms.Button') throw new Error('PasteControl did not surface the clone type for a Location-less clip: ' + litPaste.typeName);
       if (litPaste.x !== -1 || litPaste.y !== -1) throw new Error(`PasteControl should report (-1,-1) for a clip without an integer Location: (${litPaste.x},${litPaste.y})`);
-      console.log(`e2e: copy/paste verified — clone (${ps.name}) renames+offsets & renders (+1); original survives; refuse root/container/bad-clip; paste into a container parents; net48 live-add hints (type=${ps.typeName}, loc ${ps.x},${ps.y}; Location-less clip → -1,-1); SECURITY: reject Fqn-injection, non-designer call, sibling-ref; AST rename preserves string literals; disk untouched`);
+      console.log(`e2e: copy/paste verified — clone (${ps.name}) renames+offsets & renders (+1); v1.11 exact Ctrl+drag offset (${exact.x},${exact.y}) + bounded RPC; exact nested client/Margin/Padding/baseline metadata; original survives; refuse root/container/bad-clip; paste into a container parents; net48 live-add hints (type=${ps.typeName}, loc ${ps.x},${ps.y}; Location-less clip → -1,-1); SECURITY: reject Fqn-injection, non-designer call, sibling-ref; AST rename preserves string literals; disk untouched`);
     }
 
     // ---- z-order (Bring to Front / Send to Back) — engine MoveZOrder: relocate Controls.Add among siblings ----
@@ -5505,7 +6310,54 @@ namespace Product.CustomForms
         const tlpDisk2 = fs.readFileSync(tlpForm, 'utf8');
         if ((await reparentControl(engine, tlpForm, 'tableLayoutPanel1', 'this', tlpDisk2)).safe) throw new Error('reparent must refuse a TableLayoutPanel with 3-arg cell children (leaf-only/cycle-safe)');
       }
-      console.log('e2e: reparent verified — okButton → optionsGroup (parentId reflows) and back to root (byte-identical); refuses root/self/unknown/container-with-children/non-container target/non-Control tray target/TLP-cells; disk untouched');
+      // V2 LAY-03 tab-page drop: the drag planner supplies coordinates already converted into the destination
+      // TabPage's client coordinate space. The source edit must move ownership and rewrite Location in the same
+      // preview so the control does not jump when rendered under the selected page.
+      const tabDrop = `namespace Demo { partial class F {
+        private System.Windows.Forms.TabControl tabControl1;
+        private System.Windows.Forms.TabPage tabPage1;
+        private System.Windows.Forms.TabPage tabPage2;
+        private System.Windows.Forms.TextBox textBox1;
+        private void InitializeComponent() {
+          this.tabControl1 = new System.Windows.Forms.TabControl();
+          this.tabPage1 = new System.Windows.Forms.TabPage();
+          this.tabPage2 = new System.Windows.Forms.TabPage();
+          this.textBox1 = new System.Windows.Forms.TextBox();
+          this.tabControl1.Controls.Add(this.tabPage1);
+          this.tabControl1.Controls.Add(this.tabPage2);
+          this.tabControl1.SelectedIndex = 1;
+          this.textBox1.Location = new System.Drawing.Point(120, 80);
+          this.textBox1.Name = "textBox1";
+          this.Controls.Add(this.textBox1);
+          this.Controls.Add(this.tabControl1);
+        }
+      } }`;
+      const tabRp = await reparentControl(engine, designer, 'textBox1', 'tabPage2', tabDrop, 24, 36);
+      if (!tabRp.safe || tabRp.newText === null) throw new Error('reparent(tabPage2 with converted Location) rejected: ' + tabRp.reason);
+      if (!/this\.tabPage2\.Controls\.Add\(this\.textBox1\)/.test(tabRp.newText)) throw new Error('tab-page reparent did not move ownership to tabPage2');
+      if (/this\.Controls\.Add\(this\.textBox1\)/.test(tabRp.newText)) throw new Error('tab-page reparent left the old root Controls.Add(textBox1)');
+      if (!/this\.textBox1\.Location = new System\.Drawing\.Point\(24, 36\);/.test(tabRp.newText)) throw new Error('tab-page reparent did not rewrite parent-relative Location');
+
+      // V2 LAY-03 stale SplitContainer panel target: a stale canvas may name a nested Panel2 target after the source
+      // no longer declares a SplitContainer. The engine must refuse before returning source text, with the catalog's
+      // exact machine diagnostic.
+      const staleSplit = `namespace Demo { partial class F {
+        private System.Windows.Forms.Panel splitContainer1;
+        private System.Windows.Forms.TextBox textBox1;
+        private void InitializeComponent() {
+          this.splitContainer1 = new System.Windows.Forms.Panel();
+          this.textBox1 = new System.Windows.Forms.TextBox();
+          this.textBox1.Location = new System.Drawing.Point(10, 20);
+          this.textBox1.Name = "textBox1";
+          this.Controls.Add(this.textBox1);
+          this.Controls.Add(this.splitContainer1);
+        }
+      } }`;
+      const staleRp = await reparentControl(engine, designer, 'textBox1', 'splitContainer1.Panel2', staleSplit, 5, 6);
+      if (staleRp.safe || staleRp.reason !== 'MISSING_CONTAINER' || staleRp.newText != null) {
+        throw new Error('stale SplitContainer.Panel2 reparent must refuse with exact MISSING_CONTAINER and no text: ' + JSON.stringify(staleRp));
+      }
+      console.log('e2e: reparent verified — okButton -> optionsGroup (parentId reflows) and back to root (byte-identical); tab-page drop rewrites parent-relative Location; stale SplitContainer.Panel2 refuses MISSING_CONTAINER; refuses root/self/unknown/container-with-children/non-container target/non-Control tray target/TLP-cells; disk untouched');
     }
 
     // ---- group move (multi-select): chain setProperty(Location) over several controls (applyGroupMove core) ----
@@ -5595,7 +6447,24 @@ namespace Product.CustomForms
 
     console.log('E2E RESULT: PASS — extension client renders, live-updates, edits properties (incl. Point/Size/Color/Font/Padding), renders single-control dirty-region patches, resolves complex-project output via MSBuild, and honors an explicit assembly override via the engine over named-pipe JSON-RPC');
   } finally {
+    const engineExited = engine.process.exitCode !== null
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+        engine.process.once('exit', () => resolve());
+        setTimeout(resolve, 3_000);
+      });
     engine.dispose();
+    await engineExited;
+    for (const tempRoot of engineScopedTempRoots) {
+      try {
+        fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+      } catch (error) {
+        // Cleanup must not turn a fully executed acceptance run red because an external AV/indexer briefly retained
+        // the already-disposed temp tree. Disclose the exact non-repository artifact instead of hiding it.
+        console.error('[e2e] warning: could not remove engine-scoped temp directory ' + tempRoot + ': ' + (error as Error).message);
+      }
+    }
+    engineScopedTempRoots.clear();
   }
 }
 

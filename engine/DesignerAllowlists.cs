@@ -12,7 +12,8 @@ namespace WinFormsDesigner.Engine
     //
     // These answer exactly three questions about a construct in a hand-crafted .Designer.cs:
     // · IsConstructionAllowed(T) — may `new T(...)` run as an inline PROPERTY VALUE? (pure value structs only)
-    // · IsFactoryInvocationAllowed(T, m) — may the static call `T.m(...)` run? (pure Color factories only)
+    // · IsFactoryInvocationAllowed(T, m) — may the static call `T.m(...)` run? (pure Color factories plus the
+    //   explicitly encoded SystemIcons.<member>.ToBitmap shapes emitted by the VS designer)
     // · IsStaticReadAllowed(T) — may a static/property read off T run? (side-effect-free value sources)
     // Anything not listed becomes gracefully "unrepresentable" (interpreted) / a named fallback (net48) — never an
     // arbitrary constructor, file-reading BCL call, or user/vendor static getter executed merely on preview-open.
@@ -24,14 +25,25 @@ namespace WinFormsDesigner.Engine
     {
         /// <summary>
         /// Static-invocation eval path: only the pure, side-effect-free Color factory methods the value-converter
-        /// emits (and real designer files contain). Never "any static method in an allowed assembly" — that would
-        /// still expose side-effecting calls like MessageBox.Show or Image.FromFile.
+        /// emits (and real designer files contain), plus fixed pseudo-method names representing
+        /// `SystemIcons.&lt;member&gt;.ToBitmap()`. Never "any static method in an allowed assembly" — that would still
+        /// expose side-effecting calls like MessageBox.Show or Image.FromFile.
         /// </summary>
         private static readonly HashSet<string> AllowedStaticInvocations = new(StringComparer.Ordinal)
         {
             "System.Drawing.Color.FromArgb",
             "System.Drawing.Color.FromName",
             "System.Drawing.Color.FromKnownColor",
+            "System.Drawing.SystemIcons.ApplicationToBitmap",
+            "System.Drawing.SystemIcons.AsteriskToBitmap",
+            "System.Drawing.SystemIcons.ErrorToBitmap",
+            "System.Drawing.SystemIcons.ExclamationToBitmap",
+            "System.Drawing.SystemIcons.HandToBitmap",
+            "System.Drawing.SystemIcons.InformationToBitmap",
+            "System.Drawing.SystemIcons.QuestionToBitmap",
+            "System.Drawing.SystemIcons.ShieldToBitmap",
+            "System.Drawing.SystemIcons.WarningToBitmap",
+            "System.Drawing.SystemIcons.WinLogoToBitmap",
         };
 
         /// <summary>
@@ -107,6 +119,7 @@ namespace WinFormsDesigner.Engine
             typeof(System.Drawing.Color).Assembly,
             typeof(System.Drawing.Font).Assembly, // Font/FontFamily (System.Drawing[.Common])
             typeof(System.Drawing.FontFamily).Assembly,
+            typeof(System.Drawing.SystemIcons).Assembly,
             typeof(System.Windows.Forms.Padding).Assembly, // Padding/Cursors/ColumnStyle/RowStyle (System.Windows.Forms)
             typeof(System.Windows.Forms.Cursors).Assembly,
             typeof(System.Windows.Forms.ColumnStyle).Assembly,
@@ -120,6 +133,20 @@ namespace WinFormsDesigner.Engine
         public static bool IsFactoryInvocationAllowed(Type t, string methodName) =>
             t?.FullName != null && IsTrustedFrameworkType(t) && AllowedStaticInvocations.Contains(t.FullName + "." + methodName);
 
+        /// <summary>Decode the closed IR pseudo-method used for the only allowed instance-call shape in generated
+        /// source: `System.Drawing.SystemIcons.&lt;member&gt;.ToBitmap()`. The type-side overload retains the trusted
+        /// framework-assembly check, so a project cannot impersonate SystemIcons by FullName.</summary>
+        public static bool TryGetSystemIconBitmapMember(Type t, string methodName, out string member)
+        {
+            member = "";
+            if (t?.FullName != "System.Drawing.SystemIcons" || !IsTrustedFrameworkType(t)
+                || methodName == null || !methodName.EndsWith("ToBitmap", StringComparison.Ordinal)
+                || !AllowedStaticInvocations.Contains(t.FullName + "." + methodName))
+                return false;
+            member = methodName.Substring(0, methodName.Length - "ToBitmap".Length);
+            return member.Length != 0;
+        }
+
         public static bool IsConstructionAllowed(Type t) =>
             t?.FullName != null && IsTrustedFrameworkType(t) && AllowedConstructionTypes.Contains(t.FullName);
 
@@ -131,6 +158,13 @@ namespace WinFormsDesigner.Engine
         // the VS-canonical fully-qualified source prefix against the SAME private sets. Same boundary, one source.
         public static bool IsFactoryName(string typeFullName, string methodName) =>
             typeFullName != null && AllowedStaticInvocations.Contains(typeFullName + "." + methodName);
+
+        public static bool TryGetSystemIconBitmapFactoryName(string typeFullName, string iconMember, out string methodName)
+        {
+            methodName = (iconMember ?? "") + "ToBitmap";
+            return typeFullName == "System.Drawing.SystemIcons"
+                && AllowedStaticInvocations.Contains(typeFullName + "." + methodName);
+        }
 
         public static bool IsConstructionName(string typeFullName) =>
             typeFullName != null && AllowedConstructionTypes.Contains(typeFullName);

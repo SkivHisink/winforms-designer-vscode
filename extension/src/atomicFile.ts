@@ -15,6 +15,7 @@
  * sessions and processes (pid + counter) so two windows saving the same file cannot stage onto each other.
  */
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 let sequence = 0;
 
@@ -48,14 +49,51 @@ async function replaceWithRetry(staged: string, target: string): Promise<void> {
   }
 }
 
+async function syncDirectory(directory: string): Promise<void> {
+  let handle: fs.promises.FileHandle | undefined;
+  try {
+    handle = await fs.promises.open(directory, 'r');
+    await handle.sync();
+  } catch (error) {
+    // Windows does not expose directory handles through Node's ordinary fs.open API (EPERM/EISDIR). The staged file
+    // itself is still flushed with FlushFileBuffers before MoveFileEx; on platforms that expose a directory fd, the
+    // post-rename fsync below also makes the directory entry durable. Do not claim stronger Windows power-loss
+    // semantics than Node can provide.
+    const code = (error as NodeJS.ErrnoException).code ?? '';
+    if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EISDIR', 'EINVAL', 'ENOTSUP'].includes(code)) throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+/** Delete a local file and flush the containing directory where Node exposes a directory handle. */
+export async function durableDeleteLocalFile(target: string): Promise<void> {
+  try {
+    await fs.promises.unlink(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return;
+  }
+  await syncDirectory(path.dirname(target));
+}
+
 export async function atomicWriteLocalFile(target: string, bytes: Uint8Array): Promise<void> {
   const tmp = stagingPath(target);
+  let staged: fs.promises.FileHandle | undefined;
   try {
-    await fs.promises.writeFile(tmp, bytes);
+    staged = await fs.promises.open(tmp, 'wx');
+    await staged.writeFile(bytes);
+    // `rename` alone protects against torn visibility but not against a power loss that leaves only cached bytes.
+    // Flush the complete staging file before publishing its name.
+    await staged.sync();
+    await staged.close();
+    staged = undefined;
     await replaceWithRetry(tmp, target);
+    await syncDirectory(path.dirname(target));
   } catch (error) {
     // Clean up a partially staged temp after EITHER a failed write or a failed replace, so an interrupted save
     // does not leak a `.wfd-…tmp` sibling next to the form.
+    try { await staged?.close(); } catch { /* best effort */ }
     try { await fs.promises.unlink(tmp); } catch { /* best effort */ }
     throw error;
   }

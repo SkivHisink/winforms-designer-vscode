@@ -21,6 +21,12 @@ namespace WinFormsDesigner.Engine
         public bool Editable { get; init; }
         /// <summary>Stable fail-closed explanation when <see cref="Editable"/> is false.</summary>
         public string? ReadOnlyReason { get; init; }
+        /// <summary>True only for the bounded derived-source property override channel. Does not authorize structural edits.</summary>
+        public bool InheritedOverrideEditable { get; init; }
+        /// <summary>True only when live layout constraints may be checked for a derived geometry override.</summary>
+        public bool InheritedGeometryOverrideEditable { get; init; }
+        /// <summary>Opaque engine-issued token bound to the compiled base field identity.</summary>
+        public string BaseIdentityToken { get; init; } = "";
         /// <summary>Parent control's edit id, or null for the root.</summary>
         public string? ParentId { get; init; }
         public bool IsRoot { get; init; }
@@ -28,10 +34,37 @@ namespace WinFormsDesigner.Engine
         public int Y { get; init; }
         public int Width { get; init; }
         public int Height { get; init; }
+        /// <summary>The live client rectangle in the same full-frame coordinate space as X/Y. Unlike the outer
+        /// bounds it includes every intermediate container's real client inset, so grid/spacing math never guesses
+        /// about GroupBox, Panel, tab-page, or form chrome.</summary>
+        public int ClientX { get; init; }
+        public int ClientY { get; init; }
+        public int ClientWidth { get; init; }
+        public int ClientHeight { get; init; }
+        /// <summary>The live WinForms layout distances used by v1.11 snaplines.</summary>
+        public GeometrySpacing Margin { get; init; } = new();
+        public GeometrySpacing Padding { get; init; } = new();
+        /// <summary>Absolute full-frame Y of the measured text baseline for Label/Button/TextBox-class controls, or -1
+        /// when the control has no supported text-baseline snapline.</summary>
+        public int TextBaseline { get; init; } = -1;
         /// <summary>Nesting level from the root (root = 0). Higher wins a hit-test (innermost on top).</summary>
         public int Depth { get; init; }
+        /// <summary>Parent Controls index in WinForms z-order. Index 0 is frontmost; root uses <see cref="int.MaxValue"/>.</summary>
+        public int ZOrder { get; init; } = int.MaxValue;
         /// <summary>The control's TabIndex (for the tab-order editor overlay). Root = -1 (no tab order).</summary>
         public int TabIndex { get; init; }
+        /// <summary>Rendered text/caption for standard surface characterization. Empty when not applicable.</summary>
+        public string Text { get; init; } = "";
+        /// <summary>True when a ButtonBase-like control has an Image assigned by the live graph.</summary>
+        public bool HasImage { get; init; }
+        /// <summary>ButtonBase FlatStyle, when applicable; otherwise empty.</summary>
+        public string FlatStyle { get; init; } = "";
+        /// <summary>TextBoxBase.Multiline, when applicable.</summary>
+        public bool Multiline { get; init; }
+        /// <summary>TextBox scroll-bar mode, when applicable; otherwise empty.</summary>
+        public string ScrollBars { get; init; } = "";
+        /// <summary>TextBox border style, when applicable; otherwise empty.</summary>
+        public string BorderStyle { get; init; } = "";
         /// <summary>Anchor edges as an invariant string ("Top, Left" / "None") — feeds the canvas anchor-tether
         /// overlay (Phase 2). Root = "None".</summary>
         public string Anchor { get; init; } = "None";
@@ -43,6 +76,17 @@ namespace WinFormsDesigner.Engine
         /// <summary>True when this control is a ToolStrip/MenuStrip/StatusStrip — the canvas routes clicks on it into
         /// on-canvas item mode ("Type Here" add / item rename / delete) instead of a plain control select.</summary>
         public bool IsStripHost { get; init; }
+        /// <summary>Exact live TableLayoutPanel column widths. Empty for every other control. Published so a canvas
+        /// drop can resolve a cell from the same laid-out graph that produced the picture instead of guessing from
+        /// source styles or equal-width arithmetic.</summary>
+        public int[] TableColumnWidths { get; init; } = Array.Empty<int>();
+        /// <summary>Exact live TableLayoutPanel row heights. Empty for every other control.</summary>
+        public int[] TableRowHeights { get; init; } = Array.Empty<int>();
+        /// <summary>Live FlowLayoutPanel direction, or empty for non-flow containers. The host uses this only to
+        /// translate a drop point into a complete sibling order; the engine still authorizes every source rewrite.</summary>
+        public string FlowDirection { get; init; } = "";
+        /// <summary>Live FlowLayoutPanel wrapping mode.</summary>
+        public bool FlowWrapContents { get; init; }
     }
 
     /// <summary>The field-backed tab page whose actual header contains a window-space point. Empty fields are the
@@ -148,6 +192,13 @@ namespace WinFormsDesigner.Engine
     /// </summary>
     public sealed class RenderLayoutResult
     {
+        /// <summary>
+        /// Opaque, process-local identity of the retained modern design surface that produced this frame. Its capture
+        /// scale is retained with the graph so a bounded dirty patch can match either a 1x or 2x backing. Clients may
+        /// only echo it back; source bytes and the independently recomputed edit preview are revalidated before the
+        /// cached graph can be mutated.
+        /// </summary>
+        public string GraphToken { get; init; } = "";
         /// <summary>The full-frame PNG (same bytes as <see cref="RenderResult.Png"/>).</summary>
         public byte[] Png { get; init; } = Array.Empty<byte>();
         public int Width { get; init; }

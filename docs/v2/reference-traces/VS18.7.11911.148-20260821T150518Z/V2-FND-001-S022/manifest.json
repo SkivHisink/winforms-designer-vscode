@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260821T150518Z-S022",
+  "scenarioId": "V2-FND-001-S022",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains anchoredButton at (24,48), Size 120x30, Anchor Top|Left|Right.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S022AnchoredResizeForm.cs with the WinForms Designer",
+    "Select anchoredButton through the real designer input window",
+    "Drag the east sizing handle by +40 physical pixels",
+    "Execute File.SaveAll",
+    "Verify the exact generated-source patch and live accessible bounds"
+  ],
+  "expected": "Visual Studio changes Size 120x30 to 160x30, canonicalizes four bare CodeDOM separator comments from // to // plus one space, preserves Anchor and Location, and leaves source/project byte-identical.",
+  "before": {
+    "sourceSha256": "7bb769c74d032e1c8d97c3fe304c9fa56b81762cf52f87428f00dda29d65f89b",
+    "designerSha256": "301564bb7584ca88061cf737f9e14c0786380713da0c3a01563e9f3bf088274e",
+    "projectSha256": "cf3987f6b4ae3139d4e12f33b09cd00c63348aa0ad646b237508b1513cf4474b",
+    "shape": {
+      "anchor": "System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right",
+      "location": {
+        "x": 24,
+        "y": 48
+      },
+      "size": {
+        "width": 120,
+        "height": 30
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "7bb769c74d032e1c8d97c3fe304c9fa56b81762cf52f87428f00dda29d65f89b",
+    "designerSha256": "533f99a82d9eb68dec8f8d19c84adeebf5e065813260d9a931e1851bcd3e2839",
+    "projectSha256": "cf3987f6b4ae3139d4e12f33b09cd00c63348aa0ad646b237508b1513cf4474b",
+    "shape": {
+      "anchor": "System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right",
+      "location": {
+        "x": 24,
+        "y": 48
+      },
+      "size": {
+        "width": 160,
+        "height": 30
+      }
+    }
+  },
+  "exactDesignerPatch": true,
+  "exactAfterArtifact": "S022AnchoredResizeForm.Designer.after.cs.gz",
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\4a7ff14fff6241629f45c18df46cf0bf\\Modern\\S022AnchoredResizeForm.cs",
+    "automationId": "anchoredButton",
+    "input": {
+      "clickedWindow": 22224690,
+      "dragWindow": 22224690,
+      "widthDelta": 40
+    },
+    "beforeBounds": {
+      "x": 540.0,
+      "y": 186.0,
+      "width": 120.0,
+      "height": 30.0
+    },
+    "afterBounds": {
+      "x": 540.0,
+      "y": 186.0,
+      "width": 160.0,
+      "height": 30.0
+    },
+    "capture": {
+      "hwnd": 6167016,
+      "x": -8,
+      "y": -8,
+      "width": 1936,
+      "height": 1048,
+      "dpi": 96,
+      "sha256": "a4b3d7b792a026f702121e57620215c8684e5cc8ed7c8d48174d4eae594c704e"
+    }
+  }
+}

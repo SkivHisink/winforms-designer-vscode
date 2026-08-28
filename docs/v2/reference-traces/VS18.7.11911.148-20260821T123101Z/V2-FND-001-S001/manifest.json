@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260821T123101Z-S001",
+  "scenarioId": "V2-FND-001-S001",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows SDK Form with source, Designer source, neutral resx, and explicit project item relationships.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S001SaveForm.cs with the WinForms Designer",
+    "Execute File.SaveAll without a designer edit",
+    "Hash source, generated source, neutral resx, and project before and after"
+  ],
+  "expected": "No source, generated-source, neutral-resource, or project diff and no designer mutation.",
+  "beforeSha256": {
+    "S001SaveForm.cs": "9fd2fe10e6df38b991b4139b85c9d13ad9fbfc280fb2ec338752ce2974f37eb3",
+    "S001SaveForm.Designer.cs": "5b2622ca0527c6ef0999e527ff6de191b7cd6d86165b573d3df239b6bc7d52cd",
+    "S001SaveForm.resx": "25a3a9027b218cfc4f61c9218774f5bbb0f6f84305cae23f024664b9feb36308",
+    "VisualStudioReference.Modern.csproj": "dc4ad986eec8feaefb3a66fd6ba35e4a68731eced4349a1801e5dd5a9c8f7b2d"
+  },
+  "afterSha256": {
+    "S001SaveForm.cs": "9fd2fe10e6df38b991b4139b85c9d13ad9fbfc280fb2ec338752ce2974f37eb3",
+    "S001SaveForm.Designer.cs": "5b2622ca0527c6ef0999e527ff6de191b7cd6d86165b573d3df239b6bc7d52cd",
+    "S001SaveForm.resx": "25a3a9027b218cfc4f61c9218774f5bbb0f6f84305cae23f024664b9feb36308",
+    "VisualStudioReference.Modern.csproj": "dc4ad986eec8feaefb3a66fd6ba35e4a68731eced4349a1801e5dd5a9c8f7b2d"
+  },
+  "byteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\ac84ddbeff2741a7933f69b39991d89b\\Modern\\S001SaveForm.cs",
+    "caption": "",
+    "capture": {
+      "hwnd": 12322970,
+      "x": 1912,
+      "y": -8,
+      "width": 1936,
+      "height": 1048,
+      "dpi": 96,
+      "sha256": "3ffe1766eceb5092ed1f384803ff767ebb25b082085a15625ce457d98bb9d379"
+    }
+  }
+}

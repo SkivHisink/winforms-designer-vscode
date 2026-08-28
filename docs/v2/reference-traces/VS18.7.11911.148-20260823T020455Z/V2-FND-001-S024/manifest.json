@@ -1,0 +1,523 @@
+{
+    "schemaVersion":  1,
+    "traceId":  "VS18.7.11911.148-20260823T020455Z-S024",
+    "scenarioId":  "V2-FND-001-S024",
+    "referenceTraceSource":  "VisualStudioWinFormsDesigner",
+    "authority":  {
+                      "product":  "Visual Studio Enterprise 2026",
+                      "dteVersion":  "18.0",
+                      "installationVersion":  "18.7.11911.148",
+                      "edition":  "Enterprise",
+                      "executable":  "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+                      "dteProgId":  "VisualStudio.DTE.18.0",
+                      "captureHost":  "Microsoft Windows NT 10.0.26100.0; AMD64"
+                  },
+    "status":  "PASS",
+    "setup":  "Equivalent net10.0-windows and net48 Forms each contain one root-owned Button whose field and serialized Name are both submitButton.",
+    "actionLog":  [
+                      "Build solution in actual Visual Studio",
+                      "Open the modern and net48 S024ClipboardCollisionForm.cs fixtures with their in-process WinForms Designers",
+                      "Select each actual submitButton through the real designer input/capture HWND or native Document Outline",
+                      "Execute native Edit.Copy and require no source mutation",
+                      "Execute native Edit.Paste and File.SaveAll",
+                      "Require Visual Studio to preserve submitButton and serialize exactly one uniquely named clone with copied Text and Size",
+                      "Execute one native Edit.Undo plus save and require the original component shape",
+                      "Execute one native Edit.Redo plus save and require byte-exact reproduction of the first paste serialization",
+                      "Repeat the full operation independently on both runtime lanes and verify source and project bytes remain exact"
+                  ],
+    "expected":  "Visual Studio resolves the clipboard name collision before persistence: the existing submitButton survives, one non-colliding Button clone is serialized, and the Paste is one reproducible undoable designer transaction on both runtime lanes.",
+    "runtimeLegs":  {
+                        "modern":  {
+                                       "status":  "PASS",
+                                       "pass":  true,
+                                       "before":  {
+                                                      "sourceSha256":  "806449d93b6620e288a47855a073e463b08f7b5692971b52631a936d39c6c123",
+                                                      "designerSha256":  "b9cbf2149eac410e28f1b531dcd2e242633f022a0c1703cdbd7c5814dfbe2488",
+                                                      "projectSha256":  "7d0e801b31c2b83fc91d0584d526eece9d0412f9f21cebb6777c0e38a5474f37",
+                                                      "shape":  {
+                                                                    "buttonCount":  1,
+                                                                    "buttons":  [
+                                                                                    {
+                                                                                        "fieldName":  "submitButton",
+                                                                                        "serializedName":  "submitButton",
+                                                                                        "location":  {
+                                                                                                         "x":  40,
+                                                                                                         "y":  40
+                                                                                                     },
+                                                                                        "size":  {
+                                                                                                     "width":  124,
+                                                                                                     "height":  32
+                                                                                                 },
+                                                                                        "text":  "Submit existing",
+                                                                                        "tabIndex":  0,
+                                                                                        "rootOwnerCount":  1
+                                                                                    }
+                                                                                ],
+                                                                    "distinctFieldNameCount":  1,
+                                                                    "distinctSerializedNameCount":  1
+                                                                }
+                                                  },
+                                       "after":  {
+                                                     "sourceSha256":  "806449d93b6620e288a47855a073e463b08f7b5692971b52631a936d39c6c123",
+                                                     "designerSha256":  "c7de407fd24f39f6c4c97d936672d10ae2e0f29493adb35c3fe96fc5141d3bcc",
+                                                     "projectSha256":  "7d0e801b31c2b83fc91d0584d526eece9d0412f9f21cebb6777c0e38a5474f37",
+                                                     "shape":  {
+                                                                   "buttonCount":  2,
+                                                                   "buttons":  [
+                                                                                   {
+                                                                                       "fieldName":  "button1",
+                                                                                       "serializedName":  "button1",
+                                                                                       "location":  {
+                                                                                                        "x":  98,
+                                                                                                        "y":  74
+                                                                                                    },
+                                                                                       "size":  {
+                                                                                                    "width":  124,
+                                                                                                    "height":  32
+                                                                                                },
+                                                                                       "text":  "Submit existing",
+                                                                                       "tabIndex":  1,
+                                                                                       "rootOwnerCount":  1
+                                                                                   },
+                                                                                   {
+                                                                                       "fieldName":  "submitButton",
+                                                                                       "serializedName":  "submitButton",
+                                                                                       "location":  {
+                                                                                                        "x":  40,
+                                                                                                        "y":  40
+                                                                                                    },
+                                                                                       "size":  {
+                                                                                                    "width":  124,
+                                                                                                    "height":  32
+                                                                                                },
+                                                                                       "text":  "Submit existing",
+                                                                                       "tabIndex":  0,
+                                                                                       "rootOwnerCount":  1
+                                                                                   }
+                                                                               ],
+                                                                   "distinctFieldNameCount":  2,
+                                                                   "distinctSerializedNameCount":  2
+                                                               }
+                                                 },
+                                       "observedClone":  {
+                                                             "fieldName":  "button1",
+                                                             "serializedName":  "button1",
+                                                             "location":  {
+                                                                              "x":  98,
+                                                                              "y":  74
+                                                                          },
+                                                             "size":  {
+                                                                          "width":  124,
+                                                                          "height":  32
+                                                                      },
+                                                             "text":  "Submit existing",
+                                                             "tabIndex":  1,
+                                                             "rootOwnerCount":  1
+                                                         },
+                                       "copyPropertiesExact":  true,
+                                       "undoShapeExact":  true,
+                                       "redoShapeExact":  true,
+                                       "redoBytesExact":  true,
+                                       "sourceAndProjectExact":  true,
+                                       "visualStudioWindow":  {
+                                                                  "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\124cc3b085d24b33b6fa976e1c9e9605\\Modern\\S024ClipboardCollisionForm.cs",
+                                                                  "command":  "Select submitButton + Edit.Copy + Edit.Paste + one Edit.Undo + one Edit.Redo",
+                                                                  "input":  {
+                                                                                "selectionMethod":  "designer-surface-capture-click",
+                                                                                "outlineSelection":  null,
+                                                                                "clickedWindow":  28450188,
+                                                                                "windowChain":  "L0 hwnd=28450188 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield \u003c- L1 hwnd=26942862 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView \u003c- L2 hwnd=37689666 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface \u003c- L3 hwnd=84807680 class=GenericPane text=S024ClipboardCollisionForm.cs [Design] \u003c- L4 hwnd=252253498 class=HwndWrapper[DefaultDomain;;dfb755bb-f204-47cd-8af2-76f142730ded] text=VisualStudioReference - S024ClipboardCollisionForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                                "point":  {
+                                                                                              "x":  831,
+                                                                                              "y":  202
+                                                                                          },
+                                                                                "buttonBounds":  {
+                                                                                                     "x":  769,
+                                                                                                     "y":  186,
+                                                                                                     "width":  124,
+                                                                                                     "height":  32
+                                                                                                 }
+                                                                            },
+                                                                  "copyAvailable":  true,
+                                                                  "pasteAvailable":  true,
+                                                                  "beforeCopySha256":  "b9cbf2149eac410e28f1b531dcd2e242633f022a0c1703cdbd7c5814dfbe2488",
+                                                                  "afterCopySha256":  "b9cbf2149eac410e28f1b531dcd2e242633f022a0c1703cdbd7c5814dfbe2488",
+                                                                  "copyWasNonMutating":  true,
+                                                                  "undoAvailable":  true,
+                                                                  "redoAvailable":  true,
+                                                                  "afterPaste":  {
+                                                                                     "designerSha256":  "c7de407fd24f39f6c4c97d936672d10ae2e0f29493adb35c3fe96fc5141d3bcc",
+                                                                                     "shape":  {
+                                                                                                   "buttonCount":  2,
+                                                                                                   "buttons":  [
+                                                                                                                   {
+                                                                                                                       "fieldName":  "button1",
+                                                                                                                       "serializedName":  "button1",
+                                                                                                                       "location":  {
+                                                                                                                                        "x":  98,
+                                                                                                                                        "y":  74
+                                                                                                                                    },
+                                                                                                                       "size":  {
+                                                                                                                                    "width":  124,
+                                                                                                                                    "height":  32
+                                                                                                                                },
+                                                                                                                       "text":  "Submit existing",
+                                                                                                                       "tabIndex":  1,
+                                                                                                                       "rootOwnerCount":  1
+                                                                                                                   },
+                                                                                                                   {
+                                                                                                                       "fieldName":  "submitButton",
+                                                                                                                       "serializedName":  "submitButton",
+                                                                                                                       "location":  {
+                                                                                                                                        "x":  40,
+                                                                                                                                        "y":  40
+                                                                                                                                    },
+                                                                                                                       "size":  {
+                                                                                                                                    "width":  124,
+                                                                                                                                    "height":  32
+                                                                                                                                },
+                                                                                                                       "text":  "Submit existing",
+                                                                                                                       "tabIndex":  0,
+                                                                                                                       "rootOwnerCount":  1
+                                                                                                                   }
+                                                                                                               ],
+                                                                                                   "distinctFieldNameCount":  2,
+                                                                                                   "distinctSerializedNameCount":  2
+                                                                                               }
+                                                                                 },
+                                                                  "afterUndo":  {
+                                                                                    "designerSha256":  "0196376ea9c3e42d6c858e01a6266da02e0551bbcd4141c46c17461b54b99e13",
+                                                                                    "shape":  {
+                                                                                                  "buttonCount":  1,
+                                                                                                  "buttons":  [
+                                                                                                                  {
+                                                                                                                      "fieldName":  "submitButton",
+                                                                                                                      "serializedName":  "submitButton",
+                                                                                                                      "location":  {
+                                                                                                                                       "x":  40,
+                                                                                                                                       "y":  40
+                                                                                                                                   },
+                                                                                                                      "size":  {
+                                                                                                                                   "width":  124,
+                                                                                                                                   "height":  32
+                                                                                                                               },
+                                                                                                                      "text":  "Submit existing",
+                                                                                                                      "tabIndex":  0,
+                                                                                                                      "rootOwnerCount":  1
+                                                                                                                  }
+                                                                                                              ],
+                                                                                                  "distinctFieldNameCount":  1,
+                                                                                                  "distinctSerializedNameCount":  1
+                                                                                              }
+                                                                                },
+                                                                  "afterRedo":  {
+                                                                                    "designerSha256":  "c7de407fd24f39f6c4c97d936672d10ae2e0f29493adb35c3fe96fc5141d3bcc",
+                                                                                    "shape":  {
+                                                                                                  "buttonCount":  2,
+                                                                                                  "buttons":  [
+                                                                                                                  {
+                                                                                                                      "fieldName":  "button1",
+                                                                                                                      "serializedName":  "button1",
+                                                                                                                      "location":  {
+                                                                                                                                       "x":  98,
+                                                                                                                                       "y":  74
+                                                                                                                                   },
+                                                                                                                      "size":  {
+                                                                                                                                   "width":  124,
+                                                                                                                                   "height":  32
+                                                                                                                               },
+                                                                                                                      "text":  "Submit existing",
+                                                                                                                      "tabIndex":  1,
+                                                                                                                      "rootOwnerCount":  1
+                                                                                                                  },
+                                                                                                                  {
+                                                                                                                      "fieldName":  "submitButton",
+                                                                                                                      "serializedName":  "submitButton",
+                                                                                                                      "location":  {
+                                                                                                                                       "x":  40,
+                                                                                                                                       "y":  40
+                                                                                                                                   },
+                                                                                                                      "size":  {
+                                                                                                                                   "width":  124,
+                                                                                                                                   "height":  32
+                                                                                                                               },
+                                                                                                                      "text":  "Submit existing",
+                                                                                                                      "tabIndex":  0,
+                                                                                                                      "rootOwnerCount":  1
+                                                                                                                  }
+                                                                                                              ],
+                                                                                                  "distinctFieldNameCount":  2,
+                                                                                                  "distinctSerializedNameCount":  2
+                                                                                              }
+                                                                                },
+                                                                  "capture":  {
+                                                                                  "hwnd":  252253498,
+                                                                                  "x":  0,
+                                                                                  "y":  0,
+                                                                                  "width":  1920,
+                                                                                  "height":  1080,
+                                                                                  "dpi":  96,
+                                                                                  "sha256":  "7b7516fae8eca70375202887fcc943f1fa169594d7baa65003f64637be297da2"
+                                                                              }
+                                                              }
+                                   },
+                        "net48":  {
+                                      "status":  "PASS",
+                                      "pass":  true,
+                                      "before":  {
+                                                     "sourceSha256":  "526bce5d679ec7fe42b45c8d225afa26faaa49c340392e7f8c7c1821333d14b7",
+                                                     "designerSha256":  "c4237ad31e4fd47be99619ce5004d8564893d061cc7388649d2603deb63f6a91",
+                                                     "projectSha256":  "819fe78c06b774d34d18ee0cc21c81ae63c9827f8d0d5e135878c1a552f19d66",
+                                                     "shape":  {
+                                                                   "buttonCount":  1,
+                                                                   "buttons":  [
+                                                                                   {
+                                                                                       "fieldName":  "submitButton",
+                                                                                       "serializedName":  "submitButton",
+                                                                                       "location":  {
+                                                                                                        "x":  40,
+                                                                                                        "y":  40
+                                                                                                    },
+                                                                                       "size":  {
+                                                                                                    "width":  124,
+                                                                                                    "height":  32
+                                                                                                },
+                                                                                       "text":  "Submit existing",
+                                                                                       "tabIndex":  0,
+                                                                                       "rootOwnerCount":  1
+                                                                                   }
+                                                                               ],
+                                                                   "distinctFieldNameCount":  1,
+                                                                   "distinctSerializedNameCount":  1
+                                                               }
+                                                 },
+                                      "after":  {
+                                                    "sourceSha256":  "526bce5d679ec7fe42b45c8d225afa26faaa49c340392e7f8c7c1821333d14b7",
+                                                    "designerSha256":  "dceda7b6fe3b0b4443d38758ae02cfc52225fac7ff641fc2b69b04d84b1701f8",
+                                                    "projectSha256":  "819fe78c06b774d34d18ee0cc21c81ae63c9827f8d0d5e135878c1a552f19d66",
+                                                    "shape":  {
+                                                                  "buttonCount":  2,
+                                                                  "buttons":  [
+                                                                                  {
+                                                                                      "fieldName":  "button1",
+                                                                                      "serializedName":  "button1",
+                                                                                      "location":  {
+                                                                                                       "x":  98,
+                                                                                                       "y":  74
+                                                                                                   },
+                                                                                      "size":  {
+                                                                                                   "width":  124,
+                                                                                                   "height":  32
+                                                                                               },
+                                                                                      "text":  "Submit existing",
+                                                                                      "tabIndex":  1,
+                                                                                      "rootOwnerCount":  1
+                                                                                  },
+                                                                                  {
+                                                                                      "fieldName":  "submitButton",
+                                                                                      "serializedName":  "submitButton",
+                                                                                      "location":  {
+                                                                                                       "x":  40,
+                                                                                                       "y":  40
+                                                                                                   },
+                                                                                      "size":  {
+                                                                                                   "width":  124,
+                                                                                                   "height":  32
+                                                                                               },
+                                                                                      "text":  "Submit existing",
+                                                                                      "tabIndex":  0,
+                                                                                      "rootOwnerCount":  1
+                                                                                  }
+                                                                              ],
+                                                                  "distinctFieldNameCount":  2,
+                                                                  "distinctSerializedNameCount":  2
+                                                              }
+                                                },
+                                      "observedClone":  {
+                                                            "fieldName":  "button1",
+                                                            "serializedName":  "button1",
+                                                            "location":  {
+                                                                             "x":  98,
+                                                                             "y":  74
+                                                                         },
+                                                            "size":  {
+                                                                         "width":  124,
+                                                                         "height":  32
+                                                                     },
+                                                            "text":  "Submit existing",
+                                                            "tabIndex":  1,
+                                                            "rootOwnerCount":  1
+                                                        },
+                                      "copyPropertiesExact":  true,
+                                      "undoShapeExact":  true,
+                                      "redoShapeExact":  true,
+                                      "redoBytesExact":  true,
+                                      "sourceAndProjectExact":  true,
+                                      "visualStudioWindow":  {
+                                                                 "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\124cc3b085d24b33b6fa976e1c9e9605\\Net48\\S024ClipboardCollisionForm.cs",
+                                                                 "command":  "Select submitButton + Edit.Copy + Edit.Paste + one Edit.Undo + one Edit.Redo",
+                                                                 "input":  {
+                                                                               "selectionMethod":  "native-document-outline-second-row",
+                                                                               "outlineSelection":  {
+                                                                                                        "point":  {
+                                                                                                                      "x":  615,
+                                                                                                                      "y":  151
+                                                                                                                  },
+                                                                                                        "windowChain":  "L0 hwnd=30612810 class=WindowsForms10.SysTreeView32.app.0.2cea0ca_r17_ad1 text= \u003c- L1 hwnd=88871132 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= \u003c- L2 hwnd=39656934 class=VsDocOutlineTool text= \u003c- L3 hwnd=184686510 class=GenericPane text=Document Outline - S024ClipboardCollisionForm \u003c- L4 hwnd=252253498 class=HwndWrapper[DefaultDomain;;dfb755bb-f204-47cd-8af2-76f142730ded] text=VisualStudioReference - S024ClipboardCollisionForm.cs [Design] - Microsoft Visual Studio (Administrator)"
+                                                                                                    },
+                                                                               "clickedWindow":  30612810,
+                                                                               "windowChain":  "L0 hwnd=41620666 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=AdornerWindow \u003c- L1 hwnd=79893418 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=OverlayControl \u003c- L2 hwnd=155259844 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerFrame \u003c- L3 hwnd=149820718 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text= \u003c- L4 hwnd=114234490 class=GenericPane text=S024ClipboardCollisionForm.cs [Design] \u003c- L5 hwnd=252253498 class=HwndWrapper[DefaultDomain;;dfb755bb-f204-47cd-8af2-76f142730ded] text=VisualStudioReference - S024ClipboardCollisionForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                               "point":  {
+                                                                                             "x":  831,
+                                                                                             "y":  202
+                                                                                         },
+                                                                               "buttonBounds":  {
+                                                                                                    "x":  769,
+                                                                                                    "y":  186,
+                                                                                                    "width":  124,
+                                                                                                    "height":  32
+                                                                                                }
+                                                                           },
+                                                                 "copyAvailable":  true,
+                                                                 "pasteAvailable":  true,
+                                                                 "beforeCopySha256":  "c4237ad31e4fd47be99619ce5004d8564893d061cc7388649d2603deb63f6a91",
+                                                                 "afterCopySha256":  "c4237ad31e4fd47be99619ce5004d8564893d061cc7388649d2603deb63f6a91",
+                                                                 "copyWasNonMutating":  true,
+                                                                 "undoAvailable":  true,
+                                                                 "redoAvailable":  true,
+                                                                 "afterPaste":  {
+                                                                                    "designerSha256":  "dceda7b6fe3b0b4443d38758ae02cfc52225fac7ff641fc2b69b04d84b1701f8",
+                                                                                    "shape":  {
+                                                                                                  "buttonCount":  2,
+                                                                                                  "buttons":  [
+                                                                                                                  {
+                                                                                                                      "fieldName":  "button1",
+                                                                                                                      "serializedName":  "button1",
+                                                                                                                      "location":  {
+                                                                                                                                       "x":  98,
+                                                                                                                                       "y":  74
+                                                                                                                                   },
+                                                                                                                      "size":  {
+                                                                                                                                   "width":  124,
+                                                                                                                                   "height":  32
+                                                                                                                               },
+                                                                                                                      "text":  "Submit existing",
+                                                                                                                      "tabIndex":  1,
+                                                                                                                      "rootOwnerCount":  1
+                                                                                                                  },
+                                                                                                                  {
+                                                                                                                      "fieldName":  "submitButton",
+                                                                                                                      "serializedName":  "submitButton",
+                                                                                                                      "location":  {
+                                                                                                                                       "x":  40,
+                                                                                                                                       "y":  40
+                                                                                                                                   },
+                                                                                                                      "size":  {
+                                                                                                                                   "width":  124,
+                                                                                                                                   "height":  32
+                                                                                                                               },
+                                                                                                                      "text":  "Submit existing",
+                                                                                                                      "tabIndex":  0,
+                                                                                                                      "rootOwnerCount":  1
+                                                                                                                  }
+                                                                                                              ],
+                                                                                                  "distinctFieldNameCount":  2,
+                                                                                                  "distinctSerializedNameCount":  2
+                                                                                              }
+                                                                                },
+                                                                 "afterUndo":  {
+                                                                                   "designerSha256":  "a7ca497353afcea32dc86817834b49f83ebc701f84395971774b9f3661b515f6",
+                                                                                   "shape":  {
+                                                                                                 "buttonCount":  1,
+                                                                                                 "buttons":  [
+                                                                                                                 {
+                                                                                                                     "fieldName":  "submitButton",
+                                                                                                                     "serializedName":  "submitButton",
+                                                                                                                     "location":  {
+                                                                                                                                      "x":  40,
+                                                                                                                                      "y":  40
+                                                                                                                                  },
+                                                                                                                     "size":  {
+                                                                                                                                  "width":  124,
+                                                                                                                                  "height":  32
+                                                                                                                              },
+                                                                                                                     "text":  "Submit existing",
+                                                                                                                     "tabIndex":  0,
+                                                                                                                     "rootOwnerCount":  1
+                                                                                                                 }
+                                                                                                             ],
+                                                                                                 "distinctFieldNameCount":  1,
+                                                                                                 "distinctSerializedNameCount":  1
+                                                                                             }
+                                                                               },
+                                                                 "afterRedo":  {
+                                                                                   "designerSha256":  "dceda7b6fe3b0b4443d38758ae02cfc52225fac7ff641fc2b69b04d84b1701f8",
+                                                                                   "shape":  {
+                                                                                                 "buttonCount":  2,
+                                                                                                 "buttons":  [
+                                                                                                                 {
+                                                                                                                     "fieldName":  "button1",
+                                                                                                                     "serializedName":  "button1",
+                                                                                                                     "location":  {
+                                                                                                                                      "x":  98,
+                                                                                                                                      "y":  74
+                                                                                                                                  },
+                                                                                                                     "size":  {
+                                                                                                                                  "width":  124,
+                                                                                                                                  "height":  32
+                                                                                                                              },
+                                                                                                                     "text":  "Submit existing",
+                                                                                                                     "tabIndex":  1,
+                                                                                                                     "rootOwnerCount":  1
+                                                                                                                 },
+                                                                                                                 {
+                                                                                                                     "fieldName":  "submitButton",
+                                                                                                                     "serializedName":  "submitButton",
+                                                                                                                     "location":  {
+                                                                                                                                      "x":  40,
+                                                                                                                                      "y":  40
+                                                                                                                                  },
+                                                                                                                     "size":  {
+                                                                                                                                  "width":  124,
+                                                                                                                                  "height":  32
+                                                                                                                              },
+                                                                                                                     "text":  "Submit existing",
+                                                                                                                     "tabIndex":  0,
+                                                                                                                     "rootOwnerCount":  1
+                                                                                                                 }
+                                                                                                             ],
+                                                                                                 "distinctFieldNameCount":  2,
+                                                                                                 "distinctSerializedNameCount":  2
+                                                                                             }
+                                                                               },
+                                                                 "capture":  {
+                                                                                 "hwnd":  252253498,
+                                                                                 "x":  0,
+                                                                                 "y":  0,
+                                                                                 "width":  1920,
+                                                                                 "height":  1080,
+                                                                                 "dpi":  96,
+                                                                                 "sha256":  "2a2bb6cd215307594f8345c746fa93846bcf57b412b328a18032d38bc9894089"
+                                                                             }
+                                                             }
+                                  }
+                    },
+    "modernDesignerBeforeArtifact":  "S024ClipboardCollisionForm.Designer.before.cs",
+    "modernDesignerAfterArtifact":  "S024ClipboardCollisionForm.Designer.after-redo.cs.gz",
+    "net48DesignerBeforeArtifact":  "S024ClipboardCollisionForm.Net48.Designer.before.cs",
+    "net48DesignerAfterArtifact":  "S024ClipboardCollisionForm.Net48.Designer.after-redo.cs.gz",
+    "runtimeArchitecture":  "actual Visual Studio x64 modern + net48 reference; physical ARM64 remains an independent external gate",
+    "visualStudioWindow":  {
+                               "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\124cc3b085d24b33b6fa976e1c9e9605\\Modern\\S024ClipboardCollisionForm.cs",
+                               "command":  "Select submitButton + Edit.Copy + Edit.Paste + one Edit.Undo + one Edit.Redo",
+                               "capture":  {
+                                               "hwnd":  252253498,
+                                               "x":  0,
+                                               "y":  0,
+                                               "width":  1920,
+                                               "height":  1080,
+                                               "dpi":  96,
+                                               "sha256":  "7b7516fae8eca70375202887fcc943f1fa169594d7baa65003f64637be297da2"
+                                           }
+                           }
+}

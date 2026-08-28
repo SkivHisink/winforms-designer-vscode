@@ -1,0 +1,3233 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260824T085431Z-S061",
+  "scenarioId": "V2-FND-001-S061",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "A net10.0-windows Form contains editable top-level button1 and sibling textBox1 controls.",
+  "actionLog": [
+    "Build solution in actual Visual Studio",
+    "Open S061OutlineRenameForm.cs with the installed WinForms Designer",
+    "Open the native Document Outline",
+    "Select the exact visible button1 | Button row through the measured native owner-drawn outline tree",
+    "Verify the outline selection through the native Properties (Name)=button1 value",
+    "Probe physical F2 and registered Rename commands without mutation; neither native inline-rename route is available",
+    "Switch Properties to alphabetical order and commit (Name)=submitButton through UI Automation ValuePattern",
+    "Execute File.SaveAll, one native Undo, File.SaveAll, one native Redo, and File.SaveAll",
+    "Verify the complete identity/Name rewrite, unrelated Text and sibling preservation, byte-exact Redo, and source/project identity"
+  ],
+  "expected": "Actual Visual Studio selects button1 through Document Outline, renames the component through Properties (Name), rewrites every component identity reference while preserving Button.Text and textBox1, records one designer Undo unit, and reproduces the renamed Designer source byte-exactly on Redo. F2 is not claimed as a native outline rename route.",
+  "before": {
+    "sourceSha256": "fc953761c796a9806adef5b810b9630cf43a2b1309c28a349d3bd289609f80e3",
+    "designerSha256": "9b12903d6ea6ffb47dc668de8b27cfcd759fcc1b54a56beeb40f504f4f417ced",
+    "projectSha256": "1dde4ddb3fe998f47049c97792097967d065057971a0bb45e51e90b10bb172c5"
+  },
+  "after": {
+    "sourceSha256": "fc953761c796a9806adef5b810b9630cf43a2b1309c28a349d3bd289609f80e3",
+    "designerSha256": "2fd635f8b669d1159aaf73f0783300654c7ddc0a09a0d3ba8a872e3cef58efba",
+    "projectSha256": "1dde4ddb3fe998f47049c97792097967d065057971a0bb45e51e90b10bb172c5"
+  },
+  "sourceByteIdentical": true,
+  "designerChanged": true,
+  "projectByteIdentical": true,
+  "beforeShape": {
+    "oldMemberReferenceCount": 8,
+    "oldNameLiteralCount": 1,
+    "preservedTextLiteralCount": 1,
+    "siblingTextBoxReferenceCount": 6
+  },
+  "renameExact": true,
+  "undoExact": true,
+  "redoExact": true,
+  "designerBeforeArtifact": "S061OutlineRenameForm.Designer.before.cs",
+  "designerAfterRenameArtifact": "S061OutlineRenameForm.Designer.after-rename.cs.gz",
+  "designerAfterUndoArtifact": "S061OutlineRenameForm.Designer.after-undo.cs.gz",
+  "designerAfterRedoArtifact": "S061OutlineRenameForm.Designer.after-redo.cs.gz",
+  "runtimeArchitecture": "actual Visual Studio x64 modern SDK reference",
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\613f67218b88430abf3b900e3f7dfc07\\Modern\\S061OutlineRenameForm.cs",
+    "documentOutlineCommandAvailable": true,
+    "outlinePanes": [
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "ST:0:0:{25f7e850-ffa1-11d0-b63f-00a0c922e851}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1139.0,
+          "y": 69.0,
+          "width": 199.0,
+          "height": 584.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 4395740,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 558.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      }
+    ],
+    "outlineInventory": [
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "ST:0:0:{25f7e850-ffa1-11d0-b63f-00a0c922e851}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1139.0,
+          "y": 69.0,
+          "width": 199.0,
+          "height": 584.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1148.0,
+          "y": 74.0,
+          "width": 107.0,
+          "height": 15.0
+        },
+        "ancestors": [
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Window Position (Alt+-)",
+        "automationId": "HeaderDropDown",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "Dropdown button",
+        "value": null,
+        "helpText": "Window Position (Alt+-)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "DropDownButton",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1265.0,
+          "y": 70.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Auto Hide",
+        "automationId": "AutoHideButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Auto Hide",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1289.0,
+          "y": 70.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Close (Shift+Esc)",
+        "automationId": "HideButton",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Close (Shift+Esc)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1313.0,
+          "y": 70.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 4395740,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 558.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "42",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "VsDocOutlineTool",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 3806596,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 558.0
+        },
+        "ancestors": [
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "3806760",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 3806760,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 558.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "10556262",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.SysTreeView32.app.0.2cea0ca_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 10556262,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 119.0,
+          "width": 197.0,
+          "height": 533.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Commands",
+        "automationId": "4264608",
+        "controlType": "ControlType.ToolBar",
+        "localizedControlType": "tool bar",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 4264608,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 25.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "TypeDisplayStyle",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1142.0,
+          "y": 95.0,
+          "width": 29.0,
+          "height": 22.0
+        },
+        "ancestors": [
+          {
+            "name": "Commands",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Expand All",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1177.0,
+          "y": 95.0,
+          "width": 23.0,
+          "height": 22.0
+        },
+        "ancestors": [
+          {
+            "name": "Commands",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Collapse All",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1200.0,
+          "y": 95.0,
+          "width": 23.0,
+          "height": 22.0
+        },
+        "ancestors": [
+          {
+            "name": "Commands",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Move Down",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": false,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1229.0,
+          "y": 95.0,
+          "width": 23.0,
+          "height": 22.0
+        },
+        "ancestors": [
+          {
+            "name": "Commands",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Move Up",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": false,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1252.0,
+          "y": 95.0,
+          "width": 23.0,
+          "height": 22.0
+        },
+        "ancestors": [
+          {
+            "name": "Commands",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Move Out",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": false,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1275.0,
+          "y": 95.0,
+          "width": 23.0,
+          "height": 22.0
+        },
+        "ancestors": [
+          {
+            "name": "Commands",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Move Into",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "",
+        "frameworkId": "",
+        "nativeWindowHandle": 0,
+        "enabled": false,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1298.0,
+          "y": 95.0,
+          "width": 23.0,
+          "height": 22.0
+        },
+        "ancestors": [
+          {
+            "name": "Commands",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      }
+    ],
+    "relevantUiAutomation": [
+      {
+        "name": "Save S061OutlineRenameForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "Save S061OutlineRenameForm.cs (Ctrl+S)",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "Button",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 859.0,
+          "y": 36.0,
+          "width": 24.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "Standard",
+            "controlType": "ControlType.ToolBar"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S061OutlineRenameForm.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S061OutlineRenameForm.cs",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 513.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S061OutlineRenameForm",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S061OutlineRenameForm",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 537.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S061OutlineRenameForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S061OutlineRenameForm.Designer.cs",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S061OutlineRenameForm.Designer.cs",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 561.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S061OutlineRenameForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S061OutlineRenameForm.resx",
+        "automationId": "",
+        "controlType": "ControlType.TreeItem",
+        "localizedControlType": "tree view item",
+        "value": "S061OutlineRenameForm.resx",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TreeViewItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": false,
+        "offscreen": false,
+        "bounds": {
+          "x": 684.0,
+          "y": 585.0,
+          "width": 435.0,
+          "height": 24.0
+        },
+        "ancestors": [
+          {
+            "name": "S061OutlineRenameForm.cs",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "VisualStudioReference.Modern",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution 'VisualStudioReference' ‎",
+            "controlType": "ControlType.TreeItem"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Tree"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "Solution Explorer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "ST:0:0:{25f7e850-ffa1-11d0-b63f-00a0c922e851}",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1139.0,
+          "y": 69.0,
+          "width": 199.0,
+          "height": 584.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "",
+        "controlType": "ControlType.Text",
+        "localizedControlType": "text",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TextBlock",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1148.0,
+          "y": 74.0,
+          "width": 107.0,
+          "height": 15.0
+        },
+        "ancestors": [
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.TitleBar"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Document Outline - S061OutlineRenameForm",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 4395740,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 558.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "Commands",
+        "automationId": "4264608",
+        "controlType": "ControlType.ToolBar",
+        "localizedControlType": "tool bar",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 4264608,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1140.0,
+          "y": 94.0,
+          "width": 197.0,
+          "height": 25.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "Document Outline - S061OutlineRenameForm",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S061OutlineRenameForm.cs [Design]",
+        "automationId": "",
+        "controlType": "ControlType.TabItem",
+        "localizedControlType": "tab item",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "TabItem",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": true,
+        "offscreen": false,
+        "bounds": {
+          "x": 1344.0,
+          "y": 69.0,
+          "width": 217.0,
+          "height": 26.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S061OutlineRenameForm.cs [Design]",
+        "automationId": "D:0:0:{BCE7043E-E7D7-A278-1417-E91FBF1872ED}|Modern\\VisualStudioReference.Modern.csproj|d:\\data\\code\\csharpwinformextension\\.codex-tmp\\vs-reference-traces\\613f67218b88430abf3b900e3f7dfc07\\modern\\s061outlinerenameform.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}|Form",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "ViewPresenter",
+        "frameworkId": "WPF",
+        "nativeWindowHandle": 0,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1345.0,
+          "y": 95.0,
+          "width": 535.0,
+          "height": 199.0
+        },
+        "ancestors": [
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "S061OutlineRenameForm.cs [Design]",
+        "automationId": "",
+        "controlType": "ControlType.Pane",
+        "localizedControlType": "pane",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "GenericPane",
+        "frameworkId": "Win32",
+        "nativeWindowHandle": 4920386,
+        "enabled": true,
+        "focusable": false,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1345.0,
+          "y": 95.0,
+          "width": 535.0,
+          "height": 199.0
+        },
+        "ancestors": [
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+            "controlType": "ControlType.Window"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "automationId": "textBox1",
+        "controlType": "ControlType.Edit",
+        "localizedControlType": "edit",
+        "value": "",
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Edit.app.0.273e403_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 5640346,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1388.0,
+          "y": 211.0,
+          "width": 160.0,
+          "height": 23.0
+        },
+        "ancestors": [
+          {
+            "name": "S061 outline rename",
+            "controlType": "ControlType.Window"
+          },
+          {
+            "name": "OverlayContainer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      },
+      {
+        "name": "button1",
+        "automationId": "button1",
+        "controlType": "ControlType.Button",
+        "localizedControlType": "button",
+        "value": null,
+        "helpText": "",
+        "itemStatus": "",
+        "accessKey": "",
+        "className": "WindowsForms10.Button.app.0.273e403_r3_ad1",
+        "frameworkId": "WinForm",
+        "nativeWindowHandle": 4264692,
+        "enabled": true,
+        "focusable": true,
+        "hasKeyboardFocus": false,
+        "selectionItemSelected": null,
+        "offscreen": false,
+        "bounds": {
+          "x": 1388.0,
+          "y": 161.0,
+          "width": 110.0,
+          "height": 30.0
+        },
+        "ancestors": [
+          {
+            "name": "S061 outline rename",
+            "controlType": "ControlType.Window"
+          },
+          {
+            "name": "OverlayContainer",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerWindowFrame",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "DesignerView",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "WinForms Window Surface",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.Pane"
+          },
+          {
+            "name": "S061OutlineRenameForm.cs [Design]",
+            "controlType": "ControlType.TabItem"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Tab"
+          },
+          {
+            "name": "",
+            "controlType": "ControlType.Pane"
+          }
+        ]
+      }
+    ],
+    "outlineSelection": {
+      "row": "button1 | Button (visible row 3)",
+      "point": {
+        "x": 1219,
+        "y": 172
+      },
+      "clickedWindow": 10556262,
+      "selectedName": "button1",
+      "namePropertyCandidates": [
+        {
+          "label": "(Name)",
+          "value": "button1",
+          "offscreen": true,
+          "bounds": {
+            "x": "Infinity",
+            "y": "Infinity",
+            "width": "-Infinity",
+            "height": "-Infinity"
+          }
+        }
+      ],
+      "propertySelectionEvidence": [
+        {
+          "name": "Save S061OutlineRenameForm.cs",
+          "automationId": "",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "Save S061OutlineRenameForm.cs (Ctrl+S)",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "Button",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 859.0,
+            "y": 36.0,
+            "width": 24.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "Standard",
+              "controlType": "ControlType.ToolBar"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Properties",
+          "automationId": "",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "Properties (Alt+Enter)",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "Button",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 938.0,
+            "y": 97.0,
+            "width": 24.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "Explorer",
+              "controlType": "ControlType.ToolBar"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "S061OutlineRenameForm.cs",
+          "automationId": "",
+          "controlType": "ControlType.TreeItem",
+          "localizedControlType": "tree view item",
+          "value": "S061OutlineRenameForm.cs",
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "TreeViewItem",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": false,
+          "offscreen": false,
+          "bounds": {
+            "x": 684.0,
+            "y": 513.0,
+            "width": 435.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "VisualStudioReference.Modern",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution 'VisualStudioReference' ‎",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Tree"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "S061OutlineRenameForm",
+          "automationId": "",
+          "controlType": "ControlType.TreeItem",
+          "localizedControlType": "tree view item",
+          "value": "S061OutlineRenameForm",
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "TreeViewItem",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": false,
+          "offscreen": false,
+          "bounds": {
+            "x": 684.0,
+            "y": 537.0,
+            "width": 435.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "S061OutlineRenameForm.cs",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "VisualStudioReference.Modern",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution 'VisualStudioReference' ‎",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Tree"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "S061OutlineRenameForm.Designer.cs",
+          "automationId": "",
+          "controlType": "ControlType.TreeItem",
+          "localizedControlType": "tree view item",
+          "value": "S061OutlineRenameForm.Designer.cs",
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "TreeViewItem",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": false,
+          "offscreen": false,
+          "bounds": {
+            "x": 684.0,
+            "y": 561.0,
+            "width": 435.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "S061OutlineRenameForm.cs",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "VisualStudioReference.Modern",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution 'VisualStudioReference' ‎",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Tree"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "S061OutlineRenameForm.resx",
+          "automationId": "",
+          "controlType": "ControlType.TreeItem",
+          "localizedControlType": "tree view item",
+          "value": "S061OutlineRenameForm.resx",
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "TreeViewItem",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": false,
+          "offscreen": false,
+          "bounds": {
+            "x": 684.0,
+            "y": 585.0,
+            "width": 435.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "S061OutlineRenameForm.cs",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "VisualStudioReference.Modern",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution 'VisualStudioReference' ‎",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Tree"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "Solution Explorer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Document Outline - S061OutlineRenameForm",
+          "automationId": "ST:0:0:{25f7e850-ffa1-11d0-b63f-00a0c922e851}",
+          "controlType": "ControlType.Pane",
+          "localizedControlType": "pane",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "ViewPresenter",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1139.0,
+            "y": 69.0,
+            "width": 199.0,
+            "height": 584.0
+          },
+          "ancestors": [
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Document Outline - S061OutlineRenameForm",
+          "automationId": "",
+          "controlType": "ControlType.Text",
+          "localizedControlType": "text",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "TextBlock",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": false,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1148.0,
+            "y": 74.0,
+            "width": 107.0,
+            "height": 15.0
+          },
+          "ancestors": [
+            {
+              "name": "Document Outline - S061OutlineRenameForm",
+              "controlType": "ControlType.TitleBar"
+            },
+            {
+              "name": "Document Outline - S061OutlineRenameForm",
+              "controlType": "ControlType.TitleBar"
+            },
+            {
+              "name": "Document Outline - S061OutlineRenameForm",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Document Outline - S061OutlineRenameForm",
+          "automationId": "",
+          "controlType": "ControlType.Pane",
+          "localizedControlType": "pane",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "GenericPane",
+          "frameworkId": "Win32",
+          "nativeWindowHandle": 4395740,
+          "enabled": true,
+          "focusable": false,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1140.0,
+            "y": 94.0,
+            "width": 197.0,
+            "height": 558.0
+          },
+          "ancestors": [
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Document Outline - S061OutlineRenameForm",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "S061OutlineRenameForm.cs [Design]",
+          "automationId": "",
+          "controlType": "ControlType.TabItem",
+          "localizedControlType": "tab item",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "TabItem",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": true,
+          "offscreen": false,
+          "bounds": {
+            "x": 1344.0,
+            "y": 69.0,
+            "width": 217.0,
+            "height": 26.0
+          },
+          "ancestors": [
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "S061OutlineRenameForm.cs [Design]",
+          "automationId": "D:0:0:{BCE7043E-E7D7-A278-1417-E91FBF1872ED}|Modern\\VisualStudioReference.Modern.csproj|d:\\data\\code\\csharpwinformextension\\.codex-tmp\\vs-reference-traces\\613f67218b88430abf3b900e3f7dfc07\\modern\\s061outlinerenameform.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}|Form",
+          "controlType": "ControlType.Pane",
+          "localizedControlType": "pane",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "ViewPresenter",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1345.0,
+            "y": 95.0,
+            "width": 535.0,
+            "height": 199.0
+          },
+          "ancestors": [
+            {
+              "name": "S061OutlineRenameForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "S061OutlineRenameForm.cs [Design]",
+          "automationId": "",
+          "controlType": "ControlType.Pane",
+          "localizedControlType": "pane",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "GenericPane",
+          "frameworkId": "Win32",
+          "nativeWindowHandle": 4920386,
+          "enabled": true,
+          "focusable": false,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1345.0,
+            "y": 95.0,
+            "width": 535.0,
+            "height": 199.0
+          },
+          "ancestors": [
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S061OutlineRenameForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S061OutlineRenameForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "button1",
+          "automationId": "button1",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "WindowsForms10.Button.app.0.273e403_r3_ad1",
+          "frameworkId": "WinForm",
+          "nativeWindowHandle": 4264692,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1388.0,
+            "y": 161.0,
+            "width": 110.0,
+            "height": 30.0
+          },
+          "ancestors": [
+            {
+              "name": "S061 outline rename",
+              "controlType": "ControlType.Window"
+            },
+            {
+              "name": "OverlayContainer",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerWindowFrame",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "DesignerView",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "WinForms Window Surface",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S061OutlineRenameForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S061OutlineRenameForm.cs [Design]",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "S061OutlineRenameForm.cs [Design]",
+              "controlType": "ControlType.TabItem"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Tab"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            }
+          ]
+        },
+        {
+          "name": "Properties",
+          "automationId": "ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+          "controlType": "ControlType.Pane",
+          "localizedControlType": "pane",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "ViewPresenter",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1593.0,
+            "y": 69.0,
+            "width": 288.0,
+            "height": 584.0
+          },
+          "ancestors": [
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Properties",
+          "automationId": "",
+          "controlType": "ControlType.Text",
+          "localizedControlType": "text",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "TextBlock",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": false,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1602.0,
+            "y": 74.0,
+            "width": 53.0,
+            "height": 15.0
+          },
+          "ancestors": [
+            {
+              "name": "Properties",
+              "controlType": "ControlType.TitleBar"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.TitleBar"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Properties",
+          "automationId": "",
+          "controlType": "ControlType.ToolBar",
+          "localizedControlType": "tool bar",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "ToolBar",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1594.0,
+            "y": 94.0,
+            "width": 284.0,
+            "height": 30.0
+          },
+          "ancestors": [
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Sort Properties By Category",
+          "automationId": "",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "Sort Properties By Category",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "Button",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": true,
+          "offscreen": false,
+          "bounds": {
+            "x": 1596.0,
+            "y": 97.0,
+            "width": 24.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "Properties",
+              "controlType": "ControlType.ToolBar"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Sort Properties Alphabetically",
+          "automationId": "",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "Sort Properties Alphabetically",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "Button",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": false,
+          "offscreen": false,
+          "bounds": {
+            "x": 1622.0,
+            "y": 97.0,
+            "width": 24.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "Properties",
+              "controlType": "ControlType.ToolBar"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Show Properties",
+          "automationId": "",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "Show Properties",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "Button",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": true,
+          "offscreen": false,
+          "bounds": {
+            "x": 1653.0,
+            "y": 97.0,
+            "width": 24.0,
+            "height": 24.0
+          },
+          "ancestors": [
+            {
+              "name": "Properties",
+              "controlType": "ControlType.ToolBar"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Properties",
+          "automationId": "",
+          "controlType": "ControlType.Pane",
+          "localizedControlType": "pane",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "GenericPane",
+          "frameworkId": "Win32",
+          "nativeWindowHandle": 4854326,
+          "enabled": true,
+          "focusable": false,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1594.0,
+            "y": 124.0,
+            "width": 286.0,
+            "height": 528.0
+          },
+          "ancestors": [
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Text",
+          "automationId": "52449172",
+          "controlType": "ControlType.TreeItem",
+          "localizedControlType": "tree item",
+          "value": "button1",
+          "helpText": "The text associated with the control.",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "",
+          "frameworkId": "",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": true,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1595.0,
+            "y": 511.0,
+            "width": 266.0,
+            "height": 18.0
+          },
+          "ancestors": [
+            {
+              "name": "Appearance",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Properties Window",
+              "controlType": "ControlType.Table"
+            },
+            {
+              "name": "PropertyGrid",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Property Browser",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Text",
+          "automationId": "4199922",
+          "controlType": "ControlType.Edit",
+          "localizedControlType": "edit",
+          "value": "button1",
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "WindowsForms10.EDIT.app.0.2cea0ca_r17_ad1",
+          "frameworkId": "WinForm",
+          "nativeWindowHandle": 4199922,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1736.0,
+            "y": 512.0,
+            "width": 109.0,
+            "height": 17.0
+          },
+          "ancestors": [
+            {
+              "name": "Text",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Appearance",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Properties Window",
+              "controlType": "ControlType.Table"
+            },
+            {
+              "name": "PropertyGrid",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Property Browser",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "(Name)",
+          "automationId": "38413266",
+          "controlType": "ControlType.TreeItem",
+          "localizedControlType": "tree item",
+          "value": "button1",
+          "helpText": "Indicates the name used in code to identify the object.",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "",
+          "frameworkId": "",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": true,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": true,
+          "bounds": {
+            "x": "Infinity",
+            "y": "Infinity",
+            "width": "-Infinity",
+            "height": "-Infinity"
+          },
+          "ancestors": [
+            {
+              "name": "Design",
+              "controlType": "ControlType.TreeItem"
+            },
+            {
+              "name": "Properties Window",
+              "controlType": "ControlType.Table"
+            },
+            {
+              "name": "PropertyGrid",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Property Browser",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "Properties",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "",
+              "controlType": "ControlType.Pane"
+            },
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        },
+        {
+          "name": "Properties",
+          "automationId": "AUTOHIDE_ST:0:0:{eefa5220-e298-11d0-8f78-00a0c9110057}",
+          "controlType": "ControlType.Button",
+          "localizedControlType": "button",
+          "value": null,
+          "helpText": "",
+          "itemStatus": "",
+          "accessKey": "",
+          "className": "Button",
+          "frameworkId": "WPF",
+          "nativeWindowHandle": 0,
+          "enabled": true,
+          "focusable": false,
+          "hasKeyboardFocus": false,
+          "selectionItemSelected": null,
+          "offscreen": false,
+          "bounds": {
+            "x": 1887.0,
+            "y": 149.0,
+            "width": 27.0,
+            "height": 53.0
+          },
+          "ancestors": [
+            {
+              "name": "VisualStudioReference - S061OutlineRenameForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+              "controlType": "ControlType.Window"
+            }
+          ]
+        }
+      ],
+      "capture": {
+        "hwnd": 4723880,
+        "x": 641,
+        "y": 2,
+        "width": 1279,
+        "height": 687,
+        "dpi": 96,
+        "sha256": "653e56a67a5561e21dd9e244d3b550efbf68f80a2733a66203419e239e984594"
+      }
+    },
+    "propertiesCommandAvailable": true,
+    "inlineRenameProbe": {
+      "input": "physical VK_F2 keybd_event after measured row click",
+      "renameCommands": [
+        {
+          "name": "File.Rename",
+          "available": false
+        },
+        {
+          "name": "Tools.RenameTab",
+          "available": true
+        },
+        {
+          "name": "OtherContextMenus.Toolbox.RenameItem",
+          "available": true
+        },
+        {
+          "name": "OtherContextMenus.BookmarkWindow.Rename",
+          "available": true
+        },
+        {
+          "name": "Refactor.Rename",
+          "available": false
+        },
+        {
+          "name": "OtherContextMenus.WorkspaceContextMenu.CMake.RenameTarget",
+          "available": false
+        },
+        {
+          "name": "OtherContextMenus.WorkspaceContextMenu.CMake.RenameItem",
+          "available": false
+        },
+        {
+          "name": "ReSharper.ReSharper_Rename",
+          "available": false
+        },
+        {
+          "name": "ReSharper_UnitTestSessionRename",
+          "available": false
+        },
+        {
+          "name": "ReSharper_RenameInjectedLayer",
+          "available": false
+        },
+        {
+          "name": "ReSharper_ExecuteDeferredRename",
+          "available": true
+        },
+        {
+          "name": "ReSharper_ResxEditorRename",
+          "available": false
+        },
+        {
+          "name": "ReSharper_RenameSnapshot",
+          "available": false
+        },
+        {
+          "name": "OtherContextMenus.WorkspaceContextMenu.Rename",
+          "available": false
+        },
+        {
+          "name": "ArchitectureContextMenus.DirectedGraphContextMenu.Edit.Rename",
+          "available": false
+        },
+        {
+          "name": "OtherContextMenus.TestListContextMenu.Rename",
+          "available": false
+        },
+        {
+          "name": "OtherContextMenus.MicrosoftDataEntityDesignContext.Rename",
+          "available": false
+        },
+        {
+          "name": "OtherContextMenus.MicrosoftDataEntityDesignContext.Refactor.Rename",
+          "available": false
+        },
+        {
+          "name": "Team.Git.Rename",
+          "available": false
+        },
+        {
+          "name": "TeamFoundationContextMenus.PromoteChanges.TfsContextPromoteRename",
+          "available": false
+        },
+        {
+          "name": "TeamFoundationContextMenus.SourceControlExplorer.TfsContextExplorerRename",
+          "available": false
+        }
+      ],
+      "editors": [],
+      "capture": {
+        "hwnd": 4723880,
+        "x": 641,
+        "y": 2,
+        "width": 1279,
+        "height": 687,
+        "dpi": 96,
+        "sha256": "81a6c3fb6028cbdc53c2157c7da7d95ce5ad8008cb9665c95632e7b5cab49d12"
+      },
+      "cancelledWithEscape": true
+    },
+    "propertiesRename": {
+      "alphabeticalMethod": "InvokePattern.Invoke",
+      "nameBefore": "button1",
+      "nameRowBounds": {
+        "x": "Infinity",
+        "y": "Infinity",
+        "width": "-Infinity",
+        "height": "-Infinity"
+      },
+      "editMethod": "UIAutomation ValuePattern.SetValue",
+      "requestedName": "submitButton",
+      "beforeCapture": {
+        "hwnd": 4723880,
+        "x": 641,
+        "y": 2,
+        "width": 1279,
+        "height": 687,
+        "dpi": 96,
+        "sha256": "1eecdadfa83d7b78bc7e60aad721f7283304322609ec10d2bdb32a4930143c91"
+      },
+      "afterRename": {
+        "sha256": "2fd635f8b669d1159aaf73f0783300654c7ddc0a09a0d3ba8a872e3cef58efba",
+        "shape": {
+          "oldFieldCount": 0,
+          "newFieldCount": 1,
+          "oldMemberReferenceCount": 0,
+          "newMemberReferenceCount": 8,
+          "oldNameLiteralCount": 0,
+          "newNameLiteralCount": 1,
+          "preservedTextLiteralCount": 1,
+          "siblingTextBoxReferenceCount": 6
+        },
+        "capture": {
+          "hwnd": 4723880,
+          "x": 641,
+          "y": 2,
+          "width": 1279,
+          "height": 687,
+          "dpi": 96,
+          "sha256": "747a700f66e475482bc8905d37f264e84a166b053919e0e8aaa66cfde2a56f94"
+        }
+      },
+      "undo": {
+        "available": true,
+        "sha256": "9c989ff6def4d0a20f5bdcd55ab0e9509fdcef77ec8effc1f7debb7db3268de6",
+        "shape": {
+          "oldFieldCount": 1,
+          "newFieldCount": 0,
+          "oldMemberReferenceCount": 8,
+          "newMemberReferenceCount": 0,
+          "oldNameLiteralCount": 1,
+          "newNameLiteralCount": 0,
+          "preservedTextLiteralCount": 1,
+          "siblingTextBoxReferenceCount": 6
+        },
+        "capture": {
+          "hwnd": 4723880,
+          "x": 641,
+          "y": 2,
+          "width": 1279,
+          "height": 687,
+          "dpi": 96,
+          "sha256": "48e9d89f67d2b1fbdc14aef915b950a1bb9c0a031c04c44a9ae8d98bf47afb00"
+        }
+      },
+      "redo": {
+        "available": true,
+        "sha256": "2fd635f8b669d1159aaf73f0783300654c7ddc0a09a0d3ba8a872e3cef58efba",
+        "shape": {
+          "oldFieldCount": 0,
+          "newFieldCount": 1,
+          "oldMemberReferenceCount": 0,
+          "newMemberReferenceCount": 8,
+          "oldNameLiteralCount": 0,
+          "newNameLiteralCount": 1,
+          "preservedTextLiteralCount": 1,
+          "siblingTextBoxReferenceCount": 6
+        },
+        "byteExactToRename": true,
+        "capture": {
+          "hwnd": 4723880,
+          "x": 641,
+          "y": 2,
+          "width": 1279,
+          "height": 687,
+          "dpi": 96,
+          "sha256": "a3d37bde52ec7863e265ecea6b259393615d8096d6200ac0faf15122c897ef20"
+        }
+      }
+    },
+    "capture": {
+      "hwnd": 4723880,
+      "x": 641,
+      "y": 2,
+      "width": 1279,
+      "height": 687,
+      "dpi": 96,
+      "sha256": "a3d37bde52ec7863e265ecea6b259393615d8096d6200ac0faf15122c897ef20"
+    }
+  }
+}

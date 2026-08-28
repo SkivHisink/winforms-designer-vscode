@@ -21,5 +21,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\engine\Engine.csproj" />
+    <ProjectReference Include="..\..\fixtures\FakeVendor\FakeVendor.csproj" />
   </ItemGroup>
 </Project>

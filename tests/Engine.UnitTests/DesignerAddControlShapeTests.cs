@@ -54,6 +54,45 @@ namespace DemoApp
 """;
 
     [Fact]
+    public void LocalizableDrop_UsesApplyResourcesAndReturnsNeutralResourceUpdate()
+    {
+        const string source = """
+namespace DemoApp
+{
+    partial class Form1
+    {
+        private void InitializeComponent()
+        {
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
+            resources.ApplyResources(this, "$this");
+            this.Name = "Form1";
+        }
+    }
+}
+""";
+
+        var result = DesignerRenderer.AddLocalizedControl(
+            "Form1.Designer.cs", "this", "Label", source, null, 5, 6, width: 160, height: 24);
+
+        Assert.True(result.Safe, result.Reason);
+        Assert.Equal("label1", result.Name);
+        Assert.NotNull(result.NewText);
+        Assert.NotNull(result.ResxText);
+        Assert.Contains("resources.ApplyResources(this.label1, \"label1\");", result.NewText!);
+        Assert.DoesNotContain("this.label1.AutoSize =", result.NewText!);
+        Assert.DoesNotContain("this.label1.Location =", result.NewText!);
+        Assert.DoesNotContain("this.label1.Size =", result.NewText!);
+        Assert.DoesNotContain("this.label1.Text =", result.NewText!);
+        Assert.Contains("this.label1.Name = \"label1\";", result.NewText!);
+        Assert.Contains("this.label1.TabIndex = 0;", result.NewText!);
+        Assert.Contains("name=\"label1.AutoSize\"", result.ResxText!);
+        Assert.Contains("name=\"label1.Location\"", result.ResxText!);
+        Assert.Contains("name=\"label1.Size\"", result.ResxText!);
+        Assert.Contains("name=\"label1.Text\"", result.ResxText!);
+        Assert.Contains("label1.Location", result.ResourceKeys);
+    }
+
+    [Fact]
     public void AddControl_UsesVisualStudioFieldNames()
     {
         var check = DesignerControlEditor.AddControl(ScaffoldedForm, "this", "CheckBox");
@@ -159,6 +198,75 @@ namespace DemoApp
         Assert.True(button.Safe, button.Reason);
         Assert.DoesNotContain("AutoSize", button.NewText!);
         Assert.DoesNotContain("PerformLayout", button.NewText!);
+    }
+
+    [Fact]
+    public void RectangleDrop_EmitsRequestedLocationAndSize()
+    {
+        var result = DesignerControlEditor.AddControl(
+            ScaffoldedForm,
+            "this",
+            "Button",
+            locX: 12,
+            locY: 34,
+            width: 210,
+            height: 42);
+        Assert.True(result.Safe, result.Reason);
+
+        string text = Normalized(result.NewText!);
+        Assert.Contains("this.button1.Location = new System.Drawing.Point(12, 34);", text);
+        Assert.Contains("this.button1.Size = new System.Drawing.Size(210, 42);", text);
+        Assert.DoesNotContain("this.button1.Bounds =", text);
+        Assert.DoesNotContain("this.button1.Width =", text);
+        Assert.DoesNotContain("this.button1.Height =", text);
+    }
+
+    [Fact]
+    public void RectangleDrop_DisablesAutoSizeBeforeWritingRequestedSize()
+    {
+        var result = DesignerControlEditor.AddControl(
+            ScaffoldedForm,
+            "this",
+            "Label",
+            locX: 5,
+            locY: 6,
+            width: 160,
+            height: 24);
+        Assert.True(result.Safe, result.Reason);
+
+        string text = Normalized(result.NewText!);
+        Assert.Contains(Normalized("""
+            this.label1.AutoSize = false;
+            this.label1.Location = new System.Drawing.Point(5, 6);
+            this.label1.Name = "label1";
+            this.label1.Size = new System.Drawing.Size(160, 24);
+"""), text);
+        Assert.DoesNotContain("this.label1.AutoSize = true;", text);
+        Assert.DoesNotContain("this.PerformLayout();", text);
+    }
+
+    [Theory]
+    [InlineData(null, 24)]
+    [InlineData(160, null)]
+    [InlineData(0, 24)]
+    [InlineData(160, 0)]
+    [InlineData(-1, 24)]
+    [InlineData(160, -1)]
+    [InlineData(100001, 24)]
+    [InlineData(160, 100001)]
+    public void RectangleDrop_RejectsIncompleteOrInvalidSizes(int? width, int? height)
+    {
+        var result = DesignerControlEditor.AddControl(
+            ScaffoldedForm,
+            "this",
+            "Button",
+            locX: 5,
+            locY: 6,
+            width: width,
+            height: height);
+
+        Assert.False(result.Safe);
+        Assert.Null(result.NewText);
     }
 
     [Fact]
@@ -281,6 +389,33 @@ namespace Sample
             < text.IndexOf("// panel1", System.StringComparison.Ordinal));
         Assert.Contains("this.panel1.Controls.Add(this.button1);", text);
         Assert.DoesNotContain("this.Controls.Add(this.button1);", text);
+    }
+
+    [Fact]
+    public void SplitterPanelSyntheticParent_AcceptsToolboxChildInExactPanel()
+    {
+        var withSplit = DesignerControlEditor.AddControl(ScaffoldedForm, "this", "SplitContainer", null, 10, 10);
+        Assert.True(withSplit.Safe, withSplit.Reason);
+
+        var first = DesignerControlEditor.AddControl(
+            withSplit.NewText!, "splitContainer1.Panel1", "Button", null, 7, 9);
+        Assert.True(first.Safe, first.Reason);
+        Assert.Contains("this.splitContainer1.Panel1.Controls.Add(this.button1);", first.NewText);
+        Assert.Contains("this.button1.Location = new System.Drawing.Point(7, 9);", first.NewText);
+
+        var second = DesignerControlEditor.AddControl(
+            first.NewText!, "splitContainer1.Panel2", "Label", null, 11, 13);
+        Assert.True(second.Safe, second.Reason);
+        Assert.Contains("this.splitContainer1.Panel2.Controls.Add(this.label1);", second.NewText);
+        Assert.DoesNotContain("this.Controls.Add(this.button1);", second.NewText);
+        Assert.DoesNotContain("this.Controls.Add(this.label1);", second.NewText);
+
+        var invalidPanel = DesignerControlEditor.AddControl(
+            withSplit.NewText!, "splitContainer1.Panel3", "Button", null, 0, 0);
+        Assert.False(invalidPanel.Safe);
+        var nonSplitPanel = DesignerControlEditor.AddControl(
+            withSplit.NewText!, "button1.Panel1", "Button", null, 0, 0);
+        Assert.False(nonSplitPanel.Safe);
     }
 
     /// <summary>Trailing spaces (Visual Studio writes "// " headers) are irrelevant to these assertions.</summary>

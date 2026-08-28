@@ -1,0 +1,167 @@
+{
+    "schemaVersion":  1,
+    "traceId":  "VS18.7.11911.148-20260824T131153Z-S079",
+    "scenarioId":  "V2-FND-001-S079",
+    "referenceTraceSource":  "VisualStudioWinFormsDesigner",
+    "authority":  {
+                      "product":  "Visual Studio Enterprise 2026",
+                      "dteVersion":  "18.0",
+                      "installationVersion":  "18.7.11911.148",
+                      "edition":  "Enterprise",
+                      "executable":  "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+                      "dteProgId":  "VisualStudio.DTE.18.0",
+                      "captureHost":  "Microsoft Windows NT 10.0.26100.0; AMD64"
+                  },
+    "status":  "PASS",
+    "setup":  "A classic net48 Form has ClientSize 320x160, logical primaryButton (20,30,90x28), logical statusLabel (50,82,80x20), RightToLeft=Yes, and RightToLeftLayout=true.",
+    "actionLog":  [
+                      "Build the exact classic net48 fixture solution in actual Visual Studio",
+                      "Open S079RtlLayoutForm.cs in the installed classic WinForms Designer",
+                      "Resolve the real Form, Button, and Label child HWNDs by exact native captions",
+                      "Measure the Form client rectangle in screen space and both child window rectangles with Win32",
+                      "Convert each child rectangle to Form-client coordinates",
+                      "Require x = clientWidth - logicalX - width with exact Y and Size preservation",
+                      "Require source, Designer, and project SHA-256 values to remain byte-identical without Save"
+                  ],
+    "expected":  "The actual classic WinForms Designer applies WS_EX_LAYOUTRTL geometry: primaryButton is client (210,30,90x28), statusLabel is client (190,82,80x20), and every source artifact remains clean and byte-identical.",
+    "runtimeArchitecture":  "actual Visual Studio x64 classic net48 reference",
+    "before":  {
+                   "sourceSha256":  "4fb75a27874988e80b737f709c50f9780f3d1227380d03013689cf796788357d",
+                   "designerSha256":  "ab3c5f23806fd72600e8ec8697a9a0a13a8059995d204f1f1726abd2b2acdb98",
+                   "projectSha256":  "8156f5baf72bc5902b3537670c4cb3a575069eac32e8cbb4302802d575eca8ab"
+               },
+    "after":  {
+                  "sourceSha256":  "4fb75a27874988e80b737f709c50f9780f3d1227380d03013689cf796788357d",
+                  "designerSha256":  "ab3c5f23806fd72600e8ec8697a9a0a13a8059995d204f1f1726abd2b2acdb98",
+                  "projectSha256":  "8156f5baf72bc5902b3537670c4cb3a575069eac32e8cbb4302802d575eca8ab"
+              },
+    "clientExact":  true,
+    "controls":  {
+                     "primaryButton":  {
+                                           "exact":  true,
+                                           "measurement":  {
+                                                               "nativeWindowHandle":  9178560,
+                                                               "className":  "WindowsForms10.BUTTON.app.0.2cea0ca_r17_ad1",
+                                                               "text":  "RTL primary",
+                                                               "logicalSource":  {
+                                                                                     "x":  20,
+                                                                                     "y":  30,
+                                                                                     "width":  90,
+                                                                                     "height":  28
+                                                                                 },
+                                                               "expectedMirrored":  {
+                                                                                        "x":  210,
+                                                                                        "y":  30,
+                                                                                        "width":  90,
+                                                                                        "height":  28
+                                                                                    },
+                                                               "actualClient":  {
+                                                                                    "x":  210,
+                                                                                    "y":  30,
+                                                                                    "width":  90,
+                                                                                    "height":  28
+                                                                                }
+                                                           }
+                                       },
+                     "statusLabel":  {
+                                         "exact":  true,
+                                         "measurement":  {
+                                                             "nativeWindowHandle":  6948562,
+                                                             "className":  "WindowsForms10.STATIC.app.0.2cea0ca_r17_ad1",
+                                                             "text":  "RTL status",
+                                                             "logicalSource":  {
+                                                                                   "x":  50,
+                                                                                   "y":  82,
+                                                                                   "width":  80,
+                                                                                   "height":  20
+                                                                               },
+                                                             "expectedMirrored":  {
+                                                                                      "x":  190,
+                                                                                      "y":  82,
+                                                                                      "width":  80,
+                                                                                      "height":  20
+                                                                                  },
+                                                             "actualClient":  {
+                                                                                  "x":  190,
+                                                                                  "y":  82,
+                                                                                  "width":  80,
+                                                                                  "height":  20
+                                                                              }
+                                                         }
+                                     }
+                 },
+    "sourceContractExact":  true,
+    "artifactsExact":  true,
+    "visualStudioWindow":  {
+                               "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\355235409ce14cd7912aacebd81723c9\\Net48\\S079RtlLayoutForm.cs",
+                               "route":  "actual classic net48 WinForms Designer native child HWND geometry",
+                               "form":  {
+                                            "nativeWindowHandle":  10621424,
+                                            "className":  "WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1",
+                                            "text":  "S079 RTL layout",
+                                            "clientScreenBounds":  {
+                                                                       "x":  1368,
+                                                                       "y":  141,
+                                                                       "width":  320,
+                                                                       "height":  160
+                                                                   }
+                                        },
+                               "controls":  {
+                                                "primaryButton":  {
+                                                                      "nativeWindowHandle":  9178560,
+                                                                      "className":  "WindowsForms10.BUTTON.app.0.2cea0ca_r17_ad1",
+                                                                      "text":  "RTL primary",
+                                                                      "logicalSource":  {
+                                                                                            "x":  20,
+                                                                                            "y":  30,
+                                                                                            "width":  90,
+                                                                                            "height":  28
+                                                                                        },
+                                                                      "expectedMirrored":  {
+                                                                                               "x":  210,
+                                                                                               "y":  30,
+                                                                                               "width":  90,
+                                                                                               "height":  28
+                                                                                           },
+                                                                      "actualClient":  {
+                                                                                           "x":  210,
+                                                                                           "y":  30,
+                                                                                           "width":  90,
+                                                                                           "height":  28
+                                                                                       }
+                                                                  },
+                                                "statusLabel":  {
+                                                                    "nativeWindowHandle":  6948562,
+                                                                    "className":  "WindowsForms10.STATIC.app.0.2cea0ca_r17_ad1",
+                                                                    "text":  "RTL status",
+                                                                    "logicalSource":  {
+                                                                                          "x":  50,
+                                                                                          "y":  82,
+                                                                                          "width":  80,
+                                                                                          "height":  20
+                                                                                      },
+                                                                    "expectedMirrored":  {
+                                                                                             "x":  190,
+                                                                                             "y":  82,
+                                                                                             "width":  80,
+                                                                                             "height":  20
+                                                                                         },
+                                                                    "actualClient":  {
+                                                                                         "x":  190,
+                                                                                         "y":  82,
+                                                                                         "width":  80,
+                                                                                         "height":  20
+                                                                                     }
+                                                                }
+                                            },
+                               "capture":  {
+                                               "hwnd":  7538332,
+                                               "x":  641,
+                                               "y":  2,
+                                               "width":  1279,
+                                               "height":  687,
+                                               "dpi":  96,
+                                               "sha256":  "a625709b28e66336b6da1753702ba5763d5dec39caea58a41e63ed7f7c062a28"
+                                           }
+                           }
+}

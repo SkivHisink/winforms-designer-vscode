@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "traceId": "VS18.7.11911.148-20260821T163055Z-S030",
+  "scenarioId": "V2-FND-001-S030",
+  "referenceTraceSource": "VisualStudioWinFormsDesigner",
+  "authority": {
+    "product": "Visual Studio Enterprise 2026",
+    "dteVersion": "18.0",
+    "installationVersion": "18.7.11911.148",
+    "edition": "Enterprise",
+    "executable": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+    "dteProgId": "VisualStudio.DTE.18.0",
+    "captureHost": "Microsoft Windows NT 10.0.26100.0; AMD64"
+  },
+  "status": "PASS",
+  "setup": "net10.0-windows Form contains three Buttons sized 120x30, 60x24, and 90x36; button1 is the primary selection after Edit.SelectAll.",
+  "actionLog": [
+    "Build solution in Visual Studio",
+    "Open S030SameWidthForm.cs with the WinForms Designer",
+    "Execute Edit.SelectAll",
+    "Verify Format.MakeSameWidth is enabled",
+    "Execute Format.MakeSameWidth",
+    "Execute File.SaveAll",
+    "Verify the exact generated-source patch"
+  ],
+  "expected": "Visual Studio preserves button1 at 120x30, changes only button2 width 60->120 and button3 width 90->120, preserves every height and Location, canonicalizes bare CodeDOM separator comments, and leaves source/project byte-identical.",
+  "before": {
+    "sourceSha256": "12dcdff3275e301f37423728a61d07ac6f1405f60bfcb8c70456c0fae7c14db3",
+    "designerSha256": "6e8aba8f94733a046684b3c26b23b05beb093980b7013472de236c48da45d3fd",
+    "projectSha256": "687c797e8bdd895bd64c0976aa6add225a195f05a1dc5274e7f81512fde57b44",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 12,
+          "y": 10
+        },
+        "size": {
+          "width": 120,
+          "height": 30
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 42,
+          "y": 55
+        },
+        "size": {
+          "width": 60,
+          "height": 24
+        }
+      },
+      "button3": {
+        "location": {
+          "x": 77,
+          "y": 100
+        },
+        "size": {
+          "width": 90,
+          "height": 36
+        }
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "12dcdff3275e301f37423728a61d07ac6f1405f60bfcb8c70456c0fae7c14db3",
+    "designerSha256": "50aefa158d326f2a33c064df015dbcc4c636ab6520afa5509506b9aefe221d0b",
+    "projectSha256": "687c797e8bdd895bd64c0976aa6add225a195f05a1dc5274e7f81512fde57b44",
+    "shape": {
+      "button1": {
+        "location": {
+          "x": 12,
+          "y": 10
+        },
+        "size": {
+          "width": 120,
+          "height": 30
+        }
+      },
+      "button2": {
+        "location": {
+          "x": 42,
+          "y": 55
+        },
+        "size": {
+          "width": 120,
+          "height": 24
+        }
+      },
+      "button3": {
+        "location": {
+          "x": 77,
+          "y": 100
+        },
+        "size": {
+          "width": 120,
+          "height": 36
+        }
+      }
+    }
+  },
+  "exactDesignerPatch": true,
+  "exactAfterArtifact": "S030SameWidthForm.Designer.after.cs.gz",
+  "sourceByteIdentical": true,
+  "projectByteIdentical": true,
+  "visualStudioWindow": {
+    "document": "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\e048c00d3eb644e89d47c74ef260e1bc\\Modern\\S030SameWidthForm.cs",
+    "command": "Format.MakeSameWidth",
+    "beforeSelect": {
+      "selectAllAvailable": true,
+      "makeSameWidthAvailable": false
+    },
+    "afterSelect": {
+      "selectAllAvailable": true,
+      "makeSameWidthAvailable": true
+    },
+    "capture": {
+      "hwnd": 16652796,
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "sha256": "89fb035d16260e073ec727ab4d5b65ec60f2f42a9c53067e93890b731ea4c947"
+    }
+  }
+}

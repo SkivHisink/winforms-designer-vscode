@@ -66,6 +66,11 @@ namespace WinFormsDesigner.Engine
         {
             bool isRoot = componentName is "this" or "";
 
+            if (!isRoot && !IsValidComponentPath(componentName))
+                return new EditResult { Mode = EditMode.Failed, Reason = "invalid component path: " + componentName };
+            if (!DesignerControlEditor.IsValidIdentifier(propertyName))
+                return new EditResult { Mode = EditMode.Failed, Reason = "invalid property name: " + propertyName };
+
             // reject anything that is not exactly one expression — stops a value like
             // `5; this.evil = 1` from injecting extra statements through the splice.
             if (!IsSingleExpression(newValueExpr))
@@ -133,12 +138,28 @@ namespace WinFormsDesigner.Engine
         public static bool OnlyTargetChanged(string original, string edited, string componentName, string propertyName, EditMode mode)
         {
             bool isRoot = componentName is "this" or "";
-            var (origNon, origTgt) = Classify(original, componentName, propertyName, isRoot);
-            var (editNon, editTgt) = Classify(edited, componentName, propertyName, isRoot);
+            var (origNon, origTgt) = Classify(FindInitializeComponent(original)?.Body, componentName, propertyName, isRoot);
+            var (editNon, editTgt) = Classify(FindInitializeComponent(edited)?.Body, componentName, propertyName, isRoot);
 
             int expectedDelta = mode == EditMode.Insert ? 1 : 0;
             if (editTgt != origTgt + expectedDelta) return false;
             return MultisetEqual(origNon, editNon);
+        }
+
+        /// <summary>Same minimality proof over already-validated InitializeComponent bodies. Owned-region planning has
+        /// both Roslyn trees in hand, so reparsing two dense whole files would add latency but no independent evidence.</summary>
+        internal static bool OnlyTargetChanged(
+            BlockSyntax originalBody,
+            BlockSyntax editedBody,
+            string componentName,
+            string propertyName,
+            EditMode mode)
+        {
+            bool isRoot = componentName is "this" or "";
+            var (origNon, origTgt) = Classify(originalBody, componentName, propertyName, isRoot);
+            var (editNon, editTgt) = Classify(editedBody, componentName, propertyName, isRoot);
+            int expectedDelta = mode == EditMode.Insert ? 1 : 0;
+            return editTgt == origTgt + expectedDelta && MultisetEqual(origNon, editNon);
         }
 
         /// <summary>
@@ -153,7 +174,7 @@ namespace WinFormsDesigner.Engine
         public static PropertyResetResult ResetProperty(string sourceText, string componentName, string propertyName)
         {
             bool isRoot = componentName is "this" or "";
-            if (!isRoot && !DesignerControlEditor.IsValidIdentifier(componentName))
+            if (!isRoot && !IsValidComponentPath(componentName))
                 return new PropertyResetResult { Reason = "invalid component id: " + componentName };
             if (!DesignerControlEditor.IsValidIdentifier(propertyName))
                 return new PropertyResetResult { Reason = "invalid property name: " + propertyName };
@@ -267,13 +288,16 @@ namespace WinFormsDesigner.Engine
         // ---- classification ----
 
         private static (List<string> nonTarget, int targetCount) Classify(string code, string comp, string prop, bool isRoot)
+            => Classify(FindInitializeComponent(code)?.Body, comp, prop, isRoot);
+
+        private static (List<string> nonTarget, int targetCount) Classify(
+            BlockSyntax? body, string comp, string prop, bool isRoot)
         {
             var nonTarget = new List<string>();
             int targetCount = 0;
-            var init = FindInitializeComponent(code);
-            if (init?.Body != null)
+            if (body != null)
             {
-                foreach (var st in init.Body.Statements)
+                foreach (var st in body.Statements)
                 {
                     if (IsTargetAssignment(st, comp, prop, isRoot)) targetCount++;
                     else nonTarget.Add(NormalizeStmt(st.ToString()));
@@ -286,16 +310,42 @@ namespace WinFormsDesigner.Engine
             st is ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax asg }
             && TargetMatches(Flatten(asg.Left), comp, prop, isRoot);
 
-        private static bool TargetMatches(List<string> chain, string comp, string prop, bool isRoot) =>
-            isRoot ? (chain.Count == 1 && chain[0] == prop)
-                   : (chain.Count == 2 && chain[0] == comp && chain[1] == prop);
+        private static bool TargetMatches(List<string> chain, string comp, string prop, bool isRoot)
+        {
+            if (isRoot) return chain.Count == 1 && chain[0] == prop;
+            string[] path = ComponentPath(comp);
+            if (chain.Count != path.Length + 1 || chain[^1] != prop) return false;
+            for (int i = 0; i < path.Length; i++)
+                if (chain[i] != path[i]) return false;
+            return true;
+        }
 
         // An insert anchor is any statement that names the component: for a child, either its property assignment
         // `this.comp.X = …` (chain [comp, X]) OR its own creation `this.comp = new …` (chain [comp]) — so setting
         // the FIRST property on a component whose only statement is the `new` line still finds an anchor (e.g.
         // importing an Image onto a freshly-added tray component) instead of failing with "no anchor".
-        private static bool OwnerMatches(List<string> chain, string comp, bool isRoot) =>
-            isRoot ? chain.Count == 1 : ((chain.Count == 1 || chain.Count == 2) && chain[0] == comp);
+        private static bool OwnerMatches(List<string> chain, string comp, bool isRoot)
+        {
+            if (isRoot) return chain.Count == 1;
+            string[] path = ComponentPath(comp);
+            bool exactPathOwner = (chain.Count == path.Length || chain.Count == path.Length + 1)
+                && path.Select((part, index) => chain[index] == part).All(match => match);
+            if (exactPathOwner) return true;
+            // A framework-owned subcontainer (currently SplitContainer.Panel1/Panel2) can have no property assignment
+            // of its own yet. In that case anchor the first panel property after the owning field's assignment group.
+            return path.Length > 1 && (chain.Count == 1 || chain.Count == 2) && chain[0] == path[0];
+        }
+
+        private static string[] ComponentPath(string componentName) =>
+            componentName.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
+
+        private static bool IsValidComponentPath(string componentName)
+        {
+            string[] path = ComponentPath(componentName);
+            return path.Length is > 0 and <= 8
+                && string.Join(".", path) == componentName
+                && path.All(DesignerControlEditor.IsValidIdentifier);
+        }
 
         // ---- helpers ----
 

@@ -118,6 +118,49 @@ namespace WinFormsDesigner.Engine
             return ApplyEdits(resxText, edits);
         }
 
+        /// <summary>Remove every resource owned by the supplied component identities (all <c>id.*</c> keys). Used by
+        /// structural Delete on a localizable form for neutral and satellite files. An absent resource file remains
+        /// absent; a no-match file is returned byte-identically; malformed XML refuses the whole caller transaction.</summary>
+        public static LocalizedResourceEditResult RemoveComponents(string? resxText, IReadOnlyList<string> componentIds)
+        {
+            if (componentIds == null || componentIds.Count == 0) return Fail("no components");
+            if (componentIds.Count > MaxBatch) return Fail("too many components in one batch");
+            if (resxText != null && resxText.Length > MaxResxChars) return Fail("existing .resx is too large to modify safely");
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string id in componentIds)
+            {
+                if (!DesignerControlEditor.IsValidIdentifier(id)) return Fail("invalid component id: " + id);
+                ids.Add(id);
+            }
+            if (resxText == null) return new LocalizedResourceEditResult { Ok = true, ResxText = null };
+
+            XDocument doc;
+            try
+            {
+                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+                using var sr = new StringReader(resxText);
+                using var xr = XmlReader.Create(sr, settings);
+                doc = XDocument.Load(xr);
+            }
+            catch { return Fail("the existing .resx is malformed and was not modified"); }
+            if (doc.Root == null || doc.Root.Name.LocalName != "root") return Fail("the existing .resx has no root element");
+
+            var removed = doc.Root.Elements("data")
+                .Where(element =>
+                {
+                    string? name = (string?)element.Attribute("name");
+                    if (name == null) return false;
+                    int dot = name.IndexOf('.');
+                    return dot > 0 && ids.Contains(name.Substring(0, dot));
+                })
+                .ToList();
+            if (removed.Count == 0)
+                return new LocalizedResourceEditResult { Ok = true, ResxText = resxText };
+            var keys = removed.Select(element => (string)element.Attribute("name")!).ToList();
+            foreach (var element in removed) element.Remove();
+            return new LocalizedResourceEditResult { Ok = true, ResxText = Serialize(doc, resxText), Keys = keys };
+        }
+
         private static string? UpsertScalar(string? resxText, string key, string valueTypeName, string? rawValue, out string reason)
         {
             reason = "";
@@ -253,7 +296,7 @@ namespace WinFormsDesigner.Engine
             var root = doc.Root!;
             root.Elements("data").Where(d => (string?)d.Attribute("name") == key).ToList().ForEach(d => d.Remove());
             if (!remove && makeNode != null) root.Add(makeNode());
-            return Serialize(doc);
+            return Serialize(doc, resxText);
         }
 
         private static string? FailText(string message, out string reason)
@@ -265,20 +308,26 @@ namespace WinFormsDesigner.Engine
         private static LocalizedResourceEditResult Fail(string reason) =>
             new() { Ok = false, Reason = reason };
 
-        private static string Serialize(XDocument doc)
+        private static string Serialize(XDocument doc, string? originalText)
         {
             StripStructuralWhitespace(doc.Root!);
+            string newLine = originalText?.Contains("\r\n", StringComparison.Ordinal) == true ? "\r\n"
+                : originalText?.Contains('\n') == true ? "\n"
+                : "\r\n";
+            bool hadTrailingNewLine = originalText?.EndsWith("\r\n", StringComparison.Ordinal) == true
+                || originalText?.EndsWith('\n') == true;
             var settings = new XmlWriterSettings
             {
                 OmitXmlDeclaration = true,
                 Indent = true,
                 IndentChars = "  ",
-                NewLineChars = "\r\n",
+                NewLineChars = newLine,
                 NewLineHandling = NewLineHandling.None,
             };
             var sb = new System.Text.StringBuilder();
             using (var w = XmlWriter.Create(sb, settings)) doc.Root!.Save(w);
-            return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n" + sb;
+            string serialized = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" + newLine + sb;
+            return hadTrailingNewLine ? serialized + newLine : serialized;
         }
 
         private static void StripStructuralWhitespace(XElement el)

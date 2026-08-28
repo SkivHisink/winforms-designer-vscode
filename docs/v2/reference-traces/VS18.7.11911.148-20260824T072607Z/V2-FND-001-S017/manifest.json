@@ -1,0 +1,518 @@
+{
+    "schemaVersion":  1,
+    "traceId":  "VS18.7.11911.148-20260824T072607Z-S017",
+    "scenarioId":  "V2-FND-001-S017",
+    "referenceTraceSource":  "VisualStudioWinFormsDesigner",
+    "authority":  {
+                      "product":  "Visual Studio Enterprise 2026",
+                      "dteVersion":  "18.0",
+                      "installationVersion":  "18.7.11911.148",
+                      "edition":  "Enterprise",
+                      "executable":  "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+                      "dteProgId":  "VisualStudio.DTE.18.0",
+                      "captureHost":  "Microsoft Windows NT 10.0.26100.0; AMD64"
+                  },
+    "status":  "PASS",
+    "setup":  "A modern Form contains a 250x180 Panel with four child Buttons plus two Form-level Buttons; the native marquee rectangle fully encloses enclosedButtonA and enclosedButtonB, partially intersects partialButton, and excludes all remaining controls.",
+    "actionLog":  [
+                      "Open S017MarqueeForm.cs in the actual modern WinForms Designer",
+                      "Resolve the real Panel and all six Button bounds through UI Automation",
+                      "Require the native screen-space rectangle to intersect exactly enclosedButtonA, enclosedButtonB, and partialButton while fully containing only the first two",
+                      "Drag the marquee through the capture-owned native input window using the disconnected-desktop cursor-relative offset",
+                      "Invoke Edit.Copy and require it to be non-mutating",
+                      "Invoke a diagnostic Edit.Paste and require exactly three new Panel children whose Text values identify all and only the intersecting controls",
+                      "Invoke one native Edit.Undo, require the original semantic shape, and record any CodeDOM ordering normalization separately from the non-mutating marquee outcome"
+                  ],
+    "expected":  "Visual Studio selects all three intersecting direct children from the active Panel, including the partially intersected Button; the same-Panel outside and Form-level controls remain unselected, while the marquee and Copy leave source bytes exact.",
+    "runtimeArchitecture":  "actual Visual Studio x64 modern SDK reference",
+    "before":  {
+                   "sourceSha256":  "8495545023badc83644d19c5ebe229462e64b9f480c48efb7785c2fa16dd72ec",
+                   "designerSha256":  "3211af8ddda929a3cf67436cf9b0611a9338b8c9a7f1cd7b6c2f6477da1711c7",
+                   "projectSha256":  "a1583f54f34c0339ed9ff30e95450456c56421b3e594e0ae8f538d72cc5fed07",
+                   "shape":  {
+                                 "buttonFieldCount":  6,
+                                 "distinctButtonFieldCount":  6,
+                                 "buttonFields":  [
+                                                      "enclosedButtonA",
+                                                      "enclosedButtonB",
+                                                      "partialButton",
+                                                      "panelOutsideButton",
+                                                      "formOutsideButtonA",
+                                                      "formOutsideButtonB"
+                                                  ],
+                                 "panelAddCount":  4,
+                                 "formAddCount":  3,
+                                 "textCounts":  {
+                                                    "enclosedA":  1,
+                                                    "enclosedB":  1,
+                                                    "partial":  1,
+                                                    "panelOutside":  1,
+                                                    "formOutsideA":  1,
+                                                    "formOutsideB":  1
+                                                }
+                             }
+               },
+    "afterPaste":  {
+                       "designerSha256":  "e10b4f8cce4bdf26037c2e0e198ceab87dd2dcc8a0dafa2bb249c58cb9262998",
+                       "shape":  {
+                                     "buttonFieldCount":  9,
+                                     "distinctButtonFieldCount":  9,
+                                     "buttonFields":  [
+                                                          "enclosedButtonA",
+                                                          "enclosedButtonB",
+                                                          "partialButton",
+                                                          "panelOutsideButton",
+                                                          "formOutsideButtonA",
+                                                          "formOutsideButtonB",
+                                                          "button1",
+                                                          "button2",
+                                                          "button3"
+                                                      ],
+                                     "panelAddCount":  7,
+                                     "formAddCount":  3,
+                                     "textCounts":  {
+                                                        "enclosedA":  2,
+                                                        "enclosedB":  2,
+                                                        "partial":  2,
+                                                        "panelOutside":  1,
+                                                        "formOutsideA":  1,
+                                                        "formOutsideB":  1
+                                                    }
+                                 }
+                   },
+    "afterUndo":  {
+                      "sourceSha256":  "8495545023badc83644d19c5ebe229462e64b9f480c48efb7785c2fa16dd72ec",
+                      "designerSha256":  "f85a6f850d61fcef17367473c8f5b3deda9bcc6e9b71f4bae9c2c1486a0f060b",
+                      "projectSha256":  "a1583f54f34c0339ed9ff30e95450456c56421b3e594e0ae8f538d72cc5fed07",
+                      "shape":  {
+                                    "buttonFieldCount":  6,
+                                    "distinctButtonFieldCount":  6,
+                                    "buttonFields":  [
+                                                         "enclosedButtonA",
+                                                         "enclosedButtonB",
+                                                         "partialButton",
+                                                         "panelOutsideButton",
+                                                         "formOutsideButtonA",
+                                                         "formOutsideButtonB"
+                                                     ],
+                                    "panelAddCount":  4,
+                                    "formAddCount":  3,
+                                    "textCounts":  {
+                                                       "enclosedA":  1,
+                                                       "enclosedB":  1,
+                                                       "partial":  1,
+                                                       "panelOutside":  1,
+                                                       "formOutsideA":  1,
+                                                       "formOutsideB":  1
+                                                   }
+                                }
+                  },
+    "selectionProbe":  {
+                           "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\5f6cb070c4d04b569ce8e4e80f820ec8\\Modern\\S017MarqueeForm.cs",
+                           "action":  "Cursor-relative native marquee, Edit.Copy, diagnostic Edit.Paste, native Edit.Undo",
+                           "expectedFullyContained":  [
+                                                          "enclosedButtonA",
+                                                          "enclosedButtonB"
+                                                      ],
+                           "intersecting":  [
+                                                "enclosedButtonA",
+                                                "enclosedButtonB",
+                                                "partialButton"
+                                            ],
+                           "elementBounds":  {
+                                                 "panel1":  {
+                                                                "x":  1392,
+                                                                "y":  165,
+                                                                "width":  250,
+                                                                "height":  180,
+                                                                "right":  1642,
+                                                                "bottom":  345
+                                                            },
+                                                 "enclosedButtonA":  {
+                                                                         "x":  1413,
+                                                                         "y":  186,
+                                                                         "width":  70,
+                                                                         "height":  30,
+                                                                         "right":  1483,
+                                                                         "bottom":  216
+                                                                     },
+                                                 "enclosedButtonB":  {
+                                                                         "x":  1513,
+                                                                         "y":  186,
+                                                                         "width":  70,
+                                                                         "height":  30,
+                                                                         "right":  1583,
+                                                                         "bottom":  216
+                                                                     },
+                                                 "partialButton":  {
+                                                                       "x":  1583,
+                                                                       "y":  221,
+                                                                       "width":  55,
+                                                                       "height":  35,
+                                                                       "right":  1638,
+                                                                       "bottom":  256
+                                                                   },
+                                                 "panelOutsideButton":  {
+                                                                            "x":  1413,
+                                                                            "y":  281,
+                                                                            "width":  100,
+                                                                            "height":  30,
+                                                                            "right":  1513,
+                                                                            "bottom":  311
+                                                                        },
+                                                 "formOutsideButtonA":  {
+                                                                            "x":  1678,
+                                                                            "y":  181,
+                                                                            "width":  110,
+                                                                            "height":  30,
+                                                                            "right":  1788,
+                                                                            "bottom":  211
+                                                                        },
+                                                 "formOutsideButtonB":  {
+                                                                            "x":  1678,
+                                                                            "y":  241,
+                                                                            "width":  110,
+                                                                            "height":  30,
+                                                                            "right":  1788,
+                                                                            "bottom":  271
+                                                                        }
+                                             },
+                           "marquee":  {
+                                           "left":  1400,
+                                           "top":  173,
+                                           "right":  1602,
+                                           "bottom":  240
+                                       },
+                           "input":  {
+                                         "mode":  "cursor-relative-capture-owned-window-offset",
+                                         "beforeWindowChain":  "L0 hwnd=135054 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield \u003c- L1 hwnd=135052 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView \u003c- L2 hwnd=69514 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface \u003c- L3 hwnd=69510 class=GenericPane text=S017MarqueeForm.cs [Design] \u003c- L4 hwnd=9372138 class=HwndWrapper[DefaultDomain;;952e164c-bcaa-406b-b5c8-3bf1b2ad9f20] text=VisualStudioReference - S017MarqueeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                         "shiftedWindowChain":  "L0 hwnd=135054 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield \u003c- L1 hwnd=135052 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView \u003c- L2 hwnd=69514 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface \u003c- L3 hwnd=69510 class=GenericPane text=S017MarqueeForm.cs [Design] \u003c- L4 hwnd=9372138 class=HwndWrapper[DefaultDomain;;952e164c-bcaa-406b-b5c8-3bf1b2ad9f20] text=VisualStudioReference - S017MarqueeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                         "captureWindow":  135054,
+                                         "deltaX":  202,
+                                         "deltaY":  67,
+                                         "start":  {
+                                                       "x":  1400,
+                                                       "y":  173
+                                                   },
+                                         "end":  {
+                                                     "x":  1602,
+                                                     "y":  240
+                                                 },
+                                         "cursor":  {
+                                                        "x":  1256,
+                                                        "y":  639
+                                                    },
+                                         "cursorReadAvailable":  true,
+                                         "traceWindowShift":  {
+                                                                  "x":  -346,
+                                                                  "y":  399,
+                                                                  "syntheticStart":  {
+                                                                                         "x":  1054,
+                                                                                         "y":  572
+                                                                                     },
+                                                                  "syntheticPanelBounds":  {
+                                                                                               "x":  1047,
+                                                                                               "y":  564,
+                                                                                               "width":  250,
+                                                                                               "height":  180
+                                                                                           }
+                                                              }
+                                     },
+                           "copyAvailable":  true,
+                           "pasteAvailable":  true,
+                           "copyWasNonMutating":  true,
+                           "beforeCopySha256":  "3211af8ddda929a3cf67436cf9b0611a9338b8c9a7f1cd7b6c2f6477da1711c7",
+                           "afterCopySha256":  "3211af8ddda929a3cf67436cf9b0611a9338b8c9a7f1cd7b6c2f6477da1711c7",
+                           "afterPasteSha256":  "e10b4f8cce4bdf26037c2e0e198ceab87dd2dcc8a0dafa2bb249c58cb9262998",
+                           "afterPasteShape":  {
+                                                   "buttonFieldCount":  9,
+                                                   "distinctButtonFieldCount":  9,
+                                                   "buttonFields":  [
+                                                                        "enclosedButtonA",
+                                                                        "enclosedButtonB",
+                                                                        "partialButton",
+                                                                        "panelOutsideButton",
+                                                                        "formOutsideButtonA",
+                                                                        "formOutsideButtonB",
+                                                                        "button1",
+                                                                        "button2",
+                                                                        "button3"
+                                                                    ],
+                                                   "panelAddCount":  7,
+                                                   "formAddCount":  3,
+                                                   "textCounts":  {
+                                                                      "enclosedA":  2,
+                                                                      "enclosedB":  2,
+                                                                      "partial":  2,
+                                                                      "panelOutside":  1,
+                                                                      "formOutsideA":  1,
+                                                                      "formOutsideB":  1
+                                                                  }
+                                               },
+                           "afterPasteArtifact":  "S017MarqueeForm.Designer.after-paste.cs.gz",
+                           "undoAvailable":  true,
+                           "afterUndoSha256":  "f85a6f850d61fcef17367473c8f5b3deda9bcc6e9b71f4bae9c2c1486a0f060b",
+                           "afterUndoShape":  {
+                                                  "buttonFieldCount":  6,
+                                                  "distinctButtonFieldCount":  6,
+                                                  "buttonFields":  [
+                                                                       "enclosedButtonA",
+                                                                       "enclosedButtonB",
+                                                                       "partialButton",
+                                                                       "panelOutsideButton",
+                                                                       "formOutsideButtonA",
+                                                                       "formOutsideButtonB"
+                                                                   ],
+                                                  "panelAddCount":  4,
+                                                  "formAddCount":  3,
+                                                  "textCounts":  {
+                                                                     "enclosedA":  1,
+                                                                     "enclosedB":  1,
+                                                                     "partial":  1,
+                                                                     "panelOutside":  1,
+                                                                     "formOutsideA":  1,
+                                                                     "formOutsideB":  1
+                                                                 }
+                                              },
+                           "capture":  {
+                                           "hwnd":  9372138,
+                                           "x":  641,
+                                           "y":  2,
+                                           "width":  1279,
+                                           "height":  687,
+                                           "dpi":  96,
+                                           "sha256":  "faf40dca57b896f540e99cfa5163b56f9bdb4b27d33a0955193160d34c663956"
+                                       },
+                           "activeDragCapture":  {
+                                                     "hwnd":  9372138,
+                                                     "x":  295,
+                                                     "y":  401,
+                                                     "width":  1279,
+                                                     "height":  687,
+                                                     "dpi":  96,
+                                                     "sha256":  "a6dd67abe2619e6e3462d6cc2f0079dca16c56b21e97a17d1918d21200ede2a0"
+                                                 },
+                           "afterPasteCapture":  {
+                                                     "hwnd":  9372138,
+                                                     "x":  641,
+                                                     "y":  2,
+                                                     "width":  1279,
+                                                     "height":  687,
+                                                     "dpi":  96,
+                                                     "sha256":  "796cd4937b7353f262522880a79e34d5bc4a8b705f2540af071027adc2aed94b"
+                                                 }
+                       },
+    "beforeShapeExact":  true,
+    "pasteProvesExactSelection":  true,
+    "undoShapeExact":  true,
+    "undoBytesExact":  false,
+    "selectionOutcomeBytesExact":  true,
+    "diagnosticUndoSerializerNormalized":  true,
+    "sourceAndProjectExact":  true,
+    "resource":  {
+                     "exists":  true,
+                     "root":  "root",
+                     "dataCount":  0,
+                     "metadataCount":  0,
+                     "sha256":  "d679c8de86ccb99ed1f69895706946ec8b2e9eed458dd6d7b8d5144cb3bb3cf5",
+                     "standardEmptyOrAbsent":  true,
+                     "artifact":  "S017MarqueeForm.resx"
+                 },
+    "exactAfterPasteArtifact":  "S017MarqueeForm.Designer.after-paste.cs.gz",
+    "exactAfterUndoArtifact":  "S017MarqueeForm.Designer.after-undo.cs.gz",
+    "visualStudioWindow":  {
+                               "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\5f6cb070c4d04b569ce8e4e80f820ec8\\Modern\\S017MarqueeForm.cs",
+                               "action":  "Cursor-relative native marquee, Edit.Copy, diagnostic Edit.Paste, native Edit.Undo",
+                               "expectedFullyContained":  [
+                                                              "enclosedButtonA",
+                                                              "enclosedButtonB"
+                                                          ],
+                               "intersecting":  [
+                                                    "enclosedButtonA",
+                                                    "enclosedButtonB",
+                                                    "partialButton"
+                                                ],
+                               "elementBounds":  {
+                                                     "panel1":  {
+                                                                    "x":  1392,
+                                                                    "y":  165,
+                                                                    "width":  250,
+                                                                    "height":  180,
+                                                                    "right":  1642,
+                                                                    "bottom":  345
+                                                                },
+                                                     "enclosedButtonA":  {
+                                                                             "x":  1413,
+                                                                             "y":  186,
+                                                                             "width":  70,
+                                                                             "height":  30,
+                                                                             "right":  1483,
+                                                                             "bottom":  216
+                                                                         },
+                                                     "enclosedButtonB":  {
+                                                                             "x":  1513,
+                                                                             "y":  186,
+                                                                             "width":  70,
+                                                                             "height":  30,
+                                                                             "right":  1583,
+                                                                             "bottom":  216
+                                                                         },
+                                                     "partialButton":  {
+                                                                           "x":  1583,
+                                                                           "y":  221,
+                                                                           "width":  55,
+                                                                           "height":  35,
+                                                                           "right":  1638,
+                                                                           "bottom":  256
+                                                                       },
+                                                     "panelOutsideButton":  {
+                                                                                "x":  1413,
+                                                                                "y":  281,
+                                                                                "width":  100,
+                                                                                "height":  30,
+                                                                                "right":  1513,
+                                                                                "bottom":  311
+                                                                            },
+                                                     "formOutsideButtonA":  {
+                                                                                "x":  1678,
+                                                                                "y":  181,
+                                                                                "width":  110,
+                                                                                "height":  30,
+                                                                                "right":  1788,
+                                                                                "bottom":  211
+                                                                            },
+                                                     "formOutsideButtonB":  {
+                                                                                "x":  1678,
+                                                                                "y":  241,
+                                                                                "width":  110,
+                                                                                "height":  30,
+                                                                                "right":  1788,
+                                                                                "bottom":  271
+                                                                            }
+                                                 },
+                               "marquee":  {
+                                               "left":  1400,
+                                               "top":  173,
+                                               "right":  1602,
+                                               "bottom":  240
+                                           },
+                               "input":  {
+                                             "mode":  "cursor-relative-capture-owned-window-offset",
+                                             "beforeWindowChain":  "L0 hwnd=135054 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield \u003c- L1 hwnd=135052 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView \u003c- L2 hwnd=69514 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface \u003c- L3 hwnd=69510 class=GenericPane text=S017MarqueeForm.cs [Design] \u003c- L4 hwnd=9372138 class=HwndWrapper[DefaultDomain;;952e164c-bcaa-406b-b5c8-3bf1b2ad9f20] text=VisualStudioReference - S017MarqueeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                             "shiftedWindowChain":  "L0 hwnd=135054 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=InputShield \u003c- L1 hwnd=135052 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=DesignerView \u003c- L2 hwnd=69514 class=WindowsForms10.Window.8.app.0.2cea0ca_r17_ad1 text=WinForms Window Surface \u003c- L3 hwnd=69510 class=GenericPane text=S017MarqueeForm.cs [Design] \u003c- L4 hwnd=9372138 class=HwndWrapper[DefaultDomain;;952e164c-bcaa-406b-b5c8-3bf1b2ad9f20] text=VisualStudioReference - S017MarqueeForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                             "captureWindow":  135054,
+                                             "deltaX":  202,
+                                             "deltaY":  67,
+                                             "start":  {
+                                                           "x":  1400,
+                                                           "y":  173
+                                                       },
+                                             "end":  {
+                                                         "x":  1602,
+                                                         "y":  240
+                                                     },
+                                             "cursor":  {
+                                                            "x":  1256,
+                                                            "y":  639
+                                                        },
+                                             "cursorReadAvailable":  true,
+                                             "traceWindowShift":  {
+                                                                      "x":  -346,
+                                                                      "y":  399,
+                                                                      "syntheticStart":  {
+                                                                                             "x":  1054,
+                                                                                             "y":  572
+                                                                                         },
+                                                                      "syntheticPanelBounds":  {
+                                                                                                   "x":  1047,
+                                                                                                   "y":  564,
+                                                                                                   "width":  250,
+                                                                                                   "height":  180
+                                                                                               }
+                                                                  }
+                                         },
+                               "copyAvailable":  true,
+                               "pasteAvailable":  true,
+                               "copyWasNonMutating":  true,
+                               "beforeCopySha256":  "3211af8ddda929a3cf67436cf9b0611a9338b8c9a7f1cd7b6c2f6477da1711c7",
+                               "afterCopySha256":  "3211af8ddda929a3cf67436cf9b0611a9338b8c9a7f1cd7b6c2f6477da1711c7",
+                               "afterPasteSha256":  "e10b4f8cce4bdf26037c2e0e198ceab87dd2dcc8a0dafa2bb249c58cb9262998",
+                               "afterPasteShape":  {
+                                                       "buttonFieldCount":  9,
+                                                       "distinctButtonFieldCount":  9,
+                                                       "buttonFields":  [
+                                                                            "enclosedButtonA",
+                                                                            "enclosedButtonB",
+                                                                            "partialButton",
+                                                                            "panelOutsideButton",
+                                                                            "formOutsideButtonA",
+                                                                            "formOutsideButtonB",
+                                                                            "button1",
+                                                                            "button2",
+                                                                            "button3"
+                                                                        ],
+                                                       "panelAddCount":  7,
+                                                       "formAddCount":  3,
+                                                       "textCounts":  {
+                                                                          "enclosedA":  2,
+                                                                          "enclosedB":  2,
+                                                                          "partial":  2,
+                                                                          "panelOutside":  1,
+                                                                          "formOutsideA":  1,
+                                                                          "formOutsideB":  1
+                                                                      }
+                                                   },
+                               "afterPasteArtifact":  "S017MarqueeForm.Designer.after-paste.cs.gz",
+                               "undoAvailable":  true,
+                               "afterUndoSha256":  "f85a6f850d61fcef17367473c8f5b3deda9bcc6e9b71f4bae9c2c1486a0f060b",
+                               "afterUndoShape":  {
+                                                      "buttonFieldCount":  6,
+                                                      "distinctButtonFieldCount":  6,
+                                                      "buttonFields":  [
+                                                                           "enclosedButtonA",
+                                                                           "enclosedButtonB",
+                                                                           "partialButton",
+                                                                           "panelOutsideButton",
+                                                                           "formOutsideButtonA",
+                                                                           "formOutsideButtonB"
+                                                                       ],
+                                                      "panelAddCount":  4,
+                                                      "formAddCount":  3,
+                                                      "textCounts":  {
+                                                                         "enclosedA":  1,
+                                                                         "enclosedB":  1,
+                                                                         "partial":  1,
+                                                                         "panelOutside":  1,
+                                                                         "formOutsideA":  1,
+                                                                         "formOutsideB":  1
+                                                                     }
+                                                  },
+                               "capture":  {
+                                               "hwnd":  9372138,
+                                               "x":  641,
+                                               "y":  2,
+                                               "width":  1279,
+                                               "height":  687,
+                                               "dpi":  96,
+                                               "sha256":  "faf40dca57b896f540e99cfa5163b56f9bdb4b27d33a0955193160d34c663956"
+                                           },
+                               "activeDragCapture":  {
+                                                         "hwnd":  9372138,
+                                                         "x":  295,
+                                                         "y":  401,
+                                                         "width":  1279,
+                                                         "height":  687,
+                                                         "dpi":  96,
+                                                         "sha256":  "a6dd67abe2619e6e3462d6cc2f0079dca16c56b21e97a17d1918d21200ede2a0"
+                                                     },
+                               "afterPasteCapture":  {
+                                                         "hwnd":  9372138,
+                                                         "x":  641,
+                                                         "y":  2,
+                                                         "width":  1279,
+                                                         "height":  687,
+                                                         "dpi":  96,
+                                                         "sha256":  "796cd4937b7353f262522880a79e34d5bc4a8b705f2540af071027adc2aed94b"
+                                                     }
+                           }
+}

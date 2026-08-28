@@ -1,0 +1,247 @@
+{
+    "schemaVersion":  1,
+    "traceId":  "VS18.7.11911.148-20260822T234847Z-S050",
+    "scenarioId":  "V2-FND-001-S050",
+    "referenceTraceSource":  "VisualStudioWinFormsDesigner",
+    "authority":  {
+                      "product":  "Visual Studio Enterprise 2026",
+                      "dteVersion":  "18.0",
+                      "installationVersion":  "18.7.11911.148",
+                      "edition":  "Enterprise",
+                      "executable":  "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\common7\\ide\\devenv.exe",
+                      "dteProgId":  "VisualStudio.DTE.18.0",
+                      "captureHost":  "Microsoft Windows NT 10.0.26100.0; AMD64"
+                  },
+    "status":  "PASS",
+    "setup":  "A net10.0-windows Form contains button1 with exactly one existing Click subscription and one compatible button1_Click method.",
+    "actionLog":  [
+                      "Build solution in actual Visual Studio",
+                      "Open S050ExistingEventForm.cs with the WinForms Designer and select button1",
+                      "Open View.PropertiesWindow and activate the native Show Events button",
+                      "Verify the owner-drawn Click row and writable cell both expose button1_Click",
+                      "Commit the same handler through the real writable Events cell with UIAutomation ValuePattern and Enter",
+                      "Execute File.SaveAll and verify source, Designer, and project bytes plus exact method/subscription counts"
+                  ],
+    "expected":  "The actual Events grid publishes the existing compatible button1_Click handler, committing the same handler is a no-op, no duplicate method or subscription is generated, and all three project artifacts remain byte-identical.",
+    "before":  {
+                   "sourceSha256":  "a64028cdb47a7c0d3bff88a9b48e65aef58dead35f064f7c1ee9b9d443f96ac9",
+                   "designerSha256":  "b7418110c276174eeba4e32a27dbe8f21dc83c0f75e69d102237556f472093f9",
+                   "projectSha256":  "ad9b851b5893c76498edbe80e52ee2ec062f9bd5c8c9019d8f6629034eadc638"
+               },
+    "after":  {
+                  "sourceSha256":  "a64028cdb47a7c0d3bff88a9b48e65aef58dead35f064f7c1ee9b9d443f96ac9",
+                  "designerSha256":  "b7418110c276174eeba4e32a27dbe8f21dc83c0f75e69d102237556f472093f9",
+                  "projectSha256":  "ad9b851b5893c76498edbe80e52ee2ec062f9bd5c8c9019d8f6629034eadc638"
+              },
+    "sourceByteIdentical":  true,
+    "designerByteIdentical":  true,
+    "projectByteIdentical":  true,
+    "handlerCount":  1,
+    "subscriptionCount":  1,
+    "runtimeArchitecture":  "actual Visual Studio x64 reference; physical ARM64 remains an independent external gate",
+    "visualStudioWindow":  {
+                               "document":  "D:\\Data\\Code\\CSharpWinformExtension\\.codex-tmp\\vs-reference-traces\\34728c0b0b3a4682950b255393701358\\Modern\\S050ExistingEventForm.cs",
+                               "controlAutomationId":  "button1",
+                               "clickedWindow":  86840604,
+                               "eventsWindow":  0,
+                               "rowWindow":  44636530,
+                               "eventName":  "Click",
+                               "handlerName":  "button1_Click",
+                               "handlerCommitMethod":  "UIAutomation.ValuePattern.SetValue + Enter",
+                               "eventRow":  {
+                                                "name":  "Click",
+                                                "automationId":  "52338232",
+                                                "controlType":  "ControlType.TreeItem",
+                                                "localizedControlType":  "tree item",
+                                                "value":  "button1_Click",
+                                                "helpText":  "Occurs when the component is clicked.",
+                                                "itemStatus":  "",
+                                                "accessKey":  "",
+                                                "className":  "",
+                                                "frameworkId":  "",
+                                                "nativeWindowHandle":  0,
+                                                "enabled":  true,
+                                                "focusable":  true,
+                                                "offscreen":  false,
+                                                "bounds":  {
+                                                               "x":  1593,
+                                                               "y":  174,
+                                                               "width":  266,
+                                                               "height":  18
+                                                           },
+                                                "ancestors":  [
+                                                                  {
+                                                                      "name":  "Action",
+                                                                      "controlType":  "ControlType.TreeItem"
+                                                                  },
+                                                                  {
+                                                                      "name":  "Properties Window",
+                                                                      "controlType":  "ControlType.Table"
+                                                                  },
+                                                                  {
+                                                                      "name":  "PropertyGrid",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "Property Browser",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "Properties",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "Properties",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "",
+                                                                      "controlType":  "ControlType.Pane"
+                                                                  },
+                                                                  {
+                                                                      "name":  "VisualStudioReference - S050ExistingEventForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                      "controlType":  "ControlType.Window"
+                                                                  }
+                                                              ]
+                                            },
+                               "handlerItems":  [
+                                                    {
+                                                        "name":  "Click",
+                                                        "automationId":  "52338232",
+                                                        "controlType":  "ControlType.TreeItem",
+                                                        "localizedControlType":  "tree item",
+                                                        "value":  "button1_Click",
+                                                        "helpText":  "Occurs when the component is clicked.",
+                                                        "itemStatus":  "",
+                                                        "accessKey":  "",
+                                                        "className":  "",
+                                                        "frameworkId":  "",
+                                                        "nativeWindowHandle":  0,
+                                                        "enabled":  true,
+                                                        "focusable":  true,
+                                                        "offscreen":  false,
+                                                        "bounds":  {
+                                                                       "x":  1593,
+                                                                       "y":  174,
+                                                                       "width":  266,
+                                                                       "height":  18
+                                                                   },
+                                                        "ancestors":  [
+                                                                          {
+                                                                              "name":  "Action",
+                                                                              "controlType":  "ControlType.TreeItem"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties Window",
+                                                                              "controlType":  "ControlType.Table"
+                                                                          },
+                                                                          {
+                                                                              "name":  "PropertyGrid",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Property Browser",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "VisualStudioReference - S050ExistingEventForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                              "controlType":  "ControlType.Window"
+                                                                          }
+                                                                      ]
+                                                    },
+                                                    {
+                                                        "name":  "Click",
+                                                        "automationId":  "44636530",
+                                                        "controlType":  "ControlType.Edit",
+                                                        "localizedControlType":  "edit",
+                                                        "value":  "button1_Click",
+                                                        "helpText":  "",
+                                                        "itemStatus":  "",
+                                                        "accessKey":  "",
+                                                        "className":  "WindowsForms10.EDIT.app.0.2cea0ca_r17_ad1",
+                                                        "frameworkId":  "WinForm",
+                                                        "nativeWindowHandle":  44636530,
+                                                        "enabled":  true,
+                                                        "focusable":  true,
+                                                        "offscreen":  false,
+                                                        "bounds":  {
+                                                                       "x":  1734,
+                                                                       "y":  175,
+                                                                       "width":  109,
+                                                                       "height":  17
+                                                                   },
+                                                        "ancestors":  [
+                                                                          {
+                                                                              "name":  "Click",
+                                                                              "controlType":  "ControlType.TreeItem"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Action",
+                                                                              "controlType":  "ControlType.TreeItem"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties Window",
+                                                                              "controlType":  "ControlType.Table"
+                                                                          },
+                                                                          {
+                                                                              "name":  "PropertyGrid",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Property Browser",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "Properties",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "",
+                                                                              "controlType":  "ControlType.Pane"
+                                                                          },
+                                                                          {
+                                                                              "name":  "VisualStudioReference - S050ExistingEventForm.cs [Design] - Microsoft Visual Studio (Administrator)",
+                                                                              "controlType":  "ControlType.Window"
+                                                                          }
+                                                                      ]
+                                                    }
+                                                ],
+                               "capture":  {
+                                               "hwnd":  27073646,
+                                               "x":  0,
+                                               "y":  0,
+                                               "width":  1920,
+                                               "height":  1080,
+                                               "dpi":  96,
+                                               "sha256":  "460be1745ee698c88eb105060bc408534c41cd232e1ae980906dd5dbb8472a30"
+                                           }
+                           }
+}

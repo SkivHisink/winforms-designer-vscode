@@ -3,10 +3,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  applyV2ChooseItems,
+  authorizeV2ToolboxAssembly,
+  buildV2ToolboxPalette,
   discoverBuildOutputAssemblies,
   discoverProjectBuildOutputRoots,
   discoverProbeAssemblies,
   discoverRegisteredAssemblies,
+  filterToolboxByRuntime,
+  refuseTierDToolboxRequest,
   isUserEditDocument,
   uniqueAssemblyPaths
 } from './toolboxDiscovery';
@@ -276,5 +281,249 @@ describe('project-scoped build-output roots', () => {
     for (const scheme of ['output', 'vscode-userdata', 'git', 'vscode', 'search-editor', 'debug']) {
       expect(isUserEditDocument(scheme)).toBe(false);
     }
+  });
+});
+
+describe('v2 toolbox catalog scenarios S053-S060', () => {
+  it('V2-FND-001-S053: auto-populates framework controls with provenance and category', () => {
+    const palette = buildV2ToolboxPalette([
+      { name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' },
+      { name: 'Label', fqn: 'System.Windows.Forms.Label', category: 'Common Controls' },
+    ], [], {
+      chosenItems: [],
+      hiddenFqns: [],
+      favoriteFqns: ['System.Windows.Forms.Button'],
+    });
+
+    const button = palette.items.find((item) => item.name === 'Button');
+    expect(button).toMatchObject({
+      fqn: 'System.Windows.Forms.Button',
+      category: 'Common Controls',
+      favorite: true,
+      suppressed: false,
+      provenance: {
+        kind: 'framework',
+        assemblyName: 'System.Windows.Forms',
+      },
+    });
+    expect(palette.items.map((item) => item.fqn)).toEqual([
+      'System.Windows.Forms.Button',
+      'System.Windows.Forms.Label',
+    ]);
+  });
+
+  it('V2-FND-001-S054: Choose Items adds managed custom control with assembly provenance and cacheable state', () => {
+    const root = tempDir();
+    const assemblyPath = path.join(root, 'FakeVendor.dll');
+    fs.writeFileSync(assemblyPath, 'managed');
+    const automatic = [{ name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' }];
+
+    const next = applyV2ChooseItems({ chosenItems: [], hiddenFqns: [], favoriteFqns: [] }, automatic, [{
+      name: 'FancyButton',
+      namespace: 'FakeVendor',
+      assemblyName: 'FakeVendor',
+      version: '2.0.0.0',
+      directory: root,
+      assemblyPath,
+      fromProject: true,
+      checked: true,
+    }], 'Favorites');
+    const palette = buildV2ToolboxPalette(automatic, [], next);
+    const fancy = palette.items.find((item) => item.fqn === 'FakeVendor.FancyButton');
+
+    expect(next.chosenItems).toEqual([expect.objectContaining({
+      name: 'FancyButton',
+      fqn: 'FakeVendor.FancyButton',
+      category: 'Favorites',
+      fromProject: true,
+      assemblyPath,
+    })]);
+    expect(fancy).toMatchObject({
+      category: 'Favorites',
+      fromProject: true,
+      provenance: {
+        kind: 'choose-items',
+        assemblyName: 'FakeVendor',
+        assemblyPath: path.resolve(assemblyPath),
+      },
+    });
+  });
+
+  it('V2-FND-001-S053/S054: product discovery roots feed framework plus project toolbox palette', async () => {
+    const workspace = tempDir();
+    const app = path.join(workspace, 'App');
+    const controls = path.join(workspace, 'Controls');
+    const controlsOutput = path.join(controls, 'bin', 'Debug', 'net8.0-windows');
+    fs.mkdirSync(path.join(app, 'bin'), { recursive: true });
+    fs.mkdirSync(controlsOutput, { recursive: true });
+    const appProject = path.join(app, 'App.csproj');
+    const controlsProject = path.join(controls, 'Controls.csproj');
+    const controlAssembly = path.join(controlsOutput, 'Controls.dll');
+    fs.writeFileSync(appProject, '<Project><ItemGroup><ProjectReference Include="..\\Controls\\Controls.csproj" /></ItemGroup></Project>');
+    fs.writeFileSync(controlsProject, '<Project />');
+    fs.writeFileSync(controlAssembly, 'managed-control-metadata');
+
+    const roots = await discoverProjectBuildOutputRoots(appProject, { yieldNow: async () => undefined });
+    const assemblies = await discoverBuildOutputAssemblies(roots.roots, { yieldNow: async () => undefined });
+    const projectItems = assemblies.assemblies.map((assembly) => ({
+      name: 'RatingControl',
+      fqn: 'Controls.RatingControl',
+      category: 'Project Controls',
+      fromProject: true,
+      assemblyPath: assembly.path,
+    }));
+
+    const curated = applyV2ChooseItems({
+      chosenItems: [],
+      hiddenFqns: ['System.Windows.Forms.Label'],
+      favoriteFqns: ['Controls.RatingControl'],
+    }, [
+      { name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' },
+      ...projectItems,
+    ], [{
+      name: 'ChartControl',
+      namespace: 'Controls',
+      assemblyName: 'Controls',
+      assemblyPath: controlAssembly,
+      fromProject: true,
+      checked: true,
+    }], 'Project Controls');
+    const palette = buildV2ToolboxPalette([
+      { name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' },
+      { name: 'Label', fqn: 'System.Windows.Forms.Label', category: 'Common Controls' },
+    ], projectItems, curated);
+
+    expect(roots.projects).toEqual([path.resolve(appProject), path.resolve(controlsProject)]);
+    expect(assemblies.assemblies.map((assembly) => path.basename(assembly.path))).toEqual(['Controls.dll']);
+    expect(palette.items.map((item) => item.fqn)).toEqual([
+      'System.Windows.Forms.Button',
+      'Controls.RatingControl',
+      'Controls.ChartControl',
+    ]);
+    expect(palette.suppressed.map((item) => item.fqn)).toEqual(['System.Windows.Forms.Label']);
+    expect(palette.items.find((item) => item.fqn === 'System.Windows.Forms.Button')?.provenance.kind).toBe('framework');
+    expect(palette.items.find((item) => item.fqn === 'Controls.RatingControl')).toMatchObject({
+      category: 'Project Controls',
+      favorite: true,
+      provenance: {
+        kind: 'project',
+        assemblyName: 'Controls',
+        assemblyPath: path.resolve(controlAssembly),
+      },
+    });
+    expect(palette.items.find((item) => item.fqn === 'Controls.ChartControl')?.provenance.kind).toBe('choose-items');
+  });
+
+  it('V2-FND-001-S055: favorites and suppression persist per workspace without losing provenance', () => {
+    const root = tempDir();
+    const vendor = path.join(root, 'FakeVendor.dll');
+    fs.writeFileSync(vendor, 'managed');
+    const frameworkItems = [
+      { name: 'Button', fqn: 'System.Windows.Forms.Button', category: 'Common Controls' },
+      { name: 'Label', fqn: 'System.Windows.Forms.Label', category: 'Common Controls' },
+    ];
+    const projectItems = [
+      { name: 'FancyButton', fqn: 'FakeVendor.FancyButton', category: 'Project Controls', fromProject: true, assemblyPath: vendor },
+    ];
+    const workspaceState = {
+      chosenItems: [],
+      hiddenFqns: ['System.Windows.Forms.Label'],
+      favoriteFqns: ['System.Windows.Forms.Button', 'FakeVendor.FancyButton'],
+    };
+
+    const first = buildV2ToolboxPalette(frameworkItems, projectItems, workspaceState);
+    const reloaded = buildV2ToolboxPalette(frameworkItems, projectItems, first.curation);
+
+    expect(reloaded.items.map((item) => item.fqn)).toEqual([
+      'System.Windows.Forms.Button',
+      'FakeVendor.FancyButton',
+    ]);
+    expect(reloaded.suppressed.map((item) => item.fqn)).toEqual(['System.Windows.Forms.Label']);
+    expect(reloaded.items.every((item) => item.favorite)).toBe(true);
+    expect(reloaded.items.find((item) => item.fqn === 'FakeVendor.FancyButton')?.provenance).toMatchObject({
+      kind: 'project',
+      assemblyName: 'FakeVendor',
+    });
+  });
+
+  it('V2-FND-001-S056: refuses toolbox assembly outside trusted workspace or allowlist before scanning', () => {
+    const workspace = tempDir();
+    const outside = tempDir();
+    const dll = path.join(outside, 'ExternalControls.dll');
+    fs.writeFileSync(dll, 'managed');
+
+    const untrusted = authorizeV2ToolboxAssembly({
+      assemblyPath: dll,
+      workspaceRoots: [workspace],
+      workspaceTrusted: true,
+      designTimeCodeEnabled: false,
+    });
+    expect(untrusted).toMatchObject({
+      ok: false,
+      reasonCode: 'UNTRUSTED_ASSEMBLY',
+    });
+
+    const allowed = authorizeV2ToolboxAssembly({
+      assemblyPath: dll,
+      workspaceRoots: [workspace],
+      allowlistedAssemblyPaths: [dll],
+      workspaceTrusted: true,
+      designTimeCodeEnabled: true,
+    });
+    expect(allowed).toMatchObject({
+      ok: true,
+      normalizedAssemblyPath: fs.realpathSync.native(dll),
+    });
+  });
+
+  // Explicit evidence bindings: V2-FND-001-S057, V2-FND-001-S058, V2-FND-001-S059, V2-FND-001-S060.
+  it('V2-FND-001-S057-S060: keeps x86 COM ActiveX Tier-D paths gated with no mutation or fake host', () => {
+    expect(refuseTierDToolboxRequest('registered-activex')).toMatchObject({
+      ok: false,
+      reasonCode: 'X86_WORKER_UNAVAILABLE',
+      mutationAllowed: false,
+      generatedFiles: [],
+    });
+    expect(refuseTierDToolboxRequest('unsigned-activex')).toMatchObject({
+      ok: false,
+      reasonCode: 'COM_ACTIVE_X_UNSUPPORTED',
+      mutationAllowed: false,
+      generatedFiles: [],
+    });
+    expect(refuseTierDToolboxRequest('activex-rollback')).toMatchObject({
+      ok: false,
+      reasonCode: 'COM_ACTIVE_X_UNSUPPORTED',
+      mutationAllowed: false,
+      generatedFiles: [],
+    });
+    expect(refuseTierDToolboxRequest('com-toolbox')).toMatchObject({
+      ok: false,
+      reasonCode: 'TIER_D_NOT_APPROVED',
+      mutationAllowed: false,
+      generatedFiles: [],
+    });
+  });
+});
+
+describe('filterToolboxByRuntime', () => {
+  type Item = { name: string; frameworkOnly?: boolean };
+  const shim: Item = { name: 'DataGrid', frameworkOnly: true };
+  const modern: Item = { name: 'Button' };
+  const items: Item[] = [shim, modern];
+
+  it('follows the open form in auto mode: a net4x form keeps the .NET Framework-only controls', () => {
+    expect(filterToolboxByRuntime(items, 'net48').map((i) => i.name)).toEqual(['DataGrid', 'Button']);
+    expect(filterToolboxByRuntime(items, 'modern').map((i) => i.name)).toEqual(['Button']);
+  });
+
+  it('pins the answer when the user overrides auto', () => {
+    expect(filterToolboxByRuntime(items, 'modern', 'net48').map((i) => i.name)).toEqual(['DataGrid', 'Button']);
+    expect(filterToolboxByRuntime(items, 'net48', 'modern').map((i) => i.name)).toEqual(['Button']);
+    expect(filterToolboxByRuntime(items, 'modern', 'all').map((i) => i.name)).toEqual(['DataGrid', 'Button']);
+  });
+
+  it('keeps an item that never carries the flag, on either runtime', () => {
+    expect(filterToolboxByRuntime([modern], 'modern')).toHaveLength(1);
+    expect(filterToolboxByRuntime([modern], 'net48')).toHaveLength(1);
   });
 });

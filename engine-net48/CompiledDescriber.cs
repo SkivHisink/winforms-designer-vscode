@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.Design.Serialization;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace WinFormsDesigner.Engine.Net48
@@ -115,7 +116,7 @@ namespace WinFormsDesigner.Engine.Net48
                     readOnly = true;
                 }
 
-                var (standardValues, stdExclusive) = StandardValuesOf(pd, c);
+                var (standardValues, stdExclusive, metadataDiagnosticCode) = StandardValuesOf(pd, c);
 
                 // Component-reference property (ReferenceConverter: AcceptButton/CancelButton/ContextMenuStrip…): the
                 // compiled instance is not sited, so its converter can't list siblings — self-enumerate the field-backed
@@ -163,6 +164,7 @@ namespace WinFormsDesigner.Engine.Net48
                     Category = string.IsNullOrEmpty(pd.Category) ? "Misc" : pd.Category,
                     StandardValues = standardValues,
                     StandardValuesExclusive = stdExclusive,
+                    MetadataDiagnosticCode = metadataDiagnosticCode,
                     FlagsMembers = FlagsMembersOf(pd.PropertyType),
                     FlagsZero = FlagsZeroOf(pd.PropertyType),
                     TableCell = isTableCell,
@@ -331,13 +333,15 @@ namespace WinFormsDesigner.Engine.Net48
             catch { return null; }
         }
 
-        private static (List<string>?, bool) StandardValuesOf(PropertyDescriptor pd, IComponent owner)
+        private static readonly TimeSpan ConverterQueryTimeout = TimeSpan.FromMilliseconds(200);
+
+        private static (List<string>?, bool, string?) StandardValuesOf(PropertyDescriptor pd, IComponent owner)
         {
             try
             {
-                if (pd.PropertyType.IsEnum && pd.PropertyType.IsDefined(typeof(FlagsAttribute), false)) return (null, false);
+                if (pd.PropertyType.IsEnum && pd.PropertyType.IsDefined(typeof(FlagsAttribute), false)) return (null, false, null);
                 var conv = pd.Converter;
-                if (conv == null) return (null, false);
+                if (conv == null) return (null, false, null);
                 // ONLY the WinForms ImageIndex/ImageKey converters get a describe-time context (Instance = the component) —
                 // they read the control's ATTACHED ImageList off context.Instance to enumerate its indices/keys. On the
                 // compiled net48 instance the ImageList is real (its resx ImageStream loaded), so the dropdown shows real
@@ -348,8 +352,8 @@ namespace WinFormsDesigner.Engine.Net48
                     && ReferenceEquals(conv.GetType().Assembly, typeof(Control).Assembly);
                 ITypeDescriptorContext? ctx = null;
                 if (isImageConv) { try { ctx = new DescribeContext(owner, pd); } catch { ctx = null; } }
-                var coll = StandardValuesColl(conv, ctx);
-                if (coll == null) return (null, false);
+                var coll = StandardValuesColl(conv, ctx, out string? metadataDiagnosticCode);
+                if (coll == null) return (null, false, metadataDiagnosticCode);
                 var vals = new List<string>();
                 foreach (var sv in coll)
                 {
@@ -365,26 +369,59 @@ namespace WinFormsDesigner.Engine.Net48
                 }
                 // vals.Count==0 → no dropdown; for an image converter that's an absent/empty ImageList (sentinel filtered).
                 // A populated 1-image no-sentinel NoneExcludedImageIndexConverter (yields exactly [0]) correctly still shows.
-                if (vals.Count == 0) return (null, false);
+                if (vals.Count == 0) return (null, false, metadataDiagnosticCode);
                 bool excl = false;
                 try { excl = ctx != null ? conv.GetStandardValuesExclusive(ctx) : conv.GetStandardValuesExclusive(); }
                 catch { try { excl = conv.GetStandardValuesExclusive(); } catch { excl = false; } }
-                return (vals, excl);
+                return (vals, excl, metadataDiagnosticCode);
             }
-            catch { return (null, false); }
+            catch { return (null, false, null); }
         }
 
         /// <summary>Converter standard-values set, PREFERRING the context-aware overload (so ImageIndexConverter/
         /// ImageKeyConverter resolve the attached ImageList) with a context-less fallback — strictly non-regressing.
         /// Mirrors net9's DesignerDescribe.StandardValuesColl.</summary>
-        private static System.Collections.ICollection? StandardValuesColl(TypeConverter conv, ITypeDescriptorContext? ctx)
+        private static System.Collections.ICollection? StandardValuesColl(TypeConverter conv, ITypeDescriptorContext? ctx,
+            out string? metadataDiagnosticCode)
         {
+            metadataDiagnosticCode = null;
             if (ctx != null)
             {
-                try { if (conv.GetStandardValuesSupported(ctx)) { var c = conv.GetStandardValues(ctx); if (c != null) return c; } }
-                catch { /* the context upset this converter → fall back below */ }
+                bool supportedQuery = TryRunConverterQuery(
+                    () => conv.GetStandardValuesSupported(ctx), out bool supported, out bool supportedTimedOut);
+                if (supportedTimedOut)
+                {
+                    metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                    return null;
+                }
+                System.Collections.ICollection? values = null;
+                bool valuesTimedOut = false;
+                bool valuesQuery = supportedQuery && supported
+                    && TryRunConverterQuery(() => conv.GetStandardValues(ctx), out values, out valuesTimedOut);
+                if (valuesTimedOut)
+                {
+                    metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                    return null;
+                }
+                if (valuesQuery && values != null) return values;
             }
-            try { if (conv.GetStandardValuesSupported()) return conv.GetStandardValues(); } catch { /* none */ }
+            bool contextlessSupportedQuery = TryRunConverterQuery(
+                () => conv.GetStandardValuesSupported(), out bool contextlessSupported, out bool contextlessSupportedTimedOut);
+            if (contextlessSupportedTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            System.Collections.ICollection? contextlessValues = null;
+            bool contextlessValuesTimedOut = false;
+            bool contextlessValuesQuery = contextlessSupportedQuery && contextlessSupported
+                && TryRunConverterQuery(() => conv.GetStandardValues(), out contextlessValues, out contextlessValuesTimedOut);
+            if (contextlessValuesTimedOut)
+            {
+                metadataDiagnosticCode = "CONVERTER_TIMEOUT";
+                return null;
+            }
+            if (contextlessValuesQuery && contextlessValues != null) return contextlessValues;
             return null;
         }
 
@@ -494,11 +531,62 @@ namespace WinFormsDesigner.Engine.Net48
         private static string? StringifyInvariant(PropertyDescriptor pd, object? v)
         {
             if (v == null) return null;
-            if (pd.Converter is { } conv && conv.CanConvertTo(typeof(string)))
+            if (pd.Converter is { } conv
+                && TryRunConverterQuery(() => conv.CanConvertTo(typeof(string)), out bool canConvert)
+                && canConvert
+                && TryRunConverterQuery(() => conv.ConvertToInvariantString(v), out string? converted))
             {
-                return conv.ConvertToInvariantString(v);
+                return converted;
             }
             return null;
+        }
+
+        private static bool TryRunConverterQuery<T>(Func<T> query, out T? result)
+        {
+            return TryRunConverterQuery(query, out result, out _);
+        }
+
+        private static bool TryRunConverterQuery<T>(Func<T> query, out T? result, out bool timedOut)
+        {
+            timedOut = false;
+            Task<T> task;
+            try
+            {
+                task = Task.Run(query);
+            }
+            catch
+            {
+                result = default;
+                return false;
+            }
+
+            try
+            {
+                if (task.Wait(ConverterQueryTimeout))
+                {
+                    result = task.GetAwaiter().GetResult();
+                    return true;
+                }
+            }
+            catch
+            {
+                result = default;
+                return false;
+            }
+
+            ObserveLateConverterFault(task);
+            timedOut = true;
+            result = default;
+            return false;
+        }
+
+        private static void ObserveLateConverterFault(Task task)
+        {
+            _ = task.ContinueWith(
+                completed => { var ignored = completed.Exception; },
+                System.Threading.CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
         }
     }
 }

@@ -56,6 +56,35 @@ namespace WinFormsDesigner.Engine
         public bool Found { get; init; }
     }
 
+    /// <summary>
+    /// Revision-bound result of applying one proven <c>Text</c> source edit to the live modern design surface retained
+    /// by <see cref="DesignerRenderer.RenderWithLayout"/>. This is the modern equivalent of Visual Studio keeping its
+    /// designer host alive between property-grid edits: layout, pixels, property metadata and geometry authority all
+    /// come from the same post-edit graph. <see cref="Applied"/> is false on every token/source/proof mismatch, so the
+    /// extension can fall back to the established rebuild path without trusting client-authored cache state.
+    /// </summary>
+    public sealed class CachedTextPropertyEditResult
+    {
+        public bool Applied { get; init; }
+        public string Reason { get; init; } = "";
+        public string GraphToken { get; init; } = "";
+        public bool FullFrame { get; init; }
+        public bool LayoutUnchanged { get; init; }
+        public byte[] Png { get; init; } = Array.Empty<byte>();
+        public int X { get; init; }
+        public int Y { get; init; }
+        public int Width { get; init; }
+        public int Height { get; init; }
+        public int FrameWidth { get; init; }
+        public int FrameHeight { get; init; }
+        public int ClientWidth { get; init; }
+        public int ClientHeight { get; init; }
+        public List<LayoutControl> Controls { get; init; } = new();
+        public List<ToolStripItemBounds> ToolStripItems { get; init; } = new();
+        public ComponentInfo? Component { get; init; }
+        public GeometryDragStartResult? Geometry { get; init; }
+    }
+
     public static class DesignerRenderer
     {
         private static readonly Assembly[] ProbeAssemblies =
@@ -103,6 +132,7 @@ namespace WinFormsDesigner.Engine
         /// (<see cref="RenderDetailed"/>) and the combined render+layout (<see cref="RenderWithLayout"/>).</summary>
         private static byte[] CaptureRootPng(Control root, int w, int h, int scale = 1)
         {
+            PrepareForDesignSurfaceCapture(root);
             if (scale > 1)
             {
                 // High-DPI capture: scale the control tree UP by an integer factor so text and metrics are drawn at the
@@ -113,6 +143,7 @@ namespace WinFormsDesigner.Engine
                 {
                     using var big = new Bitmap(w * scale, h * scale, PixelFormat.Format32bppArgb);
                     root.DrawToBitmap(big, new Rectangle(0, 0, w * scale, h * scale));
+                    OverlayProgressBarState(root, big);
                     using var msb = new MemoryStream();
                     big.Save(msb, ImageFormat.Png);
                     return msb.ToArray();
@@ -121,9 +152,23 @@ namespace WinFormsDesigner.Engine
             }
             using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             root.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
+            OverlayProgressBarState(root, bmp);
             using var ms = new MemoryStream();
             bmp.Save(ms, ImageFormat.Png);
             return ms.ToArray();
+        }
+
+        /// <summary>The live Visual Studio designer does not hand keyboard focus to a child merely because it is the
+        /// first control in tab order. A hidden render host can do exactly that when its window is created, causing a
+        /// TextBox to paint selected text into the preview. Clear transient focus/selection state before every capture;
+        /// this changes no serialized property and keeps the image aligned with the design surface.</summary>
+        private static void PrepareForDesignSurfaceCapture(Control root)
+        {
+            if (root.FindForm() is Form form) form.ActiveControl = null;
+            foreach (var textBox in DescendantControls(root).OfType<TextBoxBase>())
+            {
+                textBox.Select(0, 0);
+            }
         }
 
         /// <summary>
@@ -142,26 +187,123 @@ namespace WinFormsDesigner.Engine
                 root.ClientSize = new Size(400, 300);
             }
 
-            IComponent? target = (componentId is "this" or "")
-                ? g.Host.RootComponent
-                : g.Host.Container.Components.Cast<IComponent>().FirstOrDefault(c => c.Site?.Name == componentId);
+            IComponent? target = FindGraphComponent(g, componentId);
             if (target is not Control ctrl)
             {
                 return new ControlRenderResult { Found = false };
             }
 
+            return CaptureControlPng(ctrl, root);
+        }
+
+        private static ControlRenderResult CaptureControlPng(Control ctrl, Control root, int scale = 1)
+        {
             int w = Math.Max(ctrl.Width, 1);
             int h = Math.Max(ctrl.Height, 1);
+            // Placement and dimensions stay in logical form pixels. The webview composites this patch into its scaled
+            // backing store using the current physical/logical ratio, exactly as it does for the full-frame PNG.
+            var (x, y) = ComputeWindowOffset(ctrl, root);
+            PrepareForDesignSurfaceCapture(root);
+            if (scale > 1)
+            {
+                // Retained dirty patches are restricted to a geometry-stable leaf. Scaling the entire 300-control
+                // root just to repaint this one leaf is O(N) and defeats the dirty-region budget; scale only the
+                // invalidated control, then restore its exact logical bounds.
+                Rectangle logicalBounds = ctrl.Bounds;
+                Padding logicalMargin = ctrl.Margin;
+                Padding logicalPadding = ctrl.Padding;
+                Size logicalMinimumSize = ctrl.MinimumSize;
+                Size logicalMaximumSize = ctrl.MaximumSize;
+                Font logicalFont = ctrl.Font;
+                ctrl.Scale(new SizeF(scale, scale));
+                try
+                {
+                    using var scaled = new Bitmap(w * scale, h * scale, PixelFormat.Format32bppArgb);
+                    ctrl.DrawToBitmap(scaled, new Rectangle(0, 0, w * scale, h * scale));
+                    OverlayProgressBarState(ctrl, scaled);
+                    using var scaledStream = new MemoryStream();
+                    scaled.Save(scaledStream, ImageFormat.Png);
+                    return new ControlRenderResult
+                    {
+                        Png = scaledStream.ToArray(), X = x, Y = y, Width = w, Height = h, Found = true,
+                    };
+                }
+                finally
+                {
+                    ctrl.Bounds = logicalBounds;
+                    ctrl.Margin = logicalMargin;
+                    ctrl.Padding = logicalPadding;
+                    ctrl.MinimumSize = logicalMinimumSize;
+                    ctrl.MaximumSize = logicalMaximumSize;
+                    if (!ReferenceEquals(ctrl.Font, logicalFont)) ctrl.Font = logicalFont;
+                }
+            }
             using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             ctrl.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
+            OverlayProgressBarState(ctrl, bmp);
             using var ms = new MemoryStream();
             bmp.Save(ms, ImageFormat.Png);
 
             // Placement in the FULL-FRAME (window) pixel space, so the host draws the patch directly at
             // (X,Y) over the cached full frame — see ComputeWindowOffset (shared with DescribeLayout).
-            var (x, y) = ComputeWindowOffset(ctrl, root);
-
             return new ControlRenderResult { Png = ms.ToArray(), X = x, Y = y, Width = w, Height = h, Found = true };
+        }
+
+        /// <summary>
+        /// Native ProgressBar state is not included by WinForms DrawToBitmap/WM_PRINT: a Value=90 bar can otherwise be
+        /// byte-identical to Value=0 even though the live component is correct. Paint the themed bar and its bounded
+        /// value chunk over the captured rectangle. This is deterministic, applies to full-frame and dirty-region
+        /// captures, and leaves every other native/custom control on its real DrawToBitmap path.
+        /// </summary>
+        private static void OverlayProgressBarState(Control captureRoot, Bitmap bitmap)
+        {
+            using var graphics = Graphics.FromImage(bitmap);
+            foreach (var progress in DescendantControls(captureRoot).OfType<ProgressBar>())
+            {
+                var (x, y) = ReferenceEquals(progress, captureRoot) ? (0, 0) : ComputeWindowOffset(progress, captureRoot);
+                var bounds = Rectangle.Intersect(new Rectangle(x, y, Math.Max(progress.Width, 1), Math.Max(progress.Height, 1)),
+                    new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+                if (bounds.Width <= 0 || bounds.Height <= 0) continue;
+
+                int range = Math.Max(1, progress.Maximum - progress.Minimum);
+                double ratio = Math.Clamp((progress.Value - progress.Minimum) / (double)range, 0d, 1d);
+                try
+                {
+                    if (ProgressBarRenderer.IsSupported)
+                    {
+                        ProgressBarRenderer.DrawHorizontalBar(graphics, bounds);
+                        if (progress.Style != ProgressBarStyle.Marquee && ratio > 0)
+                        {
+                            var inner = Rectangle.Inflate(bounds, -3, -3);
+                            inner.Width = Math.Max(0, (int)Math.Round(inner.Width * ratio));
+                            if (inner.Width > 0 && inner.Height > 0)
+                                ProgressBarRenderer.DrawHorizontalChunks(graphics, inner);
+                        }
+                        continue;
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    // Visual styles may become unavailable between IsSupported and drawing; use the classic fallback.
+                }
+
+                graphics.FillRectangle(SystemBrushes.Control, bounds);
+                ControlPaint.DrawBorder3D(graphics, bounds, Border3DStyle.SunkenOuter);
+                if (progress.Style != ProgressBarStyle.Marquee && ratio > 0)
+                {
+                    var inner = Rectangle.Inflate(bounds, -2, -2);
+                    inner.Width = Math.Max(0, (int)Math.Round(inner.Width * ratio));
+                    if (inner.Width > 0 && inner.Height > 0) graphics.FillRectangle(SystemBrushes.Highlight, inner);
+                }
+            }
+        }
+
+        private static IEnumerable<Control> DescendantControls(Control root)
+        {
+            yield return root;
+            foreach (Control child in root.Controls)
+                foreach (var descendant in DescendantControls(child))
+                    yield return descendant;
         }
 
         /// <summary>
@@ -169,28 +311,140 @@ namespace WinFormsDesigner.Engine
         /// the single source of truth for BOTH the dirty-region patch placement (<see cref="RenderControl"/>)
         /// and the hit-test rectangles (<see cref="DescribeLayout"/>), so a click maps to exactly the area
         /// a patch would repaint. Root → (0,0); otherwise the sum of each ancestor's offset up to the root
-        /// plus the form's client origin within the chrome (derived from window-vs-client size: symmetric
-        /// side/bottom borders). Pixel-exact for direct children of the root; a control nested in a
-        /// container with its own client inset (GroupBox caption/border) is off by that intermediate inset
-        /// (≈1–3 px) — acceptable for selection, see <see cref="ControlRenderResult"/>.
+        /// plus the form's client origin within the chrome. The primary path asks WinForms to translate the
+        /// child's OUTER Location from its immediate parent's client space into screen space, then subtracts the
+        /// root client origin. That preserves every intermediate client inset (GroupBox/Panel/TabPage and custom
+        /// container chrome) instead of accumulating Bounds as if every parent had a zero-width border.
         /// </summary>
         private static (int X, int Y) ComputeWindowOffset(Control ctrl, Control root)
         {
             if (ReferenceEquals(ctrl, root)) return (0, 0);
+            var (originX, originY) = RootClientOrigin(root);
+            try
+            {
+                root.CreateControl();
+                ctrl.Parent?.CreateControl();
+                if (ctrl.Parent != null)
+                {
+                    Rectangle rootClientScreen = PhysicalClientScreenBounds(root);
+                    Point outerA = ctrl.Parent.PointToScreen(ctrl.Location);
+                    Point outerB = ctrl.Parent.PointToScreen(new Point(ctrl.Right, ctrl.Bottom));
+                    int outerX = Math.Min(outerA.X, outerB.X);
+                    int outerY = Math.Min(outerA.Y, outerB.Y);
+                    return (outerX - rootClientScreen.Left + originX,
+                        outerY - rootClientScreen.Top + originY);
+                }
+            }
+            catch { /* unrealized/hostile handle -> retain the bounded hierarchy fallback below */ }
+
             int x = 0, y = 0;
             for (Control? c = ctrl; c != null && !ReferenceEquals(c, root); c = c.Parent)
             {
                 x += c.Left;
                 y += c.Top;
             }
-            int originX = Math.Max(0, (root.Width - root.ClientSize.Width) / 2);
-            int originY = Math.Max(0, (root.Height - root.ClientSize.Height) - originX);
             // A Form with RightToLeftLayout uses WS_EX_LAYOUTRTL: WinForms keeps each child's logical Left unchanged,
             // but paints the whole client surface mirrored. Overlay/hit-test/dirty-patch coordinates must describe the
             // painted window, not the serialized logical coordinate, or selection lands on the opposite side.
             if (root is Form form && form.RightToLeft == RightToLeft.Yes && form.RightToLeftLayout)
                 x = root.ClientSize.Width - x - ctrl.Width;
             return (x + originX, y + originY);
+        }
+
+        private static (int X, int Y) RootClientOrigin(Control root)
+        {
+            int x = Math.Max(0, (root.Width - root.ClientSize.Width) / 2);
+            int y = Math.Max(0, (root.Height - root.ClientSize.Height) - x);
+            return (x, y);
+        }
+
+        /// <summary>Physical screen rectangle of a client area. Taking both logical corners is essential for
+        /// WS_EX_LAYOUTRTL: PointToScreen(Point.Empty) is the physical right edge on a mirrored window.</summary>
+        private static Rectangle PhysicalClientScreenBounds(Control control)
+        {
+            Point a = control.PointToScreen(Point.Empty);
+            Point b = control.PointToScreen(new Point(control.ClientSize.Width, control.ClientSize.Height));
+            return Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+        }
+
+        /// <summary>Exact live client rectangle in full-frame coordinates. PointToScreen is intentionally used only
+        /// for metadata reads after the graph has been realized; the fallback is deterministic and never mutates
+        /// source when a custom control refuses handle creation.</summary>
+        private static Rectangle ComputeClientWindowBounds(Control ctrl, Control root, int outerX, int outerY)
+        {
+            var (rootOriginX, rootOriginY) = RootClientOrigin(root);
+            try
+            {
+                root.CreateControl();
+                ctrl.CreateControl();
+                Rectangle rootClientScreen = PhysicalClientScreenBounds(root);
+                Rectangle clientScreen = PhysicalClientScreenBounds(ctrl);
+                return new Rectangle(
+                    clientScreen.Left - rootClientScreen.Left + rootOriginX,
+                    clientScreen.Top - rootClientScreen.Top + rootOriginY,
+                    Math.Max(ctrl.ClientSize.Width, 1),
+                    Math.Max(ctrl.ClientSize.Height, 1));
+            }
+            catch
+            {
+                int insetX = Math.Max(0, (ctrl.Width - ctrl.ClientSize.Width) / 2);
+                int insetY = Math.Max(0, ctrl.Height - ctrl.ClientSize.Height - insetX);
+                return new Rectangle(outerX + insetX, outerY + insetY,
+                    Math.Max(ctrl.ClientSize.Width, 1), Math.Max(ctrl.ClientSize.Height, 1));
+            }
+        }
+
+        /// <summary>Measure the first rendered text baseline for Label, ButtonBase, and TextBoxBase controls from the live Font/DPI and the control's real client
+        /// rectangle. The browser only scales this engine-authored logical coordinate by zoom, so font, DPI and zoom
+        /// cannot independently invent a different guide.</summary>
+        private static int MeasureTextBaseline(Control ctrl, Rectangle clientWindow)
+        {
+            if (ctrl is not Label && ctrl is not TextBoxBase && ctrl is not ButtonBase) return -1;
+            try
+            {
+                using var graphics = ctrl.CreateGraphics();
+                Font font = ctrl.Font;
+                int em = font.FontFamily.GetEmHeight(font.Style);
+                int ascentDesign = font.FontFamily.GetCellAscent(font.Style);
+                float emPixels = font.SizeInPoints * graphics.DpiY / 72f;
+                float ascent = em > 0 ? ascentDesign * emPixels / em : font.GetHeight(graphics) * 0.8f;
+                float lineHeight = font.GetHeight(graphics);
+
+                Rectangle display = ctrl.DisplayRectangle;
+                int top = Math.Max(0, display.Top);
+                int available = Math.Max(1, Math.Min(clientWindow.Height - top, display.Height));
+                if (ctrl is Label label)
+                {
+                    bool middle = label.TextAlign is ContentAlignment.MiddleLeft
+                        or ContentAlignment.MiddleCenter or ContentAlignment.MiddleRight;
+                    bool bottom = label.TextAlign is ContentAlignment.BottomLeft
+                        or ContentAlignment.BottomCenter or ContentAlignment.BottomRight;
+                    if (bottom) top += Math.Max(0, (int)Math.Floor(available - lineHeight));
+                    else if (middle) top += Math.Max(0, (int)Math.Floor((available - lineHeight) / 2f));
+                }
+                else if (ctrl is ButtonBase button)
+                {
+                    bool middle = button.TextAlign is ContentAlignment.MiddleLeft
+                        or ContentAlignment.MiddleCenter or ContentAlignment.MiddleRight;
+                    bool bottom = button.TextAlign is ContentAlignment.BottomLeft
+                        or ContentAlignment.BottomCenter or ContentAlignment.BottomRight;
+                    if (bottom) top += Math.Max(0, (int)Math.Floor(available - lineHeight));
+                    else if (middle) top += Math.Max(0, (int)Math.Floor((available - lineHeight) / 2f));
+                }
+                else if (ctrl is TextBoxBase textBox && !textBox.Multiline)
+                {
+                    top += Math.Max(0, (int)Math.Floor((available - lineHeight) / 2f));
+                }
+
+                // ButtonBase's themed content rectangle carries one additional vertical text inset relative to the
+                // public client rectangle. The actual VS ButtonDesigner exposes that inset in its Baseline SnapLine
+                // (default 100x30 Button offset 21, while the raw Font ascent calculation yields 20).
+                int themedButtonInset = ctrl is ButtonBase ? 1 : 0;
+                int baseline = clientWindow.Y + top + (int)Math.Round(ascent, MidpointRounding.AwayFromZero)
+                    + themedButtonInset;
+                return Math.Max(clientWindow.Y, Math.Min(clientWindow.Bottom - 1, baseline));
+            }
+            catch { return -1; }
         }
 
         /// <summary>
@@ -283,6 +537,11 @@ namespace WinFormsDesigner.Engine
         {
             string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
+            return BeginGeometryDrag(g, componentId, src);
+        }
+
+        private static GeometryDragStartResult BeginGeometryDrag(LoadedGraph g, string componentId, string sourceText)
+        {
             var root = (Control)g.Host.RootComponent;
             if (root.Width <= 0 || root.Height <= 0)
             {
@@ -290,6 +549,10 @@ namespace WinFormsDesigner.Engine
             }
 
             var owned = g.Ownership.FirstOrDefault(kv => kv.Value.Id == componentId);
+            if (owned.Key is Control inheritedControl && owned.Value.Ownership == "inherited"
+                && owned.Value.InheritedPropertyOverrideEditable)
+                return DesignerGeometry.BeginInherited(inheritedControl, root, g.ClassName, componentId,
+                    owned.Value.BaseIdentityToken, WindowBoundsOf(root));
             if (owned.Key != null && !owned.Value.Editable)
                 return new GeometryDragStartResult
                 {
@@ -306,7 +569,7 @@ namespace WinFormsDesigner.Engine
                 root,
                 g.ClassName,
                 componentId,
-                src,
+                sourceText,
                 g.InheritedBase,
                 WindowBoundsOf(root));
         }
@@ -324,7 +587,8 @@ namespace WinFormsDesigner.Engine
             int width,
             int height,
             string? controlAssemblyPath = null,
-            string? sourceText = null)
+            string? sourceText = null,
+            string? expectedBaseIdentityToken = null)
         {
             string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
@@ -336,6 +600,18 @@ namespace WinFormsDesigner.Engine
 
 
             var owned = g.Ownership.FirstOrDefault(kv => kv.Value.Id == componentId);
+            if (owned.Key is Control inheritedControl && owned.Value.Ownership == "inherited"
+                && owned.Value.InheritedPropertyOverrideEditable)
+                return DesignerGeometry.CommitInherited(
+                    inheritedControl,
+                    root,
+                    g.ClassName,
+                    componentId,
+                    new GeometryRect { X = x, Y = y, Width = width, Height = height },
+                    src,
+                    owned.Value,
+                    expectedBaseIdentityToken ?? "",
+                    WindowBoundsOf(root));
             if (owned.Key != null && !owned.Value.Editable)
                 return new GeometryCommitResult
                 {
@@ -377,46 +653,231 @@ namespace WinFormsDesigner.Engine
         public static RenderLayoutResult RenderWithLayout(string designerFilePath, string? controlAssemblyPath = null, string? sourceText = null,
             int renderScale = 1, string[]? selectedTabs = null)
         {
-            using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
-            var root = (Control)g.Host.RootComponent;
-            ApplyTabViewState(g, selectedTabs);
-            if (root.Width <= 0 || root.Height <= 0)
+            string graphSource = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
+            bool retained = false;
+            try
             {
-                root.ClientSize = new Size(400, 300);
+                var root = (Control)g.Host.RootComponent;
+                ApplyTabViewState(g, selectedTabs);
+                if (root.Width <= 0 || root.Height <= 0)
+                {
+                    root.ClientSize = new Size(400, 300);
+                }
+                int w = Math.Max(root.Width, 1);
+                int h = Math.Max(root.Height, 1);
+
+                // Build the hit-test map BEFORE drawing. DescribeLayout computes bounds on the freshly-loaded,
+                // not-yet-painted surface, and DrawToBitmap can trigger a layout pass — so doing the (pure,
+                // non-mutating) geometry reads first keeps Controls field-identical to a standalone DescribeLayout,
+                // and capturing afterwards keeps the PNG byte-identical to a standalone RenderDetailed. The e2e
+                // byte/field-equality leg pins both halves of that contract.
+                var controls = BuildLayoutControls(g, root, w, h);
+                var png = CaptureRootPng(root, w, h, renderScale);
+                // Harvest item geometry AFTER the PNG capture: BuildToolStripItems forces a per-strip PerformLayout, and
+                // doing it post-capture keeps the PNG byte-identical (DrawToBitmap already laid the strip out for free).
+                var toolStripItems = BuildToolStripItems(g, root);
+                var tray = BuildTray(g, root);
+                string autoScaleDimensions = SerializedAutoScaleDimensions(root);
+                string graphToken = RetainGraph(designerFilePath, graphSource, g, controls, renderScale);
+                retained = graphToken.Length > 0;
+
+                return new RenderLayoutResult
+                {
+                    GraphToken = graphToken,
+                    Png = png,
+                    Width = w,
+                    Height = h,
+                    ClientWidth = root.ClientSize.Width,
+                    ClientHeight = root.ClientSize.Height,
+                    RootType = g.RootType.FullName ?? g.RootType.Name,
+                    InheritedBase = g.InheritedBase,
+                    BaseTypeName = g.BaseTypeName,
+                    UnrenderableResxCount = g.UnrenderableResxCount,
+                    TotalStatements = g.Total,
+                    Representable = g.Representable,
+                    Unrepresentable = g.Unrepresentable,
+                    Controls = controls,
+                    Tray = tray,
+                    ToolStripItems = toolStripItems,
+                    AutoScaleDimensions = autoScaleDimensions,
+                };
             }
-            int w = Math.Max(root.Width, 1);
-            int h = Math.Max(root.Height, 1);
-
-            // Build the hit-test map BEFORE drawing. DescribeLayout computes bounds on the freshly-loaded,
-            // not-yet-painted surface, and DrawToBitmap can trigger a layout pass — so doing the (pure,
-            // non-mutating) geometry reads first keeps Controls field-identical to a standalone DescribeLayout,
-            // and capturing afterwards keeps the PNG byte-identical to a standalone RenderDetailed. The e2e
-            // byte/field-equality leg pins both halves of that contract.
-            var controls = BuildLayoutControls(g, root, w, h);
-            var png = CaptureRootPng(root, w, h, renderScale);
-            // Harvest item geometry AFTER the PNG capture: BuildToolStripItems forces a per-strip PerformLayout, and
-            // doing it post-capture keeps the PNG byte-identical (DrawToBitmap already laid the strip out for free).
-            var toolStripItems = BuildToolStripItems(g, root);
-
-            return new RenderLayoutResult
+            finally
             {
-                Png = png,
-                Width = w,
-                Height = h,
-                ClientWidth = root.ClientSize.Width,
-                ClientHeight = root.ClientSize.Height,
-                RootType = g.RootType.FullName ?? g.RootType.Name,
-                InheritedBase = g.InheritedBase,
-                BaseTypeName = g.BaseTypeName,
-                UnrenderableResxCount = g.UnrenderableResxCount,
-                TotalStatements = g.Total,
-                Representable = g.Representable,
-                Unrepresentable = g.Unrepresentable,
-                Controls = controls,
-                Tray = BuildTray(g, root),
-                ToolStripItems = toolStripItems,
-                AutoScaleDimensions = SerializedAutoScaleDimensions(root),
-            };
+                if (!retained) g.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Apply one ordinary string <c>Text</c> edit to the exact modern graph retained by
+        /// <see cref="RenderWithLayout"/>. The token alone grants nothing: path, old source bytes and the independently
+        /// recomputed source-first edit must all match before a live setter runs. Any post-set failure evicts the
+        /// now-untrusted graph, leaving the caller to rebuild from the already committed source.
+        /// </summary>
+        public static CachedTextPropertyEditResult ApplyCachedTextPropertyEdit(
+            string graphToken,
+            string designerFilePath,
+            string componentId,
+            string propertyName,
+            string newValueExpr,
+            string beforeSourceText,
+            string afterSourceText)
+        {
+            var entry = FindRetainedGraph(graphToken);
+            if (entry == null)
+                return CachedTextRefusal("retained graph token is missing or expired");
+            if (!string.Equals(entry.DesignerFilePath, CanonicalDesignerPath(designerFilePath), StringComparison.OrdinalIgnoreCase))
+                return CachedTextRefusal("retained graph belongs to another designer document");
+            if (!string.Equals(entry.SourceText, beforeSourceText, StringComparison.Ordinal))
+                return CachedTextRefusal("retained graph source revision does not match the requested edit");
+            if (propertyName != "Text")
+                return CachedTextRefusal("only the bounded Text fast path is supported");
+
+            // Recompute the established deterministic splice against the exact retained old bytes. Current-source
+            // ownership is independently proven from the live graph below, while the ordinary Lane B planner already
+            // performed its full minimality gate before the host committed. Re-running ApplyPropertyEdit here would
+            // parse the same 300-control file five more times; exact deterministic bytes + syntax is the independent
+            // post-commit proof this token-bound path needs.
+            var proof = DesignerPropertyEditor.EditProperty(
+                beforeSourceText, componentId, propertyName, newValueExpr);
+            if (proof.Mode == EditMode.Failed || string.IsNullOrEmpty(proof.NewText)
+                || !string.Equals(proof.NewText, afterSourceText, StringComparison.Ordinal))
+                return CachedTextRefusal("the independently recomputed source edit does not match the committed bytes");
+            if (CSharpSyntaxTree.ParseText(afterSourceText).GetDiagnostics()
+                .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+                return CachedTextRefusal("the committed source edit contains syntax errors");
+
+            var g = entry.Graph;
+            if (g.Unrepresentable.Count != 0)
+                return CachedTextRefusal("partial designer graphs are not eligible for retained live edits");
+            var owned = g.Ownership.FirstOrDefault(pair => pair.Value.Id == componentId);
+            if (owned.Key is not Control target || !owned.Value.Editable || owned.Value.Ownership != "currentSource")
+                return CachedTextRefusal("the target is not an editable current-source control");
+            var descriptor = TypeDescriptor.GetProperties(target).Find(propertyName, ignoreCase: false);
+            if (descriptor == null || descriptor.IsReadOnly || descriptor.PropertyType != typeof(string))
+                return CachedTextRefusal("the target Text property is not an editable System.String value");
+
+            try
+            {
+                var root = (Control)g.Host.RootComponent;
+                var beforeGeometry = CapturePatchGeometry(root);
+                var expression = SyntaxFactory.ParseExpression(newValueExpr);
+                if (expression.ContainsDiagnostics)
+                    return CachedTextRefusal("the Text expression is not valid C# syntax");
+                descriptor.SetValue(target, Eval(expression, typeof(string), g.UserAsms));
+                g.ExplicitMembers.Add((target, propertyName));
+
+                root.PerformLayout();
+                int frameWidth = Math.Max(root.Width, 1);
+                int frameHeight = Math.Max(root.Height, 1);
+                bool fullFrame = target.Controls.Count != 0 || !SamePatchGeometry(beforeGeometry, root);
+                var controls = fullFrame
+                    ? BuildLayoutControls(g, root, frameWidth, frameHeight)
+                    : new List<LayoutControl>();
+                ControlRenderResult patch;
+                byte[] png;
+                if (fullFrame)
+                {
+                    png = CaptureRootPng(root, frameWidth, frameHeight, entry.RenderScale);
+                    patch = new ControlRenderResult
+                    {
+                        Found = true,
+                        X = 0,
+                        Y = 0,
+                        Width = frameWidth,
+                        Height = frameHeight,
+                    };
+                }
+                else
+                {
+                    patch = CaptureControlPng(target, root, entry.RenderScale);
+                    if (!patch.Found) throw new InvalidOperationException("the retained target could not be captured");
+                    png = patch.Png;
+                }
+
+                var toolStripItems = fullFrame ? BuildToolStripItems(g, root) : new List<ToolStripItemBounds>();
+                var modifiers = DesignerModifiers.ParseFieldModifiers(afterSourceText);
+                var component = DesignerDescribe.DescribeComponent(
+                    g.Host, g.ClassName, g.ExplicitMembers, componentId, g.EventWirings, modifiers,
+                    g.GraphComponents, g.Ownership, g.ControlAssemblyPath);
+                if (component == null || component.Id != componentId)
+                    throw new InvalidOperationException("the retained component metadata no longer resolves the edited target");
+                var geometry = BeginGeometryDrag(g, componentId, afterSourceText);
+
+                entry.SourceText = afterSourceText;
+                if (fullFrame) entry.Controls = controls;
+                entry.Used = ++_retainedGraphUse;
+                return new CachedTextPropertyEditResult
+                {
+                    Applied = true,
+                    GraphToken = entry.Token,
+                    FullFrame = fullFrame,
+                    LayoutUnchanged = !fullFrame,
+                    Png = png,
+                    X = patch.X,
+                    Y = patch.Y,
+                    Width = patch.Width,
+                    Height = patch.Height,
+                    FrameWidth = frameWidth,
+                    FrameHeight = frameHeight,
+                    ClientWidth = root.ClientSize.Width,
+                    ClientHeight = root.ClientSize.Height,
+                    Controls = controls,
+                    ToolStripItems = toolStripItems,
+                    Component = component,
+                    Geometry = geometry,
+                };
+            }
+            catch (Exception ex)
+            {
+                EvictRetainedGraph(graphToken);
+                return CachedTextRefusal("retained Text edit failed: " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
+        private static CachedTextPropertyEditResult CachedTextRefusal(string reason) => new() { Reason = reason };
+
+        private sealed class PatchGeometrySnapshot
+        {
+            public required Control Control { get; init; }
+            public Control? Parent { get; init; }
+            public Rectangle Bounds { get; init; }
+            public Size ClientSize { get; init; }
+            public Padding Margin { get; init; }
+            public Padding Padding { get; init; }
+            public bool Visible { get; init; }
+            public int ChildCount { get; init; }
+        }
+
+        private static List<PatchGeometrySnapshot> CapturePatchGeometry(Control root)
+            => DescendantControls(root).Select(control => new PatchGeometrySnapshot
+            {
+                Control = control,
+                Parent = control.Parent,
+                Bounds = control.Bounds,
+                ClientSize = control.ClientSize,
+                Margin = control.Margin,
+                Padding = control.Padding,
+                Visible = control.Visible,
+                ChildCount = control.Controls.Count,
+            }).ToList();
+
+        private static bool SamePatchGeometry(IReadOnlyList<PatchGeometrySnapshot> before, Control root)
+        {
+            var after = DescendantControls(root).ToList();
+            if (before.Count != after.Count) return false;
+            for (int i = 0; i < after.Count; i++)
+            {
+                Control current = after[i];
+                PatchGeometrySnapshot prior = before[i];
+                if (!ReferenceEquals(prior.Control, current) || !ReferenceEquals(prior.Parent, current.Parent)
+                    || prior.Bounds != current.Bounds || prior.ClientSize != current.ClientSize
+                    || prior.Margin != current.Margin || prior.Padding != current.Padding
+                    || prior.Visible != current.Visible || prior.ChildCount != current.Controls.Count)
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>The live root's <c>CurrentAutoScaleDimensions</c> in the designer's own literal form
@@ -468,6 +929,48 @@ namespace WinFormsDesigner.Engine
             return new TabHit();
         }
 
+        /// <summary>Confirm one selected control's hosted adorner hover against a freshly loaded product graph. The
+        /// canvas supplies only a component id, an engine-issued adorner id, and control-local coordinates; the live
+        /// ControlDesigner descriptor and optional hit-test callback must both agree.</summary>
+        public static DesignerAdornerHitInfo HitTestDesignerAdorner(
+            string designerFilePath,
+            string componentId,
+            string adornerId,
+            int localX,
+            int localY,
+            string? controlAssemblyPath = null,
+            string? sourceText = null)
+        {
+            try
+            {
+                using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
+                var component = FindGraphComponent(g, componentId);
+                if (component == null || !g.Ownership.TryGetValue(component, out var ownership))
+                {
+                    return new DesignerAdornerHitInfo
+                    {
+                        ComponentId = componentId ?? "",
+                        AdornerId = adornerId ?? "",
+                        ErrorCode = "component_unavailable",
+                        Reason = "The component is not present in the current designer graph.",
+                    };
+                }
+                return DesignerDescribe.HitTestDesignerAdorner(
+                    g.Host, component, componentId, adornerId, localX, localY, ownership.Editable);
+            }
+            catch (Exception ex)
+            {
+                return new DesignerAdornerHitInfo
+                {
+                    ComponentId = componentId ?? "",
+                    AdornerId = adornerId ?? "",
+                    ErrorCode = "graph_failed",
+                    Reason = "The designer graph could not confirm the hosted adorner: "
+                        + ex.GetType().Name + ".",
+                };
+            }
+        }
+
         /// <summary>
         /// Build every control's window-space hit-test rectangle (+ minimal tree info), innermost-first —
         /// the shared core of <see cref="DescribeLayout"/> and <see cref="RenderWithLayout"/> so the two
@@ -511,11 +1014,19 @@ namespace WinFormsDesigner.Engine
                 string? parentId = null;
                 if (!isRoot && ctrl.Parent is Control p)
                 {
-                    parentId = ReferenceEquals(p, root) ? "this"
-                        : g.Ownership.TryGetValue(p, out var parentSource) ? parentSource.Id : "";
+                    if (ReferenceEquals(p, root)) parentId = "this";
+                    else
+                    {
+                        parentId = SplitterPanelParentId(p, g.Ownership);
+                        if (parentId.Length == 0 && g.Ownership.TryGetValue(p, out var parentSource))
+                            parentId = parentSource.Id;
+                    }
                 }
 
                 var (x, y) = ComputeWindowOffset(ctrl, root);
+                int outerX = isRoot ? 0 : x;
+                int outerY = isRoot ? 0 : y;
+                Rectangle client = ComputeClientWindowBounds(ctrl, root, outerX, outerY);
                 controls.Add(new LayoutControl
                 {
                     Id = source.Id,
@@ -524,14 +1035,31 @@ namespace WinFormsDesigner.Engine
                     Ownership = source.Ownership,
                     Editable = source.Editable,
                     ReadOnlyReason = source.ReadOnlyReason,
+                    InheritedOverrideEditable = source.InheritedPropertyOverrideEditable,
+                    InheritedGeometryOverrideEditable = source.InheritedGeometryOverrideEditable,
+                    BaseIdentityToken = source.BaseIdentityToken,
                     ParentId = parentId,
                     IsRoot = isRoot,
                     X = isRoot ? 0 : x,
                     Y = isRoot ? 0 : y,
                     Width = isRoot ? frameW : Math.Max(ctrl.Width, 1),
                     Height = isRoot ? frameH : Math.Max(ctrl.Height, 1),
+                    ClientX = client.X,
+                    ClientY = client.Y,
+                    ClientWidth = client.Width,
+                    ClientHeight = client.Height,
+                    Margin = GeometrySpacing.From(ctrl.Margin),
+                    Padding = GeometrySpacing.From(ctrl.Padding),
+                    TextBaseline = MeasureTextBaseline(ctrl, client),
                     Depth = depth,
+                    ZOrder = isRoot || ctrl.Parent == null ? int.MaxValue : ctrl.Parent.Controls.GetChildIndex(ctrl),
                     TabIndex = isRoot ? -1 : ctrl.TabIndex,
+                    Text = ctrl.Text ?? "",
+                    HasImage = ctrl is ButtonBase buttonBaseWithImage && buttonBaseWithImage.Image != null,
+                    FlatStyle = ctrl is ButtonBase buttonBase ? buttonBase.FlatStyle.ToString() : "",
+                    Multiline = ctrl is TextBoxBase textBoxBase && textBoxBase.Multiline,
+                    ScrollBars = ctrl is TextBox textBox ? textBox.ScrollBars.ToString() : "",
+                    BorderStyle = ctrl is TextBox textBoxBorder ? textBoxBorder.BorderStyle.ToString() : "",
                     Anchor = isRoot ? "None" : ctrl.Anchor.ToString(),
                     Dock = isRoot ? "None" : ctrl.Dock.ToString(),
                     // Only a strip PARENTED into the tree gets on-canvas item geometry (BuildToolStripItems skips
@@ -541,6 +1069,64 @@ namespace WinFormsDesigner.Engine
                     // hosts need an explicit adapter; reflection-based hidden-page filtering alone grants no verbs.
                     IsTabHost = ctrl is TabControl,
                     IsStripHost = ctrl is ToolStrip && (isRoot || ctrl.Parent != null),
+                    TableColumnWidths = ctrl is TableLayoutPanel table ? table.GetColumnWidths() : Array.Empty<int>(),
+                    TableRowHeights = ctrl is TableLayoutPanel tableRows ? tableRows.GetRowHeights() : Array.Empty<int>(),
+                    FlowDirection = ctrl is FlowLayoutPanel flow ? flow.FlowDirection.ToString() : "",
+                    FlowWrapContents = ctrl is FlowLayoutPanel wrappingFlow && wrappingFlow.WrapContents,
+                });
+            }
+
+            // SplitContainer.Panel1/Panel2 are real design-surface containers but are not ordinary generated fields,
+            // so the design host does not site them and GraphComponents cannot enumerate them. Emit stable synthetic
+            // nodes anyway: without these rectangles a toolbox hit inside an empty half resolves to the SplitContainer
+            // field (which rejects direct Controls.Add) or the form. Visual Studio exposes both panels as container
+            // surfaces; the corresponding source identity is `splitContainer1.Panel1|Panel2`.
+            foreach (var pair in g.Ownership)
+            {
+                if (pair.Key is not SplitContainer split || string.IsNullOrWhiteSpace(pair.Value.Id)) continue;
+                AddSyntheticSplitterPanel(split.Panel1, "Panel1", split, pair.Value);
+                AddSyntheticSplitterPanel(split.Panel2, "Panel2", split, pair.Value);
+            }
+
+            void AddSyntheticSplitterPanel(
+                SplitterPanel panel,
+                string panelName,
+                SplitContainer split,
+                ComponentOwnershipInfo splitSource)
+            {
+                if (IsOnHiddenTab(panel, root)) return;
+                string id = splitSource.Id + "." + panelName;
+                if (controls.Any(control => control.Id == id)) return;
+                int depth = 0;
+                for (Control? current = panel; current != null && !ReferenceEquals(current, root); current = current.Parent) depth++;
+                var (x, y) = ComputeWindowOffset(panel, root);
+                Rectangle client = ComputeClientWindowBounds(panel, root, x, y);
+                controls.Add(new LayoutControl
+                {
+                    Id = id,
+                    Name = panelName,
+                    Type = typeof(SplitterPanel).FullName!,
+                    Ownership = splitSource.Ownership,
+                    Editable = splitSource.Editable,
+                    ReadOnlyReason = splitSource.ReadOnlyReason,
+                    ParentId = splitSource.Id,
+                    IsRoot = false,
+                    X = x,
+                    Y = y,
+                    Width = Math.Max(panel.Width, 1),
+                    Height = Math.Max(panel.Height, 1),
+                    ClientX = client.X,
+                    ClientY = client.Y,
+                    ClientWidth = client.Width,
+                    ClientHeight = client.Height,
+                    Margin = GeometrySpacing.From(panel.Margin),
+                    Padding = GeometrySpacing.From(panel.Padding),
+                    TextBaseline = -1,
+                    Depth = depth,
+                    ZOrder = split.Controls.GetChildIndex(panel),
+                    TabIndex = panel.TabIndex,
+                    Anchor = panel.Anchor.ToString(),
+                    Dock = panel.Dock.ToString(),
                 });
             }
 
@@ -551,10 +1137,25 @@ namespace WinFormsDesigner.Engine
             {
                 int d = b.Depth.CompareTo(a.Depth);
                 if (d != 0) return d;
-                return ((long)a.Width * a.Height).CompareTo((long)b.Width * b.Height);
+                int z = a.ZOrder.CompareTo(b.ZOrder);
+                if (z != 0) return z;
+                int area = ((long)a.Width * a.Height).CompareTo((long)b.Width * b.Height);
+                if (area != 0) return area;
+                return string.CompareOrdinal(a.Id, b.Id);
             });
 
             return controls;
+        }
+
+        private static string SplitterPanelParentId(Control parent, IReadOnlyDictionary<IComponent, ComponentOwnershipInfo> ownership)
+        {
+            if (parent is not SplitterPanel splitterPanel || splitterPanel.Parent is not SplitContainer split)
+                return "";
+            if (!ownership.TryGetValue(split, out var splitSource) || string.IsNullOrWhiteSpace(splitSource.Id))
+                return "";
+            if (ReferenceEquals(splitterPanel, split.Panel1)) return splitSource.Id + ".Panel1";
+            if (ReferenceEquals(splitterPanel, split.Panel2)) return splitSource.Id + ".Panel2";
+            return "";
         }
 
         /// <summary>Width (horizontal strip) / height (vertical strip) of the synthesized trailing "Type Here" add-slot.</summary>
@@ -885,7 +1486,7 @@ namespace WinFormsDesigner.Engine
         {
             using var g = LoadGraph(designerFilePath, controlAssemblyPath);
             var mods = DesignerModifiers.ParseFieldModifiers(SafeRead(designerFilePath));
-            return DesignerDescribe.Describe(g.Host, g.ClassName, g.ExplicitMembers, g.Total, g.Representable, g.Unrepresentable, g.EventWirings, mods, g.GraphComponents, g.Ownership);
+            return DesignerDescribe.Describe(g.Host, g.ClassName, g.ExplicitMembers, g.Total, g.Representable, g.Unrepresentable, g.EventWirings, mods, g.GraphComponents, g.Ownership, g.ControlAssemblyPath);
         }
 
         /// <summary>Describe one component by edit id ("this" = root) — the bounded per-selection path for a grid.</summary>
@@ -893,7 +1494,7 @@ namespace WinFormsDesigner.Engine
         {
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
             var mods = DesignerModifiers.ParseFieldModifiers(sourceText ?? SafeRead(designerFilePath));
-            return DesignerDescribe.DescribeComponent(g.Host, g.ClassName, g.ExplicitMembers, componentId, g.EventWirings, mods, g.GraphComponents, g.Ownership);
+            return DesignerDescribe.DescribeComponent(g.Host, g.ClassName, g.ExplicitMembers, componentId, g.EventWirings, mods, g.GraphComponents, g.Ownership, g.ControlAssemblyPath);
         }
 
         /// <summary>Read a file's text for a describe pseudo-property parse; empty on any IO error (the pseudo-props
@@ -910,10 +1511,74 @@ namespace WinFormsDesigner.Engine
             try
             {
                 var form = FormClassResolver.FormClass(CSharpSyntaxTree.ParseText(source).GetRoot());
-                if (form != null && FormClassResolver.FieldNamesOf(form).Contains(componentId)) return null;
+                if (form != null && (FormClassResolver.FieldNamesOf(form).Contains(componentId)
+                    || IsCurrentSourceSyntheticContainerPath(form, componentId))) return null;
             }
             catch { /* malformed/ambiguous source is rejected below */ }
             return "component '" + componentId + "' is not declared by the current designer source (inherited or unresolved components are read-only)";
+        }
+
+        /// <summary>Validate the bounded source-spellable identity used for framework-owned design containers.
+        /// SplitContainer panels are real editable surfaces but never fields of their own; the only safe path is an
+        /// exact current-source SplitContainer field followed by Panel1 or Panel2. Alias-based/unknown field types are
+        /// deliberately refused rather than granting a direct RPC an arbitrary member-access splice.</summary>
+        private static bool IsCurrentSourceSyntheticContainerPath(ClassDeclarationSyntax form, string componentId)
+        {
+            string[] parts = componentId.Split('.');
+            if (parts.Length != 2 || (parts[1] != "Panel1" && parts[1] != "Panel2")) return false;
+            foreach (var field in form.Members.OfType<FieldDeclarationSyntax>())
+            {
+                if (!field.Declaration.Variables.Any(variable => variable.Identifier.Text == parts[0])) continue;
+                string type = field.Declaration.Type.ToString().Replace("global::", "", StringComparison.Ordinal).Trim();
+                return type == "SplitContainer" || type.EndsWith(".SplitContainer", StringComparison.Ordinal);
+            }
+            return false;
+        }
+
+        private const int MaxMultiPropertyTargets = 128;
+
+        /// <summary>Validate the closed target set accepted by the multi-object property adapters. The caller supplies
+        /// webview-originated ids, so an empty/duplicate/oversized set or an identifier that is not owned by the current
+        /// designer source is rejected before the first candidate splice is computed.</summary>
+        private static string[]? ValidateMultiPropertyTargets(string source, IReadOnlyList<string>? componentIds,
+            string propertyName, out string reason)
+        {
+            reason = "";
+            if (componentIds == null || componentIds.Count < 2)
+            {
+                reason = "multi-object property edit requires at least two targets";
+                return null;
+            }
+            if (componentIds.Count > MaxMultiPropertyTargets)
+            {
+                reason = "multi-object property edit exceeds the " + MaxMultiPropertyTargets + " target limit";
+                return null;
+            }
+            if (!DesignerControlEditor.IsValidIdentifier(propertyName))
+            {
+                reason = "invalid property name: " + propertyName;
+                return null;
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var ids = new string[componentIds.Count];
+            for (int i = 0; i < componentIds.Count; i++)
+            {
+                string id = componentIds[i] ?? "";
+                if (id.Length == 0 || !seen.Add(id))
+                {
+                    reason = id.Length == 0 ? "multi-object property target is empty" : "duplicate multi-object property target: " + id;
+                    return null;
+                }
+                string? ownershipError = CurrentSourceOwnershipError(source, id);
+                if (ownershipError != null)
+                {
+                    reason = ownershipError;
+                    return null;
+                }
+                ids[i] = id;
+            }
+            return ids;
         }
 
         /// <summary>
@@ -959,6 +1624,182 @@ namespace WinFormsDesigner.Engine
                 Minimal = minimal,
                 NewText = safe ? edit.NewText : null,
                 Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target property"),
+            };
+        }
+
+        /// <summary>Apply one bounded derived-source override for an inherited framework control. Unlike
+        /// <see cref="ApplyPropertyEdit"/>, this path loads the current base graph, recomputes the observed field
+        /// identity, and accepts only the opaque token previously issued by that graph. The client supplies no field
+        /// type, accessibility, property type, or observed token; all of them are derived again here.</summary>
+        public static PropertyEditResult ApplyInheritedPropertyOverride(
+            string designerFilePath,
+            string componentName,
+            string propertyName,
+            string newValueExpr,
+            string expectedBaseIdentityToken,
+            string? controlAssemblyPath = null,
+            string? sourceText = null) => EditInheritedPropertyOverride(
+                designerFilePath, componentName, propertyName, newValueExpr, expectedBaseIdentityToken,
+                controlAssemblyPath, sourceText, remove: false);
+
+        public static PropertyEditResult RemoveInheritedPropertyOverride(
+            string designerFilePath,
+            string componentName,
+            string propertyName,
+            string expectedBaseIdentityToken,
+            string? controlAssemblyPath = null,
+            string? sourceText = null) => EditInheritedPropertyOverride(
+                designerFilePath, componentName, propertyName, "", expectedBaseIdentityToken,
+                controlAssemblyPath, sourceText, remove: true);
+
+        private static PropertyEditResult EditInheritedPropertyOverride(
+            string designerFilePath,
+            string componentName,
+            string propertyName,
+            string newValueExpr,
+            string expectedBaseIdentityToken,
+            string? controlAssemblyPath,
+            string? sourceText,
+            bool remove)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null) { src = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, src) = ReadWithEncoding(designerFilePath); }
+
+            try
+            {
+                using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
+                var match = g.Ownership.FirstOrDefault(kv => kv.Value.Id == componentName);
+                if (match.Key == null || match.Value.Ownership != "inherited"
+                    || !match.Value.InheritedPropertyOverrideEditable)
+                    return new PropertyEditResult
+                    {
+                        Mode = EditMode.Failed,
+                        Encoding = encoding,
+                        Reason = match.Key == null ? "inherited component not found: " + componentName
+                            : match.Value.ReadOnlyReason ?? "inherited component is not eligible for derived overrides",
+                    };
+                if (!remove && DesignerInheritedOverrideEditor.IsGeometryProperty(propertyName)
+                    && !match.Value.InheritedGeometryOverrideEditable)
+                    return new PropertyEditResult
+                    {
+                        Mode = EditMode.Failed,
+                        Encoding = encoding,
+                        Reason = "inherited geometry is managed by Dock, AutoSize, or a layout-panel parent",
+                    };
+
+                PropertyDescriptor? descriptor;
+                try { descriptor = TypeDescriptor.GetProperties(match.Key).Find(propertyName, ignoreCase: false); }
+                catch (Exception ex)
+                {
+                    return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding,
+                        Reason = "inherited property metadata failed: " + ex.GetType().Name + ": " + ex.Message };
+                }
+                string propertyType = descriptor?.PropertyType.FullName ?? "";
+                if (descriptor == null || !descriptor.IsBrowsable || descriptor.IsReadOnly
+                    || !DesignerInheritedOverrideEditor.SupportsProperty(propertyName, propertyType))
+                    return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding,
+                        Reason = "property is not eligible for an inherited override: " + propertyName };
+
+                var request = new InheritedOverrideEditRequest
+                {
+                    SourceText = src,
+                    FieldId = match.Value.Id,
+                    FieldTypeName = match.Value.InheritedFieldType,
+                    EffectiveAccessibility = match.Value.EffectiveAccessibility,
+                    PropertyName = propertyName,
+                    PropertyTypeName = propertyType,
+                    ValueExpression = newValueExpr,
+                    ExpectedBaseIdentityToken = expectedBaseIdentityToken,
+                    ObservedBaseIdentityToken = match.Value.BaseIdentityToken,
+                };
+                Type? resolvedFieldType = match.Value.InheritedResolvedFieldType;
+                Type resolvedRuntimeType = match.Key.GetType();
+                if (resolvedFieldType == null)
+                    return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding,
+                        Reason = "inherited field type is no longer resolved by the live designer graph" };
+                var edit = remove
+                    ? DesignerInheritedOverrideEditor.TryRemove(request, resolvedFieldType, resolvedRuntimeType)
+                    : DesignerInheritedOverrideEditor.TryApply(request, resolvedFieldType, resolvedRuntimeType);
+                if (!edit.Safe || edit.NewText == null)
+                    return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+                return new PropertyEditResult
+                {
+                    Mode = edit.Mode == InheritedOverrideEditMode.Insert ? EditMode.Insert : EditMode.Replace,
+                    Encoding = encoding,
+                    ParseOk = true,
+                    Minimal = true,
+                    NewText = edit.NewText,
+                };
+            }
+            catch (Exception ex)
+            {
+                return new PropertyEditResult
+                {
+                    Mode = EditMode.Failed,
+                    Encoding = encoding,
+                    Reason = "inherited override authorization failed: " + ex.GetType().Name + ": " + ex.Message,
+                };
+            }
+        }
+
+        /// <summary>Compute one all-or-nothing multi-object scalar-property edit. Every target is first authorized
+        /// independently against the exact same source snapshot; only then are the already-safe targeted splices
+        /// composed in memory. A refusal at either phase returns no text, so the host cannot commit a prefix of the
+        /// selection. Each constituent splice retains <see cref="DesignerPropertyEditor.OnlyTargetChanged"/> and the
+        /// host applies the final text as one undo unit.</summary>
+        public static PropertyEditResult ApplyPropertyEdits(string designerFilePath, IReadOnlyList<string> componentIds,
+            string propertyName, string newValueExpr, string? sourceText = null)
+        {
+            string source;
+            Encoding encoding;
+            if (sourceText != null) { source = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, source) = ReadWithEncoding(designerFilePath); }
+
+            var ids = ValidateMultiPropertyTargets(source, componentIds, propertyName, out string targetReason);
+            if (ids == null)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = targetReason };
+
+            // Preflight every member against ONE immutable snapshot. This catches an unsafe insertion anchor,
+            // malformed expression, inherited/unresolved id, or safety-gate refusal before batch composition begins.
+            foreach (string id in ids)
+            {
+                var candidate = ApplyPropertyEdit(designerFilePath, id, propertyName, newValueExpr, source);
+                if (!candidate.Safe)
+                    return new PropertyEditResult
+                    {
+                        Mode = EditMode.Failed,
+                        Encoding = encoding,
+                        Reason = "target '" + id + "' refused " + propertyName + ": " + candidate.Reason,
+                    };
+            }
+
+            string text = source;
+            EditMode aggregateMode = EditMode.Replace;
+            foreach (string id in ids)
+            {
+                var applied = ApplyPropertyEdit(designerFilePath, id, propertyName, newValueExpr, text);
+                if (!applied.Safe || applied.NewText == null)
+                    return new PropertyEditResult
+                    {
+                        Mode = EditMode.Failed,
+                        Encoding = encoding,
+                        Reason = "target '" + id + "' could not be composed atomically: " + applied.Reason,
+                    };
+                if (applied.Mode == EditMode.Insert) aggregateMode = EditMode.Insert;
+                text = applied.NewText;
+            }
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(text).GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+            return new PropertyEditResult
+            {
+                Mode = parseOk ? aggregateMode : EditMode.Failed,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = parseOk,
+                NewText = parseOk ? text : null,
+                Reason = parseOk ? "" : "multi-object edited text has syntax errors",
             };
         }
 
@@ -1009,6 +1850,54 @@ namespace WinFormsDesigner.Engine
             return DesignerPropertyEditor.ResetProperty(src, componentName, propertyName);
         }
 
+        /// <summary>All-or-nothing multi-object Reset. A target with no explicit assignment is a representable no-op;
+        /// a target whose assignment cannot be removed without losing comments/directives/other statements rejects the
+        /// whole batch. The returned text therefore contains every reset or none of them.</summary>
+        public static PropertyResetResult ApplyPropertyResets(string designerFilePath, IReadOnlyList<string> componentIds,
+            string propertyName, string? sourceText = null)
+        {
+            string source = sourceText ?? ReadWithEncoding(designerFilePath).text;
+            var ids = ValidateMultiPropertyTargets(source, componentIds, propertyName, out string targetReason);
+            if (ids == null) return new PropertyResetResult { Ok = false, Reason = targetReason };
+
+            foreach (string id in ids)
+            {
+                var candidate = ApplyPropertyReset(designerFilePath, id, propertyName, source);
+                if (!candidate.Ok)
+                    return new PropertyResetResult
+                    {
+                        Ok = false,
+                        Reason = "target '" + id + "' refused reset of " + propertyName + ": " + candidate.Reason,
+                    };
+            }
+
+            string text = source;
+            bool changed = false;
+            foreach (string id in ids)
+            {
+                var applied = ApplyPropertyReset(designerFilePath, id, propertyName, text);
+                if (!applied.Ok)
+                    return new PropertyResetResult
+                    {
+                        Ok = false,
+                        Reason = "target '" + id + "' could not be reset atomically: " + applied.Reason,
+                    };
+                if (applied.Changed && applied.NewText != null)
+                {
+                    text = applied.NewText;
+                    changed = true;
+                }
+            }
+
+            return new PropertyResetResult
+            {
+                Ok = true,
+                Changed = changed,
+                NewText = changed ? text : null,
+                Reason = changed ? "" : "all selected properties are already at their defaults",
+            };
+        }
+
         /// <summary>Import side of image/icon properties: embed the bytes into the form's sibling .resx and emit the
         /// <c>resources.GetObject</c> assignment (ensuring the resources local). Mirrors <see cref="ApplyPropertyEdit"/>
         /// (buffer-or-disk designer source; the host passes the current .resx text and applies both returned texts).
@@ -1018,6 +1907,41 @@ namespace WinFormsDesigner.Engine
         {
             string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
             return DesignerImageEditor.SetImageResource(src, componentName, propertyName, propertyTypeName, imageBytes, resxText);
+        }
+
+        /// <summary>List existing project image/bitmap/icon resources from the host-supplied .resx +
+        /// Resources.Designer.cs texts. No file-ref target is opened; only safe metadata and generated accessors are
+        /// cross-checked.</summary>
+        public static ProjectResourceListResult ListProjectImageResources(string? resxText, string? resourcesDesignerSource) =>
+            DesignerProjectResourcePicker.ListImageResources(resxText, resourcesDesignerSource);
+
+        /// <summary>Bind an image-like property to an existing strongly typed project resource. This mutates only the
+        /// form's .Designer.cs by routing the generated expression through the same byte-local property editor used by
+        /// scalar grid edits; the project .resx is not copied or rewritten.</summary>
+        public static PropertyEditResult ApplyProjectImageResource(string designerFilePath, string componentName,
+            string propertyName, string propertyTypeName, string? resxText, string? resourcesDesignerSource,
+            string resourceClassFullName, string resourcePropertyName, string? sourceText = null)
+        {
+            string source;
+            Encoding encoding;
+            if (sourceText != null) { source = sourceText; encoding = new UTF8Encoding(false); }
+            else { (encoding, source) = ReadWithEncoding(designerFilePath); }
+
+            string? expr = DesignerProjectResourcePicker.BuildResourceExpression(
+                resxText, resourcesDesignerSource, resourceClassFullName, resourcePropertyName, propertyTypeName, out string reason);
+            if (expr == null)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = reason };
+
+            var edit = ApplyPropertyEdit(designerFilePath, componentName, propertyName, expr, source);
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                NewText = edit.NewText,
+                Encoding = encoding,
+                ParseOk = edit.ParseOk,
+                Minimal = edit.Minimal,
+                Reason = edit.Reason,
+            };
         }
 
         /// <summary>0.11.0 ImageList editor — embed a serialized ImageStream blob (from the net48 serializer) into the
@@ -1352,6 +2276,46 @@ namespace WinFormsDesigner.Engine
             return DesignerBindingEditor.GetDataSource(src, ownerId);
         }
 
+        /// <summary>Discover bounded project DTO schemas and conventional application settings for the Data Sources pane.</summary>
+        public static DataSourcesResult ListProjectDataSources(string designerFilePath, string? sourceText = null)
+            => DesignerDataSourceGenerator.ListDataSources(designerFilePath, sourceText);
+
+        /// <summary>Generate a bounded detail/grid data-binding surface as one source edit.</summary>
+        public static DataSourceGenerationResult GenerateProjectDataSource(
+            string designerFilePath,
+            string schemaKey,
+            string mode,
+            string parentId,
+            int x,
+            int y,
+            bool includeNavigator,
+            string? existingBindingSourceId = null,
+            string? existingGridId = null,
+            string? sourceText = null)
+            => DesignerDataSourceGenerator.GenerateDataSource(
+                designerFilePath,
+                schemaKey ?? "",
+                mode ?? "",
+                parentId ?? "this",
+                x,
+                y,
+                includeNavigator,
+                existingBindingSourceId,
+                existingGridId,
+                sourceText);
+
+        /// <summary>Bind one discovered application setting to a compatible selected control.</summary>
+        public static DataSourceGenerationResult BindProjectApplicationSetting(
+            string designerFilePath,
+            string settingKey,
+            string targetId,
+            string? sourceText = null)
+            => DesignerDataSourceGenerator.BindApplicationSetting(
+                designerFilePath,
+                settingKey ?? "",
+                targetId ?? "",
+                sourceText);
+
         /// <summary>Set DataSource through the closed null/component/typeof(Type) workflow.</summary>
         public static PropertyEditResult ApplyDataSourceEdit(string designerFilePath, string ownerId,
             string kind, string value, string? sourceText = null)
@@ -1415,7 +2379,8 @@ namespace WinFormsDesigner.Engine
         /// </summary>
         public static EventGenResult GenerateEventHandler(
             string designerFilePath, string componentId, string eventName,
-            string? handlerName, string? designerSourceText, string? codeText, string? controlAssemblyPath = null)
+            string? handlerName, string? designerSourceText, string? codeText, string? controlAssemblyPath = null,
+            IReadOnlyList<string>? projectCodeTexts = null)
         {
             string designerSrcForOwnership = designerSourceText ?? File.ReadAllText(designerFilePath);
             string? ownershipError = CurrentSourceOwnershipError(designerSrcForOwnership, componentId);
@@ -1423,18 +2388,21 @@ namespace WinFormsDesigner.Engine
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, designerSourceText);
 
             bool isRoot = componentId is "this" or "";
-            System.ComponentModel.IComponent? comp = isRoot
-                ? g.Host.RootComponent
-                : g.Host.Container.Components.Cast<System.ComponentModel.IComponent>().FirstOrDefault(c => c.Site?.Name == componentId);
+            System.ComponentModel.IComponent? comp = FindGraphComponent(g, componentId);
             if (comp == null) return new EventGenResult { Safe = false, Reason = "component not found: " + componentId };
 
             var ed = System.ComponentModel.TypeDescriptor.GetEvents(comp)[eventName];
             var del = ed?.EventType;
             var invoke = del?.GetMethod("Invoke");
             if (del == null || invoke == null) return new EventGenResult { Safe = false, Reason = "event/delegate not found: " + eventName };
+            var eventCodeTexts = EventCodeTexts(codeText, projectCodeTexts);
 
-            string compName = isRoot ? g.ClassName : (comp.Site?.Name ?? componentId);
-            string idKey = isRoot ? "this" : compName;
+            string idKey = isRoot ? "this" : componentId;
+            string compName = isRoot
+                ? g.ClassName
+                : componentId.Contains('.', StringComparison.Ordinal)
+                    ? componentId.Replace('.', '_')
+                    : (comp.Site?.Name ?? componentId);
 
             // already wired in the source? → don't add a second wiring; only generate a missing stub.
             string? existing = null;
@@ -1442,7 +2410,7 @@ namespace WinFormsDesigner.Engine
 
             if (existing != null)
             {
-                bool needsStub = codeText != null && !DesignerEventEditor.HasMethod(codeText, g.ClassQualifiedName, existing);
+                bool needsStub = codeText != null && !DesignerEventEditor.HasMethodInFiles(eventCodeTexts, g.ClassQualifiedName, existing);
                 if (!needsStub)
                     return new EventGenResult { Safe = true, AlreadyWired = true, HandlerName = existing };
                 var s0 = MakeStub(codeText!, g.ClassQualifiedName, existing, invoke);
@@ -1463,9 +2431,15 @@ namespace WinFormsDesigner.Engine
             string handler = handlerName != null && handlerName.Trim().Length > 0 ? handlerName.Trim() : compName + "_" + eventName;
             if (!DesignerEventEditor.IsValidIdentifier(handler))
                 return new EventGenResult { Safe = false, HandlerName = handler, Reason = "handler name is not a valid identifier: " + handler };
-            // refuse to WIRE an event with no code-behind to hold its handler: that would leave the
-            // .Designer.cs referencing a method that doesn't exist (a compile error, hard to undo).
-            if (codeText == null)
+            var parameterTypes = invoke.GetParameters().Select(p => p.ParameterType.FullName ?? p.ParameterType.Name).ToList();
+            var compatibleHandlers = DesignerEventEditor.FindCompatibleHandlersInFiles(
+                eventCodeTexts, g.ClassQualifiedName, parameterTypes, invoke.ReturnType.FullName ?? invoke.ReturnType.Name);
+            bool handlerExists = DesignerEventEditor.HasMethodInFiles(eventCodeTexts, g.ClassQualifiedName, handler);
+            if (handlerExists && !compatibleHandlers.Contains(handler, StringComparer.Ordinal))
+                return new EventGenResult { Safe = false, HandlerName = handler, Reason = "handler '" + handler + "' exists in a project partial but does not match the event's signature" };
+            // A compatible handler may already live in another project partial; wire it without generating a duplicate.
+            // Otherwise the primary code-behind remains the deterministic insertion target.
+            if (!handlerExists && codeText == null)
                 return new EventGenResult { Safe = false, HandlerName = handler, Reason = "no code-behind (.cs) to place the handler" };
 
             string designerSrc = designerSourceText ?? File.ReadAllText(designerFilePath);
@@ -1487,9 +2461,9 @@ namespace WinFormsDesigner.Engine
             int insertAt = -1;
             string? insertText = null;
             bool stubCreated = false;
-            if (!DesignerEventEditor.HasMethod(codeText, g.ClassQualifiedName, handler))
+            if (!handlerExists)
             {
-                var stub = MakeStub(codeText, g.ClassQualifiedName, handler, invoke);
+                var stub = MakeStub(codeText!, g.ClassQualifiedName, handler, invoke);
                 if (!stub.Ok)
                     return new EventGenResult { Safe = false, HandlerName = handler, Reason = "stub: " + stub.Reason };
                 newCode = stub.NewText;
@@ -1517,14 +2491,15 @@ namespace WinFormsDesigner.Engine
         /// names, only for events that HAVE at least one candidate. Empty when there is no code-behind.
         /// </summary>
         public static List<EventCandidates> ListHandlerCandidates(
-            string designerFilePath, string componentId, string? designerSourceText, string? codeText, string? controlAssemblyPath = null)
+            string designerFilePath, string componentId, string? designerSourceText, string? codeText,
+            string? controlAssemblyPath = null, IReadOnlyList<string>? projectCodeTexts = null)
         {
             var list = new List<EventCandidates>();
-            if (codeText == null) return list;
+            var eventCodeTexts = EventCodeTexts(codeText, projectCodeTexts);
+            if (eventCodeTexts.Count == 0) return list;
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, designerSourceText);
             bool isRoot = componentId is "this" or "";
-            System.ComponentModel.IComponent? comp = isRoot ? g.Host.RootComponent
-                : g.Host.Container.Components.Cast<System.ComponentModel.IComponent>().FirstOrDefault(c => c.Site?.Name == componentId);
+            System.ComponentModel.IComponent? comp = FindGraphComponent(g, componentId);
             if (comp == null) return list;
 
             // events share delegate types, so match the code-behind once per DISTINCT signature
@@ -1547,12 +2522,25 @@ namespace WinFormsDesigner.Engine
                     invoke.GetParameters().Select(p => p.ParameterType.AssemblyQualifiedName ?? p.ParameterType.FullName ?? p.ParameterType.Name));
                 if (!bySig.TryGetValue(sig, out var cands))
                 {
-                    cands = DesignerEventEditor.FindCompatibleHandlers(codeText, g.ClassQualifiedName, pnames, retName);
+                    cands = DesignerEventEditor.FindCompatibleHandlersInFiles(eventCodeTexts, g.ClassQualifiedName, pnames, retName);
                     bySig[sig] = cands;
                 }
                 if (cands.Count > 0) list.Add(new EventCandidates { Event = ed.Name, Handlers = cands });
             }
             return list;
+        }
+
+        /// <summary>Resolve a handler to the exact project partial source that declares it. The form's fully-qualified
+        /// identity comes from the loaded designer graph; same-named methods on unrelated classes are ignored.</summary>
+        public static int FindEventHandlerSourceIndex(string designerFilePath, string handlerName,
+            IReadOnlyList<string>? projectCodeTexts, string? designerSourceText = null,
+            string? controlAssemblyPath = null)
+        {
+            if (!DesignerEventEditor.IsValidIdentifier(handlerName) || projectCodeTexts == null) return -1;
+            using var g = LoadGraph(designerFilePath, controlAssemblyPath, designerSourceText);
+            for (int i = 0; i < projectCodeTexts.Count; i++)
+                if (DesignerEventEditor.HasMethod(projectCodeTexts[i] ?? "", g.ClassQualifiedName, handlerName)) return i;
+            return -1;
         }
 
         /// <summary>
@@ -1562,21 +2550,21 @@ namespace WinFormsDesigner.Engine
         /// </summary>
         public static EventWiringResult SetEventWiring(
             string designerFilePath, string componentId, string eventName, string? handlerName,
-            string? designerSourceText, string? codeText, string? controlAssemblyPath = null)
+            string? designerSourceText, string? codeText, string? controlAssemblyPath = null,
+            IReadOnlyList<string>? projectCodeTexts = null)
         {
             string designerSrcForOwnership = designerSourceText ?? File.ReadAllText(designerFilePath);
             string? ownershipError = CurrentSourceOwnershipError(designerSrcForOwnership, componentId);
             if (ownershipError != null) return new EventWiringResult { Safe = false, Reason = ownershipError };
             using var g = LoadGraph(designerFilePath, controlAssemblyPath, designerSourceText);
             bool isRoot = componentId is "this" or "";
-            System.ComponentModel.IComponent? comp = isRoot ? g.Host.RootComponent
-                : g.Host.Container.Components.Cast<System.ComponentModel.IComponent>().FirstOrDefault(c => c.Site?.Name == componentId);
+            System.ComponentModel.IComponent? comp = FindGraphComponent(g, componentId);
             if (comp == null) return new EventWiringResult { Safe = false, Reason = "component not found: " + componentId };
             var ed = System.ComponentModel.TypeDescriptor.GetEvents(comp)[eventName];
             var del = ed?.EventType;
             if (del == null) return new EventWiringResult { Safe = false, Reason = "event not found: " + eventName };
 
-            string idKey = isRoot ? "this" : (comp.Site?.Name ?? componentId);
+            string idKey = isRoot ? "this" : componentId;
             string? handler = handlerName != null && handlerName.Trim().Length > 0 ? handlerName.Trim() : null;
             bool wired = g.EventWirings.TryGetValue(idKey, out var wmap) && wmap.ContainsKey(eventName);
 
@@ -1586,19 +2574,22 @@ namespace WinFormsDesigner.Engine
             // isn't the delegate's. This checked existence by NAME only, so `void WrongClick(string text)` could be
             // wired to Click and the build broke. The dropdown already filters by signature; this is the write
             // path, which the panel can reach with any value, so it must apply the SAME rule rather than trust it.
-            if (handler != null && codeText != null)
+            if (handler != null)
             {
+                var eventCodeTexts = EventCodeTexts(codeText, projectCodeTexts);
+                if (eventCodeTexts.Count == 0)
+                    return new EventWiringResult { Safe = false, Reason = "no project code snapshot was supplied to validate handler '" + handler + "'" };
                 var invoke = del.GetMethod("Invoke");
                 if (invoke == null)
                     return new EventWiringResult { Safe = false, Reason = "event delegate has no Invoke: " + eventName };
                 var pnames = invoke.GetParameters().Select(p => p.ParameterType.FullName ?? p.ParameterType.Name).ToList();
-                var compatible = DesignerEventEditor.FindCompatibleHandlers(
-                    codeText, g.ClassQualifiedName, pnames, invoke.ReturnType.FullName ?? invoke.ReturnType.Name);
+                var compatible = DesignerEventEditor.FindCompatibleHandlersInFiles(
+                    eventCodeTexts, g.ClassQualifiedName, pnames, invoke.ReturnType.FullName ?? invoke.ReturnType.Name);
                 if (!compatible.Contains(handler, StringComparer.Ordinal))
                     return new EventWiringResult
                     {
                         Safe = false,
-                        Reason = DesignerEventEditor.HasMethod(codeText, g.ClassQualifiedName, handler)
+                        Reason = DesignerEventEditor.HasMethodInFiles(eventCodeTexts, g.ClassQualifiedName, handler)
                             ? "handler '" + handler + "' does not match the event's signature"
                             : "handler method not found in code-behind: " + handler,
                     };
@@ -1620,13 +2611,23 @@ namespace WinFormsDesigner.Engine
             return new EventWiringResult { Safe = true, DesignerText = edit.NewText, HandlerName = handler ?? "" };
         }
 
+        private static List<string> EventCodeTexts(string? primaryCodeText, IReadOnlyList<string>? projectCodeTexts)
+        {
+            var texts = new List<string>();
+            if (primaryCodeText != null) texts.Add(primaryCodeText);
+            if (projectCodeTexts != null)
+                foreach (string? text in projectCodeTexts)
+                    if (text != null && !texts.Contains(text, StringComparer.Ordinal)) texts.Add(text);
+            return texts;
+        }
+
         /// <summary>
         /// Toolbox "add control": add a standard WinForms control to the .Designer.cs as a MINIMAL text edit
         /// (field declaration + InitializeComponent statements). Pure text — NO graph load (the generated
         /// statements are interpreted by the existing engine on the next render, which creates the control via
         /// host.CreateComponent). parentId "this" = the root form. The host applies the returned text unsaved.
         /// </summary>
-        public static ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, IReadOnlyList<string>? projectControlFqns = null, string? autoScaleDimensions = null)
+        public static ControlAddResult AddControl(string designerFilePath, string parentId, string controlTypeKey, string? sourceText = null, int? locX = null, int? locY = null, string? controlAssemblyPath = null, IReadOnlyList<string>? projectControlFqns = null, string? autoScaleDimensions = null, int? width = null, int? height = null)
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             // Fast path (curated/framework): pure text, NO assembly load. Only a project-control key
@@ -1651,7 +2652,31 @@ namespace WinFormsDesigner.Engine
                     projectControls = EnumerateProjectControls(ResolveAsmForList(designerFilePath, controlAssemblyPath));
                 }
             }
-            return DesignerControlEditor.AddControl(src, parentId, controlTypeKey, projectControls, locX, locY, autoScaleDimensions);
+            return DesignerControlEditor.AddControl(src, parentId, controlTypeKey, projectControls, locX, locY, autoScaleDimensions, width, height);
+        }
+
+        /// <summary>Add a control to an already-localizable form. The ordinary bounded add composes the structural
+        /// source first; only its newly-emitted localizable assignments are then lifted into the neutral .resx and
+        /// replaced by ApplyResources. The caller persists source and resource as one transaction.</summary>
+        public static ControlAddResult AddLocalizedControl(string designerFilePath, string parentId,
+            string controlTypeKey, string? sourceText, string? resxText, int? locX = null, int? locY = null,
+            string? controlAssemblyPath = null, IReadOnlyList<string>? projectControlFqns = null,
+            string? autoScaleDimensions = null, int? width = null, int? height = null)
+        {
+            var added = AddControl(designerFilePath, parentId, controlTypeKey, sourceText, locX, locY,
+                controlAssemblyPath, projectControlFqns, autoScaleDimensions, width, height);
+            if (!added.Safe || added.NewText == null) return added;
+            var localized = DesignerLocalizeForm.ApplyAddedControl(added.NewText, added.Name, resxText);
+            if (!localized.Safe || localized.NewText == null || localized.ResxText == null)
+                return new ControlAddResult { Safe = false, Name = added.Name, Reason = localized.Reason };
+            return new ControlAddResult
+            {
+                Safe = true,
+                Name = added.Name,
+                NewText = localized.NewText,
+                ResxText = localized.ResxText,
+                ResourceKeys = localized.Keys,
+            };
         }
 
         /// <summary>Add a new empty tab page to a tab host (pure text edit; the caller supplies the page type,
@@ -1900,16 +2925,48 @@ namespace WinFormsDesigner.Engine
             return DesignerControlEditor.MoveTabPage(src, hostId, pageId, left);
         }
 
+        /// <summary>Read one standard TabControl's field-backed page ids in canonical source collection order.
+        /// Pure text, no graph load; ambiguous/non-current-source collections are returned read-only.</summary>
+        public static TabPageItemsResult ListTabPages(string designerFilePath, string hostId, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            string? ownershipError = CurrentSourceOwnershipError(src, hostId);
+            if (ownershipError != null) return new TabPageItemsResult { Ok = false, Reason = ownershipError };
+            return DesignerControlEditor.ListTabPages(src, hostId);
+        }
+
+        /// <summary>Atomically apply an exact TabPages permutation as a minimal source edit. Pure text, no graph load.</summary>
+        public static ControlReorderResult SetTabPageOrder(string designerFilePath, string hostId,
+            IReadOnlyList<string> desiredOrder, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            string? ownershipError = CurrentSourceOwnershipError(src, hostId);
+            if (ownershipError != null) return new ControlReorderResult { Safe = false, Reason = ownershipError };
+            foreach (string pageId in desiredOrder ?? Array.Empty<string>())
+            {
+                ownershipError = CurrentSourceOwnershipError(src, pageId);
+                if (ownershipError != null) return new ControlReorderResult { Safe = false, Reason = ownershipError };
+            }
+            return DesignerControlEditor.SetTabPageOrder(src, hostId, desiredOrder ?? Array.Empty<string>());
+        }
+
         /// <summary>Reparent a leaf control into a different container / the root as a MINIMAL text edit —
-        /// rewrites only the receiver of its Controls.Add. Pure text, no graph load. See
+        /// rewrites only the receiver of its Controls.Add, plus an optional parent-relative Location. Pure text, no graph load. See
         /// <see cref="DesignerControlEditor.Reparent"/>.</summary>
-        public static ControlReorderResult ReparentControl(string designerFilePath, string childId, string newParentId, string? sourceText = null)
+        public static ControlReorderResult ReparentControl(string designerFilePath, string childId, string newParentId, string? sourceText = null, int? locX = null, int? locY = null)
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             string? ownershipError = CurrentSourceOwnershipError(src, childId)
-                ?? CurrentSourceOwnershipError(src, newParentId);
+                ?? CurrentSourceOwnershipError(src, ReparentOwnershipId(newParentId));
             if (ownershipError != null) return new ControlReorderResult { Safe = false, Reason = ownershipError };
-            return DesignerControlEditor.Reparent(src, childId, newParentId);
+            return DesignerControlEditor.Reparent(src, childId, newParentId, locX, locY);
+        }
+
+        private static string ReparentOwnershipId(string parentId)
+        {
+            if (parentId is "this" or "") return parentId;
+            int dot = parentId.IndexOf('.');
+            return dot < 0 ? parentId : parentId.Substring(0, dot);
         }
 
         /// <summary>Copy a leaf control to an opaque clipboard blob (field type + its InitializeComponent
@@ -1928,6 +2985,14 @@ namespace WinFormsDesigner.Engine
         {
             string src = sourceText ?? File.ReadAllText(designerFilePath);
             return DesignerControlEditor.PasteControl(src, clip, parentId);
+        }
+
+        /// <summary>Paste a clipboard control at an exact offset from its original Location.</summary>
+        public static ControlPasteResult PasteControlAtOffset(string designerFilePath, string clip, string parentId,
+            int offsetX, int offsetY, string? sourceText = null)
+        {
+            string src = sourceText ?? File.ReadAllText(designerFilePath);
+            return DesignerControlEditor.PasteControlAtOffset(src, clip, parentId, offsetX, offsetY);
         }
 
         /// <summary>Bring a control to front / send it to back by relocating its Controls.Add among its siblings.
@@ -2072,6 +3137,9 @@ namespace WinFormsDesigner.Engine
             /// a successful save.</summary>
             public required string ClassQualifiedName { get; init; }
             public required List<Assembly> UserAsms { get; init; }
+            /// <summary>The resolved primary project output path. User assemblies are byte-loaded, so their
+            /// Assembly.Location is empty; metadata policies that need a broker input path use this exact source.</summary>
+            public string? ControlAssemblyPath { get; init; }
             /// <summary>Complete discoverable graph: host-sited current components plus inherited visual/field components.</summary>
             public required List<IComponent> GraphComponents { get; init; }
             /// <summary>Authoritative source ownership/editability for every <see cref="GraphComponents"/> entry.</summary>
@@ -2090,6 +3158,101 @@ namespace WinFormsDesigner.Engine
             /// them on its own; they're a representable no-op for render (see IsSupportInitBracket).</summary>
             public required List<string> SupportInitStatements { get; init; }
             public void Dispose() => Surface.Dispose();
+        }
+
+        /// <summary>
+        /// A small STA-local working set of live modern design surfaces. DesignSurface and every component it owns are
+        /// apartment-affine, so ThreadStatic is intentional: production has one engine STA, while parallel test STAs
+        /// must never exchange graphs. One current revision per document and four documents maximum mirrors the
+        /// existing user-assembly cache's bounded working-set rule.
+        /// </summary>
+        private sealed class RetainedGraph
+        {
+            public required string Token { get; init; }
+            public required string DesignerFilePath { get; init; }
+            public required LoadedGraph Graph { get; init; }
+            public required string SourceText { get; set; }
+            public required List<LayoutControl> Controls { get; set; }
+            public required int RenderScale { get; init; }
+            public long Used { get; set; }
+        }
+
+        [ThreadStatic]
+        private static Dictionary<string, RetainedGraph>? _retainedGraphs;
+        [ThreadStatic]
+        private static long _retainedGraphUse;
+        private const int RetainedGraphLimit = 4;
+
+        private static string RetainGraph(
+            string designerFilePath,
+            string sourceText,
+            LoadedGraph graph,
+            List<LayoutControl> controls,
+            int renderScale)
+        {
+            var cache = _retainedGraphs ??= new Dictionary<string, RetainedGraph>(StringComparer.Ordinal);
+            string canonicalPath = CanonicalDesignerPath(designerFilePath);
+            foreach (string stale in cache.Values
+                .Where(entry => string.Equals(entry.DesignerFilePath, canonicalPath, StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.Token)
+                .ToArray())
+                EvictRetainedGraph(stale);
+            while (cache.Count >= RetainedGraphLimit)
+            {
+                var oldest = cache.Values.OrderBy(entry => entry.Used).First();
+                EvictRetainedGraph(oldest.Token);
+            }
+
+            string token = Guid.NewGuid().ToString("N");
+            cache[token] = new RetainedGraph
+            {
+                Token = token,
+                DesignerFilePath = canonicalPath,
+                Graph = graph,
+                SourceText = sourceText,
+                Controls = controls,
+                RenderScale = Math.Max(1, renderScale),
+                Used = ++_retainedGraphUse,
+            };
+            return token;
+        }
+
+        private static RetainedGraph? FindRetainedGraph(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token) || _retainedGraphs == null
+                || !_retainedGraphs.TryGetValue(token, out var entry)) return null;
+            entry.Used = ++_retainedGraphUse;
+            return entry;
+        }
+
+        /// <summary>
+        /// Prove that an engine-issued live graph is the exact complete source revision a Lane B planner is about to
+        /// edit. This only skips rebuilding the same IR: source hash/region/Lane A/minimality proofs still run normally.
+        /// Must be called on the engine STA because the retained working set and DesignSurface are apartment-local.
+        /// </summary>
+        public static bool RetainedGraphProvesFullCoverage(
+            string graphToken,
+            string designerFilePath,
+            string sourceText)
+        {
+            var entry = FindRetainedGraph(graphToken);
+            return entry != null
+                && string.Equals(entry.DesignerFilePath, CanonicalDesignerPath(designerFilePath), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(entry.SourceText, sourceText, StringComparison.Ordinal)
+                && entry.Graph.Unrepresentable.Count == 0
+                && entry.Graph.Total == entry.Graph.Representable;
+        }
+
+        private static void EvictRetainedGraph(string token)
+        {
+            if (_retainedGraphs == null || !_retainedGraphs.Remove(token, out var entry)) return;
+            try { entry.Graph.Dispose(); } catch { /* the fallback rebuild remains authoritative */ }
+        }
+
+        private static string CanonicalDesignerPath(string path)
+        {
+            try { return Path.GetFullPath(path); }
+            catch { return path; }
         }
 
         private static List<IComponent> SnapshotBaseGraph(IDesignerHost host, Control root)
@@ -2118,9 +3281,9 @@ namespace WinFormsDesigner.Engine
             return result;
         }
 
-        private static Dictionary<IComponent, string> ReflectedComponentFields(Control root)
+        private static Dictionary<IComponent, List<FieldInfo>> ReflectedComponentFields(Control root)
         {
-            var names = new Dictionary<IComponent, string>(ReferenceEqualityComparer.Instance);
+            var fieldsByComponent = new Dictionary<IComponent, List<FieldInfo>>(ReferenceEqualityComparer.Instance);
             for (Type? type = root.GetType(); type != null && type != typeof(Form) && type != typeof(UserControl)
                  && type != typeof(Control) && type != typeof(Component); type = type.BaseType)
             {
@@ -2132,18 +3295,55 @@ namespace WinFormsDesigner.Engine
                     if (!typeof(IComponent).IsAssignableFrom(field.FieldType)) continue;
                     try
                     {
-                        if (field.GetValue(root) is IComponent component && !names.ContainsKey(component))
-                            names[component] = field.Name;
+                        if (field.GetValue(root) is IComponent component)
+                        {
+                            if (!fieldsByComponent.TryGetValue(component, out var aliases))
+                                fieldsByComponent[component] = aliases = new List<FieldInfo>();
+                            aliases.Add(field);
+                        }
                     }
                     catch { /* inaccessible/hostile field degrades to another identity source */ }
                 }
             }
-            return names;
+            return fieldsByComponent;
+        }
+
+        private static string EffectiveAccessibilityOf(FieldInfo field)
+        {
+            if (field.IsPublic) return "public";
+            if (field.IsFamily) return "protected";
+            if (field.IsFamilyOrAssembly) return "protected internal";
+            if (field.IsFamilyAndAssembly) return "private protected";
+            if (field.IsAssembly) return "internal";
+            if (field.IsPrivate) return "private";
+            return "unknown";
+        }
+
+        private static bool AccessibleFromDerivedDesigner(string accessibility) =>
+            accessibility is "public" or "protected" or "protected internal";
+
+        private static string BaseIdentityToken(FieldInfo field, string accessibility)
+        {
+            try
+            {
+                string identity = string.Join("\n", new[]
+                {
+                    field.DeclaringType?.Assembly.FullName ?? "",
+                    field.Module.ModuleVersionId.ToString("D"),
+                    field.DeclaringType?.FullName ?? "",
+                    field.MetadataToken.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    field.Name,
+                    field.FieldType.AssemblyQualifiedName ?? field.FieldType.FullName ?? field.FieldType.Name,
+                    accessibility,
+                });
+                return "sha256:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+            }
+            catch { return ""; }
         }
 
         private static (List<IComponent> components, Dictionary<IComponent, ComponentOwnershipInfo> ownership) BuildGraphOwnership(
             IDesignerHost host, Control root, IReadOnlyList<IComponent> beforeInterpret, HashSet<string> sourceFields,
-            string rootName, string baseTypeName)
+            string rootName, string baseTypeName, bool resolvedBase)
         {
             var components = new List<IComponent>();
             var seen = new HashSet<IComponent>(ReferenceEqualityComparer.Instance);
@@ -2153,13 +3353,14 @@ namespace WinFormsDesigner.Engine
             Add(root);
 
             var before = new HashSet<IComponent>(beforeInterpret, ReferenceEqualityComparer.Instance);
-            var reflectedNames = ReflectedComponentFields(root);
+            var reflectedFields = ReflectedComponentFields(root);
             string Candidate(IComponent component)
             {
                 string candidate = component.Site?.Name ?? "";
                 if (candidate.Length == 0 && component is Control control) candidate = control.Name ?? "";
                 if (candidate.Length == 0 && component is ToolStripItem item) candidate = item.Name ?? "";
-                if (candidate.Length == 0) reflectedNames.TryGetValue(component, out candidate!);
+                if (candidate.Length == 0 && reflectedFields.TryGetValue(component, out var fields) && fields.Count == 1)
+                    candidate = fields[0].Name;
                 return DesignerControlEditor.IsValidIdentifier(candidate ?? "") ? candidate! : "";
             }
 
@@ -2199,13 +3400,44 @@ namespace WinFormsDesigner.Engine
 
                 if (before.Contains(component))
                 {
+                    FieldInfo? field = null;
+                    bool uniqueField = reflectedFields.TryGetValue(component, out var inheritedFields)
+                        && inheritedFields.Count == 1;
+                    if (uniqueField) field = inheritedFields![0];
+                    string accessibility = field == null ? "unknown" : EffectiveAccessibilityOf(field);
+                    bool resolvedControl = field != null && component is Control
+                        && !field.IsStatic && field.Name == candidate
+                        && typeof(Control).IsAssignableFrom(field.FieldType)
+                        && field.FieldType.IsInstanceOfType(component)
+                        && DesignerInheritedOverrideEditor.SupportsInheritedField(field.Name, field.FieldType, component.GetType());
+                    bool overrideEditable = resolvedBase && uniqueField && resolvedControl
+                        && AccessibleFromDerivedDesigner(accessibility);
+                    string token = overrideEditable ? BaseIdentityToken(field!, accessibility) : "";
+                    overrideEditable = overrideEditable && token.Length > 0;
+                    bool geometryOverrideEditable = overrideEditable && component is Control inheritedControl
+                        && inheritedControl.Dock == DockStyle.None
+                        && !inheritedControl.AutoSize
+                        && DesignerGeometry.LiveRefusalReason(inheritedControl, root).Length == 0;
                     ownership[component] = new ComponentOwnershipInfo
                     {
                         Id = candidate,
                         Name = candidate,
                         Ownership = "inherited",
                         Editable = false,
-                        ReadOnlyReason = "Component belongs to inherited base type '" + (baseTypeName.Length > 0 ? baseTypeName : root.GetType().Name) + "'.",
+                        InheritedPropertyOverrideEditable = overrideEditable,
+                        InheritedGeometryOverrideEditable = geometryOverrideEditable,
+                        BaseIdentityToken = token,
+                        InheritedFieldType = field?.FieldType.FullName ?? "",
+                        EffectiveAccessibility = accessibility,
+                        InheritedResolvedFieldType = overrideEditable ? field?.FieldType : null,
+                        ReadOnlyReason = overrideEditable
+                            ? "Component belongs to inherited base type '" + (baseTypeName.Length > 0 ? baseTypeName : root.GetType().Name)
+                                + "'. Structural edits remain read-only; allowlisted properties may be overridden in the derived source."
+                            : !uniqueField
+                                ? "Inherited component does not map to exactly one base field."
+                                : !AccessibleFromDerivedDesigner(accessibility)
+                                    ? "Inherited field is not public or protected; derived overrides are read-only."
+                                    : "Inherited component type or base identity is not trusted for derived overrides.",
                     };
                 }
                 else if (sourceFields.Contains(candidate))
@@ -2450,9 +3682,10 @@ namespace WinFormsDesigner.Engine
                 // resolve resources.GetObject(...) against the form's sibling .resx (image/icon properties).
                 // null when there is no .resx → forms without resources are entirely unaffected.
                 var resx = ResxResolver.TryLoadForDesigner(designerFilePath);
-                var (total, ok, unrep, explicitMembers, eventWirings, supportInit) = Interpret(cls, host, userAsms, resx);
+                var (total, ok, unrep, explicitMembers, eventWirings, supportInit) = Interpret(
+                    cls, host, userAsms, resx, SeedInheritedOverrideComponents((Control)host.RootComponent, beforeInterpret));
                 var graph = BuildGraphOwnership(host, (Control)host.RootComponent, beforeInterpret,
-                    FormClassResolver.FieldNamesOf(cls), cls.Identifier.Text, rootInfo.BaseTypeName);
+                    FormClassResolver.FieldNamesOf(cls), cls.Identifier.Text, rootInfo.BaseTypeName, rootInfo.ResolvedBase);
 
                 return new LoadedGraph
                 {
@@ -2467,6 +3700,7 @@ namespace WinFormsDesigner.Engine
                     ClassName = cls.Identifier.Text,
                     ClassQualifiedName = FormClassResolver.QualifiedName(cls),
                     UserAsms = userAsms,
+                    ControlAssemblyPath = string.IsNullOrWhiteSpace(asmPath) ? null : Path.GetFullPath(asmPath),
                     GraphComponents = graph.components,
                     Ownership = graph.ownership,
                     Total = total,
@@ -2759,13 +3993,12 @@ namespace WinFormsDesigner.Engine
                 if (asg.Left is not MemberAccessExpressionSyntax lhs) continue;
 
                 string evt = lhs.Name.Identifier.Text;
-                string comp = lhs.Expression switch
-                {
-                    MemberAccessExpressionSyntax inner => inner.Name.Identifier.Text, // this.comp.Event
-                    ThisExpressionSyntax => "this",                                   // this.Event (root)
-                    IdentifierNameSyntax idn => idn.Identifier.Text,                  // comp.Event
-                    _ => "",
-                };
+                var componentPath = Flatten(lhs.Expression);
+                string comp = lhs.Expression is ThisExpressionSyntax
+                    ? "this"
+                    : componentPath.Count > 0 && componentPath.All(DesignerControlEditor.IsValidIdentifier)
+                        ? string.Join(".", componentPath)
+                        : "";
                 if (comp.Length == 0) continue;
 
                 string? handler = ExtractHandlerName(asg.Right);
@@ -2803,11 +4036,37 @@ namespace WinFormsDesigner.Engine
         /// serialized on the single STA thread; <see cref="Eval"/> reads it to resolve resources.GetObject(...).</summary>
         [ThreadStatic] private static (HashSet<string> vars, ResxResolver? resolver)? _resx;
 
+        private static Dictionary<string, IComponent> SeedInheritedOverrideComponents(
+            Control root, IReadOnlyList<IComponent> beforeInterpret)
+        {
+            var before = new HashSet<IComponent>(beforeInterpret, ReferenceEqualityComparer.Instance);
+            var candidates = new List<(string name, IComponent component)>();
+            foreach (var kv in ReflectedComponentFields(root))
+            {
+                if (!before.Contains(kv.Key) || kv.Value.Count != 1 || kv.Key is not Control control) continue;
+                var field = kv.Value[0];
+                string accessibility = EffectiveAccessibilityOf(field);
+                if (field.IsStatic || !AccessibleFromDerivedDesigner(accessibility)
+                    || !DesignerControlEditor.IsValidIdentifier(field.Name)
+                    || !typeof(Control).IsAssignableFrom(field.FieldType)
+                    || !field.FieldType.IsInstanceOfType(control)
+                    || !DesignerInheritedOverrideEditor.SupportsInheritedField(field.Name, field.FieldType, control.GetType())) continue;
+                candidates.Add((field.Name, kv.Key));
+            }
+            return candidates.GroupBy(candidate => candidate.name, StringComparer.Ordinal)
+                .Where(group => group.Count() == 1)
+                .ToDictionary(group => group.Key, group => group.Single().component, StringComparer.Ordinal);
+        }
+
         private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers, List<string> eventWirings, List<string> supportInit) Interpret(
-            ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms, ResxResolver? resx = null)
+            ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms, ResxResolver? resx = null,
+            IReadOnlyDictionary<string, IComponent>? inheritedOverrideComponents = null)
         {
             var root = (Control)host.RootComponent;
             var comps = new Dictionary<string, IComponent>(StringComparer.Ordinal);
+            if (inheritedOverrideComponents != null)
+                foreach (var candidate in inheritedOverrideComponents)
+                    comps[candidate.Key] = candidate.Value;
             var unrep = new List<string>();
             // (component, property) pairs explicitly assigned in the source file. Lets the
             // serializer echo exactly the source's property set and not the extra
@@ -3210,14 +4469,26 @@ namespace WinFormsDesigner.Engine
             return false;
         }
 
-        private static Control? FindGraphControl(LoadedGraph g, string id)
+        private static IComponent? FindGraphComponent(LoadedGraph g, string id)
         {
+            if (id is "this" or "") return g.Host.RootComponent;
             if (string.IsNullOrWhiteSpace(id)) return null;
             foreach (var component in g.GraphComponents)
-                if (component is Control control && g.Ownership.TryGetValue(component, out var source)
-                    && string.Equals(source.Id, id, StringComparison.Ordinal)) return control;
+                if (g.Ownership.TryGetValue(component, out var source)
+                    && string.Equals(source.Id, id, StringComparison.Ordinal)) return component;
+            int separator = id.LastIndexOf('.');
+            if (separator > 0 && separator < id.Length - 1)
+            {
+                string splitId = id.Substring(0, separator);
+                string panelName = id.Substring(separator + 1);
+                if (panelName is "Panel1" or "Panel2"
+                    && FindGraphComponent(g, splitId) is SplitContainer split)
+                    return panelName == "Panel1" ? split.Panel1 : split.Panel2;
+            }
             return null;
         }
+
+        private static Control? FindGraphControl(LoadedGraph g, string id) => FindGraphComponent(g, id) as Control;
 
         /// <summary>Apply bounded, request-local tab view state. Only exact identities in the loaded graph are used,
         /// and only a standard TabControl -> member TabPage relation may be mutated. Invalid entries are ignored.</summary>
@@ -3276,6 +4547,31 @@ namespace WinFormsDesigner.Engine
                 return true;
 
             var targetChain = Flatten(ma.Expression);
+
+            if (method is "BringToFront" or "SendToBack")
+            {
+                if ((inv.ArgumentList?.Arguments.Count ?? 0) != 0)
+                {
+                    why = method + " unexpected arguments: " + inv.ToString().Trim();
+                    return false;
+                }
+
+                Control? targetControl = null;
+                if (targetChain.Count == 0)
+                    targetControl = root;
+                else if (targetChain.Count == 1 && comps.TryGetValue(targetChain[0], out var targetComponent) && targetComponent is Control resolved)
+                    targetControl = resolved;
+
+                if (targetControl == null)
+                {
+                    why = method + " on unknown control: " + ma.Expression;
+                    return false;
+                }
+
+                if (method == "BringToFront") targetControl.BringToFront();
+                else targetControl.SendToBack();
+                return true;
+            }
 
             if (method == "ApplyResources"
                 && _resx is { } rx
@@ -3405,7 +4701,16 @@ namespace WinFormsDesigner.Engine
                             // items) AND representable instead of dropping the whole AddRange to read-only.
                             var v = Eval(elExpr, null, userAsms);
                             if (v != null) list.Add(v);
-                            else { why = "AddRange: unknown element " + elExpr; return false; }
+                            else
+                            {
+                                // Controls.AddRange losing an element is categorically different from a list/menu
+                                // collection losing an item: it removes a declared control from the design surface.
+                                // Preserve that distinction so every render/save host can fail closed.
+                                why = (targetChain.Count > 0 && targetChain[^1] == "Controls"
+                                    ? "Controls.AddRange unknown element "
+                                    : "AddRange: unknown element ") + elExpr;
+                                return false;
+                            }
                         }
                     }
                     return true;
@@ -3555,6 +4860,28 @@ namespace WinFormsDesigner.Engine
                         {
                             string key = rlit.Token.ValueText;
                             return mai.Name.Identifier.Text == "GetString" ? rx.resolver.GetString(key) : rx.resolver.GetObject(key);
+                        }
+
+                        // Real VS-generated Image assignments may use
+                        // `System.Drawing.SystemIcons.Information.ToBitmap()`. This is the one allowlisted instance
+                        // invocation: a zero-argument conversion of a finite, trusted framework icon property. It is
+                        // recognized before generic static-factory resolution because the receiver includes the icon
+                        // member and is therefore not itself a type name.
+                        if (mai.Name.Identifier.Text == "ToBitmap" && invk.ArgumentList.Arguments.Count == 0
+                            && mai.Expression is MemberAccessExpressionSyntax iconRead)
+                        {
+                            string iconTypeName = iconRead.Expression.ToString();
+                            string iconMember = iconRead.Name.Identifier.Text;
+                            if (DesignerAllowlists.TryGetSystemIconBitmapFactoryName(iconTypeName, iconMember, out string iconFactory))
+                            {
+                                var iconType = ResolveType(iconTypeName, userAsms)
+                                    ?? throw new InvalidOperationException("cannot resolve system icon type " + iconTypeName);
+                                if (!DesignerAllowlists.TryGetSystemIconBitmapMember(iconType, iconFactory, out string checkedMember))
+                                    throw new InvalidOperationException("system icon bitmap factory not allowed: " + iconTypeName + "." + iconMember);
+                                var iconProperty = iconType.GetProperty(checkedMember, BindingFlags.Public | BindingFlags.Static);
+                                if (iconProperty?.GetValue(null) is Icon icon) return icon.ToBitmap();
+                                throw new InvalidOperationException("no system icon member " + checkedMember);
+                            }
                         }
 
                         // static factory call: Type.Method(args) — e.g. System.Drawing.Color.FromArgb(64, 128, 255),
