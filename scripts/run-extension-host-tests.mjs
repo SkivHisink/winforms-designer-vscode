@@ -142,7 +142,7 @@ const net48Build = spawnSync(
   { cwd: repo, env: { ...process.env, TEMP: testTemp, TMP: testTemp }, stdio: 'inherit' },
 );
 if (net48Build.error || net48Build.status !== 0) {
-  fs.rmSync(workspaceFixture, { recursive: true, force: true });
+  discardWorkspace(workspaceFixture);
   throw net48Build.error ?? new Error(`net48 Extension Host fixture build failed with exit code ${String(net48Build.status)}`);
 }
 const modernInheritanceProject = path.join(
@@ -154,7 +154,7 @@ const modernInheritanceBuild = spawnSync(
   { cwd: repo, env: { ...process.env, TEMP: testTemp, TMP: testTemp }, stdio: 'inherit' },
 );
 if (modernInheritanceBuild.error || modernInheritanceBuild.status !== 0) {
-  fs.rmSync(workspaceFixture, { recursive: true, force: true });
+  discardWorkspace(workspaceFixture);
   throw modernInheritanceBuild.error
     ?? new Error(`modern visual-inheritance Extension Host fixture build failed with exit code ${String(modernInheritanceBuild.status)}`);
 }
@@ -168,7 +168,7 @@ const fakeVendorBuild = spawnSync(
   { cwd: repo, env: { ...process.env, TEMP: testTemp, TMP: testTemp }, stdio: 'inherit' },
 );
 if (fakeVendorBuild.error || fakeVendorBuild.status !== 0) {
-  fs.rmSync(workspaceFixture, { recursive: true, force: true });
+  discardWorkspace(workspaceFixture);
   throw fakeVendorBuild.error ?? new Error(`modern FakeVendor Extension Host fixture build failed with exit code ${String(fakeVendorBuild.status)}`);
 }
 // S047/S048 need the real compiled-net48 metadata lane without making the modern S093/S094 fixture resolve to its
@@ -180,7 +180,7 @@ const fakeVendorNet48Build = spawnSync(
   { cwd: repo, env: { ...process.env, TEMP: testTemp, TMP: testTemp }, stdio: 'inherit' },
 );
 if (fakeVendorNet48Build.error || fakeVendorNet48Build.status !== 0) {
-  fs.rmSync(workspaceFixture, { recursive: true, force: true });
+  discardWorkspace(workspaceFixture);
   throw fakeVendorNet48Build.error
     ?? new Error(`net48 FakeVendor Extension Host fixture build failed with exit code ${String(fakeVendorNet48Build.status)}`);
 }
@@ -294,7 +294,7 @@ try {
   if (process.exitCode && process.env.WFD_KEEP_FAILED_WORKSPACE === '1') {
     console.error(`Preserving failed Extension Host workspace for diagnostics: ${workspaceFixture}`);
   } else {
-    fs.rmSync(workspaceFixture, { recursive: true, force: true });
+    discardWorkspace(workspaceFixture);
   }
 }
 
@@ -416,4 +416,19 @@ function writeS122PerformanceForm(root, namespaceName, className, count, vendorC
   ].join('\r\n');
   fs.writeFileSync(path.join(root, `${className}.cs`), source, 'utf8');
   fs.writeFileSync(path.join(root, `${className}.Designer.cs`), designer, 'utf8');
+}
+
+/** Removes the disposable Extension Host workspace.
+ *
+ * Windows can keep a handle on a file for a moment after the editor and the engines have exited, and `force` only
+ * forgives a missing path, not a locked one — so retry. If the directory still will not go, say so and move on:
+ * this runs after the suite has already printed its verdict, and a temp directory that outlives the run must not
+ * be what decides it. On a CI runner that is exactly what happened — every scenario passed and the step still
+ * failed, on an EPERM from the teardown. */
+function discardWorkspace(target) {
+  try {
+    fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (error) {
+    console.warn(`Could not remove the Extension Host workspace ${target}: ${error?.message ?? error}`);
+  }
 }
