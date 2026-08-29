@@ -1,0 +1,30 @@
+# Byte-pinned files: a gate compares their exact SHA-256 against a hash recorded when they were captured or
+# generated, so git must reproduce those bytes on every checkout instead of rewriting line endings for the
+# platform. Without this, an LF blob materialises as CRLF wherever core.autocrlf=true (the default on Windows CI
+# runners): the hash changes and the gate fails, while still passing in a working tree that happens to hold LF.
+# That is exactly how the reference-render gate reached CI looking green and failed there.
+#
+# The archive is not uniform — it records what Visual Studio actually wrote, and four of the captured sources
+# were written with CRLF. Every rule below was measured against the manifests (381 pinned files across 137
+# captures, plus 5 fixtures) rather than assumed, so changing one means re-measuring, not guessing.
+
+# Captured Visual Studio evidence. Default to the blob's own bytes...
+docs/v2/reference-traces/** -text
+# ...then restore CRLF for the four captures that Visual Studio wrote that way.
+docs/v2/reference-traces/**/GroupMoveForm.cs text eol=crlf
+docs/v2/reference-traces/**/GroupMoveForm.Designer.cs text eol=crlf
+docs/v2/reference-traces/**/S100AdapterRoundTripForm.cs text eol=crlf
+docs/v2/reference-traces/**/S100AdapterRoundTripForm.Designer.cs text eol=crlf
+
+# The fixtures Visual Studio was pointed at when those traces were captured.
+fixtures/VisualStudioReference/** -text
+
+# The Extension Host S100 scenario copies this sample verbatim into its disposable workspace and then compares the
+# copy's SHA-256 against the archived capture, so the sample is pinned to the archive's bytes too.
+docs/v2/adapter-manifest.sample.json -text
+
+# Generated protocol bindings: `generate-v2-protocol.mjs --check` compares each file against the generator's
+# output character for character, and the generator writes "\n".
+extension/src/v2Protocol.ts -text
+engine/V2Protocol.cs -text
+engine-net48/V2Protocol.cs -text
