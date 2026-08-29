@@ -521,7 +521,10 @@ async function section(scenarioIds: readonly string[], body: () => Promise<void>
   } catch (error) {
     const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
     for (const scenarioId of scenarioIds) scenarioResults.push({ scenarioId, passed: false, error: detail });
-    console.log(`SCENARIO ${label} FAIL - ${detail.split('\n')[0]}`);
+    // The whole message, not its first line: an assertion that lists WHICH budget or invariant broke puts that list
+    // on the lines after the headline, and truncating here left a CI failure saying only that S122 "failed:" with
+    // the reasons discarded. The stack still goes to the ledger; the log gets the part a reader needs.
+    console.log(`SCENARIO ${label} FAIL - ${error instanceof Error ? error.message : String(error)}`);
     // Best effort only: give the next scenario a clean editor surface so one failure cascades as little as possible.
     try { await vscode.commands.executeCommand('workbench.action.closeAllEditors'); } catch { /* ignore */ }
   }

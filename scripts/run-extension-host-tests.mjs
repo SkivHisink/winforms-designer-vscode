@@ -246,8 +246,13 @@ try {
   }
   const ledgerFailures = ledgerResults.filter((result) => result?.passed !== true);
   if (ledgerFailures.length > 0) {
+    // Keep the whole assertion message and drop only the stack: an assertion that names which budget or invariant
+    // broke puts that on the lines after the headline, and taking the first line alone reported a CI failure whose
+    // reasons had already been thrown away.
     throw new Error(`S003 setup suite reported ${ledgerFailures.length} failed scenario(s): `
-      + ledgerFailures.map((result) => `${result?.scenarioId}: ${String(result?.error).split('\n')[0]}`).join(' | '));
+      + ledgerFailures
+        .map((result) => `${result?.scenarioId}: ${String(result?.error ?? '').split('\n    at ')[0]}`)
+        .join(' | '));
   }
   console.log(`VS Code Extension Host tail scenarios all passed (${ledgerResults.length} rows): ${version}`);
 
