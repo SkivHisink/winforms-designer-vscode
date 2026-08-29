@@ -131,6 +131,20 @@ public sealed class DesignerExpandableMetadataTests
         Assert.Equal(new[] { "Alpha", "Beta" }, Child(healthyMode.Properties!, "Mode").StandardValues);
     }
 
+    // The test above passes on an idle machine whatever the guard does. Its net48 twin failed on a CI runner because
+    // the guard ran converter queries on the THREAD POOL: a stalled converter parks its thread for good, .NET injects
+    // replacements slowly, and the next query then spent its whole budget queued — so the property lost its VALUE,
+    // not just its dropdown. Pin the property that made that possible, since a fast machine cannot observe it.
+    [Fact]
+    public void ConverterQueries_NeverRunOnAThreadPoolThread()
+    {
+        ThreadAffinityConverter.RanOnPoolThread = null;
+        Describe(new ThreadAffinityComponent(), nameof(ThreadAffinityComponent));
+
+        Assert.False(ThreadAffinityConverter.RanOnPoolThread,
+            "a converter query running on a pool thread makes a busy machine drop property values");
+    }
+
     private static ComponentInfo DescribeRoot()
     {
         return Describe(new ExpandableMetadataComponent(), nameof(ExpandableMetadataComponent));
@@ -176,6 +190,25 @@ public sealed class SlowStandardValuesComponent : Component
     [DefaultValue("Alpha")]
     [TypeConverter(typeof(SlowStandardValuesConverter))]
     public string Mode { get; set; } = "Alpha";
+}
+
+public sealed class ThreadAffinityComponent : Component
+{
+    [DefaultValue("Alpha")]
+    [TypeConverter(typeof(ThreadAffinityConverter))]
+    public string Mode { get; set; } = "Alpha";
+}
+
+public sealed class ThreadAffinityConverter : StringConverter
+{
+    // null until the converter is asked anything — Assert.False then fails, which is the honest outcome.
+    internal static bool? RanOnPoolThread;
+
+    public override bool GetStandardValuesSupported(ITypeDescriptorContext? context)
+    {
+        RanOnPoolThread = System.Threading.Thread.CurrentThread.IsThreadPoolThread;
+        return false;
+    }
 }
 
 internal sealed class TestDesignerHost : IDesignerHost

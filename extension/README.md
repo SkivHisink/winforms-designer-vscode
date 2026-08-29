@@ -4,7 +4,7 @@
 
 Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered form — click controls, edit properties, drag and resize, wire events, and save minimal changes back into `.Designer.cs`. No round-trip through Visual Studio.
 
-> **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
+> ✅ **2.0.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
 
 ![WinForms Designer for VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/main-picture.png)
 

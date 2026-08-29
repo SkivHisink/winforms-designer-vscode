@@ -334,10 +334,6 @@ namespace WinFormsDesigner.Engine.Net48
         }
 
         private static readonly TimeSpan ConverterQueryTimeout = TimeSpan.FromMilliseconds(200);
-        /// <summary>How long a converter query may wait to be SCHEDULED before its own budget starts. Separate from
-        /// <see cref="ConverterQueryTimeout"/> on purpose: queueing delay is the machine's fault, not the converter's,
-        /// and charging it to the converter drops good metadata on a small or busy runner.</summary>
-        private static readonly TimeSpan ConverterStartBudget = TimeSpan.FromSeconds(2);
 
         private static (List<string>?, bool, string?) StandardValuesOf(PropertyDescriptor pd, IComponent owner)
         {
@@ -553,53 +549,104 @@ namespace WinFormsDesigner.Engine.Net48
         private static bool TryRunConverterQuery<T>(Func<T> query, out T? result, out bool timedOut)
         {
             timedOut = false;
-            Task<T> task;
-            // NOT disposed and NOT a `using`: a query we abandon still sets this from its own thread long after we
-            // have returned, and ManualResetEventSlim.Set() on a disposed instance throws on a pool thread.
-            var started = new System.Threading.ManualResetEventSlim(false);
-            try
-            {
-                task = Task.Run(() => { started.Set(); return query(); });
-            }
-            catch
-            {
-                result = default;
-                return false;
-            }
+            result = default;
 
-            try
+            T? captured = default;
+            bool produced = false;
+            bool completed;
+
+            lock (PumpGate)
             {
-                // The budget bounds the CONVERTER, not the queue. Wait for the work to actually begin first: a
-                // stalled converter leaves its thread sleeping, .NET injects replacement pool threads slowly, and on
-                // a small or busy machine the whole budget can be spent before the next converter runs a single
-                // instruction. That made a property lose its VALUE — not just its dropdown — which is how the S043
-                // net48 describe failed on a CI runner while passing on every developer machine.
-                started.Wait(ConverterStartBudget);
-                if (task.Wait(ConverterQueryTimeout))
+                ConverterQueryPump pump;
+                try
                 {
-                    result = task.GetAwaiter().GetResult();
-                    return true;
+                    if (SharedPump == null) SharedPump = new ConverterQueryPump();
+                    pump = SharedPump;
+                }
+                catch
+                {
+                    // No thread to run the query on. Degrade this one field rather than run the converter unbounded.
+                    return false;
+                }
+
+                try
+                {
+                    completed = pump.Run(
+                        () => { try { captured = query(); produced = true; } catch { produced = false; } },
+                        ConverterQueryTimeout);
+                }
+                catch
+                {
+                    SharedPump = null;
+                    return false;
+                }
+
+                if (!completed)
+                {
+                    // The worker is parked inside the converter and will never come back. Drop it and let the next
+                    // query start a fresh one — the queries that follow must not inherit this converter's stall.
+                    SharedPump = null;
+                    timedOut = true;
+                    return false;
                 }
             }
-            catch
-            {
-                result = default;
-                return false;
-            }
 
-            ObserveLateConverterFault(task);
-            timedOut = true;
-            result = default;
-            return false;
+            if (!produced) return false;
+            result = captured;
+            return true;
         }
 
-        private static void ObserveLateConverterFault(Task task)
+        private static readonly object PumpGate = new object();
+        private static ConverterQueryPump? SharedPump;
+
+        /// <summary>
+        /// A private worker thread that runs third-party converter queries under <see cref="ConverterQueryTimeout"/>.
+        /// It deliberately does NOT use the thread pool. A converter that hangs parks its thread for good; .NET
+        /// injects replacement pool threads slowly, so on a small or busy machine the NEXT query spent its whole
+        /// budget sitting in the queue and timed out without running a single instruction — costing a property its
+        /// VALUE, not just its dropdown. That is how S043 failed on a CI runner while passing on every developer
+        /// machine. A dedicated thread starts however loaded the machine is, and one worker serves every query of a
+        /// describe, so the guard costs one thread rather than one per property.
+        /// </summary>
+        private sealed class ConverterQueryPump
         {
-            _ = task.ContinueWith(
-                completed => { var ignored = completed.Exception; },
-                System.Threading.CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
-                TaskScheduler.Default);
+            // Never disposed: an abandoned query still signals from its own thread long after we have returned, and
+            // signalling a disposed instance would throw there.
+            private readonly System.Threading.SemaphoreSlim _pending = new System.Threading.SemaphoreSlim(0, 1);
+            private readonly System.Threading.ManualResetEventSlim _finished =
+                new System.Threading.ManualResetEventSlim(false);
+            private Action _job = delegate { };
+
+            internal ConverterQueryPump()
+            {
+                var thread = new System.Threading.Thread(Loop)
+                {
+                    IsBackground = true, // a parked converter must never keep the engine alive
+                    Name = "designer-converter-query",
+                };
+                thread.Start();
+            }
+
+            /// <summary>Runs <paramref name="job"/> on the worker and reports whether it finished in time. A pump
+            /// that reports false is stuck inside the converter and must be discarded, never reused.</summary>
+            internal bool Run(Action job, TimeSpan timeout)
+            {
+                _job = job;
+                _finished.Reset();
+                _pending.Release();
+                return _finished.Wait(timeout);
+            }
+
+            private void Loop()
+            {
+                while (true)
+                {
+                    _pending.Wait();
+                    try { _job(); }
+                    catch { }
+                    finally { _finished.Set(); }
+                }
+            }
         }
     }
 }

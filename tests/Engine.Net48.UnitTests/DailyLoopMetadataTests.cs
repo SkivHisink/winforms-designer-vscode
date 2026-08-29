@@ -74,6 +74,24 @@ partial class Form1
                 Assert.Null(mode.MetadataDiagnosticCode);
             }
         }
+
+        // S043 above passes on an idle machine whatever the guard does. It failed on a CI runner because the guard
+        // ran converter queries on the THREAD POOL: a stalled converter parks its thread for good, .NET injects
+        // replacements slowly, and the next query then spent its whole budget queued — so the property lost its
+        // VALUE, not just its dropdown. Pin the property that made that possible, since it is the part a fast
+        // developer machine cannot observe.
+        [Fact]
+        public void ConverterQueries_NeverRunOnAThreadPoolThread_OnNet48()
+        {
+            ThreadAffinityNet48Converter.RanOnPoolThread = null;
+            using (var component = new ThreadAffinityNet48Component())
+            {
+                CompiledDescriber.Describe(component, "affinity", "affinity", false, "this");
+            }
+
+            Assert.False(ThreadAffinityNet48Converter.RanOnPoolThread,
+                "a converter query running on a pool thread makes a busy machine drop property values");
+        }
     }
 
     [DefaultEvent(nameof(Activated))]
@@ -122,6 +140,25 @@ partial class Form1
 
         public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext context) =>
             new StandardValuesCollection(new[] { "Alpha", "Beta" });
+    }
+
+    internal sealed class ThreadAffinityNet48Component : Component
+    {
+        [DefaultValue("Alpha")]
+        [TypeConverter(typeof(ThreadAffinityNet48Converter))]
+        public string Mode { get; set; } = "Alpha";
+    }
+
+    internal sealed class ThreadAffinityNet48Converter : StringConverter
+    {
+        // null until the converter is asked anything — Assert.False then fails, which is the honest outcome.
+        internal static bool? RanOnPoolThread;
+
+        public override bool GetStandardValuesSupported(ITypeDescriptorContext context)
+        {
+            RanOnPoolThread = System.Threading.Thread.CurrentThread.IsThreadPoolThread;
+            return false;
+        }
     }
 
     internal sealed class HealthyNet48StandardValuesConverter : StringConverter
