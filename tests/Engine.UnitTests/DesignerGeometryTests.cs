@@ -296,6 +296,226 @@ public sealed class DesignerGeometryTests
         }
     }
 
+    // GitHub #7 — Visual Studio orders the sections by component, not by nesting: a button dropped on the form and then
+    // moved into a panel keeps its section ABOVE the panel's. The panel's Controls.Add then takes the button's anchor
+    // distances against the panel's default 200x100 size, and only the SuspendLayout/ResumeLayout bracket stops the
+    // later `panel1.Size` assignment from dragging every Right/Bottom-anchored child along with it.
+    private static string CrudFormSource(string autoScaleDimensions = "7F, 15F", string? fontStatement = null,
+        bool autoScaleAfterChildren = false) => $$"""
+        namespace Demo
+        {
+            partial class CrudForm : System.Windows.Forms.Form
+            {
+                private System.Windows.Forms.Button saveButton;
+                private System.Windows.Forms.TextBox nameTextBox;
+                private System.Windows.Forms.GroupBox groupBox1;
+                private System.Windows.Forms.Panel panel1;
+
+                private void InitializeComponent()
+                {
+                    this.saveButton = new System.Windows.Forms.Button();
+                    this.nameTextBox = new System.Windows.Forms.TextBox();
+                    this.groupBox1 = new System.Windows.Forms.GroupBox();
+                    this.panel1 = new System.Windows.Forms.Panel();
+                    this.groupBox1.SuspendLayout();
+                    this.panel1.SuspendLayout();
+                    this.SuspendLayout();
+                    this.saveButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+                    this.saveButton.Location = new System.Drawing.Point(416, 8);
+                    this.saveButton.Name = "saveButton";
+                    this.saveButton.Size = new System.Drawing.Size(75, 23);
+                    this.saveButton.Text = "Save";
+                    this.nameTextBox.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
+                        | System.Windows.Forms.AnchorStyles.Right)));
+                    this.nameTextBox.Location = new System.Drawing.Point(100, 30);
+                    this.nameTextBox.Name = "nameTextBox";
+                    this.nameTextBox.Size = new System.Drawing.Size(440, 23);
+                    this.groupBox1.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+                        | System.Windows.Forms.AnchorStyles.Left)
+                        | System.Windows.Forms.AnchorStyles.Right)));
+                    this.groupBox1.Controls.Add(this.nameTextBox);
+                    this.groupBox1.Location = new System.Drawing.Point(12, 12);
+                    this.groupBox1.Name = "groupBox1";
+                    this.groupBox1.Size = new System.Drawing.Size(560, 300);
+                    this.groupBox1.Text = "Customer";
+                    this.panel1.Controls.Add(this.saveButton);
+                    this.panel1.Dock = System.Windows.Forms.DockStyle.Bottom;
+                    this.panel1.Location = new System.Drawing.Point(0, 321);
+                    this.panel1.Name = "panel1";
+                    this.panel1.Size = new System.Drawing.Size(584, 40);
+                    {{(autoScaleAfterChildren ? "" : AutoScaleStatements(autoScaleDimensions))}}
+                    this.ClientSize = new System.Drawing.Size(584, 361);
+                    this.Controls.Add(this.groupBox1);
+                    this.Controls.Add(this.panel1);
+                    {{(autoScaleAfterChildren ? AutoScaleStatements(autoScaleDimensions) : "")}}
+                    {{fontStatement ?? ""}}
+                    this.Name = "CrudForm";
+                    this.groupBox1.ResumeLayout(false);
+                    this.groupBox1.PerformLayout();
+                    this.panel1.ResumeLayout(false);
+                    this.ResumeLayout(false);
+                }
+            }
+        }
+        """;
+
+    private static string AutoScaleStatements(string autoScaleDimensions) =>
+        "this.AutoScaleDimensions = new System.Drawing.SizeF(" + autoScaleDimensions + ");\r\n"
+        + "this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;";
+
+    private static void AssertCrudFormKeepsDesignedGeometry(string source)
+    {
+        var layout = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("CrudForm.Designer.cs", sourceText: source));
+        var root = Assert.Single(layout.Controls, c => c.Id == "this");
+        var group = Assert.Single(layout.Controls, c => c.Id == "groupBox1");
+        var panel = Assert.Single(layout.Controls, c => c.Id == "panel1");
+        var save = Assert.Single(layout.Controls, c => c.Id == "saveButton");
+        var name = Assert.Single(layout.Controls, c => c.Id == "nameTextBox");
+
+        Assert.Equal((584, 361), (root.ClientWidth, root.ClientHeight));
+        Assert.Equal((12, 12, 560, 300), (group.X - root.ClientX, group.Y - root.ClientY, group.Width, group.Height));
+        Assert.Equal((0, 321, 584, 40), (panel.X - root.ClientX, panel.Y - root.ClientY, panel.Width, panel.Height));
+        Assert.Equal((416, 8, 75, 23), (save.X - panel.ClientX, save.Y - panel.ClientY, save.Width, save.Height));
+        Assert.Equal((100, 440), (name.X - group.ClientX, name.Width));
+    }
+
+    [Fact]
+    public void RenderLayout_ChildSectionBeforeItsContainer_KeepsAnchoredChildrenWhereTheSourcePutsThem() =>
+        AssertCrudFormKeepsDesignedGeometry(CrudFormSource());
+
+    [Fact]
+    // The form font is assigned after its children (alphabetical order). The interpreter used to consume the
+    // AutoScaleDimensions assignment on the still-empty root and then rescale the finished tree on the font change —
+    // every control drawn at 6/7 of its designed position although the compiled form does not scale at all.
+    public void RenderLayout_FormFontWithMatchingAutoScaleDimensions_DoesNotRescaleTheDesignedGeometry() =>
+        AssertCrudFormKeepsDesignedGeometry(CrudFormSource("6F, 13F",
+            "this.Font = new System.Drawing.Font(\"Tahoma\", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));"));
+
+    [Fact]
+    // A .NET Framework form still declaring 6F, 13F under the .NET default font: the running app rescales it, but the
+    // designer keeps the coordinates the source declares because every geometry edit is written back to that source.
+    public void RenderLayout_StaleAutoScaleDimensions_KeepsSourceCoordinatesInsteadOfRescaling() =>
+        AssertCrudFormKeepsDesignedGeometry(CrudFormSource("6F, 13F"));
+
+    [Fact]
+    // With the containers already attached when the scale becomes due, a child's ResumeLayout(false) lets the form
+    // scale that child (ContainerControl.OnChildLayoutResuming) before the form's own resume is ever reached.
+    public void RenderLayout_StaleAutoScaleDimensionsAssignedAfterChildren_KeepsSourceCoordinates() =>
+        AssertCrudFormKeepsDesignedGeometry(CrudFormSource("6F, 13F", autoScaleAfterChildren: true));
+
+    [Fact]
+    // A nested UserControl has no DocumentDesigner to shadow its AutoScale* pair: with a stale 6F, 13F its replayed
+    // resume would rescale the button, and a drag would then write the scaled position back into the source.
+    public void NestedContainerWithStaleAutoScaleDimensions_KeepsSourceCoordinatesAcrossAMove()
+    {
+        const string source = """
+            namespace Demo
+            {
+                partial class NestedScaleForm : System.Windows.Forms.Form
+                {
+                    private System.Windows.Forms.UserControl child;
+                    private System.Windows.Forms.Button button;
+                    private void InitializeComponent()
+                    {
+                        this.child = new System.Windows.Forms.UserControl();
+                        this.button = new System.Windows.Forms.Button();
+                        this.child.SuspendLayout();
+                        this.SuspendLayout();
+                        this.button.Location = new System.Drawing.Point(100, 50);
+                        this.button.Name = "button";
+                        this.button.Size = new System.Drawing.Size(80, 30);
+                        this.child.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
+                        this.child.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+                        this.child.Controls.Add(this.button);
+                        this.child.Location = new System.Drawing.Point(10, 10);
+                        this.child.Name = "child";
+                        this.child.Size = new System.Drawing.Size(300, 150);
+                        this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
+                        this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+                        this.ClientSize = new System.Drawing.Size(400, 250);
+                        this.Controls.Add(this.child);
+                        this.Name = "NestedScaleForm";
+                        this.child.ResumeLayout(false);
+                        this.ResumeLayout(false);
+                    }
+                }
+            }
+            """;
+
+        var start = Sta.Invoke(() => DesignerRenderer.BeginGeometryDrag("NestedScaleForm.Designer.cs", "button", sourceText: source));
+        var bounds = Assert.IsType<GeometryRect>(start.LogicalBounds);
+        Assert.Equal((100, 50, 80, 30), (bounds.X, bounds.Y, bounds.Width, bounds.Height));
+
+        var commit = Sta.Invoke(() => DesignerRenderer.CommitGeometryBounds(
+            "NestedScaleForm.Designer.cs", "button", bounds.X + 10, bounds.Y, bounds.Width, bounds.Height, sourceText: source));
+        Assert.True(commit.Ok, commit.Reason);
+        Assert.Contains("this.button.Location = new System.Drawing.Point(110, 50);", commit.DesignerText);
+
+        var reloaded = Sta.Invoke(() => DesignerRenderer.BeginGeometryDrag(
+            "NestedScaleForm.Designer.cs", "button", sourceText: commit.DesignerText));
+        var after = Assert.IsType<GeometryRect>(reloaded.LogicalBounds);
+        Assert.Equal((110, 50, 80, 30), (after.X, after.Y, after.Width, after.Height));
+    }
+
+    [Fact]
+    // On the never-shown surface GDI+ refuses to paint the splitter, and SplitContainer's layout throws after sizing
+    // its panels but before resuming them; their Dock=Fill children must still fill the panels.
+    public void SplitContainerPanels_LayOutTheirDockedChildren()
+    {
+        const string source = """
+            namespace Demo
+            {
+                partial class SplitForm : System.Windows.Forms.Form
+                {
+                    private System.Windows.Forms.SplitContainer split;
+                    private System.Windows.Forms.Button left;
+                    private System.Windows.Forms.Button right;
+                    private void InitializeComponent()
+                    {
+                        this.split = new System.Windows.Forms.SplitContainer();
+                        this.left = new System.Windows.Forms.Button();
+                        this.right = new System.Windows.Forms.Button();
+                        ((System.ComponentModel.ISupportInitialize)(this.split)).BeginInit();
+                        this.split.Panel1.SuspendLayout();
+                        this.split.Panel2.SuspendLayout();
+                        this.split.SuspendLayout();
+                        this.SuspendLayout();
+                        this.split.Dock = System.Windows.Forms.DockStyle.Fill;
+                        this.split.Location = new System.Drawing.Point(0, 0);
+                        this.split.Name = "split";
+                        this.split.Panel1.Controls.Add(this.left);
+                        this.split.Panel2.Controls.Add(this.right);
+                        this.split.Size = new System.Drawing.Size(640, 400);
+                        this.split.SplitterDistance = 420;
+                        this.left.Dock = System.Windows.Forms.DockStyle.Fill;
+                        this.left.Name = "left";
+                        this.right.Dock = System.Windows.Forms.DockStyle.Fill;
+                        this.right.Name = "right";
+                        this.ClientSize = new System.Drawing.Size(640, 400);
+                        this.Controls.Add(this.split);
+                        this.Name = "SplitForm";
+                        this.split.Panel1.ResumeLayout(false);
+                        this.split.Panel2.ResumeLayout(false);
+                        ((System.ComponentModel.ISupportInitialize)(this.split)).EndInit();
+                        this.split.ResumeLayout(false);
+                        this.ResumeLayout(false);
+                    }
+                }
+            }
+            """;
+
+        var layout = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("SplitForm.Designer.cs", sourceText: source));
+        var panel1 = Assert.Single(layout.Controls, c => c.Id == "split.Panel1");
+        var panel2 = Assert.Single(layout.Controls, c => c.Id == "split.Panel2");
+        var left = Assert.Single(layout.Controls, c => c.Id == "left");
+        var right = Assert.Single(layout.Controls, c => c.Id == "right");
+
+        Assert.Empty(layout.Unrepresentable);
+        Assert.Equal((panel1.ClientWidth, panel1.ClientHeight), (left.Width, left.Height));
+        Assert.Equal((panel2.ClientWidth, panel2.ClientHeight), (right.Width, right.Height));
+        Assert.True(left.Width > 300 && right.Width > 150, $"left {left.Width}x{left.Height}, right {right.Width}x{right.Height}");
+    }
+
     [Fact]
     // V2-FND-001-S022 — the engine-authoritative resize changes Size without rewriting Anchor or Location.
     public void V2_FND_001_S022_AnchoredResizeChangesSizeWithoutChangingAnchorAssignment()

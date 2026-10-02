@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
 import {
   V2AdapterManifest,
+  V2AdapterManifestArchitecture,
   V2AdapterManifestDiagnosticCode,
+  V2AdapterManifestRuntime,
+  validateV2AdapterManifestCompatibilityCohort,
   validateV2AdapterManifestJson,
 } from './v2AdapterManifest';
 
@@ -13,37 +16,52 @@ import {
 export const V2_ADAPTER_MANIFEST_WORKSPACE_GLOB = '**/.winforms-designer/adapter-manifest.json';
 export const V2_ADAPTER_MANIFEST_DISCOVERY_LIMIT = 64;
 export const V2_ADAPTER_MANIFEST_FILE_BYTE_LIMIT = 256 * 1024;
+export const V2_ADAPTER_MANIFEST_DIAGNOSTIC_LIMIT = 32;
+export const V2_ADAPTER_MANIFEST_DIAGNOSTIC_MESSAGE_LIMIT = 1024;
 
 export type V2AdapterManifestRegistryDiagnosticCode = V2AdapterManifestDiagnosticCode
   | 'ADAPTER_MANIFEST_READ_FAILED'
-  | 'ADAPTER_MANIFEST_FILE_TOO_LARGE';
+  | 'ADAPTER_MANIFEST_FILE_TOO_LARGE'
+  | 'ADAPTER_IDENTITY_DUPLICATE';
+
+export interface V2AdapterManifestInspectionContext {
+  readonly runtime?: V2AdapterManifestRuntime;
+  readonly architecture?: V2AdapterManifestArchitecture;
+}
+
+export interface V2AdapterManifestRegistryDiagnostic {
+  readonly code: V2AdapterManifestRegistryDiagnosticCode;
+  readonly message: string;
+  readonly path?: string;
+}
 
 export interface V2AdapterManifestProductStatus {
   readonly uri: string;
   readonly ok: boolean;
+  /** Static schema validity is independent of the inspected runtime and architecture. */
+  readonly manifestValid: boolean;
+  readonly compatibilityState: 'compatible' | 'incompatible' | 'invalid' | 'duplicate';
+  readonly compatibilityContext: V2AdapterManifestInspectionContext & { readonly productVersion: string };
   readonly adapterId: string | null;
   readonly adapterVersion: string | null;
   readonly supportedProtocolVersions: readonly number[];
   readonly compatibilityCohorts: readonly {
     readonly minProductVersion: string;
     readonly maxProductVersionExclusive: string;
-    readonly runtimes: readonly string[];
-    readonly architectures: readonly string[];
+    readonly runtimes: readonly V2AdapterManifestRuntime[];
+    readonly architectures: readonly V2AdapterManifestArchitecture[];
   }[];
   readonly capabilities: readonly string[];
   readonly unsupportedFeatures: readonly string[];
   readonly diagnosticCodes: readonly V2AdapterManifestRegistryDiagnosticCode[];
+  readonly diagnostics: readonly V2AdapterManifestRegistryDiagnostic[];
+  readonly diagnosticsTruncated: boolean;
   readonly manifestDeclaresVendorCodeLoad: boolean;
   readonly manifestDeclaresWorkspaceMutation: boolean;
   /** Product invariant: declaration is not execution. */
   readonly vendorCodeLoaded: false;
   /** Product invariant: discovery is read-only even when a manifest requests a source-first cohort. */
   readonly workspaceMutationAuthorityGranted: false;
-}
-
-interface RegistryDiagnostic {
-  readonly code: V2AdapterManifestRegistryDiagnosticCode;
-  readonly message: string;
 }
 
 export class V2AdapterManifestRegistry implements vscode.Disposable {
@@ -71,6 +89,7 @@ export class V2AdapterManifestRegistry implements vscode.Disposable {
   snapshot(): readonly V2AdapterManifestProductStatus[] {
     return this.latest.map((status) => ({
       ...status,
+      compatibilityContext: { ...status.compatibilityContext },
       supportedProtocolVersions: [...status.supportedProtocolVersions],
       compatibilityCohorts: status.compatibilityCohorts.map((cohort) => ({
         ...cohort,
@@ -80,24 +99,64 @@ export class V2AdapterManifestRegistry implements vscode.Disposable {
       capabilities: [...status.capabilities],
       unsupportedFeatures: [...status.unsupportedFeatures],
       diagnosticCodes: [...status.diagnosticCodes],
+      diagnostics: status.diagnostics.map((item) => ({ ...item })),
     }));
   }
 
+  /** Inspect a form without changing the workspace snapshot or global Problems diagnostics. */
+  snapshotForContext(context: V2AdapterManifestInspectionContext): readonly V2AdapterManifestProductStatus[] {
+    return this.snapshot().map((status) => {
+      const compatibilityContext = {
+        productVersion: this.productVersion,
+        runtime: context.runtime,
+        architecture: context.architecture,
+      };
+      if (!status.manifestValid) return { ...status, compatibilityContext };
+      const diagnostics = [
+        ...status.diagnostics.filter((item) => item.code !== 'ADAPTER_COHORT_UNSUPPORTED'),
+        ...validateV2AdapterManifestCompatibilityCohort({
+          productId: 'winforms-designer-vscode',
+          cohorts: status.compatibilityCohorts.map((cohort) => ({
+            ...cohort,
+            productId: 'winforms-designer-vscode',
+            runtimes: [...cohort.runtimes],
+            architectures: [...cohort.architectures],
+          })),
+        }, compatibilityContext),
+      ];
+      return withDiagnostics({ ...status, compatibilityContext }, diagnostics);
+    });
+  }
+
   async refresh(): Promise<readonly V2AdapterManifestProductStatus[]> {
+    if (this.disposed) return this.snapshot();
     const generation = ++this.refreshGeneration;
     const uris = await this.discoverManifestUris();
-    const next: V2AdapterManifestProductStatus[] = [];
-    const nextDiagnostics: { uri: vscode.Uri; diagnostics: vscode.Diagnostic[] }[] = [];
+    if (this.disposed || generation !== this.refreshGeneration) return this.snapshot();
+    const entries: { uri: vscode.Uri; status: V2AdapterManifestProductStatus }[] = [];
 
     for (const uri of uris) {
-      const { status, diagnostics } = await this.evaluateUri(uri);
-      next.push(status);
-      nextDiagnostics.push({ uri, diagnostics: diagnostics.map(toVscodeDiagnostic) });
+      const status = await this.evaluateUri(uri);
+      if (this.disposed || generation !== this.refreshGeneration) return this.snapshot();
+      entries.push({ uri, status });
     }
+
+    const identityCounts = new Map<string, number>();
+    for (const { status } of entries) {
+      if (status.adapterId) identityCounts.set(status.adapterId, (identityCounts.get(status.adapterId) ?? 0) + 1);
+    }
+    const next = entries.map(({ status }) => {
+      const count = status.adapterId ? identityCounts.get(status.adapterId) ?? 0 : 0;
+      return count < 2 ? status : withDiagnostics(status, [...status.diagnostics, {
+        code: 'ADAPTER_IDENTITY_DUPLICATE',
+        path: '$.adapter.id',
+        message: `Adapter identity '${status.adapterId}' is declared by ${count} discovered manifests. Keep one declaration for this identity or assign distinct adapter IDs; no duplicate is accepted.`,
+      }]);
+    });
 
     if (this.disposed || generation !== this.refreshGeneration) return this.snapshot();
     this.diagnostics.clear();
-    for (const item of nextDiagnostics) this.diagnostics.set(item.uri, item.diagnostics);
+    entries.forEach((entry, index) => this.diagnostics.set(entry.uri, next[index].diagnostics.map(toVscodeDiagnostic)));
     this.latest = next;
     const accepted = next.filter((status) => status.ok).length;
     const refused = next.length - accepted;
@@ -123,8 +182,9 @@ export class V2AdapterManifestRegistry implements vscode.Disposable {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = undefined;
-      void this.refresh().catch((error) => {
-        this.output.appendLine(`[adapter manifests] refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      void this.refresh().catch(() => {
+        // Filesystem/provider errors may contain private workspace paths or arbitrary content.
+        this.output.appendLine('[adapter manifests] refresh failed; retry manifest discovery after checking workspace access.');
       });
     }, 75);
   }
@@ -135,7 +195,8 @@ export class V2AdapterManifestRegistry implements vscode.Disposable {
       undefined,
       V2_ADAPTER_MANIFEST_DISCOVERY_LIMIT + 1,
     );
-    const ordered = discovered
+    const unique = new Map(discovered.map((uri) => [uri.toString(), uri]));
+    const ordered = [...unique.values()]
       .filter((uri) => uri.scheme === 'file')
       .sort((left, right) => left.toString().localeCompare(right.toString(), 'en'));
     if (ordered.length > V2_ADAPTER_MANIFEST_DISCOVERY_LIMIT) {
@@ -146,27 +207,31 @@ export class V2AdapterManifestRegistry implements vscode.Disposable {
     return ordered.slice(0, V2_ADAPTER_MANIFEST_DISCOVERY_LIMIT);
   }
 
-  private async evaluateUri(uri: vscode.Uri): Promise<{
-    status: V2AdapterManifestProductStatus;
-    diagnostics: readonly RegistryDiagnostic[];
-  }> {
+  private async evaluateUri(uri: vscode.Uri): Promise<V2AdapterManifestProductStatus> {
     let bytes: Uint8Array;
     try {
       const stat = await vscode.workspace.fs.stat(uri);
       if (stat.size > V2_ADAPTER_MANIFEST_FILE_BYTE_LIMIT) {
-        const diagnostic: RegistryDiagnostic = {
+        const diagnostic: V2AdapterManifestRegistryDiagnostic = {
           code: 'ADAPTER_MANIFEST_FILE_TOO_LARGE',
-          message: `Adapter manifest exceeds the ${V2_ADAPTER_MANIFEST_FILE_BYTE_LIMIT}-byte product discovery limit.`,
+          message: `Adapter manifest exceeds the ${V2_ADAPTER_MANIFEST_FILE_BYTE_LIMIT}-byte product discovery limit. Reduce the manifest size and retry discovery.`,
         };
-        return { status: statusFrom(null, uri, [diagnostic]), diagnostics: [diagnostic] };
+        return statusFrom(null, uri, this.productVersion, [diagnostic]);
       }
       bytes = await vscode.workspace.fs.readFile(uri);
+      // Recheck the actual bytes: a file may grow between stat and readFile.
+      if (bytes.byteLength > V2_ADAPTER_MANIFEST_FILE_BYTE_LIMIT) {
+        return statusFrom(null, uri, this.productVersion, [{
+          code: 'ADAPTER_MANIFEST_FILE_TOO_LARGE',
+          message: `Adapter manifest exceeds the ${V2_ADAPTER_MANIFEST_FILE_BYTE_LIMIT}-byte product discovery limit. Reduce the manifest size and retry discovery.`,
+        }]);
+      }
     } catch {
-      const diagnostic: RegistryDiagnostic = {
+      const diagnostic: V2AdapterManifestRegistryDiagnostic = {
         code: 'ADAPTER_MANIFEST_READ_FAILED',
-        message: 'Adapter manifest could not be read.',
+        message: 'Adapter manifest could not be read. Check file permissions and retry discovery.',
       };
-      return { status: statusFrom(null, uri, [diagnostic]), diagnostics: [diagnostic] };
+      return statusFrom(null, uri, this.productVersion, [diagnostic]);
     }
 
     const evaluation = validateV2AdapterManifestJson(Buffer.from(bytes).toString('utf8'), {
@@ -177,32 +242,27 @@ export class V2AdapterManifestRegistry implements vscode.Disposable {
         'diagnostics.machine-readable',
       ],
     });
-    const diagnostics: RegistryDiagnostic[] = evaluation.diagnostics.map((diagnostic) => ({
+    const diagnostics: V2AdapterManifestRegistryDiagnostic[] = evaluation.diagnostics.map((diagnostic) => ({
       code: diagnostic.code,
       message: diagnostic.message,
+      path: diagnostic.path,
     }));
-    return {
-      status: statusFrom(evaluation.manifest ?? null, uri, diagnostics, {
-        declaresVendorCodeLoad: evaluation.manifestDeclaresVendorCodeLoad,
-        declaresWorkspaceMutation: evaluation.manifestDeclaresWorkspaceMutation,
-      }),
-      diagnostics,
-    };
+    return statusFrom(evaluation.manifest ?? null, uri, this.productVersion, diagnostics);
   }
 }
 
 function statusFrom(
   manifest: V2AdapterManifest | null,
   uri: vscode.Uri,
-  diagnostics: readonly RegistryDiagnostic[],
-  declarations: { declaresVendorCodeLoad: boolean; declaresWorkspaceMutation: boolean } = {
-    declaresVendorCodeLoad: false,
-    declaresWorkspaceMutation: false,
-  },
+  productVersion: string,
+  diagnostics: readonly V2AdapterManifestRegistryDiagnostic[],
 ): V2AdapterManifestProductStatus {
-  return {
+  return withDiagnostics({
     uri: uri.toString(),
     ok: diagnostics.length === 0 && manifest !== null,
+    manifestValid: manifest !== null,
+    compatibilityState: manifest === null ? 'invalid' : 'compatible',
+    compatibilityContext: { productVersion },
     adapterId: manifest?.adapter.id ?? null,
     adapterVersion: manifest?.adapter.version ?? null,
     supportedProtocolVersions: [...(manifest?.protocol.supportedVersions ?? [])],
@@ -214,18 +274,42 @@ function statusFrom(
     })),
     capabilities: [...(manifest?.capabilities ?? [])],
     unsupportedFeatures: [...(manifest?.unsupportedFeatures ?? [])],
-    diagnosticCodes: diagnostics.map((diagnostic) => diagnostic.code),
-    manifestDeclaresVendorCodeLoad: declarations.declaresVendorCodeLoad,
-    manifestDeclaresWorkspaceMutation: declarations.declaresWorkspaceMutation,
+    diagnosticCodes: [],
+    diagnostics: [],
+    diagnosticsTruncated: false,
+    manifestDeclaresVendorCodeLoad: manifest?.trust.loadVendorCode ?? false,
+    manifestDeclaresWorkspaceMutation: manifest !== null && manifest.trust.mutationAuthority !== 'none',
     vendorCodeLoaded: false,
     workspaceMutationAuthorityGranted: false,
+  }, diagnostics);
+}
+
+function withDiagnostics(
+  status: V2AdapterManifestProductStatus,
+  diagnostics: readonly V2AdapterManifestRegistryDiagnostic[],
+): V2AdapterManifestProductStatus {
+  const bounded = diagnostics.slice(0, V2_ADAPTER_MANIFEST_DIAGNOSTIC_LIMIT).map((item) => ({
+    ...item,
+    message: item.message.slice(0, V2_ADAPTER_MANIFEST_DIAGNOSTIC_MESSAGE_LIMIT),
+    path: item.path?.slice(0, 256),
+  }));
+  return {
+    ...status,
+    ok: status.manifestValid && diagnostics.length === 0,
+    compatibilityState: !status.manifestValid ? 'invalid'
+      : diagnostics.some((item) => item.code === 'ADAPTER_IDENTITY_DUPLICATE') ? 'duplicate'
+      : diagnostics.length > 0 ? 'incompatible' : 'compatible',
+    diagnostics: bounded,
+    diagnosticCodes: bounded.map((item) => item.code),
+    diagnosticsTruncated: status.diagnosticsTruncated || diagnostics.length > bounded.length
+      || diagnostics.some((item) => item.message.length > V2_ADAPTER_MANIFEST_DIAGNOSTIC_MESSAGE_LIMIT || (item.path?.length ?? 0) > 256),
   };
 }
 
-function toVscodeDiagnostic(diagnostic: RegistryDiagnostic): vscode.Diagnostic {
+function toVscodeDiagnostic(diagnostic: V2AdapterManifestRegistryDiagnostic): vscode.Diagnostic {
   const item = new vscode.Diagnostic(
     new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 1)),
-    diagnostic.message,
+    `${diagnostic.path ? `${diagnostic.path}: ` : ''}${diagnostic.message}`,
     vscode.DiagnosticSeverity.Error,
   );
   item.source = 'WinForms Designer Adapter Manifest';

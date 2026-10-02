@@ -36,5 +36,9 @@
   "command.runBuildTask.title": "WinForms: Ejecutar tarea de compilación (liberar antes la vista previa)",
   "command.runTestTask.title": "WinForms: Ejecutar tarea de pruebas (liberar antes la vista previa)",
   "command.stopEngines.title": "WinForms: Detener el motor de vista previa del diseñador",
-  "command.restartEngines.title": "WinForms: Reiniciar el motor de vista previa del diseñador"
+  "command.restartEngines.title": "WinForms: Reiniciar el motor de vista previa del diseñador",
+  "command.showFormStatus.title": "WinForms: Mostrar estado del formulario",
+  "command.rebuildToolboxCache.title": "WinForms: Regenerar caché del cuadro de herramientas",
+  "command.refreshToolbox.title": "WinForms: Actualizar cuadro de herramientas",
+  "command.requestToolboxItems.title": "WinForms: Elegir elementos del cuadro de herramientas"
 }

@@ -3658,11 +3658,25 @@ namespace WinFormsDesigner.Engine
             var rootInfo = DetectRootType(cls, designerFilePath, userAsms);
             Type rootType = rootInfo.Surface;
 
-            DesignSurface surface = new DesignSurface();
+            // A control that throws on the surface must never open a window on the user's desktop: the designer would
+            // fall back to a modal MessageBox and block this STA thread. What it would have shown becomes a warning.
+            var ui = new HeadlessDesignerUIService();
+            DesignSurface NewSurface()
+            {
+                var services = new ServiceContainer();
+                services.AddService(typeof(System.Windows.Forms.Design.IUIService), ui);
+                return new DesignSurface(services);
+            }
+
+            DesignSurface surface = NewSurface();
             try
             {
-                try { surface.BeginLoad(rootType); }
-                catch when (rootInfo.ResolvedBase)
+                bool baseLoaded;
+                try { surface.BeginLoad(rootType); baseLoaded = surface.IsLoaded; }
+                catch when (rootInfo.ResolvedBase) { baseLoaded = false; }
+                // DesignSurface reports a throwing root constructor through LoadErrors and IsLoaded == false, not as an
+                // exception, so the fallback must key on the load outcome rather than only on a throw.
+                if (!baseLoaded && rootInfo.ResolvedBase)
                 {
                     // A compiled base can still be non-designable (throwing constructor, missing runtime dependency,
                     // unsupported designer). Dispose the partial surface and preserve the historical framework-only
@@ -3670,7 +3684,7 @@ namespace WinFormsDesigner.Engine
                     surface.Dispose();
                     rootType = SurfaceFor(rootType);
                     rootInfo = new RootTypeInfo(rootType, true, rootInfo.BaseTypeName, false);
-                    surface = new DesignSurface();
+                    surface = NewSurface();
                     surface.BeginLoad(rootType);
                 }
                 if (!surface.IsLoaded)
@@ -3683,7 +3697,10 @@ namespace WinFormsDesigner.Engine
                 // null when there is no .resx → forms without resources are entirely unaffected.
                 var resx = ResxResolver.TryLoadForDesigner(designerFilePath);
                 var (total, ok, unrep, explicitMembers, eventWirings, supportInit) = Interpret(
-                    cls, host, userAsms, resx, SeedInheritedOverrideComponents((Control)host.RootComponent, beforeInterpret));
+                    cls, host, userAsms, resx, SeedInheritedOverrideComponents((Control)host.RootComponent, beforeInterpret),
+                    new ProjectResourceResolver(designerFilePath, NamespaceOf(cls),
+                        DesignerCultureSelection.GetCultureName(designerFilePath), userAsms));
+                foreach (string error in ui.Errors) unrep.Add("the designer disabled a control: " + error);
                 var graph = BuildGraphOwnership(host, (Control)host.RootComponent, beforeInterpret,
                     FormClassResolver.FieldNamesOf(cls), cls.Identifier.Text, rootInfo.BaseTypeName, rootInfo.ResolvedBase);
 
@@ -3737,7 +3754,9 @@ namespace WinFormsDesigner.Engine
                 throw new InvalidOperationException(typeName + " is not a System.Windows.Forms.Control");
             }
 
-            var surface = new DesignSurface();
+            var services = new ServiceContainer();
+            services.AddService(typeof(System.Windows.Forms.Design.IUIService), new HeadlessDesignerUIService());
+            var surface = new DesignSurface(services);
             try
             {
                 surface.BeginLoad(typeof(Form));
@@ -4036,6 +4055,13 @@ namespace WinFormsDesigner.Engine
         /// serialized on the single STA thread; <see cref="Eval"/> reads it to resolve resources.GetObject(...).</summary>
         [ThreadStatic] private static (HashSet<string> vars, ResxResolver? resolver)? _resx;
 
+        /// <summary>The project's strongly typed resources (<c>global::App.Properties.Resources.Logo</c>) for the
+        /// duration of <see cref="Interpret"/>; scoped and thread-static like <see cref="_resx"/>.</summary>
+        [ThreadStatic] private static ProjectResourceResolver? _projectResources;
+
+        private static string NamespaceOf(ClassDeclarationSyntax cls) =>
+            string.Join(".", cls.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse().Select(n => n.Name.ToString()));
+
         private static Dictionary<string, IComponent> SeedInheritedOverrideComponents(
             Control root, IReadOnlyList<IComponent> beforeInterpret)
         {
@@ -4060,7 +4086,8 @@ namespace WinFormsDesigner.Engine
 
         private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers, List<string> eventWirings, List<string> supportInit) Interpret(
             ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms, ResxResolver? resx = null,
-            IReadOnlyDictionary<string, IComponent>? inheritedOverrideComponents = null)
+            IReadOnlyDictionary<string, IComponent>? inheritedOverrideComponents = null,
+            ProjectResourceResolver? projectResources = null)
         {
             var root = (Control)host.RootComponent;
             var comps = new Dictionary<string, IComponent>(StringComparer.Ordinal);
@@ -4135,8 +4162,11 @@ namespace WinFormsDesigner.Engine
             var nodeMap = new Dictionary<string, System.Windows.Forms.TreeNode>(StringComparer.Ordinal);
             var treeNodeLocals = new HashSet<string>(StringComparer.Ordinal);
 
+            var brackets = new BracketReplay();
             var prevResx = _resx;
+            var prevProjectResources = _projectResources;
             _resx = (resxVars, resx);
+            _projectResources = projectResources;
             try
             {
                 foreach (var stmt in init.Body.Statements)
@@ -4169,7 +4199,7 @@ namespace WinFormsDesigner.Engine
                             }
                             if (es.Expression is InvocationExpressionSyntax inv)
                             {
-                                if (HandleInvocation(inv, root, comps, userAsms, out string? why))
+                                if (HandleInvocation(inv, root, comps, userAsms, brackets, out string? why))
                                 {
                                     ok++;
                                     // Capture ISupportInitialize BeginInit/EndInit brackets verbatim so the serializer
@@ -4197,7 +4227,16 @@ namespace WinFormsDesigner.Engine
                     }
                 }
             }
-            finally { _resx = prevResx; }
+            finally
+            {
+                _resx = prevResx;
+                _projectResources = prevProjectResources;
+                // A bracket the source opened but never closed (hand edit, or a Resume statement that failed) must not
+                // leave a control suspended on the design surface: every later drag/resize would defer its layout. What
+                // fails while closing or settling is reported like any failed statement — the surface is incomplete.
+                brackets.CloseAll(unrep);
+                SettleLayout(root, unrep);
+            }
             return (total, ok, unrep, explicitMembers, eventWirings, supportInit);
         }
 
@@ -4405,7 +4444,12 @@ namespace WinFormsDesigner.Engine
                 target = comps[chain[0]];
                 propStart = 1;
             }
-            else if (chain.Count == 1)
+            else if (chain.Count == 1
+                // `this.Appearance.Font` / `this.Appearance.Options.UseFont` / `this.IconOptions.Image`: a hop through
+                // a property of the ROOT itself, which DevExpress XtraForm/XtraUserControl designers emit for every
+                // form-level appearance. Never for a field name: a field whose creation failed must stay unrecognized
+                // rather than be silently re-targeted at a same-named root property.
+                || (!fieldNames.Contains(chain[0]) && TypeDescriptor.GetProperties(root)[chain[0]] != null))
             {
                 target = root;
                 propStart = 0;
@@ -4526,7 +4570,7 @@ namespace WinFormsDesigner.Engine
             && ce.Type.ToString() == "System.ComponentModel.ISupportInitialize";
 
         private static bool HandleInvocation(InvocationExpressionSyntax inv, Control root,
-            Dictionary<string, IComponent> comps, IReadOnlyList<Assembly> userAsms, out string? why)
+            Dictionary<string, IComponent> comps, IReadOnlyList<Assembly> userAsms, BracketReplay brackets, out string? why)
         {
             why = null;
             if (inv.Expression is not MemberAccessExpressionSyntax ma)
@@ -4536,15 +4580,43 @@ namespace WinFormsDesigner.Engine
             }
             string method = ma.Name.Identifier.Text;
 
-            if (method is "SuspendLayout" or "ResumeLayout" or "PerformLayout") return true;
-
-            // ISupportInitialize BeginInit/EndInit bracketing — a representable no-op for RENDER (see IsSupportInitBracket).
-            // The caller ALSO captures it verbatim into the `supportInit` list so the serializer re-emits it on a
-            // round-trip (0.12.0 R1: DesignerSerializer.InjectSupportInit), which is why it now round-trips instead of
-            // forcing read-only. Suspend/Resume/PerformLayout above are regenerated canonically by the serializer, so
-            // they need no capture.
-            if (IsSupportInitBracket(inv))
+            // Layout scaffolding is REPLAYED, not dropped (the IR path does the same). VS opens InitializeComponent with
+            // SuspendLayout on every container precisely so the property assignments inside do not lay out: a child
+            // added to a panel BEFORE the panel's Size is assigned takes its anchor distances from the panel's DEFAULT
+            // size, and with layout live the later Size assignment then moves/stretches every Right/Bottom-anchored
+            // child — buttons drawn hundreds of pixels away from where the compiled form puts them. ResumeLayout(false)
+            // re-takes the anchors against the final size. Representable either way (the serializer regenerates these
+            // calls canonically); a shape we cannot bind to a control stays the inert no-op it always was.
+            if (method is "SuspendLayout" or "ResumeLayout" or "PerformLayout")
+            {
+                if (TryResolveLayoutTarget(Flatten(ma.Expression), root, comps, out var layoutTarget)
+                    && TryLayoutCallArgument(method, inv, out bool performLayout))
+                {
+                    if (method == "SuspendLayout") brackets.Suspend(layoutTarget);
+                    else if (method == "ResumeLayout") brackets.Resume(layoutTarget, performLayout);
+                    else layoutTarget.PerformLayout();
+                }
                 return true;
+            }
+
+            // ISupportInitialize BeginInit/EndInit — REPLAYED for the same reason as the layout bracket (the IR path does
+            // too): between the two calls a component takes its property assignments as one batch. DevExpress's
+            // LayoutControl arranges its items from their designed Location/Size only at EndInit; with the bracket
+            // skipped, every assignment re-flowed the items live and editors and buttons landed wherever that flow put
+            // them. The caller ALSO captures the statement verbatim into `supportInit` so the serializer re-emits it on a
+            // round-trip (0.12.0 R1: DesignerSerializer.InjectSupportInit); Suspend/Resume/PerformLayout above are
+            // regenerated canonically and need no capture. A shape we cannot bind stays the inert no-op it always was.
+            if (IsSupportInitBracket(inv))
+            {
+                var operand = ((CastExpressionSyntax)((ParenthesizedExpressionSyntax)ma.Expression).Expression).Expression;
+                if ((inv.ArgumentList?.Arguments.Count ?? 0) == 0
+                    && TryResolveSupportInitTarget(Flatten(operand), root, comps, out var initTarget))
+                {
+                    if (method == "BeginInit") brackets.BeginInit(initTarget);
+                    else brackets.EndInit(initTarget);
+                }
+                return true;
+            }
 
             var targetChain = Flatten(ma.Expression);
 
@@ -4746,6 +4818,173 @@ namespace WinFormsDesigner.Engine
             return false;
         }
 
+        /// <summary>Lay the replayed tree out top-down, as the designer does when it shows the surface. A container the
+        /// source resumed with ResumeLayout(false) — the overload Visual Studio emits — performs no layout, so until the
+        /// window would be shown its docked and anchored children still hold the bounds they were assigned. Every reader
+        /// of the graph (drag start, describe, hit-testing) must see the laid-out geometry the canvas paints.
+        ///
+        /// SplitContainer sizes its panels between a SuspendLayout/ResumeLayout pair and repaints its splitter in the
+        /// middle. The design surface is never shown, and GDI+ refuses to paint a hidden window, so that repaint throws
+        /// after the panels are sized but before they are resumed — leaving every docked child at its own size. The pair
+        /// it opened is closed here; any other layout failure is reported, because the surface is then incomplete.</summary>
+        private static void SettleLayout(Control control, List<string> failures)
+        {
+            try { control.PerformLayout(); }
+            catch (System.Runtime.InteropServices.ExternalException) when (control is SplitContainer split)
+            {
+                split.Panel1.ResumeLayout(true);
+                split.Panel2.ResumeLayout(true);
+            }
+            catch (Exception ex)
+            {
+                failures.Add("layout of " + DescribeForFailure(control) + " failed  [" + ex.GetType().Name + ": " + ex.Message + "]");
+            }
+            foreach (var child in control.Controls.Cast<Control>().ToArray())
+                SettleLayout(child, failures);
+        }
+
+        private static string DescribeForFailure(object target) =>
+            target is IComponent { Site.Name: { Length: > 0 } name } ? name
+            : target is Control { Name.Length: > 0 } control ? control.Name
+            : target.GetType().Name;
+
+        /// <summary>The control a layout call's receiver names: <c>this</c>, a field, or a read-only hop off a field
+        /// (<c>this.splitContainer1.Panel1</c>).</summary>
+        private static bool TryResolveLayoutTarget(List<string> chain, Control root,
+            Dictionary<string, IComponent> comps, out Control target)
+        {
+            target = root;
+            if (chain.Count == 0) return true;
+            if (!comps.TryGetValue(chain[0], out var component)) return false;
+            object? owner = component;
+            for (int i = 1; i < chain.Count && owner != null; i++)
+                owner = TypeDescriptor.GetProperties(owner)[chain[i]]?.GetValue(owner);
+            if (owner is not Control control) return false;
+            target = control;
+            return true;
+        }
+
+        /// <summary>The object an init bracket's cast operand names: <c>this</c>, a field, or a read-only hop off a field
+        /// (<c>this.textEdit1.Properties</c>, the RepositoryItem every DevExpress editor brackets).</summary>
+        private static bool TryResolveSupportInitTarget(List<string> chain, Control root,
+            Dictionary<string, IComponent> comps, out ISupportInitialize target)
+        {
+            target = null!;
+            object? owner = root;
+            if (chain.Count > 0)
+            {
+                if (!comps.TryGetValue(chain[0], out var component)) return false;
+                owner = component;
+                for (int i = 1; i < chain.Count && owner != null; i++)
+                    owner = TypeDescriptor.GetProperties(owner)[chain[i]]?.GetValue(owner);
+            }
+            if (owner is not ISupportInitialize initializable) return false;
+            target = initializable;
+            return true;
+        }
+
+        /// <summary>The canonical argument shapes: none for SuspendLayout/PerformLayout; none (which the framework
+        /// defines as <c>ResumeLayout(true)</c>) or one bool literal for ResumeLayout.</summary>
+        private static bool TryLayoutCallArgument(string method, InvocationExpressionSyntax inv, out bool performLayout)
+        {
+            var args = inv.ArgumentList.Arguments;
+            performLayout = method == "ResumeLayout";
+            if (args.Count == 0) return true;
+            if (method != "ResumeLayout" || args.Count != 1 || args[0].NameColon != null
+                || args[0].Expression is not LiteralExpressionSyntax literal) return false;
+            if (literal.IsKind(SyntaxKind.TrueLiteralExpression)) { performLayout = true; return true; }
+            if (literal.IsKind(SyntaxKind.FalseLiteralExpression)) { performLayout = false; return true; }
+            return false;
+        }
+
+        /// <summary>
+        /// The Suspend/Resume and BeginInit/EndInit brackets one <see cref="Interpret"/> pass has opened, so whatever the
+        /// source left open is closed when the pass ends — inits first, as Visual Studio orders them.
+        ///
+        /// The replayed bracket must not bring AUTO-SCALING onto the surface. While a ContainerControl is suspended,
+        /// assigning AutoScaleDimensions only records that scaling is due; its outermost ResumeLayout — or the earlier
+        /// ResumeLayout(false) of any child (ContainerControl.OnChildLayoutResuming) — then rescales by
+        /// CurrentAutoScaleDimensions / AutoScaleDimensions. The designer has to show the coordinates the source
+        /// declares, because every geometry edit is written back to that source: a stale pair (6F, 13F under the .NET
+        /// default font) would make each drag move the control by the scale error. The root's DocumentDesigner shadows
+        /// these properties and keeps the live form at its current metrics; a nested UserControl has no such shadow, so
+        /// before any replayed resume the control and every container above it are aligned with their current metrics —
+        /// the end state the framework itself leaves after scaling, without rescaling the controls.
+        /// </summary>
+        private sealed class BracketReplay
+        {
+            private readonly Dictionary<Control, int> _open = new(ReferenceEqualityComparer.Instance);
+            private readonly List<ISupportInitialize> _initializing = new();
+
+            public void BeginInit(ISupportInitialize target)
+            {
+                target.BeginInit();
+                _initializing.Add(target);
+            }
+
+            /// <summary>Closes only a bracket this pass opened on that very instance — matched by reference, never by
+            /// the target's own Equals — so a stray EndInit stays the inert no-op it was.</summary>
+            public void EndInit(ISupportInitialize target)
+            {
+                int index = _initializing.FindLastIndex(open => ReferenceEquals(open, target));
+                if (index < 0) return;
+                _initializing.RemoveAt(index);
+                target.EndInit();
+            }
+
+            public void Suspend(Control control)
+            {
+                _open[control] = Depth(control) + 1;
+                control.SuspendLayout();
+            }
+
+            public void Resume(Control control, bool performLayout)
+            {
+                int depth = Depth(control);
+                if (depth > 0) _open[control] = depth - 1;
+                for (Control? scope = control; scope != null; scope = scope.Parent) KeepDesignedScale(scope);
+                control.ResumeLayout(performLayout);
+            }
+
+            /// <summary>Closes what the source left open. A failure here is a statement the form never got to run
+            /// cleanly, so it is reported into <paramref name="failures"/> like any other.</summary>
+            public void CloseAll(List<string> failures)
+            {
+                for (int i = _initializing.Count - 1; i >= 0; i--)
+                {
+                    try { _initializing[i].EndInit(); }
+                    catch (Exception ex) { failures.Add(Failure("EndInit", _initializing[i], ex)); }
+                }
+                _initializing.Clear();
+                foreach (var entry in _open.ToList())
+                {
+                    for (int i = 0; i < entry.Value; i++)
+                    {
+                        try { Resume(entry.Key, false); }
+                        catch (Exception ex) { failures.Add(Failure("ResumeLayout", entry.Key, ex)); }
+                    }
+                }
+                _open.Clear();
+            }
+
+            private static string Failure(string method, object target, Exception ex) =>
+                "unclosed " + method + " of " + DescribeForFailure(target) + " failed when the designer closed it  ["
+                + ex.GetType().Name + ": " + ex.Message + "]";
+
+            private int Depth(Control control) => _open.TryGetValue(control, out var depth) ? depth : 0;
+
+            private static void KeepDesignedScale(Control control)
+            {
+                if (control is not ContainerControl container
+                    || container.AutoScaleMode is not (AutoScaleMode.Font or AutoScaleMode.Dpi)) return;
+                SizeF designed = container.AutoScaleDimensions;
+                if (designed.Width <= 0 || designed.Height <= 0) return;
+                SizeF current = container.CurrentAutoScaleDimensions;
+                if (current.Width <= 0 || current.Height <= 0 || current == designed) return;
+                container.AutoScaleDimensions = current;
+            }
+        }
+
         /// <summary>The element expressions of an array argument (<c>new T[]{a,b}</c> / <c>new[]{a,b}</c> /
         /// bare <c>{a,b}</c>), or null if it isn't an array initializer.</summary>
         private static IReadOnlyList<ExpressionSyntax>? ExtractArrayElements(ExpressionSyntax arg)
@@ -4812,7 +5051,7 @@ namespace WinFormsDesigner.Engine
                         // a small set of side-effect-free drawing/forms value initializers as property values —
                         // restrict to exactly those (see AllowedConstructionTypes), so no corelib/BCL/user
                         // constructor is executable from a .Designer.cs.
-                        if (!IsConstructionAllowed(t))
+                        if (!IsConstructionAllowed(t) && !DesignerAllowlists.IsVendorValueConstructionAllowed(t))
                         {
                             throw new InvalidOperationException("construction not allowed: " + t.FullName);
                         }
@@ -4842,6 +5081,11 @@ namespace WinFormsDesigner.Engine
                             }
                         }
                         if (targetType != null && targetType.IsEnum) return Enum.Parse(targetType, member);
+                        // `global::App.Properties.Resources.Logo` — read from the project's .resx, never by running the
+                        // generated accessor (see ProjectResourceResolver).
+                        if (_projectResources is { } projectResources
+                            && projectResources.TryResolve(ma.Expression.ToString(), member, targetType, out var resource))
+                            return resource;
                         throw new InvalidOperationException("cannot evaluate member access " + ma);
                     }
 

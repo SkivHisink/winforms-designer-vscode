@@ -1,0 +1,32 @@
+{
+  "version": "2.1.0",
+  "artifacts": [
+    {
+      "path": "extension/winforms-designer-2.1.0-win32-x64.vsix",
+      "bytes": 18238665,
+      "sha256": "B97F1B31E55449C617F319C2532D8031DF2D552CFD6171812113E6EFF443D065",
+      "entries": 204,
+      "modernRuntimeIdentifier": "win-x64",
+      "modernMachine": "0x8664",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "9EB9461A0A0EA4AB675CF25AA010C7724B2349030C9E21510ADC544EBFEE2581",
+      "release21SuiteAbsent": true
+    },
+    {
+      "path": "extension/winforms-designer-2.1.0-win32-arm64.vsix",
+      "bytes": 18226463,
+      "sha256": "39FB928C13629FF4A4919E1CFBB05DF51567D72241F583326D7EEC290DB5E151",
+      "entries": 204,
+      "modernRuntimeIdentifier": "win-arm64",
+      "modernMachine": "0xAA64",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "9EB9461A0A0EA4AB675CF25AA010C7724B2349030C9E21510ADC544EBFEE2581",
+      "release21SuiteAbsent": true,
+      "physicalArm64Execution": "NOT_EXECUTED"
+    }
+  ],
+  "nonEngineIdenticalEntryCount": 23,
+  "bothAssemblyVersions": "2.1.0.0",
+  "assertions": "scripts/assert-vsix.ps1 PASS for both target/RID/PE combinations; release21 suites absent",
+  "published": false
+}

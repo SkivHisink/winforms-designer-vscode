@@ -23,6 +23,7 @@ pnpm-workspace.yaml
 *.map
 dist/*e2e.cjs
 dist/extension-host-suite.cjs
+dist/release21-extension-host-suite.cjs
 dist/v2-headless-validate.cjs
 dist/v2-soak.cjs
 dist/**/*.map

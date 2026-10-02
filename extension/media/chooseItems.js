@@ -27,6 +27,7 @@
   var targetTab = null;    // the toolbox tab these go into (from the right-clicked tab)
   var inited = false;      // seed `selected` from the tab's current membership only on first load
   var view = 'net';        // the active dialog tab (.NET / COM / WPF)
+  var scopeRefusal = null; // host-owned refusal for the currently requested unsupported scope
 
   var loadingEl = document.getElementById('ciLoading');
   var tableEl = document.getElementById('ciTable');
@@ -73,11 +74,18 @@
   }
   function fqnOf(it) { return it.namespace ? it.namespace + '.' + it.name : it.name; }
   function showLoading(on) { loadingEl.style.display = on ? 'flex' : 'none'; tableEl.style.display = on ? 'none' : 'block'; }
-  function setStatus() { if (statusEl) statusEl.textContent = targetTab ? T('chooseItems.status.tabTarget', { tab: targetTab }) : T('chooseItems.status.noTab'); }
+  function setStatus() {
+    if (!statusEl) return;
+    statusEl.textContent = scopeRefusal && scopeRefusal.scope === view
+      ? scopeRefusal.reasonCode + ': ' + scopeRefusal.message
+      : targetTab ? T('chooseItems.status.tabTarget', { tab: targetTab }) : T('chooseItems.status.noTab');
+  }
 
   function render() {
     if (view !== 'net') {
-      tableEl.innerHTML = '<div class="empty">' + esc(T('chooseItems.unsupportedScope', { kind: view === 'com' ? T('chooseItems.tab.com') : T('chooseItems.tab.wpf') })) + '</div>';
+      tableEl.innerHTML = scopeRefusal && scopeRefusal.scope === view
+        ? '<div class="empty" role="status"><code>' + esc(scopeRefusal.reasonCode) + '</code><p>' + esc(scopeRefusal.message) + '</p></div>'
+        : '<div class="empty" role="status">' + esc(T('chooseItems.unsupportedScope', { kind: view === 'com' ? T('chooseItems.tab.com') : T('chooseItems.tab.wpf') })) + '</div>';
       return;
     }
     var q = (filterEl.value || '').trim().toLowerCase();
@@ -151,12 +159,19 @@
   }
 
   function setView(v) {
+    if (v !== 'net' && v !== 'com' && v !== 'wpf') return;
     view = v;
+    scopeRefusal = null;
     var net = view === 'net';
     for (var a = 0; a < scopedActionEls.length; a++) scopedActionEls[a].disabled = net ? netDisabledState[a] : true;
     var ts = document.querySelectorAll('#ciTabs .t');
     for (var i = 0; i < ts.length; i++) ts[i].className = ts[i].getAttribute('data-tab') === v ? 't active' : 't';
+    detailsEl.textContent = '';
+    showLoading(false);
+    setStatus();
     render();
+    // The host applies the same boundary to API requests; a hidden/disabled tab is not the support contract.
+    if (!net) vscode.postMessage({ type: 'requestScope', scope: view });
   }
 
   var tabs = document.querySelectorAll('#ciTabs .t');
@@ -185,7 +200,16 @@
 
   window.addEventListener('message', function (e) {
     var m = e.data;
-    if (m.type === 'items') {
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'scopeRefused') {
+      // Ignore late replies from another tab and malformed host data; never turn a refusal into an executable action.
+      if (view === 'net' || m.scope !== view || typeof m.message !== 'string' ||
+          ['COM_ACTIVE_X_UNSUPPORTED', 'WPF_TOOLBOX_UNSUPPORTED', 'TOOLBOX_SCOPE_INVALID'].indexOf(m.reasonCode) < 0) return;
+      scopeRefusal = { scope: m.scope, reasonCode: m.reasonCode, message: m.message };
+      showLoading(false);
+      setStatus();
+      render();
+    } else if (m.type === 'items') {
       items = m.items || [];
       targetTab = m.tab || null;
       // seed the checkboxes from the tab's current membership ONCE; keep the user's in-progress checks across
@@ -197,7 +221,7 @@
       setStatus();
       // brief shimmer so it reads like VS's "Loading items…" scan, then reveal the (updated) list
       setTimeout(function () { showLoading(false); render(); }, 600);
-    } else if (m.type === 'browseResult') {
+    } else if (m.type === 'browseResult' && view === 'net') {
       // per-Browse summary (added N / no components / could-not-load reason) so a no-op pick isn't silent
       if (statusEl) statusEl.textContent = m.message || '';
     }

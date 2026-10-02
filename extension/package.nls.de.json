@@ -36,5 +36,9 @@
   "command.runBuildTask.title": "WinForms: Build-Task ausführen (Vorschau zuerst freigeben)",
   "command.runTestTask.title": "WinForms: Test-Task ausführen (Vorschau zuerst freigeben)",
   "command.stopEngines.title": "WinForms: Designer-Vorschau-Engine stoppen",
-  "command.restartEngines.title": "WinForms: Designer-Vorschau-Engine neu starten"
+  "command.restartEngines.title": "WinForms: Designer-Vorschau-Engine neu starten",
+  "command.showFormStatus.title": "WinForms: Formularstatus anzeigen",
+  "command.rebuildToolboxCache.title": "WinForms: Toolbox-Cache neu erstellen",
+  "command.refreshToolbox.title": "WinForms: Toolbox aktualisieren",
+  "command.requestToolboxItems.title": "WinForms: Toolboxelemente auswählen"
 }

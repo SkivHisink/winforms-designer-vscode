@@ -160,7 +160,7 @@ const mutationAuthorityRank: Record<V2AdapterManifestMutationAuthority, number> 
   sourceFirst: 1,
   hostedDesignTime: 2,
 };
-const semverRegex = new RegExp('^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$');
+const semverRegex = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const identifierRegex = new RegExp('^[a-z][a-z0-9.-]{2,95}$');
 const displayNameRegex = new RegExp('^[^\\r\\n]{1,120}$');
 
@@ -342,26 +342,7 @@ function validateCompatibilityRequest(
     }
   }
 
-  if (request.productVersion || request.runtime || request.architecture) {
-    const productVersion = request.productVersion ?? manifest.compatibility.cohorts[0]?.minProductVersion;
-    const runtime = request.runtime ?? manifest.compatibility.cohorts[0]?.runtimes[0];
-    const architecture = request.architecture ?? manifest.compatibility.cohorts[0]?.architectures[0];
-    const cohort = manifest.compatibility.cohorts.find((candidate) =>
-      candidate.productId === V2_ADAPTER_MANIFEST_PRODUCT_ID
-      && runtime !== undefined
-      && architecture !== undefined
-      && candidate.runtimes.includes(runtime)
-      && candidate.architectures.includes(architecture)
-      && typeof productVersion === 'string'
-      && semverSatisfies(productVersion, candidate.minProductVersion, candidate.maxProductVersionExclusive));
-    if (!cohort) {
-      diagnostics.push(diagnostic(
-        'ADAPTER_COHORT_UNSUPPORTED',
-        '$.compatibility.cohorts',
-        'No adapter compatibility cohort matches the requested product/runtime/architecture.',
-      ));
-    }
-  }
+  diagnostics.push(...validateV2AdapterManifestCompatibilityCohort(manifest.compatibility, request));
 
   if (request.payloadBytes !== undefined) {
     if (!Number.isSafeInteger(request.payloadBytes) || request.payloadBytes < 0 || request.payloadBytes > manifest.bounds.maxPayloadBytes) {
@@ -406,6 +387,34 @@ function validateCompatibilityRequest(
       'Adapter did not declare permission to load vendor code.',
     ));
   }
+}
+
+/** Evaluate only requested axes. Unspecified axes are wildcards, never inferred from the first cohort. */
+export function validateV2AdapterManifestCompatibilityCohort(
+  compatibility: V2AdapterManifest['compatibility'],
+  request: Pick<V2AdapterCompatibilityRequest, 'productVersion' | 'runtime' | 'architecture'>,
+): V2AdapterManifestDiagnostic[] {
+  if (request.productVersion === undefined && request.runtime === undefined && request.architecture === undefined) return [];
+  const cohort = compatibility.cohorts.find((candidate) =>
+    candidate.productId === V2_ADAPTER_MANIFEST_PRODUCT_ID
+    && (request.runtime === undefined || candidate.runtimes.includes(request.runtime))
+    && (request.architecture === undefined || candidate.architectures.includes(request.architecture))
+    && (request.productVersion === undefined
+      || semverSatisfies(request.productVersion, candidate.minProductVersion, candidate.maxProductVersionExclusive)));
+  if (cohort) return [];
+
+  const productVersion = request.productVersion === undefined ? 'any' : isSemver(request.productVersion) ? request.productVersion : 'invalid';
+  const runtime = request.runtime === undefined ? 'any' : supportedRuntimeSet.has(request.runtime) ? request.runtime : 'unsupported';
+  const architecture = request.architecture === undefined ? 'any' : supportedArchitectureSet.has(request.architecture) ? request.architecture : 'unsupported';
+  const declared = compatibility.cohorts.map((candidate) =>
+    `[${candidate.minProductVersion}, ${candidate.maxProductVersionExclusive}) ${candidate.runtimes.join('/')} ${candidate.architectures.join('/')}`);
+  const summary = declared.slice(0, 3).join('; ') + (declared.length > 3 ? `; ${declared.length - 3} more cohorts` : '');
+  return [diagnostic(
+    'ADAPTER_COHORT_UNSUPPORTED',
+    '$.compatibility.cohorts',
+    `No declared cohort matches product ${productVersion}, runtime ${runtime}, architecture ${architecture}. `
+      + `Use a matching runtime/architecture or install a manifest that declares this product version. Declared: ${summary}.`,
+  )];
 }
 
 function validateProtocolVersions(value: unknown, diagnostics: V2AdapterManifestDiagnostic[]): void {
@@ -502,7 +511,7 @@ function validateStringSet(
   const seen = new Set<string>();
   for (const item of value) {
     if (typeof item !== 'string' || !allowed.has(item) || seen.has(item)) {
-      diagnostics.push(diagnostic(code, path, `Unsupported or duplicate value '${String(item)}'.`));
+      diagnostics.push(diagnostic(code, path, `Unsupported or duplicate value. Use unique values from: ${[...allowed].join(', ')}.`));
       return;
     }
     seen.add(item);
@@ -522,7 +531,7 @@ function validateDisplayName(value: unknown, path: string, diagnostics: V2Adapte
 }
 
 function validateSemver(value: unknown, path: string, diagnostics: V2AdapterManifestDiagnostic[]): void {
-  if (typeof value !== 'string' || !semverRegex.test(value)) {
+  if (typeof value !== 'string' || !isSemver(value)) {
     pushInvalid(diagnostics, path, 'Version must be semantic version text.');
   }
 }
@@ -575,20 +584,51 @@ function isAbsolutePathLike(candidatePath: string): boolean {
 }
 
 function semverSatisfies(version: string, minimum: string, maximumExclusive: string): boolean {
-  return semverRegex.test(version)
-    && semverRegex.test(minimum)
-    && semverRegex.test(maximumExclusive)
+  return isSemver(version)
+    && isSemver(minimum)
+    && isSemver(maximumExclusive)
     && compareSemver(version, minimum) >= 0
     && compareSemver(version, maximumExclusive) < 0;
 }
 
 function compareSemver(left: string, right: string): number {
-  const leftParts = left.split('-', 1)[0].split('.').map((part) => Number(part));
-  const rightParts = right.split('-', 1)[0].split('.').map((part) => Number(part));
+  const leftMatch = semverRegex.exec(left);
+  const rightMatch = semverRegex.exec(right);
+  if (!leftMatch || !rightMatch) return NaN;
+  const leftParts = leftMatch.slice(1, 4).map(Number);
+  const rightParts = rightMatch.slice(1, 4).map(Number);
   for (let index = 0; index < 3; index++) {
     if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
   }
+  const leftPrerelease = leftMatch[4]?.split('.');
+  const rightPrerelease = rightMatch[4]?.split('.');
+  if (!leftPrerelease) return rightPrerelease ? 1 : 0;
+  if (!rightPrerelease) return -1;
+  for (let index = 0; index < Math.max(leftPrerelease.length, rightPrerelease.length); index++) {
+    const leftPart = leftPrerelease[index];
+    const rightPart = rightPrerelease[index];
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^[0-9]+$/.test(leftPart);
+    const rightNumeric = /^[0-9]+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      // Compare digit strings directly; prerelease identifiers may exceed JavaScript's safe integer range.
+      if (leftPart.length !== rightPart.length) return leftPart.length - rightPart.length;
+      return leftPart < rightPart ? -1 : 1;
+    }
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftPart < rightPart ? -1 : 1;
+  }
   return 0;
+}
+
+function isSemver(value: string): boolean {
+  if (value.length > 128) return false;
+  const match = semverRegex.exec(value);
+  return match !== null
+    && match.slice(1, 4).every((part) => Number.isSafeInteger(Number(part)))
+    && !(match[4]?.split('.').some((part) => /^[0-9]+$/.test(part) && part.length > 1 && part.startsWith('0')));
 }
 
 function requiredProtocolVersions(): number[] {

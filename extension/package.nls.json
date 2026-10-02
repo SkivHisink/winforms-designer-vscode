@@ -36,5 +36,9 @@
   "command.runBuildTask.title": "WinForms: Run Build Task (Release Preview First)",
   "command.runTestTask.title": "WinForms: Run Test Task (Release Preview First)",
   "command.stopEngines.title": "WinForms: Stop the Designer Preview Engine",
-  "command.restartEngines.title": "WinForms: Restart the Designer Preview Engine"
+  "command.restartEngines.title": "WinForms: Restart the Designer Preview Engine",
+  "command.showFormStatus.title": "WinForms: Show Form Status",
+  "command.rebuildToolboxCache.title": "WinForms: Rebuild Toolbox Cache",
+  "command.refreshToolbox.title": "WinForms: Refresh Toolbox",
+  "command.requestToolboxItems.title": "WinForms: Choose Toolbox Items"
 }

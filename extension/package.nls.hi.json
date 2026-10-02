@@ -36,5 +36,9 @@
   "command.runBuildTask.title": "WinForms: बिल्ड कार्य चलाएँ (पहले प्रीव्यू रिलीज़ करें)",
   "command.runTestTask.title": "WinForms: टेस्ट कार्य चलाएँ (पहले प्रीव्यू रिलीज़ करें)",
   "command.stopEngines.title": "WinForms: डिज़ाइनर प्रीव्यू इंजन रोकें",
-  "command.restartEngines.title": "WinForms: डिज़ाइनर प्रीव्यू इंजन पुनः प्रारंभ करें"
+  "command.restartEngines.title": "WinForms: डिज़ाइनर प्रीव्यू इंजन पुनः प्रारंभ करें",
+  "command.showFormStatus.title": "WinForms: फ़ॉर्म की स्थिति दिखाएँ",
+  "command.rebuildToolboxCache.title": "WinForms: टूलबॉक्स कैश फिर से बनाएँ",
+  "command.refreshToolbox.title": "WinForms: टूलबॉक्स रीफ़्रेश करें",
+  "command.requestToolboxItems.title": "WinForms: टूलबॉक्स आइटम चुनें"
 }

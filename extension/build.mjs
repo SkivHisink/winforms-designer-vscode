@@ -42,6 +42,14 @@ await esbuild.build({
   external: ['vscode'],
 });
 
+// Focused 2.1 product acceptance uses its own disposable workspace and command scenarios.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/release21-extension-host-suite.ts'],
+  outfile: 'dist/release21-extension-host-suite.cjs',
+  external: ['vscode'],
+});
+
 // Repeatable cold-start + warm-render guardrail. Kept as a small bundled client so CI measures the same JSON-RPC
 // path as the extension without involving VS Code, jsdom, or a package-manager test runner.
 await esbuild.build({

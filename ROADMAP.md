@@ -1,4 +1,4 @@
-# Release roadmap: 1.0.0 → 2.0.0
+# Release roadmap: 1.0.0 → 3.0.0
 
 Version **1.0.0** establishes and hardens the trust floor: the common render → select → edit → save loop is stable,
 and unsupported forms fail closed instead of being silently mis-rendered or rewritten. The 1.x line builds
@@ -8,8 +8,16 @@ intentional protocol or compatibility break.
 This roadmap describes release outcomes, not calendar commitments. Security, data-loss prevention, and
 regressions in the stable workflow take priority over the order below.
 
-The editable visual version lives in
-[`docs/roadmap-to-2.0.0.drawio`](docs/roadmap-to-2.0.0.drawio).
+The detailed forward plan is **[Roadmap 2.0.0 → 3.0.0](docs/roadmap-2.0.0-to-3.0.0.md)** (Russian,
+planning baseline: 2026-09-22). It defines twelve planned 2.x minor releases, dependencies, acceptance criteria,
+capacity assumptions, and the 3.0.0 platform contract. See the [release summary below](#20-to-30-release-summary).
+
+The 1.x–2.0.0 sections below retain the historical release narrative. Dated closeout statements are evidence for
+their recorded snapshot, not a fresh audit of the current checkout or publication status. The forward plan records
+current-code differences, including the already wired metadata-only adapter manifest registry.
+
+The editable visual version of the historical 1.0.0–2.0.0 plan lives in
+[`docs/roadmap-to-2.0.0.drawio`](docs/roadmap-to-2.0.0.drawio); it does not cover the new 2.x–3.0.0 program.
 
 ## 1.0.0 — Stable foundation
 
@@ -786,6 +794,43 @@ migration, reliability, performance, accessibility/localization, package and ind
 licensed-vendor access, physical hardware, legal approval and credentials remain explicit external PASS/GATED/NOT
 EXECUTED decisions; repository-side evidence cannot stand in for them.
 
+<a id="20-to-30-release-summary"></a>
+
+## 2.0.0 → 3.0.0 — Planned release sequence
+
+**Status: 2.1.0 implemented, locally verified and packaged; 2.2.0–3.0.0 PLANNED.**
+The [2.1.0 evidence record](docs/release-2.1.0.md) includes real installed upgrade/downgrade and backup recovery.
+Publication has not been performed. These milestones do not promote historical harness results,
+vendor support, hardware qualification, or publication gates to completed status. Existing source-first editing,
+resource transactions, recovery, project resolution, and bounded hosted routes remain the starting point.
+
+| Version | Intended outcome |
+|---|---|
+| **2.0.0 / 2.0.x** | Reconcile the baseline and maintain the stable workflow with focused fixes and exact release evidence |
+| **2.1.0** | **Implemented and locally verified:** actionable compatibility diagnostics, unsupported-runtime detection, settings migration and workspace recovery; [evidence](docs/release-2.1.0.md) |
+| **2.2.0** | Route ordinary designer commands through the versioned protocol and product worker supervisor |
+| **2.3.0** | Broader multi-artifact transactions, multi-step hot-exit history and conflict-safe document recovery |
+| **2.4.0** | Hosted-service expansion, verified adapter loading, public Adapter SDK Preview and editor contracts |
+| **2.5.0** | First independently certified vendor cohort and useful vendor collection/editor workflows |
+| **2.6.0** | Large-form performance, richer layout tools, navigation and broader incremental updates |
+| **2.7.0** | Culture/resource overview, dependency-aware asset operations, pseudo-localization and native RTL validation |
+| **2.8.0** | Complete bounded data-binding workflows, schema refresh, master-detail and deterministic sample data |
+| **2.9.0** | Reusable templates/snippets, bounded extraction and semantic refactoring, richer project-context UX |
+| **2.10.0** | Consolidated accessibility, physical DPI/ARM64 and clean-machine runtime qualification |
+| **2.11.0** | A supported product CLI, project validation, Problems integration and expanded previewable advisor fixes |
+| **2.12.0** | Contract freeze, SDK RC, real upgrade/rollback rehearsal, beta cohorts and long product soak |
+| **3.0.0** | Stable extensible designer platform with SDK 1.0 and an evidence-backed support matrix |
+
+Architecture, accessibility and external qualification begin early and progress alongside feature work. x86/COM/ActiveX
+execution remains a separate conditional program; its feasibility does not block the managed baseline. Breaking public
+contract changes require deprecation and migration before the 3.0.0 boundary, while project source/resource compatibility
+remains a permanent requirement.
+
+The **[detailed plan](docs/roadmap-2.0.0-to-3.0.0.md)** contains task IDs and checklists for every release, product
+acceptance scenarios, dependency diagrams, planned performance budgets, support tiers, research decisions, risk and
+capacity estimates, and the first 90 days. It preserves the distinction between repository results, reference traces,
+hardware/vendor acceptance, release readiness and publication.
+
 ## Release rules
 
 - The fail-closed safety boundary is permanent; a roadmap feature never ships by bypassing it.
@@ -801,4 +846,7 @@ EXECUTED decisions; repository-side evidence cannot stand in for them.
   partial-update self-repair evidence.
 - 1.x preserves project files, user settings, public workflows and the source-first safety contract. Any unavoidable
   compatibility break belongs in 2.0.0 with a documented migration path and rollback.
+- 2.x preserves its declared public workflows and compatibility contracts. Future breaking public-contract changes
+  require a documented deprecation period, migration and rollback at the 3.0.0 boundary; they never justify silently
+  rewriting existing project sources or resources.
 - “Visual Studio parity” is an evidence-backed release claim tied to the declared support tiers, not an aspirational label.

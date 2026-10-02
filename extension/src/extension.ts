@@ -2,20 +2,18 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { randomUUID } from 'node:crypto';
 import {
   EngineBackedV2WorkerSupervisor,
   EngineHandle,
   createEngineBackedV2WorkerSupervisor,
   getCapabilities,
-  listToolboxItems,
   ping,
   recordV2EngineProbeCrash,
   releaseAllCompiledAssemblies,
   releaseCompiledAssembly,
-  requestV2EngineProbe,
   resolveAssembly,
   startEngine,
-  describeDesigner,
   ComponentDesc,
   DesignerAdornerHitResult,
   HostedDesignerProbeResult,
@@ -39,7 +37,7 @@ import {
   HighDpiQuickFixPreviewResult,
 } from './designerEditor';
 import { resolveFrameworkOutput } from './csprojRef';
-import { setLocale, t } from './i18n';
+import { currentLang, setLocale, t } from './i18n';
 import { EngineRecoveryPolicy } from './engineRecovery';
 import { isBuildOrTestTask, taskCoordinationKey } from './taskCoordination';
 import { BuildWriteOrigin, ExternalBuildRelease, intermediateDirCandidates, isAssemblyWrite } from './externalBuild';
@@ -63,6 +61,10 @@ import {
   V2AdapterManifestProductStatus,
   V2AdapterManifestRegistry,
 } from './v2AdapterManifestRegistry';
+import { buildDesignerDiagnosticBundle, createDesignerDiagnostic, DesignerDiagnostic } from './designerDiagnostics';
+import { FormStatusLabels, FormStatusSnapshot, showFormStatusView } from './formStatusView';
+import { invalidateProjectCompatibilityCache } from './projectCompatibility';
+import { classifyToolboxRequest } from './toolboxRequest';
 
 export interface ScaffoldCommandOptions {
   /** Optional non-interactive type name. Explorer calls omit this and keep the normal VS-style prompt. */
@@ -386,6 +388,8 @@ interface EngineHealth {
   lastExit?: string;
 }
 const engineHealth = new Map<EngineKind, EngineHealth>();
+/** Observed workspace task only: do not attribute success to the active form or its current assembly. */
+let lastSuccessfulWorkspaceBuild: string | undefined;
 const coordinatedTasks = new Map<vscode.TaskExecution, Promise<boolean>>();
 const preReleasedTaskKeys = new Map<string, number>();
 let shuttingDown = false;
@@ -550,7 +554,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
 
   // Persist toolbox additions/removals/custom tabs in workspace state. The reflection cache remains global because
   // it is keyed by absolute assembly path plus file metadata and is safe to reuse across workspaces.
-  DesignerHub.instance.initState(context.globalState, context.workspaceState);
+  await DesignerHub.instance.initState(context.globalState, context.workspaceState);
+
+  const compatibilityWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csproj,props,targets,dll,exe,deps.json}');
+  context.subscriptions.push(
+    compatibilityWatcher,
+    compatibilityWatcher.onDidCreate(() => invalidateProjectCompatibilityCache()),
+    compatibilityWatcher.onDidChange(() => invalidateProjectCompatibilityCache()),
+    compatibilityWatcher.onDidDelete(() => invalidateProjectCompatibilityCache()),
+  );
 
   // 1.0.0 — teach the hub how to hand a .NET Framework build output back, so the LAST designer using one releases
   // it on close (the engine holds the user's dlls open until then; see releaseNet48Output). The engines live here,
@@ -709,10 +721,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     );
   }
 
-  // Export Diagnostics: gather engine/environment/active-document/settings info into a new
-  // untitled Markdown document (no file written — the user saves it where they want, no permission prompt).
+  // Support commands capture the designer before opening another editor. Exports use structured safe facts only.
   context.subscriptions.push(
-    vscode.commands.registerCommand('winformsDesigner.exportDiagnostics', () => exportDiagnostics(context)),
+    vscode.commands.registerCommand('winformsDesigner.exportDiagnostics', () => exportDiagnostics(context, adapterManifestRegistry)),
+    vscode.commands.registerCommand('winformsDesigner.copySafeDiagnostics', async (documentId?: unknown) => {
+      if (documentId !== undefined && documentId !== DesignerHub.instance.activeSession?.documentUri.toString()) {
+        void vscode.window.showWarningMessage(t('support.contextChanged'));
+        return;
+      }
+      const report = await collectSafeDiagnosticReport(context, adapterManifestRegistry);
+      await vscode.env.clipboard.writeText(report);
+      void vscode.window.showInformationMessage(t('status.diagnosticsCopied'));
+    }),
+    vscode.commands.registerCommand('winformsDesigner.showFormStatus', () => openFormStatus(context, adapterManifestRegistry)),
+    vscode.commands.registerCommand('winformsDesigner.rebuildToolboxCache', async () => {
+      const session = DesignerHub.instance.activeSession;
+      await DesignerHub.instance.clearToolboxMetadataCache();
+      if (session) await session.refreshToolbox(true);
+      void vscode.window.showInformationMessage(t('support.cacheRebuilt'));
+    }),
+    vscode.commands.registerCommand('winformsDesigner.refreshToolbox', async () => {
+      const session = DesignerHub.instance.activeSession;
+      if (!session) { void vscode.window.showInformationMessage(t('support.noActiveForm')); return; }
+      await session.refreshToolbox(true);
+      void vscode.window.showInformationMessage(t('support.toolboxRefreshed'));
+    }),
+    vscode.commands.registerCommand('winformsDesigner.requestToolboxItems', async (scope: unknown = 'net') => {
+      const request = classifyToolboxRequest(scope);
+      if (request.status === 'refused') {
+        void vscode.window.showWarningMessage(scope === 'com' ? t('support.comUnsupported')
+          : scope === 'wpf' ? t('support.wpfUnsupported') : t('diagnostics.reason.UNKNOWN_REASON'));
+        return request;
+      }
+      const session = DesignerHub.instance.activeSession;
+      if (!session) {
+        void vscode.window.showInformationMessage(t('support.noActiveForm'));
+        return { status: 'refused', reasonCode: 'NO_ACTIVE_FORM', message: t('support.noActiveForm') };
+      }
+      await session.openChooseItems();
+      return request;
+    }),
   );
 
   // "Select Control Assembly": point the active form at the project/assembly that builds its (custom) controls.
@@ -856,6 +904,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (!release) return;
       coordinatedTasks.delete(event.execution);
       void release.finally(() => DesignerHub.instance.endNet48Task());
+    }),
+    vscode.tasks.onDidEndTaskProcess((event) => {
+      if (event.exitCode !== 0 || event.execution.task.group?.id !== vscode.TaskGroup.Build.id) return;
+      lastSuccessfulWorkspaceBuild = new Date().toISOString();
+      invalidateProjectCompatibilityCache();
     }),
   );
 
@@ -1337,141 +1390,186 @@ async function addScaffoldFromExplorer(
   }
 }
 
-/**
- * Export Diagnostics: collect engine + environment + active-document + settings state into a Markdown
- * report opened as a new untitled document. Read-only — never writes a file (no permission prompt) and never
- * throws out (each probe is guarded so a dead engine still produces a useful report).
- */
-async function exportDiagnostics(context: vscode.ExtensionContext): Promise<void> {
-  const L: string[] = [];
-  L.push('# WinForms Designer — Diagnostics', '');
-  L.push(`- Generated: ${new Date().toISOString()}`);
-  L.push(`- Extension: ${String(context.extension.packageJSON.version ?? '(unknown)')}`);
-  L.push(`- VS Code: ${vscode.version}`);
-  L.push(`- Platform: ${process.platform} ${process.arch}, Node ${process.versions.node}`);
-  L.push(`- Extension Host memory: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MiB RSS`);
-  L.push(`- Engine entry point: ${resolveEngineEntry(context)}`);
-
-  let eng: EngineHandle | undefined;
+/** A wedged health RPC must not prevent access to the recovery UI or hold diagnostic export indefinitely. */
+async function supportWithinBudget<T>(operation: PromiseLike<T>, budgetMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const pingStarted = performance.now();
-    eng = await getEngine(context);
-    L.push(`- Engine: ${await ping(eng)}`);
-    L.push(`- Engine ping: ${(performance.now() - pingStarted).toFixed(1)} ms`);
-    L.push(`- Engine PID: ${eng.process.pid ?? '(unknown)'}`);
-    try {
-      const caps = await getCapabilities(eng);
-      L.push(`- Engine capabilities: ${caps.engine}; edit=${caps.edit}; livePreviewUnsavedEdits=${caps.livePreviewUnsavedEdits}`);
-    } catch (e) {
-      // Keep an otherwise healthy ping/start result truthful when talking to an older/unexpected engine build.
-      L.push(`- Engine capabilities: unavailable — ${e instanceof Error ? e.message : String(e)}`);
-    }
-  } catch (e) {
-    L.push(`- Engine: FAILED to start — ${e instanceof Error ? e.message : String(e)}`);
-  }
+    return await Promise.race([Promise.resolve(operation), new Promise<T>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Designer support operation timed out.')), budgetMs);
+    })]);
+  } finally { if (timer !== undefined) clearTimeout(timer); }
+}
 
-  L.push('', '## Engine lifecycle');
+/** Local inspection may show file identities; only collectSafeDiagnosticReport is shareable by default. */
+async function openFormStatus(context: vscode.ExtensionContext, registry: V2AdapterManifestRegistry): Promise<FormStatusSnapshot | undefined> {
+  const session = DesignerHub.instance.activeSession;
+  if (!session) { void vscode.window.showInformationMessage(t('support.noActiveForm')); return undefined; }
+  const getSnapshot = async (): Promise<FormStatusSnapshot> => {
+    const support = await supportWithinBudget(session.captureSupportSnapshot(true), 14_000);
+    const unknown = t('support.unknown');
+    const diagnostics = [...support.diagnostics];
+    const engine = engines.get(support.engineKind);
+    let caps: Awaited<ReturnType<typeof getCapabilities>> | undefined;
+    if (engine) {
+      try { caps = await supportWithinBudget(getCapabilities(engine), 2_000); }
+      catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
+    }
+    const architecture = support.compatibility?.workerArchitecture;
+    const adapters = registry.snapshotForContext({ runtime: support.engineKind,
+      architecture: architecture === 'x64' || architecture === 'arm64' ? architecture : undefined });
+    for (const adapter of adapters) for (const code of adapter.diagnosticCodes)
+      diagnostics.push(createDesignerDiagnostic(code, { assembly: adapter.adapterId }));
+    const evaluated = support.compatibility?.evaluated;
+    const field = (name: string, value: string | undefined): { label: string; value: string } =>
+      ({ label: t(`support.field.${name}`), value: value || unknown });
+    const current = await supportWithinBudget(session.captureSupportSnapshot(), 14_000);
+    if (DesignerHub.instance.activeSession !== session || current.documentId !== support.documentId
+      || current.revision !== support.revision || current.engineKind !== support.engineKind
+      || current.culture !== support.culture || current.assemblyPath !== support.assemblyPath
+      || current.previewAuthority !== support.previewAuthority || current.renderOk !== support.renderOk)
+      throw new Error('The inspected designer context changed.');
+    return {
+      documentId: support.documentId, revision: support.revision,
+      title: `${t('support.title')} — ${path.basename(session.documentUri.fsPath)}`,
+      fields: [
+        field('project', support.projectPath), field('framework', evaluated?.targetFramework),
+        field('engine', `${support.engineKind}${caps ? ` / ${caps.runtime}` : ''}`),
+        field('architecture', architecture), field('configuration', evaluated?.configuration),
+        field('platformTarget', evaluated?.platformTarget),
+        field('prefer32Bit', evaluated?.prefer32Bit == null ? unknown : String(evaluated.prefer32Bit)),
+        field('culture', support.culture || t('support.defaultCulture')),
+        field('preview', t(support.previewAuthority === 'liveSource' ? 'support.sourceLive'
+          : support.previewAuthority === 'compiled' ? 'support.sourceCompiled' : 'support.sourceStale')),
+        field('document', t(support.dirty ? 'support.dirty' : 'support.clean')),
+        field('lastBuild', lastSuccessfulWorkspaceBuild
+          ? t('support.buildObserved', { time: lastSuccessfulWorkspaceBuild }) : t('support.buildUnknown')),
+        field('assembly', support.assemblyPath),
+        field('capabilities', caps ? `render=${caps.render}; edit=${caps.edit}; livePreviewUnsavedEdits=${caps.livePreviewUnsavedEdits}` : unknown),
+        { label: t('support.details'), value: support.compatibility?.limitations.join('\n') || unknown },
+      ],
+      diagnostics: diagnostics.map(item => ({ ...item, message: t(`diagnostics.reason.${item.code}`) })),
+      adapterRows: adapters.map(adapter => ({ id: adapter.adapterId ?? unknown, state: t('support.metadataOnly'),
+        message: adapter.diagnosticCodes.length
+          ? adapter.diagnostics.map(item => `${t(`diagnostics.reason.${item.code}`)} ${item.message}`).join('\n')
+          : t('support.noDiagnostics') })),
+    };
+  };
+  // Open the loading panel immediately; a slow evaluation or dead RPC cannot hide the recovery surface.
+  const initial = getSnapshot();
+  let first: Promise<FormStatusSnapshot> | undefined = initial;
+  const labels: FormStatusLabels = {
+    title: t('support.title'), fieldsHeading: t('support.fieldsHeading'), diagnosticsHeading: t('support.diagnosticsHeading'),
+    adaptersHeading: t('support.adaptersHeading'), noDiagnostics: t('support.noDiagnostics'), noAdapters: t('support.noAdapters'),
+    details: t('support.details'), target: t('support.target', { target: '' }), loading: t('support.loading'),
+    loadFailed: t('support.loadFailed'), actionFailed: t('support.actionFailed'), language: currentLang(),
+    severity: { info: t('support.severity.info'), warning: t('support.severity.warning'), error: t('support.severity.error') },
+    actions: { retry: t('support.action.retry'), rebuild: t('support.action.rebuild'), chooseAssembly: t('support.action.chooseAssembly'),
+      viewCode: t('support.action.viewCode'), clearCache: t('support.action.clearCache'), restart: t('support.action.restart'), refresh: t('support.action.refresh') },
+  };
+  const panel = showFormStatusView(context.extensionUri, async () => {
+    if (first) { const result = first; first = undefined; return result; }
+    return getSnapshot();
+  }, async (action, displayed) => {
+    const current = await supportWithinBudget(session.captureSupportSnapshot(), 14_000);
+    if (DesignerHub.instance.activeSession !== session || current.documentId !== displayed.documentId || current.revision !== displayed.revision) {
+      void vscode.window.showWarningMessage(t('support.contextChanged')); return;
+    }
+    switch (action) {
+      case 'viewCode': doViewCode(session.documentUri); break;
+      case 'retry': await supportWithinBudget(session.rerenderFromDoc(), 20_000); break;
+      case 'rebuild': await runCoordinatedTask('build'); break;
+      case 'chooseAssembly': await selectControlAssembly(context); break;
+      case 'clearCache':
+        await supportWithinBudget(DesignerHub.instance.clearToolboxMetadataCache(), 10_000);
+        await supportWithinBudget(session.refreshToolbox(true), 20_000);
+        void vscode.window.showInformationMessage(t('support.cacheRebuilt')); break;
+      case 'restart': await supportWithinBudget(restartPreviewEngines(), 30_000); break;
+    }
+  }, labels);
+  context.subscriptions.push(panel);
+  return initial.catch(() => undefined);
+}
+
+/** Shareable report: a fixed Markdown envelope plus bounded complete JSON from allowlisted live facts. */
+async function collectSafeDiagnosticReport(context: vscode.ExtensionContext, registry: V2AdapterManifestRegistry): Promise<string> {
+  const session = DesignerHub.instance.activeSession;
+  let support: Awaited<ReturnType<NonNullable<typeof session>['captureSupportSnapshot']>> | undefined;
+  const diagnostics: DesignerDiagnostic[] = [];
+  if (session) {
+    try { support = await supportWithinBudget(session.captureSupportSnapshot(), 14_000); diagnostics.push(...support.diagnostics); }
+    catch { diagnostics.push(createDesignerDiagnostic('UNKNOWN_REASON')); }
+  }
+  const architecture = support?.compatibility?.workerArchitecture;
+  for (const adapter of registry.snapshotForContext({ runtime: support?.engineKind,
+    architecture: architecture === 'x64' || architecture === 'arm64' ? architecture : undefined }))
+    for (const code of adapter.diagnosticCodes) diagnostics.push(createDesignerDiagnostic(code));
+  let engine: EngineHandle | undefined;
+  let caps: Awaited<ReturnType<typeof getCapabilities>> | undefined;
+  let pingMs: number | undefined;
+  let engineGreeting = 'unavailable';
+  try {
+    const started = performance.now();
+    // Keep the established modern-engine health probe even without an active form.
+    engine = await supportWithinBudget(getEngine(context), 12_000);
+    const response = await supportWithinBudget(ping(engine), 2_000);
+    pingMs = Math.round((performance.now() - started) * 10) / 10;
+    // An RPC response is not safe arbitrary text: accept only the bundled greeting and numeric runtime version.
+    if (typeof response === 'string' && /^winforms-engine ok \/ \.NET(?: Framework| Core)? \d{1,6}\.\d{1,6}(?:\.\d{1,6}){0,2}$/.test(response))
+      engineGreeting = response;
+    try { caps = await supportWithinBudget(getCapabilities(engine), 2_000); }
+    catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
+  } catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
+  let sessionCaps = caps;
+  if (support?.engineKind === 'net48') {
+    const activeEngine = engines.get('net48');
+    sessionCaps = undefined;
+    if (activeEngine) {
+      try { sessionCaps = await supportWithinBudget(getCapabilities(activeEngine), 2_000); }
+      catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
+    }
+  }
+  const result = buildDesignerDiagnosticBundle({
+    generatedAt: new Date().toISOString(), correlationId: randomUUID(),
+    versions: { extension: String(context.extension.packageJSON.version ?? ''), vscode: vscode.version, node: process.versions.node },
+    platform: process.platform, architecture: process.arch, workspaceTrusted: vscode.workspace.isTrusted,
+    engines: (['modern', 'net48'] as const).map(kind => ({ kind, running: engines.has(kind), starts: engineHealth.get(kind)?.starts ?? 0,
+      recentCrashes: engineRecovery.recentCrashCount(kind), lastStartupMs: engineHealth.get(kind)?.lastStartupMs })),
+    session: support ? { engineKind: support.engineKind, net48RenderMode: support.net48RenderMode ?? undefined,
+      renderOk: support.renderOk, dirty: support.dirty, revision: support.revision,
+      controlCount: support.controlCount, componentCount: support.componentCount } : undefined,
+    capabilities: sessionCaps, timings: { ...support?.timings, ...(pingMs === undefined ? {} : { pingMs }) }, diagnostics,
+  }, { maxBytes: 60 * 1024 });
+  const safe = result.bundle;
+  const probeCaps = buildDesignerDiagnosticBundle({ capabilities: caps }).bundle.capabilities;
+  const lines = [
+    '# WinForms Designer — Diagnostics', '', `- Generated: ${safe.generatedAt ?? 'unavailable'}`,
+    `- Extension: ${safe.versions?.extension ?? 'unavailable'}`, `- VS Code: ${safe.versions?.vscode ?? 'unavailable'}`,
+    `- Platform: ${safe.environment?.platform ?? 'unknown'} ${safe.environment?.architecture ?? 'unknown'}, Node ${safe.versions?.node ?? 'unknown'}`,
+    `- Extension Host memory: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MiB RSS`,
+    `- Engine: ${engineGreeting}`, `- Engine ping: ${pingMs === undefined ? 'unavailable' : `${pingMs} ms`}`,
+    `- Engine PID: ${Number.isSafeInteger(engine?.process.pid) ? engine!.process.pid : 'unavailable'}`,
+    `- Engine capabilities: ${probeCaps?.engine ?? 'unavailable'}; edit=${probeCaps?.edit ?? 'unknown'}; livePreviewUnsavedEdits=${probeCaps?.livePreviewUnsavedEdits ?? 'unknown'}`,
+    '', '## Engine lifecycle',
+  ];
   for (const kind of ['modern', 'net48'] as const) {
-    const health = engineHealth.get(kind);
-    const running = engines.get(kind);
-    L.push(`- ${kind}: ${running ? `running (pid ${running.process.pid ?? '?'})` : 'stopped'}; starts=${health?.starts ?? 0}; `
-      + `lastStartup=${health?.lastStartupMs != null ? `${health.lastStartupMs} ms` : 'n/a'}; `
-      + `recentCrashes=${engineRecovery.recentCrashCount(kind)}; lastExit=${health?.lastExit ?? 'n/a'}`);
+    const health = safe.engines?.find(item => item.kind === kind);
+    const pid = engines.get(kind)?.process.pid;
+    const priorExit = engineHealth.get(kind)?.lastExit;
+    const exit = priorExit === undefined ? 'n/a' : priorExit.includes('RPC connection closed') ? 'RPC connection closed'
+      : priorExit.includes('process exit') ? 'process exit' : 'unknown';
+    lines.push(`- ${kind}: ${health?.running && Number.isSafeInteger(pid) ? `running (pid ${pid})` : 'stopped'}; starts=${health?.starts ?? 0}; `
+      + `lastStartup=${health?.lastStartupMs === undefined ? 'n/a' : `${health.lastStartupMs} ms`}; recentCrashes=${health?.recentCrashes ?? 0}; lastExit=${exit}`);
   }
-  L.push('', '## V2 worker probe (diagnostics only; normal designer traffic uses the established engine path)');
-  await appendV2WorkerDiagnostics(L, 'modern');
+  lines.push('', '## Diagnostic bundle', '', '```json', result.json, '```');
+  const report = lines.join('\n');
+  if (Buffer.byteLength(report, 'utf8') > 64 * 1024) throw new Error('Diagnostic report exceeded its size limit.');
+  return report;
+}
 
-  const uri = activeCustomEditorUri() ?? vscode.window.activeTextEditor?.document.uri;
-  L.push('', '## Active document');
-  if (!uri) {
-    L.push('- (no active editor)');
-  } else {
-    const designer = resolveDesignerFile(uri.fsPath);
-    L.push(`- File: ${uri.fsPath}`);
-    L.push(`- Designer file: ${designer ?? '(no .Designer.cs)'}`);
-    const cfg = vscode.workspace.getConfiguration('winformsDesigner', uri);
-    L.push('', '## Settings');
-    L.push(`- autoOpenDesigner: ${cfg.get('autoOpenDesigner', true)}`);
-    L.push(`- assemblyPath (raw): ${cfg.get<string>('assemblyPath') || '(none)'}`);
-    L.push(`- assemblyPath (resolved override): ${getAssemblyOverride(uri.fsPath) ?? '(none — auto-discover)'}`);
-    if (eng && designer) {
-      try { L.push(`- Resolved assembly: ${(await resolveAssembly(eng, designer)) ?? '(unresolved)'}`); }
-      catch (e) { L.push(`- Resolved assembly: error — ${e instanceof Error ? e.message : String(e)}`); }
-      try {
-        const d = await describeDesigner(eng, designer, getAssemblyOverride(uri.fsPath));
-        L.push('', '## Designer graph');
-        L.push(`- Root type: ${d.rootType}`);
-        L.push(`- Components: ${d.components.length}`);
-        L.push(`- Representable statements: ${d.representable}/${d.totalStatements} (round-trip safe: ${d.roundTripSafe})`);
-        if (d.unrepresentable.length) L.push('- Unrepresentable:', ...d.unrepresentable.map((u) => `  - ${u}`));
-      } catch (e) {
-        L.push('', `## Designer graph: error — ${e instanceof Error ? e.message : String(e)}`);
-      }
-      try {
-        const tb = await listToolboxItems(eng, designer, getAssemblyOverride(uri.fsPath));
-        const proj = tb.filter((t) => t.fromProject).length;
-        L.push('', `## Toolbox: ${tb.length} controls (${proj} from project assembly)`);
-      } catch { /* ignore */ }
-    }
-  }
-
-  const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: L.join('\n') });
+async function exportDiagnostics(context: vscode.ExtensionContext, registry: V2AdapterManifestRegistry): Promise<void> {
+  const content = await collectSafeDiagnosticReport(context, registry);
+  const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content });
   await vscode.window.showTextDocument(doc, { preview: false });
-}
-
-async function appendV2WorkerDiagnostics(lines: string[], kind: EngineKind): Promise<void> {
-  if (!v2WorkerSupervisor) {
-    lines.push(`- ${kind}: unavailable; reason=SUPERVISOR_NOT_INITIALIZED`);
-    return;
-  }
-  if (!engines.get(kind)) {
-    lines.push(`- ${kind}: unavailable; reason=ENGINE_UNAVAILABLE_AFTER_PRIMARY_PROBE`);
-    return;
-  }
-
-  const active = activeCustomEditorUri() ?? vscode.window.activeTextEditor?.document.uri;
-  const documentLabel = active?.fsPath ?? 'no-active-document';
-  const sourceFingerprintSeed = active ? sourceMetadataSeed(active.fsPath) : documentLabel;
-  try {
-    const result = await requestV2EngineProbe(v2WorkerSupervisor, {
-      runtime: kind,
-      command: 'getCapabilities',
-      documentLabel,
-      documentRevision: sourceFingerprintSeed,
-      sourceFingerprintSeed,
-      workspaceTrust: vscode.workspace.isTrusted ? 'trusted' : 'untrusted',
-      designTimeTrust: 'sourceFirst',
-      timeoutMs: 1_000,
-    });
-    if (result.status === 'ok') {
-      if (result.result.command === 'getCapabilities') {
-        const value = result.result.value;
-        lines.push(`- ${kind}: ok; worker=${result.workerKey}; request=${result.requestId}; generation=${result.generation}; `
-          + `engine=${value.engine}; edit=${value.edit}; livePreviewUnsavedEdits=${value.livePreviewUnsavedEdits}; `
-          + `recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
-      } else {
-        lines.push(`- ${kind}: ok; worker=${result.workerKey}; request=${result.requestId}; generation=${result.generation}; `
-          + `ping=${result.result.value}; recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
-      }
-      return;
-    }
-
-    lines.push(`- ${kind}: ${result.status}; worker=${result.workerKey ?? 'none'}; reason=${result.reasonCode}; `
-      + `request=${result.requestId ?? 'n/a'}; generation=${result.generation ?? 'n/a'}; `
-      + `recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
-  } catch (error) {
-    lines.push(`- ${kind}: faulted; reason=${error instanceof Error ? error.message : String(error)}; `
-      + `recentCrashes=${v2WorkerRecovery.recentCrashCount(kind)}`);
-  }
-}
-
-function sourceMetadataSeed(fsPath: string): string {
-  try {
-    const stat = fs.statSync(fsPath);
-    return `${fsPath}:${stat.size}:${Math.trunc(stat.mtimeMs)}`;
-  } catch {
-    return `${fsPath}:missing`;
-  }
 }
 
 /** Drives the "Open Designer" editor-title action (shown on a form .cs OR a .Designer.cs partner). */
@@ -2269,8 +2367,8 @@ async function stopPreviewEngines(): Promise<void> {
  * the stop and the engine starts fresh on the next open/render.
  */
 async function restartPreviewEngines(): Promise<void> {
-  const stopped = await stopEnginesCore();
   const session = DesignerHub.instance.activeSession;
+  const stopped = await stopEnginesCore();
   if (session) {
     // rerenderFromDoc → the render pipeline → getEngine → a brand-new engine process; net48 may fail-closed if the
     // recycle above could not confirm the old exit (net48Blocked), in which case the next render recovers.

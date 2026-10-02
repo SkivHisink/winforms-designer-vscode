@@ -10,7 +10,7 @@ Render, click-select, edit and lay out `.Designer.cs` forms — live — without
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code Engine](https://img.shields.io/badge/VS%20Code-%5E1.84-007ACC?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![Version 2.0](https://img.shields.io/badge/version-2.0-brightgreen.svg)](#support-matrix)
+[![Version 2.1](https://img.shields.io/badge/version-2.1-brightgreen.svg)](#support-matrix)
 
 </div>
 
@@ -110,7 +110,7 @@ The rendering is real: a headless .NET host instantiates your controls — inclu
 - **[.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)** matching the VSIX architecture. Building from source needs the .NET 10 SDK pinned by `global.json`.
 - **.NET Framework 4.8** — for `net4x` / DevExpress projects. Building `engine-net48/` from source needs its targeting pack.
 
-**Windows ARM64:** a `win32-arm64` package is published and genuinely contains an ARM64 engine, but it has never been run on ARM64 hardware — CI and releases build on x64 runners. Treat it as unverified; only `win32-x64` is covered by 2.0.0's tested claims. See [ARM64 notes](docs/arm64-support.md).
+**Windows ARM64:** a `win32-arm64` package is published and genuinely contains an ARM64 engine, but it has never been run on ARM64 hardware — CI and releases build on x64 runners. Treat it as unverified; only `win32-x64` is covered by the tested claims of 2.1.0. See [ARM64 notes](docs/arm64-support.md).
 
 ## 🚀 Installing
 
@@ -153,7 +153,7 @@ The designer refuses rather than guesses:
 
 - A **capability preflight** classifies every form (`safe` / `localizable` / `binaryResx` / `unresolvedType` / `lostStatements` / `unrepresentable`). A form it can't regenerate losslessly stays editable through targeted splices, but whole-file regeneration is refused **with the category named**.
 - Every save route has multi-file preflight, one undo/redo boundary, conflict-safe compensation, and preservation of unknown comments and opaque binary resources.
-- **x86, COM and ActiveX** are outside the 2.0.0 claim and refuse before touching files. So do arbitrary vendor-specific property editors and hosted designers beyond the supported framework routes.
+- **x86, COM and ActiveX** are outside the supported scope. Required-x86 projects, COM/WPF toolbox requests and forms whose source declares an ActiveX control are refused with a named reason before anything is written; an `AxInterop` wrapper offered by the .NET chooser is not filtered yet (see the [2.1.0 record](docs/release-2.1.0.md)). Arbitrary vendor-specific property editors and hosted designers beyond the supported framework routes are refused as well.
 - Visual Studio reference traces, licensed-vendor certification, physical ARM64/DPI and assistive-tech acceptance are recorded as **external or not executed**, never inferred from tests. See the [2.0.0 gate record](docs/release-2.0.0-gate-record.md).
 
 ### `net4x` build coordination
@@ -162,11 +162,20 @@ The net48 preview renders a real compiled instance of your form, so it loads you
 
 ## 🗺️ Roadmap & quality
 
-See the **[release roadmap](ROADMAP.md)** for the shipped milestones and what 2.0.0 does and does not claim.
+See the **[release roadmap](ROADMAP.md)** for the milestone history and planned release sequence.
+The **[detailed 2.0.0 → 3.0.0 roadmap](docs/roadmap-2.0.0-to-3.0.0.md)** (Russian) covers twelve 2.x minor releases,
+the adapter SDK, vendor workflows, large forms, localization, data binding, accessibility and project validation,
+with dependencies and acceptance criteria for the 3.0.0 platform.
 
 The safety core has C# and TypeScript unit coverage; the webview UI is validated headless; startup and render latency are guarded by a repeatable performance baseline; and activation, engine startup, capabilities and lifecycle diagnostics are smoke-tested in the real VS Code Extension Host on **VS Code 1.84 and current Stable**.
 
-Found a rough edge? Please [file an issue](https://github.com/SkivHisink/winforms-designer-vscode/issues) — the **WinForms: Export Designer Diagnostics** command produces a ready-to-paste report.
+Found a rough edge? **WinForms: Show Form Status** explains the current project/runtime, preview source and
+actionable diagnostic codes. **Rebuild Toolbox Cache**, **Refresh Toolbox** and **Restart the Designer Preview Engine** help recover
+the session while preserving unsaved source and toolbox customization. See the [2.1.0 support and evidence guide](docs/release-2.1.0.md).
+
+Please [file an issue](https://github.com/SkivHisink/winforms-designer-vscode/issues) with the report from
+**WinForms: Export Designer Diagnostics**. Export and Copy Diagnostics exclude source, property values, raw errors
+and private paths; the bounded report contains versions, capability facts and pseudonymized diagnostic identities.
 
 ## 🤝 Contributing
 

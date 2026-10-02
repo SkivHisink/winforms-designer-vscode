@@ -80,6 +80,8 @@ a fixed size.
 
 ## Reporting a problem
 
-**WinForms: Export Designer Diagnostics** (command palette) produces a Markdown report with engine state,
-environment, the active document and settings — attach it to the issue. It writes no files on its own; it opens an
-untitled document.
+**WinForms: Show Form Status** (command palette) explains why the active form is limited and offers the recovery
+actions that apply. **WinForms: Export Designer Diagnostics** produces a bounded Markdown report with versions,
+engine state, capability facts and diagnostic codes — attach it to the issue. It contains no source, property
+values, settings or private paths, writes no files on its own, and opens as an untitled document you can review
+before sharing.

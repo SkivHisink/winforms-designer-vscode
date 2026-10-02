@@ -4,7 +4,13 @@
 
 Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered form — click controls, edit properties, drag and resize, wire events, and save minimal changes back into `.Designer.cs`. No round-trip through Visual Studio.
 
-> ✅ **2.0.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
+> ✅ **2.1.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
+
+**New in 2.1:** run **WinForms: Show Form Status** to inspect the active form's project, runtime, architecture,
+preview source and actionable diagnostics. Rebuild the toolbox cache, refresh controls or restart engines while
+preserving unsaved edits and toolbox customization. Export/Copy Diagnostics produces a bounded report without
+source, property values, raw exceptions or private paths. Adapter declarations remain metadata only; x86/COM
+and physical ARM64 support are not added by this release.
 
 ![WinForms Designer for VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/main-picture.png)
 
@@ -166,6 +172,11 @@ through strict allowlists rather than executing arbitrary code from the file. On
 | Inherited forms (derived fields editable, inherited read-only) | ✅ | ✅ |
 | Byte-local save | ✅ | ✅ |
 | **Overall** | **Stable** | **Live-source preview + disclosed compiled fallback** |
+
+**DevExpress on the modern engine** (a DevExpress `net8.0`+ build in a `net10.0-windows` project) is verified with
+DevExpress **25.2.5**: LayoutControl arrangement, `Appearance` properties and SVG/bitmap images from the project's
+own `Properties.Resources` render without skipped statements. DevExpress versions without .NET 10 support (before
+25.2) fail inside their own constructors on .NET 10; such a form opens as a disclosed incomplete preview.
 
 ## Links
 

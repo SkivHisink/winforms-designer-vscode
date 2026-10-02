@@ -150,6 +150,41 @@ namespace WinFormsDesigner.Engine
         public static bool IsConstructionAllowed(Type t) =>
             t?.FullName != null && IsTrustedFrameworkType(t) && AllowedConstructionTypes.Contains(t.FullName);
 
+        /// <summary>
+        /// Vendor VALUE initializers the modern interpreter may construct inline, keyed by FullName AND the vendor's
+        /// assembly identity. Only structs whose constructors store their arguments — the vendor counterpart of
+        /// Padding/Size — and only types the vendor's own designer emits as a property value
+        /// (`this.layoutControlItem1.Padding = new DevExpress.XtraLayout.Utils.Padding(2, 2, 5, 5)`).
+        ///
+        /// The identity check is not a signature check (strong names are not validated on .NET), and it does not need
+        /// to be: a project that ships a forged vendor assembly already runs that assembly's parameterless component
+        /// constructors through the ordinary `this.x = new T()` path. What this list must never admit is a type with
+        /// side effects in a GENUINE vendor assembly reached with source-chosen arguments, which is why it names types
+        /// rather than assemblies. The net48 engine renders vendor forms from the compiled type and does not consult it.
+        /// </summary>
+        private static readonly HashSet<string> AllowedVendorValueConstructionTypes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "DevExpress.XtraLayout.Utils.Padding",
+        };
+
+        private static readonly byte[] DevExpressPublicKeyToken = { 0xb8, 0x8d, 0x17, 0x54, 0xd7, 0x00, 0xe4, 0x9a };
+
+        public static bool IsVendorValueConstructionAllowed(Type t) =>
+            t?.FullName != null && t.IsValueType && AllowedVendorValueConstructionTypes.Contains(t.FullName)
+            && IsDevExpressAssembly(t.Assembly);
+
+        /// <summary>Whether <paramref name="assembly"/> carries DevExpress's name prefix and public key token.</summary>
+        public static bool IsDevExpressAssembly(Assembly? assembly)
+        {
+            var name = assembly?.GetName();
+            if (name?.Name == null || !name.Name.StartsWith("DevExpress.", StringComparison.Ordinal)) return false;
+            byte[]? token = name.GetPublicKeyToken();
+            if (token == null || token.Length != DevExpressPublicKeyToken.Length) return false;
+            for (int i = 0; i < token.Length; i++)
+                if (token[i] != DevExpressPublicKeyToken[i]) return false;
+            return true;
+        }
+
         public static bool IsStaticReadAllowed(Type t) =>
             t?.FullName != null && IsTrustedFrameworkType(t) && AllowedStaticReadTypes.Contains(t.FullName);
 

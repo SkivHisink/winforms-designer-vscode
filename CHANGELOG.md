@@ -9,6 +9,53 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-02
+
+### Added
+
+- **Show Form Status** displays the active form's project, evaluated target framework/configuration, engine,
+  worker architecture, localization culture, preview source, document state and capabilities. Build history
+  only reports successful workspace build tasks observed in this session, with project attribution explicitly
+  unverified. Stable diagnostic codes offer applicable recovery actions.
+- Architecture inspection combines trusted, bounded MSBuild evaluation with managed/native PE evidence on
+  modern and .NET Framework routes. Required x86, incompatible outputs and unsupported COM/ActiveX requests
+  receive named refusals. Unknown evidence remains visible; `Prefer32Bit` EXE metadata alone is not an x86 refusal.
+- Adapter manifest status now distinguishes schema validity, duplicate identity, runtime/architecture/version
+  compatibility and metadata discovery. Accepting a declaration does not load adapter code or grant mutations.
+- **Rebuild Toolbox Cache**, **Refresh Toolbox**, and explicit toolbox-scope request commands support recovery
+  without clearing user curation, settings, transaction journals, document backups or unsaved source.
+- Support UI and reason messages are translated into all seven shipped languages.
+
+### Fixed
+
+- Activation awaits the real global-to-workspace toolbox migration. Existing workspace preferences win;
+  legacy originals remain available for downgrade, and failed writes can be retried. Invalid saved data is
+  retained and diagnosed instead of being overwritten when it is loaded or migrated; the next toolbox view change
+  stores the sanitized view state. Cache clear is serialized against pending writes.
+- Export and Copy Diagnostics share a bounded structured report with correlation ID, versions, capabilities,
+  timings and canonical reason codes. Source, property values, raw exceptions, private paths and identifiers
+  are excluded or pseudonymized; the complete Markdown report stays within 64 KiB.
+- Controls no longer drift on larger forms ([#7](https://github.com/SkivHisink/winforms-designer-vscode/issues/7)).
+  The modern engine now replays `SuspendLayout`/`ResumeLayout`/`PerformLayout` and `ISupportInitialize`
+  `BeginInit`/`EndInit` instead of skipping them, so a button whose section precedes its panel's keeps its anchors,
+  a form with its own `Font` is no longer rescaled, and DevExpress `LayoutControl` items sit where they were
+  designed. The designer keeps showing the coordinates the source declares even when `AutoScaleDimensions` is
+  stale for the current default font.
+- DevExpress forms on .NET 10 ([#6](https://github.com/SkivHisink/winforms-designer-vscode/issues/6)): root
+  appearance assignments (`this.Appearance.Font`), `DevExpress.XtraLayout.Utils.Padding` values and strongly typed
+  project resources (`global::App.Properties.Resources.Logo`, including DevExpress SVG images) are interpreted
+  instead of being reported as unrepresentable. Project resources are read from the project's `.resx`; the
+  generated accessor never runs, and a file reference that leaves the project directory or passes through a link
+  is not read. DevExpress versions without .NET 10 support (before 25.2) fail inside their own constructors on
+  .NET 10; such a form now opens as the incomplete preview described below.
+- A form whose compiled base throws in its constructor now opens as the documented incomplete preview instead of
+  failing to load.
+- A control whose designer fails while the modern engine loads a form no longer opens a modal error dialog on the
+  desktop (which also blocked the engine); the failure is listed among the form's skipped constructs.
+
+The scope and executed checks are recorded in [the 2.1.0 evidence record](https://github.com/SkivHisink/winforms-designer-vscode/blob/v2.1.0/docs/release-2.1.0.md).
+The earlier limits on physical ARM64, vendor certification and Visual Studio parity remain in force.
+
 ## [2.0.0] - 2026-08-28
 
 **The v2 managed designer foundation ships as an explicitly bounded release.** It freezes the generated protocol,
@@ -2467,7 +2514,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.15.0...v2.0.0
 [1.15.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.13.0...v1.14.0

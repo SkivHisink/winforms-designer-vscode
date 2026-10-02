@@ -211,7 +211,11 @@ import {
 } from './resourceTransactionCoordinator';
 import { TransactionRunnerResult, TransactionUndoRegistration } from './transactionRunner';
 import { TransactionJournalState } from './transactionJournal';
-import { activeXControlsInDesignerSource, assemblyRequiresX86 } from './tierDCompatibility';
+import { activeXControlsInDesignerSource } from './tierDCompatibility';
+import { inspectCachedProjectCompatibility, ProjectCompatibilityResult } from './projectCompatibility';
+import { createDesignerDiagnostic, diagnosticsFromRenderItems, DesignerDiagnostic } from './designerDiagnostics';
+import { loadPersistedDesignerState, persistToolboxScanCache, clearDisposableDesignerCaches } from './persistedDesignerState';
+import { classifyToolboxRequest } from './toolboxRequest';
 import { planAddFormMembership, resolveFormMembershipProject } from './formProjectMembership';
 
 export type EngineKind = 'modern' | 'net48';
@@ -656,26 +660,29 @@ export class DesignerHub {
 
   /** Wire up persistence (call once at activation). User-curated toolbox membership and tabs are workspace-local;
    * the metadata reflection cache stays global because its path plus size/mtime key is workspace-independent. */
-  initState(memento: vscode.Memento, workspaceMemento?: vscode.Memento): void {
+  async initState(memento: vscode.Memento, workspaceMemento?: vscode.Memento): Promise<void> {
     this.memento = memento;
     this.workspaceMemento = workspaceMemento;
-    // v1.7 and earlier stored curation globally. Seed an unset workspace key once from that legacy value so the v1.8
-    // scope correction does not make an existing user's chosen/hidden controls and custom tabs appear to vanish.
-    const scopedValue = <T>(key: string, fallback: T): T => {
-      if (!workspaceMemento) return memento.get<T>(key, fallback);
-      const current = workspaceMemento.get<T>(key);
-      if (current !== undefined) return current;
-      const migrated = memento.get<T>(key, fallback);
-      void workspaceMemento.update(key, migrated);
-      return migrated;
-    };
-    this.chosenItems = scopedValue<ToolboxItemInfo[]>('chosenToolboxItems', []);
-    this.hidden = new Set(scopedValue<string[]>('hiddenToolboxFqns', []));
-    this.toolboxUi = sanitizeToolboxUi(scopedValue<unknown>('toolboxUiState', null));
-    this.browsedToolboxAssemblies = uniqueAssemblyPaths(
-      scopedValue<string[]>('browsedToolboxAssemblies', []));
-    const storedCache = memento.get<Record<string, ToolboxScanCacheEntry>>('toolboxScanCache', {});
-    this.toolboxScanCache = storedCache && typeof storedCache === 'object' ? storedCache : {};
+    const state = await loadPersistedDesignerState(memento, workspaceMemento);
+    this.chosenItems = state.chosenItems;
+    this.hidden = new Set(state.hiddenFqns);
+    this.toolboxUi = sanitizeToolboxUi(state.toolboxUi);
+    this.browsedToolboxAssemblies = uniqueAssemblyPaths(state.browsedAssemblies);
+    this.toolboxScanCache = state.scanCache;
+    this.persistedStateIssues = state.migration.issues.map((issue) => issue.reason === 'migration-write-failed'
+      ? 'STATE_MIGRATION_FAILED' : issue.key === 'toolboxScanCache' ? 'CACHE_CORRUPT' : 'PERSISTED_STATE_INVALID');
+  }
+
+  /** Cache recovery never deletes user curation, settings, journal or unsaved document backups. */
+  private cacheGeneration = 0;
+  get toolboxCacheGeneration(): number { return this.cacheGeneration; }
+  persistedStateIssues: readonly string[] = [];
+  async clearToolboxMetadataCache(): Promise<void> {
+    this.cacheGeneration++;
+    this.toolboxScanCache = {};
+    for (const session of this.openSessions) session.invalidateToolboxMetadata();
+    if (this.memento) await clearDisposableDesignerCaches(this.memento);
+    this.persistedStateIssues = this.persistedStateIssues.filter(code => code !== 'CACHE_CORRUPT' && code !== 'CACHE_WRITE_FAILED');
   }
   /** Replace the toolbox customization (added + hidden), persist it, and re-push the merged toolbox. */
   setToolboxCustomization(chosen: ToolboxItemInfo[], hidden: string[]): void {
@@ -722,14 +729,17 @@ export class DesignerHub {
     return entry && stamp && entry.stamp === stamp ? entry : undefined;
   }
 
-  storeToolboxScan(file: string, items: ToolboxCandidate[], error?: string, probeDirectories: readonly string[] = []): void {
+  storeToolboxScan(file: string, items: ToolboxCandidate[], error?: string, probeDirectories: readonly string[] = [], expectedGeneration = this.cacheGeneration): void {
+    if (expectedGeneration !== this.cacheGeneration) return;
     const stamp = this.assemblyStamp(file, probeDirectories);
     if (!stamp) return;
     const key = normalize(file);
     this.toolboxScanCache[key] = { stamp, items: items.slice(0, 2048), error };
     const keys = Object.keys(this.toolboxScanCache);
     for (let i = 0; i < keys.length - 256; i++) delete this.toolboxScanCache[keys[i]];
-    void this.memento?.update('toolboxScanCache', this.toolboxScanCache);
+    if (this.memento) void persistToolboxScanCache(this.memento, this.toolboxScanCache).catch(() => {
+      this.persistedStateIssues = [...this.persistedStateIssues.filter((code) => code !== 'CACHE_WRITE_FAILED'), 'CACHE_WRITE_FAILED'];
+    });
   }
 
   /** The form-specific view state. Invalid/old entries degrade to an empty state instead of reaching the webview. */
@@ -2478,6 +2488,8 @@ class DesignerSession {
   /** S122: accepted phase timings from the latest real full-render product path. Engine startup/toolbox warm-up is
    * deliberately outside these frozen steady-state phases; capture owns the engine's inseparable model+pixel RPC. */
   private lastFullRenderTelemetry: ProductRenderTelemetry | null = null;
+  private supportFailureCode: string | undefined;
+  private invalidAssemblyOverride = false;
   /** Last product-hosted ComponentDesigner activation for the current certified selection. A worker fault is kept
    * separate from renderOk: the generic form/property surface intentionally remains usable after quarantine. */
   private lastHostedDesignerProbe: HostedDesignerProbeResult | null = null;
@@ -2612,6 +2624,8 @@ class DesignerSession {
   private autoToolboxItems: ToolboxItemInfo[] = [];
   private autoToolboxDiscoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private autoToolboxDiscoveryGeneration = 0;
+  private toolboxLoadGeneration = 0;
+  private chooseItemsGeneration = 0;
   private lastAutoDiscoveryLog = '';
   private readonly autoToolboxWatchers = new Map<string, vscode.Disposable>();
   private readonly autoToolboxRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -2647,7 +2661,7 @@ class DesignerSession {
    * edit (including edit then Undo back to byte-identical source) makes Apply refuse instead of silently replanning. */
   private pendingHighDpiQuickFix: PendingHighDpiQuickFix | undefined;
 
-  private readonly documentUri: vscode.Uri;
+  readonly documentUri: vscode.Uri;
   /** The custom document whose in-memory .Designer.cs text this session renders and edits (issue #2). */
   private readonly doc: WinFormsDesignDocument;
   /** One isolated modal editor at a time per designer session. The engine broker is cancellable/fail-closed, but
@@ -3587,6 +3601,53 @@ class DesignerSession {
     }
   }
 
+  /** Read-only product support facts. Raw source, property values and engine exceptions stay outside this DTO. */
+  async captureSupportSnapshot(forceCompatibility = false) {
+    const revision = this.doc.rev;
+    const renderGeneration = this.renderSeq;
+    const culture = this.localizationCulture;
+    const projectPath = this.supportProjectPath();
+    const explicit = this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined;
+    const route = this.resolveRouting(explicit);
+    const assemblyPath = route.asm ?? this.autoAsm;
+    const compatibility = await this.inspectCompatibility(assemblyPath, route.kind, forceCompatibility);
+    if (this.disposed || revision !== this.doc.rev || renderGeneration !== this.renderSeq
+      || culture !== this.localizationCulture
+      || projectPath !== this.supportProjectPath()
+      || explicit !== (this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined)) throw new Error('DOCUMENT_CHANGED');
+    const diagnostics: DesignerDiagnostic[] = diagnosticsFromRenderItems(this.lastRenderDiagnostic?.items ?? []);
+    if (compatibility.code !== 'ARCHITECTURE_COMPATIBLE') diagnostics.push(createDesignerDiagnostic(compatibility.code));
+    if (this.invalidAssemblyOverride || route.frameworkUnbuilt) diagnostics.push(createDesignerDiagnostic('ASSEMBLY_UNRESOLVED'));
+    if (this.lastRenderDiagnostic?.kind === 'failure') {
+      const diagnostic = createDesignerDiagnostic(this.supportFailureCode ?? this.lastRenderDiagnostic.cause,
+        { target: this.lastRenderDiagnostic.target });
+      diagnostics.push(diagnostic.code === 'UNKNOWN_REASON' ? createDesignerDiagnostic('RENDER_FAILED') : diagnostic);
+    }
+    const previewAuthority: 'liveSource' | 'compiled' | 'stale' = !this.renderOk ? 'stale'
+      : this.engineKind === 'net48' && this.net48RenderMode !== 'interpreted' ? 'compiled' : 'liveSource';
+    if (previewAuthority === 'compiled') diagnostics.push(createDesignerDiagnostic('COMPILED_PREVIEW'));
+    for (const code of DesignerHub.instance.persistedStateIssues) diagnostics.push(createDesignerDiagnostic(code));
+    const timings: Record<string, number> = this.lastFullRenderTelemetry ? { ...this.lastFullRenderTelemetry } : {};
+    return {
+      documentId: this.documentUri.toString(), revision, dirty: this.doc.isDirty, renderOk: this.renderOk,
+      engineKind: this.engineKind, net48RenderMode: this.net48RenderMode,
+      projectPath: this.supportProjectPath(), culture: this.localizationCulture,
+      assemblyPath: assemblyPath ?? compatibility.output?.path, previewAuthority, compatibility,
+      diagnostics: diagnostics.filter((item, index, all) => all.findIndex(other => other.code === item.code && other.target === item.target) === index),
+      controlCount: this.controls.length, componentCount: this.trayComponents.length, timings,
+    };
+  }
+
+  private supportProjectPath(): string | undefined {
+    return (isResolvedDocumentOwner(this.lastDocumentOwner) ? this.lastDocumentOwner?.projectPath : undefined)
+      || (this.designerFile ? findOwningCsproj(path.dirname(this.designerFile), this.wsRoot()) : undefined) || undefined;
+  }
+
+  private inspectCompatibility(assemblyPath: string | undefined, runtime: EngineKind, force = false): Promise<ProjectCompatibilityResult> {
+    return inspectCachedProjectCompatibility({ projectPath: this.supportProjectPath(), assemblyPath,
+      runtime, trusted: vscode.workspace.isTrusted }, { force });
+  }
+
   extensionHostTestState(): {
     renderReady: boolean;
     /** See openDocumentState.panelActive. Read through the disposed flag: WebviewPanel.active throws once the panel
@@ -3738,6 +3799,7 @@ class DesignerSession {
     this.selectionGen++; // reject in-flight describes from the lost process before stale metadata can be published
     this.publishedPropertyComponent = undefined;
     if (delayMs == null) {
+      this.supportFailureCode = 'ENGINE_CRASH_LOOP';
       this.postRenderFailure(t('host.engineCrashLoop'), this.currentId || 'this', t('host.engineCrashLoop'));
       return;
     }
@@ -4271,6 +4333,7 @@ class DesignerSession {
    * failure leaves it undefined (retry later); a project-enumeration failure degrades to framework-only. */
   private async loadToolboxItems(): Promise<void> {
     if (this.toolboxItems || !this.designerFile) return;
+    const generation = this.toolboxLoadGeneration;
     // Capture the kind: the pre-render refreshViews (ctor setActive) runs while engineKind is still the default
     // 'modern', but the first fullRender flips it to 'net48' for a compiled form. A load started under one kind must
     // NOT assign after the kind flipped — else a stale framework-only net9 result would poison the net48 cache and
@@ -4285,12 +4348,12 @@ class DesignerSession {
       if (asm) {
         try { project = await listCompiledToolboxControls(await this.ensureEngine('net48'), asm); } catch { /* project best-effort */ }
       }
-      if (this.disposed || this.engineKind !== kind || this.toolboxItems) return; // kind flipped / already loaded under us
+      if (this.disposed || generation !== this.toolboxLoadGeneration || this.engineKind !== kind || this.toolboxItems) return;
       this.toolboxItems = filterToolboxByRuntime([...framework, ...project], kind, this.toolboxRuntimeFilter());
     } else {
       let items: ToolboxItemInfo[];
       try { items = await listToolboxItems(await this.ensureEngine('modern'), this.designerFile, this.asm()); } catch { return; }
-      if (this.disposed || this.engineKind !== kind || this.toolboxItems) return;
+      if (this.disposed || generation !== this.toolboxLoadGeneration || this.engineKind !== kind || this.toolboxItems) return;
       this.toolboxItems = filterToolboxByRuntime(items, kind, this.toolboxRuntimeFilter());
     }
   }
@@ -4303,12 +4366,38 @@ class DesignerSession {
   }
 
   // ----- view refresh (when this session becomes the focused one, or a view (re)opens) -----
-  async refreshToolbox(): Promise<void> {
+  invalidateToolboxMetadata(): void {
+    this.toolboxLoadGeneration++;
+    this.toolboxItems = undefined;
+    this.autoToolboxItems = [];
+    this.cancelAutoToolboxDiscovery(true);
+    this.chooseItemsGeneration++;
+    if (this.chooseItemsPanel) void this.pushCandidates(this.chooseItemsPanel).catch(() => { /* later refresh retries */ });
+  }
+
+  async refreshToolbox(force = false): Promise<void> {
     if (this.disposed || !this.designerFile) return;
-    await this.loadToolboxItems();
-    this.pushToolboxItems();
-    this.scheduleAutoToolboxDiscovery();
-    await this.refreshPalette();
+    if (force) this.invalidateToolboxMetadata();
+    const generation = this.toolboxLoadGeneration;
+    const refresh = async () => {
+      await this.loadToolboxItems();
+      if (generation !== this.toolboxLoadGeneration || this.disposed) return;
+      if (force && !this.toolboxItems) throw new Error('Toolbox discovery could not complete.');
+      this.pushToolboxItems();
+      if (force) await this.runAutoToolboxDiscovery(this.autoToolboxDiscoveryGeneration);
+      else this.scheduleAutoToolboxDiscovery();
+      await this.refreshPalette();
+    };
+    try {
+      if (force) await this.withTimeout(refresh(), 18000, 'toolbox refresh timed out');
+      else await refresh();
+    } catch (error) {
+      if (force && generation === this.toolboxLoadGeneration) {
+        this.toolboxLoadGeneration++;
+        this.cancelAutoToolboxDiscovery();
+      }
+      throw error;
+    }
   }
 
   /** Fetch the color/font palette once (engine-wide static, cached on the hub) and push it to the panel so
@@ -4667,7 +4756,7 @@ class DesignerSession {
     // invalidate any in-flight render BEFORE the stallable net48 discard await below, so a render
     // that started before this undo/redo/revert can't complete during the wait and install the now-undone picture
     // The trailing fullRender bumps the sequence again; both leave an earlier render's captured seq stale.
-    this.renderSeq++;
+    const reconcileGeneration = ++this.renderSeq;
     // 0.11.0 net48 undo reconcile — a text-level revert (undo/redo/revert) makes the cached compiled instance STALE:
     // net48 renders the live compiled INSTANCE (not the text), and that instance still carries the reverted edit's
     // live mutation, so reusing it would keep showing the undone change. Drop it so the next render re-instantiates
@@ -4675,13 +4764,15 @@ class DesignerSession {
     if (this.engineKind === 'net48') {
       const asm = this.asm();
       if (asm && this.designerFile) {
-        try { await discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, asm); }
+        try { await this.withTimeout(discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, asm),
+          2000, 'compiled preview reset timed out'); }
         catch { /* best effort — a failed discard just leaves the (pre-existing) staleness, never corrupts */ }
       }
     // The discard makes the next render re-instantiate from the compiled baseline, so an undone/reverted live edit
     // no longer lingers in the preview. (There is no divergence lock to update — it was descoped; net48 shows the
     // last build and says so, editable throughout.)
     }
+    if (this.disposed || reconcileGeneration !== this.renderSeq) return;
     await this.fullRender();
   }
 
@@ -4998,6 +5089,15 @@ class DesignerSession {
     this.chooseItemsPanel = panel;
     panel.webview.html = chooseItemsHtml(panel.webview, this.extensionUri);
     panel.webview.onDidReceiveMessage(async (m: { type?: string; scope?: string; tab?: string | null; rows?: ChooseRow[] }) => {
+      if (m && ['requestScope', 'browse', 'applyChooseItems'].includes(m.type ?? '')) {
+        const request = classifyToolboxRequest(m.scope);
+        if (request.status === 'refused') {
+          await panel.webview.postMessage({ type: 'scopeRefused', scope: m.scope,
+            reasonCode: request.reasonCode,
+            message: m.scope === 'com' ? t('support.comUnsupported') : m.scope === 'wpf' ? t('support.wpfUnsupported') : request.message });
+          return;
+        }
+      }
       if (m?.type === 'ready') await this.pushCandidates(panel);
       else if (m?.type === 'browse' && m.scope === 'net') await this.browseChooseItems(panel);
       else if (m?.type === 'applyChooseItems' && m.scope === 'net') { this.applyChosen(m.tab ?? undefined, m.rows ?? []); panel.dispose(); }
@@ -5037,6 +5137,7 @@ class DesignerSession {
 
   private async scanCandidateAssembly(file: string): Promise<ToolboxScanCacheEntry> {
     const hub = DesignerHub.instance;
+    const generation = hub.toolboxCacheGeneration;
     const probes = this.toolboxProbeDirectories();
     const cached = hub.cachedToolboxScan(file, probes);
     if (cached) return cached;
@@ -5072,7 +5173,8 @@ class DesignerSession {
       error = errMsg(err);
     }
     const entry = { items, error, stamp: '' };
-    hub.storeToolboxScan(file, items, error, probes);
+    if (generation !== hub.toolboxCacheGeneration) return { items: [], error: 'Cache scan superseded by refresh.', stamp: '' };
+    hub.storeToolboxScan(file, items, error, probes, generation);
     return hub.cachedToolboxScan(file, probes) ?? entry;
   }
 
@@ -5091,6 +5193,10 @@ class DesignerSession {
    * which of its items are currently in the toolbox (so the checkboxes start in the right state). */
   private async pushCandidates(panel: vscode.WebviewPanel, autoCheck?: string[]): Promise<void> {
     const hub = DesignerHub.instance;
+    const generation = ++this.chooseItemsGeneration;
+    const cacheGeneration = hub.toolboxCacheGeneration;
+    const current = () => !this.disposed && this.chooseItemsPanel === panel
+      && generation === this.chooseItemsGeneration && cacheGeneration === hub.toolboxCacheGeneration;
     const tab = this.chooseItemsTab ?? null;
     // "chosen" sent to the dialog = the fqns CURRENTLY in the toolbox (framework-not-hidden + added) → so the
     // checkboxes start checked for everything already in the toolbox (matching VS), not all-off.
@@ -5110,6 +5216,7 @@ class DesignerSession {
         this.engineKind === 'modern' ? this.asm() : undefined,
       );
       const discovered = await this.discoveredCandidates();
+      if (!current()) return;
       // Auto-discovered entries must also appear in Choose Items. That dialog is the add/remove surface; omitting
       // these rows would make a workspace control impossible to hide or restore after automatic discovery.
       const autoDiscovered = this.autoToolboxItems.map((item): ToolboxCandidate => {
@@ -5135,6 +5242,7 @@ class DesignerSession {
       });
       void panel.webview.postMessage({ type: 'items', items, tab, chosen: inToolbox(), check });
     } catch (err) {
+      if (!current()) return;
       void panel.webview.postMessage({ type: 'items', items: [], tab, chosen: inToolbox(), check });
       this.output.appendLine('choose-items enumeration failed: ' + errMsg(err));
     }
@@ -5255,19 +5363,7 @@ class DesignerSession {
       await vscode.commands.executeCommand('winformsDesigner.selectControlAssembly');
       return;
     }
-    const diag = this.lastRenderDiagnostic;
-    const lines = [
-      'WinForms Designer diagnostics',
-      `Form: ${this.designerFile ?? this.documentUri.fsPath}`,
-      `Engine: ${this.engineKind}${this.engineKind === 'net48' ? ` (${this.net48RenderMode})` : ''}`,
-      `Target: ${diag?.target ?? this.currentId ?? 'this'}`,
-      `Cause: ${diag?.cause || diag?.message || t('designer.diag.noDetails')}`,
-    ];
-    for (const item of diag?.items ?? []) {
-      lines.push('', `[${item.category}] ${item.target}`, `Statement: ${item.text}`);
-      if (item.detail) lines.push(`Detail: ${item.detail}`);
-    }
-    await vscode.env.clipboard.writeText(lines.join('\n'));
+    await vscode.commands.executeCommand('winformsDesigner.copySafeDiagnostics', this.documentUri.toString());
     this.post({ type: 'status', message: t('status.diagnosticsCopied') });
   }
 
@@ -5298,6 +5394,12 @@ class DesignerSession {
   private async fullRender(skipReselect = false): Promise<boolean> {
     if (!this.designerFile || this.disposed) return false;
     const seq = ++this.renderSeq;
+    this.supportFailureCode = undefined;
+    if (!vscode.workspace.isTrusted) {
+      this.supportFailureCode = 'WORKSPACE_TRUST_REQUIRED';
+      this.postRenderFailure(t('diagnostics.reason.WORKSPACE_TRUST_REQUIRED'), 'this', this.supportFailureCode);
+      return false;
+    }
     this.output.appendLine(`[designer] render #${seq} starting: ${this.designerFile}`);
     this.post({ type: 'loading', message: t('host.loading.starting') });
     try {
@@ -5310,6 +5412,7 @@ class DesignerSession {
 
     const activeXControls = activeXControlsInDesignerSource(this.doc.designerText);
     if (activeXControls.length > 0) {
+      this.supportFailureCode = 'COM_ACTIVE_X_UNSUPPORTED';
       const refusal = refuseTierDToolboxRequest('registered-activex');
       const named = activeXControls.slice(0, 3).map(({ control, type }) => `${control} (${type})`).join(', ')
         + (activeXControls.length > 3 ? ', …' : '');
@@ -5324,18 +5427,23 @@ class DesignerSession {
     // auto-detect this from the project so a net48/DevExpress form isn't sent to net9 (which can't load it →
     // a near-empty "empty form"). See resolveRouting.
     const explicit = this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined;
+    const configured = vscode.workspace.getConfiguration('winformsDesigner', this.documentUri).get<string>('assemblyPath');
+    this.invalidAssemblyOverride = Boolean(configured?.trim() && !explicit) || Boolean(explicit && !fs.existsSync(explicit));
     const route = this.resolveRouting(explicit);
-    // Remember an AUTO-resolved framework assembly (not the explicit override) so this session's net48 edit ops
-    // reuse it via asm(); a net9 form / explicit source leaves it undefined so nothing stale leaks into asm().
-    this.autoAsm = explicit ? undefined : route.asm;
-    const asm = route.asm;
-    if (asm && assemblyRequiresX86(asm)) {
-      const refusal = refuseTierDToolboxRequest('registered-activex');
-      const message = t('host.tierD.x86Refused', { assembly: path.basename(asm) });
-      this.output.appendLine(`[designer] ${refusal.reasonCode}: ${message}`);
-      this.postRenderFailure(message, path.basename(asm), refusal.reasonCode);
-      return false;
+    // Bind preflight and rendering to the SAME resolver-selected output. The modern resolver considers Debug
+    // and Release, so inspecting an arbitrary default Debug output can otherwise refuse a valid Release form.
+    let asm = route.asm;
+    if (route.kind === 'modern' && !explicit) {
+      try {
+        asm = await this.withTimeout(resolveAssembly(await this.ensureEngine('modern'), this.designerFile),
+          12000, 'assembly resolution timed out') ?? undefined;
+      } catch (err) {
+        if (seq === this.renderSeq && !this.disposed) { this.supportFailureCode = 'ENGINE_UNAVAILABLE'; this.fail(err); }
+        return false;
+      }
+      if (seq !== this.renderSeq || this.disposed) return false;
     }
+    this.autoAsm = explicit ? undefined : asm;
     const prevKind = this.engineKind;
     this.engineKind = route.kind;
     if (this.engineKind !== prevKind) {
@@ -5343,6 +5451,15 @@ class DesignerSession {
       // toolbox re-enumerates on the correct engine (net48 → framework + project/vendor controls). See loadToolboxItems.
       this.toolboxItems = undefined;
       DesignerHub.instance.refreshStatus();
+    }
+
+    const compatibility = await this.inspectCompatibility(asm, route.kind);
+    if (seq !== this.renderSeq || this.disposed) return false;
+    if (compatibility.status === 'incompatible' || compatibility.code === 'WORKSPACE_TRUST_REQUIRED') {
+      this.supportFailureCode = compatibility.code;
+      const message = t(`diagnostics.reason.${compatibility.code}`);
+      this.postRenderFailure(message, 'this', compatibility.code);
+      return false;
     }
 
     if (this.engineKind === 'net48' && DesignerHub.instance.net48TaskActive) {
@@ -5358,6 +5475,7 @@ class DesignerSession {
     // assembly; net48 needs the compiled output). Don't draw a misleading empty form — tell the user and offer
     // to point the designer at a built control source.
     if (route.frameworkUnbuilt) {
+      this.supportFailureCode = 'ASSEMBLY_UNRESOLVED';
       this.output.appendLine(`[designer] render #${seq}: .NET Framework project not built — prompting for control source`);
       this.postRenderFailure(t('host.frameworkUnbuilt'), 'this', t('host.frameworkUnbuilt'));
       this.promptControlSource(t('host.frameworkUnbuilt'));
@@ -5368,7 +5486,7 @@ class DesignerSession {
     try {
       eng = await this.withTimeout(this.ensureEngine(this.engineKind), 12000, 'engine did not start (is the .NET SDK / dotnet on PATH?)');
     } catch (err) {
-      if (seq === this.renderSeq && !this.disposed) this.fail(err);
+      if (seq === this.renderSeq && !this.disposed) { this.supportFailureCode = 'ENGINE_UNAVAILABLE'; this.fail(err); }
       return false;
     }
     if (seq !== this.renderSeq || this.disposed) return false;

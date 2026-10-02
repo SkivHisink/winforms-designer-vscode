@@ -21,6 +21,10 @@ resolve a target directory.
 | **Class** | `winformsDesigner.addClass` | Explorer right-click → **Add** | Scaffolds a single `<Name>.cs` and opens it as code |
 | **WinForms: Show Properties** | `winformsDesigner.showProperties` | Palette (always) | Focuses the **Designer** panel and switches it to the Properties tab |
 | **WinForms: Export Designer Diagnostics** | `winformsDesigner.exportDiagnostics` | Palette (always) | Opens a Markdown report as an untitled document — see [Diagnostics](#diagnostics-and-the-output-channel) |
+| **WinForms: Show Form Status** | `winformsDesigner.showFormStatus` | Palette (always) | Opens a panel for the active form: its project, evaluated target framework and configuration, engine, worker architecture, localization culture, preview source, document state and capabilities, plus each active problem with its stable reason code and the recovery actions that apply. Its **Refresh** re-inspects the form after a build or project change |
+| **WinForms: Rebuild Toolbox Cache** | `winformsDesigner.rebuildToolboxCache` | Palette (always) | Clears the rebuildable reflection cache behind the toolbox and refreshes the active form's toolbox. Chosen and hidden controls, custom tabs, settings, unsaved forms, backups and transaction journals are kept |
+| **WinForms: Refresh Toolbox** | `winformsDesigner.refreshToolbox` | Palette (always; needs an open form) | Repeats control discovery for the active form without clearing any cache |
+| **WinForms: Choose Toolbox Items** | `winformsDesigner.requestToolboxItems` | Palette (always; needs an open form) | Opens the **.NET Framework Components** chooser. Extensions can pass the scope `net`, `com` or `wpf`: COM/ActiveX answers `COM_ACTIVE_X_UNSUPPORTED`, WPF answers `WPF_TOOLBOX_UNSUPPORTED`, anything else `TOOLBOX_SCOPE_INVALID` — a refusal starts no discovery and changes nothing |
 | **WinForms: Select Control Assembly / Project…** | `winformsDesigner.selectControlAssembly` | Palette and editor title bar while a designer is focused; also the click action of the control-assembly status bar item | Points the active form at the project or `.dll` that provides its custom controls, remembered per form |
 | **WinForms: Select Form Localization Culture…** | `winformsDesigner.selectLocalizationCulture` | Palette and editor title bar while a designer is focused | Picks the culture whose `.resx` edits go to; offers **Add Localization** on a form that is not localizable yet. See [Localization](Localization) |
 | **WinForms: Edit ImageList Images…** | `winformsDesigner.editImageListImages` | Palette, while a designer is focused | Edits the selected `ImageList`'s images. Refuses when the selection is not an `ImageList`, or when the existing images cannot be read back — saving replaces the whole set, so it fails closed |
@@ -140,12 +144,14 @@ dropdown). It records: each render and its result, every edit the safety gates r
 it, toolbox auto-discovery scans and their budgets, engine start/stop/release lifecycle, and the .NET Framework
 compiled-preview disclosure (deduped, so it is logged once per form rather than per render).
 
-**WinForms: Export Designer Diagnostics** produces a full report as an **untitled Markdown document** — it never
-writes a file, so it raises no permission prompt and you decide whether to save it. It gathers the extension,
-VS Code, platform and Node versions, the engine entry point, ping time, PID and capabilities, the lifecycle of
-both engines (starts, last startup time, recent crashes, last exit), the active document and its resolved
-designer file, the effective settings, the designer graph (root type, component count, representable statements)
-and the toolbox count. Every probe is guarded, so a dead engine still produces a usable report.
+**WinForms: Export Designer Diagnostics** produces a report as an **untitled Markdown document** — it never
+writes a file, so it raises no permission prompt and you decide whether to save it. **Copy Diagnostics** (on the
+canvas banner) puts the same report on the clipboard. The report holds versions, environment, engine lifecycle
+counters, session flags, capability facts, measured timings, a correlation ID and the canonical diagnostic codes.
+It is bounded (at most 60 KiB of JSON, 64 KiB in total) and deliberately leaves out source statements, property
+values, settings, raw engine errors and private paths; control, target and assembly names are replaced by labels
+that only mean something inside that one report. Nothing is uploaded. Every probe is guarded, so a dead engine
+still produces a usable report.
 
 When a render is only partial, the canvas shows a diagnostics banner with **Show details** / **Hide details**,
 a **Dismiss** ×, and four actions: **Retry**, **Rebuild** (runs **WinForms: Run Build Task (Release Preview

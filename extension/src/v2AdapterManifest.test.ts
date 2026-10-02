@@ -179,6 +179,45 @@ describe('v2 adapter manifest', () => {
     expect(JSON.stringify(result.diagnostics)).not.toContain('C:\\repo');
   });
 
+  it('treats unspecified runtime and architecture as wildcards across all declared cohorts', () => {
+    const candidate = manifest();
+    candidate.compatibility.cohorts = [
+      { ...candidate.compatibility.cohorts[0], minProductVersion: '1.0.0', maxProductVersionExclusive: '2.0.0', runtimes: ['modern'], architectures: ['x64'] },
+      { ...candidate.compatibility.cohorts[0], runtimes: ['net48'], architectures: ['arm64'] },
+    ];
+    expect(evaluateV2AdapterManifest(candidate, { productVersion: '2.1.0' }).ok).toBe(true);
+    expect(evaluateV2AdapterManifest(candidate, { productVersion: '2.1.0', runtime: 'net48' }).ok).toBe(true);
+    expect(evaluateV2AdapterManifest(candidate, { architecture: 'arm64' }).ok).toBe(true);
+    expect(evaluateV2AdapterManifest(candidate, { productVersion: '2.1.0', runtime: 'modern' }).ok).toBe(false);
+  });
+
+  it.each([
+    ['2.1.0-rc.1', false],
+    ['2.1.0', true],
+    ['2.1.0+build.99', true],
+    ['2.2.0-rc.2', true],
+    ['2.2.0-rc.10', false],
+    ['2.2.0', false],
+    ['02.1.0', false],
+    ['2.1.0-01', false],
+  ])('checks semantic product version %s against prerelease boundaries', (productVersion, expected) => {
+    const candidate = manifest();
+    candidate.compatibility.cohorts[0].minProductVersion = '2.1.0';
+    candidate.compatibility.cohorts[0].maxProductVersionExclusive = '2.2.0-rc.10';
+    expect(evaluateV2AdapterManifest(candidate, { productVersion }).ok).toBe(expected);
+  });
+
+  it('validates a prerelease-only interval and rejects non-semantic or unbounded versions', () => {
+    const candidate = manifest();
+    candidate.compatibility.cohorts[0].minProductVersion = '2.1.0-beta.2';
+    candidate.compatibility.cohorts[0].maxProductVersionExclusive = '2.1.0';
+    expect(evaluateV2AdapterManifest(candidate, { productVersion: '2.1.0-rc.1' }).ok).toBe(true);
+    for (const version of ['2.1.0-01', '2.1.0-..', '02.1.0', `2.1.0-${'a'.repeat(129)}`]) {
+      candidate.adapter.version = version;
+      expect(evaluateV2AdapterManifest(candidate).ok).toBe(false);
+    }
+  });
+
   it('rejects drive-relative, alternate-stream, and ambiguous relative path forms', () => {
     const result = evaluateV2AdapterManifest(manifest(), {
       paths: ['C:relative.cs', 'controls/Foo.cs:Zone.Identifier', './controls/Foo.cs', 'controls//Foo.cs'],

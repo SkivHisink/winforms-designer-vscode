@@ -1,0 +1,112 @@
+{
+  "suite": "release21-installed-upgrade-downgrade",
+  "passed": true,
+  "startedAt": "2026-10-02T03:06:34.010Z",
+  "vscodeVersion": "1.135.0",
+  "fixtureRoot": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl",
+  "baselineRef": "72a4ee3",
+  "baselineProvenance": "Reconstructed from the exact repository 2.0.0 baseline; not a historical published VSIX.",
+  "environment": {
+    "commit": "72a4ee3b3afcc6ce459dab4b19ec113b2f759fe6",
+    "workingTree": "dirty (58 changed or untracked paths)",
+    "os": "Windows_NT 10.0.26100 x64",
+    "nodeArch": "x64",
+    "windowsDesktopRuntime": "10.0.9",
+    "netFrameworkRelease": 533320
+  },
+  "packages": {
+    "old": {
+      "version": "2.0.0",
+      "path": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\baseline-2.0.0-win32-x64.vsix",
+      "sha256": "a1799013f8be3fc2ab3b2ef98b1e9468f79561bb1641bd87c2a10356b7c2f2ac",
+      "bundledEntrySha256": "5cb8d2a82cb436869fe4dc512857b4edec0c74f60b41d6bbeaa363d703f8a763",
+      "modernEngineSha256": "7909734d10a2f6a91ea3eeb4fc21a185ee645c07f5cbc8d7946718501695b203",
+      "classicEngineSha256": "eac1e8c01b7cb4b25133de5c935e3f6c0aa58c875e8d35ef2f55830ac320e327"
+    },
+    "new": {
+      "version": "2.1.0",
+      "path": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\winforms-designer-2.1.0-win32-x64.vsix",
+      "sha256": "b97f1b31e55449c617f319c2532d8031df2d552cfd6171812113e6eff443d065"
+    }
+  },
+  "phases": [
+    {
+      "phase": "old-initialize",
+      "passed": true,
+      "completedAt": "2026-10-02T03:06:52.946Z",
+      "vscodeVersion": "1.135.0",
+      "extensionVersion": "2.0.0",
+      "installedExtensionPath": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\extensions\\skivhisink.winforms-designer-vscode-2.0.0",
+      "developmentHarnessPath": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\harness",
+      "checks": [
+        "installed-product-version",
+        "separate-development-harness",
+        "real-product-activation",
+        "version-specific-product-commands"
+      ]
+    },
+    {
+      "phase": "upgrade",
+      "passed": true,
+      "completedAt": "2026-10-02T03:07:01.809Z",
+      "vscodeVersion": "1.135.0",
+      "extensionVersion": "2.1.0",
+      "installedExtensionPath": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\extensions\\skivhisink.winforms-designer-vscode-2.1.0",
+      "developmentHarnessPath": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\harness",
+      "checks": [
+        "installed-product-version",
+        "separate-development-harness",
+        "real-product-activation",
+        "version-specific-product-commands",
+        "real-disposable-cache-clear-command",
+        "real-designer-render",
+        "dirty-custom-document-created",
+        "source-file-remains-unchanged"
+      ]
+    },
+    {
+      "phase": "downgrade",
+      "passed": true,
+      "completedAt": "2026-10-02T03:07:12.713Z",
+      "vscodeVersion": "1.135.0",
+      "extensionVersion": "2.0.0",
+      "installedExtensionPath": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\extensions\\skivhisink.winforms-designer-vscode-2.0.0",
+      "developmentHarnessPath": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\harness",
+      "checks": [
+        "installed-product-version",
+        "separate-development-harness",
+        "real-product-activation",
+        "version-specific-product-commands",
+        "real-designer-render",
+        "old-product-restored-new-backup",
+        "restored-source-file-remains-unchanged",
+        "old-product-recovered-undo-redo"
+      ]
+    }
+  ],
+  "checks": [
+    "actual-2.1-activation-migrated-missing-workspace-keys",
+    "existing-workspace-curation-preserved",
+    "legacy-global-curation-preserved-for-downgrade",
+    "cache-clear-persisted-only-disposable-key",
+    "unknown-journal-and-backup-bytes-preserved",
+    "actual-2.1-custom-document-backup-persisted",
+    "actual-2.0-downgrade-activation-preserved-settings",
+    "actual-2.0-restored-2.1-backup-with-undo-redo"
+  ],
+  "baselineCommit": "72a4ee3b3afcc6ce459dab4b19ec113b2f759fe6",
+  "storage": {
+    "globalDb": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\user-data\\User\\globalStorage\\state.vscdb",
+    "workspaceDb": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\user-data\\User\\workspaceStorage\\249bb56ff9e359bf44d28335167cfe72\\state.vscdb",
+    "mementoId": "SkivHisink.winforms-designer-vscode",
+    "sharedData": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\shared-data",
+    "seeding": "Offline SQLite mutation of the real closed VS Code profile, using shipped 2.0 memento shapes."
+  },
+  "hotExitBackup": {
+    "path": "d:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\user-data\\User\\workspaceStorage\\249bb56ff9e359bf44d28335167cfe72\\SkivHisink.winforms-designer-vscode\\1481807471",
+    "sha256": "abc90181722444932174a12b11aee818ba54f549299b7b08b705619f3149487f",
+    "registryPath": "D:\\Data\\Code\\CSharpWinformExtension\\extension\\.vscode-test\\tmp\\release21-upgrade-y3YZJl\\user-data\\User\\workspaceStorage\\249bb56ff9e359bf44d28335167cfe72\\skivhisink.winforms-designer-vscode\\hot-exit-recovery-v1.json",
+    "sourceByteFormat": true
+  },
+  "completedAt": "2026-10-02T03:07:15.906Z"
+}

@@ -57,10 +57,10 @@ namespace WinFormsDesigner.Engine
             if (resourcesDesignerSource.Length > MaxTextChars)
                 return Fail("resource designer source is too large");
 
-            var resources = ParseResx(resxText, out var resxReason);
+            var resources = ParseResx(resxText, ImageTypes, out var resxReason);
             if (resources == null) return Fail(resxReason);
 
-            var properties = ParseGeneratedProperties(resourcesDesignerSource, out var sourceReason);
+            var properties = ParseGeneratedProperties(resourcesDesignerSource, ImageTypes, out var sourceReason);
             if (properties == null) return Fail(sourceReason);
 
             var candidates = new List<ProjectResourceCandidate>();
@@ -147,6 +147,92 @@ namespace WinFormsDesigner.Engine
             return expr;
         }
 
+        /// <summary>A class declared in a strongly typed resource designer file, as the interpreter's READ side sees
+        /// it. <see cref="Canonical"/> is false for any class of that name that is not the inert generated shape; it
+        /// still takes part in name binding, but nothing is ever read through it.</summary>
+        internal sealed class ResourceAccessorClass
+        {
+            public string ClassFullName { get; init; } = "";
+            public bool Canonical { get; init; }
+            /// <summary>The literal base name the generated ResourceManager is constructed with.</summary>
+            public string ResourceManagerBaseName { get; init; } = "";
+            /// <summary>Canonical accessors of the caller's value types: property name → (.resx key, value type).</summary>
+            public Dictionary<string, (string Key, string ValueTypeName)> Accessors { get; init; } = new(StringComparer.Ordinal);
+        }
+
+        /// <summary>One .resx payload the READ side may decode: a file reference or inline base64, never materialized.</summary>
+        internal sealed class ResourcePayload
+        {
+            public string ValueTypeName { get; init; } = "";
+            public string StorageKind { get; init; } = "";
+            public string RawValue { get; init; } = "";
+        }
+
+        /// <summary>Every class named <paramref name="simpleName"/> a resource designer file declares, with the
+        /// canonical image accessors of <paramref name="valueTypes"/> it exposes. An accessor is listed whether or not
+        /// its .resx still holds a usable payload, so a missing key can be told apart from an absent class.</summary>
+        internal static List<ResourceAccessorClass>? ReadAccessorClasses(string? source, string simpleName, ISet<string> valueTypes)
+        {
+            if (string.IsNullOrWhiteSpace(source) || source.Length > MaxTextChars) return null;
+            var tree = CSharpSyntaxTree.ParseText(source);
+            if (tree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error)) return null;
+
+            var classes = new List<ResourceAccessorClass>();
+            foreach (var cls in tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
+            {
+                if (cls.Identifier.Text != simpleName) continue;
+                string classFqn = QualifiedClassName(cls);
+                if (!IsCanonicalGeneratedResourceClass(cls, out string baseName))
+                {
+                    classes.Add(new ResourceAccessorClass { ClassFullName = classFqn, Canonical = false });
+                    continue;
+                }
+                var accessors = new Dictionary<string, (string, string)>(StringComparer.Ordinal);
+                foreach (var prop in cls.Members.OfType<PropertyDeclarationSyntax>())
+                {
+                    if (!prop.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword))) continue;
+                    string valueType = NormalizeType(prop.Type.ToString());
+                    if (!valueTypes.Contains(valueType) || !DesignerControlEditor.IsValidIdentifier(prop.Identifier.Text)) continue;
+                    string? key = ExtractCanonicalGetObjectKey(prop);
+                    if (string.IsNullOrEmpty(key) || accessors.ContainsKey(prop.Identifier.Text)) continue;
+                    accessors[prop.Identifier.Text] = (key!, valueType);
+                }
+                classes.Add(new ResourceAccessorClass
+                {
+                    ClassFullName = classFqn,
+                    Canonical = true,
+                    ResourceManagerBaseName = baseName,
+                    Accessors = accessors,
+                });
+            }
+            return classes;
+        }
+
+        /// <summary>Every <c>data</c> key of a .resx: its readable payload for <paramref name="valueTypes"/>, or null
+        /// when the key is present but cannot be read safely (binary, unlisted type, malformed) — so a culture overlay
+        /// can SHADOW the neutral value instead of exposing it.</summary>
+        internal static Dictionary<string, ResourcePayload?>? ReadPayloads(string? resxText, ISet<string> valueTypes)
+        {
+            if (string.IsNullOrWhiteSpace(resxText) || resxText.Length > MaxTextChars) return null;
+            var unreadable = new HashSet<string>(StringComparer.Ordinal);
+            var resources = ParseResx(resxText, valueTypes, unreadable, out _);
+            if (resources == null) return null;
+            var payloads = new Dictionary<string, ResourcePayload?>(StringComparer.Ordinal);
+            foreach (string key in unreadable) payloads[key] = null;
+            foreach (var entry in resources)
+                payloads[entry.Key] = new ResourcePayload
+                {
+                    ValueTypeName = entry.Value.ValueTypeName,
+                    StorageKind = entry.Value.StorageKind,
+                    RawValue = entry.Value.RawValue,
+                };
+            return payloads;
+        }
+
+        /// <summary>Whether a .resx payload of <paramref name="resxType"/> is what a generated accessor of
+        /// <paramref name="generatedType"/> returns.</summary>
+        internal static bool PayloadMatchesAccessor(string resxType, string generatedType) => TypesCompatible(resxType, generatedType);
+
         private static ProjectResourceListResult Fail(string reason) =>
             new() { Ok = false, Reason = string.IsNullOrWhiteSpace(reason) ? "resource picker refused the input" : reason };
 
@@ -154,6 +240,7 @@ namespace WinFormsDesigner.Engine
         {
             public string ValueTypeName { get; init; } = "";
             public string StorageKind { get; init; } = "";
+            public string RawValue { get; init; } = "";
         }
 
         private sealed class GeneratedResourceProperty
@@ -165,7 +252,11 @@ namespace WinFormsDesigner.Engine
             public string ValueTypeName { get; init; } = "";
         }
 
-        private static Dictionary<string, ResourceMeta>? ParseResx(string text, out string reason)
+        private static Dictionary<string, ResourceMeta>? ParseResx(string text, ISet<string> valueTypes, out string reason) =>
+            ParseResx(text, valueTypes, null, out reason);
+
+        private static Dictionary<string, ResourceMeta>? ParseResx(string text, ISet<string> valueTypes,
+            HashSet<string>? unreadable, out string reason)
         {
             reason = "";
             XDocument doc;
@@ -210,13 +301,14 @@ namespace WinFormsDesigner.Engine
                     return null;
                 }
 
-                var meta = TryClassifyResourceNode(data);
+                var meta = TryClassifyResourceNode(data, valueTypes);
                 if (meta != null) result[name] = meta;
+                else unreadable?.Add(name);
             }
             return result;
         }
 
-        private static ResourceMeta? TryClassifyResourceNode(XElement data)
+        private static ResourceMeta? TryClassifyResourceNode(XElement data, ISet<string> valueTypes)
         {
             string typeName = NormalizeType(((string?)data.Attribute("type")) ?? "");
             string mime = ((string?)data.Attribute("mimetype")) ?? "";
@@ -227,16 +319,16 @@ namespace WinFormsDesigner.Engine
                 string[] parts = value.Split(';');
                 if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[0])) return null;
                 string fileRefType = NormalizeType(parts[1]);
-                return ImageTypes.Contains(fileRefType)
-                    ? new ResourceMeta { ValueTypeName = fileRefType, StorageKind = "fileRef" }
+                return valueTypes.Contains(fileRefType)
+                    ? new ResourceMeta { ValueTypeName = fileRefType, StorageKind = "fileRef", RawValue = value }
                     : null;
             }
 
             if (mime.IndexOf("bytearray.base64", StringComparison.OrdinalIgnoreCase) >= 0
-                && ImageTypes.Contains(typeName)
+                && valueTypes.Contains(typeName)
                 && LooksLikeBoundedBase64(value))
             {
-                return new ResourceMeta { ValueTypeName = typeName, StorageKind = "bytearray" };
+                return new ResourceMeta { ValueTypeName = typeName, StorageKind = "bytearray", RawValue = value };
             }
 
             return null;
@@ -254,7 +346,7 @@ namespace WinFormsDesigner.Engine
             catch { return false; }
         }
 
-        private static List<GeneratedResourceProperty>? ParseGeneratedProperties(string source, out string reason)
+        private static List<GeneratedResourceProperty>? ParseGeneratedProperties(string source, ISet<string> valueTypes, out string reason)
         {
             reason = "";
             var tree = CSharpSyntaxTree.ParseText(source);
@@ -272,7 +364,7 @@ namespace WinFormsDesigner.Engine
                 if (!prop.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword))) continue;
 
                 string valueType = NormalizeType(prop.Type.ToString());
-                if (!ImageTypes.Contains(valueType)) continue;
+                if (!valueTypes.Contains(valueType)) continue;
                 if (!DesignerControlEditor.IsValidIdentifier(prop.Identifier.Text)) continue;
 
                 string? key = ExtractCanonicalGetObjectKey(prop);
@@ -321,8 +413,12 @@ namespace WinFormsDesigner.Engine
         /// property body. We accept the shape emitted by the Visual Studio strongly-typed resource generator and reject
         /// partial/base classes, type initializers, static member initializers, or a substituted ResourceManager getter.
         /// </summary>
-        private static bool IsCanonicalGeneratedResourceClass(ClassDeclarationSyntax cls)
+        private static bool IsCanonicalGeneratedResourceClass(ClassDeclarationSyntax cls) =>
+            IsCanonicalGeneratedResourceClass(cls, out _);
+
+        private static bool IsCanonicalGeneratedResourceClass(ClassDeclarationSyntax cls, out string resourceManagerBaseName)
         {
+            resourceManagerBaseName = "";
             if (cls.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword))
                 || cls.BaseList != null
                 || cls.TypeParameterList != null)
@@ -353,7 +449,8 @@ namespace WinFormsDesigner.Engine
 
             var resourceManagers = cls.Members.OfType<PropertyDeclarationSyntax>()
                 .Where(p => p.Identifier.Text == "ResourceManager").ToList();
-            return resourceManagers.Count == 1 && IsCanonicalResourceManagerProperty(resourceManagers[0], cls.Identifier.Text);
+            return resourceManagers.Count == 1
+                && IsCanonicalResourceManagerProperty(resourceManagers[0], cls.Identifier.Text, out resourceManagerBaseName);
         }
 
         private static bool HasCanonicalStaticField(ClassDeclarationSyntax cls, string name, string typeName)
@@ -367,8 +464,10 @@ namespace WinFormsDesigner.Engine
             return matches.Count == 1 && matches[0].Initializer == null;
         }
 
-        private static bool IsCanonicalResourceManagerProperty(PropertyDeclarationSyntax prop, string className)
+        private static bool IsCanonicalResourceManagerProperty(PropertyDeclarationSyntax prop, string className,
+            out string baseNameValue)
         {
+            baseNameValue = "";
             if (!prop.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword))
                 || NormalizeType(prop.Type.ToString()) != "System.Resources.ResourceManager"
                 || prop.ExpressionBody != null
@@ -419,6 +518,7 @@ namespace WinFormsDesigner.Engine
                 || UnwrapParentheses(assignment.Right) is not IdentifierNameSyntax assignedTemp
                 || assignedTemp.Identifier.Text != temp.Identifier.Text)
                 return false;
+            baseNameValue = baseName.Token.ValueText;
             return true;
         }
 

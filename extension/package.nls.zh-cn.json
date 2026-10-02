@@ -36,5 +36,9 @@
   "command.runBuildTask.title": "WinForms: 运行生成任务（先释放预览）",
   "command.runTestTask.title": "WinForms: 运行测试任务（先释放预览）",
   "command.stopEngines.title": "WinForms: 停止设计器预览引擎",
-  "command.restartEngines.title": "WinForms: 重启设计器预览引擎"
+  "command.restartEngines.title": "WinForms: 重启设计器预览引擎",
+  "command.showFormStatus.title": "WinForms: 显示窗体状态",
+  "command.rebuildToolboxCache.title": "WinForms: 重新生成工具箱缓存",
+  "command.refreshToolbox.title": "WinForms: 刷新工具箱",
+  "command.requestToolboxItems.title": "WinForms: 选择工具箱项"
 }
