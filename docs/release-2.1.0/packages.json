@@ -3,24 +3,24 @@
   "artifacts": [
     {
       "path": "extension/winforms-designer-2.1.0-win32-x64.vsix",
-      "bytes": 18238665,
-      "sha256": "B97F1B31E55449C617F319C2532D8031DF2D552CFD6171812113E6EFF443D065",
+      "bytes": 18239661,
+      "sha256": "06586593C55D6499842AB416209994CFF47943FBC1E502E16541BD9918601E33",
       "entries": 204,
       "modernRuntimeIdentifier": "win-x64",
       "modernMachine": "0x8664",
       "net48Machine": "0x8664",
-      "extensionBundleSha256": "9EB9461A0A0EA4AB675CF25AA010C7724B2349030C9E21510ADC544EBFEE2581",
+      "extensionBundleSha256": "58160351ED0DC79653C90995E3F25CECFC7AD9E7295F2902C412CBAAC9166538",
       "release21SuiteAbsent": true
     },
     {
       "path": "extension/winforms-designer-2.1.0-win32-arm64.vsix",
-      "bytes": 18226463,
-      "sha256": "39FB928C13629FF4A4919E1CFBB05DF51567D72241F583326D7EEC290DB5E151",
+      "bytes": 18227458,
+      "sha256": "50B9E653832A57F3AABECF340ED655294F9A075B8FCE03C859B80B2A61966F80",
       "entries": 204,
       "modernRuntimeIdentifier": "win-arm64",
       "modernMachine": "0xAA64",
       "net48Machine": "0x8664",
-      "extensionBundleSha256": "9EB9461A0A0EA4AB675CF25AA010C7724B2349030C9E21510ADC544EBFEE2581",
+      "extensionBundleSha256": "58160351ED0DC79653C90995E3F25CECFC7AD9E7295F2902C412CBAAC9166538",
       "release21SuiteAbsent": true,
       "physicalArm64Execution": "NOT_EXECUTED"
     }

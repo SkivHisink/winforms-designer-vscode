@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  EvaluatedProjectArchitecture, inspectPeArchitecture, inspectProjectCompatibility, parseProjectEvaluation,
+  compatibilityForRender, EvaluatedProjectArchitecture, inspectImageCompatibility, inspectPeArchitecture, inspectProjectCompatibility, parseProjectEvaluation,
   ProjectCompatibilityCache, ProjectCompatibilityResult,
   projectEvaluationArguments, evaluateProjectArchitecture,
 } from './projectCompatibility';
@@ -153,11 +153,16 @@ describe('session architecture cache', () => {
     await vi.waitFor(() => expect(inspect).toHaveBeenCalledTimes(1));
     cache.invalidate();
     release(result());
-    expect((await first).status).toBe('unknown');
+    const invalidated = await first;
+    expect(invalidated.status).toBe('unknown');
+    // Marked so a render waiting on it asks again instead of treating "unknown" as an answer.
+    expect(invalidated.stale).toBe(true);
     const second = cache.inspect(options);
     await vi.waitFor(() => expect(inspect).toHaveBeenCalledTimes(2));
     release(result());
-    expect((await second).status).toBe('compatible');
+    const fresh = await second;
+    expect(fresh.status).toBe('compatible');
+    expect(fresh.stale).toBeUndefined();
     expect(inspect).toHaveBeenCalledTimes(2);
   });
 
@@ -436,5 +441,55 @@ describe('project compatibility decisions', () => {
     expect(result.status).toBe('unknown');
     expect(readImage).not.toHaveBeenCalled();
     expect(result.observedPaths).not.toContain('secrets/Key.dll');
+  });
+});
+
+describe('render gate', () => {
+  afterEach(() => { vi.useRealTimers(); vi.mocked(spawn).mockReset(); });
+  const decided = (status: ProjectCompatibilityResult['status']): ProjectCompatibilityResult => ({
+    status, code: status === 'incompatible' ? 'DEPENDENCY_ARCHITECTURE_MISMATCH' : 'ARCHITECTURE_UNKNOWN', message: status,
+    workerArchitecture: 'x64', nativeDependencies: [], limitations: [], observedPaths: [],
+  });
+
+  it('refuses a required-x86 output from its image without starting MSBuild', async () => {
+    const result = await inspectImageCompatibility({ ...options, assemblyPath: outputPath }, { readImage: async () => pe(0x14c, 3) });
+    expect(result.code).toBe('OUTPUT_ARCHITECTURE_MISMATCH');
+    expect(result.evaluated).toBeUndefined();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('leaves an incompatibility only project settings show to the complete inspection', async () => {
+    const result = await inspectImageCompatibility(options, { readImage: async () => { throw new Error('ENOENT'); } });
+    expect(result.status).toBe('unknown');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('uses a complete result that is already at hand', async () => {
+    const imagesOnly = vi.fn(async () => decided('unknown'));
+    const gate = await compatibilityForRender(Promise.resolve(decided('incompatible')), imagesOnly, 200);
+    expect(gate.result.status).toBe('incompatible');
+    expect(gate.late).toBeUndefined();
+    expect(imagesOnly).not.toHaveBeenCalled();
+  });
+
+  it('does not wait for a running evaluation and hands it back as late evidence', async () => {
+    vi.useFakeTimers();
+    let finish!: (result: ProjectCompatibilityResult) => void;
+    const complete = new Promise<ProjectCompatibilityResult>((resolve) => { finish = resolve; });
+    const imagesOnly = vi.fn(async () => decided('unknown'));
+    const pending = compatibilityForRender(complete, imagesOnly, 200);
+    await vi.advanceTimersByTimeAsync(200);
+    const gate = await pending;
+    expect(gate.result.status).toBe('unknown');
+    expect(imagesOnly).toHaveBeenCalledOnce();
+    finish(decided('incompatible'));
+    await expect(gate.late).resolves.toMatchObject({ status: 'incompatible' });
+  });
+
+  it('falls back to image evidence when the complete inspection fails', async () => {
+    const imagesOnly = vi.fn(async () => decided('unknown'));
+    const gate = await compatibilityForRender(Promise.reject(new Error('evaluation crashed')), imagesOnly, 200);
+    expect(gate.result.status).toBe('unknown');
+    await expect(gate.late).rejects.toThrow('evaluation crashed');
   });
 });

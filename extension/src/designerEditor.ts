@@ -212,7 +212,7 @@ import {
 import { TransactionRunnerResult, TransactionUndoRegistration } from './transactionRunner';
 import { TransactionJournalState } from './transactionJournal';
 import { activeXControlsInDesignerSource } from './tierDCompatibility';
-import { inspectCachedProjectCompatibility, ProjectCompatibilityResult } from './projectCompatibility';
+import { compatibilityForRender, inspectCachedProjectCompatibility, inspectImageCompatibility, ProjectCompatibilityResult } from './projectCompatibility';
 import { createDesignerDiagnostic, diagnosticsFromRenderItems, DesignerDiagnostic } from './designerDiagnostics';
 import { loadPersistedDesignerState, persistToolboxScanCache, clearDisposableDesignerCaches } from './persistedDesignerState';
 import { classifyToolboxRequest } from './toolboxRequest';
@@ -286,6 +286,8 @@ const STALE_RENDER_BLOCKED = new Set<string>([
 // while a newer image is decoding, and the host independently checks the exact generation so a delayed or forged
 // message cannot act on the newer authoritative graph.
 const CANVAS_GENERATION_GUARDED = new Set<string>(['pick', 'manipulate', 'manipulateGroup']);
+/** How long a render waits for a cached MSBuild-evaluated compatibility result before using the image evidence. */
+const COMPLETE_COMPATIBILITY_WAIT_MS = 200;
 
 const LOCALIZABLE_SOURCE_BLOCKED = new Set<string>(
   [...STALE_RENDER_BLOCKED].filter((type) => ![
@@ -2465,6 +2467,11 @@ class DesignerSession {
   /** Bumped by every pick(); captured by loadProps so a load whose awaits outlive its selection publishes nothing. */
   private selectionGen = 0;
   private renderSeq = 0;
+  /** Identifies the latest full render, so a late project evaluation refuses only the form it was started for. */
+  private renderCompatibilityToken: object | undefined;
+  /** A compatibility refusal outlives the render that found it: no later picture of the same inputs is published
+   * until complete evidence for them says otherwise. */
+  private compatibilityRefusal: { key: string; result: ProjectCompatibilityResult } | undefined;
   private lastCanvasInputRefusalCode: 'STALE_CANVAS' | null = null;
   /** Extension Host S016 phase telemetry; null outside a net48 property-edit attempt. */
   private lastNet48PropertyEditTelemetry: {
@@ -3646,6 +3653,70 @@ class DesignerSession {
   private inspectCompatibility(assemblyPath: string | undefined, runtime: EngineKind, force = false): Promise<ProjectCompatibilityResult> {
     return inspectCachedProjectCompatibility({ projectPath: this.supportProjectPath(), assemblyPath,
       runtime, trusted: vscode.workspace.isTrusted }, { force });
+  }
+
+  /** The render gate. A render waits for the MSBuild-evaluated evidence only when it is already at hand; otherwise it
+   * is gated on the image evidence, and the evaluation refuses the form when it finishes (see compatibilityForRender). */
+  private async inspectCompatibilityForRender(assemblyPath: string | undefined, runtime: EngineKind, token: object): Promise<ProjectCompatibilityResult> {
+    const key = JSON.stringify([this.supportProjectPath(), assemblyPath, runtime]);
+    const imagesOnly = () => inspectImageCompatibility({ projectPath: this.supportProjectPath(), assemblyPath, runtime, trusted: vscode.workspace.isTrusted });
+    let { result, late } = await compatibilityForRender(this.inspectCompatibility(assemblyPath, runtime), imagesOnly, COMPLETE_COMPATIBILITY_WAIT_MS);
+    // Evidence invalidated while it was gathered is no answer, however quickly it came back: gather it again behind
+    // the image evidence, exactly as for an evaluation still running.
+    if (!late && result.stale) {
+      late = this.inspectCompatibility(assemblyPath, runtime);
+      result = await imagesOnly();
+    }
+    // A newer full render owns the compatibility state now; this one is superseded and its caller discards it.
+    if (this.disposed || token !== this.renderCompatibilityToken) return result;
+    if (this.compatibilityRefusal && this.compatibilityRefusal.key !== key) this.compatibilityRefusal = undefined;
+    if (!late) {
+      this.recordCompatibility(key, result);
+      return result;
+    }
+    if (result.status === 'incompatible') this.compatibilityRefusal = { key, result };
+    // Until the evaluation answers, an earlier refusal of these same inputs still stands.
+    const gated = this.compatibilityRefusal?.key === key ? this.compatibilityRefusal.result : result;
+    this.watchLateCompatibility(late, assemblyPath, runtime, key, token, 0, gated.status === 'incompatible');
+    return gated;
+  }
+
+  /** Complete evidence either refuses these inputs or lifts an earlier refusal of them; true when it lifted one. */
+  private recordCompatibility(key: string, result: ProjectCompatibilityResult): boolean {
+    if (result.status === 'incompatible') {
+      this.compatibilityRefusal = { key, result };
+      return false;
+    }
+    if (result.stale || this.compatibilityRefusal?.key !== key) return false;
+    this.compatibilityRefusal = undefined;
+    return true;
+  }
+
+  private watchLateCompatibility(late: Promise<ProjectCompatibilityResult>, assemblyPath: string | undefined,
+    runtime: EngineKind, key: string, token: object, attempt: number, refusedAtGate: boolean): void {
+    void late.then((complete) => {
+      // A newer full render gated itself on newer evidence.
+      if (this.disposed || token !== this.renderCompatibilityToken) return;
+      // Evidence invalidated while it was gathered decides nothing: gather it again for the form still on screen.
+      if (complete.stale && attempt < 2) {
+        this.watchLateCompatibility(this.inspectCompatibility(assemblyPath, runtime), assemblyPath, runtime, key, token,
+          attempt + 1, refusedAtGate);
+        return;
+      }
+      const lifted = this.recordCompatibility(key, complete);
+      // The gate already refused this render; the complete evidence only confirms it. Superseding again would
+      // invalidate a Form Status snapshot taken of that refusal.
+      if (complete.status === 'incompatible' && !refusedAtGate) {
+        ++this.renderSeq; // supersede a render still in flight so its picture cannot land after the refusal
+        this.supportFailureCode = complete.code;
+        this.output.appendLine(`[designer] ${complete.code} after project evaluation: ${complete.message}`);
+        this.postRenderFailure(t(`diagnostics.reason.${complete.code}`), 'this', complete.code);
+        return;
+      }
+      // Fresh evidence lifted the refusal this render was shown with (the output was rebuilt, for example): finish the
+      // recovery instead of leaving the form read-only until another Retry. The new render reads the cached evidence.
+      if (lifted) void this.fullRender();
+    }, () => undefined);
   }
 
   extensionHostTestState(): {
@@ -5394,6 +5465,9 @@ class DesignerSession {
   private async fullRender(skipReselect = false): Promise<boolean> {
     if (!this.designerFile || this.disposed) return false;
     const seq = ++this.renderSeq;
+    // Claimed before any await, so evidence a previous render is still waiting for cannot cancel this one.
+    const compatibilityToken = {};
+    this.renderCompatibilityToken = compatibilityToken;
     this.supportFailureCode = undefined;
     if (!vscode.workspace.isTrusted) {
       this.supportFailureCode = 'WORKSPACE_TRUST_REQUIRED';
@@ -5453,7 +5527,7 @@ class DesignerSession {
       DesignerHub.instance.refreshStatus();
     }
 
-    const compatibility = await this.inspectCompatibility(asm, route.kind);
+    const compatibility = await this.inspectCompatibilityForRender(asm, route.kind, compatibilityToken);
     if (seq !== this.renderSeq || this.disposed) return false;
     if (compatibility.status === 'incompatible' || compatibility.code === 'WORKSPACE_TRUST_REQUIRED') {
       this.supportFailureCode = compatibility.code;
@@ -7943,6 +8017,8 @@ class DesignerSession {
     const after = await this.currentText();
     if (after === undefined || after === null) return false;
     const codeBehindText = await this.currentCodeText();
+    // A refusal that landed while this edit awaited the buffers must not be undone by publishing its picture.
+    if (this.disposed || this.compatibilityRefusal) return false;
     const seq = ++this.renderSeq;
     try {
       const eng = await this.ensureEngine('net48');
@@ -12245,6 +12321,8 @@ class DesignerSession {
     await this.applyEngineLocalizationCulture(eng);
     const asm = this.asm();
     const text = await this.currentText();
+    // A refusal that landed while this edit awaited the engine must not be undone by publishing its picture.
+    if (this.disposed || this.compatibilityRefusal) return false;
     const seq = ++this.renderSeq;
 
     // A retained dirty-region patch carries the full frame's 1x/2x capture scale while its placement stays in logical

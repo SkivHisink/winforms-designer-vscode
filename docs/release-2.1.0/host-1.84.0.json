@@ -2,7 +2,7 @@
   "suite": "release21-extension-host",
   "vscodeVersion": "1.84.0",
   "extensionVersion": "2.1.0",
-  "completedAt": "2026-10-01T17:26:01.847Z",
+  "completedAt": "2026-10-02T05:59:09.246Z",
   "failed": 0,
   "scenarios": [
     {
@@ -44,20 +44,20 @@
   ],
   "testedBuild": {
     "requestedVSCodeVersion": "1.84.0",
-    "startedAt": "2026-10-01T17:25:33.469Z",
+    "startedAt": "2026-10-02T05:58:32.152Z",
     "environment": {
-      "commit": "72a4ee3b3afcc6ce459dab4b19ec113b2f759fe6",
-      "workingTree": "dirty (58 changed or untracked paths)",
+      "commit": "d2e3f4e4ec790714339c288758defeb8d9256b82",
+      "workingTree": "dirty (15 changed or untracked paths)",
       "os": "Windows_NT 10.0.26100 x64",
       "nodeArch": "x64",
       "windowsDesktopRuntime": "10.0.9",
       "netFrameworkRelease": 533320
     },
     "sha256": {
-      "extension/dist/extension.js": "9eb9461a0a0ea4ab675cf25aa010c7724b2349030c9e21510adc544ebfee2581",
+      "extension/dist/extension.js": "58160351ed0dc79653c90995e3f25cecfc7ad9e7295f2902c412cbaac9166538",
       "extension/dist/release21-extension-host-suite.cjs": "1c4141df906ecba17639888a65e04d2d93f715af074b53de090356410c7ac00e",
-      "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "52adb90dbee7134200e6a92845ccb71fbb9beebaf6737c38b0bfd869a159bd25",
-      "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "773e571f3a57bf24e82fe893674b5f76e7752afb57099d3c7320924bfd354d1c"
+      "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "9083fa3bd90a0b4bc1d8d4a18a513619bd4c75708f1dcf0a5f1ee82d684e5aa8",
+      "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "18355edee76b428ff654e004491d319167aca425f4baac2a1570f1d087e260cb"
     }
   }
 }

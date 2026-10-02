@@ -1,7 +1,7 @@
 # ADR 0001 — net48 engine moves to live-source interpretation (VS model)
 
 - **Status:** Accepted (2026-07-20)
-- **Deciders:** maintainer (SkivHisink); independent architecture review by codex (gpt-5.6-terra) —
+- **Deciders:** maintainer (SkivHisink); independent architecture review —
   verdict **APPROVE-WITH-CHANGES**, all mandatory changes folded into the plan below (v2).
 - **Context:** v1.0.0 passed a 4-round adversarial audit (GO) with the .NET Framework 4.8 engine labeled
   *Experimental*: it renders a compiled instance of the last build, not the live buffer. The maintainer decided the
@@ -15,7 +15,7 @@
 - **Consequences:** ~16–24 weeks (M-1…M6); net9 production cutover to the shared IR pipeline happens after this
   release (shadow mode only until then); pinning/release/recycle machinery survives; vendor design-time hosting
   remains a permanent non-goal (VS-only SDK EULA).
-- **Evidence:** five subsystem maps under `docs/adr/evidence/net48-stable/` (corrections in plan §9); codex review
+- **Evidence:** five subsystem maps under `docs/adr/evidence/net48-stable/` (corrections in plan §9); independent review
   transcript in session task `bepm1iiwp`.
 
 The accepted plan (v2, verbatim) follows.
@@ -31,13 +31,13 @@ compiled-instance render retained as a per-form **fallback** (disclosed) and as 
 comparator** for the interpreter.
 
 v1 written 2026-07-20 from five subsystem maps (`docs/maps/net48-stable/map-*.json` — see CORRECTIONS below).
-**v2 same day: amended per codex (gpt-5.6-terra) architecture review — verdict APPROVE-WITH-CHANGES, proceed with
+**v2 same day: amended per the independent architecture review — verdict APPROVE-WITH-CHANGES, proceed with
 M-1 → M0 after these amendments. This v2 incorporates every mandatory change.** Full review: session task
 `bepm1iiwp`.
 
 ---
 
-## 0. Codex verdict summary (what changed v1 → v2)
+## 0. Review verdict summary (what changed v1 → v2)
 
 Approved: default-domain Roslyn front-end → closed statement IR → child-domain executor; base-type root (VS model);
 hybrid with compiled fallback; rejected alternatives (pinned Roslyn in child, parse-only second AppDomain,
@@ -69,7 +69,7 @@ Mandatory changes, all folded in below:
 - **net9 engine is already a VS-style interpreter** (~18.2k LOC; interpreter core ~1.1k LOC ~95% portable; the
   splice-editor family ~7k LOC pure Roslyn text logic). Only hard net10-only piece: collectible ALC → AppDomain
   analogue exists.
-- **Roslyn stays OUT of the render child domain** — as a *binding-policy decision* (codex correction, not a CLR
+- **Roslyn stays OUT of the render child domain** — as a *binding-policy decision* (review correction, not a CLR
   impossibility): `ChildDomainConfig` synthesizes unbounded redirects unified on the USER's versions; loading our
   Roslyn graph under that policy is not robust. The RPC stack (StreamJsonRpc/Newtonsoft) runs in the DEFAULT domain —
   it does not disprove this. Add a probe test: after an interpreted render, no `Microsoft.CodeAnalysis*` assembly is
@@ -81,7 +81,7 @@ Mandatory changes, all folded in below:
   collection/init methods, painting, TypeDescriptor code from built project/vendor assemblies necessarily run).
   The source boundary prevents arbitrary C# *expression* execution; it does not sandbox compiled controls.
 
-## 2. Security architecture (codex findings 1–3 — load-bearing)
+## 2. Security architecture (review findings 1–3 — load-bearing)
 
 ### 2.1 BLOCKER — no live BinaryFormatter on the interpreted path
 The v1 "net48 bonus: binary-resx via live BinaryFormatter" is **withdrawn**. The live sibling `.resx` is
@@ -118,7 +118,7 @@ domain (never sent to the renderer). Negative tests: forge known-kind nodes, unk
 excessive graphs, invalid paths/init targets/sequences directly at the executor and prove rejection **without the
 side-effect canary firing**.
 
-## 3. Fidelity architecture (codex findings 4–7, 9)
+## 3. Fidelity architecture (review findings 4–7, 9)
 
 ### 3.1 Hybrid identity model (NOT wholesale FieldNames replacement)
 `DesignedTypeName` (logical class being designed) ≠ `RuntimeRootType` (instantiated immediate base) — carried
@@ -174,7 +174,7 @@ specialized AddRange, inline non-`IComponent` vendor value ctors, repository but
 Default`/`WindowsFormsSettings`/fonts/skins applied in `Program.Main`/own ctor/Load. Environmental: license
 failures, async skins, DPI/font substitution. FakeVendor declares each fixture's expected class explicitly.
 
-## 4. Host contract (codex finding 10)
+## 4. Host contract (review finding 10)
 
 Two independent axes: `engineKind: modern | net48` × `renderMode: interpreted | compiledFallback` (per successful
 render result, generation-checked; cleared/unknown on failed/unbuilt render). Machine-readable fallback reason
@@ -192,7 +192,7 @@ make every fallback edit stale-until-rebuild). Interpreted mode: off by default;
 if the 300-control perf gate proves it, always behind source-first commit + generation checks + full-replay
 recovery. Every RPC classified by consumer before any deletion.
 
-## 5. Milestones (codex-revised; ~16–24 weeks)
+## 5. Milestones (revised after review; ~16–24 weeks)
 
 | M | Content | Est |
 |---|---------|----:|
@@ -203,12 +203,12 @@ recovery. Every RPC classified by consumer before any deletion.
 | **M3** | Two-axis host mode semantics (§4): banner/status transitions, fallback routing, capability plumbing, formNotice matrix re-pinned | 2–3 wks |
 | **M4** | Interpreted edit parity (splice → re-render); RPC classification per §4 policy; tab ops: net9 legs implemented, net48-only guards lifted in interpreted mode | 2–3 wks |
 | **M5** | REPEAT adversarial security review (IR/executor), licensing/lifecycle soak (multi-form, shared-bin, rebuild/release, crash/recycle, memory), service-expansion audit for the site | 2–4 wks |
-| **M6** | Fallback-rate gate (§7), docs/label two-tier matrix, 7-locale l10n, final full codex GO protocol | 1–2 wks |
+| **M6** | Fallback-rate gate (§7), docs/label two-tier matrix, 7-locale l10n, final full independent GO review | 1–2 wks |
 
 net9 production cutover to the IR pipeline: **after** this release (shadow/differential during M0–M5 keeps the
 security policy single-sourced); a pre-release cutover would add 2–4 wks and risk the already-stable engine.
 
-## 6. Corpus (codex finding 12 — required dimensions)
+## 6. Corpus (review finding 12 — required dimensions)
 
 FakeVendor (MIT, in-repo, CI) per §3.6 taxonomy + net48 unit project + env-gated real-vendor leg (DevExpress/PGMUI;
 **emits an archived redacted certification manifest**: vendor/version, project/form counts, source/build hashes,
@@ -223,7 +223,7 @@ missing/corrupt/unsafe binary nodes; Localizable=true as pinned named unsupporte
 generations; binding-redirect collision fixtures (System.Memory etc.); DPI 100/125/150/200%, font/theme/culture,
 repeated-render determinism; same-simple-name types across assemblies; 300-control nested layouts.
 
-## 7. Release gate (codex finding 11 — quantitative)
+## 7. Release gate (review finding 11 — quantitative)
 
 - Target: ≤ **2%** form-level fallback on the representative real-vendor/LOB corpus (~200 forms, several
   independent apps, multiple vendor generations).
@@ -234,7 +234,7 @@ repeated-render determinism; same-simple-name types across assemblies; 300-contr
 - Every non-full-IR or init/execution failure counts as fallback; denominator = forms opened.
 - Support matrix becomes TWO tiers: "net48 live-source interpreted — **Stable**" / "compiled last-build
   compatibility fallback — degraded, disclosed per form". No single unconditional "Stable" cell.
-- Plus codex's full M6 NO-SHIP list (session task `bepm1iiwp`, "I would say NO-SHIP at M6 if…") — adopted verbatim
+- Plus the reviewer's full M6 NO-SHIP list ("I would say NO-SHIP at M6 if…") — adopted verbatim
   as the M6 checklist.
 
 ## 8. What stays weaker than modern/VS (documented, not hidden)
@@ -245,7 +245,7 @@ scope; ApplyResources localization separate; x86 unsupported (explicit error); u
 fallback; in-place loading pins outputs until release/unload; licensing context may differ from VS; DrawToBitmap
 capture-class limits; some vendor IC constructs remain outside the safe IR vocabulary → disclosed fallback.
 
-## 9. Map corrections (codex finding H — 9 wrong/misleading facts)
+## 9. Map corrections (review finding H — 9 wrong/misleading facts)
 
 The maps in `docs/maps/net48-stable/` are evidence, corrected as follows: (1) LiveInstanceId/BuildId are DIAGNOSTIC
 only — the host divergence lock was descoped (map-net48-engine overstates; Dtos.cs comments stale). (2) StreamJsonRpc/
@@ -264,9 +264,9 @@ Vendor design-time hosting (VS-only SDK EULA), full ApplyResources workflow, x86
 ## 11. Post-implementation independent review (2026-07-20)
 
 After the whole testable interpreter core (M0 + M1 logic + render + host routing + M2 comparator/corpus + M5 soak/
-licensing + broad IR coverage) was green, it was put through **two independent adversarial reviews**: a Claude 5-lens
-workflow (8/8 findings confirmed) and codex/gpt-5.6 (24 findings, incl. **2 CRITICAL the Claude self-review missed** —
-the "run codex independently" lesson). 32 findings total; the label "Experimental" was honest.
+licensing + broad IR coverage) was green, it was put through **two independent adversarial reviews**: a five-lens
+review (8/8 findings confirmed) and a second, separate review (24 findings, incl. **2 CRITICAL the first review missed** —
+the lesson that a separate reviewer catches what a self-review does not). 32 findings total; the label "Experimental" was honest.
 
 **Fixed + verified green** (net10 xUnit 125, net48 6, both engines build 0/0, tsc, e2e + webview-e2e PASS; 19 new pinning
 tests):
@@ -294,7 +294,7 @@ tests):
   `splitContainer1.Panel1.SuspendLayout()` (every populated SplitContainer/ToolStripContainer panel) → relaxed to any
   `this`/field-rooted receiver while keeping the arg-shape guard; the aggregate budget initially missed resource keys/
   type names → now counts them.
-- **codex #5 — vendor child-type resolution (HIGH for coverage) — FIXED.** `AssemblyIrHost.ResolveType` previously
+- **review #5 — vendor child-type resolution (HIGH for coverage) — FIXED.** `AssemblyIrHost.ResolveType` previously
   searched only a frozen 6-assembly array + `Type.GetType`, so a control from a referenced vendor/sibling assembly (e.g.
   `DevExpress.XtraEditors.SimpleButton`) never resolved and the form fell back on *every* render — the main reason real
   vendor forms didn't interpret. Now it also force-loads the probe assemblies' references (once, best-effort, via the
@@ -305,16 +305,16 @@ tests):
 
 **Deferred (documented, not release-blocking for the *fail-closed* bar, but real work):**
 
-- **codex #1 — cross-AppDomain `[Serializable]` transport** trusts the in-process producer; not reachable from hostile
+- **review #1 — cross-AppDomain `[Serializable]` transport** trusts the in-process producer; not reachable from hostile
   source today (the default-domain builder emits only known leaves) but a `SerializationBinder` restricting the stream to
   the closed node set would harden it. The aggregate budget bounds downstream work, not the deserialization allocation
   itself.
-- **codex #7** split-partial base handshake (base declared in the non-designer `.cs` partial → `BaseTypeSyntaxName` empty
+- **review #7** split-partial base handshake (base declared in the non-designer `.cs` partial → `BaseTypeSyntaxName` empty
   → a stale compiled base can be used silently until rebuild); **#8** the interpreted root is not sited
   (`DesignMode==false` on the root only — siting a `Show()`n root has real behavioral risk, and the impact is contrived);
   **#23** `--compare` shares one AppDomain (static state can skew equivalence); **#24** net48 Snapshot coverage counters
   report control counts, not source-statement coverage (host currently ignores them).
-- **codex #15 — FIXED.** `ComponentResourceManager(typeof(OtherForm))` would have read the current form's sibling `.resx`;
+- **review #15 — FIXED.** `ComponentResourceManager(typeof(OtherForm))` would have read the current form's sibling `.resx`;
   the builder now only registers a manager whose `typeof(X)` target IS this form, so a foreign manager's GetString/
   GetObject falls back honestly (VS canonically emits `typeof(ThisForm)`, so no normal form over-Gaps).
 

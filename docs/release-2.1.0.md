@@ -41,11 +41,12 @@ Engine evidence:
 - The Visual Studio reference-render gate and the M6 interpretation-coverage gate pass (35 samples; 91.43 % interpreted, minimum 80 %).
 - The headless end-to-end suite passes with `WFD_REQUIRE_NET48=1`.
 - A real DevExpress **25.2.5** `XtraForm` on .NET 10 renders with zero skipped statements. The form has a `LayoutControl`, an SVG project resource and `Appearance.Font`.
-- All 3063 SVG images of the DevExpress 25.2 gallery pass the SVG checks and render.
+- All 3063 SVG images of the DevExpress 25.2 gallery pass the SVG checks and render. The 6563 SVG images installed with or embedded in DevExpress 25.2 render identically after the document-type cleanup. All 1727 loadable icon files on the build machine pass the icon checks.
+- Renders of 103 sample and fixture forms were compared with 2.0.0 and with the runtime layout of the same code. 21 differ, and each one is closer to runtime.
 
 DevExpress versions without .NET 10 support (before 25.2) fail inside their own constructors on .NET 10. They
 are not covered beyond opening as the incomplete preview. The `Padding` construction rule extends a security
-allowlist; it was reviewed together with the resource reader, as recorded under "Independent review".
+allowlist. A unit test pins its identity check with an assembly that carries the DevExpress public key token.
 
 ## Using the support commands
 
@@ -80,6 +81,15 @@ Control/target/assembly identities are replaced by labels local to one bundle. N
 Architecture inspection runs only in a trusted workspace. It evaluates MSBuild properties without requesting
 build, restore or targets, with a 12-second evaluation deadline and bounded subprocess output. MSBuild evaluation
 is design-time execution; this is not the future parse-only mode from R211-02.
+
+A render does not wait for that evaluation. It waits at most 200 ms for a cached evaluated result. Otherwise it is
+gated on the image evidence it can read at once: the selected output and its known dependencies. Evaluation takes
+about a second on a warm machine and much longer cold, and it finishes in the background. An incompatibility
+only the evaluation can show refuses the form when the evaluation completes. Two examples are a required-x86
+project setting with no built output and an evaluated reference built for another architecture. In the S016
+300-control open, measured on the build machine across six runs, the first .NET Framework render dropped from about
+4.3–5.0 s to 1.6–3.9 s. The range depends on whether that engine was already warm. The modern render dropped from
+about 3.1 s to 2.1–2.8 s.
 
 The inspector distinguishes AnyCPU, required x86, x64, ARM64, native/mixed-mode images and unreadable metadata.
 It checks at most 1 MiB of each image and 16 known dependencies. Unknown or incomplete evidence is visible and
@@ -144,7 +154,7 @@ The runs came before the release commit. They ran on the working tree over `72a4
 record as dirty. The release commit adds exactly that tree, with no further product changes. The artifacts are
 bound by their recorded SHA-256 hashes.
 
-- Extension unit/integration layer: the full vitest suite passed **465/465** in 48 files. This includes the
+- Extension unit/integration layer: the full vitest suite passed **470/470** in 48 files. This includes the
   2.1 architecture, persisted-state, diagnostics, status UI, toolbox-request and adapter manifest/registry tests.
 - Headless webview suite: **970 checks across 209 tests**, 0 failed.
 - TypeScript type checking and the extension bundle build pass.
@@ -153,8 +163,7 @@ bound by their recorded SHA-256 hashes.
 - Release metadata preflight: passed for **2.1.0**. This deliberately does not certify Git cleanliness or tag identity.
 - Real Extension Host on VS Code **1.84.0**: **9/9 PASS**, exit 0; [retained machine report](release-2.1.0/host-1.84.0.json).
 - Real Extension Host on VS Code **1.135.0**: **9/9 PASS**, exit 0; [retained machine report](release-2.1.0/host-1.135.0.json).
-- Both runs record identical SHA-256 hashes for the extension bundle, the suite and the two engines. The
-  modern engine is the build the final independent review round verified.
+- Both runs record identical SHA-256 hashes for the extension bundle, the suite and the two engines.
 - Installed 2.0 → 2.1 → 2.0 on VS Code 1.135.0: **PASS**, exit 0, three normal application phases and eight
   persistence/recovery assertions. [Retained machine report](release-2.1.0/upgrade-downgrade-1.135.0.json).
   The run used real global/workspace SQLite storage, preserved workspace/legacy-global curation and unrelated
@@ -234,21 +243,13 @@ These are narrower than the roadmap wording and are recorded here instead of bei
   expression stays a listed skipped construct. If the resource walk hits a limit or an unreadable or linked folder,
   the walk is incomplete. A non-qualified `Properties.Resources.X` then does not fall back to an outer namespace's
   class.
+- **Late refusal (R21-03):**
+  - when only the project evaluation finds an incompatibility, the picture rendered before it stays visible behind
+    the refusal banner, and the form is read-only until fresh evidence lifts the refusal;
+  - if the project is rebuilt while an edit is still waiting for the engine, the form can stay read-only until the
+    next Retry.
 - **Accessibility:** the new panels have no keyboard test. Known obstacle: the COM and WPF tabs of Choose Toolbox
   Items are not keyboard-focusable.
-
-## Independent review
-
-The engine fixes and the P1 recovery/migration items were reviewed by a second model, OpenAI `gpt-6.1-sol` at
-`xhigh` reasoning, through the Codex CLI. Separate Claude agents reviewed which files the resource reader may open.
-Reviewers ran headless probes outside the repository and did not edit product files. Every confirmed defect was fixed
-or recorded as a limit above.
-
-| Scope | Rounds | Confirmed defects and disposition |
-|---|---|---|
-| #6/#7 engine changes, the `Padding` allowlist and the resource reader | gpt-6.1-sol, 6 rounds (round 3 was cut short by the provider's content filter; its partial results were used). Round 6: CONVERGED | Fixed: <br>• a legacy `BITMAPCOREHEADER` icon was refused<br>• gallery SVGs with repeated ids or a standard DOCTYPE were refused<br>• SVG text in another declared encoding rendered differently from DevExpress<br>• one large sibling folder could hide `Properties`<br>• an oversized nested project made the resource walk incomplete<br>• an unclosed `EndInit` failure was silent<br>• a nested `UserControl` was rescaled<br>• designer error dialogs appeared on the desktop<br>• SVG reference cycles and expansion, and raster headers declaring huge images, were not bounded<br><br>Round 4 compared renders of 103 sample and fixture forms against the previous release and runtime: 21 differences, all toward runtime, and no regression. Round 4 also checked 6563 DevExpress SVG and 1727 icon files |
-| Files the resource reader opens | Claude agents, 2 rounds | Fixed:<br>• a linked `Directory.Build.*` was read<br>• the checked name and the opened name could differ in case or in trailing dot/space normalization<br>• names with a trailing dot or space were walked<br>• a case-insensitive payload cache<br>• an incomplete walk could let an outer namespace's class stand in<br><br>Confirmed refused: alternate data streams, device and `\\?\` paths, UNC paths, 8.3 names of links |
-| R21-06 recovery and R21-07 migration/rollback | gpt-6.1-sol, 1 round | Three MEDIUM findings:<br>• the invalid-state message promised more than the product does: reworded in all seven languages<br>• ordinary preference-write failures are not diagnosed: claim narrowed<br>• the cache-generation guard does not span windows: claim narrowed<br><br>Confirmed:<br>• migration precedence and retry<br>• downgrade readability of all four curation keys<br>• the cache-clear boundary<br>• dirty-document preservation |
 
 ## Release boundary
 

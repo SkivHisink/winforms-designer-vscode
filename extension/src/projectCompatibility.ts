@@ -51,6 +51,8 @@ export interface ProjectCompatibilityResult {
   limitations: string[];
   /** Cache invalidation hints, not a complete file dependency graph. New imports still require refresh. */
   observedPaths: string[];
+  /** The evidence was invalidated while it was gathered; it decides nothing and should be gathered again. */
+  stale?: boolean;
 }
 export type ProjectEvaluationRequest = ProjectCompatibilityOptions & { projectPath: string };
 export type ProjectEvaluationResult =
@@ -334,6 +336,38 @@ export async function inspectProjectCompatibility(
   return { ...result, message: result.output ? result.output.reason : 'No built managed output was available; architecture compatibility remains unknown.' };
 }
 
+/** The same decision from the image evidence alone: the selected output and the dependencies passed in. MSBuild is
+ * not started, so project settings and evaluated references stay unknown until a complete inspection finishes. */
+export function inspectImageCompatibility(
+  options: ProjectCompatibilityOptions,
+  dependencies: Pick<ProjectCompatibilityDependencies, 'readImage'> = {},
+): Promise<ProjectCompatibilityResult> {
+  return inspectProjectCompatibility(options, {
+    readImage: dependencies.readImage,
+    evaluate: async () => ({ ok: false, reason: 'Project evaluation has not finished; only image evidence was inspected.' }),
+  });
+}
+
+/**
+ * What a render waits for. The complete inspection evaluates the project with MSBuild, which takes about a second
+ * warm and far longer on a cold machine, so a render waits for it only briefly — long enough for a cached result —
+ * and is otherwise gated on the image evidence it can read at once. `late` is the complete result still to come; an
+ * incompatibility only it can find (a project setting, an evaluated reference) must then refuse the form.
+ */
+export async function compatibilityForRender(
+  complete: Promise<ProjectCompatibilityResult>,
+  imagesOnly: () => Promise<ProjectCompatibilityResult>,
+  waitMs: number,
+): Promise<{ result: ProjectCompatibilityResult; late?: Promise<ProjectCompatibilityResult> }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), waitMs); });
+  try {
+    const settled = await Promise.race([complete.catch(() => undefined), expired]);
+    if (settled) return { result: settled };
+  } finally { clearTimeout(timer); }
+  return { result: await imagesOnly(), late: complete };
+}
+
 interface CompatibilityCacheEntry {
   generation: number;
   expires: number;
@@ -420,7 +454,7 @@ export class ProjectCompatibilityCache {
       const after = new Map(await Promise.all(paths.map(async (filePath) => [filePath, await this.stamp(filePath)] as const)));
       const changed = [...before].some(([filePath, stamp]) => after.get(filePath) !== stamp);
       if (entry.generation !== this.generation || changed) {
-        return { ...result, status: 'unknown' as const, code: 'ARCHITECTURE_UNKNOWN' as const,
+        return { ...result, status: 'unknown' as const, code: 'ARCHITECTURE_UNKNOWN' as const, stale: true,
           message: 'Project or output changed during architecture inspection; refresh the diagnosis.',
           evaluated: undefined, output: undefined, nativeDependencies: [], observedPaths: [],
           limitations: [...result.limitations, changed

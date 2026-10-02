@@ -20,6 +20,8 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 - Architecture inspection combines trusted, bounded MSBuild evaluation with managed/native PE evidence on
   modern and .NET Framework routes. Required x86, incompatible outputs and unsupported COM/ActiveX requests
   receive named refusals. Unknown evidence remains visible; `Prefer32Bit` EXE metadata alone is not an x86 refusal.
+  A form does not wait for the MSBuild evaluation before it renders: the output image is checked at once, and an
+  incompatibility only the evaluation can show refuses the form when the evaluation completes.
 - Adapter manifest status now distinguishes schema validity, duplicate identity, runtime/architecture/version
   compatibility and metadata discovery. Accepting a declaration does not load adapter code or grant mutations.
 - **Rebuild Toolbox Cache**, **Refresh Toolbox**, and explicit toolbox-scope request commands support recovery

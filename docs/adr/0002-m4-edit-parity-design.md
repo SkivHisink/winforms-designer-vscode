@@ -1,6 +1,6 @@
 # ADR 0002 — M4 edit parity: source-authoritative editing with canvas-bound identity
 
-Status: accepted (design). Author: synthesized from an independent codex (gpt-5.6) architecture pass, 2026-07-20,
+Status: accepted (design). Author: synthesized from an independent architecture review, 2026-07-20,
 grounded in the current implementation. Supersedes the brief M4 scoping in ADR 0001 §11.1.
 
 ## Governing invariant
@@ -150,7 +150,7 @@ interpreted object cache is a measured follow-up, NOT M4 (it carries timer/handl
 Split `isCompiledPreview` into `pinsNet48Output` (true for interpreted AND fallback) and `isBuildBasedCanvas` (true only
 for fallback/legacy). Refresh status when render mode changes, not only when engineKind changes.
 
-## Slices (smallest-valuable-first; each independently shippable + tested + codex-reviewed)
+## Slices (smallest-valuable-first; each independently shippable + tested + independently reviewed)
 
 1. **Thin vertical READ parity** — request-local interpreted describe scope in RenderWorker; `DescribeInterpretedComponent`
    on EngineApi; origin/logical-root/value-state DTO fields; origin-aware SourceMetadata; reuse CompiledDescriber's explicit
@@ -205,7 +205,7 @@ no graph cache, deterministic finally disposal (S1/S6).
 dispose), `EngineApi.DescribeInterpretedComponent` RPC + `--describe-interpreted` CLI, `engineClient.describeInterpretedComponent`,
 and the host wiring — `loadProps` / `loadItemProps` / `describeFor` route to the interpreted describe when
 `net48RenderMode === 'interpreted'`, with a null result leaving the panel unavailable (never compiled values) and disabling
-move/resize. An independent codex review (round 1) found 9 issues; **fixed:** #1 host wiring (the panel now actually calls
+move/resize. An independent review (round 1) found 9 issues; **fixed:** #1 host wiring (the panel now actually calls
 the interpreted endpoint), #2 inherited target → null (require `Origins==DeclaredInCurrentSource`), #3 stale-base handshake
 in describe, #4 `HostOffscreen` wrapper-Form leak on `Show()` throw (shared fix, also fixes the render path), #7
 null-describe → `manip{move:false,resize:false}`, #9 `ShortName` handles the CLR nested `+` separator.
@@ -214,9 +214,9 @@ null-describe → `manip{move:false,resize:false}`, #9 `ShortName` handles the C
 
 A first cut tried the essential write-parity as a single "hard `live48` guard": under an interpreted canvas, return
 `this.fullRender()` (re-interpret the committed source) instead of the compiled mutation, since all 20 net48 mutation
-call sites funnel through `live48`. **An independent codex review proved this too broad and it was REVERTED** — the guard
+call sites funnel through `live48`. **An independent review proved this too broad and it was REVERTED** — the guard
 falsely assumes every `live48` call follows a committed SOURCE edit. It is correct for source-backed control edits
-(property/drag/remove/reset — codex CONFIRMED 9/11/12), but breaks three categories:
+(property/drag/remove/reset — the review CONFIRMED 9/11/12), but breaks three categories:
 - **Tabs** (`tabClick`/`applyAddTab`): navigation/transient view state that does NOT commit source (and `AddTabPage`'s
   splice writes no selection) — the guard skips the compiled tab-select, so the clicked/added tab never opens.
 - **ToolStrip item edits** (`applyItemEdit`/`resetItemFromGrid`): need `fullRender(skipReselect=true)`; the guard's plain
@@ -231,12 +231,12 @@ render; an unflagged caller keeps the compiled path (the pre-M4 behavior — nev
 re-interpret committed source): group move / align / resize / group-remove / single-remove / add-control / z-order (all
 already `if(net48) live48; else fullRender`), and the property edit via `liveEdit48` — the CONTROL caller (`applyEdit`)
 passes skipReselect=false, the ITEM caller (`applyItemEdit`) passes skipReselect=true so the on-canvas item highlight
-survives (this is codex #3's contract, now satisfied). **Not flagged** (kept compiled — no new break; Slice 4/5): reset,
+survives (this is review finding #3's contract, now satisfied). **Not flagged** (kept compiled — no new break; Slice 4/5): reset,
 tree nodes, image list, string/grid/tree collections, ToolStrip structural, paste/duplicate (their per-control `live48`
 loop ends in ONE trailing `fullRender` that re-interprets the whole committed batch), tab navigation (transient view
-state). This closes codex's blanket-guard failures #1/#2/#3/#5 by construction (tabs & paste unflagged, items skipReselect).
+state). This closes the review's blanket-guard failures #1/#2/#3/#5 by construction (tabs & paste unflagged, items skipReselect).
 
-**A SECOND codex review of the opt-in router found more (fixed):** (#1) Paste/Duplicate had NO trailing net48 `fullRender`
+**A SECOND independent review of the opt-in router found more (fixed):** (#1) Paste/Duplicate had NO trailing net48 `fullRender`
 (it was only in the net9 `else`), so the "self-handles" assumption was wrong — added a single interpreted `fullRender`
 under an interpreted canvas that SKIPS the per-control compiled adds (which flip mid-batch and can't reach a source-only
 parent). (#2) N/W/NW/NE/SW resize goes through `applyEdits` (Location+Size), whose `live48` was unflagged — now flagged.
@@ -245,7 +245,7 @@ snaps to the form → the hidden control's grid is dropped, unrecoverable) — `
 (matching the pre-M4 `show48`, which posted no control select; the trailing `loadProps(id)`/`loadItemProps` restores the
 grid), which fixes both the control-visibility and the item-highlight cases.
 
-**Flagged control-edit surface now** (extended after the review — all follow the codex-validated `liveEdit48` pattern:
+**Flagged control-edit surface now** (extended after the review — all follow the review-validated `liveEdit48` pattern:
 a source-backed edit → `live48` helper after commit, net9 counterpart is `fullRender`/`patchOrRerender`, `skipReselect:true`
 so the trailing `loadProps`/`loadItemProps` refreshes the grid while the webview keeps its selection): group move / align /
 resize (SE via applyEdit, N/W via applyEdits) / group-remove / single-remove / add-control / z-order / control-property /
@@ -255,14 +255,14 @@ surface. **Then extended further (green):** the **image-list edit** (`setCompile
 and the **ToolStrip STRUCTURAL edit** (`liveToolStrip48`) gets an interpreted short-circuit — under an interpreted canvas
 it returns `fullRender(true)` (re-interpret the committed source, keep the item highlight) instead of running the
 `listToolStripItems` field-id resolution + compiled reconcile (which could bail before `live48` and would flip to the
-build — codex #4). The **undo-race** (codex #7) is closed: `rerenderFromDoc` bumps `renderSeq` BEFORE the stallable
+build — review #4). The **undo-race** (review #7) is closed: `rerenderFromDoc` bumps `renderSeq` BEFORE the stallable
 `discardCompiledLive` await, so an in-flight render can't paint the now-undone picture during the wait.
 
-**The ONE remaining edit-parity area is TABS** (tab click/navigation + tab-rename hit-test — codex #1/#2/#6): these are
+**The ONE remaining edit-parity area is TABS** (tab click/navigation + tab-rename hit-test — review #1/#2/#6): these are
 transient VIEW STATE, not source edits, so they genuinely need the Slice-5 infrastructure — the interpreted render must
 emit tab-header hit regions + accept a closed view-state DTO (selected page) in its input token, and a narrow
 `TabControl`+`TabPage` adapter applies it. That's a coupled engine+host change, deliberately left for Slice 5.
-**Also remaining (minor):** codex #4b item-selection edge cases (nested-submenu `closeSubmenu`, availability/overflow —
+**Also remaining (minor):** review #4b item-selection edge cases (nested-submenu `closeSubmenu`, availability/overflow —
 largely pre-existing), and #8 the `live48` boolean not distinguishing an accepted-fallback picture from one reflecting the
 committed source (a contract nuance for the ToolStrip-ADD auto-reopen).
 **Still deferred:** #4 item edit selection edge cases (nested-submenu `closeSubmenu`, availability/overflow re-resolution —
@@ -270,7 +270,7 @@ largely pre-existing, compiled `show48` also posts a layout); #6 tab-rename hit-
 undo-race (in-flight interpreted render vs discard); #8 boolean-vs-fallback semantics (Slice 6); reset/collections/toolstrip
 re-interpretation (Slice 4). **Infra gap:** a net48 `DesignerSession` host-test harness — the interpreted host routing (this
 slice AND Slice 1's describe wiring) is logic the current engine-level e2e / engine-free webview-e2e can't drive; the change
-is tsc-verified + correct-by-construction per codex's spec across two review rounds, pending that harness.
+is tsc-verified + correct-by-construction per the reviewed spec across two review rounds, pending that harness.
 
 **Deferred to later slices (documented, from the same review):** #5 an *unexpected* exception inside
 `InterpretedRenderPlan.Plan` (post-construction, e.g. a vendor `GetFields` throw — the per-field body is already guarded)
@@ -291,20 +291,20 @@ interpreted; bogus override is a safe no-op). S3/S4 operations route through the
 Full suite green: net10 xUnit 128/0, net48 xUnit 6/0, tsc, l10n (7 locales), webview-e2e 505/0, e2e PASS (interpreted-describe,
 tab view-state, vendor-corpus, all interpreter legs).
 
-**Hardening + harness DONE (2026-07-20, codex-reviewed):**
+**Hardening + harness DONE (2026-07-20, independently reviewed):**
 - #5 DONE — `InterpretedRenderPlan.Plan` now wraps `Execute` and returns a fallback CARRYING `Root` (all three callers'
   finally dispose it: RenderInterpretedWithLayout, DescribeInterpretedComponent, HitTestInterpretedTab) so an unexpected
   executor throw can't strand the constructed Form; plus a targeted guard on the `BuildIdentityModel` `GetFields()`
   enumeration so a pathological vendor type is skipped, not fatal.
 - #6 DONE — `loadProps` + `loadItemProps` bind the describe response to the SOURCE revision `doc.rev` (bumps on
-  commit/undo/load), captured synchronously right after the source is sampled. **codex caught** that an earlier
+  commit/undo/load), captured synchronously right after the source is sampled. **the review caught** that an earlier
   `renderSeq` binding over-rejected: a tab-header click's `skipReselect` `fullRender` bumps `renderSeq` (a VIEW-STATE
   render, no source change) and would discard the accompanying selection's describe, leaving the panel stale. `doc.rev`
   is immune to view-state renders — fixed.
 - Host-test harness DONE — the identity-model resolution was extracted VERBATIM into shared `InterpretedDescribeResolver`
   (RenderWorker delegates to it, then does the net48-only CompiledDescriber step). 5 net10 white-box tests + 1 net48
   parity test pin root→logical-name, current-source→siblings, inherited→null, unknown→null, and the nested-parent case.
-  **codex caught** a pre-existing `ParentOf` bug the extraction faithfully preserved: it scanned merged instances without
+  **the review caught** a pre-existing `ParentOf` bug the extraction faithfully preserved: it scanned merged instances without
   checking `Origins`, so a current-source child reparented under an INHERITED container (a base `OnControlAdded`) reported
   the inherited panel's name as its parent. Fixed to filter `DeclaredInCurrentSource` (skip inherited ancestors to the
   logical root) + a test reproducing the exact scenario.
