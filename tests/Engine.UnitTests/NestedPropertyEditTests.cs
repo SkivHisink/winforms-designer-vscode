@@ -128,7 +128,8 @@ public sealed class NestedPropertyEditTests
 
     // ---- splice: exactly the nested target, nothing else ----
 
-    private const string Source = """
+    // LF regardless of how the checkout writes this file: the expectations below spell their newlines as "\n".
+    private static readonly string Source = """
         namespace Demo
         {
             partial class Form1 : System.Windows.Forms.Form
@@ -149,7 +150,7 @@ public sealed class NestedPropertyEditTests
                 }
             }
         }
-        """;
+        """.ReplaceLineEndings("\n");
 
     [Fact]
     public void Apply_ReplacesTheExistingNestedAssignment_Only()
