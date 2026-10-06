@@ -93,6 +93,21 @@ public sealed class BuildOutputPinningTests : IDisposable
         Assert.Null(WhyNotOverwritable(output));
     }
 
+    // A native DLL beside the output (CUDA/BLAS runtimes) is answered from its PE header without a load attempt, and
+    // the header read must not hold the file either.
+    [Fact]
+    public void ScanAssemblyCandidates_NativeImage_IsNotADotNetAssembly_AndIsNotPinned()
+    {
+        string native = Path.Combine(_dir, "NativeBeside.dll");
+        File.Copy(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "coreclr.dll"), native);
+
+        var result = DesignerRenderer.ScanAssemblyCandidates(native, fromProject: true);
+
+        Assert.Equal("not a .NET assembly (or wrong architecture)", result.Error);
+        Assert.Empty(result.Items ?? new List<ToolboxCandidate>());
+        Assert.Null(WhyNotOverwritable(native));
+    }
+
     [Fact]
     public void Render_WithAControlAssembly_DoesNotPinIt()
     {

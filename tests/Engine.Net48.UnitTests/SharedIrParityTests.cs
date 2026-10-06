@@ -102,6 +102,30 @@ namespace Demo {
             button.Image.Dispose();
         }
 
+        // The CodeDom decimal form (NumericUpDown, vendor spin editors) interprets on the production runtime with the
+        // exact bits, and the same form with reserved flag bits fails closed instead of guessing a value.
+        [Fact]
+        public void CodeDomDecimal_ParsesAndExecutesOnNet48()
+        {
+            string source = Source.Replace(
+                "this.button1.Text = \"Click me\";",
+                "this.button1.Text = \"Click me\"; this.button1.Tag = new decimal(new int[] {\n            15,\n            0,\n            0,\n            -2147418112});");
+            var doc = DesignerIrBuilder.Build(source);
+            Assert.NotNull(doc);
+            Assert.True(doc.FullCoverage, "gaps: " + string.Join(" | ", doc.UnrepresentableReasons));
+
+            var result = DesignerIrExecutor.Execute(doc, new Form(), new TestHost());
+            Assert.True(result.Ok, result.FailureReason);
+            var button = Assert.IsType<Button>(result.Instances["button1"]);
+            Assert.Equal(new[] { 15, 0, 0, -2147418112 }, decimal.GetBits(Assert.IsType<decimal>(button.Tag)));
+            Assert.Equal(-1.5m, (decimal)button.Tag);
+
+            var invalid = DesignerIrBuilder.Build(Source.Replace(
+                "this.button1.Text = \"Click me\";",
+                "this.button1.Text = \"Click me\"; this.button1.Tag = new decimal(new int[] { 1, 0, 0, 1 });"));
+            Assert.False(DesignerIrExecutor.Execute(invalid, new Form(), new TestHost()).Ok);
+        }
+
         [Fact]
         public void Validator_RefusesForgedIdentifier_OnNet48()
         {

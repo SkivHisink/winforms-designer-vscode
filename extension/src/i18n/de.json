@@ -270,6 +270,7 @@
   "panel.hint.font": " (Name, sizept[, style=Bold, Italic])",
   "panel.search.props": "Eigenschaften suchen…",
   "panel.search.events": "Ereignisse suchen…",
+  "panel.search.clear": "Suche löschen",
   "panel.event.handlerTip": "Handlernamen eingeben (neu oder vorhanden) oder löschen, um die Verknüpfung zu entfernen",
   "panel.event.wiredTip": "  —  Doppelklick, um zum Handler zu springen",
   "panel.event.unwiredTip": "  —  Doppelklick, um einen Handler zu erstellen",
@@ -544,6 +545,15 @@
   "support.action.viewCode": "Code anzeigen",
   "support.action.clearCache": "Toolbox-Cache neu erstellen",
   "support.action.restart": "Vorschau-Engine neu starten",
+  "support.action.reinstall": "Erweiterung zum Neuinstallieren öffnen",
+  "host.rollback.frozen": "Ein Rollback wird vorbereitet, daher nimmt der Designer keine neue Arbeit an. Laden Sie das Fenster neu, um fortzufahren.",
+  "host.rollback.ready": "Bereit zum Versionswechsel: Es läuft keine Designer-Operation, und jedes gespeicherte Journal ist abgeschlossen. Installieren Sie die vorherige Version von WinForms Designer und führen Sie dann „Fenster neu laden“ aus. Nicht gespeicherte Entwürfe bleiben in den VS Code-Sicherungen.",
+  "host.rollback.blocked": "Nicht bereit zum Versionswechsel: {count} Element(e) müssen zuerst geklärt werden ({detail}). Der Designer arbeitet mit dieser Version weiter.",
+  "host.rollback.confirmUnresolved": "{count} Designer-Operation(en) haben ein unklares Ergebnis. Prüfen Sie die betroffenen Dateien vor dem Versionswechsel. Trotzdem wechseln?",
+  "host.rollback.switchAnyway": "Trotzdem wechseln",
+  "host.rollback.resume": "Weiter entwerfen",
+  "host.rollback.cancelled": "Die Rückkehr-Vorbereitung wurde abgebrochen, weil sich ein Formular durch Rückgängig, Wiederholen oder Zurücksetzen geändert hat. Führen Sie vor dem Versionswechsel erneut „WinForms: Rückkehr oder Downgrade des Designers vorbereiten“ aus.",
+  "host.revert.failed": "Das Formular konnte nicht zurückgesetzt werden, weil seine generierte Datei nicht gelesen werden kann. Ihre nicht gespeicherten Änderungen bleiben erhalten; prüfen Sie die Datei auf dem Datenträger und versuchen Sie es erneut.",
   "support.action.refresh": "Status aktualisieren",
   "support.field.project": "Projekt",
   "support.field.framework": "Ausgewertetes Zielframework",
@@ -607,5 +617,6 @@
   "diagnostics.reason.ADAPTER_IDENTITY_DUPLICATE": "Mehrere Manifeste deklarieren dieselbe Adapteridentität. Beheben Sie die doppelte Deklaration.",
   "diagnostics.reason.CACHE_WRITE_FAILED": "Der Steuerelement-Cache konnte nicht gespeichert werden. Erstellen Sie den Cache neu, um es erneut zu versuchen.",
   "diagnostics.reason.STATE_MIGRATION_FAILED": "Die gespeicherten Toolbox-Einstellungen konnten nicht migriert werden. Laden Sie das Fenster neu, um es erneut zu versuchen; die ursprünglichen Einstellungen bleiben erhalten.",
-  "diagnostics.reason.PERSISTED_STATE_INVALID": "Die gespeicherten Designer-Einstellungen sind ungültig; nur ihre gültigen Teile werden verwendet. Die gespeicherten Daten bleiben erhalten, bis der Designer diese Einstellung das nächste Mal speichert."
+  "diagnostics.reason.PERSISTED_STATE_INVALID": "Die gespeicherten Designer-Einstellungen sind ungültig; nur ihre gültigen Teile werden verwendet. Die gespeicherten Daten bleiben erhalten, bis der Designer diese Einstellung das nächste Mal speichert.",
+  "diagnostics.reason.ENGINE_INSTALLATION_INCOMPATIBLE": "Die Engine-Dateien fehlen oder sind mit dieser Erweiterung nicht kompatibel. Installieren Sie die passende Version von WinForms Designer erneut und führen Sie dann Reload Window aus. Speichern oder sichern Sie ungespeicherte Dokumente vor dem Neuladen."
 }

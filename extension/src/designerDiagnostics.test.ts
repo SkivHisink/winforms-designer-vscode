@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { categorizeUnrepresentable } from './renderDiagnostics';
 import {
   buildDesignerDiagnosticBundle, createDesignerDiagnostic, diagnosticsFromRenderItems,
-  DESIGNER_DIAGNOSTIC_REASONS, DesignerDiagnosticSnapshot,
+  DESIGNER_DIAGNOSTIC_REASONS, DesignerDiagnosticSnapshot, engineInstallationDiagnosticCode,
 } from './designerDiagnostics';
 
 const sample: DesignerDiagnosticSnapshot = {
@@ -17,6 +17,21 @@ const sample: DesignerDiagnosticSnapshot = {
 };
 
 describe('designer reason catalogue', () => {
+  test('incompatible installations offer repair instructions without an ineffective automatic restart', () => {
+    for (const code of ['ENGINE_PROTOCOL_PARTIAL_UPDATE', 'ENGINE_PAYLOAD_UNAVAILABLE', 'MISSING_ENGINE_PAYLOAD',
+      'BUILD_ID_MISMATCH', 'PROTOCOL_VERSION_UNSUPPORTED', 'UNKNOWN_REQUIRED_CAPABILITY', 'PROTOCOL_NOT_NEGOTIATED']) {
+      const diagnostic = createDesignerDiagnostic(engineInstallationDiagnosticCode({ code, message: 'PRIVATE_EXCEPTION_VALUE' }));
+      expect(diagnostic.code).toBe('ENGINE_INSTALLATION_INCOMPATIBLE');
+      expect(diagnostic.message).toContain('Reinstall');
+      expect(diagnostic.message).toContain('Reload Window');
+      // An executable repair that is not a restart: it opens the extension so the payload can be reinstalled.
+      expect(diagnostic.actions).toEqual(['reinstall']);
+      expect(diagnostic.message).not.toContain('PRIVATE_EXCEPTION_VALUE');
+    }
+    expect(engineInstallationDiagnosticCode({ code: 'WORKER_CRASH_LOOP' })).toBe('ENGINE_UNAVAILABLE');
+    expect(engineInstallationDiagnosticCode(null)).toBe('ENGINE_UNAVAILABLE');
+  });
+
   test('distinguishes missing type, failed initialization and unsupported source without copying exception detail', () => {
     const raw = [
       'this.widget1 = new Acme.Widget(); [TypeLoadException: unresolved type Acme.Widget]',
@@ -56,7 +71,7 @@ describe('designer reason catalogue', () => {
   });
 
   test('only permits the documented recovery action identifiers and refuses path/statement context', () => {
-    const allowed = new Set(['retry', 'rebuild', 'chooseAssembly', 'viewCode', 'clearCache', 'restart']);
+    const allowed = new Set(['retry', 'rebuild', 'chooseAssembly', 'viewCode', 'clearCache', 'restart', 'reinstall']);
     for (const reason of Object.values(DESIGNER_DIAGNOSTIC_REASONS)) {
       expect(reason.actions.every((action) => allowed.has(action))).toBe(true);
     }

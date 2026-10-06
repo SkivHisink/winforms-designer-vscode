@@ -640,6 +640,9 @@ namespace WinFormsDesigner.Engine
             start.ArgumentList.Add("--uitypeeditor-worker");
             start.Environment["WFD_UITYPEEDITOR_WORKER"] = "1";
 
+            // The worker must end with the engine that started it (see EngineProcessJob); otherwise it does not run.
+            if (!EngineProcessJob.HelpersAllowed)
+                throw new InvalidOperationException("The UITypeEditor worker cannot be tied to the engine's lifetime.");
             using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
             if (!process.Start()) throw new InvalidOperationException("The UITypeEditor worker did not start.");
             using CancellationTokenRegistration registration = cancellationToken.Register(

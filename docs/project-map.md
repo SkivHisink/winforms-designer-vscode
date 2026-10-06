@@ -41,7 +41,7 @@ VS Code extension host (TypeScript, extension/src)
 
 | Area | Files |
 |---|---|
-| Entry and protocol | `Program.cs` (CLI verbs and the JSON-RPC pipe server), `V2Protocol.cs` (generated, byte-pinned) |
+| Entry and protocol | `Program.cs` (CLI verbs and the JSON-RPC pipe server), `V2Protocol.cs` (generated, byte-pinned), `RuntimeProtocol.cs` (compile-linked negotiation, binary identity and ordinary RPC envelope dispatch) |
 | Interpretation and render | `DesignerRenderer.cs` (`LoadGraph` → `Interpret` → `HandleAssignment`/`HandleInvocation`/`Eval`, layout and init bracket replay, PNG capture), `DesignerAllowlists.cs` (the security allowlists, shared with net48), `HeadlessDesignerUIService.cs` (designer errors become listed constructs, never dialogs) |
 | Resources | `DesignerResx.cs`, `SafeResxResolver.cs`, `ProjectResourceResolver.cs` (`Properties.Resources.X` from the project's own `.resx`, bounded decoders), `DesignerProjectResourcePicker.cs` |
 | Properties | `DesignerDescribe.cs`, `DesignerValueConverter.cs`, `DesignerPalette.cs`, `DesignerUiTypeEditorBroker.cs` / `DesignerUiTypeEditorWorker.cs` |
@@ -50,6 +50,7 @@ VS Code extension host (TypeScript, extension/src)
 | Geometry and layout | `DesignerGeometry.cs`, `DesignerLayout.cs`, `DesignerAdornerInfo.cs` |
 | Localization | `DesignerLocalizeForm.cs`, `DesignerLocalizedResxEditor.cs`, `DesignerCultureSelection.cs` |
 | Projects and types | `ProjectResolver.cs`, `FormClassResolver.cs`, `ControlLoadContext.cs`, `CompiledRootFactory.cs` |
+| Process lifetime | `EngineProcessJob.cs` (the serving engine's kill-on-close job: helper processes end with the engine), `EditPathWarmup.cs` (compiles the source-edit path in the background when a worker starts) |
 | Shared IR (also net48) | `DesignerIr.cs`, `DesignerIrBuilder.cs` (Roslyn front end), `DesignerIrExecutor.cs`, `InterpretedRenderPlan.cs`, `InterpretedDescribeResolver.cs`, `RenderModeDecision.cs`, `AssemblyIrHost.cs` |
 | Hosted designers | `DesignerServiceKernel.cs`, `HostedServiceKernelProduct*.cs`, `HostedDesignerAdornerContract.cs`, `DesignTimeSite.cs`, `VsNameCreationService.cs`, `DesignerInheritedOverrideEditor.cs` |
 
@@ -58,7 +59,8 @@ Files compiled into **both** engines (edit with both runtimes in mind): `FormCla
 `DesignTimeSite.cs`, `RenderModeDecision.cs`, `SafeResxResolver.cs`, `AssemblyIrHost.cs`, `CompiledRootFactory.cs`,
 `InterpretedRenderPlan.cs`, `InterpretedDescribeResolver.cs`, `DesignerInheritedOverrideEditor.cs`,
 `DesignerAdornerInfo.cs`, `HostedDesignerAdornerContract.cs`, `VsNameCreationService.cs`, `DesignerServiceKernel.cs`,
-`HostedServiceKernelProductContract.cs`.
+`HostedServiceKernelProductContract.cs`, `NestedPropertyPath.cs` (the nested-property edit rule: describe offers ⇔ live
+edit accepts).
 
 ## .NET Framework engine (`engine-net48/`)
 
@@ -74,15 +76,15 @@ project output directory) with `ChildDomainConfig.cs` (its configuration and bin
 |---|---|
 | Activation and commands | `extension.ts` |
 | Designer session | `designerEditor.ts` (custom editor provider, `DesignerHub`, per-form session: render, select, edit, save, toolbox) |
-| Engines | `engineClient.ts` (spawn and RPC), `engineRecovery.ts` (crash-loop policy), `workerSupervisor.ts`, `workerSelection.ts`, `v2Protocol.ts` (generated) |
-| Documents and save | `documentStore.ts`, `byteLocal.ts` (byte-local save), `atomicFile.ts`, `patchSet.ts`, `transactionJournal.ts`, `transactionRunner.ts`, `transactionRecovery.ts`, `resourceTransaction.ts`, `resourceTransactionCoordinator.ts`, `binaryResx.ts`, `localizable.ts`, `inlineDesigner.ts` |
-| Projects and builds | `formProjectMembership.ts`, `solutionProjects.ts`, `projectCompatibility.ts` (architecture evidence: PE images plus MSBuild evaluation), `projectResources.ts`, `projectEventSources.ts`, `csprojRef.ts`, `externalBuild.ts`, `taskCoordination.ts`, `formSiblings.ts`, `scaffolding.ts`, `autoOpen.ts` |
-| Diagnostics and status | `designerDiagnostics.ts` (reason catalogue and the redacted report), `formStatusView.ts`, `renderDiagnostics.ts`, `renderGate.ts`, `formNotice.ts`, `learnMore.ts` |
+| Engines | `engineClient.ts` (spawn and RPC), `engineTransport.ts` (negotiation and supervised envelope transport), `engineWriter.ts` (stream failure teardown), `engineRegistry.ts` (project graph process ownership), `engineAdmission.ts` (bounded wait for resident capacity), `engineStartup.ts` (shared physical startup with independent document cancellation and confirmed cleanup), `engineRequestContext.ts` / `engineMethodSource.ts` (request identity, workflow leases and source arguments), `engineRecovery.ts` (crash-loop policy), `workerSupervisor.ts`, `workerSelection.ts`, `v2Protocol.ts` (generated) |
+| Documents and save | `documentStore.ts`, `byteLocal.ts` (byte-local save), `atomicFile.ts`, `patchSet.ts`, `mutationOperation.ts` (stable host operation identity, durable commit outcomes and rollback admission), `rollbackPreparation.ts` (Prepare Rollback: freeze, settle, inspect, stop workers), `transactionJournal.ts`, `transactionRunner.ts`, `transactionRecovery.ts`, `resourceTransaction.ts`, `resourceTransactionCoordinator.ts`, `binaryResx.ts`, `localizable.ts`, `inlineDesigner.ts` |
+| Projects and builds | `formProjectMembership.ts`, `solutionProjects.ts`, `projectCompatibility.ts` (architecture evidence: PE images plus MSBuild evaluation), `dependencyGraphIdentity.ts`, `outputDependencyIdentity.ts` (bounded byte fingerprints for worker isolation), `projectResources.ts`, `projectEventSources.ts`, `csprojRef.ts`, `externalBuild.ts`, `taskCoordination.ts`, `formSiblings.ts`, `scaffolding.ts`, `autoOpen.ts` |
+| Diagnostics and status | `designerDiagnostics.ts` (reason catalogue and the redacted report), `formStatusView.ts`, `controlSourceStatus.ts` (active-session output badge without worker startup), `renderDiagnostics.ts`, `renderGate.ts`, `formNotice.ts`, `learnMore.ts` |
 | Toolbox | `toolboxDiscovery.ts`, `toolboxRequest.ts`, `tierDCompatibility.ts` (COM/ActiveX boundary), `vendorTasks.ts` |
 | Persisted state and adapters | `persistedDesignerState.ts`, `v2Migration.ts`, `v2AdapterManifest.ts`, `v2AdapterManifestRegistry.ts` |
 | UI helpers | `selection.ts`, `multiProperty.ts`, `valueExpr.ts`, `dpiScale.ts`, `tabViewState.ts` |
 | Localization | `i18n/en.ts` (source of truth) and `i18n/*.json` (six translations) |
-| Test harnesses | `e2e.ts`, `webview-e2e.ts` + `webviewHarness.ts`, `extension-host-suite.ts`, `release21-extension-host-suite.ts`, `release21-upgrade-suite.ts`, `performance-baseline.ts`, `scenarioEvidence.ts`, `v2HeadlessValidate*.ts`, `v2Soak*.ts`, `v2Phase0Performance.ts` |
+| Test harnesses | `e2e.ts`, `webview-e2e.ts` + `webviewHarness.ts`, `extension-host-suite.ts`, `release21-extension-host-suite.ts`, `release21-upgrade-suite.ts`, `release22-extension-host-suite.ts`, `release22-upgrade-suite.ts`, `performance-baseline.ts`, `scenarioEvidence.ts`, `v2HeadlessValidate*.ts`, `v2Soak*.ts`, `v2Phase0Performance.ts` |
 
 Unit tests sit next to their modules as `*.test.ts` (vitest, `npm test`).
 
@@ -97,14 +99,14 @@ Webviews (`extension/media/`): `designer.js` (canvas), `panel.js` (Properties, T
 | CI text gates | `ci-l10n-parity.mjs`, `ci-mojibake-scan.mjs`, `release-preflight.mjs`, `generate-v2-protocol.mjs` |
 | Visual Studio reference renders | `capture-visual-studio-reference-traces.ps1`, `compare-visual-studio-reference-renders.ps1` |
 | v2 scenario evidence | `validate-v2-scenario-catalog.ps1`, `collect-v2-test-evidence.mjs`, `validate-v2-execution-evidence.mjs`, `test-v2-execution-evidence-gate.mjs`, `reconcile-v2-catalog-evidence.mjs`, `v2-evidence-provenance.mjs` |
-| Extension Host and release runners | `run-extension-host-tests.mjs`, `run-release21-extension-host-tests.mjs`, `run-release21-upgrade-tests.mjs`, `release21-environment.mjs` |
+| Extension Host and release runners | `run-extension-host-tests.mjs`, `run-release21-extension-host-tests.mjs`, `run-release21-upgrade-tests.mjs`, `run-release22-extension-host-tests.mjs`, `run-release22-upgrade-tests.mjs`, `release21-environment.mjs` |
 
 ## Documents (`docs/`)
 
 | Path | Contents |
 |---|---|
 | `adr/` | Architecture decisions: 0001 net48 live-source interpretation, 0002 edit parity, 0003 hosted services and dual-lane persistence; `adr/evidence/` holds the subsystem maps 0001 was based on |
-| `release-2.0.0-gate-record.md`, `release-2.1.0.md` (+ `release-2.1.0/`) | Release records with the machine reports they cite |
+| `release-2.0.0-gate-record.md`, `release-2.1.0.md` (+ `release-2.1.0/`), `release-2.2.0.md` (+ `release-2.2.0/`) | Release records with the machine reports they cite |
 | `roadmap-2.0.0-to-3.0.0.md`, `roadmap-v2.0.0-implementation-plan.md`, `roadmap-to-2.0.0.drawio` | Plans; the short public roadmap is the root `ROADMAP.md` |
 | `v2/` | Protocol and adapter-manifest schemas, the scenario catalog (`vs-parity-scenario-catalog.tsv`), archived Visual Studio reference traces and comparisons (byte-pinned) |
 | `TESTING.md`, `arm64-support.md` | Test strategy; ARM64 status |

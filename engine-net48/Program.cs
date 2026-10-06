@@ -5,9 +5,11 @@ using System.IO;
 using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Serialization;
 using StreamJsonRpc;
+using WinFormsDesigner.Engine.Protocol;
 using WinFormsDesigner.Engine;
 
 namespace WinFormsDesigner.Engine.Net48
@@ -59,6 +61,14 @@ namespace WinFormsDesigner.Engine.Net48
 
             if (Has(args, "--pipe", out string? pipeName) && pipeName != null)
             {
+                if (!RenderDesktop.ConfineServingEngine())
+                {
+                    // Fail closed: a process a compiled form starts could otherwise outlive a recycled engine and keep
+                    // the user's output pinned with nothing left to release it.
+                    await Console.Error.WriteLineAsync("[engine-net48] processes started by the engine could not be confined to its lifetime; not serving");
+                    return 3;
+                }
+                await Console.Error.WriteLineAsync("[engine-net48] processes started by the engine are confined to its lifetime");
                 await Console.Error.WriteLineAsync("[engine-net48] listening on pipe: " + pipeName);
                 using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous))
@@ -69,6 +79,7 @@ namespace WinFormsDesigner.Engine.Net48
                     formatter.JsonSerializer.ContractResolver = new CamelCasePropertyNamesContractResolver();
                     var handler = new HeaderDelimitedMessageHandler(pipe, pipe, formatter);
                     var rpc = new JsonRpc(handler, new EngineApi());
+                    rpc.CancelLocallyInvokedMethodsWhenConnectionIsClosed = true;
                     rpc.StartListening();
                     await rpc.Completion;
                     await Console.Error.WriteLineAsync("[engine-net48] rpc completed");
@@ -713,6 +724,14 @@ namespace WinFormsDesigner.Engine.Net48
     /// mis-scoped a months-scale plan once.)</summary>
     public sealed class EngineApi
     {
+        private readonly RuntimeProtocolRouter _protocol;
+        public EngineApi() => _protocol = new RuntimeProtocolRouter(this);
+
+        public ProtocolNegotiationResult NegotiateProtocol(string handshakeJson) => _protocol.Negotiate(handshakeJson);
+        public Task<ProtocolExecutionResult> ExecuteV2Envelope(string envelopeJson, CancellationToken cancellationToken) =>
+            Task.Run(() => _protocol.ExecuteAsync(envelopeJson, cancellationToken));
+        public bool CancelV2Request(string sessionId, string cancellationToken) => _protocol.Cancel(sessionId, cancellationToken);
+        public WorkerUsage GetV2WorkerUsage() => WorkerUsage.Read();
         private readonly DomainManager _domains = new DomainManager();
         private readonly object _cultureGate = new object();
         private readonly Dictionary<string, string> _designerCultures =

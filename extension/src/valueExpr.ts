@@ -30,6 +30,8 @@ export function toCSharpExpression(type: string, isEnum: boolean, raw: string): 
   if (isEnum) {
     // single member → Type.Member; comma-separated (a [Flags] enum like AnchorStyles) → Type.A | Type.B | …
     // (one C# expression, accepted by the engine's single-expression gate and read back via its bitwise-or Eval).
+    // The type name comes from assembly metadata, which is not C#: only a plain dotted name may be spliced.
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(type)) return null;
     const members = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
     if (!members.length) return null;
     if (!members.every((m) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(m))) return null;
@@ -56,15 +58,31 @@ export function toCSharpExpression(type: string, isEnum: boolean, raw: string): 
     case 'System.UInt16':
     case 'System.UInt32':
     case 'System.UInt64':
-      return /^\d+$/.test(t) ? t : null;
     case 'System.SByte':
     case 'System.Int16':
     case 'System.Int32':
     case 'System.Int64':
-      return /^-?\d+$/.test(t) ? t : null;
+      // An out-of-range literal parses but does not compile (`byte b = 256;` is CS0031) — refuse it here.
+      return /^-?\d+$/.test(t) && integerFits(type, BigInt(t)) ? t : null;
     default:
       return null;
   }
+}
+
+const INTEGER_RANGES: Record<string, [bigint, bigint]> = {
+  'System.Byte': [0n, 255n],
+  'System.SByte': [-128n, 127n],
+  'System.Int16': [-32768n, 32767n],
+  'System.UInt16': [0n, 65535n],
+  'System.Int32': [-2147483648n, 2147483647n],
+  'System.UInt32': [0n, 4294967295n],
+  'System.Int64': [-9223372036854775808n, 9223372036854775807n],
+  'System.UInt64': [0n, 18446744073709551615n],
+};
+
+function integerFits(type: string, value: bigint): boolean {
+  const range = INTEGER_RANGES[type];
+  return !!range && value >= range[0] && value <= range[1];
 }
 
 /** Last dotted segment of a type name (System.Drawing.Color → Color), for user-facing messages. */

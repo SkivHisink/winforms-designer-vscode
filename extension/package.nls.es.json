@@ -36,9 +36,11 @@
   "command.runBuildTask.title": "WinForms: Ejecutar tarea de compilación (liberar antes la vista previa)",
   "command.runTestTask.title": "WinForms: Ejecutar tarea de pruebas (liberar antes la vista previa)",
   "command.stopEngines.title": "WinForms: Detener el motor de vista previa del diseñador",
+  "command.prepareRollback.title": "WinForms: Preparar la reversión o el cambio a una versión anterior del diseñador",
   "command.restartEngines.title": "WinForms: Reiniciar el motor de vista previa del diseñador",
   "command.showFormStatus.title": "WinForms: Mostrar estado del formulario",
   "command.rebuildToolboxCache.title": "WinForms: Regenerar caché del cuadro de herramientas",
   "command.refreshToolbox.title": "WinForms: Actualizar cuadro de herramientas",
-  "command.requestToolboxItems.title": "WinForms: Elegir elementos del cuadro de herramientas"
+  "command.requestToolboxItems.title": "WinForms: Elegir elementos del cuadro de herramientas",
+  "config.workers.maximumResidentProcesses.description": "Número máximo de motores de vista previa residentes para distintos proyectos (1–16; valor predeterminado: 4). Cada motor .NET Framework incluye un proceso de inicio y otro de renderizado aislado. Un motor ocupado no se cierra para abrir otro proyecto; vuelva a intentarlo cuando termine la solicitud actual o cierre un diseñador."
 }

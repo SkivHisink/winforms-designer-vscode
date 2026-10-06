@@ -4,15 +4,19 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <Version>2.1.0</Version>
-    <AssemblyVersion>2.1.0.0</AssemblyVersion>
-    <FileVersion>2.1.0.0</FileVersion>
-    <InformationalVersion>2.1.0</InformationalVersion>
+    <Version>2.2.0</Version>
+    <AssemblyVersion>2.2.0.0</AssemblyVersion>
+    <FileVersion>2.2.0.0</FileVersion>
+    <InformationalVersion>2.2.0</InformationalVersion>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>WinFormsDesigner.Engine</AssemblyName>
     <RootNamespace>WinFormsDesigner.Engine</RootNamespace>
+    <!-- Workers are isolated per project graph, so a form's worker can be young and lightly used. Compile methods
+         without precompiled code fully optimized on first call instead of running slow quick-JIT code until enough
+         calls have promoted them (the Roslyn edit path otherwise stays several times slower for its first edits). -->
+    <TieredCompilationQuickJit>false</TieredCompilationQuickJit>
   </PropertyGroup>
 
   <ItemGroup>

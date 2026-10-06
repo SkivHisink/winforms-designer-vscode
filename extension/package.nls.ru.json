@@ -36,9 +36,11 @@
   "command.runBuildTask.title": "WinForms: Запустить задачу сборки (сначала освободить предпросмотр)",
   "command.runTestTask.title": "WinForms: Запустить задачу тестов (сначала освободить предпросмотр)",
   "command.stopEngines.title": "WinForms: Остановить движок предпросмотра конструктора",
+  "command.prepareRollback.title": "WinForms: Подготовить откат или понижение версии конструктора",
   "command.restartEngines.title": "WinForms: Перезапустить движок предпросмотра конструктора",
   "command.showFormStatus.title": "WinForms: Показать состояние формы",
   "command.rebuildToolboxCache.title": "WinForms: Пересоздать кэш панели элементов",
   "command.refreshToolbox.title": "WinForms: Обновить панель элементов",
-  "command.requestToolboxItems.title": "WinForms: Выбрать элементы панели"
+  "command.requestToolboxItems.title": "WinForms: Выбрать элементы панели",
+  "config.workers.maximumResidentProcesses.description": "Максимальное число одновременно работающих движков предпросмотра для разных проектов (1–16; по умолчанию 4). Движок .NET Framework включает процесс запуска и изолированный процесс рендера. Занятый движок не выгружается ради другого проекта; повторите запрос после завершения текущего или закройте дизайнер."
 }

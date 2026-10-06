@@ -64,7 +64,7 @@ try {
 
   $forbidden = @($names | Where-Object {
     $_ -match '^extension/(?:src|\.vscode-test|\.dotnet-home|\.dotnet-temp)/' -or
-    $_ -match 'extension-host-suite|(?:^|/)e2e\.cjs$|webview-e2e\.cjs$|v2-headless-validate\.cjs$|v2-soak\.cjs$'
+    $_ -match 'extension-host-suite|(?:^|/)release\d+-upgrade-suite\.cjs$|(?:^|/)e2e\.cjs$|webview-e2e\.cjs$|v2-headless-validate\.cjs$|v2-soak\.cjs$'
   })
   if ($forbidden.Count -gt 0) {
     throw "VSIX contains development/test files: $($forbidden -join ', ')"

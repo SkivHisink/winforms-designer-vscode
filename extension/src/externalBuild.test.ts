@@ -1,6 +1,38 @@
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ExternalBuildRelease, intermediateDirCandidates, isAssemblyWrite } from './externalBuild';
+import { classifyOutputEvent, ExternalBuildRelease, intermediateDirCandidates, isAssemblyWrite } from './externalBuild';
+
+describe('classifyOutputEvent', () => {
+  const stamp = (content: string, readOnly = false) => ({ content, readOnly });
+
+  // The false positive this guards: reading or scanning the pinned output (the designer's own assembly loads, toolbox
+  // reflection, an indexer) raises metadata-only `change` events on Windows. Those once made a click look like a build.
+  it('ignores a change event that left the named file’s content and read-only bit unchanged', () => {
+    expect(classifyOutputEvent('change', 'Vendor.Controls.dll', stamp('100:4096'), stamp('100:4096'))).toBeNull();
+    expect(classifyOutputEvent('change', 'App.pdb', stamp('7:10', true), stamp('7:10', true))).toBeNull();
+  });
+
+  it('a change that wrote the file (time or size moved) is a write', () => {
+    expect(classifyOutputEvent('change', 'App.exe', stamp('100:4096'), stamp('200:4096'))).toBe('write');
+    expect(classifyOutputEvent('change', 'App.exe', stamp('100:4096'), stamp('100:5000'))).toBe('write');
+  });
+
+  // MSBuild Copy with OverwriteReadOnlyFiles clears the attribute BEFORE copying; while the destination is still pinned
+  // that is the only event the output directory raises, so it must start the release — but it proves nothing landed.
+  it('a read-only bit cleared ahead of an overwrite is a signal, not a write', () => {
+    expect(classifyOutputEvent('change', 'Vendor.Controls.dll', stamp('100:4096', true), stamp('100:4096', false))).toBe('signal');
+  });
+
+  it('a file the baseline did not know (created after the watch was armed) is a write', () => {
+    expect(classifyOutputEvent('change', 'New.dll', undefined, stamp('1:1'))).toBe('write');
+  });
+
+  it('every rename (create / delete / replace) is a write and every unnamed event a signal', () => {
+    expect(classifyOutputEvent('rename', 'App.exe', stamp('100:4096'), stamp('100:4096'))).toBe('write');
+    expect(classifyOutputEvent('rename', 'App.exe', stamp('100:4096'), stamp('absent'))).toBe('write');
+    expect(classifyOutputEvent('change', null, undefined, stamp('absent'))).toBe('signal');
+  });
+});
 
 describe('isAssemblyWrite', () => {
   it('reacts to a written assembly — the file a build is about to copy over the pinned output', () => {
@@ -128,6 +160,20 @@ describe('ExternalBuildRelease', () => {
     expect(build.active).toBe(true);
 
     build.onWrite('output'); // the copy reached the output directory
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(log[log.length - 1]).toBe('end');
+  });
+
+  it('an output event that is not an assembly (unnamed, .pdb, .config) releases but does not prove the copy landed', async () => {
+    const build = make();
+    build.onWrite('output', false); // e.g. the .pdb was copied first
+    expect(log).toEqual(['begin', 'release']);
+    releaseGate!();
+
+    await vi.advanceTimersByTimeAsync(3000 * 3);
+    expect(log).not.toContain('end'); // the assembly may still be on its way — keep the handles off
+
+    build.onWrite('output', true); // the assembly itself reached the output
     await vi.advanceTimersByTimeAsync(3000);
     expect(log[log.length - 1]).toBe('end');
   });

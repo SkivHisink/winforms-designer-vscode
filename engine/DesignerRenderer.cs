@@ -1627,6 +1627,144 @@ namespace WinFormsDesigner.Engine
             };
         }
 
+        /// <summary>
+        /// Targeted NESTED property edit — `this.button1.ImageOptions.Location = …;`, the statement VS writes for a
+        /// property of a Content sub-object. The owner is exactly one current-source field (or the root), never a
+        /// synthetic container path; <paramref name="propertyPath"/> is 2–4 identifiers (NestedPropertyPath). The edit
+        /// is the ordinary byte-minimal splice with the owner path `button1.ImageOptions` and the leaf `Location`, so the
+        /// same single-expression, parse and only-the-target-changed gates prove it. Whether the path is a writable
+        /// nested property is decided where the graph lives (describe's NestedEditable, which the host requires, and
+        /// net48's live TryApplyNested); like <see cref="ApplyPropertyEdit"/>, this splice does not load the form.
+        /// </summary>
+        public static PropertyEditResult ApplyNestedPropertyEdit(string designerFilePath, string componentName, string propertyPath,
+            string newValueExpr, string? sourceText = null)
+        {
+            string src;
+            Encoding encoding;
+            if (sourceText != null)
+            {
+                src = sourceText;
+                encoding = new UTF8Encoding(false);
+            }
+            else
+            {
+                (encoding, src) = ReadWithEncoding(designerFilePath);
+            }
+            string[]? path = NestedPropertyPath.Split(propertyPath);
+            if (path == null || !path.All(DesignerControlEditor.IsValidIdentifier))
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = "invalid nested property path: " + propertyPath };
+            bool isRoot = componentName is "this" or "";
+            if (!isRoot && (componentName.Contains('.') || !DesignerControlEditor.IsValidIdentifier(componentName)))
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = "invalid component id: " + componentName };
+            string? ownershipError = CurrentSourceOwnershipError(src, componentName);
+            if (ownershipError != null)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = ownershipError };
+            // The nested route writes plain literals only: a string/char/number/bool literal, a negated number, or an
+            // enum member spelled as plain identifiers. Never an invocation, `this`, or anything else an expression can be.
+            if (!IsNestedLiteralValue(newValueExpr))
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = "nested value is not a literal or enum member: " + newValueExpr };
+
+            // If the source ever replaces an object on the way (`this.button1.ImageOptions = …`), a set placed before that
+            // statement is lost at runtime and one placed after cannot be proven to land on the object the grid showed.
+            string[] lhs = isRoot ? path : new[] { componentName }.Concat(path).ToArray();
+            int ownObject = isRoot ? 0 : 1; // `this.button1 = new …` creates the owner itself — that one is expected
+            // Every assignment counts — one nested in a block or chained in another's value (`a = this.b.Options = …`)
+            // replaces the object just the same.
+            var init = FormClassResolver.InitMethod(CSharpSyntaxTree.ParseText(src).GetRoot());
+            foreach (var asg in init?.Body?.DescendantNodes().OfType<AssignmentExpressionSyntax>() ?? Enumerable.Empty<AssignmentExpressionSyntax>())
+            {
+                var chain = DesignerPropertyEditor.FlattenValues(asg.Left); // `@ImageOptions` replaces it just the same
+                // a hop-named member written through a receiver that cannot be followed (a cast…) may be this very hop
+                bool unprovable = DesignerPropertyEditor.IsUnanalyzable(chain)
+                    && lhs.Skip(ownObject).Take(lhs.Length - 1 - ownObject).Contains(chain[chain.Count - 1]);
+                if (unprovable || (chain.Count > ownObject && chain.Count < lhs.Length && chain.SequenceEqual(lhs.Take(chain.Count))))
+                    return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = "the source replaces '" + string.Join(".", chain) + "', so a nested set cannot be placed safely" };
+            }
+            // The grid described the CONSTRUCTED control; the compiled assignment binds on the field's DECLARED type. They
+            // name the same member only when the field is type-certain — declared as exactly the type every
+            // `this.field = new T(…)` constructs, as VS writes it (a base-typed field could bind a member the subtype hides).
+            if (!isRoot && !IsTypeCertainField(src, init, componentName))
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = "'" + componentName + "' is not declared as the exact type it is created as" };
+
+            string hops = string.Join(".", path.Take(path.Length - 1));
+            string owner = isRoot ? hops : componentName + "." + hops;
+            string leaf = path[path.Length - 1];
+            var edit = isRoot
+                ? DesignerPropertyEditor.EditRootNestedProperty(src, path, newValueExpr)
+                : DesignerPropertyEditor.EditProperty(src, owner, leaf, newValueExpr);
+            if (edit.Mode == EditMode.Failed)
+                return new PropertyEditResult { Mode = EditMode.Failed, Encoding = encoding, Reason = edit.Reason };
+
+            bool parseOk = !CSharpSyntaxTree.ParseText(edit.NewText).GetDiagnostics()
+                .Any(d => d.Severity == DiagnosticSeverity.Error);
+            bool minimal = DesignerPropertyEditor.OnlyTargetChanged(src, edit.NewText, owner, leaf, edit.Mode);
+            bool safe = parseOk && minimal;
+            return new PropertyEditResult
+            {
+                Mode = edit.Mode,
+                Encoding = encoding,
+                ParseOk = parseOk,
+                Minimal = minimal,
+                NewText = safe ? edit.NewText : null,
+                Reason = safe ? "" : (!parseOk ? "edited text has syntax errors" : "edit changed more than the target property"),
+            };
+        }
+
+        /// <summary>The field is declared (in the current designer source) as exactly the type that every assignment to it
+        /// in InitializeComponent constructs with <c>new</c>, and it is constructed at least once there.</summary>
+        private static bool IsTypeCertainField(string source, MethodDeclarationSyntax? init, string fieldName)
+        {
+            // Spelled the same (whitespace aside), in the same file scope, binds the same type. `global::X` and `X` need
+            // not: inside a namespace that declares its own X they are different types, so no qualifier is normalized away.
+            static string Norm(string typeText) => new string(typeText.Where(c => !char.IsWhiteSpace(c)).ToArray());
+            var form = FormClassResolver.FormClass(CSharpSyntaxTree.ParseText(source).GetRoot());
+            var declaration = form?.Members.OfType<FieldDeclarationSyntax>()
+                .FirstOrDefault(f => f.Declaration.Variables.Any(v => v.Identifier.ValueText == fieldName));
+            if (declaration == null || init?.Body == null) return false;
+            string declared = Norm(declaration.Declaration.Type.ToString());
+            int creations = 0;
+            foreach (var asg in init.Body.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+            {
+                var chain = DesignerPropertyEditor.FlattenValues(asg.Left);
+                if (chain.Count != 1 || chain[0] != fieldName) continue;
+                if (asg.Right is not ObjectCreationExpressionSyntax created || Norm(created.Type.ToString()) != declared) return false;
+                creations++;
+            }
+            return creations > 0;
+        }
+
+        /// <summary>The closed set of values the nested route writes: a string/char/numeric/boolean literal, a negated
+        /// numeric literal, or a member access made only of plain identifiers (an enum member such as
+        /// <c>DevExpress.XtraEditors.ImageLocation.MiddleLeft</c>). No invocation, element access, `this`, or operator.</summary>
+        private static bool IsNestedLiteralValue(string value)
+        {
+            var expr = SyntaxFactory.ParseExpression(value);
+            if (expr.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error) || expr.ToString().Trim() != value.Trim())
+                return false;
+            switch (expr)
+            {
+                case LiteralExpressionSyntax lit:
+                    return lit.IsKind(SyntaxKind.StringLiteralExpression) || lit.IsKind(SyntaxKind.CharacterLiteralExpression)
+                        || lit.IsKind(SyntaxKind.NumericLiteralExpression)
+                        || lit.IsKind(SyntaxKind.TrueLiteralExpression) || lit.IsKind(SyntaxKind.FalseLiteralExpression);
+                case PrefixUnaryExpressionSyntax neg when neg.IsKind(SyntaxKind.UnaryMinusExpression):
+                    return neg.Operand is LiteralExpressionSyntax number && number.IsKind(SyntaxKind.NumericLiteralExpression);
+                case MemberAccessExpressionSyntax:
+                    for (ExpressionSyntax e = expr; ;)
+                    {
+                        if (e is MemberAccessExpressionSyntax m && m.IsKind(SyntaxKind.SimpleMemberAccessExpression)
+                            && m.Name is IdentifierNameSyntax name && NestedPropertyPath.IsPlainIdentifier(name.Identifier.Text))
+                        {
+                            e = m.Expression;
+                            continue;
+                        }
+                        return e is IdentifierNameSyntax id && NestedPropertyPath.IsPlainIdentifier(id.Identifier.Text);
+                    }
+                default:
+                    return false;
+            }
+        }
+
         /// <summary>Apply one bounded derived-source override for an inherited framework control. Unlike
         /// <see cref="ApplyPropertyEdit"/>, this path loads the current base graph, recomputes the observed field
         /// identity, and accepts only the opaque token previously issued by that graph. The client supplies no field
@@ -2830,6 +2968,10 @@ namespace WinFormsDesigner.Engine
         {
             ControlLoadContext? alc = null;
             unloadReference = null;
+            // A native DLL beside the managed output (CUDA/BLAS/ML runtimes) is expected, not a load failure: answer it
+            // quietly from the PE header instead of logging a BadImageFormatException for each one.
+            if (IsWellFormedNativeImage(full))
+                return new ToolboxScanResult { AssemblyName = simpleName, Error = "not a .NET assembly (or wrong architecture)" };
             try
             {
                 alc = new ControlLoadContext(full, probeDirectories);
@@ -2869,6 +3011,23 @@ namespace WinFormsDesigner.Engine
                     unloadReference = new WeakReference(alc, trackResurrection: true);
                     alc.Unload();
                 }
+            }
+        }
+
+        /// <summary>True only for a readable, well-formed PE image without a CLI header. A torn or corrupt image (a build
+        /// mid-write — see ControlLoadContext) is NOT treated as native: it falls through to the load path, which still
+        /// diagnoses it. The file is read with full sharing and closed at once, so it never blocks a build.</summary>
+        private static bool IsWellFormedNativeImage(string path)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
+                return pe.PEHeaders.CorHeader == null;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -5043,7 +5202,18 @@ namespace WinFormsDesigner.Engine
 
                 case ObjectCreationExpressionSyntax oc:
                     {
-                        var t = ResolveType(oc.Type.ToString(), userAsms) ?? throw new InvalidOperationException("unresolved type " + oc.Type);
+                        // ResolveCastType also maps the keyword alias VS writes for `new decimal(new int[] {...})`.
+                        var t = ResolveCastType(oc.Type, userAsms) ?? throw new InvalidOperationException("unresolved type " + oc.Type);
+                        // decimal is not constructable in general — only its closed CodeDom bits form, decoded from
+                        // literal syntax (nothing is evaluated), the same form the IR front-end accepts.
+                        if (t == typeof(decimal))
+                        {
+                            if (!DesignerIrBuilder.TryDecimalBitsSyntax(oc, out int[] bits))
+                                throw new InvalidOperationException("construction not allowed: System.Decimal outside new decimal(new int[] { lo, mid, hi, flags })");
+                            if (!DesignerAllowlists.TryCreateDecimalFromBits(bits, out decimal d, out string? decimalError))
+                                throw new InvalidOperationException(decimalError);
+                            return d;
+                        }
                         // SECURITY: Activator.CreateInstance on any resolvable type would run a side-effecting
                         // constructor on open/render (ResolveType reaches corelib, so e.g.
                         // new System.IO.FileStream(path, FileMode.Create) creates/truncates a real file; a user
@@ -5171,6 +5341,12 @@ namespace WinFormsDesigner.Engine
                         if (inner is IConvertible) { try { return Convert.ChangeType(inner, Nullable.GetUnderlyingType(ct) ?? ct); } catch { return inner; } }
                         return inner;
                     }
+
+                // CodeDom's split of a string longer than 80 characters: `"…" +\r\n "…"`. Literals only (constant folding).
+                case BinaryExpressionSyntax cat when cat.IsKind(SyntaxKind.AddExpression):
+                    return DesignerIrBuilder.TryConcatStringLiterals(cat, out string joined)
+                        ? joined
+                        : throw new InvalidOperationException("unsupported expression: only string literals can be concatenated '" + cat + "'");
 
                 case BinaryExpressionSyntax be when be.IsKind(SyntaxKind.BitwiseOrExpression):
                     {

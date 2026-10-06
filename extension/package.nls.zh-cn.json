@@ -36,9 +36,11 @@
   "command.runBuildTask.title": "WinForms: 运行生成任务（先释放预览）",
   "command.runTestTask.title": "WinForms: 运行测试任务（先释放预览）",
   "command.stopEngines.title": "WinForms: 停止设计器预览引擎",
+  "command.prepareRollback.title": "WinForms: 准备回滚或降级设计器",
   "command.restartEngines.title": "WinForms: 重启设计器预览引擎",
   "command.showFormStatus.title": "WinForms: 显示窗体状态",
   "command.rebuildToolboxCache.title": "WinForms: 重新生成工具箱缓存",
   "command.refreshToolbox.title": "WinForms: 刷新工具箱",
-  "command.requestToolboxItems.title": "WinForms: 选择工具箱项"
+  "command.requestToolboxItems.title": "WinForms: 选择工具箱项",
+  "config.workers.maximumResidentProcesses.description": "不同项目可同时驻留的预览工作引擎数量上限（1–16，默认 4）。每个 .NET Framework 工作引擎包含一个启动进程和一个隔离渲染进程。不会为了打开另一个项目而卸载正在处理请求的引擎；请在当前请求完成后重试，或关闭一个设计器。"
 }

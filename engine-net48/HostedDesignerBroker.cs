@@ -91,6 +91,15 @@ namespace WinFormsDesigner.Engine.Net48
                         "The certified hosted-designer worker could not be started.", mainPid);
 
                 int launchedPid = child.Id;
+                // Tie the worker's life to this engine: a recycle or crash of the engine must not leave it running
+                // with the user's assembly loaded. Uncontained, it is not allowed to run at all.
+                if (!RenderDesktop.ContainChildProcess(child.Handle))
+                {
+                    try { child.Kill(); } catch { }
+                    try { child.WaitForExit(2_000); } catch { }
+                    return Refused(componentTypeName, certificationId, sha, "WORKER_UNAVAILABLE",
+                        "The certified hosted-designer worker could not be tied to the engine's lifetime.", mainPid);
+                }
                 if (!child.WaitForExit(WorkerTimeoutMs))
                 {
                     try { child.Kill(); } catch { }

@@ -634,6 +634,9 @@ namespace WinFormsDesigner.Engine
                     {
                         var ct = host.ResolveType(kc.TypeName);
                         if (ct == null) { err = "unresolved ctor type " + kc.TypeName; return false; }
+                        // The closed CodeDom decimal form (typeof equality: a user type named System.Decimal is not it
+                        // and falls to the allowlist below, which refuses it).
+                        if (ct == typeof(decimal)) return TryDecimalBits(kc, out value, out err);
                         // SECURITY re-check: only allowlisted pure value-type initializers (Point/Size/Font/…).
                         if (!DesignerAllowlists.IsConstructionAllowed(ct)) { err = "construction not allowed: " + kc.TypeName; return false; }
                         if (!TryMaterializeArgs(kc.Args, inst, host, out var cargs, out err)) return false;
@@ -694,6 +697,32 @@ namespace WinFormsDesigner.Engine
                 default:
                     err = "unmaterializable value " + v.GetType().Name; return false;
             }
+        }
+
+        /// <summary>Re-check the front-end's closed decimal form on the child side (a forged IR reaches here too): exactly
+        /// one Int32 array of four Int32 numbers, nothing else materialized, then Decimal validates the bits.</summary>
+        private static bool TryDecimalBits(IrKnownCtor kc, out object? value, out string? err)
+        {
+            value = null; err = null;
+            if (kc.Args.Count != 1 || kc.Args[0] is not IrArray words || words.ElementTypeName != "System.Int32"
+                || words.Items.Count != DesignerAllowlists.DecimalBitsLength)
+            {
+                err = "construction not allowed: System.Decimal outside new decimal(new int[] { lo, mid, hi, flags })";
+                return false;
+            }
+            var bits = new int[words.Items.Count];
+            for (int i = 0; i < bits.Length; i++)
+            {
+                if (words.Items[i] is not IrNumber { Kind: IrNumericKind.Int32 } n || !TryNumber(n, out var w, out err) || w is not int word)
+                {
+                    err ??= "decimal bits must be Int32 literals";
+                    return false;
+                }
+                bits[i] = word;
+            }
+            if (!DesignerAllowlists.TryCreateDecimalFromBits(bits, out decimal d, out err)) return false;
+            value = d;
+            return true;
         }
 
         private static bool TryMaterializeArgs(List<IrValue> args, Dictionary<string, object> inst, IIrHost host, out object?[] result, out string? err)

@@ -5,6 +5,38 @@
 // host protocol in src/designerEditor.ts.
 (function () {
   var vscode = acquireVsCodeApi();
+  // ---- outgoing mutation identity ----
+  // One object represents one user intent. Reposting it keeps operationId, while each delivery attempt has
+  // a separate requestAttemptId. These IDs only correlate requests; the host still authorizes every edit.
+  var mutationMessageTypes = {
+    edit: true, editNested: true, importImage: true, pickProjectImageResource: true, clearImage: true,
+    resetProperty: true, setTableCell: true, setCollection: true, setStringArray: true,
+    setGenericList: true, uiTypeEditor: true, uiCollectionEditor: true, setColumns: true,
+    setTabPages: true, setGridColumns: true, setBindings: true, setDataSource: true,
+    setExtender: true, setTreeNodes: true, setToolStripItems: true, setHandler: true,
+    createHandler: true, renameComponent: true, addControl: true, addComponent: true,
+    generateDataSource: true, bindApplicationSetting: true, deleteSelected: true, outlineReparent: true,
+    outlineMoveZOrder: true
+  };
+  var mutationIdentitySequence = 0;
+  function nextMutationIdentity(kind) {
+    var random;
+    var cryptoApi = window.crypto;
+    if (cryptoApi && typeof cryptoApi.randomUUID === 'function') random = cryptoApi.randomUUID();
+    else if (cryptoApi && cryptoApi.getRandomValues) {
+      var words = new Uint32Array(4); cryptoApi.getRandomValues(words);
+      random = Array.prototype.map.call(words, function (word) { return ('00000000' + word.toString(16)).slice(-8); }).join('');
+    } else random = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    return 'webview-' + kind + '-' + random + '-' + (++mutationIdentitySequence).toString(36);
+  }
+  function postMessage(message) {
+    if (mutationMessageTypes[message.type] === true) {
+      if (!message.operationId) message.operationId = nextMutationIdentity('operation');
+      message.requestAttemptId = nextMutationIdentity('attempt');
+    }
+    vscode.postMessage(message);
+  }
+  // ---- end outgoing mutation identity ----
   // ---- i18n shim: host injects window.__WFD_L10N__ (catalog) + window.__WFD_LANG__ (locale) before this
   // script. T()/TN() mirror the host's t()/tn(); a missing key falls back to the key itself. Named T/TN (not
   // t/tn) because `t` is already used as a local variable throughout this file. ----
@@ -62,7 +94,7 @@
     mainTabToolbox.className = which === 'toolbox' ? 'active' : '';
     mainTabData.className = which === 'data' ? 'active' : '';
     if (which === 'outline') renderOutline();
-    if (which === 'data') vscode.postMessage({ type: 'refreshDataSources' });
+    if (which === 'data') postMessage({ type: 'refreshDataSources' });
     if (persist !== false) savePanelViewState();
   }
   mainTabProps.addEventListener('click', function () { showMainTab('props'); });
@@ -105,7 +137,7 @@
     b.title = T('panel.data.dragTip');
     b.addEventListener('click', function () {
       var intent = dataIntent(schema, mode);
-      vscode.postMessage({
+      postMessage({
         type: 'generateDataSource', schemaKey: intent.schemaKey, mode: intent.mode, parentId: 'this',
         includeNavigator: intent.includeNavigator, existingBindingSourceId: intent.existingBindingSourceId,
         existingGridId: existingGridId || null
@@ -155,13 +187,13 @@
         var bind = document.createElement('button'); bind.type = 'button'; bind.textContent = T('panel.data.bindSelected');
         bind.disabled = !selected || selected.id === 'this' || selected.editable === false;
         bind.addEventListener('click', function () {
-          if (currentId) vscode.postMessage({ type: 'bindApplicationSetting', settingKey: setting.key, id: currentId });
+          if (currentId) postMessage({ type: 'bindApplicationSetting', settingKey: setting.key, id: currentId });
         });
         row.appendChild(bind); dataListEl.appendChild(row);
       });
     }
   }
-  dataRefreshEl.addEventListener('click', function () { vscode.postMessage({ type: 'refreshDataSources' }); });
+  dataRefreshEl.addEventListener('click', function () { postMessage({ type: 'refreshDataSources' }); });
 
   // ---- Toolbox pane: VS-style vertical stack of collapsible category "tabs" + custom tabs + right-click menu.
   // In VS the toolbox "tabs" are these collapsible category headers; the right-click menu (Add/Rename/Delete/
@@ -210,7 +242,7 @@
     return out;
   }
   function savePanelViewState() {
-    vscode.postMessage({
+    postMessage({
       type: 'panelViewStateChanged',
       state: {
         activeTab: activeMainTab,
@@ -333,18 +365,18 @@
         // Switching from an armed visual control to a tray component must disarm rectangle placement immediately.
         // The host repeats this clear before its async add so the canvas and a re-rendered panel cannot retain stale state.
         clearToolboxSelection();
-        vscode.postMessage({ type: 'addComponent', componentType: it.name });
+        postMessage({ type: 'addComponent', componentType: it.name });
       }
       else {
         clearToolboxSelection();
         selectedToolboxControl = addKey;
         b.classList.add('selected');
-        vscode.postMessage({ type: 'selectToolboxControl', controlType: addKey });
+        postMessage({ type: 'selectToolboxControl', controlType: addKey });
       }
     });
     b.addEventListener('dblclick', function () {
       if (it.isComponent) return;
-      vscode.postMessage({ type: 'addControl', controlType: addKey });
+      postMessage({ type: 'addControl', controlType: addKey });
     });
     if (it.isComponent) return b;   // components aren't draggable (no on-form position)
     // cross-webview drag → canvas drop (custom MIME, NOT text/uri-list). Double-click is the reliable fallback.
@@ -367,7 +399,7 @@
   tbSearchEl.addEventListener('input', function () {
     // Keep metadata discovery subordinate to interaction: the host cancels its current bounded pass and retries
     // after the user pauses, so filtering never competes with a background assembly walk.
-    vscode.postMessage({ type: 'toolboxInteraction' });
+    postMessage({ type: 'toolboxInteraction' });
     renderToolbox();
   });
   // Right-click anywhere in the toolbox body (empty area / between items) → the menu with no tab context
@@ -466,7 +498,7 @@
 
   // ---- Choose Items → opens the big "Choose Toolbox Items" window. It is a SEPARATE editor-area webview
   // panel (created by the host), not a micro modal inside this narrow side panel (matches VS).
-  function openChoose(tab) { vscode.postMessage({ type: 'chooseItems', tab: tab || null }); }
+  function openChoose(tab) { postMessage({ type: 'chooseItems', tab: tab || null }); }
   function closeChoose() { /* the Choose Items window is its own panel now — nothing to close here */ }
 
   // ---- Properties pane (component selector + Properties/Events grid) ----
@@ -474,6 +506,7 @@
   var propsEl = document.getElementById('props');
   var eventsEl = document.getElementById('events');
   var searchEl = document.getElementById('search');
+  var searchClearEl = document.getElementById('searchClear');
   var tabPropsEl = document.getElementById('tabProps');
   var tabEventsEl = document.getElementById('tabEvents');
   var sortCatEl = document.getElementById('sortCat');
@@ -624,7 +657,7 @@
         || (p.readOnly && !inheritedResettable) || !resettable || (!!currentItemId && !currentItemEditable), act: function () {
         var rmsg = { type: 'resetProperty', id: c.id, prop: p.name, multi: !!p.multi };
         if (currentItemId && c.id === currentItemId && currentItemOwner) rmsg.ownerId = currentItemOwner;
-        vscode.postMessage(rmsg);
+        postMessage(rmsg);
       } }
     ];
     tbMenuEl.innerHTML = '';
@@ -711,7 +744,7 @@
   function postOutlineZOrder(id, toFront) {
     var c = outlineControl(id);
     if (!outlineCanDrag(c)) { setOutlineStatus('That control cannot be reordered.'); return; }
-    vscode.postMessage({ type: 'outlineMoveZOrder', id: id, toFront: !!toFront });
+    postMessage({ type: 'outlineMoveZOrder', id: id, toFront: !!toFront });
     setOutlineStatus(toFront ? T('designer.menu.bringToFront') : T('designer.menu.sendToBack'));
   }
   function openOutlineMenu(x, y, c) {
@@ -838,7 +871,7 @@
         var reason = outlineReparentReason(id, c.id);
         clearOutlineDropClasses();
         if (reason) { setOutlineStatus(reason); return; }
-        vscode.postMessage({ type: 'outlineReparent', id: id, parentId: c.id });
+        postMessage({ type: 'outlineReparent', id: id, parentId: c.id });
         setOutlineStatus('Reparenting ' + id + '...');
       });
       node.addEventListener('dragend', function () {
@@ -855,7 +888,7 @@
   }
   function pickOutline(id) {
     currentId = id; if (treeEl) treeEl.value = id;
-    vscode.postMessage({ type: 'pick', id: id }); renderOutline();
+    postMessage({ type: 'pick', id: id }); renderOutline();
   }
   // keyboard navigation for the ARIA tree: Up/Down move between visible items, Right/Left expand/collapse,
   // Enter/Space select. Attached once to the container; nodes are re-created each render but delegation persists.
@@ -869,7 +902,7 @@
     if (e.key === 'F2' && aid) {
       var renameTarget = outlineControl(aid);
       if (renameTarget && !renameTarget.isRoot && aid !== 'this' && !outlineFlagged(renameTarget)) {
-        e.preventDefault(); vscode.postMessage({ type: 'renameComponent', id: aid });
+        e.preventDefault(); postMessage({ type: 'renameComponent', id: aid });
       }
     }
     else if ((e.altKey || e.ctrlKey) && e.key === 'Home' && aid) { e.preventDefault(); postOutlineZOrder(aid, true); }
@@ -945,11 +978,11 @@
     // a TableLayoutPanel child's Column/Row is not a property assignment — it lives in the 3-arg Controls.Add, so
     // route it to the SetTableCell path (which rewrites the cell args) instead of the normal setProperty edit.
     if (prop.tableCell) {
-      vscode.postMessage({ type: 'setTableCell', id: id, cell: prop.name, value: value });
+      postMessage({ type: 'setTableCell', id: id, cell: prop.name, value: value });
       return;
     }
     if (prop.extenderProvider && prop.extenderProperty) {
-      vscode.postMessage({
+      postMessage({
         type: 'setExtender', id: id, providerId: prop.extenderProvider,
         extenderProperty: prop.extenderProperty, propType: prop.type, value: value
       });
@@ -967,7 +1000,7 @@
     // name (or "(none)"), NOT a literal — tag it so the host writes `this.<name>` / `null`. Control-edit path only (an
     // item ref would need the item channel), so skip when the edit is already routed to an item.
     else if (prop.referenceValues) msg.refEdit = true;
-    vscode.postMessage(msg);
+    postMessage(msg);
   }
   function editInput(title, value, onCommit) {
     var input = document.createElement('input');
@@ -1340,17 +1373,17 @@
       var project = document.createElement('button'); project.type = 'button'; project.className = 'imgBtn';
       project.textContent = T('panel.image.project');
       project.title = T('panel.image.projectTip');
-      project.addEventListener('click', function () { vscode.postMessage({ type: 'pickProjectImageResource', id: c.id, prop: p.name, propType: p.type }); });
+      project.addEventListener('click', function () { postMessage({ type: 'pickProjectImageResource', id: c.id, prop: p.name, propType: p.type }); });
       wrap.appendChild(project);
       var imp = document.createElement('button'); imp.type = 'button'; imp.className = 'imgBtn'; imp.textContent = T('panel.image.import');
       imp.title = T('panel.image.importTip');
-      imp.addEventListener('click', function () { vscode.postMessage({ type: 'importImage', id: c.id, prop: p.name, propType: p.type }); });
+      imp.addEventListener('click', function () { postMessage({ type: 'importImage', id: c.id, prop: p.name, propType: p.type }); });
       wrap.appendChild(imp);
       // "(none)" clears an image that is actually set in the source (has a preview or an explicit assignment).
       if (p.imagePreview || p.sourceExplicit) {
         var clr = document.createElement('button'); clr.type = 'button'; clr.className = 'imgBtn'; clr.textContent = T('common.none');
         clr.title = T('panel.image.clearTip');
-        clr.addEventListener('click', function () { vscode.postMessage({ type: 'clearImage', id: c.id, prop: p.name }); });
+        clr.addEventListener('click', function () { postMessage({ type: 'clearImage', id: c.id, prop: p.name }); });
         wrap.appendChild(clr);
       }
     }
@@ -1426,7 +1459,7 @@
     btn.title = 'Edit items…';
     btn.addEventListener('click', function () {
       pendingCollection = { id: c.id, prop: p.name, anchor: btn };
-      vscode.postMessage({ type: 'listCollection', id: c.id, prop: p.name });
+      postMessage({ type: 'listCollection', id: c.id, prop: p.name });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1445,14 +1478,14 @@
         && p.uiTypeEditorAssemblySha256
         && p.uiTypeEditorCertificationId;
       if (p.uiTypeEditor === 'System.ComponentModel.Design.CollectionEditor' || certifiedVendorEditor) {
-        vscode.postMessage({
+        postMessage({
           type: 'uiCollectionEditor', id: c.id, prop: p.name,
           itemType: p.collectionItemType, editorType: p.uiTypeEditor
         });
         return;
       }
       pendingGenericList = { id: c.id, prop: p.name, itemType: p.collectionItemType, anchor: btn };
-      vscode.postMessage({ type: 'listGenericList', id: c.id, prop: p.name, itemType: p.collectionItemType });
+      postMessage({ type: 'listGenericList', id: c.id, prop: p.name, itemType: p.collectionItemType });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1468,7 +1501,7 @@
     btn.title = 'Edit items…';
     btn.addEventListener('click', function () {
       pendingStringArray = { id: c.id, prop: p.name, anchor: btn };
-      vscode.postMessage({ type: 'listStringArray', id: c.id, prop: p.name });
+      postMessage({ type: 'listStringArray', id: c.id, prop: p.name });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1513,7 +1546,7 @@
         }
         var msg = { type: commitType, id: id, prop: prop, items: lines };
         if (commitType === 'setGenericList') msg.itemType = itemType;
-        vscode.postMessage(msg);
+        postMessage(msg);
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -1534,7 +1567,7 @@
     btn.title = 'Edit columns…';
     btn.addEventListener('click', function () {
       pendingColumns = { id: c.id, anchor: btn };
-      vscode.postMessage({ type: 'listColumns', id: c.id });
+      postMessage({ type: 'listColumns', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1599,7 +1632,7 @@
         var cols = rows.map(function (row) {
           return { id: row.id || '', text: row.text || '', width: (typeof row.width === 'number' && !isNaN(row.width)) ? row.width : 60, textAlign: row.textAlign || 'Left' };
         });
-        vscode.postMessage({ type: 'setColumns', id: id, columns: cols });
+        postMessage({ type: 'setColumns', id: id, columns: cols });
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -1621,7 +1654,7 @@
     btn.setAttribute('aria-label', 'Edit TabPages order');
     btn.addEventListener('click', function () {
       pendingTabPages = { id: c.id, anchor: btn };
-      vscode.postMessage({ type: 'listTabPages', id: c.id });
+      postMessage({ type: 'listTabPages', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1667,7 +1700,7 @@
       okBtn.addEventListener('click', function () {
         closePopup();
         if (JSON.stringify(rows) === original) return;
-        vscode.postMessage({ type: 'setTabPages', id: id, pageIds: rows.slice() });
+        postMessage({ type: 'setTabPages', id: id, pageIds: rows.slice() });
       });
       cancel.addEventListener('click', function () { closePopup(); });
       bar.appendChild(okBtn); bar.appendChild(cancel); pop.appendChild(bar);
@@ -1685,7 +1718,7 @@
     btn.title = 'Edit columns…';
     btn.addEventListener('click', function () {
       pendingGridColumns = { id: c.id, anchor: btn };
-      vscode.postMessage({ type: 'listGridColumns', id: c.id });
+      postMessage({ type: 'listGridColumns', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1773,7 +1806,7 @@
             readOnly: !!row.readOnly, visible: row.visible !== false, dataPropertyName: row.dataPropertyName || '',
             format: row.format || '', alignment: row.alignment || 'NotSet', nullValue: row.nullValue || '' };
         });
-        vscode.postMessage({ type: 'setGridColumns', id: id, gridColumns: cols });
+        postMessage({ type: 'setGridColumns', id: id, gridColumns: cols });
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -1793,7 +1826,7 @@
     btn.title = 'Edit data bindings…';
     btn.addEventListener('click', function () {
       pendingBindings = { id: c.id, anchor: btn };
-      vscode.postMessage({ type: 'listBindings', id: c.id });
+      postMessage({ type: 'listBindings', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1888,7 +1921,7 @@
       function commit() {
         closePopup();
         if (JSON.stringify(rows) === original) return;
-        vscode.postMessage({ type: 'setBindings', id: id, bindings: rows });
+        postMessage({ type: 'setBindings', id: id, bindings: rows });
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -1905,7 +1938,7 @@
     btn.title = 'Choose data source…';
     btn.addEventListener('click', function () {
       pendingDataSource = { id: c.id, anchor: btn };
-      vscode.postMessage({ type: 'getDataSource', id: c.id });
+      postMessage({ type: 'getDataSource', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -1953,7 +1986,7 @@
         closePopup();
         if (nextKind === 'component' && !nextValue) return;   // nothing to point at — never post an edit that must fail
         if (nextKind === kind && nextValue === (value || '')) return;
-        vscode.postMessage({ type: 'setDataSource', id: id, kind: nextKind, value: nextValue });
+        postMessage({ type: 'setDataSource', id: id, kind: nextKind, value: nextValue });
       });
       cancel.addEventListener('click', function () { closePopup(); });
       bar.appendChild(okBtn); bar.appendChild(cancel); pop.appendChild(bar);
@@ -1971,7 +2004,7 @@
     btn.title = 'Edit nodes…';
     btn.addEventListener('click', function () {
       pendingTreeNodes = { id: c.id, anchor: btn };
-      vscode.postMessage({ type: 'listTreeNodes', id: c.id });
+      postMessage({ type: 'listTreeNodes', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -2118,7 +2151,7 @@
       function commit() {
         closePopup();
         if (JSON.stringify(strip(roots)) === original) return; // unchanged → no edit (avoids a spurious dirty/undo)
-        vscode.postMessage({ type: 'setTreeNodes', id: id, nodes: strip(roots) });
+        postMessage({ type: 'setTreeNodes', id: id, nodes: strip(roots) });
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -2139,7 +2172,7 @@
     var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…'; btn.title = 'Edit items…';
     btn.addEventListener('click', function () {
       pendingToolStrip = { id: c.id, anchor: btn, ownerType: c.type || '' };
-      vscode.postMessage({ type: 'listToolStripItems', id: c.id });
+      postMessage({ type: 'listToolStripItems', id: c.id });
     });
     wrap.appendChild(btn);
     return wrap;
@@ -2254,7 +2287,7 @@
       function commit() {
         closePopup();
         if (JSON.stringify(strip(roots)) === original) return; // unchanged → no edit
-        vscode.postMessage({ type: 'setToolStripItems', id: id, toolStripItems: strip(roots) });
+        postMessage({ type: 'setToolStripItems', id: id, toolStripItems: strip(roots) });
       }
       okBtn.addEventListener('click', commit);
       cancel.addEventListener('click', function () { closePopup(); });
@@ -2271,7 +2304,9 @@
     tr.setAttribute('aria-label', 'Additional nested properties were truncated');
     addColSplit(nameTd); tr.appendChild(nameTd); tr.appendChild(valTd); t.appendChild(tr);
   }
-  function appendExpandableRows(t, properties, depth) {
+  // ctx (optional) = { id, canEdit }: a row the engine marked nestedEditable gets the same editor a top-level row would
+  // (closed list → <select>, open list → combobox, else a text box) and commits through the nested edit route.
+  function appendExpandableRows(t, properties, depth, ctx) {
     (properties || []).forEach(function (child) {
       var tr = document.createElement('tr'); tr.className = 'expandableMeta';
       tr.setAttribute('data-property-path', child.propertyPath || child.name || '');
@@ -2279,10 +2314,20 @@
       nameTd.style.paddingLeft = (depth * 14) + 'px'; nameTd.textContent = child.name || child.propertyPath || '';
       var details = [child.propertyPath, child.type, child.category, child.description].filter(function (v) { return !!v; }).join(' — ');
       nameTd.title = details;
-      var valTd = document.createElement('td'); valTd.className = 'ro expandableMetaValue';
-      valTd.textContent = child.value == null ? '' : String(child.value); valTd.title = child.type || '';
+      var valTd = document.createElement('td');
+      if (ctx && ctx.canEdit && child.nestedEditable === true && !child.readOnly && child.propertyPath) {
+        valTd.className = 'val expandableMetaValue';
+        var cur = child.value == null ? '' : String(child.value);
+        var commit = function (v) { postMessage({ type: 'editNested', id: ctx.id, propertyPath: child.propertyPath, value: v }); };
+        valTd.appendChild(child.standardValues && child.standardValues.length
+          ? editSelect(child.standardValues, !!child.standardValuesExclusive, cur, child.propertyPath, commit)
+          : editInput(child.propertyPath, cur, commit));
+      } else {
+        valTd.className = 'ro expandableMetaValue';
+        valTd.textContent = child.value == null ? '' : String(child.value); valTd.title = child.type || '';
+      }
       addColSplit(nameTd); tr.appendChild(nameTd); tr.appendChild(valTd); t.appendChild(tr);
-      appendExpandableRows(t, child.properties || [], depth + 1);
+      appendExpandableRows(t, child.properties || [], depth + 1, ctx);
       if (child.propertiesTruncated) appendExpandableTruncation(t, depth + 1);
     });
   }
@@ -2323,9 +2368,9 @@
     var isFont = propEditable && !mixed && p.type === FONT_TYPE;
     // generic [Flags] enums (Anchor keeps its dedicated glyph editor) → checkbox dropdown
     var isFlags = propEditable && !mixed && p.isEnum && !isAnchor && p.flagsMembers && p.flagsMembers.length;
-    // Built-in Point/Size/Padding/Anchor/Dock/Font editors keep precedence. TypeConverter metadata is a bounded,
-    // display-only fallback for every other expandable value; sourceEditable on a child is intentionally ignored
-    // because no nested write adapter exists.
+    // Built-in Point/Size/Padding/Anchor/Dock/Font editors keep precedence. TypeConverter metadata is a bounded
+    // fallback for every other expandable value: rows are read-only except those the engine marks nestedEditable
+    // (sourceEditable on a child is a conversion hint, not a write capability).
     var builtInExpand = !!parts || isAnchor || isDock || isFont;
     var metadataExpand = !mixed && !builtInExpand && ((p.properties && p.properties.length) || p.propertiesTruncated);
     var canExpand = builtInExpand || metadataExpand;
@@ -2415,7 +2460,7 @@
       modalBtn.title = 'Open ' + shortType(p.uiTypeEditor) + '…';
       modalBtn.setAttribute('aria-label', 'Edit ' + p.name + ' with ' + shortType(p.uiTypeEditor));
       modalBtn.addEventListener('click', function () {
-        vscode.postMessage({
+        postMessage({
           type: 'uiTypeEditor', id: c.id, prop: p.name, propType: p.type,
           editorType: p.uiTypeEditor
         });
@@ -2453,7 +2498,12 @@
     } else if (isOpen && isFont) {
       fontSubRows(c, p, t);
     } else if (isOpen && metadataExpand) {
-      appendExpandableRows(t, p.properties || [], 1);
+      // Nested editing is single-object and control-grid only (not a ToolStrip item, a multi-selection or an
+      // inherited component); the host re-checks the row against the describe it published.
+      appendExpandableRows(t, p.properties || [], 1, {
+        id: c.id,
+        canEdit: componentEditable(c) && !currentItemId && !p.multi && c.ownership !== 'inherited',
+      });
       if (p.propertiesTruncated) appendExpandableTruncation(t, 1);
     }
   }
@@ -2536,7 +2586,7 @@
       candFetchedFor = currentComponent.id;
       // listHandlers is a READ that replies via `candidates` (keyed on currentComponent.id, works for items already) and
       // never refreshes the props channel, so it needs no ownerId tag — unlike the wire/navigate messages below.
-      vscode.postMessage({ type: 'listHandlers', id: currentComponent.id });
+      postMessage({ type: 'listHandlers', id: currentComponent.id });
     }
   }
 
@@ -2563,10 +2613,10 @@
     function commit() {
       var val = inp.value.trim();
       if (val === cur) return;
-      if (val === '') { vscode.postMessage(tagItemOwner({ type: 'setHandler', id: c.id, event: ev.name, handler: '' })); return; }
+      if (val === '') { postMessage(tagItemOwner({ type: 'setHandler', id: c.id, event: ev.name, handler: '' })); return; }
       var known = eventCandidates[ev.name] || [];
-      if (known.indexOf(val) >= 0) vscode.postMessage(tagItemOwner({ type: 'setHandler', id: c.id, event: ev.name, handler: val }));
-      else vscode.postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: ev.name, handler: val }));
+      if (known.indexOf(val) >= 0) postMessage(tagItemOwner({ type: 'setHandler', id: c.id, event: ev.name, handler: val }));
+      else postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: ev.name, handler: val }));
     }
     inp.addEventListener('keydown', function (e2) { if (e2.key === 'Enter') { e2.preventDefault(); inp.blur(); } });
     inp.addEventListener('change', commit);
@@ -2604,8 +2654,8 @@
         nameTd.title = e.type + (e.handler ? T('panel.event.wiredTip') : T('panel.event.unwiredTip'));
         // VS-style: double-click an event → if wired, go to the handler; if unwired, CREATE one (auto-named) and go.
         nameTd.addEventListener('dblclick', function () {
-          if (e.handler) vscode.postMessage(tagItemOwner({ type: 'navigateHandler', id: c.id, event: e.name, handler: e.handler }));
-          else if (eventsEditable) vscode.postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: e.name }));
+          if (e.handler) postMessage(tagItemOwner({ type: 'navigateHandler', id: c.id, event: e.name, handler: e.handler }));
+          else if (eventsEditable) postMessage(tagItemOwner({ type: 'createHandler', id: c.id, event: e.name }));
         });
       })(ev);
       addColSplit(nameTd);
@@ -2614,7 +2664,17 @@
     eventsEl.appendChild(t);
   }
 
+  // The clear button is visible only while there is a filter to clear (programmatic clears included).
+  function syncSearchClear() { if (searchClearEl) searchClearEl.hidden = !searchEl.value; }
+  function clearSearch() {
+    if (!searchEl.value) return false;
+    searchEl.value = '';
+    renderActiveTab();
+    searchEl.focus(); // keep typing where the user was, as VS does
+    return true;
+  }
   function renderActiveTab() {
+    syncSearchClear();
     if (activeTab === 'props') renderProps(currentComponent, searchEl.value);
     else renderEvents(currentComponent, searchEl.value);
     updateDescPane(); // keep the description pane in sync with the active tab (and any re-render)
@@ -2644,14 +2704,16 @@
     return true;
   }
 
-  treeEl.addEventListener('change', function () { currentId = treeEl.value; vscode.postMessage({ type: 'pick', id: currentId }); });
+  treeEl.addEventListener('change', function () { currentId = treeEl.value; postMessage({ type: 'pick', id: currentId }); });
   tabPropsEl.addEventListener('click', function () { setTab('props'); });
   tabEventsEl.addEventListener('click', function () { setTab('events'); });
   searchEl.addEventListener('input', renderActiveTab);
   searchEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { if (clearSearch()) e.preventDefault(); return; }
     if (e.key !== 'ArrowDown' && e.key !== 'Enter') return;
     if (focusFirstGridResult()) e.preventDefault();
   });
+  if (searchClearEl) searchClearEl.addEventListener('click', function () { clearSearch(); });
   sortCatEl.addEventListener('click', function () { setSort('category'); });
   sortAlphaEl.addEventListener('click', function () { setSort('alpha'); });
 
@@ -2662,7 +2724,7 @@
     if (e.key !== 'Delete' && e.key !== 'Del') return;
     var ae = document.activeElement;
     if (ae && (/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName) || ae.isContentEditable)) return;
-    e.preventDefault(); vscode.postMessage({ type: 'deleteSelected' });
+    e.preventDefault(); postMessage({ type: 'deleteSelected' });
   });
 
   window.addEventListener('message', function (e) {
@@ -2828,5 +2890,5 @@
   // stack on top of each other; without this explicit call the first paint could show more than one pane's
   // text overlapping until the user clicked a tab. (Bug fix: "каша" on init.)
   showMainTab('props', false);
-  vscode.postMessage({ type: 'ready' });
+  postMessage({ type: 'ready' });
 })();

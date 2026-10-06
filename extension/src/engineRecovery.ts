@@ -28,6 +28,11 @@ export class EngineRecoveryPolicy {
     };
   }
 
+  /** An explicit user restart starts a fresh automatic-recovery budget. */
+  reset(kind: RecoverableEngineKind): void {
+    this.crashes.delete(kind);
+  }
+
   recentCrashCount(kind: RecoverableEngineKind, now = Date.now()): number {
     const recent = (this.crashes.get(kind) ?? []).filter((at) => now - at < this.windowMs);
     this.crashes.set(kind, recent);

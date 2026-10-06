@@ -638,6 +638,8 @@ namespace WinFormsDesigner.Engine
                 case ObjectCreationExpressionSyntax oc:
                     {
                         string tn = QualifiedTypeName(oc.Type);
+                        // decimal is not constructable in general — only its closed CodeDom bits form is.
+                        if (tn == "System.Decimal") return DecimalBitsValue(oc);
                         // inline value construction is allowed ONLY for the FullName allowlist (Point/Size/Font/…).
                         if (!AllowlistHasConstruction(tn)) return null;
                         if (oc.Initializer != null) return null;
@@ -721,6 +723,9 @@ namespace WinFormsDesigner.Engine
                         return null;
                     }
 
+                case BinaryExpressionSyntax cat when cat.IsKind(SyntaxKind.AddExpression):
+                    return TryConcatStringLiterals(cat, out string joined) ? new IrString { Value = joined } : null;
+
                 case BinaryExpressionSyntax bin when bin.IsKind(SyntaxKind.BitwiseOrExpression):
                     {
                         // flags enum: A.B | A.C | ... — collect members; every operand must be an enum member of ONE type.
@@ -765,6 +770,96 @@ namespace WinFormsDesigner.Engine
                 return true;
             }
             return false;
+        }
+
+        /// <summary>`new decimal(new int[] { lo, mid, hi, flags })` → a decimal ctor over exactly four Int32 literal
+        /// words (see <see cref="DesignerAllowlists.TryCreateDecimalFromBits"/>); any other decimal construction is
+        /// unrepresentable.</summary>
+        private static IrValue? DecimalBitsValue(ObjectCreationExpressionSyntax oc)
+        {
+            if (!TryDecimalBitsSyntax(oc, out int[] bits)) return null;
+            var words = new IrArray { ElementTypeName = "System.Int32" };
+            foreach (int w in bits)
+                words.Items.Add(new IrNumber { Kind = IrNumericKind.Int32, InvariantText = w.ToString(CultureInfo.InvariantCulture) });
+            return new IrKnownCtor { TypeName = "System.Decimal", Args = new List<IrValue> { words } };
+        }
+
+        /// <summary>The syntax half of the closed decimal form, shared with the modern interpreter: one positional
+        /// argument that is an `int[]` (keyword or System.Int32) array creation with an omitted size and exactly four
+        /// elements, each an Int32 integer literal, optionally negated or parenthesized. Calls, reads, casts and
+        /// arithmetic are refused, so nothing but literal words can reach System.Decimal.</summary>
+        internal static bool TryDecimalBitsSyntax(ObjectCreationExpressionSyntax oc, out int[] bits)
+        {
+            bits = Array.Empty<int>();
+            if (oc.Initializer != null || oc.ArgumentList == null || oc.ArgumentList.Arguments.Count != 1) return false;
+            var arg = oc.ArgumentList.Arguments[0];
+            if (arg.NameColon != null || !arg.RefKindKeyword.IsKind(SyntaxKind.None)) return false;
+            if (Unparen(arg.Expression) is not ArrayCreationExpressionSyntax arr || arr.Initializer == null) return false;
+            if (QualifiedTypeName(arr.Type.ElementType) != "System.Int32" || arr.Type.RankSpecifiers.Count != 1
+                || arr.Type.RankSpecifiers[0].Sizes.Any(s => s is not OmittedArraySizeExpressionSyntax)) return false;
+            var items = arr.Initializer.Expressions;
+            if (items.Count != DesignerAllowlists.DecimalBitsLength) return false;
+            var words = new int[items.Count];
+            for (int i = 0; i < items.Count; i++)
+                if (!TryInt32Word(items[i], out words[i])) return false;
+            bits = words;
+            return true;
+        }
+
+        /// <summary>Upper bound on the pieces of one folded string: CodeDom splits a literal every 80 characters, so this
+        /// covers ~320K characters while keeping hostile source from building an unbounded chain.</summary>
+        private const int MaxConcatPieces = 4096;
+
+        /// <summary>`"…" + "…" + …` where every operand is a string literal — the form the CodeDom serializer writes for
+        /// any string longer than 80 characters (a long ToolTip/Text). Constant folding only: a non-literal operand
+        /// (a call, a read, a number) refuses the whole expression. Walks the left-nested spine iteratively, so a long
+        /// chain cannot exhaust the stack. Shared with the modern interpreter.</summary>
+        internal static bool TryConcatStringLiterals(BinaryExpressionSyntax expr, out string value)
+        {
+            value = "";
+            var rights = new Stack<ExpressionSyntax>();
+            ExpressionSyntax e = expr;
+            while (Unparen(e) is BinaryExpressionSyntax b && b.IsKind(SyntaxKind.AddExpression))
+            {
+                if (rights.Count >= MaxConcatPieces) return false;
+                rights.Push(b.Right);
+                e = b.Left;
+            }
+            var sb = new System.Text.StringBuilder();
+            if (!AppendStringLiteral(e, sb)) return false;
+            while (rights.Count > 0)
+                if (!AppendStringLiteral(rights.Pop(), sb)) return false;
+            value = sb.ToString();
+            return true;
+        }
+
+        private static bool AppendStringLiteral(ExpressionSyntax e, System.Text.StringBuilder sb)
+        {
+            if (Unparen(e) is not LiteralExpressionSyntax lit || !lit.IsKind(SyntaxKind.StringLiteralExpression)) return false;
+            sb.Append((string)(lit.Token.Value ?? ""));
+            return true;
+        }
+
+        /// <summary>An Int32 integer literal, optionally negated: `-2147483648` is the literal 2147483648 (a uint)
+        /// negated, the sign-bit flags word CodeDom writes for a negative decimal.</summary>
+        private static bool TryInt32Word(ExpressionSyntax e, out int value)
+        {
+            value = 0;
+            e = Unparen(e);
+            bool neg = false;
+            if (e is PrefixUnaryExpressionSyntax pre && pre.IsKind(SyntaxKind.UnaryMinusExpression)) { neg = true; e = Unparen(pre.Operand); }
+            if (e is not LiteralExpressionSyntax lit || !lit.IsKind(SyntaxKind.NumericLiteralExpression)) return false;
+            long magnitude;
+            switch (lit.Token.Value)
+            {
+                case int i: magnitude = i; break;
+                case uint u: magnitude = u; break;
+                default: return false; // long/ulong/real/suffixed forms are not an Int32 word
+            }
+            long v = neg ? -magnitude : magnitude;
+            if (v < int.MinValue || v > int.MaxValue) return false;
+            value = (int)v;
+            return true;
         }
 
         private static IrValue? LiteralValue(LiteralExpressionSyntax lit)

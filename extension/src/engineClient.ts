@@ -8,6 +8,10 @@ import {
 } from 'vscode-jsonrpc/node';
 import { StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node';
 import { RecoveryDecision } from './engineRecovery';
+import { EngineTransportState, SupervisedEngineOptions, startSupervisedEngine } from './engineTransport';
+import { guardEngineMessageWriter } from './engineWriter';
+export { currentEngineRequestContext, withEngineRequestContext } from './engineRequestContext';
+export type { EngineRequestContext } from './engineRequestContext';
 import {
   SupervisedWorker,
   WorkerAdapter,
@@ -42,6 +46,11 @@ export interface EngineHandle {
   process: ChildProcess;
   pipeName: string;
   dispose(): void;
+  workerState?(): EngineTransportState;
+  /** Protect a retained workflow handle from residency-budget eviction between RPCs. Release in finally. */
+  acquireUsageLease?(): () => void;
+  delayNextReplyForTest?(delayMs: number): void;
+  wasUnexpectedlyLost?(): boolean;
 }
 
 export interface StartOptions {
@@ -95,7 +104,11 @@ export function newPipeName(): string {
   return `winforms-designer-${randomUUID()}`;
 }
 
-export async function startEngine(engineDllPath: string, opts: StartOptions = {}): Promise<EngineHandle> {
+export async function startEngine(engineDllPath: string, opts: SupervisedEngineOptions = {}): Promise<EngineHandle> {
+  return startSupervisedEngine(engineDllPath, opts, startRawEngine);
+}
+
+async function startRawEngine(engineDllPath: string, opts: StartOptions = {}): Promise<EngineHandle> {
   const dotnet = opts.dotnet ?? 'dotnet';
   const log = opts.onLog ?? ((l: string) => console.error(l));
   const pipeName = newPipeName();
@@ -134,9 +147,20 @@ export async function startEngine(engineDllPath: string, opts: StartOptions = {}
   opts.onSpawn?.(proc);
 
   const socket = await connectWithProcessGuard(proc, '\\\\.\\pipe\\' + pipeName, startupOutput, engineDllPath);
-  const connection = createMessageConnection(
+  let connection: MessageConnection;
+  const writer = new StreamMessageWriter(socket);
+  // vscode-jsonrpc's request writer uses an async Promise executor. A stream write failure otherwise rejects both
+  // the request and that internal executor. Dispose to reject every pending request, then absorb only the writer's
+  // duplicate rejection so a normal child crash cannot become an unhandled extension-host rejection.
+  guardEngineMessageWriter(writer, () => {
+    try { connection?.dispose(); } catch { /* already disconnected */ }
+    try { socket.destroy(); } catch { /* already disconnected */ }
+    // dispose suppresses onClose in vscode-jsonrpc; actual exit must also invalidate the live registry owner.
+    try { proc.kill(); } catch { /* already exited */ }
+  });
+  connection = createMessageConnection(
     new StreamMessageReader(socket),
-    new StreamMessageWriter(socket),
+    writer,
   );
   connection.listen();
 
@@ -1503,6 +1527,10 @@ export interface ExpandablePropertyDesc {
   value?: string | null;
   readOnly: boolean;
   sourceEditable: boolean;
+  /** The leaf is an enum (written as `Type.Member`). */
+  isEnum?: boolean;
+  /** The engine's nested edit route accepts this row — the only nested write capability the grid may offer. */
+  nestedEditable?: boolean;
   category: string;
   description?: string | null;
   standardValues?: string[] | null;
@@ -2550,6 +2578,19 @@ export function setProperty(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('SetProperty', designerFilePath, componentId, propertyName, newValueExpr, ...tail);
+}
+
+/** Compute a targeted NESTED property edit (`this.<id>.ImageOptions.Location = …`, no write). Pure source splice —
+ * the modern engine plans it for both engines' forms, like SetModifier. */
+export function setNestedProperty(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyPath: string,
+  newValueExpr: string,
+  sourceText: string,
+): Promise<EditPreview> {
+  return engine.connection.sendRequest<EditPreview>('SetNestedProperty', designerFilePath, componentId, propertyPath, newValueExpr, sourceText);
 }
 
 /** Low-level owned-region planner. The product route below consumes it only when the engine independently proves that

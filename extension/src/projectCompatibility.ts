@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 export type CompatibilityArchitecture = 'x86' | 'x64' | 'arm64' | 'anycpu' | 'unknown';
@@ -53,6 +54,27 @@ export interface ProjectCompatibilityResult {
   observedPaths: string[];
   /** The evidence was invalidated while it was gathered; it decides nothing and should be gathered again. */
   stale?: boolean;
+  /** True only when the evaluated effective configuration selects this exact output. */
+  effectiveOutputMatched?: boolean;
+}
+
+/** Conventional output folders supply candidate properties; TargetPath evaluation remains the verification. */
+export function selectedOutputCompatibilityOptions(
+  projectPath: string | undefined, assemblyPath: string | undefined, runtime: CompatibilityRuntime, trusted: boolean,
+): ProjectCompatibilityOptions {
+  const options: ProjectCompatibilityOptions = { projectPath, assemblyPath, runtime, trusted };
+  if (!projectPath || !assemblyPath) return options;
+  const relative = path.relative(path.dirname(path.resolve(projectPath)), path.resolve(assemblyPath));
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return options;
+  const parts = relative.split(/[\\/]+/);
+  if (parts[0]?.toLowerCase() !== 'bin' || parts.length < 3) return options;
+  let index = 1;
+  if (/^(?:x64|x86|arm64|AnyCPU)$/i.test(parts[index])) options.platform = parts[index++];
+  const configuration = parts[index++];
+  if (!configuration || !/^[A-Za-z][A-Za-z0-9_. -]{0,127}$/.test(configuration)) return options;
+  options.configuration = configuration;
+  if (/^net\d+(?:\.\d+)?(?:-[A-Za-z0-9.-]+)?$/i.test(parts[index] ?? '')) options.targetFramework = parts[index];
+  return options;
 }
 export type ProjectEvaluationRequest = ProjectCompatibilityOptions & { projectPath: string };
 export type ProjectEvaluationResult =
@@ -159,6 +181,10 @@ function runEvaluationProcess(executable: string, args: string[], timeoutMs: num
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, DOTNET_CLI_TELEMETRY_OPTOUT: '1', DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1' } });
+    // The evaluation runs behind the first frame; it must not compete with the render and the user's own work for
+    // CPU. Children (MSBuild nodes) inherit the priority class. Best effort: an unsupported call changes nothing.
+    try { if (child.pid !== undefined) os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); }
+    catch { /* priority is an optimization, never a precondition */ }
     let settled = false;
     let size = 0;
     const chunks: Buffer[] = [];
@@ -309,6 +335,8 @@ export async function inspectProjectCompatibility(
   const samePath = (a: string, b: string): boolean => process.platform === 'win32'
     ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
   const outputMatchesEvaluation = !options.assemblyPath || !!result.evaluated?.targetPath && samePath(options.assemblyPath, result.evaluated.targetPath);
+  result.effectiveOutputMatched = !!result.evaluated?.targetPath && outputMatchesEvaluation
+    && (!options.assemblyPath || !!options.configuration);
   if (options.assemblyPath && result.evaluated && !outputMatchesEvaluation) {
     result.limitations.push('The selected assembly differs from the evaluated TargetPath; evaluated reference paths are not confirmed dependencies of that build.');
   }
@@ -348,25 +376,44 @@ export function inspectImageCompatibility(
   });
 }
 
-/**
- * What a render waits for. The complete inspection evaluates the project with MSBuild, which takes about a second
- * warm and far longer on a cold machine, so a render waits for it only briefly — long enough for a cached result —
- * and is otherwise gated on the image evidence it can read at once. `late` is the complete result still to come; an
- * incompatibility only it can find (a project setting, an evaluated reference) must then refuse the form.
- */
+/** Complete effective output evidence selects the physical render worker. A published retained graph cannot move
+ * from an image-only worker to another worker when evaluation finishes. The evaluator already bounds its subprocess
+ * work; cancellation only ends this document's wait and never cancels a shared cached inspection. Failed or invalidated
+ * evidence remains conservative image evidence for this render, without a later identity promotion. */
 export async function compatibilityForRender(
   complete: Promise<ProjectCompatibilityResult>,
   imagesOnly: () => Promise<ProjectCompatibilityResult>,
-  waitMs: number,
-): Promise<{ result: ProjectCompatibilityResult; late?: Promise<ProjectCompatibilityResult> }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), waitMs); });
+  cancellation?: AbortSignal,
+  priorRefusal?: ProjectCompatibilityResult,
+): Promise<ProjectCompatibilityResult> {
+  const settled = complete.catch(() => undefined);
+  if (cancellation?.aborted) throw new Error('REQUEST_CANCELLED');
+  let abort: (() => void) | undefined;
+  const inspected = settled.then((result) => {
+    if (cancellation?.aborted) throw new Error('REQUEST_CANCELLED');
+    if (!result || result.stale) return priorRefusal ?? imagesOnly();
+    if (priorRefusal && result.status !== 'incompatible'
+      && (priorRefusal.code === 'DEPENDENCY_ARCHITECTURE_MISMATCH' || priorRefusal.code === 'PROJECT_ARCHITECTURE_MISMATCH')
+      && (!result.evaluated || !result.effectiveOutputMatched || result.status !== 'compatible')) return priorRefusal;
+    if (priorRefusal && result.status !== 'incompatible'
+      && (priorRefusal.code === 'OUTPUT_ARCHITECTURE_MISMATCH' || priorRefusal.code === 'OUTPUT_NOT_MANAGED')
+      && (!result.output?.managed || result.output.architecture === 'unknown' || imageMismatch(result.output, result.workerArchitecture))) return priorRefusal;
+    return result;
+  });
   try {
-    const settled = await Promise.race([complete.catch(() => undefined), expired]);
-    if (settled) return { result: settled };
-  } finally { clearTimeout(timer); }
-  return { result: await imagesOnly(), late: complete };
+    return await Promise.race([inspected, new Promise<never>((_, reject) => {
+      abort = () => reject(new Error('REQUEST_CANCELLED'));
+      cancellation?.addEventListener('abort', abort, { once: true });
+    })]);
+  } finally { if (abort) cancellation?.removeEventListener('abort', abort); }
 }
+
+/** How long evidence is reused while every observed file keeps its stamp. A changed project, output, import or
+ * dependency re-evaluates at once (fingerprint below, plus the workspace watchers); the bound only covers files no stamp
+ * can see, such as a NEW Directory.Build.props above the workspace. Re-running MSBuild for an unchanged project every
+ * 30 seconds cost a whole evaluation on each render after the first half minute. */
+const EVIDENCE_TTL_MS = 300_000;
+const UNKNOWN_EVIDENCE_TTL_MS = 2_000;
 
 interface CompatibilityCacheEntry {
   generation: number;
@@ -465,7 +512,7 @@ export class ProjectCompatibilityCache {
         result.observedPaths = paths;
         entry.result = clone(result);
         entry.fingerprint = JSON.stringify([...after]);
-        entry.expires = this.now() + (result.status === 'unknown' ? 2_000 : 30_000);
+        entry.expires = this.now() + (result.status === 'unknown' ? UNKNOWN_EVIDENCE_TTL_MS : EVIDENCE_TTL_MS);
       }
       return result;
     })();

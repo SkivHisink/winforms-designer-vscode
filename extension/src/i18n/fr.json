@@ -274,6 +274,7 @@
   "panel.hint.font": " (nom, sizept[, style=Bold, Italic])",
   "panel.search.props": "Rechercher des propriétés…",
   "panel.search.events": "Rechercher des événements…",
+  "panel.search.clear": "Effacer la recherche",
   "panel.event.handlerTip": "Saisissez un nom de gestionnaire (nouveau ou existant), ou effacez pour dissocier",
   "panel.event.wiredTip": "  —  double-cliquez pour accéder au gestionnaire",
   "panel.event.unwiredTip": "  —  double-cliquez pour créer un gestionnaire",
@@ -558,6 +559,15 @@
   "support.action.viewCode": "Afficher le code",
   "support.action.clearCache": "Reconstruire le cache de la boîte à outils",
   "support.action.restart": "Redémarrer le moteur d’aperçu",
+  "support.action.reinstall": "Ouvrir l’extension pour la réinstaller",
+  "host.rollback.frozen": "Un retour arrière est en préparation : le concepteur n’accepte plus de nouveau travail. Rechargez la fenêtre pour continuer.",
+  "host.rollback.ready": "Prêt à changer de version : aucune opération du concepteur n’est en cours et tous les journaux enregistrés sont terminés. Installez la version précédente de WinForms Designer, puis exécutez « Recharger la fenêtre ». Les conceptions non enregistrées restent dans les sauvegardes de VS Code.",
+  "host.rollback.blocked": "Pas prêt à changer de version : {count} élément(s) doivent d’abord être résolus ({detail}). Le concepteur continue de fonctionner avec cette version.",
+  "host.rollback.confirmUnresolved": "{count} opération(s) du concepteur ont un résultat indéterminé. Vérifiez les fichiers concernés avant de changer de version. Changer quand même ?",
+  "host.rollback.switchAnyway": "Changer quand même",
+  "host.rollback.resume": "Reprendre la conception",
+  "host.rollback.cancelled": "La préparation du retour arrière a été annulée, car un formulaire a été modifié par Annuler, Rétablir ou Rétablir le fichier. Avant de changer de version, exécutez de nouveau « WinForms : Préparer le retour arrière ou la rétrogradation du concepteur ».",
+  "host.revert.failed": "Le formulaire n’a pas pu être rétabli, car son fichier généré est illisible. Vos modifications non enregistrées sont conservées ; vérifiez le fichier sur le disque, puis réessayez.",
   "support.action.refresh": "Actualiser l’état",
   "support.field.project": "Projet",
   "support.field.framework": "Framework cible évalué",
@@ -621,5 +631,6 @@
   "diagnostics.reason.ADAPTER_IDENTITY_DUPLICATE": "Plusieurs manifestes déclarent la même identité d’adaptateur. Résolvez la déclaration en double.",
   "diagnostics.reason.CACHE_WRITE_FAILED": "Le cache des contrôles n’a pas pu être enregistré. Reconstruisez le cache pour réessayer.",
   "diagnostics.reason.STATE_MIGRATION_FAILED": "Les préférences enregistrées de la boîte à outils n’ont pas pu être migrées. Rechargez la fenêtre pour réessayer ; les préférences d’origine sont conservées.",
-  "diagnostics.reason.PERSISTED_STATE_INVALID": "Les préférences enregistrées du concepteur sont invalides ; seules leurs parties valides sont utilisées. Les données enregistrées sont conservées jusqu’au prochain enregistrement de cette préférence par le concepteur."
+  "diagnostics.reason.PERSISTED_STATE_INVALID": "Les préférences enregistrées du concepteur sont invalides ; seules leurs parties valides sont utilisées. Les données enregistrées sont conservées jusqu’au prochain enregistrement de cette préférence par le concepteur.",
+  "diagnostics.reason.ENGINE_INSTALLATION_INCOMPATIBLE": "Les fichiers du moteur sont absents ou incompatibles avec cette extension. Réinstallez la version correspondante de WinForms Designer, puis exécutez Reload Window. Enregistrez ou sauvegardez les documents non enregistrés avant de recharger."
 }

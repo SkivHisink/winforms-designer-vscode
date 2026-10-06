@@ -89,6 +89,14 @@ namespace WinFormsDesigner.Engine.Net48
                 if (child == null)
                     return Refused(componentTypeName, certificationId, sha, "WORKER_UNAVAILABLE",
                         "The net48 hosted-service worker could not be started.");
+                // Same containment as the hosted-designer worker: it must not outlive a recycled or crashed engine.
+                if (!RenderDesktop.ContainChildProcess(child.Handle))
+                {
+                    try { child.Kill(); } catch { }
+                    try { child.WaitForExit(2_000); } catch { }
+                    return Refused(componentTypeName, certificationId, sha, "WORKER_UNAVAILABLE",
+                        "The net48 hosted-service worker could not be tied to the engine's lifetime.");
+                }
                 if (!child.WaitForExit(WorkerTimeoutMs))
                 {
                     try { child.Kill(); } catch { }

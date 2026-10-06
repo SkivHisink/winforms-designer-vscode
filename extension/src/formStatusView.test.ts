@@ -14,7 +14,7 @@ const labels: FormStatusLabels = {
   actionFailed: 'Action failed', severity: { info: 'Information', warning: 'Warning', error: 'Error' },
   actions: {
     retry: 'Retry render', rebuild: 'Rebuild', chooseAssembly: 'Choose assembly', viewCode: 'View code',
-    clearCache: 'Clear cache', restart: 'Restart worker', refresh: 'Refresh',
+    clearCache: 'Clear cache', restart: 'Restart worker', reinstall: 'Open extension', refresh: 'Refresh',
   },
 };
 

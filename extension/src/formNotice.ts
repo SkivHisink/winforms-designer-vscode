@@ -7,7 +7,8 @@
 // host composes the message text from EVERY true condition so a single-slot banner never HIDES a lower-precedence
 // disclosure.
 //
-// Precedence: localizable (the active resource-editing context — 🌐) > net48Preview (ℹ️ unconditional "last build"
+// Precedence: buildTask (⏳ a build owns the .NET Framework output; the last preview is view-only until it ends) >
+// localizable (the active resource-editing context — 🌐) > net48Preview (ℹ️ unconditional "last build"
 // disclosure on an editable form) > binaryResx (⚠️) > inheritedBase (⚠️). The modern-only flags (inheritedNet9,
 // binaryResx) must ALREADY be gated to the modern engine by the caller; net48Preview is net48-only. Every non-null
 // outcome is non-silent.
@@ -15,10 +16,13 @@
 // Pure (no vscode / no i18n) so the precedence is unit-testable in isolation.
 
 export type FormNoticeKind =
-  | 'localizable' | 'inheritedBase' | 'localizableInherited' | 'binaryResx' | 'compiledPreview' | null;
+  | 'localizable' | 'inheritedBase' | 'localizableInherited' | 'binaryResx' | 'compiledPreview' | 'buildTask' | null;
 
 export function chooseFormNoticeKind(
-  localizable: boolean, inheritedNet9: boolean, binaryResx = false, net48Preview = false): FormNoticeKind {
+  localizable: boolean, inheritedNet9: boolean, binaryResx = false, net48Preview = false,
+  buildTask = false): FormNoticeKind {
+  // A running build is not a failure: it is the one transient reason the canvas is view-only, so it is the message.
+  if (buildTask) return 'buildTask';
   if (localizable && inheritedNet9) return 'localizableInherited'; // 🌐 (+ any other clause appended by host)
   if (localizable) return 'localizable';                          // 🌐 selected culture resource editing
   if (net48Preview) return 'compiledPreview';                     // ℹ️ 1.0.0 — editable, but the picture is the build

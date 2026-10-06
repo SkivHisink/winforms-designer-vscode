@@ -303,6 +303,7 @@ export const en: Catalog = {
   // property/event search placeholders
   'panel.search.props': 'Search properties…',
   'panel.search.events': 'Search events…',
+  'panel.search.clear': 'Clear search',
 
   // event combo
   'panel.event.handlerTip': 'Type a handler name (new or existing), or clear to unwire',
@@ -610,7 +611,16 @@ export const en: Catalog = {
   'support.action.viewCode': "View Code",
   'support.action.clearCache': "Rebuild Toolbox Cache",
   'support.action.restart': "Restart Preview Engine",
+  'support.action.reinstall': "Open Extension to Reinstall",
+  'host.rollback.frozen': "A rollback is being prepared, so the designer accepts no new work. Reload the window to continue.",
+  'host.rollback.ready': "Ready to switch versions: no designer operation is running and every saved journal is complete. Install the previous WinForms Designer version, then run Reload Window. Unsaved designs stay in VS Code backups.",
+  'host.rollback.blocked': "Not ready to switch versions: {count} item(s) must be resolved first ({detail}). The designer keeps working on this version.",
+  'host.rollback.confirmUnresolved': "{count} designer operation(s) have an undecided outcome. Check the affected files before switching versions. Switch anyway?",
+  'host.rollback.switchAnyway': "Switch Anyway",
+  'host.rollback.resume': "Resume Designing",
+  'host.rollback.cancelled': "Rollback preparation was cancelled because a form changed through Undo, Redo or Revert. Run “WinForms: Prepare to Roll Back or Downgrade the Designer” again before switching versions.",
   'support.action.refresh': "Refresh Status",
+  'host.revert.failed': "The form could not be reverted because its generated file could not be read. Your unsaved changes are kept; check the file on disk, then try again.",
   'support.field.project': "Project",
   'support.field.framework': "Evaluated target framework",
   'support.field.engine': "Design engine",
@@ -674,4 +684,5 @@ export const en: Catalog = {
   'diagnostics.reason.CACHE_WRITE_FAILED': "The control cache could not be saved. Rebuild the cache to retry.",
   'diagnostics.reason.STATE_MIGRATION_FAILED': "Saved toolbox preferences could not be migrated. Reload the window to retry; the original preferences are retained.",
   'diagnostics.reason.PERSISTED_STATE_INVALID': "Saved designer preferences are invalid; only their valid parts are used. The saved data is kept until the designer next stores that preference.",
+  'diagnostics.reason.ENGINE_INSTALLATION_INCOMPATIBLE': "The engine payload is missing or incompatible with this extension. Reinstall the matching WinForms Designer version, then run Reload Window. Save or back up unsaved documents before reloading.",
 };

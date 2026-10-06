@@ -18,6 +18,9 @@ export interface WorkerPayloadIdentity {
   sourceFingerprint: string;
   resourceFingerprint?: string;
   payloadHash: string;
+  sourceByteLength?: number;
+  renderGeneration?: number;
+  operationId?: string;
 }
 
 export interface WorkerSelectionInput {
@@ -35,6 +38,12 @@ export interface WorkerKey {
   runtime: WorkerRuntime;
   workerArchitecture: Exclude<WorkerArchitecture, 'x86'>;
   compatibility: 'native' | 'x64-compat';
+  ownerProject?: string;
+  configuration?: string;
+  targetFramework?: string;
+  platform?: string;
+  dependencyFingerprint?: string;
+  trustPolicy?: string;
 }
 
 export interface WorkerCapabilities {
@@ -172,5 +181,8 @@ function refuse(
 }
 
 export function workerKeyId(key: WorkerKey): string {
-  return `${key.runtime}:${key.workerArchitecture}:${key.compatibility}`;
+  const runtime = `${key.runtime}:${key.workerArchitecture}:${key.compatibility}`;
+  if (key.ownerProject === undefined) return runtime;
+  return `${runtime}:${JSON.stringify([key.ownerProject, key.configuration, key.targetFramework,
+    key.platform, key.dependencyFingerprint, key.trustPolicy])}`;
 }

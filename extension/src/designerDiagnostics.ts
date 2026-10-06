@@ -1,6 +1,6 @@
 import type { RenderDiagItem } from './renderDiagnostics';
 
-export type RecoveryActionId = 'retry' | 'rebuild' | 'chooseAssembly' | 'viewCode' | 'clearCache' | 'restart';
+export type RecoveryActionId = 'retry' | 'rebuild' | 'chooseAssembly' | 'viewCode' | 'clearCache' | 'restart' | 'reinstall';
 export type DesignerDiagnosticSeverity = 'info' | 'warning' | 'error';
 
 interface ReasonDefinition {
@@ -17,6 +17,7 @@ export const DESIGNER_DIAGNOSTIC_REASONS = {
   UNSUPPORTED_CONSTRUCT: { severity: 'warning', message: 'A source construct cannot be represented on the canvas. Inspect its source.', actions: ['viewCode'] },
   RENDER_FAILED: { severity: 'error', message: 'The current render failed. Any retained preview may be stale.', actions: ['retry', 'viewCode'] },
   ENGINE_UNAVAILABLE: { severity: 'error', message: 'The selected design engine is unavailable. Restart it and retry the render.', actions: ['restart', 'retry'] },
+  ENGINE_INSTALLATION_INCOMPATIBLE: { severity: 'error', message: 'The engine payload is missing or incompatible with this extension. Reinstall the matching WinForms Designer version, then run Reload Window. Save or back up unsaved documents before reloading.', actions: ['reinstall'] },
   ENGINE_CRASH_LOOP: { severity: 'error', message: 'Automatic engine recovery stopped after repeated failures. Inspect the source before restarting.', actions: ['viewCode', 'restart'] },
   CACHE_CORRUPT: { severity: 'warning', message: 'The rebuildable control cache is invalid. Clear that cache and discover controls again.', actions: ['clearCache'] },
   CACHE_WRITE_FAILED: { severity: 'warning', message: 'The control cache could not be saved. Rebuild the cache to retry.', actions: ['clearCache'] },
@@ -61,6 +62,16 @@ export const DESIGNER_DIAGNOSTIC_REASONS = {
 } as const satisfies Record<string, ReasonDefinition>;
 
 export type DesignerDiagnosticCode = keyof typeof DESIGNER_DIAGNOSTIC_REASONS;
+
+/** Installation repair is distinct from recycling a healthy installed process. No raw error text becomes UI. */
+export function engineInstallationDiagnosticCode(error: unknown): 'ENGINE_UNAVAILABLE' | 'ENGINE_INSTALLATION_INCOMPATIBLE' {
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && [
+    'ENGINE_PROTOCOL_PARTIAL_UPDATE', 'ENGINE_PAYLOAD_UNAVAILABLE', 'MISSING_ENGINE_PAYLOAD',
+    'BUILD_ID_MISMATCH', 'PROTOCOL_VERSION_UNSUPPORTED', 'UNKNOWN_REQUIRED_CAPABILITY',
+    'PROTOCOL_NOT_NEGOTIATED',
+  ].includes(code) ? 'ENGINE_INSTALLATION_INCOMPATIBLE' : 'ENGINE_UNAVAILABLE';
+}
 export interface DesignerDiagnosticContext {
   target?: unknown;
   control?: unknown;

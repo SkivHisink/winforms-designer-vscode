@@ -34,6 +34,7 @@ export interface DesignerResourceTransactionOptions {
   journalRoot: string;
   targets: readonly DesignerResourceTransactionTarget[];
   transactionId?: string;
+  hostOperation?: TransactionJournalRecord['hostOperation'];
   nowUtc?: () => string;
   readBytes(filePath: string): Promise<Uint8Array | null>;
   writeBytes(filePath: string, bytes: Uint8Array): Promise<void>;
@@ -202,5 +203,5 @@ export async function runDesignerResourceTransaction(
     },
   };
 
-  return runPatchSetTransaction(patchSet, adapters, { transactionId, nowUtc: options.nowUtc });
+  return runPatchSetTransaction(patchSet, adapters, { transactionId, nowUtc: options.nowUtc, hostOperation: options.hostOperation });
 }

@@ -672,14 +672,16 @@ ${outcomeCodeEntries.map(([kind, values]) => `                case V2ProtocolOut
         }
     }
 
+    [Newtonsoft.Json.JsonConverter(typeof(Newtonsoft.Json.Converters.StringEnumConverter))]
     public enum V2ProtocolMessageKind
     {
-${messageKinds.map((kind) => `        ${pascal(kind)}`).join(',\n')}
+${messageKinds.map((kind) => `        [System.Runtime.Serialization.EnumMember(Value = "${kind}")]\n        ${pascal(kind)}`).join(',\n')}
     }
 
+    [Newtonsoft.Json.JsonConverter(typeof(Newtonsoft.Json.Converters.StringEnumConverter))]
     public enum V2ProtocolOutcomeKind
     {
-${outcomeKinds.map((kind) => `        ${pascal(kind)}`).join(',\n')}
+${outcomeKinds.map((kind) => `        [System.Runtime.Serialization.EnumMember(Value = "${kind}")]\n        ${pascal(kind)}`).join(',\n')}
     }
 
     public sealed class V2Fingerprint

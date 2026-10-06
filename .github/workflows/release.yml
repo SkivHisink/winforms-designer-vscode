@@ -18,6 +18,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # The installed upgrade/downgrade acceptance reconstructs the 2.1.0 baseline with `git archive`.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -177,6 +180,26 @@ jobs:
           WFD_SCENARIO_EVIDENCE_DIR: ${{ runner.temp }}\v2-scenario-evidence
         run: npm run extension-host-e2e -- --version=stable
 
+      - name: Release 2.2 ordinary product acceptance (VS Code 1.84)
+        working-directory: extension
+        env:
+          WFD_RELEASE22_EVIDENCE_FILE: ${{ runner.temp }}\release22-product-evidence\release22-host-1.84.0.json
+        run: npm run release22:extension-host -- --version=1.84.0
+
+      - name: Release 2.2 ordinary product acceptance (VS Code Stable)
+        working-directory: extension
+        env:
+          WFD_RELEASE22_EVIDENCE_FILE: ${{ runner.temp }}\release22-product-evidence\release22-host-stable.json
+        run: npm run release22:extension-host -- --version=stable
+
+      - name: Upload Release 2.2 ordinary product acceptance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release22-product-evidence
+          path: ${{ runner.temp }}/release22-product-evidence
+          if-no-files-found: warn
+
       - name: Validate measured v2 scenario evidence
         shell: pwsh
         run: ./scripts/validate-v2-scenario-catalog.ps1 -EvidenceDirectory (Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence')
@@ -209,6 +232,31 @@ jobs:
         working-directory: extension
         shell: pwsh
         run: Copy-Item -LiteralPath winforms-designer-win32-x64.vsix -Destination (Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix') -Force
+      - name: Release 2.2 installed upgrade and downgrade (VS Code 1.84 and Stable)
+        # Installs the frozen x64 package over a reconstructed 2.1.0 baseline in isolated profiles, prepares the rollback
+        # with the product coordinator and downgrades, on the VS Code builds the product acceptance steps cached above.
+        working-directory: extension
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'release22-upgrade-evidence'
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          $vsix = Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix'
+          $stable = Get-ChildItem .vscode-test -Directory -Filter 'vscode-win32-x64-archive-*' |
+            ForEach-Object { $_.Name -replace '^vscode-win32-x64-archive-', '' } |
+            Where-Object { $_ -ne '1.84.0' } | Sort-Object { [version]$_ } | Select-Object -Last 1
+          if (-not $stable) { throw 'No cached VS Code Stable build for the installed upgrade acceptance.' }
+          foreach ($version in @('1.84.0', $stable)) {
+            npm run release22:upgrade -- "--version=$version" --baseline=18a01c096502039ea913a1e8cc2ad0d320837e35 "--new-vsix=$vsix" "--report=$(Join-Path $evidence "release22-upgrade-$version.json")"
+            if ($LASTEXITCODE -ne 0) { throw "Installed upgrade/downgrade acceptance failed on VS Code $version" }
+          }
+
+      - name: Upload Release 2.2 installed upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release22-upgrade-evidence
+          path: ${{ runner.temp }}/release22-upgrade-evidence
+          if-no-files-found: warn
 
       - name: Package VSIX (Windows ARM64)
         working-directory: extension

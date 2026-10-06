@@ -36,9 +36,11 @@
   "command.runBuildTask.title": "WinForms : Exécuter la tâche de build (libérer d’abord l’aperçu)",
   "command.runTestTask.title": "WinForms : Exécuter la tâche de test (libérer d’abord l’aperçu)",
   "command.stopEngines.title": "WinForms : Arrêter le moteur d'aperçu du concepteur",
+  "command.prepareRollback.title": "WinForms : Préparer le retour arrière ou la rétrogradation du concepteur",
   "command.restartEngines.title": "WinForms : Redémarrer le moteur d'aperçu du concepteur",
   "command.showFormStatus.title": "WinForms : Afficher l’état du formulaire",
   "command.rebuildToolboxCache.title": "WinForms : Reconstruire le cache de la boîte à outils",
   "command.refreshToolbox.title": "WinForms : Actualiser la boîte à outils",
-  "command.requestToolboxItems.title": "WinForms : Choisir les éléments de la boîte à outils"
+  "command.requestToolboxItems.title": "WinForms : Choisir les éléments de la boîte à outils",
+  "config.workers.maximumResidentProcesses.description": "Nombre maximal de moteurs d’aperçu résidents pour les différents projets (1–16 ; valeur par défaut : 4). Un moteur .NET Framework comprend un lanceur et un processus de rendu isolé. Un moteur occupé ne sera pas arrêté pour ouvrir un autre projet ; réessayez après la requête en cours ou fermez un concepteur."
 }

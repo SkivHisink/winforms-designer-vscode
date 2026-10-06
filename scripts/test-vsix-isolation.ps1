@@ -128,10 +128,22 @@ try {
   Invoke-AssertVsix (New-TestVsix 'development-v2-cli' @{
       ExtraEntries = @('extension/dist/v2-headless-validate.cjs', 'extension/dist/v2-soak.cjs')
     }) -ShouldFail -ExpectedMessage 'v2-headless-validate.cjs'
+  Invoke-AssertVsix (New-TestVsix 'development-release22-host' @{
+      ExtraEntries = @('extension/dist/release22-extension-host-suite.cjs')
+    }) -ShouldFail -ExpectedMessage 'release22-extension-host-suite.cjs'
+  Invoke-AssertVsix (New-TestVsix 'development-release22-upgrade' @{
+      ExtraEntries = @('extension/dist/release22-upgrade-suite.cjs')
+    }) -ShouldFail -ExpectedMessage 'release22-upgrade-suite.cjs'
 
   Write-Host 'assert-vsix isolation tests passed.'
 } finally {
   if (Test-Path -LiteralPath $workspace) {
+    $resolvedWorkspace = [System.IO.Path]::GetFullPath($workspace)
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedWorkspace.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+      -not [System.IO.Path]::GetFileName($resolvedWorkspace).StartsWith('wfd-vsix-isolation-', [System.StringComparison]::Ordinal)) {
+      throw 'Refusing cleanup outside the generated VSIX isolation workspace.'
+    }
     Remove-Item -LiteralPath $workspace -Recurse -Force
   }
 }

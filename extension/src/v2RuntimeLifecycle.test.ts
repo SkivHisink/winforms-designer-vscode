@@ -39,6 +39,7 @@ class RealEngineHarness {
   private readonly live = new Map<WorkerRuntime, EngineHandle>();
   private modernAttempts = 0;
   readonly started: Array<{ runtime: WorkerRuntime; pid: number }> = [];
+  readonly spawned: Array<{ runtime: WorkerRuntime; process: ChildProcess }> = [];
   readonly logs: string[] = [];
 
   constructor(private readonly firstModernEntry?: string) {}
@@ -54,7 +55,10 @@ class RealEngineHarness {
       : modernAttempt > 0 || !this.firstModernEntry
         ? modernDll
         : this.firstModernEntry;
-    const handle = await startEngine(entry, { onLog: (line) => this.logs.push(line) });
+    const handle = await startEngine(entry, {
+      onLog: (line) => this.logs.push(line),
+      onSpawn: (proc) => this.spawned.push({ runtime, process: proc }),
+    });
     this.live.set(runtime, handle);
     if (handle.process.pid !== undefined) this.started.push({ runtime, pid: handle.process.pid });
     return handle;
@@ -87,6 +91,11 @@ describe('v2 runtime lifecycle process harness', () => {
     const tempRoot = mkdtempSync(path.join(tmpdir(), 'wfd-v2-runtime-s103-'));
     const brokenApphost = path.join(tempRoot, 'WinFormsDesigner.Engine.exe');
     copyFileSync(modernExe, brokenApphost);
+    // Supply the attested managed payload so the real apphost starts; omit runtime support files to exercise
+    // an OS-process startup failure rather than the separate pre-spawn partial-installation refusal.
+    copyFileSync(modernDll, path.join(tempRoot, 'WinFormsDesigner.Engine.dll'));
+    expect(existsSync(path.join(tempRoot, 'WinFormsDesigner.Engine.runtimeconfig.json'))).toBe(false);
+    expect(existsSync(path.join(tempRoot, 'WinFormsDesigner.Engine.deps.json'))).toBe(false);
 
     const policy = new RestartOncePolicy();
     const harness = new RealEngineHarness(brokenApphost);
@@ -109,7 +118,14 @@ describe('v2 runtime lifecycle process harness', () => {
         workerKey: 'modern:x64:native',
         generation: 1,
       });
-      expect(harness.logs.join('\n')).toContain('The application to execute does not exist');
+      const failedProcess = harness.spawned[0]?.process;
+      expect(failedProcess?.pid).toBeGreaterThan(0);
+      await waitForExit(failedProcess!);
+      expect(failedProcess!.exitCode).not.toBeNull();
+      expect(failedProcess!.exitCode).not.toBe(0);
+      expect(await isPidRunning(failedProcess!.pid)).toBe(false);
+      expect(harness.logs.join('\n')).toContain('hostpolicy.dll');
+      expect(harness.logs.join('\n')).toContain('runtimeconfig.json');
 
       expect(recordV2EngineProbeCrash(supervisor, 'modern', 'x64')).toEqual({
         restart: true,
@@ -132,7 +148,9 @@ describe('v2 runtime lifecycle process harness', () => {
         generation: 2,
       });
       expect(recovered.status === 'ok' ? recovered.result.value : '').toContain('winforms-engine ok');
+      expect(harness.spawned.filter((start) => start.runtime === 'modern')).toHaveLength(2);
       expect(harness.started.filter((start) => start.runtime === 'modern')).toHaveLength(1);
+      expect(harness.started[0].pid).not.toBe(failedProcess!.pid);
     } finally {
       await harness.disposeAll();
       rmSync(tempRoot, { recursive: true, force: true });

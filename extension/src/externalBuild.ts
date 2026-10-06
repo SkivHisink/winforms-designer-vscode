@@ -41,6 +41,33 @@ export function intermediateDirCandidates(binDir: string): string[] {
   return candidates;
 }
 
+/** A file's identity for the output-directory filter: content (modification time and size, or `absent`) and the
+ * read-only attribute. */
+export interface OutputFileStamp { content: string; readOnly: boolean }
+
+/** `write`: the file itself was written, created, deleted or replaced. `signal`: build activity that does not show the
+ * copy landed (an unnamed event, or a read-only bit being cleared ahead of an overwrite). `null`: not build activity. */
+export type OutputActivity = 'write' | 'signal' | null;
+
+/**
+ * Classify one event in the pinned OUTPUT directory.
+ *
+ * - An unnamed event is a signal: fs.watch does not guarantee a filename, and dropping it could miss a build.
+ * - A `rename` (create / delete / replace) or a moved content stamp is a write.
+ * - A read-only bit that changed is a signal: MSBuild's Copy with OverwriteReadOnlyFiles clears it on the destination
+ *   BEFORE it copies, and while the destination is still pinned that attribute change is the only event there is.
+ * - Anything else is not build activity. Windows also reports metadata-only changes — last-access time, other
+ *   attributes, security — when something merely reads or scans the folder (the designer's own assembly loads and
+ *   toolbox reflection among them), and those made an ordinary click look like a build.
+ */
+export function classifyOutputEvent(
+  eventType: string, name: string | null, before: OutputFileStamp | undefined, after: OutputFileStamp): OutputActivity {
+  if (!name) return 'signal';
+  if (eventType !== 'change' || !before || before.content !== after.content) return 'write';
+  if (before.readOnly !== after.readOnly) return 'signal';
+  return null;
+}
+
 /** Where a watched write happened: the project's intermediate (`obj`) tree, or a pinned build output directory. */
 export type BuildWriteOrigin = 'intermediate' | 'output';
 
@@ -90,11 +117,13 @@ export class ExternalBuildRelease {
   /** True while a detected build owns the output (previews are view-only). */
   get active(): boolean { return this.pending !== undefined; }
 
-  /** A watched directory reported a write that qualifies as build activity. */
-  onWrite(origin: BuildWriteOrigin): void {
+  /** A watched directory reported a write that qualifies as build activity. `copyLanded` says whether an OUTPUT event
+   * showed an assembly actually written: only that proves the copy landed — an unnamed event, a cleared read-only bit
+   * or a .pdb/.config write starts or extends the release but must not end the wait early. */
+  onWrite(origin: BuildWriteOrigin, copyLanded = true): void {
     const inUse = this.hooks.outputsInUse();
     if (inUse.length === 0) return; // nothing pinned → nothing to hand back
-    if (origin === 'output') this.copySeen = true;
+    if (origin === 'output' && copyLanded) this.copySeen = true;
     this.waits = 0;
     this.arm();
     if (this.pending) return; // already released for this build — the timer above just extended it

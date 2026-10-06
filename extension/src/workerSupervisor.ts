@@ -43,7 +43,10 @@ export type WorkerRequestResult<TResult> =
 
 export interface SupervisedWorker<TPayload, TResult> {
   key: WorkerKey;
+  buildId?: string;
   send(envelope: WorkerEnvelope<TPayload>): Promise<WorkerReply<TResult>>;
+  cancel?(envelope: WorkerEnvelope<TPayload>): void;
+  usage?(): Promise<{ memoryBytes: number; handleCount: number }>;
   dispose?(): void;
 }
 
@@ -69,6 +72,11 @@ export interface WorkerSupervisorOptions {
   buildId?: string;
   recoveryPolicy: WorkerRecoveryPolicy;
   clock?: WorkerClock;
+  maxPendingRequests?: number;
+  memoryBudgetBytes?: number;
+  handleGrowthBudget?: number;
+  usagePollIntervalMs?: number;
+  usagePollTimeoutMs?: number;
 }
 
 export interface WorkerSlotState {
@@ -77,6 +85,7 @@ export interface WorkerSlotState {
   state: 'idle' | 'starting' | 'running' | 'quarantined' | 'crashLoop';
   recentCrashes: number;
   quarantineUntil?: number;
+  pendingRequests: number;
 }
 
 interface WorkerSlot<TPayload, TResult> {
@@ -87,18 +96,29 @@ interface WorkerSlot<TPayload, TResult> {
   worker?: SupervisedWorker<TPayload, TResult>;
   startPromise?: Promise<SupervisedWorker<TPayload, TResult>>;
   quarantineUntil?: number;
+  pendingRequests: number;
+  initialHandleCount?: number;
 }
 
 export class WorkerSupervisor<TPayload, TResult> {
   private readonly clock: WorkerClock;
   private readonly slots = new Map<string, WorkerSlot<TPayload, TResult>>();
   private requestSequence = 0;
+  private disposed = false;
 
   constructor(
     private readonly adapter: WorkerAdapter<TPayload, TResult>,
     private readonly options: WorkerSupervisorOptions,
   ) {
     this.clock = options.clock ?? realClock;
+  }
+
+  async prepare(key: WorkerKey): Promise<SupervisedWorker<TPayload, TResult>> {
+    if (this.disposed) throw new Error('WORKER_SUPERVISOR_DISPOSED');
+    const slot = this.slotFor(key);
+    this.releaseQuarantineIfElapsed(slot);
+    if (slot.state === 'crashLoop' || slot.state === 'quarantined') throw new Error('WORKER_QUARANTINED');
+    return this.ensureWorker(slot);
   }
 
   async request(
@@ -110,6 +130,11 @@ export class WorkerSupervisor<TPayload, TResult> {
   ): Promise<WorkerRequestResult<TResult>> {
     const slot = this.slotFor(key);
     const requestId = this.nextRequestId();
+    if (this.disposed) return { status: 'refused', reasonCode: 'WORKER_SUPERVISOR_DISPOSED', requestId, generation: slot.generation };
+    if (cancellation?.aborted) return problem('cancelled', 'REQUEST_CANCELLED', requestId, slot.generation);
+    if (slot.pendingRequests >= (this.options.maxPendingRequests ?? 32)) {
+      return { status: 'refused', reasonCode: 'WORKER_BACKPRESSURE', requestId, generation: slot.generation };
+    }
     if (slot.state === 'crashLoop') {
       return problem('crashLoop', 'WORKER_CRASH_LOOP', requestId, slot.generation);
     }
@@ -136,10 +161,10 @@ export class WorkerSupervisor<TPayload, TResult> {
       documentId: identity.documentId,
       requestId,
       traceId: `${requestId}:trace`,
-      commandId: requestId,
+      commandId: identity.operationId ?? requestId,
       documentRevision: identity.documentRevision,
-      renderGeneration: generation,
-      sourceFingerprint: createV2Fingerprint('source', identity.sourceFingerprint, 0),
+      renderGeneration: identity.renderGeneration === undefined ? generation : generation * 1_000_000_000 + identity.renderGeneration,
+      sourceFingerprint: createV2Fingerprint('source', identity.sourceFingerprint, identity.sourceByteLength ?? 0),
       resourceFingerprints: identity.resourceFingerprint
         ? [createV2Fingerprint('resource', identity.resourceFingerprint, 0)]
         : [],
@@ -163,13 +188,21 @@ export class WorkerSupervisor<TPayload, TResult> {
         generation,
       };
     }
-    const worker = await this.ensureWorker(slot).catch(() => undefined);
+    slot.pendingRequests += 1;
+    try {
+    const startup = this.ensureWorker(slot);
+    const started = await this.raceWorkerReply(startup.then((worker) => ({
+      sessionId: this.options.sessionId, generation, requestId, status: 'ok' as const, result: worker as unknown as TResult,
+    })), requestId, generation, deadlineAt - this.clock.now(), cancellation);
+    if (started.status !== 'reply') { this.recycle(key); return started.result; }
+    const worker = started.reply.result as unknown as SupervisedWorker<TPayload, TResult>;
     if (!worker) {
       return problem('faulted', 'WORKER_START_FAILED', requestId, slot.generation);
     }
     if (generation !== slot.generation) {
       return problem('stale', 'STALE_WORKER_GENERATION', requestId, generation);
     }
+    protocol.buildId = worker.buildId ?? protocol.buildId;
     const envelope: WorkerEnvelope<TPayload> = {
       protocol,
       sessionId: this.options.sessionId,
@@ -187,8 +220,13 @@ export class WorkerSupervisor<TPayload, TResult> {
       return problem('faulted', 'WORKER_REQUEST_FAULTED', requestId, generation);
     }
 
-    const raced = await this.raceWorkerReply(replyPromise, requestId, generation, timeoutMs, cancellation);
-    if (raced.status !== 'reply') return raced.result;
+    const usageWatch = this.watchActiveUsage(slot, worker, requestId, generation);
+    const raced = await this.raceWorkerReply(replyPromise, requestId, generation, deadlineAt - this.clock.now(), cancellation, usageWatch.result);
+    usageWatch.stop();
+    if (raced.status !== 'reply') {
+      try { worker.cancel?.(envelope); } catch { /* disconnected */ }
+      return raced.result;
+    }
 
     const reply = raced.reply;
     if (
@@ -209,12 +247,45 @@ export class WorkerSupervisor<TPayload, TResult> {
       };
     }
 
+    if (worker.usage) {
+      // The health query has its own bound (as in active sampling), not whatever is left of the request deadline.
+      const remaining = deadlineAt - this.clock.now();
+      const usageBound = Math.min(this.options.usagePollTimeoutMs ?? 2_000, remaining);
+      const measured = await this.raceWorkerReply(worker.usage().then((value) => ({
+        sessionId: this.options.sessionId, generation, requestId, status: 'ok' as const,
+        result: value as unknown as TResult,
+      })), requestId, generation, usageBound, cancellation);
+      if (measured.status !== 'reply') {
+        try { worker.cancel?.(envelope); } catch { /* disconnected */ }
+        if (measured.result.status === 'deadlineExceeded' && usageBound < remaining) {
+          // The worker answered the request but cannot report its own health in time: treat it as wedged.
+          this.recycle(key);
+          return problem('faulted', 'WORKER_USAGE_DEADLINE_EXCEEDED', requestId, generation);
+        }
+        return measured.result;
+      }
+      const usage = measured.reply.result as unknown as { memoryBytes: number; handleCount: number };
+      if (usage) {
+        slot.initialHandleCount ??= usage.handleCount;
+        if (this.exceedsUsageBudget(slot, usage)) {
+          this.recycle(key);
+          return problem('faulted', 'WORKER_RESOURCE_BUDGET_EXCEEDED', requestId, generation);
+        }
+      }
+    }
+    if (slot.generation !== generation) return problem('stale', 'STALE_WORKER_REPLY', requestId, generation);
+    if (cancellation?.aborted) return problem('cancelled', 'REQUEST_CANCELLED', requestId, generation);
+    if (this.clock.now() > deadlineAt) return problem('deadlineExceeded', 'REQUEST_DEADLINE_EXCEEDED', requestId, generation);
+
     return {
       status: 'ok',
       result: reply.result as TResult,
       requestId,
       generation,
     };
+    } finally {
+      slot.pendingRequests -= 1;
+    }
   }
 
   recordCrash(key: WorkerKey): RecoveryDecision {
@@ -233,24 +304,45 @@ export class WorkerSupervisor<TPayload, TResult> {
       state: slot.state,
       recentCrashes: slot.recentCrashes,
       quarantineUntil: slot.quarantineUntil,
+      pendingRequests: slot.pendingRequests,
     };
   }
 
+  recycle(key: WorkerKey): void {
+    const slot = this.slotFor(key);
+    this.disposeWorker(slot);
+    slot.worker = undefined;
+    slot.startPromise = undefined;
+    slot.generation += 1;
+    slot.state = 'idle';
+    slot.initialHandleCount = undefined;
+    slot.quarantineUntil = undefined;
+  }
+
+  states(): WorkerSlotState[] {
+    return [...this.slots.values()].map((slot) => this.state(slot.key));
+  }
+
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const slot of this.slots.values()) {
       this.disposeWorker(slot);
+      slot.worker = undefined;
       slot.state = 'idle';
       slot.startPromise = undefined;
       slot.quarantineUntil = undefined;
+      slot.generation += 1;
     }
   }
 
   private async ensureWorker(slot: WorkerSlot<TPayload, TResult>): Promise<SupervisedWorker<TPayload, TResult>> {
     if (slot.worker && slot.state === 'running') return slot.worker;
     if (!slot.startPromise) {
+      const generation = slot.generation;
       slot.state = 'starting';
       slot.startPromise = this.adapter.start(slot.key, slot.generation).then((worker) => {
-        if (slot.state === 'crashLoop' || workerKeyId(slot.key) !== workerKeyId(worker.key)) {
+        if (this.disposed || slot.generation !== generation || slot.state === 'crashLoop' || workerKeyId(slot.key) !== workerKeyId(worker.key)) {
           try { worker.dispose?.(); } catch { /* already unusable */ }
           throw new Error('stale worker start');
         }
@@ -260,12 +352,15 @@ export class WorkerSupervisor<TPayload, TResult> {
       });
     }
 
+    const starting = slot.startPromise;
     try {
-      return await slot.startPromise;
+      return await starting;
     } catch (error) {
-      slot.startPromise = undefined;
-      slot.worker = undefined;
-      if (slot.state !== 'crashLoop') slot.state = 'idle';
+      if (slot.startPromise === starting) {
+        slot.startPromise = undefined;
+        slot.worker = undefined;
+        if (slot.state !== 'crashLoop') slot.state = 'idle';
+      }
       throw error;
     }
   }
@@ -276,6 +371,7 @@ export class WorkerSupervisor<TPayload, TResult> {
     generation: number,
     timeoutMs: number,
     cancellation?: AbortSignal,
+    guard?: Promise<WorkerRequestResult<TResult>>,
   ): Promise<
     | { status: 'reply'; reply: WorkerReply<TResult> }
     | { status: 'result'; result: WorkerRequestResult<TResult> }
@@ -307,9 +403,53 @@ export class WorkerSupervisor<TPayload, TResult> {
       );
       reply.then(
         (value) => finish({ status: 'reply', reply: value }),
-        () => finish({ status: 'result', result: problem('faulted', 'WORKER_REQUEST_FAULTED', requestId, generation) }),
+        (error: unknown) => {
+          const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+          const safeCode = typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,127}$/.test(code) ? code : 'WORKER_REQUEST_FAULTED';
+          finish({ status: 'result', result: problem(safeCode === 'STALE_WORKER_REPLY' ? 'stale' : 'faulted', safeCode, requestId, generation) });
+        },
       );
+      guard?.then((result) => finish({ status: 'result', result }));
     });
+  }
+
+  private exceedsUsageBudget(slot: WorkerSlot<TPayload, TResult>, usage: { memoryBytes: number; handleCount: number }): boolean {
+    slot.initialHandleCount ??= usage.handleCount;
+    return !Number.isFinite(usage.memoryBytes) || !Number.isFinite(usage.handleCount)
+      || usage.memoryBytes > (this.options.memoryBudgetBytes ?? 1_073_741_824)
+      || usage.handleCount > 8_192
+      || usage.handleCount - slot.initialHandleCount > (this.options.handleGrowthBudget ?? 2_048);
+  }
+
+  /** Poll the physical process while its STA is busy; an unresponsive usage probe also has a bound. */
+  private watchActiveUsage(
+    slot: WorkerSlot<TPayload, TResult>, worker: SupervisedWorker<TPayload, TResult>, requestId: string, generation: number,
+  ): { result?: Promise<WorkerRequestResult<TResult>>; stop(): void } {
+    if (!worker.usage) return { stop() {} };
+    let stopped = false;
+    let pollTimer: WorkerTimer | undefined;
+    let probeTimer: WorkerTimer | undefined;
+    let finish!: (result: WorkerRequestResult<TResult>) => void;
+    const result = new Promise<WorkerRequestResult<TResult>>((resolve) => { finish = resolve; });
+    const fail = (code: string): void => {
+      if (stopped) return;
+      stopped = true;
+      pollTimer?.cancel(); probeTimer?.cancel();
+      this.recycle(slot.key);
+      finish(problem('faulted', code, requestId, generation));
+    };
+    const poll = (): void => {
+      if (stopped || slot.generation !== generation || this.disposed) return;
+      probeTimer = this.clock.setTimer(() => fail('WORKER_USAGE_DEADLINE_EXCEEDED'), this.options.usagePollTimeoutMs ?? 2_000);
+      void Promise.resolve().then(() => worker.usage!()).then((usage) => {
+        probeTimer?.cancel();
+        if (stopped || slot.generation !== generation || this.disposed) return;
+        if (this.exceedsUsageBudget(slot, usage)) { fail('WORKER_RESOURCE_BUDGET_EXCEEDED'); return; }
+        pollTimer = this.clock.setTimer(poll, this.options.usagePollIntervalMs ?? 1_000);
+      }, () => fail('WORKER_USAGE_UNAVAILABLE'));
+    };
+    pollTimer = this.clock.setTimer(poll, this.options.usagePollIntervalMs ?? 1_000);
+    return { result, stop() { stopped = true; pollTimer?.cancel(); probeTimer?.cancel(); } };
   }
 
   private replaceCrashedWorker(slot: WorkerSlot<TPayload, TResult>, decision: RecoveryDecision): void {
@@ -345,6 +485,7 @@ export class WorkerSupervisor<TPayload, TResult> {
       generation: 1,
       state: 'idle',
       recentCrashes: 0,
+      pendingRequests: 0,
     };
     this.slots.set(id, slot);
     return slot;

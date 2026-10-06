@@ -26,6 +26,11 @@ namespace WinFormsDesigner.Engine
         /// <summary>True when the current value is read/write and can be converted by the existing source expression converter.
         /// Metadata only: this does not advertise a nested property write API.</summary>
         public bool SourceEditable { get; init; }
+        /// <summary>The leaf is an enum (the host writes <c>Type.Member</c>).</summary>
+        public bool IsEnum { get; init; }
+        /// <summary>The nested edit route accepts this row: see <see cref="NestedPropertyPath"/>. The ONLY nested write
+        /// capability — the panel offers an editor exactly when this is true.</summary>
+        public bool NestedEditable { get; init; }
         public string Category { get; init; } = "Misc";
         public string? Description { get; init; }
         public List<string>? StandardValues { get; init; }
@@ -1204,12 +1209,25 @@ namespace WinFormsDesigner.Engine
             var budget = new ExpandableBudget(ExpandableMaxNodes);
             var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
             bool truncated = false;
-            var properties = ExpandablePropertiesOf(pd, owner, raw, path, 0, budget, visited, ref truncated);
+            var properties = ExpandablePropertiesOf(pd, owner, raw, path, 0, budget, visited, ref truncated,
+                NestedHopDeclaredType(owner.GetType(), owner, pd));
             return (properties, truncated);
         }
 
+        /// <summary>The declared type <paramref name="hop"/> yields when it is a writable nested hop (NestedPropertyPath),
+        /// else null — the null propagates down, so nothing under a non-writable hop is offered.</summary>
+        private static Type? NestedHopDeclaredType(Type? declaredOwnerType, object owner, PropertyDescriptor hop)
+        {
+            if (declaredOwnerType == null) return null;
+            Type? declared = NestedPropertyPath.ContentHopType(declaredOwnerType, owner, hop);
+            return declared != null && NestedPropertyPath.IsStableHop(declaredOwnerType, owner, hop.Name) ? declared : null;
+        }
+
+        /// <param name="declaredRawType">The declared type of <paramref name="raw"/> when every hop from the component down
+        /// to it is writable (see <see cref="NestedHopDeclaredType"/>); null when no leaf under it may be written.</param>
         private static List<ExpandablePropertyInfo>? ExpandablePropertiesOf(PropertyDescriptor ownerDescriptor, object owner,
-            object raw, string path, int depth, ExpandableBudget budget, HashSet<object> visited, ref bool truncated)
+            object raw, string path, int depth, ExpandableBudget budget, HashSet<object> visited, ref bool truncated,
+            Type? declaredRawType)
         {
             if (depth >= ExpandableMaxDepth) { truncated = true; return null; }
             if (!TryEnterVisited(raw, visited)) return null;
@@ -1253,8 +1271,13 @@ namespace WinFormsDesigner.Engine
                     bool nestedTruncated = false;
                     var nested = childRaw == null
                         ? null
-                        : ExpandablePropertiesOf(child, raw, childRaw, childPath, depth + 1, budget, visited, ref nestedTruncated);
+                        : ExpandablePropertiesOf(child, raw, childRaw, childPath, depth + 1, budget, visited, ref nestedTruncated,
+                            NestedHopDeclaredType(declaredRawType, raw, child));
                     if (nestedTruncated) truncated = true;
+                    // depth 0 is the second segment of the path (component property + this child).
+                    bool nestedEditable = declaredRawType != null && depth + 2 <= NestedPropertyPath.MaxSegments
+                        && NestedPropertyPath.IsSettableLeaf(declaredRawType, raw, child)
+                        && NestedPropertyPath.Split(childPath) != null;
 
                     result.Add(new ExpandablePropertyInfo
                     {
@@ -1263,6 +1286,8 @@ namespace WinFormsDesigner.Engine
                         Type = BoundString(child.PropertyType.FullName ?? child.PropertyType.Name, ExpandableMaxTypeChars),
                         Value = childValue,
                         ReadOnly = childReadOnly,
+                        IsEnum = child.PropertyType.IsEnum,
+                        NestedEditable = nestedEditable,
                         SourceEditable = SourceEditableThroughExistingValueConversion(child.PropertyType, childValue, childReadOnly),
                         Category = category,
                         Description = description,

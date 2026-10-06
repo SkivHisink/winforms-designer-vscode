@@ -10,10 +10,16 @@ namespace FakeVendor
     // Mimics a DevExpress-style control with an "Appearance" SUB-OBJECT: a settable value graph the designer writes
     // via a property CHAIN (this.fancyButton1.Appearance.BorderColor = ...). The interpreter must walk the chain
     // through TypeDescriptor: read Appearance (non-null, initialized in the ctor), then set BorderColor on it.
+    // Expandable like DevExpress ImageOptions/AppearanceObject, so the grid lists its members as nested rows and an
+    // enum member (BorderStyle) is the nested-edit case: this.fancyButton1.Appearance.BorderStyle = ….
+    public enum FakeBorderStyle { Solid, Dashed, Dotted }
+
+    [TypeConverter(typeof(ExpandableObjectConverter))]
     public sealed class FakeAppearance
     {
         public Color BorderColor { get; set; } = Color.Empty;
         public int BorderWidth { get; set; } = 1;
+        public FakeBorderStyle BorderStyle { get; set; } = FakeBorderStyle.Solid;
     }
 
     [Designer(typeof(FancyButtonDesigner))]

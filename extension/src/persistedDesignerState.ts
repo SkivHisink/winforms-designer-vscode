@@ -17,6 +17,7 @@ export const DESIGNER_CONFIGURATION_KEYS = [
   'winformsDesigner.net48.probeDirectories', 'winformsDesigner.net48.releaseOnFocusLoss',
   'winformsDesigner.deleteFormSiblings', 'winformsDesigner.net48.isolateRenderWindows',
   'winformsDesigner.net48.releaseOnExternalBuild', 'winformsDesigner.language',
+  'winformsDesigner.workers.maximumResidentProcesses',
 ] as const;
 
 export interface PersistedDesignerStateDescriptor {
@@ -67,6 +68,12 @@ export const PERSISTED_DESIGNER_STATE_INVENTORY: readonly PersistedDesignerState
     producer: 'transactionJournal.writeJournalFile', consumer: 'transactionRecovery.recoverPendingTransactions',
     format: 'TransactionJournalRecord schemaVersion 2.0.0',
     lifecycle: 'Durable before/after images; startup recovery removes terminal records and retains invalid/conflicting records.',
+  },
+  {
+    key: 'v2-operations/<document-hash>/*.json', storage: 'globalStorage', category: 'unsavedRecovery',
+    producer: 'HostMutationLedger.run', consumer: 'HostMutationLedger and transactionRecovery',
+    format: 'HostMutationRecord schemaVersion 2.2.0; stable operation identity and host commit outcome',
+    lifecycle: 'No automatic expiry through revision, Undo, close or restart; clearing extension storage ends the retry boundary.',
   },
   {
     key: 'hot-exit-recovery-v1.json', storage: 'workspaceStorage', category: 'unsavedRecovery',

@@ -50,6 +50,22 @@ await esbuild.build({
   external: ['vscode'],
 });
 
+// Focused 2.2 product traffic acceptance stays outside the packaged extension.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/release22-extension-host-suite.ts'],
+  outfile: 'dist/release22-extension-host-suite.cjs',
+  external: ['vscode'],
+});
+
+// Installed 2.1 -> 2.2 -> 2.1 upgrade and rollback uses isolated VS Code profiles.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/release22-upgrade-suite.ts'],
+  outfile: 'dist/release22-upgrade-suite.cjs',
+  external: ['vscode'],
+});
+
 // Repeatable cold-start + warm-render guardrail. Kept as a small bundled client so CI measures the same JSON-RPC
 // path as the extension without involving VS Code, jsdom, or a package-manager test runner.
 await esbuild.build({

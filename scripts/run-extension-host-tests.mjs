@@ -210,7 +210,9 @@ try {
     if (!fs.existsSync(setupEvidencePath)) throw error;
     console.log(`S003 setup workbench quit persisted after terminal suite marker: ${version}`);
   }
-  const focusedScenario = process.env.WFD_EXTENSION_HOST_S122_ONLY === '1'
+  const focusedScenario = process.env.WFD_EXTENSION_HOST_S104_ONLY === '1'
+    ? 'S104'
+    : process.env.WFD_EXTENSION_HOST_S122_ONLY === '1'
     ? 'S122'
     : process.env.WFD_EXTENSION_HOST_S016_ONLY === '1'
       ? 'S016'

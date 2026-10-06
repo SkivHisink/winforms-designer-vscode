@@ -36,9 +36,11 @@
   "command.runBuildTask.title": "WinForms: Run Build Task (Release Preview First)",
   "command.runTestTask.title": "WinForms: Run Test Task (Release Preview First)",
   "command.stopEngines.title": "WinForms: Stop the Designer Preview Engine",
+  "command.prepareRollback.title": "WinForms: Prepare to Roll Back or Downgrade the Designer",
   "command.restartEngines.title": "WinForms: Restart the Designer Preview Engine",
   "command.showFormStatus.title": "WinForms: Show Form Status",
   "command.rebuildToolboxCache.title": "WinForms: Rebuild Toolbox Cache",
   "command.refreshToolbox.title": "WinForms: Refresh Toolbox",
-  "command.requestToolboxItems.title": "WinForms: Choose Toolbox Items"
+  "command.requestToolboxItems.title": "WinForms: Choose Toolbox Items",
+  "config.workers.maximumResidentProcesses.description": "Maximum number of resident preview workers across project graphs (1–16; default 4). A .NET Framework worker includes a launcher and an isolated render process. A busy worker is never evicted to admit a different project; retry after the current request completes or close a designer."
 }

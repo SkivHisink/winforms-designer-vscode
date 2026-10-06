@@ -23,8 +23,18 @@ function eq(actual: unknown, expected: unknown, msg: string): void {
   }
   checks++;
 }
+function payloadMessages<T extends { type: string }>(posted: T[]): T[] {
+  // Existing payload assertions stay exact; webviewMutationIdentity.test.ts checks the optional envelope IDs
+  // on the original messages emitted by the shipped scripts.
+  return posted.map((m) => {
+    const { operationId: _operationId, requestAttemptId: _requestAttemptId, ...payload } = m as T & {
+      operationId?: string; requestAttemptId?: string;
+    };
+    return payload as T;
+  });
+}
 function only<T extends { type: string }>(posted: T[], type: string): T[] {
-  return posted.filter((m) => m.type === type);
+  return payloadMessages(posted.filter((m) => m.type === type));
 }
 function hClick(h: Harness, id: string): void { h.click(h.el(id)); }
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -1111,6 +1121,26 @@ test('V2-FND-001-S021: dragging a multi-selection posts one group transaction wi
   eq(only(h.posted, 'manipulateGroup'), [{ type: 'manipulateGroup', ids: ['button1', 'button2'], dx: 17, dy: 9 }],
     'one host message carries the complete ordered group move');
   eq(only(h.posted, 'manipulate').length, 0, 'the drag does not emit per-control move commits');
+  h.destroy();
+});
+
+test('hover hint and secondary selection boxes cover the full control rect (border-box overlays)', () => {
+  const h = loadDesigner();
+  const a = mkCtrl({ id: 'button1', name: 'button1', x: 10, y: 20, width: 80, height: 24 });
+  const b = mkCtrl({ id: 'button2', name: 'button2', x: 120, y: 60, width: 75, height: 23 });
+  const c = mkCtrl({ id: 'button3', name: 'button3', x: 10, y: 120, width: 60, height: 30 });
+  h.send({ type: 'layout', controls: [a, b, c] });
+  h.send({ type: 'select', id: 'button1', ids: ['button1', 'button2'] });
+
+  const sec = (Array.from(h.document.querySelectorAll('.selsec')) as any[]).find((el) => el.style.display !== 'none');
+  eq([sec?.style.left, sec?.style.top, sec?.style.width, sec?.style.height], ['120px', '60px', '75px', '23px'],
+    'a border-box secondary selection box spans the whole control, not 2px short at the right/bottom');
+
+  h.mouse('mousemove', { offsetX: 20, offsetY: 130 }, h.el('surface'));
+  const hover = h.document.querySelector('.hoverhint') as any;
+  eq([hover?.style.display, hover?.style.left, hover?.style.top, hover?.style.width, hover?.style.height],
+    ['block', '10px', '120px', '60px', '30px'],
+    'the border-box hover hint spans the whole hovered control, not 2px short at the right/bottom');
   h.destroy();
 });
 
@@ -3000,7 +3030,7 @@ test('vendor smart tag: "Add Tab Page" runs our own source-first addTab', () => 
   const h = loadDesigner();
   const fly = openVendorTasks(h, [vtag()]);
   h.click(fly.querySelector('.tfVerb'));
-  eq(h.posted, [{ type: 'addTab', hostId: 'tab1' }], 'the vendor label drives the designer’s existing addTab path');
+  eq(payloadMessages(h.posted), [{ type: 'addTab', hostId: 'tab1' }], 'the vendor label drives the designer’s existing addTab path');
   h.destroy();
 });
 
@@ -3019,7 +3049,7 @@ test('vendor smart tag: "Remove Tab Page" is inert with no page, and targets the
   const page = mkCtrl({ id: 'page1', name: 'page1', type: 'DevExpress.XtraTab.XtraTabPage', parentId: 'tab1' });
   const f2 = openVendorTasks(h2, [vtag({ label: 'Remove Tab Page', methodName: 'RemoveTabPage', verb: 'deleteTab' })], [page]);
   h2.click(f2.querySelector('.tfVerb'));
-  eq(h2.posted, [{ type: 'deleteTab', hostId: 'tab1', pageId: 'page1' }], 'it removes the active page');
+  eq(payloadMessages(h2.posted), [{ type: 'deleteTab', hostId: 'tab1', pageId: 'page1' }], 'it removes the active page');
   h2.destroy();
 });
 
@@ -3275,7 +3305,7 @@ test('V2-FND-001-S089/S090 product smart tag: certified DesignerAction command p
   ok(!!command && command.textContent === 'Apply Service Preset',
     'the real designer display name reaches a command row');
   h.click(command);
-  eq(h.posted, [{
+  eq(payloadMessages(h.posted), [{
     type: 'designerActionCommand',
     id: 'hostedServiceControl1',
     commandId: 'applyServicePreset',
@@ -3288,7 +3318,7 @@ test('V2-FND-001-S089/S090 product smart tag: certified DesignerAction command p
     'Apply Service Preset', 'Cancel Reentrant Service Action',
   ], 'both certified methods remain visible as commands without property surrogates');
   h.click(commands[1]);
-  eq(h.posted, [{
+  eq(payloadMessages(h.posted), [{
     type: 'designerActionCommand',
     id: 'hostedServiceControl1',
     commandId: 'cancelReentrantServiceAction',
@@ -3388,6 +3418,21 @@ test('panel outline drag: dropping a leaf on a supported container posts one out
   eq(reparent.length, 1, 'drop posts exactly one reparent message');
   eq([reparent[0].id, reparent[0].parentId], ['button1', 'panel1'], 'reparent carries the child and target container');
   ok(!!h.el('outlineStatus')?.textContent, 'outline shows visible drop status');
+  h.destroy();
+});
+
+test('a tab header click carries the drawn generation, so the host can refuse one aimed at an older frame', () => {
+  const h = loadDesigner();
+  h.setImageAutoLoad(false);
+  h.send({ type: 'render', png: '', width: 320, height: 200, gen: 7 });
+  h.flushImages(320, 200);
+  const host = mkCtrl({ id: 'tabControl1', name: 'tabControl1', type: 'System.Windows.Forms.TabControl', x: 8, y: 8, width: 200, height: 150, isTabHost: true });
+  const page = mkCtrl({ id: 'tabPage1', name: 'tabPage1', type: 'System.Windows.Forms.TabPage', parentId: 'tabControl1', x: 12, y: 30, width: 190, height: 120 });
+  h.send({ type: 'layout', controls: [host, page] });
+  h.resetPosted();
+  h.mouse('click', { offsetX: 40, offsetY: 15 }, h.el('surface'));
+  eq(only(h.posted, 'tabClick').map((m: any) => [m.hostId, m.gen]), [['tabControl1', 7]],
+    'the tab click names the frame it was aimed at (the host refuses it once a newer graph is current)');
   h.destroy();
 });
 
@@ -3680,6 +3725,56 @@ test('V2-FND-001-S040: keyboard property search filters live rows and focuses th
   eq(h.el('propDesc').querySelector('.pdName').textContent, 'FlatStyle',
     'keyboard focus updates the Properties description pane');
   eq(h.posted, [], 'typing, filtering, and keyboard result navigation post no host mutation');
+  h.destroy();
+});
+
+test('property search clear button and Escape restore the full list, keep focus and post nothing', () => {
+  const h = loadPanel();
+  setupComponent(h, {
+    id: 'button1',
+    name: 'button1',
+    type: 'System.Windows.Forms.Button',
+    properties: [
+      prop('Text', { type: 'System.String', value: 'Move me', category: 'Appearance' }),
+      prop('Tag', { type: 'System.Object', value: '', category: 'Data' }),
+    ],
+    events: [{ name: 'Click', type: 'System.EventHandler', category: 'Action', handler: null }],
+  });
+  const search = h.el('search');
+  const clear = h.el('searchClear');
+  const names = (pane: string) => (Array.from(h.el(pane).querySelectorAll('td.name')) as any[])
+    .map((cell) => cell.textContent.trim());
+  const type = (text: string) => {
+    search.value = text;
+    search.dispatchEvent(new h.window.InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+  };
+  h.resetPosted();
+  eq(clear.hidden, true, 'no clear button while the search box is empty');
+
+  search.focus();
+  type('tex');
+  eq(names('props'), ['Text'], 'the search filters the list');
+  eq(clear.hidden, false, 'the clear button appears once there is text to clear');
+  h.click(clear);
+  eq([search.value, clear.hidden], ['', true], 'clicking it empties the box and hides itself');
+  eq(names('props').slice().sort(), ['Tag', 'Text'], 'and restores the full list');
+  eq(h.document.activeElement, search, 'focus returns to the search box');
+
+  type('tag');
+  const esc = h.key('keydown', { key: 'Escape' }, search);
+  ok(esc.defaultPrevented, 'Escape clears a non-empty search');
+  eq([search.value, names('props').length], ['', 2], 'Escape restores the full list too');
+  const idle = h.key('keydown', { key: 'Escape' }, search);
+  ok(!idle.defaultPrevented, 'Escape on an empty box is left to the rest of the page');
+  eq(h.posted, [], 'searching and clearing properties post no host message');
+
+  h.click(h.el('tabEvents'));
+  h.resetPosted(); // opening the Events tab lists handler candidates — that is the tab, not the search
+  type('zzz');
+  eq(names('events'), [], 'the same search filters the Events tab');
+  h.click(clear);
+  eq(names('events'), ['Click'], 'and the clear button restores it');
+  eq(h.posted, [], 'searching and clearing events post no host message');
   h.destroy();
 });
 
@@ -3993,6 +4088,76 @@ test('V2-FND-001-S044: expandable TypeConverter metadata is bounded read-only ro
   ok(nested.filter((r) => r.className.indexOf('expandableTruncated') >= 0).length >= 2, 'root and nested truncation are both disclosed');
   ok(!nested.some((r) => r.querySelector('input,select,textarea,button')), 'sourceEditable metadata never advertises a nested write action');
   h.destroy();
+});
+
+/** A DevExpress-style button whose ImageOptions rows carry the engine's nested-edit capability. */
+function nestedImageOptionsComponent(over: Record<string, any> = {}, propOver: Record<string, any> = {}): any {
+  return {
+    id: 'btnInsert', name: 'btnInsert', type: 'Vendor.SimpleButton',
+    properties: [prop('ImageOptions', {
+      type: 'Vendor.SimpleButtonImageOptions', value: 'Vendor.SimpleButtonImageOptions', category: 'Appearance', readOnly: true,
+      properties: [
+        { name: 'Location', propertyPath: 'ImageOptions.Location', type: 'Vendor.ImageLocation', value: 'Default',
+          readOnly: false, sourceEditable: false, isEnum: true, nestedEditable: true, category: 'Appearance',
+          standardValues: ['Default', 'MiddleLeft', 'MiddleCenter', 'TopCenter'], standardValuesExclusive: true },
+        { name: 'AllowGlyphSkinning', propertyPath: 'ImageOptions.AllowGlyphSkinning', type: 'System.Boolean', value: 'False',
+          readOnly: false, sourceEditable: false, nestedEditable: true, category: 'Appearance',
+          standardValues: ['False', 'True'], standardValuesExclusive: true },
+        { name: 'ImageToTextIndent', propertyPath: 'ImageOptions.ImageToTextIndent', type: 'System.Int32', value: '4',
+          readOnly: false, sourceEditable: false, nestedEditable: true, category: 'Appearance' },
+        { name: 'SvgImageSize', propertyPath: 'ImageOptions.SvgImageSize', type: 'System.Drawing.Size', value: '0, 0',
+          readOnly: false, sourceEditable: true, nestedEditable: false, category: 'Appearance' },
+      ],
+      ...propOver,
+    })],
+    events: [],
+    ...over,
+  };
+}
+
+test('nested property rows the engine marks editable get the top-level editors and post one editNested', () => {
+  const h = loadPanel();
+  setupComponent(h, nestedImageOptionsComponent());
+  h.click(findPropRow(h, 'ImageOptions').querySelector('.tw'));
+  const row = (path: string) => (Array.from(h.el('props').querySelectorAll('tr.expandableMeta')) as any[])
+    .find((r) => r.getAttribute('data-property-path') === path);
+
+  const location = row('ImageOptions.Location').querySelector('select');
+  ok(!!location, 'a nested enum row renders a closed <select> (the DevExpress ImageOptions.Location case)');
+  eq(Array.from(location.options).map((o: any) => o.value), ['Default', 'MiddleLeft', 'MiddleCenter', 'TopCenter'],
+    'the select offers exactly the engine standard values');
+  eq(location.value, 'Default', 'the current value is selected');
+  h.resetPosted();
+  location.value = 'MiddleLeft';
+  location.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  eq(only(h.posted, 'editNested').map((m: any) => [m.id, m.propertyPath, m.value]),
+    [['btnInsert', 'ImageOptions.Location', 'MiddleLeft']], 'one nested edit carries the owner id, the full path and the value');
+  eq(only(h.posted, 'edit').length, 0, 'a nested row never posts an ordinary top-level edit');
+
+  ok(!!row('ImageOptions.AllowGlyphSkinning').querySelector('select'), 'a nested bool row is a True/False select');
+  const indent = row('ImageOptions.ImageToTextIndent').querySelector('input');
+  ok(!!indent, 'a nested number row is a text box');
+  h.resetPosted();
+  indent.value = '8';
+  indent.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  eq(only(h.posted, 'editNested')[0]?.propertyPath, 'ImageOptions.ImageToTextIndent', 'the number commits through the nested route');
+  ok(!row('ImageOptions.SvgImageSize').querySelector('input,select'), 'a row without the capability stays read-only text');
+  h.destroy();
+});
+
+test('nested editors are withheld where the nested route does not apply (inherited, multi-selection)', () => {
+  for (const [label, component] of [
+    ['inherited component', nestedImageOptionsComponent({ ownership: 'inherited', editable: false })],
+    ['multi-selection', nestedImageOptionsComponent({}, { multi: true })],
+  ] as const) {
+    const h = loadPanel();
+    setupComponent(h, component);
+    const twisty = findPropRow(h, 'ImageOptions').querySelector('.tw');
+    if (twisty) h.click(twisty);
+    ok(!(Array.from(h.el('props').querySelectorAll('tr.expandableMeta')) as any[]).some((r) => r.querySelector('input,select')),
+      `no nested editor on a ${label}`);
+    h.destroy();
+  }
 });
 
 test('V2-FND-001-S045 and V2-FND-001-S046: UITypeEditor metadata adds one accessible ellipsis action with the exact editor type', () => {

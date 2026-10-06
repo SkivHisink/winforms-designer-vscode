@@ -84,6 +84,12 @@ namespace WinFormsDesigner.Engine
                 return new EditResult { Mode = EditMode.Failed, Reason = "InitializeComponent not found" };
             }
 
+            // Only a plain statement `this.c.P = v;` directly in InitializeComponent is understood. A write to the target
+            // anywhere else — inside an if/block, or chained in another assignment's value — would still run after (or
+            // instead of) the edited one, so refuse rather than splice a value that may not be the effective one.
+            string? hiddenWrite = HiddenTargetWrite(init.Body, propertyName, chain => TargetMatches(chain, componentName, propertyName, isRoot));
+            if (hiddenWrite != null) return new EditResult { Mode = EditMode.Failed, Reason = hiddenWrite };
+
             // scan once: last matching target assignment (effective value) + last assignment to the
             // component (insert anchor when the property has no assignment yet)
             AssignmentExpressionSyntax? lastTarget = null;
@@ -92,7 +98,14 @@ namespace WinFormsDesigner.Engine
             {
                 if (st is not ExpressionStatementSyntax es || es.Expression is not AssignmentExpressionSyntax asg) continue;
                 var chain = Flatten(asg.Left);
-                if (TargetMatches(chain, componentName, propertyName, isRoot)) lastTarget = asg;
+                if (TargetMatches(chain, componentName, propertyName, isRoot))
+                {
+                    // `x.P += 1` is not a set: replacing its right side would keep the operator, and the canvas (which
+                    // sets the value) and the rebuilt form (which adds it) would disagree.
+                    if (!asg.IsKind(SyntaxKind.SimpleAssignmentExpression))
+                        return new EditResult { Mode = EditMode.Failed, Reason = "'" + propertyName + "' is assigned with '" + asg.OperatorToken.Text + "', not set" };
+                    lastTarget = asg;
+                }
                 else if (OwnerMatches(chain, componentName, isRoot)) lastOwner = asg;
             }
 
@@ -126,6 +139,59 @@ namespace WinFormsDesigner.Engine
             int insertPos = nlIdx < 0 ? sourceText.Length : nlIdx + 1;
             string inserted = sourceText.Substring(0, insertPos) + newStmtLine + sourceText.Substring(insertPos);
             return new EditResult { NewText = inserted, Mode = EditMode.Insert };
+        }
+
+        /// <summary>
+        /// A ROOT-owned nested set, <c>this.Appearance.Caption = …;</c> (<paramref name="path"/> = [Appearance, Caption]).
+        /// Same contract as <see cref="EditProperty"/> — replace the last exact target, else insert after an anchor — but the
+        /// anchor is the root's own assignment group (<c>this.X = …</c>) or an existing statement under the same first hop,
+        /// which <see cref="EditProperty"/> cannot see once the owner is spelled as the hop path.
+        /// </summary>
+        public static EditResult EditRootNestedProperty(string sourceText, string[] path, string newValueExpr)
+        {
+            if (path.Length < 2 || !path.All(DesignerControlEditor.IsValidIdentifier))
+                return new EditResult { Mode = EditMode.Failed, Reason = "invalid nested property path" };
+            if (!IsSingleExpression(newValueExpr))
+                return new EditResult { Mode = EditMode.Failed, Reason = "value is not a single C# expression: " + newValueExpr };
+            var init = FindInitializeComponent(sourceText);
+            if (init?.Body == null) return new EditResult { Mode = EditMode.Failed, Reason = "InitializeComponent not found" };
+            string? hiddenWrite = HiddenTargetWrite(init.Body, path[path.Length - 1], chain => chain.SequenceEqual(path));
+            if (hiddenWrite != null) return new EditResult { Mode = EditMode.Failed, Reason = hiddenWrite };
+
+            AssignmentExpressionSyntax? lastTarget = null;
+            AssignmentExpressionSyntax? lastAnchor = null;
+            foreach (var st in init.Body.Statements)
+            {
+                if (st is not ExpressionStatementSyntax es || es.Expression is not AssignmentExpressionSyntax asg) continue;
+                var chain = Flatten(asg.Left);
+                if (chain.SequenceEqual(path))
+                {
+                    if (!asg.IsKind(SyntaxKind.SimpleAssignmentExpression))
+                        return new EditResult { Mode = EditMode.Failed, Reason = "'" + string.Join(".", path) + "' is assigned with '" + asg.OperatorToken.Text + "', not set" };
+                    lastTarget = asg;
+                }
+                else if (asg.IsKind(SyntaxKind.SimpleAssignmentExpression) && (chain.Count == 1 || chain[0] == path[0]))
+                {
+                    lastAnchor = asg;
+                }
+            }
+            if (lastTarget != null)
+            {
+                int s = lastTarget.Right.SpanStart;
+                return new EditResult
+                {
+                    NewText = sourceText.Substring(0, s) + newValueExpr + sourceText.Substring(lastTarget.Right.Span.End),
+                    Mode = EditMode.Replace,
+                };
+            }
+            if (lastAnchor == null)
+                return new EditResult { Mode = EditMode.Failed, Reason = "no root assignment to anchor an insert" };
+            var anchorStmt = lastAnchor.FirstAncestorOrSelf<ExpressionStatementSyntax>()!;
+            string nl = sourceText.Contains("\r\n") ? "\r\n" : "\n";
+            string line = LeadingIndent(sourceText, anchorStmt.SpanStart) + "this." + string.Join(".", path) + " = " + newValueExpr + ";" + nl;
+            int nlIdx = sourceText.IndexOf('\n', anchorStmt.Span.End);
+            int insertPos = nlIdx < 0 ? sourceText.Length : nlIdx + 1;
+            return new EditResult { NewText = sourceText.Substring(0, insertPos) + line + sourceText.Substring(insertPos), Mode = EditMode.Insert };
         }
 
         /// <summary>
@@ -348,6 +414,65 @@ namespace WinFormsDesigner.Engine
         }
 
         // ---- helpers ----
+
+        /// <summary>A reason when some assignment to the target is not a plain <c>=</c> statement directly in the body —
+        /// a compound operator, or a write nested in a block or in another expression — else null.</summary>
+        private static string? HiddenTargetWrite(BlockSyntax body, string leafName, Func<List<string>, bool> isTarget)
+        {
+            foreach (var node in body.DescendantNodes())
+            {
+                ExpressionSyntax? written = node switch
+                {
+                    AssignmentExpressionSyntax a => a.Left,
+                    PrefixUnaryExpressionSyntax p when p.IsKind(SyntaxKind.PreIncrementExpression) || p.IsKind(SyntaxKind.PreDecrementExpression) => p.Operand,
+                    PostfixUnaryExpressionSyntax p when p.IsKind(SyntaxKind.PostIncrementExpression) || p.IsKind(SyntaxKind.PostDecrementExpression) => p.Operand,
+                    _ => null,
+                };
+                // Compare by the identifier's VALUE: `@Count` binds the same member as `Count`.
+                if (written == null) continue;
+                var values = FlattenValues(written);
+                // A write to a member of the target's name through a receiver that cannot be followed (a cast, a call)
+                // may land on the target itself: it cannot be proven otherwise, so refuse.
+                if (IsUnanalyzable(values) && values[values.Count - 1] == leafName)
+                    return "'" + leafName + "' is also written through an expression the splice cannot follow";
+                if (!isTarget(values)) continue;
+                if (node is not AssignmentExpressionSyntax asg)
+                    return "the target is also changed with ++/--";
+                if (!asg.IsKind(SyntaxKind.SimpleAssignmentExpression))
+                    return "the target is assigned with '" + asg.OperatorToken.Text + "', not set";
+                if (asg.Parent is not ExpressionStatementSyntax statement || statement.Parent != body)
+                    return "the target is also written inside another statement or expression";
+                if (!isTarget(Flatten(asg.Left)))
+                    return "the target is written with an escaped (@) identifier the splice does not match";
+            }
+            return null;
+        }
+
+        /// <summary><see cref="Flatten"/> by identifier VALUE (an escaped <c>@Count</c> is <c>Count</c>), for the checks
+        /// that must see every write C# would bind to the target, however it is spelled.</summary>
+        internal static List<string> FlattenValues(ExpressionSyntax expr)
+        {
+            var names = new List<string>();
+            void Walk(ExpressionSyntax e)
+            {
+                switch (e)
+                {
+                    case MemberAccessExpressionSyntax m: Walk(m.Expression); names.Add(m.Name.Identifier.ValueText); break;
+                    case ThisExpressionSyntax: break;
+                    case IdentifierNameSyntax id: names.Add(id.Identifier.ValueText); break;
+                    case ParenthesizedExpressionSyntax p: Walk(p.Expression); break;
+                    // `x!` is the same receiver (null-forgiving changes no binding)
+                    case PostfixUnaryExpressionSyntax bang when bang.IsKind(SyntaxKind.SuppressNullableWarningExpression): Walk(bang.Operand); break;
+                    default: names.Add("?" + e.Kind()); break;
+                }
+            }
+            Walk(expr);
+            return names;
+        }
+
+        /// <summary>A chain from <see cref="FlattenValues"/> whose receiver could not be followed (a cast, a call, an
+        /// element access…): it may reach the same object by another route.</summary>
+        internal static bool IsUnanalyzable(List<string> chain) => chain.Any(part => part.StartsWith("?", StringComparison.Ordinal));
 
         private static bool IsSingleExpression(string value)
         {

@@ -267,7 +267,7 @@ describe('disposable toolbox cache boundary', () => {
     expect(PERSISTED_DESIGNER_STATE_INVENTORY.filter((entry) => entry.category === 'disposableCache').map((entry) => entry.key))
       .toEqual([...DISPOSABLE_DESIGNER_CACHE_KEYS]);
     expect(PERSISTED_DESIGNER_STATE_INVENTORY.filter((entry) => entry.category === 'unsavedRecovery').map((entry) => entry.storage))
-      .toEqual(['globalStorage', 'workspaceStorage', 'hostBackup']);
+      .toEqual(['globalStorage', 'globalStorage', 'workspaceStorage', 'hostBackup']);
     expect(new Set(PERSISTED_DESIGNER_STATE_INVENTORY.map((entry) => entry.key)).size)
       .toBe(PERSISTED_DESIGNER_STATE_INVENTORY.length);
   });

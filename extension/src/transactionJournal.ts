@@ -41,6 +41,11 @@ export interface TransactionJournalRecord {
   /** Exact durable forward images, used to identify writes that landed before the process died. */
   afterBytesBase64: Record<string, string | null>;
   appliedTargets: string[];
+  /** The resource runner cannot own a native CustomDocument edit. A product journal is terminal only after the
+   * sole source/Undo owner acknowledges that commit; a crash in the runner-to-host gap must compensate targets. */
+  hostOperation?: { documentId: string; operationId: string; payloadFingerprint: string; commit: 'pending' | 'committed' };
+  /** A committed resource image alone cannot prove that VS Code's unsaved source buffer survived a host crash. */
+  sourceReconciliationRequired?: boolean;
   error?: string;
 }
 
@@ -53,6 +58,7 @@ export interface CreateJournalRecordOptions {
   beforeBytesBase64: Record<string, string | null>;
   afterBytesBase64: Record<string, string | null>;
   nowUtc?: string;
+  hostOperation?: TransactionJournalRecord['hostOperation'];
 }
 
 const transitions: Record<TransactionJournalState, readonly TransactionJournalState[]> = {
@@ -83,6 +89,7 @@ export function createJournalRecord(options: CreateJournalRecordOptions): Transa
     beforeBytesBase64: { ...options.beforeBytesBase64 },
     afterBytesBase64: { ...options.afterBytesBase64 },
     appliedTargets: [],
+    ...(options.hostOperation ? { hostOperation: { ...options.hostOperation } } : {}),
   };
 }
 
@@ -131,6 +138,8 @@ export function classifyJournalForRecovery(record: TransactionJournalRecord | nu
     case 'recoveryRequired':
       return 'manualResolution';
     case 'committed':
+      if (record.hostOperation?.commit === 'pending') return 'rollbackRequired';
+      return 'terminal';
     case 'rolledBack':
     case 'aborted':
       return 'terminal';
@@ -250,6 +259,11 @@ function isTransactionJournalRecord(value: unknown): value is TransactionJournal
     && Object.entries(v.afterBytesBase64).every(([target, bytes]) =>
       byteImageMatchesFingerprint(bytes, v.afterFingerprints?.[target] as ArtifactFingerprint))
     && Array.isArray(v.appliedTargets)
+    && (v.sourceReconciliationRequired === undefined || typeof v.sourceReconciliationRequired === 'boolean')
+    && (v.hostOperation === undefined || (!!v.hostOperation && typeof v.hostOperation.operationId === 'string'
+      && v.hostOperation.operationId.length > 0 && typeof v.hostOperation.documentId === 'string'
+      && v.hostOperation.documentId.length > 0 && isSha256(v.hostOperation.payloadFingerprint)
+      && ['pending', 'committed'].includes(v.hostOperation.commit)))
     && v.appliedTargets.every((target) => typeof target === 'string'
       && Object.prototype.hasOwnProperty.call(v.baseFingerprints, target));
 }

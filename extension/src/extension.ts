@@ -39,8 +39,14 @@ import {
 import { resolveFrameworkOutput } from './csprojRef';
 import { currentLang, setLocale, t } from './i18n';
 import { EngineRecoveryPolicy } from './engineRecovery';
+import { EngineRegistry } from './engineRegistry';
+import { currentEngineRequestContext, engineOwnedByCurrentRequest, engineRequestScopeActive, engineWorkerKey, retainEngineForCurrentRequest } from './engineRequestContext';
+import { EngineAdmissionGate } from './engineAdmission';
+import { refreshControlSourceStatus } from './controlSourceStatus';
+import { SharedEngineStartup, confirmEngineStartupExit } from './engineStartup';
+import { BUILD_TASK_ACTIVE, EngineRequestAudit, EngineTransportState, productRequestOutcomes, selectEngineForBudgetRecycle } from './engineTransport';
 import { isBuildOrTestTask, taskCoordinationKey } from './taskCoordination';
-import { BuildWriteOrigin, ExternalBuildRelease, intermediateDirCandidates, isAssemblyWrite } from './externalBuild';
+import { BuildWriteOrigin, classifyOutputEvent, ExternalBuildRelease, intermediateDirCandidates, isAssemblyWrite, OutputFileStamp } from './externalBuild';
 import { formSiblingsToDelete } from './formSiblings';
 import { shouldSuppressAutoOpen } from './autoOpen';
 import {
@@ -61,10 +67,13 @@ import {
   V2AdapterManifestProductStatus,
   V2AdapterManifestRegistry,
 } from './v2AdapterManifestRegistry';
-import { buildDesignerDiagnosticBundle, createDesignerDiagnostic, DesignerDiagnostic } from './designerDiagnostics';
+import { buildDesignerDiagnosticBundle, createDesignerDiagnostic, DesignerDiagnostic, engineInstallationDiagnosticCode } from './designerDiagnostics';
 import { FormStatusLabels, FormStatusSnapshot, showFormStatusView } from './formStatusView';
 import { invalidateProjectCompatibilityCache } from './projectCompatibility';
 import { classifyToolboxRequest } from './toolboxRequest';
+import type { HostMutationRecord, HostMutationResult } from './mutationOperation';
+import { hostMutationAdmissionFrozen, onRollbackPreparationInvalidated, rollbackInvalidationEpoch, ROLLBACK_PREPARED, setHostMutationAdmissionFrozen, settleAllHostMutations, trackHostMutation } from './mutationOperation';
+import { prepareRollback, RollbackPreparationResult } from './rollbackPreparation';
 
 export interface ScaffoldCommandOptions {
   /** Optional non-interactive type name. Explorer calls omit this and keep the normal VS-style prompt. */
@@ -94,7 +103,10 @@ export interface ExtensionHostTestApi {
   /** Test timing only: the next real last-session-close timer uses this bounded delay instead of the product budget. */
   armNextIdleEngineRecycle(delayMs: number): void;
   /** Test trigger only: terminate the actual mapped product worker so Extension Host E2E can observe normal recovery. */
-  crashMappedEngineForRecoveryTest(kind: EngineKind): { pid: number; signaled: boolean };
+  crashMappedEngineForRecoveryTest(kind: EngineKind, expectedPid?: number): { pid: number; signaled: boolean };
+  productWorkerState(): readonly EngineTransportState[];
+  productRequestOutcomes(): readonly EngineRequestAudit[];
+  delayNextProductReplyForTest(kind: EngineKind, delayMs: number): void;
   saveOpenDesigner(source: vscode.Uri): Promise<void>;
   saveOpenDesignerAs(source: vscode.Uri, destination: vscode.Uri): Promise<void>;
   openDesignerState(source: vscode.Uri): {
@@ -113,6 +125,7 @@ export interface ExtensionHostTestApi {
     ownerPaths: readonly string[];
     renderFailureCause: string | null;
     renderFailureMessage: string | null;
+    supportFailureCode: string | null;
     lastPropertyPersistenceLane: 'ownedRegion' | 'sourceFirst' | null;
     lastNet48PropertyEditTelemetry: {
       plannerMs: number;
@@ -177,6 +190,8 @@ export interface ExtensionHostTestApi {
     accessor: string): Promise<{ applied: boolean; refusalCode: string | null; reason: string | null }>;
   importOpenDesignerLocalImage(source: vscode.Uri, id: string, propertyName: string,
     propertyType: string, image: vscode.Uri): Promise<boolean>;
+  importOpenDesignerLocalImageWithJournalInterleave(source: vscode.Uri, id: string, propertyName: string,
+    propertyType: string, image: vscode.Uri, interleave: () => Promise<void>): Promise<boolean>;
   setOpenDesignerImageListImages(source: vscode.Uri, id: string,
     images: readonly { image: vscode.Uri; key?: string }[]): Promise<boolean>;
   setOpenDesignerImageListWithPostconditionFailure(source: vscode.Uri, id: string,
@@ -209,6 +224,11 @@ export interface ExtensionHostTestApi {
     isEnum: boolean,
     value: string,
   ): Promise<void>;
+  editOpenDesignerPropertyWithOperation(source: vscode.Uri, id: string, propertyName: string,
+    propertyType: string, isEnum: boolean, value: string, operationId: string): Promise<HostMutationResult>;
+  observeOpenDesignerOperation(source: vscode.Uri, operationId: string): HostMutationRecord | undefined;
+  runOpenDesignerOperation(source: vscode.Uri, operationId: string,
+    intent: Parameters<WinFormsDesignerProvider['runOpenDocumentOperation']>[2]): Promise<HostMutationResult>;
   editOpenDesignerColorUiTypeEditor(
     source: vscode.Uri,
     id: string,
@@ -371,8 +391,9 @@ export interface ExtensionHostTestApi {
 // Two engine processes, started lazily and keyed by kind: 'modern' (the default WinForms/Roslyn engine) and
 // 'net48' (the .NET Framework compiled-render engine for DevExpress/Framework projects). A form routes to one
 // by the runtime of its resolved control assembly (see DesignerSession.engineKind).
-const engines = new Map<EngineKind, EngineHandle>();
-const engineStarts = new Map<EngineKind, Promise<EngineHandle>>();
+const engines = new EngineRegistry<EngineHandle>();
+const engineStarts = new EngineRegistry<SharedEngineStartup<EngineHandle>>();
+const engineAdmission = new EngineAdmissionGate();
 // Every child spawned via startEngine that has NOT yet exited — registered at spawn (onSpawn), before it becomes an
 // EngineHandle, and self-removed on 'exit'. A start can sit in its ≤10s pipe-connect wait when the host deactivates;
 // deactivate() only disposes handles already in `engines`, so without this a still-connecting child would outlive the
@@ -473,37 +494,7 @@ async function setControlSource(file: string, dll: string | undefined): Promise<
 
 /** Reflect the active designer's control source in the status bar (explicit override, or the auto-resolved dll). */
 function updateControlStatus(): void {
-  if (!controlStatus) return;
-  const file = DesignerHub.instance.activeSession?.designerFilePath ?? null;
-  if (!file) { controlStatus.hide(); return; }
-  // A form rendered by the net48 engine is drawn from the project's last compiled build — surface that in the badge.
-  // The badge is informational, NOT a lock: net48 forms are editable. (It used to carry $(lock), which read as
-  // "read-only" on a perfectly editable form and collided with the real 🔒 read-only states.)
-  const preview = DesignerHub.instance.activeSession?.isCompiledPreview
-    ? t('host.statusbar.previewBadge') : '';
-  const previewTip = DesignerHub.instance.activeSession?.isCompiledPreview
-    ? '\n' + t('host.statusbar.tip.previewNote') : '';
-  const explicit = getControlSource(file);
-  if (explicit) {
-    controlStatus.text = t('host.statusbar.controls', { name: path.basename(explicit) }) + preview;
-    controlStatus.tooltip = t('host.statusbar.tip.explicit', { path: explicit }) + previewTip + '\n' + t('host.statusbar.tip.clickChange');
-    controlStatus.show();
-    return;
-  }
-  controlStatus.text = t('host.statusbar.controls', { name: t('host.statusbar.auto') }) + preview;
-  controlStatus.tooltip = t('host.statusbar.tip.auto') + previewTip + '\n' + t('host.statusbar.tip.clickOverride');
-  controlStatus.show();
-  // best-effort: fill in the resolved dll name in the background (don't block the status update on the engine)
-  void (async () => {
-    try {
-      if (!extContext) return;
-      const r = await resolveAssembly(await getEngine(extContext), file);
-      if (r && controlStatus && DesignerHub.instance.activeSession?.designerFilePath === file && !getControlSource(file)) {
-        controlStatus.text = t('host.statusbar.controls', { name: path.basename(r) + t('host.statusbar.autoSuffix') });
-        controlStatus.tooltip = t('host.statusbar.tip.autoResolved', { path: r }) + '\n' + t('host.statusbar.tip.clickOverride');
-      }
-    } catch { /* engine not up / unresolved — leave the neutral "auto" label */ }
-  })();
+  refreshControlSourceStatus(controlStatus, DesignerHub.instance.activeSession ?? undefined, getControlSource, t);
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionHostTestApi | undefined> {
@@ -801,8 +792,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   // 1.0.1 "Stop the Designer Preview Engine": an immediate off switch for the resident engine process(es). They start
   // lazily, stay warm for bounded idle reuse, then recycle; this command lets the user shut them down immediately. Always in
   // the palette (no `when`) — it's needed precisely when no designer is focused. See stopPreviewEngines.
+  // A native Undo/Redo or Revert during a prepared rollback cancels it (it cannot be refused): say so, and retire the
+  // older Resume action, which no longer has a freeze to lift.
+  onRollbackPreparationInvalidated(() => {
+    rollbackGeneration++;
+    output.appendLine('[rollback] preparation cancelled: a form changed through Undo, Redo or Revert');
+    void vscode.window.showWarningMessage(t('host.rollback.cancelled'));
+  });
+  context.subscriptions.push({ dispose: () => onRollbackPreparationInvalidated(undefined) });
   context.subscriptions.push(
     vscode.commands.registerCommand('winformsDesigner.stopEngines', () => stopPreviewEngines()),
+    vscode.commands.registerCommand('winformsDesigner.prepareRollback',
+      (options?: { interactive?: boolean; acceptUnresolved?: boolean }) => prepareRollbackCommand(context, options)),
   );
 
   // 1.0.2 "Restart the Designer Preview Engine": one-click clean engine — stop the resident process(es) and reload the
@@ -881,7 +882,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         name: task.name,
         definitionType: typeof task.definition?.type === 'string' ? task.definition.type : undefined,
       })) return;
-      if (DesignerHub.instance.net48OutputsInUse().length === 0) return;
+      // Track the task even when no .NET Framework preview exists yet: a form opened while it runs must not load
+      // and pin the output the build is about to overwrite. Only the release itself depends on running workers.
       const key = taskCoordinationKey({
         groupId: task.group?.id,
         name: task.name,
@@ -1083,8 +1085,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       adapterManifestRegistryState: () => adapterManifestRegistry.snapshot(),
       refreshAdapterManifests: () => adapterManifestRegistry.refresh(),
       engineLifecycleState: () => engineLifecycleState(),
+      productWorkerState: () => [...engines.values()].flatMap((handle) => handle.workerState ? [handle.workerState()] : []),
+      productRequestOutcomes,
+      delayNextProductReplyForTest: (kind, delayMs) => engines.get(kind)?.delayNextReplyForTest?.(delayMs),
       armNextIdleEngineRecycle: (delayMs) => armNextIdleEngineRecycle(delayMs),
-      crashMappedEngineForRecoveryTest: (kind) => crashMappedEngineForRecoveryTest(kind),
+      crashMappedEngineForRecoveryTest: (kind, expectedPid) => crashMappedEngineForRecoveryTest(kind, expectedPid),
       saveOpenDesigner: (source) => designerProvider.saveOpenDocument(source),
       saveOpenDesignerAs: (source, destination) => designerProvider.saveOpenDocumentAs(source, destination),
       openDesignerState: (source) => designerProvider.openDocumentState(source),
@@ -1104,6 +1109,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         designerProvider.tryOpenDocumentProjectImageResource(source, id, propertyName, accessor),
       importOpenDesignerLocalImage: (source, id, propertyName, propertyType, image) =>
         designerProvider.importOpenDocumentLocalImage(source, id, propertyName, propertyType, image),
+      importOpenDesignerLocalImageWithJournalInterleave: (source, id, propertyName, propertyType, image, interleave) =>
+        designerProvider.importOpenDocumentLocalImageWithJournalInterleave(source, id, propertyName, propertyType, image, interleave),
       setOpenDesignerImageListImages: (source, id, images) =>
         designerProvider.setOpenDocumentImageListImages(source, id, images),
       setOpenDesignerImageListWithPostconditionFailure: (source, id, images) =>
@@ -1121,6 +1128,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         designerProvider.resizeOpenDocumentControl(source, id, width, height),
       editOpenDesignerProperty: (source, id, propertyName, propertyType, isEnum, value) =>
         designerProvider.editOpenDocumentProperty(source, id, propertyName, propertyType, isEnum, value),
+      editOpenDesignerPropertyWithOperation: (source, id, propertyName, propertyType, isEnum, value, operationId) =>
+        designerProvider.editOpenDocumentPropertyWithOperation(source, id, propertyName, propertyType, isEnum, value, operationId),
+      observeOpenDesignerOperation: (source, operationId) => designerProvider.observeOpenDocumentOperation(source, operationId),
+      runOpenDesignerOperation: (source, operationId, intent) => designerProvider.runOpenDocumentOperation(source, operationId, intent),
       editOpenDesignerColorUiTypeEditor: (source, id, propertyName, outcome) =>
         designerProvider.editOpenDocumentColorUiTypeEditor(source, id, propertyName, outcome),
       editOpenDesignerCertifiedVendorUiTypeEditor: (source, id, propertyName) =>
@@ -1304,7 +1315,8 @@ async function addScaffoldFromExplorer(
       seedSdkResx: kind === 'form',
     });
 
-    const applied = await applyScaffoldPlanAtomically(plan, {
+    // The files and project edit are durable writes: held to rollback admission like any designer operation.
+    const applied = await trackHostMutation(() => applyScaffoldPlanAtomically(plan, {
       async writeFile(filePath, content) {
         if (testHooks?.failWriteFileName === path.basename(filePath)) {
           throw new Error(`Extension Host injected write failure for ${path.basename(filePath)}`);
@@ -1358,7 +1370,7 @@ async function addScaffoldFromExplorer(
         const nextBytes = projectHadBom ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]) : body;
         await atomicWriteLocalFile(projectPath, nextBytes);
       },
-    });
+    }));
 
     const mainUri = vscode.Uri.file(path.join(plan.targetDir, plan.mainFileName));
     output.appendLine(
@@ -1412,7 +1424,7 @@ async function openFormStatus(context: vscode.ExtensionContext, registry: V2Adap
     let caps: Awaited<ReturnType<typeof getCapabilities>> | undefined;
     if (engine) {
       try { caps = await supportWithinBudget(getCapabilities(engine), 2_000); }
-      catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
+      catch (error) { diagnostics.push(createDesignerDiagnostic(engineInstallationDiagnosticCode(error))); }
     }
     const architecture = support.compatibility?.workerArchitecture;
     const adapters = registry.snapshotForContext({ runtime: support.engineKind,
@@ -1464,7 +1476,8 @@ async function openFormStatus(context: vscode.ExtensionContext, registry: V2Adap
     loadFailed: t('support.loadFailed'), actionFailed: t('support.actionFailed'), language: currentLang(),
     severity: { info: t('support.severity.info'), warning: t('support.severity.warning'), error: t('support.severity.error') },
     actions: { retry: t('support.action.retry'), rebuild: t('support.action.rebuild'), chooseAssembly: t('support.action.chooseAssembly'),
-      viewCode: t('support.action.viewCode'), clearCache: t('support.action.clearCache'), restart: t('support.action.restart'), refresh: t('support.action.refresh') },
+      viewCode: t('support.action.viewCode'), clearCache: t('support.action.clearCache'), restart: t('support.action.restart'),
+      reinstall: t('support.action.reinstall'), refresh: t('support.action.refresh') },
   };
   const panel = showFormStatusView(context.extensionUri, async () => {
     if (first) { const result = first; first = undefined; return result; }
@@ -1484,6 +1497,9 @@ async function openFormStatus(context: vscode.ExtensionContext, registry: V2Adap
         await supportWithinBudget(session.refreshToolbox(true), 20_000);
         void vscode.window.showInformationMessage(t('support.cacheRebuilt')); break;
       case 'restart': await supportWithinBudget(restartPreviewEngines(), 30_000); break;
+      // A broken or mismatched engine payload cannot be repaired by restarting it: open this extension in the
+      // Extensions view, where it can be reinstalled; the diagnostic text says to reload the window afterwards.
+      case 'reinstall': await vscode.commands.executeCommand('extension.open', context.extension.id); break;
     }
   }, labels);
   context.subscriptions.push(panel);
@@ -1517,15 +1533,15 @@ async function collectSafeDiagnosticReport(context: vscode.ExtensionContext, reg
     if (typeof response === 'string' && /^winforms-engine ok \/ \.NET(?: Framework| Core)? \d{1,6}\.\d{1,6}(?:\.\d{1,6}){0,2}$/.test(response))
       engineGreeting = response;
     try { caps = await supportWithinBudget(getCapabilities(engine), 2_000); }
-    catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
-  } catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
+    catch (error) { diagnostics.push(createDesignerDiagnostic(engineInstallationDiagnosticCode(error))); }
+  } catch (error) { diagnostics.push(createDesignerDiagnostic(engineInstallationDiagnosticCode(error))); }
   let sessionCaps = caps;
   if (support?.engineKind === 'net48') {
     const activeEngine = engines.get('net48');
     sessionCaps = undefined;
     if (activeEngine) {
       try { sessionCaps = await supportWithinBudget(getCapabilities(activeEngine), 2_000); }
-      catch { diagnostics.push(createDesignerDiagnostic('ENGINE_UNAVAILABLE')); }
+      catch (error) { diagnostics.push(createDesignerDiagnostic(engineInstallationDiagnosticCode(error))); }
     }
   }
   const result = buildDesignerDiagnosticBundle({
@@ -1652,7 +1668,7 @@ function hasOpenDesignerTab(key: string): boolean {
  * Start the engine at most once even under concurrent renders, and self-heal if it dies.
  * Without the shared startup promise two first-renders could each spawn an engine and leak one.
  */
-async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'modern'): Promise<EngineHandle> {
+async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'modern', admissionDeadline = Date.now() + 8_000): Promise<EngineHandle> {
   // A last-session idle recycle removes/signals the resident processes before it awaits exit. A designer opened in
   // that small window waits for the bounded teardown and starts one fresh worker instead of receiving a dying handle.
   const idleRecycle = idleEngineRecycleInFlight;
@@ -1661,8 +1677,8 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
   // Wait for the confirmed teardown; and if the teardown could NOT confirm the old process exited, stay
   // fail-closed rather than start a replacement beside a process that may still hold the dll.
   if (kind === 'net48') {
-    if (net48Recycling) { try { await net48Recycling; } catch { /* fall through to the block check below */ } }
-    if (net48Blocked) throw new Error(t('host.net48.recycleBlocked'));
+    if (net48Recycling.size > 0) { try { await Promise.all(net48Recycling.values()); } catch { /* check process facts below */ } }
+    if (blockedNet48Processes.size > 0) throw new Error(t('host.net48.recycleBlocked'));
   }
   // Refuse to start once the host is shutting down. The idle/net48 waits above can suspend a start until AFTER
   // deactivate() snapshotted liveProcs; without this recheck it could resume and spawn a child that escapes teardown,
@@ -1670,44 +1686,97 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
   // The recheck is synchronous from here through the spawn (no await), so any process onSpawn registers is guaranteed
   // to land in deactivate()'s snapshot instead. Covers both engine kinds; deactivate()'s late guard remains a backstop.
   if (shuttingDown) throw new Error('extension is shutting down');
+  // A prepared rollback released every worker on purpose: nothing may start a replacement before the host restarts.
+  if (hostMutationAdmissionFrozen()) throw Object.assign(new Error(t('host.rollback.frozen')), { code: ROLLBACK_PREPARED });
+  const requestContext = currentEngineRequestContext();
+  if (requestContext?.cancellation?.aborted) throw Object.assign(new Error('REQUEST_CANCELLED'), { code: 'REQUEST_CANCELLED' });
+  if (requestContext && !engineRequestScopeActive()) throw Object.assign(new Error('WORKER_REQUEST_SCOPE_COMPLETED'), { code: 'WORKER_REQUEST_SCOPE_COMPLETED' });
+  let start = engineStarts.get(kind);
+  if (start?.isAbandoned) {
+    await start.waitForCleanup(admissionDeadline, requestContext?.cancellation);
+    return getEngine(context, kind, admissionDeadline);
+  }
   const running = engines.get(kind);
   // Liveness = the process has NOT terminated. Test the actual exit facts (exitCode for a normal exit, signalCode for a
   // signal-kill), never `process.killed` — Node's `killed` only means a signal was SENT, not that the child ended
   //, so it would call a still-alive process dead and hand back a broken handle.
   if (running && running.process.exitCode == null && running.process.signalCode == null) {
-    return running;
+    if (running.workerState?.().state === 'disposed') throw new Error('WORKER_SUPERVISOR_DISPOSED');
+    return retainEngineForCurrentRequest(running);
   }
   if (running) {
     engines.delete(kind);
     engineStarts.delete(kind);
+    start = undefined;
   }
-  let start = engineStarts.get(kind);
   if (!start) {
+    if (Date.now() >= admissionDeadline) throw Object.assign(new Error('REQUEST_DEADLINE_EXCEEDED'), { code: 'REQUEST_DEADLINE_EXCEEDED' });
+    const configuredLimit = vscode.workspace.getConfiguration('winformsDesigner').get<number>('workers.maximumResidentProcesses', 4);
+    const processLimit = Number.isFinite(configuredLimit) ? Math.max(1, Math.min(16, Math.trunc(configuredLimit))) : 4;
+    if (liveProcs.size >= processLimit) {
+      const background = requestContext?.admissionPriority === 'background';
+      const residentEntries = [...engines.entries()];
+      const victim = selectEngineForBudgetRecycle(residentEntries.map(([, handle]) => handle), background);
+      const idle = residentEntries.find(([, handle]) => handle === victim);
+      if (!idle) {
+        const resident = [...engines.values()];
+        if (resident.length === liveProcs.size && resident.every(engineOwnedByCurrentRequest)) {
+          throw new Error('WORKER_PROCESS_BUDGET_EXCEEDED'); // the caller must release its own unused handles
+        }
+        await engineAdmission.wait(() => shuttingDown || !!engines.get(kind) || !!engineStarts.get(kind)
+          || liveProcs.size < processLimit || !!selectEngineForBudgetRecycle(engines.values(), background),
+          admissionDeadline, currentEngineRequestContext()?.cancellation);
+        return getEngine(context, kind, admissionDeadline);
+      }
+      const [idleKind, idleHandle] = idle;
+      engines.deleteValue(idleHandle);
+      // Remove the resolved startup promise of the same graph before recycling it.
+      for (const pending of engineStarts.values()) if (pending.value === idleHandle) engineStarts.deleteValue(pending);
+      if (idleKind === 'net48') await recycleNet48Engine(idleHandle);
+      else {
+        const exited = new Promise<boolean>((resolve) => idleHandle.process.once('exit', () => resolve(true)));
+        idleHandle.dispose();
+        const gone = idleHandle.process.exitCode != null || idleHandle.process.signalCode != null
+          || await Promise.race([exited, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000))]);
+        if (!gone) throw new Error('WORKER_PROCESS_RECYCLE_BLOCKED');
+      }
+      if (shuttingDown) throw new Error('extension is shutting down');
+      return getEngine(context, kind, admissionDeadline); // recheck shared starts and physical count after awaited teardown
+    }
+    if (Date.now() >= admissionDeadline) throw Object.assign(new Error('REQUEST_DEADLINE_EXCEEDED'), { code: 'REQUEST_DEADLINE_EXCEEDED' });
     const entry = resolveEngineEntry(context, kind);
     const startedAt = Date.now();
+    const startupKey = engineWorkerKey(kind);
+    let startupChild: EngineHandle['process'] | undefined;
     output.show(true); // reveal the log on first engine start so startup/render issues are visible
     output.appendLine(`starting ${kind} engine: ` + entry);
-    start = startEngine(entry, {
+    start = new SharedEngineStartup<EngineHandle>({
+      start: () => startEngine(entry, {
+      runtime: kind,
+      workerKey: startupKey,
       onLog: (l) => output.appendLine(l),
       probeDirs: kind === 'net48' ? getProbeDirectories() : undefined,
+      admission: kind === 'net48' ? net48BuildAdmission : undefined,
       visibleRenderWindows: kind === 'net48' && !isolateRenderWindows(),
       // Own the child from the instant it spawns (before it becomes a handle) so deactivate() can kill it even if this
       // start is still connecting. Self-remove on 'close' AS WELL AS 'exit': an OS-level spawn
       // failure (ENOENT — dotnet/apphost missing) emits 'error' + 'close' but NEVER 'exit', so an exit-only listener
       // would leak that dead process forever. Set.delete is idempotent, so both firing is fine.
       onSpawn: (proc) => {
+        startupChild = proc;
         liveProcs.add(proc);
         const drop = (): void => { liveProcs.delete(proc); };
         proc.once('exit', drop);
         proc.once('close', drop);
+        if (start?.isAbandoned) { try { proc.kill(); } catch { /* already gone */ } }
       },
-    })
-      .then((handle) => {
+      }),
+      publish: (handle) => {
         // The window/extension can deactivate while this start is still connecting; deactivate() only disposes handles
         // already in the map, so a start that resolves afterward would reinsert and LEAK a live process + pinned dll
         // Refuse to install it — dispose and throw a shutdown error instead.
         if (shuttingDown) { try { handle.dispose(); } catch { /* ignore */ } throw new Error('extension is shutting down'); }
-        engines.set(kind, handle);
+        engines.set(kind, handle, startupKey);
         const health = engineHealth.get(kind) ?? { starts: 0 };
         health.starts += 1;
         health.lastStartupMs = Date.now() - startedAt;
@@ -1717,12 +1786,12 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
         const onLost = (reason: string, confirmedExit: boolean): void => {
           if (lost) return;
           lost = true;
-          if (engines.get(kind) !== handle) return;
-          engines.delete(kind);
-          engineStarts.delete(kind);
+          if (!engines.deleteValue(handle)) return;
+          if (start) engineStarts.deleteValue(start);
           health.lastExit = `${new Date().toISOString()} (${reason})`;
           output.appendLine(`[engine:${kind}] handle cleared: ${reason}`);
           if (shuttingDown) return;
+          if (handle.wasUnexpectedlyLost?.() === false) return;
           const scheduleRecovery = (): void => {
             const decision = engineRecovery.recordCrash(kind);
             recordV2EngineProbeCrash(v2WorkerSupervisor, kind);
@@ -1751,15 +1820,17 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
         };
         handle.process.once('exit', (code, signal) => onLost(`process exit code=${code ?? 'null'} signal=${signal ?? 'none'}`, true));
         handle.connection.onClose(() => onLost('RPC connection closed', false));
-        return handle;
-      })
-      .catch((err) => {
-        engineStarts.delete(kind); // allow a retry on the next render
-        throw err;
-      });
-    engineStarts.set(kind, start);
+      },
+      cancelPending: () => { try { startupChild?.kill(); } catch { /* already gone */ } },
+      confirmStopped: () => confirmEngineStartupExit(startupChild),
+      remove: () => {
+        if (start?.value) engines.deleteValue(start.value);
+        if (start) engineStarts.deleteValue(start);
+      },
+    });
+    engineStarts.set(kind, start, startupKey);
   }
-  return start;
+  return start.acquire(retainEngineForCurrentRequest, requestContext?.cancellation);
 }
 
 const warnedAssemblyPaths = new Set<string>();
@@ -1854,7 +1925,17 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
  * released", which is the honest answer.
  */
 async function releaseNet48Output(assemblyPath: string): Promise<boolean> {
-  const engine = engines.get('net48');
+  let released = false;
+  for (const engine of runningNet48Engines()) released = await releaseNet48OutputFrom(engine, assemblyPath) || released;
+  return released;
+}
+
+function runningNet48Engines(): EngineHandle[] {
+  return [...engines.entries()].filter(([kind, handle]) => kind === 'net48'
+    && handle.process.exitCode == null && handle.process.signalCode == null).map(([, handle]) => handle);
+}
+
+async function releaseNet48OutputFrom(engine: EngineHandle, assemblyPath: string): Promise<boolean> {
   // Terminated? Check the real exit facts (exitCode / signalCode), never `process.killed` — it only means a signal was
   // SENT (Node docs), so a still-alive process would be wrongly treated as gone.
   if (shuttingDown || !engine || engine.process.exitCode != null || engine.process.signalCode != null) return false;
@@ -1892,7 +1973,12 @@ async function releaseNet48Output(assemblyPath: string): Promise<boolean> {
  */
 
 async function autoReleaseNet48OnBlur(): Promise<boolean> {
-  const eng = engines.get('net48');
+  let released = false;
+  for (const engine of runningNet48Engines()) released = await autoReleaseNet48WorkerOnBlur(engine) || released;
+  return released;
+}
+
+async function autoReleaseNet48WorkerOnBlur(eng: EngineHandle): Promise<boolean> {
   // Same "process is really alive" facts releaseNet48Output checks; never start an engine just to release.
   if (!eng || shuttingDown || eng.process.exitCode != null || eng.process.signalCode != null) return false;
   // Nothing an OPEN designer pins ⇒ nothing to do. (A source-switched leak that no session names is left to the
@@ -1923,10 +2009,26 @@ async function autoReleaseNet48OnBlur(): Promise<boolean> {
   return false;
 }
 
+/** What a net48 worker may still run while a build owns the .NET Framework output: the release itself and protocol
+ * housekeeping. Everything else — render, describe, live edit, toolbox reflection — can load the user's assemblies and
+ * re-pin the very output the build is about to overwrite (MSB3027), so it waits until the build ends. */
+const NET48_BUILD_SAFE_METHODS = new Set(['ReleaseAllCompiledAssemblies', 'ReleaseCompiledAssembly', 'Ping', 'GetCapabilities']);
+
+function net48BuildAdmission(method: string): string | undefined {
+  return DesignerHub.instance.net48TaskActive && !NET48_BUILD_SAFE_METHODS.has(method) ? BUILD_TASK_ACTIVE : undefined;
+}
+
 /** Build/test-task release path. It shares the same bounded unload/recycle guarantees as the manual command but is
  * silent UI-wise: the canvas itself explains that its last-good frame is view-only while the task owns the output. */
 async function releaseNet48ForTask(taskName: string): Promise<boolean> {
-  const eng = engines.get('net48');
+  const workers = runningNet48Engines();
+  if (workers.length === 0) return false;
+  let released = true;
+  for (const engine of workers) released = await releaseNet48WorkerForTask(engine, taskName) && released;
+  return released;
+}
+
+async function releaseNet48WorkerForTask(eng: EngineHandle, taskName: string): Promise<boolean> {
   if (!eng || shuttingDown || eng.process.exitCode != null || eng.process.signalCode != null) return false;
   try {
     const result = await Promise.race([
@@ -2019,13 +2121,15 @@ function syncExternalBuildWatch(): void {
     if (wanted.has(dir)) continue;
     try { watcher.close(); } catch { /* already closed */ }
     externalBuildWatchers.delete(dir);
+    outputBaselines.delete(dir);
   }
   let armed = 0;
   for (const [dir, recursive] of wanted) {
     if (externalBuildWatchers.has(dir)) { armed++; continue; }
     try {
+      if (!recursive) outputBaselines.set(dir, snapshotOutputDir(dir));
       const watcher = fs.watch(dir, { recursive, persistent: false },
-        (_event, name) => onExternalBuildWrite(name, recursive ? 'intermediate' : 'output'));
+        (event, name) => onExternalBuildWrite(event, name, recursive ? 'intermediate' : 'output', dir));
       // A watch dies under us when its directory is deleted — exactly what a Clean does before recreating it. Drop
       // it and schedule a re-arm; leaving it out until the next unrelated editor event is how a Clean+Rebuild would
       // slip past the release entirely.
@@ -2059,17 +2163,53 @@ function closeExternalBuildWatch(): void {
     try { watcher.close(); } catch { /* already closed */ }
     externalBuildWatchers.delete(dir);
   }
+  outputBaselines.clear();
   if (externalBuildResync) { clearTimeout(externalBuildResync); externalBuildResync = undefined; }
   externalBuild.dispose();
 }
 
-function onExternalBuildWrite(name: string | Buffer | null, where: BuildWriteOrigin): void {
+/** Content stamps of the files in each watched OUTPUT directory, taken when the watch is armed and advanced on every
+ * event, so a metadata-only event (see isOutputBuildActivity) can be told apart from a write. */
+const outputBaselines = new Map<string, Map<string, OutputFileStamp>>();
+
+function contentStamp(file: string): OutputFileStamp {
+  try {
+    const st = fs.statSync(file);
+    return { content: `${st.mtimeMs}:${st.size}`, readOnly: (st.mode & 0o200) === 0 };
+  } catch { return { content: 'absent', readOnly: false }; }
+}
+
+function snapshotOutputDir(dir: string): Map<string, OutputFileStamp> {
+  const stamps = new Map<string, OutputFileStamp>();
+  try {
+    for (const entry of fs.readdirSync(dir)) stamps.set(entry.toLowerCase(), contentStamp(path.join(dir, entry)));
+  } catch { /* unreadable now → every named change counts until the next arm */ }
+  return stamps;
+}
+
+function onExternalBuildWrite(eventType: string, rawName: string | Buffer | null, where: BuildWriteOrigin, dir: string): void {
+  const name = rawName == null ? null : rawName.toString();
   // In the INTERMEDIATE tree only a written assembly means a copy over our pinned output is coming — reacting to the
   // rest (.cache / .AssemblyInfo.cs / .editorconfig, rewritten constantly by design-time builds) would unload the
-  // preview for nothing. The pinned OUTPUT directory is different: nothing but a build writes there, and fs.watch is
-  // documented not to guarantee a filename, so any event counts rather than being silently dropped.
+  // preview for nothing.
   if (where === 'intermediate' && !isAssemblyWrite(name)) return;
-  externalBuild.onWrite(where);
+  let copyLanded = true;
+  if (where === 'output') {
+    const baseline = name ? outputBaselines.get(dir) : undefined;
+    const key = name?.toLowerCase() ?? '';
+    const after = name ? contentStamp(path.join(dir, name)) : { content: 'absent', readOnly: false };
+    const activity = classifyOutputEvent(eventType, name, baseline?.get(key), after);
+    if (name) baseline?.set(key, after);
+    if (!activity) return;
+    // Only a written assembly proves the copy landed; a signal starts or extends the release without ending the wait.
+    copyLanded = activity === 'write' && isAssemblyWrite(name);
+  }
+  const starting = !externalBuild.active;
+  externalBuild.onWrite(where, copyLanded);
+  // Name what started a release, so a preview that went view-only without a build in sight can be explained.
+  if (starting && externalBuild.active) {
+    output.appendLine(`[release:task] external build detected: ${eventType} of ${name ?? '<unnamed>'} in ${dir} (${where})`);
+  }
 }
 
 function outputStamp(file: string): number {
@@ -2104,30 +2244,26 @@ async function runCoordinatedTask(group: 'build' | 'test'): Promise<void> {
     task = pick.task;
   }
 
-  const hasNet48 = DesignerHub.instance.net48OutputsInUse().length > 0;
+  // Coordinate every build/test task, not only while a .NET Framework preview is open (see onDidStartTask).
   const key = taskCoordinationKey({
     groupId: task.group?.id,
     name: task.name,
     definitionType: typeof task.definition?.type === 'string' ? task.definition.type : undefined,
     source: task.source,
   });
-  if (hasNet48) {
-    DesignerHub.instance.beginNet48Task(task.name);
-    await releaseNet48ForTask(task.name); // hard barrier: executeTask is not called until every domain is free/recycled
-    preReleasedTaskKeys.set(key, (preReleasedTaskKeys.get(key) ?? 0) + 1);
-  }
+  DesignerHub.instance.beginNet48Task(task.name);
+  await releaseNet48ForTask(task.name); // hard barrier: executeTask is not called until every domain is free/recycled
+  preReleasedTaskKeys.set(key, (preReleasedTaskKeys.get(key) ?? 0) + 1);
   try {
     await vscode.tasks.executeTask(task);
   } catch (err) {
-    if (hasNet48) {
-      const pending = preReleasedTaskKeys.get(key) ?? 0;
-      // If the lifecycle event consumed the reservation, it owns the matching endTask transition. Otherwise execute
-      // failed before start and this command must unwind the view-only task depth itself.
-      if (pending > 0) {
-        if (pending === 1) preReleasedTaskKeys.delete(key);
-        else preReleasedTaskKeys.set(key, pending - 1);
-        await DesignerHub.instance.endNet48Task();
-      }
+    const pending = preReleasedTaskKeys.get(key) ?? 0;
+    // If the lifecycle event consumed the reservation, it owns the matching endTask transition. Otherwise execute
+    // failed before start and this command must unwind the view-only task depth itself.
+    if (pending > 0) {
+      if (pending === 1) preReleasedTaskKeys.delete(key);
+      else preReleasedTaskKeys.set(key, pending - 1);
+      await DesignerHub.instance.endNet48Task();
     }
     void vscode.window.showErrorMessage(t('host.task.startFailed', { error: String(err) }));
   }
@@ -2150,12 +2286,20 @@ async function runCoordinatedTask(group: 'build' | 'test'): Promise<void> {
  * running, or the engine has no domain for that output.
  */
 async function releaseFrameworkAssemblies(): Promise<void> {
+  const workers = runningNet48Engines();
+  if (workers.length === 0 || shuttingDown) {
+    void vscode.window.showInformationMessage(t('host.notify.releaseAssembly.none'));
+    return;
+  }
+  for (const engine of workers) await releaseFrameworkWorkerAssemblies(engine);
+}
+
+async function releaseFrameworkWorkerAssemblies(eng: EngineHandle): Promise<void> {
   // Ask the ENGINE to release everything it holds, rather than releasing the outputs the HOST believes are in use.
   // net48OutputsInUse() can only name the assembly each open session is CURRENTLY routed to — but a session that
   // switched control source (or moved net48 → modern) silently forgets the output it previously pinned, and then no
   // session names it. That output stayed locked until the engine process exited, and this very command reported
   // "nothing to release" while the user's rebuild kept failing. Only the engine knows what it actually loaded.
-  const eng = engines.get('net48');
   if (!eng || shuttingDown) { // never START an engine just to release: no engine ⇒ nothing is held
     void vscode.window.showInformationMessage(t('host.notify.releaseAssembly.none'));
     return;
@@ -2199,10 +2343,10 @@ async function reportRecycle(handle: EngineHandle | undefined): Promise<void> {
 
 /** In-flight net48 recycle, so getEngine('net48') and a second Release invocation share the ONE teardown instead of
  * racing it. Null when not recycling. */
-let net48Recycling: Promise<boolean> | null = null;
+const net48Recycling = new Map<EngineHandle, Promise<boolean>>();
 /** Set true when a recycle could NOT confirm the old process exited: it may still pin the dll, so getEngine('net48')
  * must NOT start a replacement beside it. Cleared if that process's exit finally arrives. */
-let net48Blocked = false;
+const blockedNet48Processes = new Set<EngineHandle['process']>();
 
 /**
  * 1.0.0 — force-recycle the net48 engine: kill the EXACT captured process and WAIT for a CONFIRMED exit, so the OS
@@ -2214,21 +2358,27 @@ let net48Blocked = false;
  * clear the map entry while the process is still alive, so the map is not a reliable source of the process to kill.
  */
 function recycleNet48Engine(handle: EngineHandle | undefined): Promise<boolean> {
-  if (!net48Recycling) net48Recycling = doRecycleNet48(handle).finally(() => { net48Recycling = null; });
-  return net48Recycling;
+  const target = handle ?? engines.get('net48');
+  if (!target) return Promise.resolve(true);
+  const existing = net48Recycling.get(target);
+  if (existing) return existing;
+  const pending = doRecycleNet48(target).finally(() => { net48Recycling.delete(target); });
+  net48Recycling.set(target, pending);
+  return pending;
 }
 
 async function doRecycleNet48(handle: EngineHandle | undefined): Promise<boolean> {
   const target = handle ?? engines.get('net48');
-  if (engines.get('net48') === target) { engines.delete('net48'); engineStarts.delete('net48'); }
+  if (target) engines.deleteValue(target);
+  for (const pending of engineStarts.values()) if (pending.value === target) engineStarts.deleteValue(pending);
   if (!target) return true; // nothing to recycle → the handles are already free
   const proc = target.process;
   // Already terminated? A signal-killed child keeps exitCode === null but records signalCode (Node docs), and its
   // single 'exit' event may have fired BEFORE we attach the listener below — so a stale listener-only wait would hang
   // and latch net48Blocked forever. Check both fields first.
-  if (proc.exitCode != null || proc.signalCode != null) { net48Blocked = false; return true; }
-  net48Blocked = true; // block a replacement start until we see this exact process exit
-  proc.once('exit', () => { net48Blocked = false; }); // a late exit (even past our deadline) unblocks net48
+  if (proc.exitCode != null || proc.signalCode != null) { blockedNet48Processes.delete(proc); return true; }
+  blockedNet48Processes.add(proc); // block a replacement start until every pinned old process has exited
+  proc.once('exit', () => { blockedNet48Processes.delete(proc); });
   // `process.killed` only means a signal was SENT, not that the process ended (Node docs), so resolve exit ONLY from a
   // real exit event or an already-recorded exit/signal code — never from `killed`.
   const exited = new Promise<boolean>((resolve) => proc.once('exit', () => resolve(true)));
@@ -2249,24 +2399,103 @@ async function doRecycleNet48(handle: EngineHandle | undefined): Promise<boolean
  * Deliberately does NOT set shuttingDown: the engine is meant to come back on the next open/render (getEngine restarts
  * it). net48 goes through the careful recycle (kill + confirmed-exit wait) which ALSO frees any build output it had
  * pinned and clears the restart-block flag on the confirmed exit; the modern engine is disposed and awaited with the
- * same SIGKILL escalation. A child still mid-startup (a rare race) is left to getEngine's own ownership — the
- * steady-state resident engines are what the user sees and wants gone.
+ * same SIGKILL escalation. Pending startups are cancelled and awaited as well, even with live consumers.
  */
+/** Roadmap 2.2.0 rollback: freeze admission, settle running operations, refuse undecided durable state, release worker
+ * ownership — then the user installs the previous version and reloads. Interactive by default; the installed
+ * upgrade/downgrade acceptance calls it with `interactive: false` and an explicit answer for undecided outcomes. */
+/** Identifies the newest preparation: a Resume offered by an older one must not thaw a freeze a newer one relies on. */
+let rollbackGeneration = 0;
+let rollbackCommandRunning = false;
+
+async function prepareRollbackCommand(context: vscode.ExtensionContext,
+  options: { interactive?: boolean; acceptUnresolved?: boolean } = {}): Promise<RollbackPreparationResult> {
+  const interactive = options.interactive !== false;
+  if (rollbackCommandRunning) {
+    // Neither a new generation nor a Resume: the running preparation owns the freeze until it answers.
+    const blockers = [{ kind: 'operationsRunning' as const, id: 'preparation', detail: 'a rollback preparation is already running' }];
+    if (interactive) void vscode.window.showWarningMessage(t('host.rollback.blocked', { count: 1, detail: blockers[0].detail }));
+    return { ready: false, blockers, acknowledged: [], stoppedWorkers: 0 };
+  }
+  rollbackCommandRunning = true;
+  try { return await runRollbackPreparation(context, interactive, options.acceptUnresolved === true); }
+  finally { rollbackCommandRunning = false; }
+}
+
+async function runRollbackPreparation(context: vscode.ExtensionContext, interactive: boolean,
+  acceptUnresolved: boolean): Promise<RollbackPreparationResult> {
+  const generation = ++rollbackGeneration;
+  const resume = (choice: string | undefined): void => {
+    if (choice === t('host.rollback.resume') && generation === rollbackGeneration) setHostMutationAdmissionFrozen(false);
+  };
+  const result = await prepareRollback({
+    storageRoot: context.globalStorageUri.fsPath,
+    isFrozen: () => hostMutationAdmissionFrozen(),
+    invalidationEpoch: () => rollbackInvalidationEpoch(),
+    freeze: () => setHostMutationAdmissionFrozen(true),
+    thaw: () => setHostMutationAdmissionFrozen(false),
+    settleInFlight: (timeoutMs) => settleAllHostMutations(timeoutMs),
+    // With auto-save on, VS Code would write these after the switch was certified (or fail against the freeze).
+    unsavedAutoSaveTargets: () => {
+      const autoSaves = (uri: vscode.Uri): boolean =>
+        vscode.workspace.getConfiguration('files', uri).get<string>('autoSave', 'off') !== 'off';
+      const texts = vscode.workspace.textDocuments.filter((d) => d.isDirty && !d.isUntitled && autoSaves(d.uri));
+      return texts.length + DesignerHub.instance.dirtyDesignerUris().filter(autoSaves).length;
+    },
+    stopWorkers: () => stopEnginesConfirmed(),
+    confirmUnresolved: async (items) => {
+      if (!interactive) return acceptUnresolved;
+      const choice = await vscode.window.showWarningMessage(t('host.rollback.confirmUnresolved', { count: items.length }),
+        { modal: true }, t('host.rollback.switchAnyway'));
+      return choice === t('host.rollback.switchAnyway');
+    },
+  });
+  output.appendLine(`[rollback] ${result.ready ? 'ready' : 'refused'}: stopped=${result.stoppedWorkers}; `
+    + `blockers=${result.blockers.map((b) => `${b.kind}:${b.id}`).join(',') || 'none'}; acknowledged=${result.acknowledged.length}`);
+  if (interactive) {
+    if (result.ready) {
+      void vscode.window.showInformationMessage(t('host.rollback.ready'), t('host.rollback.resume')).then(resume);
+    } else {
+      // A refusal keeps an earlier successful preparation's freeze; this notice then carries the way back.
+      const stillFrozen = hostMutationAdmissionFrozen();
+      void vscode.window.showWarningMessage(t('host.rollback.blocked',
+        { count: result.blockers.length, detail: result.blockers[0]?.detail ?? '' }),
+      ...(stillFrozen ? [t('host.rollback.resume')] : [])).then(resume);
+    }
+  }
+  return result;
+}
+
 async function stopEnginesCore(): Promise<number> {
+  return (await stopEnginesConfirmed()).stopped;
+}
+
+/** Stop every engine and report how many processes still have no confirmed exit — the mapped handles, and any spawned
+ * child (a failed recycle may already have dropped its handle from the map while the process lives on). */
+async function stopEnginesConfirmed(): Promise<{ stopped: number; survivors: number }> {
+  const stopped = await stopMappedEngines();
+  const survivors = [...liveProcs].filter((proc) => proc.exitCode == null && proc.signalCode == null).length;
+  return { stopped, survivors };
+}
+
+async function stopMappedEngines(): Promise<number> {
   const live = (h: EngineHandle | undefined): boolean =>
     !!h && h.process.exitCode == null && h.process.signalCode == null;
-  const net48 = engines.get('net48');
+  const net48 = [...engines.entries()].filter(([kind, handle]) => kind === 'net48' && live(handle)).map(([, handle]) => handle);
   const modern = [...engines.entries()].filter(([k, h]) => k !== 'net48' && live(h)).map(([, h]) => h);
-  const running = (live(net48) ? 1 : 0) + modern.length;
-  if (running === 0) return 0;
+  const pendingStarts = [...engineStarts.values()].filter((startup) => !startup.value);
+  const running = net48.length + modern.length;
+  if (running === 0 && pendingStarts.length === 0) return 0;
+  for (const startup of pendingStarts) startup.stop();
   // net48 first: recycle also releases the pinned dll and clears net48Blocked once the exit is confirmed.
-  if (live(net48)) await recycleNet48Engine(net48);
+  for (const handle of net48) await recycleNet48Engine(handle);
   const deadline = (ms: number) => new Promise<boolean>((r) => setTimeout(() => r(false), ms));
   for (const h of modern) {
     const proc = h.process;
     // Drop from the maps BEFORE disposing so a concurrent getEngine sees it gone and starts fresh rather than handing
     // back a dying handle (mirrors doRecycleNet48's remove-first ordering).
-    engines.forEach((v, k) => { if (v === h) { engines.delete(k); engineStarts.delete(k); } });
+    engines.deleteValue(h);
+    for (const pending of engineStarts.values()) if (pending.value === h) engineStarts.deleteValue(pending);
     if (proc.exitCode != null || proc.signalCode != null) continue;
     const exited = new Promise<boolean>((resolve) => proc.once('exit', () => resolve(true)));
     try { h.dispose(); } catch { /* already dead */ }
@@ -2274,7 +2503,8 @@ async function stopEnginesCore(): Promise<number> {
     try { proc.kill('SIGKILL'); } catch { /* ignore */ }
     await Promise.race([exited, deadline(2000)]);
   }
-  return running;
+  await Promise.all(pendingStarts.map((startup) => startup.waitForCleanup()));
+  return running + pendingStarts.length;
 }
 
 function cancelIdleEngineRecycle(): void {
@@ -2311,10 +2541,14 @@ function engineLifecycleState(): {
 /** Extension Host E2E fault trigger. It deliberately does not clear maps, record a crash, start a replacement, or
  * touch a session: the real ChildProcess exit/connection-loss handlers above must perform every recovery step. This
  * function is reachable only through activate()'s WFD_EXTENSION_HOST_E2E return value, never as a product command. */
-function crashMappedEngineForRecoveryTest(kind: EngineKind): { pid: number; signaled: boolean } {
-  const handle = engines.get(kind);
+function crashMappedEngineForRecoveryTest(kind: EngineKind, expectedPid?: number): { pid: number; signaled: boolean } {
+  if (expectedPid !== undefined && (!Number.isSafeInteger(expectedPid) || expectedPid <= 0)) {
+    throw new Error('expected engine process id must be a positive safe integer');
+  }
+  const handle = expectedPid === undefined ? engines.get(kind)
+    : [...engines.entries()].find(([runtime, candidate]) => runtime === kind && candidate.process.pid === expectedPid)?.[1];
   if (!handle || handle.process.exitCode != null || handle.process.signalCode != null) {
-    throw new Error(`no running ${kind} engine is mapped`);
+    throw new Error(`no running ${kind} engine${expectedPid === undefined ? '' : ` with process id ${expectedPid}`} is mapped`);
   }
   const pid = handle.process.pid;
   if (!pid || pid <= 0) throw new Error(`${kind} engine has no operating-system process id`);
@@ -2369,6 +2603,8 @@ async function stopPreviewEngines(): Promise<void> {
 async function restartPreviewEngines(): Promise<void> {
   const session = DesignerHub.instance.activeSession;
   const stopped = await stopEnginesCore();
+  // The user chose to restart (often from the crash-loop notice): give the new processes a fresh recovery budget.
+  for (const kind of ['modern', 'net48'] as const) engineRecovery.reset(kind);
   if (session) {
     // rerenderFromDoc → the render pipeline → getEngine → a brand-new engine process; net48 may fail-closed if the
     // recycle above could not confirm the old exit (net48Blocked), in which case the next render recovers.
@@ -2547,6 +2783,7 @@ export function deactivate(): void | Promise<void> {
     disposedProcs.add(handle.process);
     try { handle.dispose(); } catch { /* ignore */ }
   }
+  for (const startup of engineStarts.values()) if (!startup.value) startup.stop();
   engines.clear();
   engineStarts.clear();
   // Await EVERY spawned child — including one still in its pipe-connect wait that never became a handle the loop above

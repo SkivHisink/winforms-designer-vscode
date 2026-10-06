@@ -2420,6 +2420,8 @@ namespace WinFormsDesigner.Engine.Net48
             // pump would dispatch its compiled Tick handler inside the preview. A control/item hits the same instances
             // ByField/reverse-scan, so its path is byte-identical.
             if (!TryResolveEditableTarget(live, componentId, out IComponent? target, out reason)) return false;
+            // A dotted name is a nested property (ImageOptions.Location): its own, narrower route.
+            if (propName.IndexOf('.') >= 0) return TryApplyNested(target!, propName, rawValue, out reason);
             var pd = TypeDescriptor.GetProperties(target)[propName];
             if (pd == null) { reason = "no property '" + propName + "'"; return false; }
             if (pd.IsReadOnly) { reason = propName + " is read-only"; return false; }
@@ -2485,6 +2487,50 @@ namespace WinFormsDesigner.Engine.Net48
                         : rawValue;
                 }
                 pd.SetValue(target, value);
+                RelayoutTarget(target);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = "could not apply '" + rawValue + "' to " + propName + ": " + ex.Message;
+                return false;
+            }
+        }
+
+        /// <summary>Live-apply a nested property (`ImageOptions.Location`) under the SAME rule describe used to offer it
+        /// (NestedPropertyPath): every hop a Content reference property, the leaf a literal-writable settable property.
+        /// Like every non-reference edit, only a Control or ToolStripItem is mutated (the Timer gate in TryApply).</summary>
+        private bool TryApplyNested(IComponent target, string propName, string rawValue, out string reason)
+        {
+            reason = "";
+            string[]? path = NestedPropertyPath.Split(propName);
+            if (path == null) { reason = "invalid nested property path '" + propName + "'"; return false; }
+            if (!(target is Control || target is ToolStripItem)) { reason = "nested edits apply to controls only"; return false; }
+            object? leafOwner = NestedPropertyPath.ResolveLeafOwner(target, path, out Type? declaredLeafOwner, out reason);
+            if (leafOwner == null || declaredLeafOwner == null) return false;
+            string leaf = path[path.Length - 1];
+            PropertyDescriptor? pd;
+            try { pd = TypeDescriptor.GetProperties(leafOwner)[leaf]; } catch { pd = null; }
+            var bound = pd == null ? null : NestedPropertyPath.SourceBoundProperty(declaredLeafOwner, leafOwner, leaf, forWrite: true);
+            if (pd == null || bound == null || !NestedPropertyPath.IsSettableLeaf(declaredLeafOwner, leafOwner, pd))
+            {
+                reason = "'" + propName + "' is not an editable nested property";
+                return false;
+            }
+            try
+            {
+                object? value = pd.Converter != null && pd.Converter.CanConvertFrom(typeof(string))
+                    ? pd.Converter.ConvertFromInvariantString(rawValue)
+                    : rawValue;
+                // Write through the member the compiled assignment binds (not the descriptor, which a provider may project),
+                // then read it back through the owner: a picture claiming an edit the owner does not hold is a mis-render.
+                bound.SetValue(leafOwner, value, null);
+                object? again = NestedPropertyPath.ResolveLeafOwner(target, path, out _, out _);
+                if (again == null || !Equals(bound.GetValue(again, null), value))
+                {
+                    reason = propName + " did not keep the value on " + (target.Site?.Name ?? "the control");
+                    return false;
+                }
                 RelayoutTarget(target);
                 return true;
             }
@@ -3471,6 +3517,15 @@ namespace WinFormsDesigner.Engine.Net48
             public bool Truncated;
         }
 
+        /// <summary>The declared type a writable nested hop yields (NestedPropertyPath), else null — propagated down so
+        /// nothing under a non-writable hop is offered. Mirrors DesignerDescribe.NestedHopDeclaredType.</summary>
+        private static Type? NestedHopDeclaredType(Type? declaredOwnerType, object owner, PropertyDescriptor hop)
+        {
+            if (declaredOwnerType == null) return null;
+            Type? declared = NestedPropertyPath.ContentHopType(declaredOwnerType, owner, hop);
+            return declared != null && NestedPropertyPath.IsStableHop(declaredOwnerType, owner, hop.Name) ? declared : null;
+        }
+
         private static ExpandableResult ExpandablePropertiesOf(PropertyDescriptor descriptor, object owner, object? raw,
             string path, bool suppressForBespokeEditor, bool componentEditable)
         {
@@ -3479,13 +3534,13 @@ namespace WinFormsDesigner.Engine.Net48
             var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
             bool truncated = false;
             var properties = ExpandablePropertiesOf(descriptor, owner, raw, path, 0, budget, visited,
-                componentEditable, ref truncated);
+                componentEditable, componentEditable ? NestedHopDeclaredType(owner.GetType(), owner, descriptor) : null, ref truncated);
             return new ExpandableResult { Properties = properties, Truncated = truncated };
         }
 
         private static List<ExpandablePropertyDesc>? ExpandablePropertiesOf(PropertyDescriptor ownerDescriptor,
             object owner, object raw, string path, int depth, ExpandableBudget budget, HashSet<object> visited,
-            bool componentEditable, ref bool truncated)
+            bool componentEditable, Type? declaredRawType, ref bool truncated)
         {
             if (depth >= ExpandableMaxDepth) { truncated = true; return null; }
             if (!TryEnterExpandable(raw, visited)) return null;
@@ -3528,8 +3583,13 @@ namespace WinFormsDesigner.Engine.Net48
 
                     bool nestedTruncated = false;
                     var nested = childRaw == null ? null : ExpandablePropertiesOf(child, raw, childRaw, childPath,
-                        depth + 1, budget, visited, componentEditable, ref nestedTruncated);
+                        depth + 1, budget, visited, componentEditable,
+                        NestedHopDeclaredType(declaredRawType, raw, child), ref nestedTruncated);
                     if (nestedTruncated) truncated = true;
+                    // The shared nested-edit rule (describe offers ⇔ TryApply accepts); depth 0 is the path's 2nd segment.
+                    bool nestedEditable = declaredRawType != null && depth + 2 <= NestedPropertyPath.MaxSegments
+                        && NestedPropertyPath.IsSettableLeaf(declaredRawType, raw, child)
+                        && NestedPropertyPath.Split(childPath) != null;
 
                     result.Add(new ExpandablePropertyDesc
                     {
@@ -3538,6 +3598,8 @@ namespace WinFormsDesigner.Engine.Net48
                         Type = BoundString(child.PropertyType.FullName ?? child.PropertyType.Name, ExpandableMaxTypeChars),
                         Value = childValue,
                         ReadOnly = childReadOnly,
+                        IsEnum = child.PropertyType.IsEnum,
+                        NestedEditable = nestedEditable,
                         SourceEditable = componentEditable
                             && SourceEditableThroughExistingValueConversion(child.PropertyType, childValue, descriptorReadOnly),
                         Category = category,

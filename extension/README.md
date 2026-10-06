@@ -4,13 +4,13 @@
 
 Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered form — click controls, edit properties, drag and resize, wire events, and save minimal changes back into `.Designer.cs`. No round-trip through Visual Studio.
 
-> ✅ **2.1.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
+> ✅ **2.2.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
 
-**New in 2.1:** run **WinForms: Show Form Status** to inspect the active form's project, runtime, architecture,
-preview source and actionable diagnostics. Rebuild the toolbox cache, refresh controls or restart engines while
-preserving unsaved edits and toolbox customization. Export/Copy Diagnostics produces a bounded report without
-source, property values, raw exceptions or private paths. Adapter declarations remain metadata only; x86/COM
-and physical ARM64 support are not added by this release.
+**New in 2.2:** ordinary designer commands use a negotiated extension/engine protocol and a bounded worker
+supervisor. Separate project graphs use separate workers; late replies and replies from a recycled process
+cannot replace the active document. Mutation identity and durable host outcomes protect source edits and Undo
+from repeat application. **WinForms: Show Form Status** and the recovery commands remain available for
+diagnosing an incompatible installation or restarting preview while retaining unsaved edits.
 
 ![WinForms Designer for VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/main-picture.png)
 

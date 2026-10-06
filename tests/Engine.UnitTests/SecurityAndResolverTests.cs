@@ -45,9 +45,83 @@ public sealed class SecurityAndResolverTests
         Assert.False(DesignerAllowlists.IsConstructionAllowed(typeof(FileStream)));
         Assert.False(DesignerAllowlists.IsConstructionAllowed(typeof(Bitmap)));
         Assert.False(DesignerAllowlists.IsConstructionAllowed(typeof(Cursor)));
+        // decimal is reachable only through its closed CodeDom bits form, never as a general construction.
+        Assert.False(DesignerAllowlists.IsConstructionAllowed(typeof(decimal)));
+        Assert.False(DesignerAllowlists.IsConstructionName("System.Decimal"));
         Assert.False(DesignerAllowlists.IsFactoryInvocationAllowed(typeof(MessageBox), "Show"));
         Assert.False(DesignerAllowlists.IsFactoryInvocationAllowed(typeof(Image), "FromFile"));
         Assert.False(DesignerAllowlists.IsStaticReadAllowed(typeof(Environment)));
+    }
+
+    private static readonly StaDispatcher Sta = new();
+
+    private static string NumericUpDownForm(string maximum) => $$"""
+        namespace Demo
+        {
+            partial class Form1 : System.Windows.Forms.Form
+            {
+                private System.Windows.Forms.NumericUpDown numericUpDown1;
+
+                private void InitializeComponent()
+                {
+                    this.numericUpDown1 = new System.Windows.Forms.NumericUpDown();
+                    this.numericUpDown1.Location = new System.Drawing.Point(12, 12);
+                    this.numericUpDown1.Maximum = {{maximum}};
+                    this.numericUpDown1.Name = "numericUpDown1";
+                    this.Controls.Add(this.numericUpDown1);
+                }
+            }
+        }
+        """;
+
+    // The modern Eval path resolved `new decimal(...)` by source text, so the keyword alias was an "unresolved type"
+    // and every NumericUpDown Maximum/Value silently kept its default.
+    [Fact]
+    public void ModernEval_CodeDomDecimal_IsRepresented()
+    {
+        var layout = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs",
+            sourceText: NumericUpDownForm("new decimal(new int[] {\n            1000,\n            0,\n            0,\n            0})")));
+        Assert.Empty(layout.Unrepresentable);
+    }
+
+    // Resolving keyword aliases must not widen construction: `object` is a keyword too and stays refused, and decimal
+    // outside its closed bits form (another overload, a computed word, the wrong word count) stays refused as well.
+    [Theory]
+    [InlineData("new object()")]
+    [InlineData("new decimal(5)")]
+    [InlineData("new System.Decimal(1.5)")]
+    [InlineData("new decimal(new int[] { 1, 0, 0 })")]
+    [InlineData("new decimal(new int[] { 1 + 1, 0, 0, 0 })")]
+    [InlineData("new decimal(new int[] { System.Int32.MaxValue, 0, 0, 0 })")]
+    public void ModernEval_ConstructionOutsideTheClosedForms_StillGated(string value)
+    {
+        var layout = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs",
+            sourceText: NumericUpDownForm(value)));
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("construction not allowed", StringComparison.Ordinal));
+    }
+
+    // CodeDom's split of a long string is folded on the modern path too; a non-literal operand is not evaluated.
+    [Fact]
+    public void ModernEval_CodeDomSplitString_Folds_NonLiteralOperandRefused()
+    {
+        var folded = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs",
+            sourceText: NumericUpDownForm("100").Replace("this.numericUpDown1.Name = \"numericUpDown1\";",
+                "this.numericUpDown1.Name = \"numericUpDown1\";\n this.Text = \"first half \" +\r\n    \"second half\";")));
+        Assert.Empty(folded.Unrepresentable);
+
+        var refused = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs",
+            sourceText: NumericUpDownForm("100").Replace("this.numericUpDown1.Name = \"numericUpDown1\";",
+                "this.numericUpDown1.Name = \"numericUpDown1\";\n this.Text = \"a\" + System.Environment.MachineName;")));
+        Assert.Contains(refused.Unrepresentable, u => u.Contains("only string literals can be concatenated", StringComparison.Ordinal));
+    }
+
+    // Decimal validates the words itself: reserved flag bits are refused, never assigned as a guessed value.
+    [Fact]
+    public void ModernEval_CodeDomDecimal_InvalidBits_Unrepresentable()
+    {
+        var layout = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs",
+            sourceText: NumericUpDownForm("new decimal(new int[] { 1, 0, 0, 1 })")));
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("invalid decimal bits", StringComparison.Ordinal));
     }
 
     // The net10 Eval path forwards to the shared sets — pin that the forwarders match, so a future refactor

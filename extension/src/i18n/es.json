@@ -274,6 +274,7 @@
   "panel.hint.font": " (nombre, sizept[, style=Bold, Italic])",
   "panel.search.props": "Buscar propiedades…",
   "panel.search.events": "Buscar eventos…",
+  "panel.search.clear": "Borrar búsqueda",
   "panel.event.handlerTip": "Escriba el nombre de un controlador (nuevo o existente), o bórrelo para desvincular",
   "panel.event.wiredTip": "  —  haga doble clic para ir al controlador",
   "panel.event.unwiredTip": "  —  haga doble clic para crear un controlador",
@@ -558,6 +559,15 @@
   "support.action.viewCode": "Ver código",
   "support.action.clearCache": "Regenerar caché del cuadro de herramientas",
   "support.action.restart": "Reiniciar motor de vista previa",
+  "support.action.reinstall": "Abrir la extensión para reinstalarla",
+  "host.rollback.frozen": "Se está preparando una reversión, por lo que el diseñador no acepta trabajo nuevo. Recargue la ventana para continuar.",
+  "host.rollback.ready": "Listo para cambiar de versión: no hay ninguna operación del diseñador en curso y todos los diarios guardados están completos. Instale la versión anterior de WinForms Designer y ejecute «Recargar ventana». Los diseños sin guardar se conservan en las copias de seguridad de VS Code.",
+  "host.rollback.blocked": "No está listo para cambiar de versión: primero deben resolverse {count} elemento(s) ({detail}). El diseñador sigue funcionando con esta versión.",
+  "host.rollback.confirmUnresolved": "{count} operación(es) del diseñador tienen un resultado indeterminado. Revise los archivos afectados antes de cambiar de versión. ¿Cambiar de todos modos?",
+  "host.rollback.switchAnyway": "Cambiar de todos modos",
+  "host.rollback.resume": "Seguir diseñando",
+  "host.rollback.cancelled": "Se canceló la preparación de la reversión porque un formulario cambió mediante Deshacer, Rehacer o Revertir. Antes de cambiar de versión, vuelva a ejecutar «WinForms: Preparar la reversión o el cambio a una versión anterior del diseñador».",
+  "host.revert.failed": "No se pudo revertir el formulario porque no se puede leer su archivo generado. Se conservan los cambios sin guardar; compruebe el archivo en el disco y vuelva a intentarlo.",
   "support.action.refresh": "Actualizar estado",
   "support.field.project": "Proyecto",
   "support.field.framework": "Framework de destino evaluado",
@@ -621,5 +631,6 @@
   "diagnostics.reason.ADAPTER_IDENTITY_DUPLICATE": "Varios manifiestos declaran la misma identidad de adaptador. Resuelva la declaración duplicada.",
   "diagnostics.reason.CACHE_WRITE_FAILED": "No se pudo guardar la caché de controles. Regénere la caché para volver a intentarlo.",
   "diagnostics.reason.STATE_MIGRATION_FAILED": "No se pudieron migrar las preferencias guardadas del cuadro de herramientas. Recargue la ventana para volver a intentarlo; se conservan las preferencias originales.",
-  "diagnostics.reason.PERSISTED_STATE_INVALID": "Las preferencias guardadas del diseñador no son válidas; solo se usan sus partes válidas. Los datos guardados se conservan hasta que el diseñador vuelva a guardar esa preferencia."
+  "diagnostics.reason.PERSISTED_STATE_INVALID": "Las preferencias guardadas del diseñador no son válidas; solo se usan sus partes válidas. Los datos guardados se conservan hasta que el diseñador vuelva a guardar esa preferencia.",
+  "diagnostics.reason.ENGINE_INSTALLATION_INCOMPATIBLE": "Faltan archivos del motor o son incompatibles con esta extensión. Reinstale la versión correspondiente de WinForms Designer y ejecute Reload Window. Guarde los documentos o haga una copia de los datos sin guardar antes de recargar."
 }

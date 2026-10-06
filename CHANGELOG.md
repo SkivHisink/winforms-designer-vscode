@@ -9,6 +9,87 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-05
+
+### Added
+
+- Ordinary modern and .NET Framework designer traffic uses negotiated protocol envelopes. Engine binary
+  identity, protocol range and required capabilities are checked before product commands are accepted.
+  Render, describe, selection metadata and mutation proposals carry session, document, request, revision,
+  generation, deadline and cancellation identity while retaining their established DTOs and source guards.
+- The product worker supervisor owns startup, warm reuse, release and crash generations. Worker selection
+  includes the owning project, build configuration, framework, platform, dependency fingerprint and trust policy.
+  Resident processes, request queues, payloads, execution time and process resource growth have bounded budgets.
+- Stable operation IDs are separate from request attempts. The host records payload fingerprints and commit
+  outcomes so an established operation cannot add a second source diff or native Undo entry. Conflicting reuse
+  and uncertain crash outcomes are refused until the retained baselines and transaction journal are reconciled.
+- Dedicated product acceptance exercises ordinary editing, resources, save, rebuild and worker recovery on
+  both runtime routes. The [2.2.0 evidence record](https://github.com/SkivHisink/winforms-designer-vscode/blob/v2.2.0/docs/release-2.2.0.md)
+  records executed checks and the limits of this release's evidence.
+- Expandable properties such as `FlatAppearance` edit their simple members (text, numbers, booleans, enums
+  and colors) in place on both runtime routes. The edit is written as `this.control.Owner.Member = value;`
+  only when every hop resolves to the same declared property, and is refused when the source already writes
+  that member through a compound, chained or unanalyzable assignment.
+- The Properties search box has a clear button, and Escape clears the filter.
+- **WinForms Designer: Prepare Rollback** freezes new edits (including native Undo/Redo of resource changes),
+  waits for in-flight operations to settle, checks the stored operation and transaction records and stops the
+  workers, confirming that each one exited, before an older version is installed. A refusal names the undecided
+  or unreadable records and keeps the designer usable; records written by another version are left untouched.
+  Open files that auto-save would still write also refuse the switch. A native Undo, Redo or Revert while the
+  rollback is prepared is carried out and cancels the preparation, which then has to be repeated.
+- An incompatible engine installation offers a reinstall action in the form status view.
+
+### Changed
+
+- While a workspace build task runs, a .NET Framework form shows a build notice instead of a render error and
+  keeps its last frame read-only. The preview resumes when the task ends; a build started outside VS Code is
+  recognised from new output files rather than from timestamp-only changes.
+- Project inspection evidence is reused for five minutes when its inputs are unchanged, and MSBuild evaluation
+  runs at below-normal priority.
+- A newly started modern worker compiles its source-edit path in the background and compiles methods fully
+  optimized on first use, so the first property edits of a form served by a fresh worker stay within the edit budget.
+- An explicit engine restart gives the new processes a fresh automatic-recovery budget. Once the crash-loop
+  guard stops recovery, restarts that were still waiting on their back-off are cancelled.
+- A build or test task is coordinated even when no .NET Framework preview is open yet, so a form opened while
+  the task runs does not load the output it is about to overwrite.
+- Both engines hold themselves in a kill-on-close job before serving, so MSBuild evaluations, editor and hosted
+  designer workers, and processes started by design-time code end with the engine — also when the private render
+  desktop is switched off. An engine that cannot establish this refuses to start instead of serving uncontained.
+
+### Fixed
+
+- Project inspection finishes before selecting the render worker. With a verified effective graph, property
+  edits use the frame's retained graph; late or superseded project evidence cannot move its token to another process.
+- The first authorized preview no longer waits for optional toolbox and palette enumeration. Automatic component
+  discovery starts after that frame; guarded background refresh delivers available items and records loading failures.
+- The .NET Framework source converter starts alongside the verified preview capture. Budget recycling prefers
+  idle unverified and metadata helpers while preserving pending-request and workflow leases. Optional background
+  work waits within the existing admission budget instead of evicting a process that owns a completed document frame.
+- The control-source status reads the output already selected by the active designer session, removing a duplicate
+  project resolution and worker startup during opening.
+- Resource-health and cancellation queries remain responsive while an ordinary command waits for the render STA.
+  Envelope dispatch runs in a separate task and keeps the protocol's command serialization and safety gates.
+- Closing a form during shared worker startup cancels only its own wait. Another live document can still acquire
+  the worker; a startup with no remaining consumers stops and confirms process exit before replacement.
+- Resource journals distinguish successful resource writes from confirmation by the document's source and
+  Undo owner. Recovery can roll back an unacknowledged resource commit after the Extension Host exits.
+- Partial installations and mismatched workers refuse ordinary commands before applying proposals. Cancelled
+  requests, stale document generations and replies from recycled workers cannot commit an obsolete edit.
+- `decimal` values written as `new decimal(new int[] { … })` and string constants split with `+` render on
+  both runtime routes instead of being listed as unsupported.
+- The hover outline and secondary-selection boxes line up with the control instead of sitting one pixel off.
+- Tab-page and strip-item clicks carry the canvas generation, so a click on a frame that is being replaced
+  cannot select a component from the previous frame.
+- Adding a control right after the form opens waits for the toolbox instead of failing with a stale generation.
+- Adding a project reference is recorded as its own operation. A companion file that cannot be restored marks
+  the operation for recovery instead of reporting success.
+- Protocol negotiation is bounded to ten seconds and the post-reply resource query to two seconds; a worker
+  that misses either is recycled instead of holding the form.
+- Assembly scanning skips files that are not well-formed managed images instead of failing the whole folder.
+- Value entry rejects enum members that are not identifiers and integers outside the property's range.
+- A native Undo or Redo of a resource change that fails, or a Revert whose generated file cannot be read, keeps
+  the form marked as unsaved instead of leaving a clean tab over unsaved source; a failed Revert keeps the backup.
+
 ## [2.1.0] - 2026-10-02
 
 ### Added
@@ -2516,7 +2597,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.15.0...v2.0.0
 [1.15.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.14.0...v1.15.0

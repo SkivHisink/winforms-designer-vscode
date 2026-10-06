@@ -10,7 +10,7 @@ Render, click-select, edit and lay out `.Designer.cs` forms — live — without
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code Engine](https://img.shields.io/badge/VS%20Code-%5E1.84-007ACC?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![Version 2.1](https://img.shields.io/badge/version-2.1-brightgreen.svg)](#support-matrix)
+[![Version 2.2](https://img.shields.io/badge/version-2.2-brightgreen.svg)](#support-matrix)
 
 </div>
 
@@ -110,7 +110,7 @@ The rendering is real: a headless .NET host instantiates your controls — inclu
 - **[.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)** matching the VSIX architecture. Building from source needs the .NET 10 SDK pinned by `global.json`.
 - **.NET Framework 4.8** — for `net4x` / DevExpress projects. Building `engine-net48/` from source needs its targeting pack.
 
-**Windows ARM64:** a `win32-arm64` package is published and genuinely contains an ARM64 engine, but it has never been run on ARM64 hardware — CI and releases build on x64 runners. Treat it as unverified; only `win32-x64` is covered by the tested claims of 2.1.0. See [ARM64 notes](docs/arm64-support.md).
+**Windows ARM64:** the `win32-arm64` package contains an ARM64 modern engine, but it has never been run on ARM64 hardware — CI and releases build on x64 runners. Treat it as unverified; the release's executed runtime checks cover `win32-x64`. See [ARM64 notes](docs/arm64-support.md).
 
 ## 🚀 Installing
 
@@ -172,6 +172,11 @@ The safety core has C# and TypeScript unit coverage; the webview UI is validated
 Found a rough edge? **WinForms: Show Form Status** explains the current project/runtime, preview source and
 actionable diagnostic codes. **Rebuild Toolbox Cache**, **Refresh Toolbox** and **Restart the Designer Preview Engine** help recover
 the session while preserving unsaved source and toolbox customization. See the [2.1.0 support and evidence guide](docs/release-2.1.0.md).
+
+Version 2.2 routes ordinary designer requests through a negotiated protocol and a bounded worker supervisor.
+Project graphs have separate workers; requests carry document and generation identity, and the host retains
+source and native Undo ownership. See the [2.2.0 implementation and evidence record](docs/release-2.2.0.md)
+for verification scope and recovery boundaries.
 
 Please [file an issue](https://github.com/SkivHisink/winforms-designer-vscode/issues) with the report from
 **WinForms: Export Designer Diagnostics**. Export and Copy Diagnostics exclude source, property values, raw errors

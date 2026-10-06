@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   compatibilityForRender, EvaluatedProjectArchitecture, inspectImageCompatibility, inspectPeArchitecture, inspectProjectCompatibility, parseProjectEvaluation,
   ProjectCompatibilityCache, ProjectCompatibilityResult,
-  projectEvaluationArguments, evaluateProjectArchitecture,
+  projectEvaluationArguments, evaluateProjectArchitecture, selectedOutputCompatibilityOptions,
 } from './projectCompatibility';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
@@ -49,6 +49,44 @@ const project: EvaluatedProjectArchitecture = {
 };
 const options = { trusted: true, projectPath, runtime: 'modern' as const, workerArchitecture: 'x64' as const };
 const evaluate = (overrides: Partial<EvaluatedProjectArchitecture> = {}) => vi.fn(async () => ({ ok: true as const, project: { ...project, ...overrides } }));
+
+describe('effective selected output configuration', () => {
+  it.each([
+    ['bin/Release/net10.0-windows/Form.dll', { configuration: 'Release', targetFramework: 'net10.0-windows' }],
+    ['bin/x64/Release/net48/Form.dll', { configuration: 'Release', targetFramework: 'net48', platform: 'x64' }],
+    ['bin/Debug/Form.dll', { configuration: 'Debug' }],
+  ])('extracts candidate properties from %s before verifying TargetPath', (output, expected) => {
+    const assemblyPath = path.resolve('fixtures', output);
+    expect(selectedOutputCompatibilityOptions(projectPath, assemblyPath, 'modern', true)).toMatchObject({
+      projectPath, assemblyPath, runtime: 'modern', trusted: true, ...expected,
+    });
+  });
+
+  it('leaves arbitrary custom outputs without an invented configuration', () => {
+    const assemblyPath = path.resolve('fixtures', 'artifacts', 'custom', 'Form.dll');
+    expect(selectedOutputCompatibilityOptions(projectPath, assemblyPath, 'modern', true)).toEqual({
+      projectPath, assemblyPath, runtime: 'modern', trusted: true,
+    });
+  });
+
+  it('does not attest a custom output produced by an unknown configuration even if the default TargetPath coincides', async () => {
+    const assemblyPath = path.resolve('fixtures', 'artifacts', 'Form.dll');
+    const selected = selectedOutputCompatibilityOptions(projectPath, assemblyPath, 'modern', true);
+    const result = await inspectProjectCompatibility(selected, { evaluate: evaluate({ targetPath: assemblyPath }), readImage: async () => pe() });
+    expect(result.effectiveOutputMatched).toBe(false);
+  });
+
+  it('attests the configuration only when its evaluated TargetPath is the selected output', async () => {
+    const assemblyPath = path.resolve('fixtures', 'bin', 'Release', 'net10.0-windows', 'Form.dll');
+    const selected = selectedOutputCompatibilityOptions(projectPath, assemblyPath, 'modern', true);
+    const evaluateSelected = evaluate({ configuration: 'Release', targetPath: assemblyPath });
+    const matched = await inspectProjectCompatibility(selected, { evaluate: evaluateSelected, readImage: async () => pe() });
+    expect(evaluateSelected).toHaveBeenCalledWith(expect.objectContaining({ configuration: 'Release', targetFramework: 'net10.0-windows' }));
+    expect(matched.effectiveOutputMatched).toBe(true);
+    const mismatched = await inspectProjectCompatibility(selected, { evaluate: evaluate(), readImage: async () => pe() });
+    expect(mismatched.effectiveOutputMatched).toBe(false);
+  });
+});
 
 describe('PE architecture evidence', () => {
   it.each([
@@ -123,18 +161,32 @@ describe('session architecture cache', () => {
     expect(inspect).toHaveBeenCalledTimes(2);
   });
 
-  it('expires successful evidence after 30 seconds and unknown after 2 seconds', async () => {
+  it('reuses unchanged successful evidence for 5 minutes and unknown evidence for 2 seconds', async () => {
     let now = 1;
     let status: ProjectCompatibilityResult['status'] = 'compatible';
     const inspect = vi.fn(async () => ({ ...result(), status }));
     const cache = new ProjectCompatibilityCache({ inspect, now: () => now, stat: async () => ({ mtimeMs: 1, size: 100 }) });
     await cache.inspect(options);
-    now += 30_001;
+    now += 30_001; // the old 30-second bound: an unchanged project is no longer re-evaluated
+    await cache.inspect(options);
+    expect(inspect).toHaveBeenCalledTimes(1);
+    now += 270_000;
     status = 'unknown';
     await cache.inspect(options);
+    expect(inspect).toHaveBeenCalledTimes(2);
     now += 2_001;
     await cache.inspect(options);
     expect(inspect).toHaveBeenCalledTimes(3);
+  });
+
+  it('re-evaluates at once when an observed file changes inside the reuse window', async () => {
+    let size = 100;
+    const inspect = vi.fn(async () => ({ ...result(), observedPaths: ['C:/src/App/App.csproj'] }));
+    const cache = new ProjectCompatibilityCache({ inspect, now: () => 1, stat: async () => ({ mtimeMs: 1, size }) });
+    await cache.inspect(options);
+    size = 101;
+    await cache.inspect(options);
+    expect(inspect).toHaveBeenCalledTimes(2);
   });
 
   it('re-evaluates completed evidence on explicit status refresh', async () => {
@@ -466,30 +518,122 @@ describe('render gate', () => {
 
   it('uses a complete result that is already at hand', async () => {
     const imagesOnly = vi.fn(async () => decided('unknown'));
-    const gate = await compatibilityForRender(Promise.resolve(decided('incompatible')), imagesOnly, 200);
-    expect(gate.result.status).toBe('incompatible');
-    expect(gate.late).toBeUndefined();
+    const gate = await compatibilityForRender(Promise.resolve(decided('incompatible')), imagesOnly);
+    expect(gate.status).toBe('incompatible');
     expect(imagesOnly).not.toHaveBeenCalled();
   });
 
-  it('does not wait for a running evaluation and hands it back as late evidence', async () => {
+  it('waits beyond the former 200ms image gate for a complete effective output before rendering', async () => {
     vi.useFakeTimers();
     let finish!: (result: ProjectCompatibilityResult) => void;
     const complete = new Promise<ProjectCompatibilityResult>((resolve) => { finish = resolve; });
     const imagesOnly = vi.fn(async () => decided('unknown'));
-    const pending = compatibilityForRender(complete, imagesOnly, 200);
-    await vi.advanceTimersByTimeAsync(200);
+    const rendered = vi.fn();
+    const pending = compatibilityForRender(complete, imagesOnly).then((result) => { rendered(result); return result; });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(rendered).not.toHaveBeenCalled();
+    expect(imagesOnly).not.toHaveBeenCalled();
+    const evaluated = { ...decided('compatible'), effectiveOutputMatched: true, evaluated: project };
+    finish(evaluated);
     const gate = await pending;
-    expect(gate.result.status).toBe('unknown');
-    expect(imagesOnly).toHaveBeenCalledOnce();
-    finish(decided('incompatible'));
-    await expect(gate.late).resolves.toMatchObject({ status: 'incompatible' });
+    expect(gate).toEqual(evaluated);
+    expect(rendered).toHaveBeenCalledOnce();
+    expect(imagesOnly).not.toHaveBeenCalled();
   });
 
   it('falls back to image evidence when the complete inspection fails', async () => {
     const imagesOnly = vi.fn(async () => decided('unknown'));
-    const gate = await compatibilityForRender(Promise.reject(new Error('evaluation crashed')), imagesOnly, 200);
-    expect(gate.result.status).toBe('unknown');
-    await expect(gate.late).rejects.toThrow('evaluation crashed');
+    const gate = await compatibilityForRender(Promise.reject(new Error('evaluation crashed')), imagesOnly);
+    expect(gate.status).toBe('unknown');
+    expect(gate.evaluated).toBeUndefined();
+    expect(imagesOnly).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a delayed project incompatibility before any image-only render can publish', async () => {
+    vi.useFakeTimers();
+    const complete = new Promise<ProjectCompatibilityResult>((resolve) => setTimeout(() => resolve(decided('incompatible')), 900));
+    const imagesOnly = vi.fn(async () => decided('compatible'));
+    const pending = compatibilityForRender(complete, imagesOnly);
+    await vi.advanceTimersByTimeAsync(900);
+    expect((await pending).status).toBe('incompatible');
+    expect(imagesOnly).not.toHaveBeenCalled();
+  });
+
+  it('does not publish invalidated effective evidence or install a late identity promotion', async () => {
+    const invalidated = { ...decided('compatible'), stale: true, effectiveOutputMatched: true, evaluated: project };
+    const imagesOnly = vi.fn(async () => decided('unknown'));
+    const gate = await compatibilityForRender(Promise.resolve(invalidated), imagesOnly);
+    expect(gate.status).toBe('unknown');
+    expect(gate.evaluated).toBeUndefined();
+    expect(gate.effectiveOutputMatched).toBeUndefined();
+    expect(imagesOnly).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the same-input evaluated refusal on failure or invalidation until valid complete evidence recovers it', async () => {
+    const refused = decided('incompatible');
+    const imagesOnly = vi.fn(async () => decided('compatible'));
+    for (const complete of [Promise.reject(new Error('evaluation failed')), Promise.resolve({ ...decided('compatible'), stale: true })]) {
+      expect(await compatibilityForRender(complete, imagesOnly, undefined, refused)).toEqual(refused);
+    }
+    expect(imagesOnly).not.toHaveBeenCalled();
+    expect((await compatibilityForRender(Promise.resolve({ ...decided('compatible'), evaluated: project, effectiveOutputMatched: true }), imagesOnly, undefined, refused)).status).toBe('compatible');
+    // A different input key supplies no prior refusal and keeps the conservative image fallback.
+    expect((await compatibilityForRender(Promise.reject(new Error('different output evaluation failed')), imagesOnly)).status).toBe('compatible');
+    expect(imagesOnly).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an evaluated dependency refusal when real inspection resolves after failed or unmatched MSBuild evaluation', async () => {
+    const refused = decided('incompatible');
+    const imagesOnly = vi.fn(async () => decided('compatible'));
+    const selected = { ...options, assemblyPath: outputPath, configuration: 'Release' };
+    const unevaluated = await inspectProjectCompatibility(selected, {
+      evaluate: async () => ({ ok: false, reason: 'MSBuild timed out' }), readImage: async () => pe(),
+    });
+    expect(unevaluated.status).toBe('compatible');
+    expect(unevaluated.evaluated).toBeUndefined();
+    expect(await compatibilityForRender(Promise.resolve(unevaluated), imagesOnly, undefined, refused)).toEqual(refused);
+    const unmatched = await inspectProjectCompatibility(selected, { evaluate: evaluate({ targetPath: outputPath + '.other.dll' }), readImage: async () => pe() });
+    expect(unmatched.status).toBe('compatible');
+    expect(unmatched.effectiveOutputMatched).toBe(false);
+    expect(await compatibilityForRender(Promise.resolve(unmatched), imagesOnly, undefined, refused)).toEqual(refused);
+    const valid = await inspectProjectCompatibility(selected, { evaluate: evaluate(), readImage: async () => pe() });
+    expect(valid.effectiveOutputMatched).toBe(true);
+    expect((await compatibilityForRender(Promise.resolve(valid), imagesOnly, undefined, refused)).status).toBe('compatible');
+    expect(imagesOnly).not.toHaveBeenCalled();
+  });
+
+  it('allows fresh current output PE evidence to replace an output-specific refusal', async () => {
+    const prior = { ...decided('incompatible'), code: 'OUTPUT_ARCHITECTURE_MISMATCH' as const };
+    const current = await inspectProjectCompatibility({ ...options, assemblyPath: outputPath }, {
+      evaluate: async () => ({ ok: false, reason: 'MSBuild unavailable' }), readImage: async () => pe(),
+    });
+    expect((await compatibilityForRender(Promise.resolve(current), async () => decided('unknown'), undefined, prior)).status).toBe('compatible');
+    const unreadable = await inspectProjectCompatibility({ ...options, assemblyPath: outputPath }, {
+      evaluate: async () => ({ ok: false, reason: 'MSBuild unavailable' }), readImage: async () => { throw new Error('unreadable output'); },
+    });
+    expect(unreadable.status).toBe('unknown');
+    expect(await compatibilityForRender(Promise.resolve(unreadable), async () => decided('unknown'), undefined, prior)).toEqual(prior);
+  });
+
+  it('cancels only the document wait and never publishes a complete result after close', async () => {
+    const cancel = new AbortController();
+    let finish!: (result: ProjectCompatibilityResult) => void;
+    const complete = new Promise<ProjectCompatibilityResult>((resolve) => { finish = resolve; });
+    const imagesOnly = vi.fn(async () => decided('unknown'));
+    const cancelled = expect(compatibilityForRender(complete, imagesOnly, cancel.signal)).rejects.toThrow('REQUEST_CANCELLED');
+    const otherDocument = compatibilityForRender(complete, imagesOnly);
+    cancel.abort();
+    await cancelled;
+    finish(decided('compatible'));
+    expect((await otherDocument).status).toBe('compatible');
+    expect(imagesOnly).not.toHaveBeenCalled();
+  });
+
+  it('refuses an already closed document without starting fallback image inspection', async () => {
+    const cancel = new AbortController(); cancel.abort();
+    const imagesOnly = vi.fn(async () => decided('unknown'));
+    await expect(compatibilityForRender(Promise.reject(new Error('late evaluation failure')), imagesOnly, cancel.signal))
+      .rejects.toThrow('REQUEST_CANCELLED');
+    expect(imagesOnly).not.toHaveBeenCalled();
   });
 });

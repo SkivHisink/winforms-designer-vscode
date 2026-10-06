@@ -29,6 +29,38 @@
   try { var _ov = document.getElementById('overlay'); if (_ov) _ov.textContent = T('designer.overlay.initializing'); } catch (_e) {}
 
   var vscode = acquireVsCodeApi();
+  // ---- outgoing mutation identity ----
+  // One object represents one user intent. Reposting it keeps operationId, while each delivery attempt has
+  // a separate requestAttemptId. These IDs only correlate requests; the host still authorizes every edit.
+  var mutationMessageTypes = {
+    manipulate: true, manipulateGroup: true, edit: true, alignControls: true,
+    centerInForm: true, resizeControls: true, dropControl: true, dropDataSource: true,
+    removeControl: true, removeControls: true, cut: true, cutControls: true,
+    paste: true, duplicate: true, duplicateDrag: true, bringToFront: true,
+    bringToFrontGroup: true, sendToBack: true, sendToBackGroup: true, tabRename: true,
+    stripAdd: true, stripMove: true, stripRename: true, stripRetype: true,
+    stripDelete: true, trayRename: true, renameComponent: true, createDefaultHandler: true,
+    addTab: true, deleteTab: true, moveTab: true, designerActionCommand: true
+  };
+  var mutationIdentitySequence = 0;
+  function nextMutationIdentity(kind) {
+    var random;
+    var cryptoApi = window.crypto;
+    if (cryptoApi && typeof cryptoApi.randomUUID === 'function') random = cryptoApi.randomUUID();
+    else if (cryptoApi && cryptoApi.getRandomValues) {
+      var words = new Uint32Array(4); cryptoApi.getRandomValues(words);
+      random = Array.prototype.map.call(words, function (word) { return ('00000000' + word.toString(16)).slice(-8); }).join('');
+    } else random = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    return 'webview-' + kind + '-' + random + '-' + (++mutationIdentitySequence).toString(36);
+  }
+  function postMessage(message) {
+    if (mutationMessageTypes[message.type] === true) {
+      if (!message.operationId) message.operationId = nextMutationIdentity('operation');
+      message.requestAttemptId = nextMutationIdentity('attempt');
+    }
+    vscode.postMessage(message);
+  }
+  // ---- end outgoing mutation identity ----
   var canvas = document.getElementById('surface');
   var ctx = canvas.getContext('2d');
   var surfaceWrap = document.getElementById('surfaceWrap');
@@ -156,7 +188,7 @@
     diagToggleEl.textContent = T(diagExpanded ? 'designer.diag.hide' : 'designer.diag.details');
   });
   if (diagDismissEl) diagDismissEl.addEventListener('click', function () { diagDismissedSig = diagSig; hideDiag(); });
-  function postDiagAction(action) { vscode.postMessage({ type: 'diagnosticAction', action: action }); }
+  function postDiagAction(action) { postMessage({ type: 'diagnosticAction', action: action }); }
   if (diagRetryEl) diagRetryEl.addEventListener('click', function () { postDiagAction('retry'); });
   if (diagRebuildEl) diagRebuildEl.addEventListener('click', function () { postDiagAction('rebuild'); });
   if (diagChooseAssemblyEl) diagChooseAssemblyEl.addEventListener('click', function () { postDiagAction('chooseAssembly'); });
@@ -226,7 +258,7 @@
     var target = e.target;
     if (!target || !target.matches || !target.matches('input, textarea, [contenteditable="true"]')) return;
     if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete')) {
-      vscode.postMessage({ type: 'toolboxInteraction' });
+      postMessage({ type: 'toolboxInteraction' });
     }
   });
   // ---- Lock Controls (VS): a locked control can't be moved/resized/nudged by mouse. The state is view metadata:
@@ -241,7 +273,7 @@
       canvasStateTimer = null;
       var ids = [];
       for (var id in lockedIds) if (Object.prototype.hasOwnProperty.call(lockedIds, id) && lockedIds[id]) ids.push(id);
-      vscode.postMessage({ type: 'canvasViewStateChanged', state: { zoom: zoom, lockedIds: ids } });
+      postMessage({ type: 'canvasViewStateChanged', state: { zoom: zoom, lockedIds: ids } });
     }, 120);
   }
   var HANDLE_DIRS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
@@ -298,7 +330,9 @@
     ensureHover();
     hoverEl.style.display = 'block';
     hoverEl.style.left = (c.x * zoom) + 'px'; hoverEl.style.top = (c.y * zoom) + 'px';
-    hoverEl.style.width = Math.max(0, c.width * zoom - 2) + 'px'; hoverEl.style.height = Math.max(0, c.height * zoom - 2) + 'px';
+    // .hoverhint is border-box: its 1px border is inside the width, so the box is exactly the control's rect (the
+    // content-box #sel is the one that needs the -2).
+    hoverEl.style.width = Math.max(0, c.width * zoom) + 'px'; hoverEl.style.height = Math.max(0, c.height * zoom) + 'px';
   }
 
   // ---- hosted ControlDesigner adorners (S093): the engine publishes only bounded control-local rectangles. The
@@ -322,7 +356,7 @@
         var token = ++designerAdornerHitToken;
         el._designerAdornerHitToken = token;
         el.classList.remove('hit'); el.classList.add('pending');
-        vscode.postMessage({ type: 'designerAdornerHit', id: state.controlId, adornerId: a.id, x: px, y: py, token: token });
+        postMessage({ type: 'designerAdornerHit', id: state.controlId, adornerId: a.id, x: px, y: py, token: token });
       });
       el.addEventListener('mouseleave', function () {
         el._designerAdornerHitToken = null;
@@ -591,7 +625,7 @@
     selection = []; current = null; canMove = false; canResize = false;
     hideHover();
     closeSlotEditor(); // a stray inline editor must not linger over a new item selection
-    vscode.postMessage({ type: 'selectItem', hostId: item.ownerId, itemId: item.itemId });
+    postGenerationBoundCanvasIntent({ type: 'selectItem', hostId: item.ownerId, itemId: item.itemId });
     renderSelection();
   }
   // delete the selected strip item (+ its subtree): the host fetches the owner's forest, omits this node, and reuses
@@ -599,7 +633,7 @@
   // highlight once the item is gone; a refused delete leaves it in place.
   function deleteStripItem() {
     if (!selectedItem) return;
-    vscode.postMessage({ type: 'stripDelete', hostId: selectedItem.ownerId, itemId: selectedItem.itemId });
+    postMessage({ type: 'stripDelete', hostId: selectedItem.ownerId, itemId: selectedItem.itemId });
   }
 
   // ---- on-canvas synthetic submenu flyout: clicking a top-level menu item that has nested DropDownItems (the engine-
@@ -761,7 +795,7 @@
     submenuSel = { ownerId: item.ownerId || (L && L.ownerId), itemId: item.itemId, itemType: item.itemType, text: item.text, ax: g.left, ay: g.top, level: level };
     selectedItem = null;                           // a nested selection isn't the top-level Del/F2 target — drop the stale one
     selection = []; current = null; canMove = false; canResize = false; // a nested item isn't a control — drop any control selection so Cut/Copy/nudge/z-order can't act on a lingering one (parity with selectStripItem)
-    vscode.postMessage({ type: 'selectItem', hostId: submenuSel.ownerId, itemId: item.itemId });
+    postGenerationBoundCanvasIntent({ type: 'selectItem', hostId: submenuSel.ownerId, itemId: item.itemId });
     renderSelection();                             // clears the top-level highlight + refreshes the Delete-enabled state
   }
   // update the .sel highlight on the EXISTING flyout rows WITHOUT rebuilding them. A rebuild (renderSubmenu → innerHTML='')
@@ -829,7 +863,7 @@
   function deleteSubmenuSel(sel) {
     sel = sel || submenuSel;
     if (!sel) return;
-    vscode.postMessage({ type: 'stripDelete', hostId: sel.ownerId, itemId: sel.itemId });
+    postMessage({ type: 'stripDelete', hostId: sel.ownerId, itemId: sel.itemId });
   }
   function onSubmenuDocDown(e) {
     for (var i = 0; i < submenuBoxes.length; i++) { if (submenuBoxes[i].style.display !== 'none' && submenuBoxes[i].contains(e.target)) return; }
@@ -888,8 +922,9 @@
   // select of the SAME owner. A host-authoritative select (fullRender / a Properties-panel pick) carries NO token → always applied.
   var pickToken = 0, pendingPick = null, suppressPickTokens = new Set();
   function postGenerationBoundCanvasIntent(message) {
-    if (lastDrawnGen >= 0) message.gen = lastDrawnGen;
-    vscode.postMessage(message);
+    // Retrying a prior intent must keep its original drawn generation (including an initially absent one).
+    if (!message.operationId && message.gen === undefined && lastDrawnGen >= 0) message.gen = lastDrawnGen;
+    postMessage(message);
   }
   // Post a canvas-origin pick AND record it as the pending (not-yet-echoed) pick for select-echo correlation.
   function postPick(id) {
@@ -1027,12 +1062,12 @@
         // Data-loss aware: only Text + position carry over; type-specific props (Image/ShortcutKeys/…) reset. Carry the
         // RAW caption (NOT trimmed): the contract is "carry Text", so a type-only change on a padded caption ("  Save  ")
         // must not silently trim it (codex review). A separator target carries no text.
-        vscode.postMessage({ type: 'stripRetype', hostId: rOwner, itemId: rItemId, itemType: newType, text: isSeparatorType(newType) ? '' : rawVal });
+        postMessage({ type: 'stripRetype', hostId: rOwner, itemId: rItemId, itemType: newType, text: isSeparatorType(newType) ? '' : rawVal });
         return;
       }
       var newText = rawVal.trim();
       if (newText === '') return; // an emptied caption = no rename (VS keeps the old text; the engine rejects blank Text)
-      vscode.postMessage({ type: 'stripRename', hostId: rOwner, itemId: rItemId, text: newText });
+      postMessage({ type: 'stripRename', hostId: rOwner, itemId: rItemId, text: newText });
       return;
     }
     var itemType = slotEditSel.value, owner = slotEditOwner, parentItemId = slotEditParentItemId, reopen = slotEditReopen;
@@ -1049,7 +1084,7 @@
     if (reopen) { reopenToken = ++reopenSeq; slotReopen = { token: reopenToken, kind: reopen.kind, ownerId: reopen.ownerId, topItemId: reopen.topItemId, path: reopen.path }; }
     // parentItemId (set only for a nested submenu slot) tells the host to append into that item's DropDownItems instead
     // of the strip's top level; omit it for a top-level add so the message shape is unchanged there.
-    vscode.postMessage({ type: 'stripAdd', hostId: owner, itemType: itemType, text: text, parentItemId: parentItemId || undefined, reopenToken: reopenToken });
+    postMessage({ type: 'stripAdd', hostId: owner, itemType: itemType, text: text, parentItemId: parentItemId || undefined, reopenToken: reopenToken });
   }
   function closeSlotEditor() {
     document.removeEventListener('mousedown', onSlotEditDocDown, true);
@@ -1162,7 +1197,7 @@
       if (finished) return;
       finished = true;
       var next = input.value.trim();
-      if (commit && next && next !== item.id) vscode.postMessage({ type: 'trayRename', id: item.id, newName: next });
+      if (commit && next && next !== item.id) postMessage({ type: 'trayRename', id: item.id, newName: next });
       else renderTray();
     }
     input.addEventListener('click', function (ev) { ev.stopPropagation(); });
@@ -1396,7 +1431,7 @@
       var c = findControl(id); if (!c) continue;
       var b = secBox(n++); b.style.display = 'block';
       b.style.left = (c.x * zoom) + 'px'; b.style.top = (c.y * zoom) + 'px';
-      b.style.width = Math.max(0, c.width * zoom - 2) + 'px'; b.style.height = Math.max(0, c.height * zoom - 2) + 'px';
+      b.style.width = Math.max(0, c.width * zoom) + 'px'; b.style.height = Math.max(0, c.height * zoom) + 'px'; // .selsec is border-box
     }
     for (; n < secBoxes.length; n++) secBoxes[n].style.display = 'none';
     var pc = current ? findControl(current) : null;
@@ -1572,10 +1607,10 @@
     }
     var links = document.createElement('div'); links.className = 'tfLinks';
     var all = document.createElement('div'); all.className = 'tfLink'; all.textContent = T('designer.menu.allProperties');
-    all.addEventListener('click', function () { closeFlyout(); vscode.postMessage({ type: 'showProperties' }); });
+    all.addEventListener('click', function () { closeFlyout(); postMessage({ type: 'showProperties' }); });
     links.appendChild(all);
     var learn = document.createElement('div'); learn.className = 'tfLink'; learn.textContent = T('designer.menu.learnMore');
-    learn.addEventListener('click', function () { closeFlyout(); vscode.postMessage({ type: 'learnMore', typeName: comp.type }); });
+    learn.addEventListener('click', function () { closeFlyout(); postMessage({ type: 'learnMore', typeName: comp.type }); });
     links.appendChild(learn);
     flyoutEl.appendChild(links);
     document.body.appendChild(flyoutEl);
@@ -1602,12 +1637,12 @@
       if (owner !== current || !vendorEnabled(v)) { closeFlyout(); return; }
       if (v.closesPanel) closeFlyout();
       if (v.verb === 'addTab') {
-        vscode.postMessage({ type: 'addTab', hostId: owner });
+        postMessage({ type: 'addTab', hostId: owner });
       } else if (v.verb === 'deleteTab') {
         var page = activePageOf(owner);
-        if (page) vscode.postMessage({ type: 'deleteTab', hostId: owner, pageId: page.id });
+        if (page) postMessage({ type: 'deleteTab', hostId: owner, pageId: page.id });
       } else if (v.verb === 'showProperties') {
-        vscode.postMessage({ type: 'showProperties' });
+        postMessage({ type: 'showProperties' });
       }
     });
     return row;
@@ -1623,7 +1658,7 @@
       if (owner !== current || !tasksState || tasksState.id !== owner
         || commandListFor(tasksState.comp).indexOf(action) < 0) { closeFlyout(); return; }
       closeFlyout();
-      vscode.postMessage({
+      postMessage({
         type: 'designerActionCommand',
         id: owner,
         commandId: action.commandId,
@@ -1635,7 +1670,7 @@
   function taskRow(comp, p) {
     var owner = current;
     var taskLabel = p.taskDisplayName || p.name;
-    function send(value) { vscode.postMessage({ type: 'edit', id: owner, prop: p.name, propType: p.type, isEnum: !!p.isEnum, value: value }); }
+    function send(value) { postMessage({ type: 'edit', id: owner, prop: p.name, propType: p.type, isEnum: !!p.isEnum, value: value }); }
     var cur = p.value == null ? '' : String(p.value);
     var isBool = /(^|\.)Boolean$/.test(p.type || '') || sameSet(p.standardValues, ['True', 'False']);
     var row;
@@ -1735,7 +1770,7 @@
       else if (mode === 'centerV') dy = (anchor.y + anchor.height / 2) - (c.y + c.height / 2);
       if (Math.round(dx) !== 0 || Math.round(dy) !== 0) edits.push({ id: id, dx: Math.round(dx), dy: Math.round(dy) });
     }
-    if (edits.length) vscode.postMessage({ type: 'alignControls', edits: edits });
+    if (edits.length) postMessage({ type: 'alignControls', edits: edits });
   }
   [['alignLeft', 'left'], ['alignRight', 'right'], ['alignTop', 'top'], ['alignBottom', 'bottom'],
    ['alignCenterH', 'centerH'], ['alignCenterV', 'centerV']].forEach(function (pair) {
@@ -1773,7 +1808,7 @@
       }
       cursor += c[zk] + gap;
     }
-    if (edits.length) vscode.postMessage({ type: 'alignControls', edits: edits });
+    if (edits.length) postMessage({ type: 'alignControls', edits: edits });
   }
   [['distH', 'h'], ['distV', 'v']].forEach(function (pair) {
     var el = document.getElementById(pair[0]);
@@ -1805,7 +1840,7 @@
       cursor = target + item[zk];
       previousOriginalEnd = item[sk] + item[zk];
     }
-    if (edits.length) vscode.postMessage({ type: 'alignControls', edits: edits });
+    if (edits.length) postMessage({ type: 'alignControls', edits: edits });
   }
   [['spaceHInc', 'h', 'increase'], ['spaceHDec', 'h', 'decrease'], ['spaceHRemove', 'h', 'remove'],
    ['spaceVInc', 'v', 'increase'], ['spaceVDec', 'v', 'decrease'], ['spaceVRemove', 'v', 'remove']].forEach(function (entry) {
@@ -1827,7 +1862,7 @@
         edits.push({ id: id, width: Math.round(w), height: Math.round(h) });
       }
     }
-    if (edits.length) vscode.postMessage({ type: 'resizeControls', sizeEdits: edits });
+    if (edits.length) postMessage({ type: 'resizeControls', sizeEdits: edits });
   }
   [['sameW', 'w'], ['sameH', 'h'], ['sameWH', 'wh']].forEach(function (pair) {
     var el = document.getElementById(pair[0]);
@@ -1840,7 +1875,7 @@
   // window-space center would place a vertical center ~half-a-caption too high. We forward the axis + selection. ----
   function centerInForm(axis) { // 'h' (horizontal) | 'v' (vertical)
     var ids = selectableIds();
-    if (ids.length) vscode.postMessage({ type: 'centerInForm', axis: axis, ids: ids });
+    if (ids.length) postMessage({ type: 'centerInForm', axis: axis, ids: ids });
   }
   [['centerFormH', 'h'], ['centerFormV', 'v']].forEach(function (pair) {
     var el = document.getElementById(pair[0]);
@@ -1941,7 +1976,7 @@
       var snapped = snapMoveToGrid(c.x, c.y, c), dx = Math.round(snapped.x - c.x), dy = Math.round(snapped.y - c.y);
       if (dx || dy) edits.push({ id: c.id, dx: dx, dy: dy });
     }
-    if (edits.length) vscode.postMessage({ type: 'alignControls', edits: edits });
+    if (edits.length) postMessage({ type: 'alignControls', edits: edits });
   }
 
   // ---- snaplines: align the moving control's edges/centers to siblings within a threshold ----
@@ -2164,7 +2199,7 @@
     if (tabOrderMode) {
       var tid = hitTest(px, py);
       if (!tid || tid === 'this') return;
-      vscode.postMessage({ type: 'edit', id: tid, prop: 'TabIndex', propType: 'System.Int32', isEnum: false, value: String(tabSeq) });
+      postMessage({ type: 'edit', id: tid, prop: 'TabIndex', propType: 'System.Int32', isEnum: false, value: String(tabSeq) });
       tabSeq++;
       return;
     }
@@ -2189,7 +2224,7 @@
     // already-selected tab control still switches tabs. Normal selection still runs below.
     var hc = findControl(id);
     if (hc && hc.isTabHost && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
-      vscode.postMessage({ type: 'tabClick', hostId: id, x: Math.round(e.offsetX / zoom), y: Math.round(e.offsetY / zoom) });
+      postGenerationBoundCanvasIntent({ type: 'tabClick', hostId: id, x: Math.round(e.offsetX / zoom), y: Math.round(e.offsetY / zoom) });
     }
     if ((e.ctrlKey || e.metaKey || e.shiftKey) && id !== 'this') { toggleSelect(id); }
     else if (id !== current || selection.length > 1) { selectSingle(id); }
@@ -2209,10 +2244,10 @@
     if (!id) return;
     var hc = findControl(id);
     if (hc && hc.isTabHost) {
-      vscode.postMessage({ type: 'tabRename', hostId: id, x: Math.round(px), y: Math.round(py) });
+      postMessage({ type: 'tabRename', hostId: id, x: Math.round(px), y: Math.round(py) });
       return;
     }
-    vscode.postMessage({ type: 'createDefaultHandler', id: id });
+    postMessage({ type: 'createDefaultHandler', id: id });
   });
 
   // cross-webview drop: a control or an engine-discovered data schema dragged from the shared panel lands here.
@@ -2246,7 +2281,7 @@
       try { data = JSON.parse(raw); } catch (_e) { return; }
       if (!data || typeof data.schemaKey !== 'string' || !data.schemaKey || data.schemaKey.length > 1024
           || (data.mode !== 'detail' && data.mode !== 'grid')) return;
-      vscode.postMessage({
+      postMessage({
         type: 'dropDataSource', schemaKey: data.schemaKey, mode: data.mode,
         includeNavigator: !!data.includeNavigator,
         existingBindingSourceId: typeof data.existingBindingSourceId === 'string' ? data.existingBindingSourceId : null,
@@ -2255,7 +2290,7 @@
       return;
     }
     var controlType = e.dataTransfer.getData(TOOLBOX_MIME);
-    if (controlType) vscode.postMessage({ type: 'dropControl', controlType: controlType, hitId: hitId || 'this', x: Math.round(x), y: Math.round(y) });
+    if (controlType) postMessage({ type: 'dropControl', controlType: controlType, hitId: hitId || 'this', x: Math.round(x), y: Math.round(y) });
   });
 
   canvas.addEventListener('mousedown', function (e) {
@@ -2356,7 +2391,7 @@
           var it = drag.items[i]; if (it.id === current) continue;
           var b = secBox(n++); b.style.display = 'block';
           b.style.left = ((it.x + sdx) * zoom) + 'px'; b.style.top = ((it.y + sdy) * zoom) + 'px';
-          b.style.width = Math.max(0, it.w * zoom - 2) + 'px'; b.style.height = Math.max(0, it.h * zoom - 2) + 'px';
+          b.style.width = Math.max(0, it.w * zoom) + 'px'; b.style.height = Math.max(0, it.h * zoom) + 'px'; // .selsec is border-box
         }
         setStatus(ctrlDrag ? T('designer.status.duplicateDrag', { count: drag.items.length, dx: Math.round(sdx), dy: Math.round(sdy) })
                              : snapOverride ? rawPlacementStatus(drag.cur)
@@ -2402,7 +2437,7 @@
       var sd = stripDrag; stripDrag = null; clearStripDropFeedback();
       if (sd.active && sd.target && Number.isFinite(sd.target.targetIndex)) {
         suppressClick = true;
-        vscode.postMessage({
+        postMessage({
           type: 'stripMove',
           hostId: sd.ownerId,
           itemId: sd.itemId,
@@ -2417,7 +2452,7 @@
       var tb = toolboxBand, rectTb = tb.rect; clearToolboxBand();
       suppressClick = true;
       if (tb.active && rectTb && rectTb.x2 > rectTb.x1 && rectTb.y2 > rectTb.y1) {
-        vscode.postMessage({
+        postMessage({
           type: 'dropControl',
           controlType: tb.controlType,
           hitId: tb.hitId || 'this',
@@ -2437,7 +2472,7 @@
       if (d.mode === 'move') {
         if (d.duplicate || e.ctrlKey || e.metaKey) {
           var ddx = d.delta ? d.delta.dx : cdx / zoom, ddy = d.delta ? d.delta.dy : cdy / zoom;
-          vscode.postMessage({ type: 'duplicateDrag', ids: d.ids, dx: Math.round(ddx), dy: Math.round(ddy) });
+          postMessage({ type: 'duplicateDrag', ids: d.ids, dx: Math.round(ddx), dy: Math.round(ddy) });
         } else if (d.group) {
           postGenerationBoundCanvasIntent({ type: 'manipulateGroup', ids: d.ids, dx: d.delta.dx, dy: d.delta.dy });
         } else {
@@ -2488,8 +2523,8 @@
     if (selectedItem) { deleteStripItem(); return; } // an on-canvas strip item is the delete target
     var ids = selectableIds();
     if (!ids.length) return;
-    if (ids.length > 1) vscode.postMessage({ type: 'removeControls', ids: ids });
-    else vscode.postMessage({ type: 'removeControl', id: ids[0] });
+    if (ids.length > 1) postMessage({ type: 'removeControls', ids: ids });
+    else postMessage({ type: 'removeControl', id: ids[0] });
   }
   if (deleteCtlEl) deleteCtlEl.addEventListener('click', doDelete);
   // ---- duplicate (VS Ctrl+D): clone the selection in place (offset by the engine's paste nudge) WITHOUT
@@ -2499,7 +2534,7 @@
     if (nudge) flushNudge(); // commit a pending keyboard-nudge so the clone copies the nudged position, not a stale one
     var ids = selectableIds();
     if (!ids.length || drag) return;
-    vscode.postMessage({ type: 'duplicate', ids: ids });
+    postMessage({ type: 'duplicate', ids: ids });
   }
   // ---- Lock Controls (VS "Lock Controls"): flip the locked state of every control on the form. Locked controls drop
   // their grab handles + a lock glyph appears, and mouse move/resize/nudge is blocked. Host persistence is view-only. ----
@@ -2510,7 +2545,7 @@
     renderSelection();
   }
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'F7') { e.preventDefault(); vscode.postMessage({ type: 'viewCode' }); return; } // VS: F7 = designer → code
+    if (e.key === 'F7') { e.preventDefault(); postMessage({ type: 'viewCode' }); return; } // VS: F7 = designer → code
     // F2 renames the selected on-canvas strip item (VS: F2 = rename). Same inline editor as the double-click path;
     // a separator has no Text so it isn't renamable. With no item selected, F2 routes the current ordinary component
     // through the same source-first rename path used by the tray and `(Name)` property.
@@ -2531,7 +2566,7 @@
       if (!renameTarget || renameTarget.readOnly || renameTarget.editable === false
           || renameTarget.inherited || renameTarget.isInherited
           || renameTarget.ownership === 'inherited' || renameTarget.ownership === 'unresolved') return;
-      e.preventDefault(); vscode.postMessage({ type: 'renameComponent', id: current });
+      e.preventDefault(); postMessage({ type: 'renameComponent', id: current });
       return;
     }
     if (e.key === 'Escape' && selectedToolboxControl) {
@@ -2539,7 +2574,7 @@
       clearToolboxBand();
       e.preventDefault();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-      vscode.postMessage({ type: 'cancelToolboxSelection' });
+      postMessage({ type: 'cancelToolboxSelection' });
       return;
     }
     if (e.key !== 'Delete' && e.key !== 'Del') return;
@@ -2676,22 +2711,22 @@
 
   function zorder(front) {
     var ids = selectableIds(); if (!ids.length) return;
-    if (ids.length > 1) vscode.postMessage({ type: front ? 'bringToFrontGroup' : 'sendToBackGroup', ids: ids });
-    else vscode.postMessage({ type: front ? 'bringToFront' : 'sendToBack', id: ids[0] });
+    if (ids.length > 1) postMessage({ type: front ? 'bringToFrontGroup' : 'sendToBackGroup', ids: ids });
+    else postMessage({ type: front ? 'bringToFront' : 'sendToBack', id: ids[0] });
   }
   function doCopy() {
     if (nudge) flushNudge();
     var ids = selectableIds(); if (!ids.length) return;
-    if (ids.length > 1) vscode.postMessage({ type: 'copyControls', ids: ids });
-    else vscode.postMessage({ type: 'copy', id: ids[0] });
+    if (ids.length > 1) postMessage({ type: 'copyControls', ids: ids });
+    else postMessage({ type: 'copy', id: ids[0] });
   }
   function doCut() {
     if (nudge) flushNudge();
     var ids = selectableIds(); if (!ids.length) return;
-    if (ids.length > 1) vscode.postMessage({ type: 'cutControls', ids: ids });
-    else vscode.postMessage({ type: 'cut', id: ids[0] });
+    if (ids.length > 1) postMessage({ type: 'cutControls', ids: ids });
+    else postMessage({ type: 'cut', id: ids[0] });
   }
-  function doPaste() { if (nudge) flushNudge(); vscode.postMessage({ type: 'paste', id: current || 'this' }); }
+  function doPaste() { if (nudge) flushNudge(); postMessage({ type: 'paste', id: current || 'this' }); }
 
   function buildCtxMenu() {
     // a selected NESTED flyout item gets the same focused menu. Capture the descriptor NOW: clicking a menu item fires
@@ -2722,7 +2757,7 @@
     var canDelete = ids.length > 0;       // false when only the root is selected → Delete/Cut/Copy greyed (VS)
     var canZ = ids.length > 0 && !!primary && !isRoot; // z-order applies to visual non-root controls only
     var menu = [];
-    menu.push({ label: T('designer.menu.viewCode'), acc: 'F7', act: function () { vscode.postMessage({ type: 'viewCode' }); } });
+    menu.push({ label: T('designer.menu.viewCode'), acc: 'F7', act: function () { postMessage({ type: 'viewCode' }); } });
     menu.push({ sep: 1 });
     menu.push({ label: T('designer.menu.bringToFront'), disabled: !canZ, act: function () { zorder(true); } });
     menu.push({ label: T('designer.menu.sendToBack'), disabled: !canZ, act: function () { zorder(false); } });
@@ -2737,8 +2772,8 @@
     menu.push({ label: T('designer.menu.lockControls'), disabled: lockable.length === 0, checked: allLocked,
                 act: function () { toggleLockAll(lockable, !allLocked); } });
     menu.push({ sep: 1 });
-    menu.push({ label: T('designer.menu.allProperties'), act: function () { vscode.postMessage({ type: 'showProperties' }); } });
-    if (!multi && subject) menu.push({ label: T('designer.menu.learnMore'), act: function () { vscode.postMessage({ type: 'learnMore', typeName: subject.type }); } });
+    menu.push({ label: T('designer.menu.allProperties'), act: function () { postMessage({ type: 'showProperties' }); } });
+    if (!multi && subject) menu.push({ label: T('designer.menu.learnMore'), act: function () { postMessage({ type: 'learnMore', typeName: subject.type }); } });
     // "Select '<ancestor>'" chain — immediate parent up to the root, like VS (single visual selection only)
     if (!multi && primary && !isRoot) {
       var chain = [], p = primary.parentId;
@@ -2755,23 +2790,23 @@
     // on its header; switching is a single click.
     if (!multi && primary && primary.isTabHost) {
       menu.push({ sep: 1 });
-      menu.push({ label: T('designer.menu.addTab'), act: function () { vscode.postMessage({ type: 'addTab', hostId: primary.id }); } });
+      menu.push({ label: T('designer.menu.addTab'), act: function () { postMessage({ type: 'addTab', hostId: primary.id }); } });
       var activePage = null;
       for (var pi = 0; pi < controls.length; pi++) { if (controls[pi].parentId === primary.id) { activePage = controls[pi]; break; } }
       menu.push({
         label: T('designer.menu.moveTabLeft'),
         disabled: !activePage,
-        act: function () { if (activePage) vscode.postMessage({ type: 'moveTab', hostId: primary.id, pageId: activePage.id, direction: 'left' }); },
+        act: function () { if (activePage) postMessage({ type: 'moveTab', hostId: primary.id, pageId: activePage.id, direction: 'left' }); },
       });
       menu.push({
         label: T('designer.menu.moveTabRight'),
         disabled: !activePage,
-        act: function () { if (activePage) vscode.postMessage({ type: 'moveTab', hostId: primary.id, pageId: activePage.id, direction: 'right' }); },
+        act: function () { if (activePage) postMessage({ type: 'moveTab', hostId: primary.id, pageId: activePage.id, direction: 'right' }); },
       });
       menu.push({
         label: activePage ? T('designer.menu.deleteTabNamed', { name: activePage.name }) : T('designer.menu.deleteTab'),
         disabled: !activePage,
-        act: function () { if (activePage) vscode.postMessage({ type: 'deleteTab', hostId: primary.id, pageId: activePage.id }); },
+        act: function () { if (activePage) postMessage({ type: 'deleteTab', hostId: primary.id, pageId: activePage.id }); },
       });
     }
     menu.push({ sep: 1 });
@@ -2782,7 +2817,7 @@
     menu.push({ sep: 1 });
     menu.push({ label: T('designer.menu.delete'), acc: 'Del', disabled: !canDelete, act: doDelete });
     menu.push({ sep: 1 });
-    menu.push({ label: T('designer.menu.properties'), act: function () { vscode.postMessage({ type: 'showProperties' }); } });
+    menu.push({ label: T('designer.menu.properties'), act: function () { postMessage({ type: 'showProperties' }); } });
     return menu;
   }
 
@@ -3014,12 +3049,12 @@
   // logical pixels and the cached net48 graph never needs a lossy fractional Scale/Scale-back cycle.
   var lastReportedDpr = (typeof window.devicePixelRatio === 'number' && isFinite(window.devicePixelRatio))
     ? window.devicePixelRatio : 1;
-  vscode.postMessage({ type: 'ready', dpr: lastReportedDpr });
+  postMessage({ type: 'ready', dpr: lastReportedDpr });
   window.addEventListener('resize', function () {
     var nextDpr = (typeof window.devicePixelRatio === 'number' && isFinite(window.devicePixelRatio))
       ? window.devicePixelRatio : 1;
     if (Math.abs(nextDpr - lastReportedDpr) < 0.01) return;
     lastReportedDpr = nextDpr;
-    vscode.postMessage({ type: 'dprChanged', dpr: nextDpr });
+    postMessage({ type: 'dprChanged', dpr: nextDpr });
   });
 })();

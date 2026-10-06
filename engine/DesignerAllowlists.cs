@@ -81,6 +81,27 @@ namespace WinFormsDesigner.Engine
         };
 
         /// <summary>
+        /// The ONE decimal form both interpreters accept: `new decimal(new int[] { lo, mid, hi, flags })`, which the
+        /// CodeDom serializer writes for every non-default decimal property (NumericUpDown.Value/Maximum, vendor spin
+        /// editors). Deliberately not a construction-allowlist entry: that would admit every Decimal overload with any
+        /// allowlisted argument shape, while this is closed to exactly four Int32 words. The words are validated by
+        /// Decimal itself (reserved flag bits, scale &gt; 28), and a rejected pattern fails the statement closed.
+        /// </summary>
+        public const int DecimalBitsLength = 4;
+
+        public static bool TryCreateDecimalFromBits(int[]? bits, out decimal value, out string? error)
+        {
+            value = 0m; error = null;
+            if (bits == null || bits.Length != DecimalBitsLength)
+            {
+                error = "decimal bits must be exactly " + DecimalBitsLength + " Int32 words";
+                return false;
+            }
+            try { value = new decimal(bits); return true; }
+            catch (ArgumentException ex) { error = "invalid decimal bits: " + ex.Message; return false; }
+        }
+
+        /// <summary>
         /// Declaring types whose public static property/field reads are allowed in the MemberAccess path. Only
         /// pure, side-effect-free framework value sources the value-converter emits: named/system colors
         /// (Color.Red, SystemColors.Control), the value structs' static members (Size.Empty, Point.Empty, …), and

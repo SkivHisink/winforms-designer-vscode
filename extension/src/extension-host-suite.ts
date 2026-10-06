@@ -14,6 +14,8 @@ import {
 } from './v2Phase0Performance';
 import { runV2HeadlessValidation } from './v2HeadlessValidate';
 import { createEvidenceAssert, ScenarioEvidenceRecorder } from './scenarioEvidence';
+import { engineIdentityHash, engineIdentityId } from './engineRequestContext';
+import type { EngineRequestAudit, EngineTransportState } from './engineTransport';
 
 const extensionId = 'skivhisink.winforms-designer-vscode';
 const designerViewType = 'winformsDesigner.designer';
@@ -192,7 +194,9 @@ interface ExtensionHostTestApi {
   adapterManifestRegistryState(): readonly V2AdapterManifestProductStatus[];
   refreshAdapterManifests(): Promise<readonly V2AdapterManifestProductStatus[]>;
   engineLifecycleState(): { openDesignerSessions: number; mappedEngines: readonly { kind: 'modern' | 'net48'; pid: number; running: boolean }[]; liveProcessPids: readonly number[]; idleRecycleScheduled: boolean; idleRecycleInFlight: boolean; idleRecycleBudgetMs: number }; armNextIdleEngineRecycle(delayMs: number): void;
-  crashMappedEngineForRecoveryTest(kind: 'modern' | 'net48'): { pid: number; signaled: boolean };
+  crashMappedEngineForRecoveryTest(kind: 'modern' | 'net48', expectedPid?: number): { pid: number; signaled: boolean };
+  productWorkerState(): readonly EngineTransportState[];
+  productRequestOutcomes(): readonly EngineRequestAudit[];
   saveOpenDesigner(source: vscode.Uri): Promise<void>;
   saveOpenDesignerAs(source: vscode.Uri, destination: vscode.Uri): Promise<void>;
   openDesignerState(source: vscode.Uri): {
@@ -647,6 +651,12 @@ export async function run(): Promise<void> {
   }
   if (process.env.WFD_EXTENSION_HOST_S124_ONLY === '1') {
     await runS124ProductWorkerCrashContinuation(testApi);
+    return;
+  }
+  if (process.env.WFD_EXTENSION_HOST_S104_ONLY === '1') {
+    await runS104IdleRecycleScenario(testApi,
+      vscode.Uri.file(path.join(workspaceRoot, 'MainForm.cs')),
+      vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'fixtures', 'Net48CtxFixture', 'ReparentForm.cs')));
     return;
   }
   if (process.env.WFD_EXTENSION_HOST_S095_ONLY === '1') {
@@ -5644,21 +5654,58 @@ export async function run(): Promise<void> {
   await new Promise<never>(() => undefined);
 }
 
+/** Select the process that actually rendered this document's current source, never the first runtime in the pool. */
+function renderedDocumentWorker(
+  testApi: ExtensionHostTestApi,
+  uri: vscode.Uri,
+  kind: 'modern' | 'net48',
+  previousRequests?: ReadonlySet<string>,
+): { worker: EngineTransportState; render: EngineRequestAudit } | undefined {
+  const state = testApi.openDesignerState(uri);
+  if (!state?.renderReady || state.engineKind !== kind || !state.designerFile) return undefined;
+  const documentId = engineIdentityId('document', state.designerFile);
+  const documentRevision = engineIdentityId('revision', `${state.revision}:${engineIdentityHash(state.designerText)}`);
+  const method = kind === 'modern' ? 'RenderWithLayout' : 'RenderInterpretedWithLayout';
+  const render = [...testApi.productRequestOutcomes()].reverse().find(request =>
+    request.documentId === documentId && request.documentRevision === documentRevision
+    && request.method === method && request.outcome === 'OK'
+    && request.generation % 1_000_000_000 >= state.renderGeneration
+    && !previousRequests?.has(request.requestId));
+  if (!render) return undefined;
+  const worker = testApi.productWorkerState().find(candidate => candidate.key.runtime === kind
+    && candidate.pid === render.pid && candidate.state === 'running');
+  return worker ? { worker, render } : undefined;
+}
+
 async function runS104IdleRecycleScenario(
   testApi: ExtensionHostTestApi,
   modernUri: vscode.Uri,
   net48Uri: vscode.Uri,
 ): Promise<void> {
   // V2-FND-001-S104 — exercise the product's last-session idle timer, not the diagnostics-only supervisor. Repeated
-  // clean reopen/close cycles must reuse the warm pair; the armed final close uses the same timer/zero-session/stop
-  // path with only its delay shortened, then proves both OS processes and every host-owned process registration exit.
+  // clean reopen/close cycles must reuse the primary document workers within the configured graph pool. Each armed
+  // close uses the real timer/zero-session/stop path with only its delay shortened and proves every observed PID exits.
   await waitFor(
     () => testApi.engineLifecycleState().openDesignerSessions === 0,
     'S104 precondition: previous CustomEditor sessions did not close',
     30_000,
   );
 
+  const configuredLimit = vscode.workspace.getConfiguration('winformsDesigner').get<number>('workers.maximumResidentProcesses', 4);
+  assert.strictEqual(configuredLimit, 4, 'S104 must exercise the default four-process residency cap');
+  const previousRequests = new Set(testApi.productRequestOutcomes().map(request => request.requestId));
+  const observedPids = new Set<number>();
+  const rememberPids = () => {
+    const state = testApi.engineLifecycleState();
+    for (const pid of [...state.liveProcessPids, ...state.mappedEngines.map(engine => engine.pid),
+      ...testApi.productRequestOutcomes().filter(request => !previousRequests.has(request.requestId)).map(request => request.pid)]) {
+      if (pid > 0) observedPids.add(pid);
+    }
+  };
+  rememberPids();
+
   const openPair = async (label: string) => {
+    const beforeOpenRequests = new Set(testApi.productRequestOutcomes().map(request => request.requestId));
     await vscode.commands.executeCommand('vscode.openWith', modernUri, designerViewType);
     await waitFor(
       () => testApi.openDesignerState(modernUri)?.renderReady === true
@@ -5673,15 +5720,55 @@ async function runS104IdleRecycleScenario(
       `S104 ${label}: compiled-net48 CustomEditor did not render`,
       60_000,
     );
+    // onSpawn owns/registers a child before pipe negotiation publishes its worker. Observe that bounded transition;
+    // every poll still enforces the physical cap and remembers auxiliary PIDs. This does not reacquire or render.
+    await waitFor(() => {
+      rememberPids();
+      const lifecycle = testApi.engineLifecycleState();
+      const live = lifecycle.liveProcessPids;
+      assert.ok(live.every(pid => Number.isSafeInteger(pid) && pid > 0), `S104 ${label}: invalid live process registration`);
+      assert.strictEqual(new Set(live).size, live.length, `S104 ${label}: duplicate live process registration`);
+      assert.ok(live.length <= configuredLimit, `S104 ${label}: physical pool exceeded the configured cap while starting`);
+      const mapped = lifecycle.mappedEngines.map(engine => engine.pid).sort((a, b) => a - b);
+      return mapped.length === live.length && mapped.every((pid, index) => pid === live[index]);
+    }, () => `S104 ${label}: owned startup did not publish or exit within the 10-second pipe connection budget: ${JSON.stringify({
+      lifecycle: testApi.engineLifecycleState(),
+      workers: testApi.productWorkerState().map(worker => ({ pid: worker.pid, key: worker.key, state: worker.state,
+        pending: worker.pending, activeLeases: worker.activeLeases })),
+    })}`, 10_000);
+    rememberPids();
     const state = testApi.engineLifecycleState();
     assert.strictEqual(state.openDesignerSessions, 2, `S104 ${label}: expected exactly two open product sessions`);
-    assert.deepStrictEqual(state.mappedEngines.map((engine) => engine.kind), ['modern', 'net48']);
-    assert.ok(state.mappedEngines.every((engine) => engine.running && engine.pid > 0));
-    assert.strictEqual(state.liveProcessPids.length, 2, `S104 ${label}: leaked an unowned engine process`);
+    assert.ok(state.mappedEngines.every((engine) => engine.running && engine.pid > 0),
+      `S104 ${label}: mapped engine is not a live owned process`);
+    const mappedPids = state.mappedEngines.map(engine => engine.pid).sort((a, b) => a - b);
+    assert.strictEqual(new Set(mappedPids).size, mappedPids.length, `S104 ${label}: duplicate process ownership`);
+    assert.deepStrictEqual(mappedPids, state.liveProcessPids, `S104 ${label}: leaked an unmapped engine process`);
+    assert.ok(mappedPids.length >= 2 && mappedPids.length <= configuredLimit,
+      `S104 ${label}: graph pool exceeded the configured ${configuredLimit}-process residency cap`);
+    const modern = renderedDocumentWorker(testApi, modernUri, 'modern', beforeOpenRequests);
+    const net48 = renderedDocumentWorker(testApi, net48Uri, 'net48', beforeOpenRequests);
+    const documents = [modernUri, net48Uri].map(uri => {
+      const document = testApi.openDesignerState(uri)!;
+      return { documentId: engineIdentityId('document', document.designerFile!),
+        documentRevision: engineIdentityId('revision', `${document.revision}:${engineIdentityHash(document.designerText)}`),
+        renderGeneration: document.renderGeneration, renderReady: document.renderReady };
+    });
+    assert.ok(modern && net48,
+      `S104 ${label}: primary process lacks a completed current-document Render: ${JSON.stringify({
+        documents, requests: testApi.productRequestOutcomes().filter(request => !beforeOpenRequests.has(request.requestId)
+          && documents.some(document => document.documentId === request.documentId)
+          && /^(RenderWithLayout|RenderInterpretedWithLayout|DescribeComponent|DescribeInterpretedComponent)$/.test(request.method)),
+        workers: testApi.productWorkerState(),
+      })}`);
+    assert.notStrictEqual(modern.worker.pid, net48.worker.pid, `S104 ${label}: runtime processes are not distinct`);
+    assert.ok([modern.worker.pid, net48.worker.pid].every(pid => mappedPids.includes(pid)),
+      `S104 ${label}: primary document worker is not mapped and live`);
     assert.strictEqual(state.idleRecycleBudgetMs, 30_000);
+    console.log(`S104 ${label}: ${JSON.stringify({ modern: modern.render, net48: net48.render, poolPids: mappedPids, configuredLimit })}`);
     return {
-      modern: state.mappedEngines.find((engine) => engine.kind === 'modern')!.pid,
-      net48: state.mappedEngines.find((engine) => engine.kind === 'net48')!.pid,
+      modern: modern.worker.pid,
+      net48: net48.worker.pid,
     };
   };
 
@@ -5699,7 +5786,7 @@ async function runS104IdleRecycleScenario(
     if (nextPids.net48 !== residentPids.net48) {
       // Closing the last framework form deliberately unloads its AppDomain so the user's build output is writable.
       // If that unload fails, the fail-closed product path replaces the whole net48 worker; replacement is correct
-      // only when the old process is gone and the two-process residency budget above still holds exactly.
+      // only when the old process is gone and the configured graph residency cap above still holds.
       const replacedPid = residentPids.net48;
       await waitFor(() => {
         try { process.kill(replacedPid, 0); return false; } catch { return true; }
@@ -5708,33 +5795,34 @@ async function runS104IdleRecycleScenario(
     residentPids = nextPids;
   }
 
-  testApi.armNextIdleEngineRecycle(100);
-  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-  await waitFor(
-    () => {
-      const state = testApi.engineLifecycleState();
-      return state.openDesignerSessions === 0 && state.mappedEngines.length === 0
-        && state.liveProcessPids.length === 0 && !state.idleRecycleScheduled && !state.idleRecycleInFlight;
-    },
-    `S104 idle recycle did not return to the zero-process budget: ${JSON.stringify(testApi.engineLifecycleState())}`,
-    30_000,
-  );
-  for (const pid of Object.values(residentPids)) {
-    let alive = true;
-    try { process.kill(pid, 0); } catch { alive = false; }
-    assert.strictEqual(alive, false, `S104 engine PID ${pid} still exists after idle recycle`);
-  }
+  const recycleAndProveExit = async (label: string) => {
+    rememberPids();
+    testApi.armNextIdleEngineRecycle(100);
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await waitFor(
+      () => {
+        rememberPids();
+        const state = testApi.engineLifecycleState();
+        return state.openDesignerSessions === 0 && state.mappedEngines.length === 0
+          && state.liveProcessPids.length === 0 && !state.idleRecycleScheduled && !state.idleRecycleInFlight;
+      },
+      `S104 ${label}: idle recycle did not return to the zero-process budget: ${JSON.stringify(testApi.engineLifecycleState())}`,
+      30_000,
+    );
+    for (const pid of observedPids) {
+      let alive = true;
+      try { process.kill(pid, 0); } catch { alive = false; }
+      assert.strictEqual(alive, false, `S104 ${label}: observed engine PID ${pid} still exists after idle recycle`);
+    }
+    console.log(`S104 ${label}: zero mapped/live processes; every observed OS PID exited: ${[...observedPids].join(', ')}`);
+  };
+  await recycleAndProveExit('warm cycles');
 
+  const exitedPids = new Set(observedPids);
   const freshPids = await openPair('fresh restart');
-  const exitedPids = Object.values(residentPids);
-  assert.ok(Object.values(freshPids).every((pid) => !exitedPids.includes(pid)),
+  assert.ok(Object.values(freshPids).every((pid) => !exitedPids.has(pid)),
     `S104 fresh designer reused an exited worker PID: ${Object.values(freshPids).join(', ')}`);
-  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-  await waitFor(
-    () => testApi.engineLifecycleState().openDesignerSessions === 0,
-    'S104 fresh-restart sessions did not close',
-    30_000,
-  );
+  await recycleAndProveExit('fresh restart');
 }
 
 async function runS079S101S105ProductScenarios(testApi: ExtensionHostTestApi, net48Uri: vscode.Uri): Promise<void> {
@@ -5892,6 +5980,10 @@ async function runS016DenseProductPerformanceScenario(testApi: ExtensionHostTest
       `S016 ${expectedEngine} product state lost controls from the 300-control graph`);
     assert.strictEqual(path.resolve(openedState?.ownerProjectPath ?? '').toLowerCase(), path.resolve(project).toLowerCase(),
       `S016 ${expectedEngine} product ownership did not resolve the exact dense-form project`);
+    if (initialInteractiveMs > initialInteractiveBudgetMs) {
+      console.error(`S016 ${expectedEngine} initial observation: ${JSON.stringify({ initialInteractiveMs,
+        telemetry: openedState?.lastFullRenderTelemetry, workers: testApi.productWorkerState(), requests: testApi.productRequestOutcomes() })}`);
+    }
     assert.ok(initialInteractiveMs <= initialInteractiveBudgetMs,
       `S016 ${expectedEngine} initial model/capture/preview ${initialInteractiveMs}ms > ${initialInteractiveBudgetMs}ms`);
     assert.strictEqual(openedState?.dirty, false);
@@ -5909,6 +6001,8 @@ async function runS016DenseProductPerformanceScenario(testApi: ExtensionHostTest
     );
 
     const generation = testApi.openDesignerState(uri)?.renderGeneration ?? 0;
+    const workersBeforeCommit = testApi.productWorkerState();
+    const requestIdsBeforeCommit = new Set(testApi.productRequestOutcomes().map((request) => request.requestId));
     const committedAt = Date.now();
     await testApi.editOpenDesignerProperty(uri, 'button000', 'Text', 'System.String', false, 'Timed commit');
     await waitFor(
@@ -5920,6 +6014,17 @@ async function runS016DenseProductPerformanceScenario(testApi: ExtensionHostTest
     );
     const commitAndReconciliationMs = Date.now() - committedAt;
     const committedState = testApi.openDesignerState(uri);
+    if ((expectedEngine === 'modern' && committedState?.lastModernPropertyEditTelemetry?.retainedApplied !== true)
+      || commitAndReconciliationMs > commitAndReconciliationBudgetMs) {
+      console.error(`S016 ${expectedEngine} product reconciliation observation: ${JSON.stringify({
+        initialInteractiveMs,
+        commitAndReconciliationMs,
+        telemetry: expectedEngine === 'modern' ? committedState?.lastModernPropertyEditTelemetry : committedState?.lastNet48PropertyEditTelemetry,
+        workersBeforeCommit,
+        workersAfterCommit: testApi.productWorkerState(),
+        requests: testApi.productRequestOutcomes().filter((request) => !requestIdsBeforeCommit.has(request.requestId)),
+      })}`);
+    }
     if (expectedEngine === 'net48') {
       assert.strictEqual(committedState?.lastNet48PropertyEditTelemetry?.snapshotComponentId, 'button000',
         'S016 net48 dirty snapshot did not carry exact same-instance button000 metadata');
@@ -5932,6 +6037,14 @@ async function runS016DenseProductPerformanceScenario(testApi: ExtensionHostTest
     } else {
       assert.strictEqual(committedState?.lastModernPropertyEditTelemetry?.retainedApplied, true,
         'S016 modern commit rebuilt the graph instead of reconciling the retained DesignSurface');
+      const rendered = workersBeforeCommit.flatMap((worker) => worker.requests).filter((request) => request.method === 'RenderWithLayout'
+        && request.documentId === engineIdentityId('document', designer)).at(-1);
+      const edited = testApi.productRequestOutcomes().filter((request) => !requestIdsBeforeCommit.has(request.requestId));
+      assert.ok(rendered, 'S016 modern initial render did not expose its actual ordinary RPC worker identity');
+      for (const method of ['PreviewOwnedRegionPropertySet', 'ApplyCachedTextPropertyEdit']) {
+        assert.strictEqual(edited.find((request) => request.method === method)?.pid, rendered.pid,
+          `S016 modern ${method} switched away from the physical worker that owns the retained graph`);
+      }
       assert.strictEqual(committedState?.lastModernPropertyEditTelemetry?.trailingPropertiesMs, 0,
         'S016 modern retained snapshot unexpectedly issued a trailing Properties load');
     }
@@ -6936,6 +7049,7 @@ async function runS124ProductWorkerCrashContinuation(testApi: ExtensionHostTestA
   const hashes = artifacts.map(sha256File);
 
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  const beforeOpenRequests = new Set(testApi.productRequestOutcomes().map(request => request.requestId));
   await vscode.commands.executeCommand('vscode.openWith', beforeCrash.uri, designerViewType);
   await waitFor(
     () => testApi.openDesignerState(beforeCrash.uri)?.renderReady === true
@@ -6949,12 +7063,23 @@ async function runS124ProductWorkerCrashContinuation(testApi: ExtensionHostTestA
   assert.strictEqual(activeCustomTab(beforeCrash.uri)?.isDirty, false);
   assert.ok(beforeState.controls.some((control) => control.id === 'button1'),
     'S124 pre-crash render did not publish the standard control');
-  const preCrashEngine = testApi.engineLifecycleState().mappedEngines.find((engine) => engine.kind === 'modern');
-  assert.ok(preCrashEngine?.running && preCrashEngine.pid > 0, 'S124 has no running mapped modern product worker');
+  const preCrash = renderedDocumentWorker(testApi, beforeCrash.uri, 'modern', beforeOpenRequests);
+  assert.ok(preCrash, 'S124 has no live owned worker that actually rendered the current pre-crash document');
+  const preCrashEngine = preCrash.worker;
+  const mappedBeforeRefusals = testApi.engineLifecycleState().mappedEngines;
+  assert.throws(() => testApi.crashMappedEngineForRecoveryTest('modern', process.pid),
+    /no running modern engine with process id \d+ is mapped/,
+    'S124 unknown process id must be refused without signaling a fallback worker');
+  assert.throws(() => testApi.crashMappedEngineForRecoveryTest('net48', preCrashEngine.pid),
+    /no running net48 engine with process id \d+ is mapped/,
+    'S124 wrong-runtime process id must be refused without signaling a fallback worker');
+  assert.deepStrictEqual(testApi.engineLifecycleState().mappedEngines, mappedBeforeRefusals,
+    'S124 refused fault injection changed worker ownership or liveness');
 
   // This is the sole injected action. It only sends SIGKILL to the actual child; the test API does not alter engine
   // maps, crash counters, sessions, documents, or timers. Everything observed below is normal product recovery.
-  const crash = testApi.crashMappedEngineForRecoveryTest('modern');
+  const beforeRecoveryRequests = new Set(testApi.productRequestOutcomes().map(request => request.requestId));
+  const crash = testApi.crashMappedEngineForRecoveryTest('modern', preCrashEngine.pid);
   assert.deepStrictEqual(crash, { pid: preCrashEngine.pid, signaled: true });
   await waitFor(
     () => testApi.openDesignerState(beforeCrash.uri)?.renderReady === false,
@@ -6970,13 +7095,16 @@ async function runS124ProductWorkerCrashContinuation(testApi: ExtensionHostTestA
 
   await waitFor(() => {
     const state = testApi.openDesignerState(beforeCrash.uri);
-    const engine = testApi.engineLifecycleState().mappedEngines.find((candidate) => candidate.kind === 'modern');
+    const engine = renderedDocumentWorker(testApi, beforeCrash.uri, 'modern', beforeRecoveryRequests)?.worker;
     return state?.renderReady === true && state.engineKind === 'modern'
       && (state.renderGeneration ?? 0) > beforeState.renderGeneration
-      && !!engine?.running && engine.pid > 0 && engine.pid !== crash.pid;
+      && !!engine && engine.pid > 0 && engine.pid !== crash.pid;
   }, `S124 product recovery did not publish a fresh worker/render: ${JSON.stringify(testApi.engineLifecycleState())}`,
   60_000);
-  const recoveredEngine = testApi.engineLifecycleState().mappedEngines.find((engine) => engine.kind === 'modern')!;
+  const recovered = renderedDocumentWorker(testApi, beforeCrash.uri, 'modern', beforeRecoveryRequests);
+  assert.ok(recovered, 'S124 recovered worker has no successful current-document Render audit');
+  const recoveredEngine = recovered.worker;
+  console.log(`S124 actual rendered worker crash/recovery: ${JSON.stringify({ before: preCrash.render, crash, recovered: recovered.render })}`);
   let oldAlive = true;
   try { process.kill(crash.pid, 0); } catch { oldAlive = false; }
   assert.strictEqual(oldAlive, false, `S124 crashed worker PID ${crash.pid} still exists after replacement`);
@@ -7016,6 +7144,7 @@ async function runS124ProductWorkerCrashContinuation(testApi: ExtensionHostTestA
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   await waitFor(() => testApi.engineLifecycleState().openDesignerSessions === 0,
     'S124 pre-crash form did not close before the continuation leg', 30_000);
+  const beforeLaterRequests = new Set(testApi.productRequestOutcomes().map(request => request.requestId));
   await vscode.commands.executeCommand('vscode.openWith', afterCrash.uri, designerViewType);
   await waitFor(
     () => testApi.openDesignerState(afterCrash.uri)?.renderReady === true
@@ -7024,7 +7153,7 @@ async function runS124ProductWorkerCrashContinuation(testApi: ExtensionHostTestA
     60_000,
   );
   assert.strictEqual(
-    testApi.engineLifecycleState().mappedEngines.find((engine) => engine.kind === 'modern')?.pid,
+    renderedDocumentWorker(testApi, afterCrash.uri, 'modern', beforeLaterRequests)?.worker.pid,
     recoveredEngine.pid,
     'S124 later form did not reuse the healthy recovered product worker',
   );

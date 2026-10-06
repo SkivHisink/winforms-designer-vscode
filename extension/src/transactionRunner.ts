@@ -79,6 +79,7 @@ export interface TransactionRunnerAdapters {
 export interface RunTransactionOptions {
   transactionId: string;
   nowUtc?: () => string;
+  hostOperation?: TransactionJournalRecord['hostOperation'];
 }
 
 export interface TransactionRunnerResult {
@@ -295,6 +296,7 @@ export async function runPatchSetTransaction(
     beforeBytesBase64: targetMap(targets, (target) => byteImage(target.baseBytes)),
     afterBytesBase64: targetMap(targets, (target) => byteImage(target.afterBytes)),
     nowUtc: now(),
+    hostOperation: options.hostOperation,
   });
   await persist(adapters, 'createdPersisted', record);
 
@@ -364,6 +366,8 @@ export async function runPatchSetTransaction(
       redo: async () => runPatchSetTransaction(patchSet, adapters, {
         transactionId: `${options.transactionId}-redo-${Date.now().toString(36)}`,
         nowUtc: options.nowUtc,
+        // Redo belongs to an already registered native history entry; it must not create another host outcome.
+        hostOperation: options.hostOperation ? { ...options.hostOperation, commit: 'committed' } : undefined,
       }),
     };
     await adapters.registerUndo?.(undoRegistration);

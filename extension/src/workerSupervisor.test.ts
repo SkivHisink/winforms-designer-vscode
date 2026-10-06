@@ -139,6 +139,66 @@ async function waitForSend(adapter: FakeAdapter, workerIndex: number, sendIndex:
 }
 
 describe('WorkerSupervisor', () => {
+  it('recycles a busy worker when active physical usage exceeds its resource budget', async () => {
+    const clock = new ManualClock();
+    const adapter = new FakeAdapter();
+    const supervisor = new WorkerSupervisor<RequestPayload, RequestResult>(adapter, {
+      sessionId: 'session-a', recoveryPolicy: new FakeRecovery(), clock, memoryBudgetBytes: 100,
+    });
+    const pending = supervisor.request(key, identity, { command: 'render' }, 10_000);
+    await waitForSend(adapter, 0, 0);
+    Object.assign(adapter.workers[0], { usage: () => Promise.resolve({ memoryBytes: 101, handleCount: 10 }) });
+    // The watcher captures worker.usage when send starts, so install on the adapter before the next request.
+    adapter.workers[0].replies[0].resolve({ sessionId: 'session-a', generation: 1, requestId: 'session-a:1', status: 'ok', result: { value: 'initial' } });
+    await expect(pending).resolves.toMatchObject({ reasonCode: 'WORKER_RESOURCE_BUDGET_EXCEEDED' });
+    const next = supervisor.request(key, identity, { command: 'render' }, 10_000);
+    await waitForSend(adapter, 1, 0);
+    adapter.workers[1].replies[0].resolve({ sessionId: 'session-a', generation: 2, requestId: 'session-a:2', status: 'ok', result: { value: 'ready' } });
+    await next;
+    Object.assign(adapter.workers[1], { usage: () => Promise.resolve({ memoryBytes: 101, handleCount: 10 }) });
+    const stuck = supervisor.request(key, identity, { command: 'render' }, 10_000);
+    await waitForSend(adapter, 1, 1);
+    clock.advance(1_000);
+    await expect(stuck).resolves.toMatchObject({ status: 'faulted', reasonCode: 'WORKER_RESOURCE_BUDGET_EXCEEDED' });
+    expect(adapter.workers[1].disposed).toBe(true);
+  });
+
+  it('bounds the post-reply health query to its own two seconds, not the remaining request deadline', async () => {
+    const clock = new ManualClock();
+    const adapter = new FakeAdapter();
+    const supervisor = new WorkerSupervisor<RequestPayload, RequestResult>(adapter, { sessionId: 'session-a', recoveryPolicy: new FakeRecovery(), clock });
+    const ready = supervisor.request(key, identity, { command: 'render' }, 30_000);
+    const first = await waitForSend(adapter, 0, 0);
+    adapter.workers[0].replies[0].resolve({ sessionId: first.sessionId, generation: first.generation, requestId: first.requestId, status: 'ok', result: { value: 'ready' } });
+    await ready;
+    Object.assign(adapter.workers[0], { usage: () => new Promise(() => undefined) });
+    const answered = supervisor.request(key, identity, { command: 'render' }, 30_000);
+    const envelope = await waitForSend(adapter, 0, 1);
+    // The worker answers at once (before any active sample); only its health query then hangs.
+    adapter.workers[0].replies[1].resolve({ sessionId: envelope.sessionId, generation: envelope.generation, requestId: envelope.requestId, status: 'ok', result: { value: 'late' } });
+    await flushSupervisorStart();
+    clock.advance(2_000);
+    await expect(answered).resolves.toMatchObject({ status: 'faulted', reasonCode: 'WORKER_USAGE_DEADLINE_EXCEEDED' });
+    expect(adapter.workers[0].disposed).toBe(true);
+  });
+
+  it('recycles a busy worker when the active physical usage probe stops answering', async () => {
+    const clock = new ManualClock();
+    const adapter = new FakeAdapter();
+    const supervisor = new WorkerSupervisor<RequestPayload, RequestResult>(adapter, { sessionId: 'session-a', recoveryPolicy: new FakeRecovery(), clock });
+    const ready = supervisor.request(key, identity, { command: 'render' }, 10_000);
+    const envelope = await waitForSend(adapter, 0, 0);
+    adapter.workers[0].replies[0].resolve({ sessionId: envelope.sessionId, generation: envelope.generation, requestId: envelope.requestId, status: 'ok', result: { value: 'ready' } });
+    await ready;
+    Object.assign(adapter.workers[0], { usage: () => new Promise(() => undefined) });
+    const stuck = supervisor.request(key, identity, { command: 'render' }, 10_000);
+    await waitForSend(adapter, 0, 1);
+    clock.advance(1_000);
+    clock.advance(2_000);
+    await expect(stuck).resolves.toMatchObject({ status: 'faulted', reasonCode: 'WORKER_USAGE_DEADLINE_EXCEEDED' });
+    expect(adapter.workers[0].disposed).toBe(true);
+  });
+
   it('wraps requests in a v2 envelope with deadline and payload identity', async () => {
     const clock = new ManualClock();
     const adapter = new FakeAdapter();
@@ -525,17 +585,17 @@ describe('WorkerSupervisor', () => {
     });
     await expect(first).resolves.toMatchObject({ status: 'ok' });
 
-    supervisor.dispose();
+    supervisor.recycle(key);
     expect(adapter.workers[0].disposed).toBe(true);
     expect(supervisor.state(key)).toMatchObject({
-      generation: 1,
+      generation: 2,
       state: 'idle',
       recentCrashes: 0,
     });
 
     const afterDispose = supervisor.request(key, identity, { command: 'render' }, 100);
     const secondEnvelope = await waitForSend(adapter, 1, 0);
-    expect(secondEnvelope.generation).toBe(1);
+    expect(secondEnvelope.generation).toBe(2);
     expect(adapter.workers).toHaveLength(2);
     adapter.workers[1].replies[0].resolve({
       sessionId: secondEnvelope.sessionId,
@@ -549,5 +609,11 @@ describe('WorkerSupervisor', () => {
       result: { value: 'fresh-after-dispose' },
       requestId: 'session-a:2',
     });
+    supervisor.dispose();
+    await expect(supervisor.request(key, identity, { command: 'render' }, 100)).resolves.toMatchObject({
+      status: 'refused', reasonCode: 'WORKER_SUPERVISOR_DISPOSED',
+    });
+    await expect(supervisor.prepare(key)).rejects.toThrow('WORKER_SUPERVISOR_DISPOSED');
+    expect(adapter.workers).toHaveLength(2);
   });
 });

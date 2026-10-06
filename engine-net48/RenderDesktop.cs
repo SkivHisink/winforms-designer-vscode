@@ -155,6 +155,7 @@ namespace WinFormsDesigner.Engine.Net48
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern IntPtr CreateJobObjectW(IntPtr sa, string name);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetInformationJobObject(IntPtr job, int infoClass, IntPtr info, int length);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
 
         /// <summary>
         /// Run this engine on a private desktop by relaunching itself there ONCE.
@@ -315,6 +316,55 @@ namespace WinFormsDesigner.Engine.Net48
 
         /// <summary>Held open on purpose: closing it kills the isolated engine.</summary>
         private static IntPtr _job = IntPtr.Zero;
+
+        /// <summary>Kill-on-close job owned by THIS engine for the helper processes it launches (hosted-designer
+        /// workers). Independent of the private-desktop isolation, which can be switched off: without it a child
+        /// would outlive a recycled or crashed engine and keep the user's assemblies loaded. Held for the process
+        /// lifetime; the OS closes it — and kills the children — when the engine ends, however it ends.</summary>
+        private static IntPtr _childJob = IntPtr.Zero;
+        private static readonly object ChildJobGate = new object();
+
+        /// <summary>Confine a helper process this engine started; false means it is NOT contained and the caller
+        /// must terminate it rather than let it run.</summary>
+        internal static bool ContainChildProcess(IntPtr process)
+        {
+            if (process == IntPtr.Zero) return false;
+            lock (ChildJobGate)
+            {
+                if (_childJob == IntPtr.Zero)
+                {
+                    IntPtr job = CreateJobObjectW(IntPtr.Zero, null);
+                    if (job == IntPtr.Zero) return false;
+                    var limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+                    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                    int size = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+                    IntPtr buffer = Marshal.AllocHGlobal(size);
+                    try
+                    {
+                        Marshal.StructureToPtr(limits, buffer, false);
+                        if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, buffer, size)) { CloseHandle(job); return false; }
+                    }
+                    finally { Marshal.FreeHGlobal(buffer); }
+                    _childJob = job;
+                }
+                // Already inside (a child inherits the serving engine's own membership): nothing more to do.
+                if (IsProcessInJob(process, _childJob, out bool inside) && inside) return true;
+                return AssignProcessToJobObject(_childJob, process);
+            }
+        }
+
+        /// <summary>Put the serving engine itself in that job, so every process it or design-time code starts later
+        /// inherits it — with or without the private desktop (whose supervisor job only exists when isolation is on).</summary>
+        internal static bool ConfineServingEngine()
+        {
+            using (var self = System.Diagnostics.Process.GetCurrentProcess())
+            {
+                if (ContainChildProcess(self.Handle)) return true;
+            }
+            // On the private desktop the supervisor already holds this process in its kill-on-close job (it resumes the
+            // engine only after that succeeded), so everything started here still ends with the engine.
+            return IsIsolated;
+        }
 
         /// <summary>Mark a standard handle inheritable for one CreateProcess call; returns its previous flags (or -1
         /// when there is nothing to restore) for <see cref="RestoreHandleFlags"/>.</summary>

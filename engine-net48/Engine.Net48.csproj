@@ -11,10 +11,10 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <Version>2.1.0</Version>
-    <AssemblyVersion>2.1.0.0</AssemblyVersion>
-    <FileVersion>2.1.0.0</FileVersion>
-    <InformationalVersion>2.1.0</InformationalVersion>
+    <Version>2.2.0</Version>
+    <AssemblyVersion>2.2.0.0</AssemblyVersion>
+    <FileVersion>2.2.0.0</FileVersion>
+    <InformationalVersion>2.2.0</InformationalVersion>
     <PlatformTarget>x64</PlatformTarget>
     <LangVersion>latest</LangVersion>
     <Nullable>annotations</Nullable>
@@ -29,6 +29,7 @@
        the modern host splices edits into the class IT resolves — a disagreement previews one class and edits another.
        A linked file makes that divergence unrepresentable; a copy would only make it unlikely. -->
   <ItemGroup>
+    <Compile Include="../engine/RuntimeProtocol.cs" Link="Shared/RuntimeProtocol.cs" />
     <Compile Include="../engine/FormClassResolver.cs" Link="Shared/FormClassResolver.cs" />
     <Compile Include="../engine/DesignerModifiers.cs" Link="Shared/DesignerModifiers.cs" />
     <Compile Include="../engine/SaveSafety.cs" Link="Shared/SaveSafety.cs" />
@@ -39,6 +40,8 @@
     <!-- The three interpreter security allowlists (RCE-on-open boundary) — ONE set consulted by the net10
          interpreter, the net48 parser and the net48 executor (M0/ADR 0001; a copy would fork the boundary). -->
     <Compile Include="../engine/DesignerAllowlists.cs" Link="Shared/DesignerAllowlists.cs" />
+    <!-- The one nested-property edit rule (describe advertises ⇔ live edit accepts), shared by both engines. -->
+    <Compile Include="../engine/NestedPropertyPath.cs" Link="Shared/NestedPropertyPath.cs" />
     <!-- M0 slice 3: the Roslyn front-end (parse InitializeComponent -> IR). Runs in this process's DEFAULT domain
          (syntax-only, no user assemblies) to produce the IR the child-domain executor consumes. -->
     <Compile Include="../engine/DesignerIrBuilder.cs" Link="Shared/DesignerIrBuilder.cs" />

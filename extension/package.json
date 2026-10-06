@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "packageManager": "npm@11.9.0",
   "preview": false,
   "license": "MIT",
@@ -194,6 +194,10 @@
       {
         "command": "winformsDesigner.stopEngines",
         "title": "%command.stopEngines.title%"
+      },
+      {
+        "command": "winformsDesigner.prepareRollback",
+        "title": "%command.prepareRollback.title%"
       },
       {
         "command": "winformsDesigner.restartEngines",
@@ -477,6 +481,14 @@
             "Hindi — हिन्दी"
           ],
           "markdownDescription": "%config.language.description%"
+        },
+        "winformsDesigner.workers.maximumResidentProcesses": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "scope": "window",
+          "markdownDescription": "%config.workers.maximumResidentProcesses.description%"
         }
       }
     }
@@ -489,6 +501,8 @@
     "webview-e2e": "node dist/webview-e2e.cjs",
     "extension-host-e2e": "node ../scripts/run-extension-host-tests.mjs",
     "release21:extension-host": "node ../scripts/run-release21-extension-host-tests.mjs",
+    "release22:extension-host": "node ../scripts/run-release22-extension-host-tests.mjs",
+    "release22:upgrade": "node ../scripts/run-release22-upgrade-tests.mjs",
     "l10n:parity": "node ../scripts/ci-l10n-parity.mjs",
     "mojibake:scan": "node ../scripts/ci-mojibake-scan.mjs",
     "v2:headless-validate": "node dist/v2-headless-validate.cjs",
@@ -511,6 +525,7 @@
   "overrides": {
     "nanoid": "3.3.18",
     "postcss": "8.5.26",
+    "source-map-js": "1.2.2",
     "undici": "7.29.1"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.2.0",
   "protocolId": "designer-protocol-v2",
   "protocolVersion": {
     "current": 2,
@@ -26,6 +26,9 @@
     "protocol.envelope-v2",
     "protocol.outcome-v2",
     "protocol.n-minus-one",
+    "protocol.binary-identity",
+    "protocol.rpc-envelope",
+    "request.operation-identity",
     "document.source-fingerprint",
     "document.resource-fingerprint",
     "request.deadline",
@@ -104,10 +107,13 @@
       ],
       "stale": [
         "STALE_SOURCE",
-        "STALE_RESOURCE"
+        "STALE_RESOURCE",
+        "STALE_GENERATION",
+        "STALE_REVISION"
       ],
       "cancelled": [
-        "CANCELLED"
+        "CANCELLED",
+        "DEADLINE_EXCEEDED"
       ],
       "unsupported": [
         "UNSUPPORTED_CAPABILITY",
@@ -117,7 +123,12 @@
         "UNKNOWN_REQUIRED_CAPABILITY",
         "PROTOCOL_VERSION_UNSUPPORTED",
         "PAYLOAD_TOO_LARGE",
-        "INVALID_ENVELOPE"
+        "INVALID_ENVELOPE",
+        "BUILD_ID_MISMATCH",
+        "PROTOCOL_NOT_NEGOTIATED",
+        "COMMAND_ID_REQUIRED",
+        "COMMAND_ID_CONFLICT",
+        "REQUEST_QUEUE_FULL"
       ],
       "fault": [
         "INTERNAL_ERROR",

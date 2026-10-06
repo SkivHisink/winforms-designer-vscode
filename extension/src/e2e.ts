@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as zlib from 'zlib';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
-import { EngineHandle, releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyCompiledEdits, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, describeLayout, beginGeometryDrag, commitGeometryBounds, serializeDesigner, previewSave, setProperty, previewOwnedRegionPropertySet, applyInheritedPropertyOverride, removeInheritedPropertyOverride, setProperties, setModifier, setTableCell, resetProperty, resetProperties, setImageResource, listProjectImageResources, setProjectImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, findEventHandlerSourceIndex, setEventWiring, addControl, addLocalizedControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, pasteControlAtOffset, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, listTabPages, setTabPageOrder, moveCompiledTab, hitTestCompiledTab, hitTestInterpretedTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, listDataSources, generateDataSource, bindApplicationSetting, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, listCompiledVendorSmartTags, setLocalizationCulture, setLocalizedResources, makeLocalizable } from './engineClient';
+import { EngineHandle, releaseCompiledAssembly, startEngine, ping, renderDesigner, renderControl, renderWithLayout, renderCompiledWithLayout, renderInterpretedWithLayout, applyCompiledEdits, applyInterpretedEditsLive, describeDesigner, describeComponent, describeCompiledComponent, describeInterpretedComponent, setCompiledPropertyLive, setNestedProperty, describeLayout, beginGeometryDrag, commitGeometryBounds, serializeDesigner, previewSave, setProperty, previewOwnedRegionPropertySet, applyInheritedPropertyOverride, removeInheritedPropertyOverride, setProperties, setModifier, setTableCell, resetProperty, resetProperties, setImageResource, listProjectImageResources, setProjectImageResource, readTableStyles, setTableStyle, convertValue, getDesignerPalette, resolveAssembly, generateEventHandler, listHandlerCandidates, findEventHandlerSourceIndex, setEventWiring, addControl, addLocalizedControl, addComponent, listControlTypes, listToolboxItems, scanToolboxAssembly, removeControl, renameComponent, copyControl, pasteControl, pasteControlAtOffset, moveZOrder, reparentControl, addTabPage, removeTabPage, moveTabPage, listTabPages, setTabPageOrder, moveCompiledTab, hitTestCompiledTab, hitTestInterpretedTab, listCollectionItems, setCollectionItems, listStringArray, setStringArray, listColumns, setColumns, listGridColumns, setGridColumns, listBindings, setBindings, getDataSource, setDataSource, listDataSources, generateDataSource, bindApplicationSetting, setExtender, listTreeNodes, setTreeNodes, TreeNodeItem, listToolStripItems, setToolStripItems, ToolStripItemModel, ToolStripItemBounds, serializeImageList, deserializeImageList, setCompiledImageListLive, setImageList, discardCompiledLive, listCompiledVendorSmartTags, setLocalizationCulture, setLocalizedResources, makeLocalizable } from './engineClient';
 import { findNearestCsproj, projectAssemblyName, csprojReferencesAssembly, projectReferencesAssembly, addReferenceToCsproj, resolveFrameworkOutput, resolveFrameworkOnlyOutput, projectTargetFramework, multiTargetHasFramework } from './csprojRef';
 import { hitTestTab } from './engineClient';
 import { categorizeUnrepresentable, diagnosticsSignature } from './renderDiagnostics';
@@ -16,6 +16,8 @@ import { refuseWhileRenderFailed } from './renderGate';
 import { retainSelectionId } from './selection';
 import { learnMoreUrl } from './learnMore';
 import { createScaffoldPlan, ScaffoldKind } from './scaffolding';
+import { createDesignerDiagnostic, engineInstallationDiagnosticCode } from './designerDiagnostics';
+import { en } from './i18n/en';
 
 /** Build the net48 ctx fixture on demand (it compiles the SAME engine/samples/ContextMenuForm.Designer.cs the net9
 * ctx leg renders from source). Returns true if a usable DLL exists after the call. Rebuilds only when the DLL is
@@ -505,6 +507,10 @@ function verifyCsprojHelpers(repo: string): void {
     if (chooseFormNoticeKind(false, false, true, true) !== 'compiledPreview') throw new Error('formNotice: compiledPreview outranks binaryResx (net48 never flags binaryResx anyway)');
     if (chooseFormNoticeKind(false, true, false, true) !== 'compiledPreview') throw new Error('formNotice: compiledPreview outranks inheritedBase');
     if (chooseFormNoticeKind(true, false, false, true) !== 'localizable') throw new Error('formNotice: localizable resource context subsumes the net48 disclosure');
+    // A running build owns the output: it is the reason the canvas is view-only, so it outranks every disclosure and is
+    // a notice, never a render failure.
+    if (chooseFormNoticeKind(false, false, false, true, true) !== 'buildTask') throw new Error('formNotice: a running build → buildTask');
+    if (chooseFormNoticeKind(true, true, true, true, true) !== 'buildTask') throw new Error('formNotice: buildTask outranks every disclosure');
     // REGRESSION GUARD: the pre-1.0 2-arg/3-arg call sites must keep their exact meaning — the new param defaults
     // false, so adding it cannot silently re-classify an existing caller.
     if (chooseFormNoticeKind(false, false) !== null) throw new Error('formNotice: clean render must stay null with the new param defaulted');
@@ -895,18 +901,33 @@ async function main(): Promise<void> {
   verifyCsprojHelpers(repo);
   verifyScaffoldBuilds();
 
-  // Startup diagnostics must fail immediately and retain the actionable OS/apphost error. This is the installed-user
-  // path for a missing .NET 10 Desktop Runtime or a wrong-architecture package; a ten-second pipe timeout hides it.
+  // A missing installed payload must fail before spawning and map to the translated installation-repair diagnostic.
+  // Real apphost/runtime startup failures are covered separately by the lifecycle process harness.
   {
-    const missingEntry = path.join(os.tmpdir(), 'wfd-engine-does-not-exist', 'WinFormsDesigner.Engine.exe');
+    const missingEntry = path.join(os.tmpdir(), `wfd-engine-does-not-exist-${process.pid}-${Date.now()}`, 'WinFormsDesigner.Engine.exe');
+    if (fs.existsSync(missingEntry) || fs.existsSync(missingEntry.replace(/\.exe$/i, '.dll')))
+      throw new Error('engine startup: missing-payload fixture unexpectedly exists');
     const started = Date.now();
-    let message = '';
-    try { await startEngine(missingEntry, { onLog: () => undefined }); }
-    catch (error) { message = error instanceof Error ? error.message : String(error); }
-    if (!message.includes('failed to start WinForms designer engine'))
-      throw new Error(`engine startup: missing apphost must return the actionable startup error, got ${JSON.stringify(message)}`);
-    if (Date.now() - started > 3_000) throw new Error('engine startup: missing apphost waited for the pipe timeout instead of failing immediately');
-    console.log('e2e: engine startup failure is immediate and actionable (missing runtime/apphost path)');
+    let failure: unknown;
+    let spawned = 0;
+    try { await startEngine(missingEntry, { onLog: () => undefined, onSpawn: () => { spawned += 1; } }); }
+    catch (error) { failure = error; }
+    if (!(failure instanceof Error) || failure.name !== 'EngineTransportError'
+        || (failure as Error & { code?: string }).code !== 'ENGINE_PAYLOAD_UNAVAILABLE')
+      throw new Error('engine startup: missing payload must return the named ENGINE_PAYLOAD_UNAVAILABLE transport error');
+    if (spawned !== 0) throw new Error('engine startup: missing payload spawned a process before refusing');
+    if (Date.now() - started > 3_000) throw new Error('engine startup: missing payload waited for the pipe timeout instead of failing immediately');
+    const diagnostic = createDesignerDiagnostic(engineInstallationDiagnosticCode(failure));
+    if (diagnostic.code !== 'ENGINE_INSTALLATION_INCOMPATIBLE' || diagnostic.actions.join() !== 'reinstall')
+      throw new Error('engine startup: missing payload must offer only the reinstall repair, never a process restart');
+    const key = `diagnostics.reason.${diagnostic.code}`;
+    for (const locale of ['en', 'ru', 'zh-cn', 'fr', 'de', 'es', 'hi']) {
+      const catalogue: Record<string, unknown> = locale === 'en' ? en
+        : JSON.parse(fs.readFileSync(path.join(repo, 'extension', 'src', 'i18n', `${locale}.json`), 'utf8'));
+      if (typeof catalogue[key] !== 'string' || !(catalogue[key] as string).trim())
+        throw new Error(`engine startup: installation-repair diagnostic is missing from ${locale}`);
+    }
+    console.log('e2e: missing engine payload refuses immediately before spawn with a named error and installation-repair diagnostic in all seven languages');
   }
 
   console.log('e2e: starting engine…');
@@ -1890,6 +1911,23 @@ async function main(): Promise<void> {
       if (!captionEdit.safe || !captionEdit.text?.includes('this.fancyButton1.Text = "Hosted caption";')) {
         throw new Error('DesignerActionList property target did not route through the ordinary source-first property edit: ' + captionEdit.reason);
       }
+      // Nested property edit (the DevExpress ImageOptions.Location shape): describe offers exactly the literal leaves
+      // under a Content sub-object, the splice writes only that nested assignment, and the interpreter reads it back.
+      const nestedRow = customDescription?.properties.find((property) => property.name === 'Appearance')?.properties
+        ?.find((row) => row.propertyPath === 'Appearance.BorderStyle');
+      if (!nestedRow?.nestedEditable || !nestedRow.isEnum || !(nestedRow.standardValues ?? []).includes('Dashed')) {
+        throw new Error('modern describe did not offer the nested enum row as editable: ' + JSON.stringify(nestedRow ?? null));
+      }
+      const nestedEdit = await setNestedProperty(engine, fakeVendorDesigner, 'fancyButton1', 'Appearance.BorderStyle',
+        'FakeVendor.FakeBorderStyle.Dashed', fakeVendorText);
+      if (!nestedEdit.safe || !nestedEdit.text?.includes('this.fancyButton1.Appearance.BorderStyle = FakeVendor.FakeBorderStyle.Dashed;')) {
+        throw new Error('nested property edit did not produce the single nested assignment: ' + nestedEdit.reason);
+      }
+      const nestedReread = await describeComponent(engine, fakeVendorDesigner, 'fancyButton1', modernFakeVendorDll, nestedEdit.text);
+      const nestedValue = nestedReread?.properties.find((property) => property.name === 'Appearance')?.properties
+        ?.find((row) => row.propertyPath === 'Appearance.BorderStyle')?.value;
+      if (nestedValue !== 'Dashed') throw new Error('the interpreter did not read the nested assignment back: ' + nestedValue);
+      console.log('e2e: nested property edit verified — Appearance.BorderStyle offered as an enum select, spliced as one nested assignment, read back as Dashed');
       console.log(`e2e: W5 visible parity verified — ProgressBar Value changes full+patch PNG; FakeVendor FancyButton move/resize is live-engine-authorized (${customStart.logicalBounds.width}x${customStart.logicalBounds.height}); real DesignerActionList Caption maps to source-first Text; certified vendor collection editor is product metadata`);
 
       // ---- on-canvas "Type Here" per-item geometry on a STRIP form ----
@@ -2794,6 +2832,21 @@ async function main(): Promise<void> {
               throw new Error('FakeVendor: source-first vendor AddRange move-left did not produce page2,page1');
             }
             const fvC = await renderCompiledWithLayout(n48, fakeVendorSrc, fakeVendorDll, fvType);
+            // net48 nested property: the compiled describe offers the same row, the live edit applies through the same
+            // rule, and the next describe shows the new value on the compiled instance.
+            const fvNestedRow = (await describeCompiledComponent(n48, fakeVendorSrc, fakeVendorDll, 'fancyButton1', fvType))
+              ?.properties.find((property) => property.name === 'Appearance')?.properties
+              ?.find((row) => row.propertyPath === 'Appearance.BorderStyle');
+            if (!fvNestedRow?.nestedEditable || !fvNestedRow.isEnum) {
+              throw new Error('net48 describe did not offer the nested enum row as editable: ' + JSON.stringify(fvNestedRow ?? null));
+            }
+            const fvNestedLive = await setCompiledPropertyLive(n48, fakeVendorSrc, fakeVendorDll, 'fancyButton1', 'Appearance.BorderStyle', 'Dotted', fvType);
+            if (!fvNestedLive.applied) throw new Error('net48 live nested edit was not applied: ' + (fvNestedLive.diagnostics ?? ''));
+            const fvNestedAfter = (await describeCompiledComponent(n48, fakeVendorSrc, fakeVendorDll, 'fancyButton1', fvType))
+              ?.properties.find((property) => property.name === 'Appearance')?.properties
+              ?.find((row) => row.propertyPath === 'Appearance.BorderStyle')?.value;
+            if (fvNestedAfter !== 'Dotted') throw new Error('net48 live nested edit did not reach the compiled instance: ' + fvNestedAfter);
+            console.log('e2e: net48 nested property edit verified — offered, live-applied (Appearance.BorderStyle=Dotted) and re-described');
             for (const c of fvC.controls.filter((x) => !x.isRoot && fvIds.includes(x.id))) {
               const b = fvI.controls.find((x) => x.id === c.id)!;
               if (Math.abs(c.x - b.x) > 2 || Math.abs(c.y - b.y) > 2 || Math.abs(c.width - b.width) > 2 || Math.abs(c.height - b.height) > 2)

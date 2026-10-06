@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using StreamJsonRpc;
+using WinFormsDesigner.Engine.Protocol;
 
 namespace WinFormsDesigner.Engine
 {
@@ -1361,11 +1362,19 @@ namespace WinFormsDesigner.Engine
 
             if (Has(args, "--pipe", out string? pipeName) && pipeName != null)
             {
+                if (!EngineProcessJob.ConfineServingEngine())
+                {
+                    // Fail closed: design-time code can start processes too, and they must not outlive the engine.
+                    await Console.Error.WriteLineAsync("[engine] helper processes could not be confined to the engine's lifetime; not serving");
+                    return 3;
+                }
+                await Console.Error.WriteLineAsync("[engine] helper processes are confined to the engine's lifetime");
                 await Console.Error.WriteLineAsync("[engine] listening on pipe: " + pipeName);
                 using var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                 await pipe.WaitForConnectionAsync();
                 await Console.Error.WriteLineAsync("[engine] client connected");
+                EditPathWarmup.Start();
                 // camelCase DTO serialization so the TypeScript client reads idiomatic JS keys
                 // (e.g. component.properties, not .Properties). Method dispatch + positional params
                 // are unaffected. Content-Length framing keeps vscode-jsonrpc interop.
@@ -1373,6 +1382,7 @@ namespace WinFormsDesigner.Engine
                 formatter.JsonSerializer.ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver();
                 var handler = new HeaderDelimitedMessageHandler(pipe, pipe, formatter);
                 var rpc = new JsonRpc(handler, new EngineApi(sta));
+                rpc.CancelLocallyInvokedMethodsWhenConnectionIsClosed = true;
                 rpc.StartListening();
                 await rpc.Completion;
                 await Console.Error.WriteLineAsync("[engine] rpc completed");
@@ -1473,7 +1483,18 @@ namespace WinFormsDesigner.Engine
     public sealed class EngineApi
     {
         private readonly StaDispatcher _sta;
-        public EngineApi(StaDispatcher sta) => _sta = sta;
+        private readonly RuntimeProtocolRouter _protocol;
+        public EngineApi(StaDispatcher sta)
+        {
+            _sta = sta;
+            _protocol = new RuntimeProtocolRouter(this);
+        }
+
+        public ProtocolNegotiationResult NegotiateProtocol(string handshakeJson) => _protocol.Negotiate(handshakeJson);
+        public Task<ProtocolExecutionResult> ExecuteV2Envelope(string envelopeJson, CancellationToken cancellationToken) =>
+            Task.Run(() => _protocol.ExecuteAsync(envelopeJson, cancellationToken));
+        public bool CancelV2Request(string sessionId, string cancellationToken) => _protocol.Cancel(sessionId, cancellationToken);
+        public WorkerUsage GetV2WorkerUsage() => WorkerUsage.Read();
 
         public string Ping() => "winforms-engine ok / " + RuntimeInformation.FrameworkDescription;
 
@@ -1860,6 +1881,14 @@ namespace WinFormsDesigner.Engine
         public EditPreview SetProperty(string designerFilePath, string componentName, string propertyName, string newValueExpr, string? sourceText = null)
         {
             var r = DesignerRenderer.ApplyPropertyEdit(designerFilePath, componentName, propertyName, newValueExpr, sourceText);
+            return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
+        }
+
+        /// <summary>Compute a targeted NESTED property edit (`this.button1.ImageOptions.Location = …`) WITHOUT writing.
+        /// Same byte-minimal splice and gates as <see cref="SetProperty"/>; see DesignerRenderer.ApplyNestedPropertyEdit.</summary>
+        public EditPreview SetNestedProperty(string designerFilePath, string componentName, string propertyPath, string newValueExpr, string? sourceText = null)
+        {
+            var r = DesignerRenderer.ApplyNestedPropertyEdit(designerFilePath, componentName, propertyPath, newValueExpr, sourceText);
             return new EditPreview { Safe = r.Safe, Mode = r.Mode.ToString(), Text = r.NewText, Reason = r.Reason };
         }
 

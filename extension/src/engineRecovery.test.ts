@@ -16,4 +16,15 @@ describe('EngineRecoveryPolicy', () => {
     expect(policy.recordCrash('net48', 200).restart).toBe(true);
     expect(policy.recordCrash('modern', 1_201)).toEqual({ restart: true, delayMs: 50, recentCrashes: 1 });
   });
+
+  test('an explicit restart gives that engine kind a fresh budget', () => {
+    const policy = new EngineRecoveryPolicy(1, 30_000, 50);
+    policy.recordCrash('modern', 100);
+    policy.recordCrash('net48', 100);
+    expect(policy.recordCrash('modern', 200).restart).toBe(false);
+    policy.reset('modern');
+    expect(policy.recentCrashCount('modern', 300)).toBe(0);
+    expect(policy.recordCrash('modern', 300)).toEqual({ restart: true, delayMs: 50, recentCrashes: 1 });
+    expect(policy.recordCrash('net48', 300).restart).toBe(false);
+  });
 });

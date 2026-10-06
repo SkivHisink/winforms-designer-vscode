@@ -131,7 +131,10 @@ export const PANEL_SCAFFOLD = `
             <button id="sortCat" class="active"></button><button id="sortAlpha"></button>
             <button id="tabProps" class="active"></button><button id="tabEvents"></button>
           </div>
-          <input id="search" type="text">
+          <div id="searchBox">
+            <input id="search" type="text">
+            <button id="searchClear" type="button" aria-label="Clear search" hidden></button>
+          </div>
         </div>
         <div id="grid"><div id="props"></div><div id="events" style="display:none"></div></div>
         <div id="propDesc"></div>

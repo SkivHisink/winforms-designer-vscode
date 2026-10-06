@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type * as vscode from 'vscode';
 
 export type FormStatusAction =
-  | 'retry' | 'rebuild' | 'chooseAssembly' | 'viewCode' | 'clearCache' | 'restart' | 'refresh';
+  | 'retry' | 'rebuild' | 'chooseAssembly' | 'viewCode' | 'clearCache' | 'restart' | 'reinstall' | 'refresh';
 
 export interface FormStatusSnapshot {
   documentId: string;
@@ -37,7 +37,7 @@ export interface FormStatusLabels {
 }
 
 const ACTIONS: readonly FormStatusAction[] = [
-  'retry', 'rebuild', 'chooseAssembly', 'viewCode', 'clearCache', 'restart', 'refresh',
+  'retry', 'rebuild', 'chooseAssembly', 'viewCode', 'clearCache', 'restart', 'reinstall', 'refresh',
 ];
 
 function isAction(value: unknown): value is FormStatusAction {

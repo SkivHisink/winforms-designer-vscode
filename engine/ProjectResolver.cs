@@ -670,6 +670,11 @@ namespace WinFormsDesigner.Engine
                     psi.ArgumentList.Add("-p:Configuration=" + configuration);
                 }
 
+                // Never leave an evaluation running past the engine that started it (see EngineProcessJob).
+                if (!EngineProcessJob.HelpersAllowed)
+                {
+                    return null;
+                }
                 using var p = Process.Start(psi);
                 if (p == null)
                 {
@@ -701,7 +706,14 @@ namespace WinFormsDesigner.Engine
 #pragma warning restore VSTHRD002
                 if (p.ExitCode != 0)
                 {
-                    string firstLine = stderr.Split('\n').FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? "(no stderr)";
+                    // MSBuild reports its own errors on STDOUT (e.g. MSB1001 "Unknown switch" when a global.json pins an
+                    // SDK whose MSBuild predates 17.8 and lacks -getProperty), so an empty stderr must not hide the reason.
+                    // The first non-empty stdout line covers a localized message without the word "error".
+                    string firstLine = stderr.Split('\n').FirstOrDefault(l => l.Trim().Length > 0)?.Trim()
+                        ?? stdout.Split('\n').FirstOrDefault(l => l.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)?.Trim()
+                        ?? stdout.Split('\n').FirstOrDefault(l => l.Trim().Length > 0)?.Trim()
+                        ?? "(no diagnostic output)";
+                    if (firstLine.Length > 300) firstLine = firstLine.Substring(0, 300) + "…";
                     Console.Error.WriteLine($"[engine] msbuild eval exit {p.ExitCode} for {csprojFullPath}: {firstLine}");
                     return null;
                 }

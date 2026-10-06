@@ -36,9 +36,11 @@
   "command.runBuildTask.title": "WinForms: Build-Task ausführen (Vorschau zuerst freigeben)",
   "command.runTestTask.title": "WinForms: Test-Task ausführen (Vorschau zuerst freigeben)",
   "command.stopEngines.title": "WinForms: Designer-Vorschau-Engine stoppen",
+  "command.prepareRollback.title": "WinForms: Rückkehr oder Downgrade des Designers vorbereiten",
   "command.restartEngines.title": "WinForms: Designer-Vorschau-Engine neu starten",
   "command.showFormStatus.title": "WinForms: Formularstatus anzeigen",
   "command.rebuildToolboxCache.title": "WinForms: Toolbox-Cache neu erstellen",
   "command.refreshToolbox.title": "WinForms: Toolbox aktualisieren",
-  "command.requestToolboxItems.title": "WinForms: Toolboxelemente auswählen"
+  "command.requestToolboxItems.title": "WinForms: Toolboxelemente auswählen",
+  "config.workers.maximumResidentProcesses.description": "Maximale Anzahl gleichzeitig laufender Vorschau-Worker für verschiedene Projekte (1–16; Standard: 4). Ein .NET Framework-Worker umfasst einen Starter und einen isolierten Renderprozess. Ein beschäftigter Worker wird nicht für ein anderes Projekt beendet. Versuchen Sie es nach Abschluss der Anfrage erneut oder schließen Sie einen Designer."
 }

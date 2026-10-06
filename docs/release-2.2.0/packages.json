@@ -1,0 +1,33 @@
+{
+  "version": "2.2.0",
+  "artifacts": [
+    {
+      "path": "extension/winforms-designer-win32-x64.vsix",
+      "bytes": 18321437,
+      "sha256": "F063C974CAE4B75EAA1BD32263746916D32BB438CB2BFC5968967452B6D93209",
+      "entries": 204,
+      "modernRuntimeIdentifier": "win-x64",
+      "modernMachine": "0x8664",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "50453FC59D7336D538E26E976F36267D52545FE7968A014FE5A5EFCC7050D514",
+      "modernEngineSha256": "4C6D04C33D3682C0F4A8DB0CB6AC21D3ADCD4D394A8C602161C83E0F20C901D5",
+      "net48EngineSha256": "F97ECC2BD5699C671C035FC7BDAB2299DE36B87A879A5B67166E0EDC277B914A",
+      "release22SuitesAbsent": true
+    },
+    {
+      "path": "extension/winforms-designer-win32-arm64.vsix",
+      "bytes": 18309246,
+      "sha256": "E064344061CA9B9DF8D7BDE210AE6B3193E72611628BD18D3B9A85EC5C204846",
+      "entries": 204,
+      "modernRuntimeIdentifier": "win-arm64",
+      "modernMachine": "0xAA64",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "50453FC59D7336D538E26E976F36267D52545FE7968A014FE5A5EFCC7050D514",
+      "release22SuitesAbsent": true,
+      "physicalArm64Execution": "NOT_EXECUTED"
+    }
+  ],
+  "bothAssemblyVersions": "2.2.0.0",
+  "assertions": "scripts/assert-vsix.ps1 PASS for both target/RID/PE combinations after freezing; packaging isolation tests PASS",
+  "published": false
+}

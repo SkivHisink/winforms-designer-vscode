@@ -19,6 +19,15 @@ It complements the dev/test commands in
 
 ## What exists today
 
+- **2.2 product protocol/lifecycle acceptance** — `npm run release22:extension-host -- --version=1.84.0`
+  and `--version=stable` run `release22-extension-host-suite.ts` in disposable modern/net48 projects. These
+  scenarios drive ordinary document edits, native Undo/Redo, resource transactions, save, rebuild and worker
+  recovery; retained reports identify the tested extension and engine binaries. Fault and repeat-operation
+  checks are recorded separately from the older diagnostic probe tests.
+- **2.2 installed transition acceptance** — `npm run release22:upgrade -- --version=1.140.0` (or `--version=1.84.0`) reconstructs
+  the exact 2.1.0 repository baseline, installs isolated VSIX packages and runs 2.1 → 2.2 → 2.1 in normal
+  workbench processes. It verifies drained pending edits/resource journals, preserved operation identities,
+  dirty backups and native Undo/Redo using actual persistent profile storage.
 - **Engine unit tests** — `dotnet test tests/Engine.UnitTests -c Release` directly covers safe-save minimality,
   syntax equivalence, identifier injection guards, interpreter allowlists, value conversion, and TFM selection.
 - **Extension unit tests** - `npm test` runs Vitest over C# expression conversion helpers, bounded project/toolbox

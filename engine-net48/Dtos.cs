@@ -354,6 +354,10 @@ namespace WinFormsDesigner.Engine.Net48
         public string? Value { get; set; }
         public bool ReadOnly { get; set; } = true;
         public bool SourceEditable { get; set; }
+        /// <summary>The leaf is an enum (the host writes <c>Type.Member</c>).</summary>
+        public bool IsEnum { get; set; }
+        /// <summary>The nested edit route accepts this row (see NestedPropertyPath) — the ONLY nested write capability.</summary>
+        public bool NestedEditable { get; set; }
         public string Category { get; set; } = "Misc";
         public string? Description { get; set; }
         public List<string>? StandardValues { get; set; }

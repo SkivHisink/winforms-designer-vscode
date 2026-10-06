@@ -266,6 +266,7 @@
   "panel.hint.font": " (名称, sizept[, style=Bold, Italic])",
   "panel.search.props": "搜索属性…",
   "panel.search.events": "搜索事件…",
+  "panel.search.clear": "清除搜索",
   "panel.event.handlerTip": "键入处理程序名称(新建或现有)，或清空以取消关联",
   "panel.event.wiredTip": "  —  双击可转到处理程序",
   "panel.event.unwiredTip": "  —  双击可创建处理程序",
@@ -530,6 +531,15 @@
   "support.action.viewCode": "查看代码",
   "support.action.clearCache": "重新生成工具箱缓存",
   "support.action.restart": "重启预览引擎",
+  "support.action.reinstall": "打开扩展以重新安装",
+  "host.rollback.frozen": "正在准备回滚，因此设计器不接受新的工作。重新加载窗口以继续。",
+  "host.rollback.ready": "可以切换版本：没有正在运行的设计器操作，所有已保存的日志均已完成。请安装 WinForms Designer 的上一个版本，然后运行“重新加载窗口”。未保存的设计保留在 VS Code 备份中。",
+  "host.rollback.blocked": "尚不能切换版本：需要先解决 {count} 项（{detail}）。设计器将继续在当前版本上工作。",
+  "host.rollback.confirmUnresolved": "{count} 个设计器操作的结果不确定。切换版本前请检查受影响的文件。仍要切换吗？",
+  "host.rollback.switchAnyway": "仍要切换",
+  "host.rollback.resume": "继续设计",
+  "host.rollback.cancelled": "由于窗体通过撤消、重做或还原发生了更改，回滚准备已取消。切换版本前，请重新运行“WinForms: 准备回滚或降级设计器”。",
+  "host.revert.failed": "无法还原窗体，因为无法读取其生成的文件。未保存的更改已保留；请检查磁盘上的文件后重试。",
   "support.action.refresh": "刷新状态",
   "support.field.project": "项目",
   "support.field.framework": "求值后的目标框架",
@@ -593,5 +603,6 @@
   "diagnostics.reason.ADAPTER_IDENTITY_DUPLICATE": "多个清单声明了相同的适配器标识。请解决重复声明问题。",
   "diagnostics.reason.CACHE_WRITE_FAILED": "无法保存控件缓存。请重新生成缓存后重试。",
   "diagnostics.reason.STATE_MIGRATION_FAILED": "无法迁移已保存的工具箱首选项。请重新加载窗口后重试；原始首选项已保留。",
-  "diagnostics.reason.PERSISTED_STATE_INVALID": "已保存的设计器首选项无效；仅使用其中有效的部分。在设计器下次保存该首选项之前，已保存的数据保持不变。"
+  "diagnostics.reason.PERSISTED_STATE_INVALID": "已保存的设计器首选项无效；仅使用其中有效的部分。在设计器下次保存该首选项之前，已保存的数据保持不变。",
+  "diagnostics.reason.ENGINE_INSTALLATION_INCOMPATIBLE": "引擎文件缺失或与此扩展不兼容。请重新安装匹配版本的 WinForms Designer，然后执行 Reload Window。重新加载前请保存文档或备份未保存的数据。"
 }
