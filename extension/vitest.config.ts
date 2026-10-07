@@ -6,5 +6,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
+    // Many tests write and fsync real journals, backups and workspaces. They take tens to hundreds of milliseconds
+    // locally, but a slow shared CI runner has stretched one past vitest's 5 s default; a hang still fails at 20 s.
+    testTimeout: 20_000,
   },
 });
