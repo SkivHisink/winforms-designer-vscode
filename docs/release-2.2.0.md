@@ -30,9 +30,10 @@ The starting checkout was clean at `18a01c096502039ea913a1e8cc2ad0d320837e35`, v
 
 ## Verification
 
-All results were produced on 2026-10-06 from the final tree, on the working tree over `18a01c0`, which the
+All results were produced on 2026-10-07 from the final tree, on the working tree over `aa46c11`, which the
 machine reports record as dirty. A release commit that adds exactly that tree needs no new evidence; any further
-product change does. The release preflight ran in metadata-only mode: clean-tree and tag identity are checked on
+product change does. The engines embed the commit id in their product version, so the same sources built from
+the release commit carry different engine hashes from the ones recorded here; the extension bundle does not. The release preflight ran in metadata-only mode: clean-tree and tag identity are checked on
 the CI checkout. A passing diagnostic probe or unit helper is not recorded as product acceptance.
 
 - Engine suites: **704/704** (modern) and **64/64** (.NET Framework), including the nested-property, decimal,
@@ -41,15 +42,19 @@ the CI checkout. A passing diagnostic probe or unit helper is not recorded as pr
   recovery policy, supervisor bounds and diagnostics.
 - Headless webview suite: **997 checks across 214 tests**, 0 failed. Headless end-to-end suite with the
   .NET Framework legs required: PASS.
-- Archived Visual Studio reference renders, the 80 % coverage gate, the scenario catalogue (static and measured),
-  the adversarial evidence controls and the generated protocol check: PASS.
-- Strict localization parity: **578 runtime keys / 44 package keys** in every locale. Mojibake scan: **831** files.
-- Real Extension Host smoke on VS Code **1.84.0** and Stable **1.140.0**: **18/18** each, including the S016
-  first-form and S122 first-use and steady-state edit budgets described below.
+- Archived Visual Studio reference renders, the 80 % coverage gate, the static scenario catalogue and the generated
+  protocol check: PASS.
+- Strict localization parity: **578 runtime keys / 44 package keys** in every locale. Mojibake scan: **830** files.
+- Real Extension Host smoke on VS Code **1.84.0** and Stable **1.140.0**: **17/18** each on this machine. Every
+  scenario passed, including S104, S124 and the S016 first-form and S122 first-use budgets described below, except
+  one S122 steady-state sample per run: a single headless preview at 37–39 ms against 32 ms, or once a single
+  reconciliation at 532 ms against 150 ms, while other workloads shared the machine. Because the smoke did not
+  complete, the measured scenario catalogue and the adversarial evidence controls were not run on this tree. The
+  same product build passed S122 in full on the CI runner before this test-only change.
 - Ordinary product acceptance (`release22:extension-host`): **28/28** on each version, exit 0 —
   [1.84.0](release-2.2.0/host-1.84.0.json), [1.140.0](release-2.2.0/host-1.140.0.json). Both record the same
-  extension bundle (`320e89fa…9e96`), suite (`dc1ec11d…1da5`), modern engine (`a4b66cad…62f1a7`) and .NET
-  Framework engine (`17f6f736…d61487`).
+  extension bundle (`320e89fa…9e96`), suite (`bd885c56…8f98`), modern engine (`752e37c2…4a46`) and .NET
+  Framework engine (`762da209…482d`).
 - Installed 2.1.0 → 2.2.0 → 2.1.0 on VS Code 1.84.0 and 1.140.0: **PASS**, three normal workbench phases and nine
   persistence/recovery checks each — [1.84.0](release-2.2.0/upgrade-downgrade-1.84.0.json),
   [1.140.0](release-2.2.0/upgrade-downgrade-1.140.0.json). The installed package is the frozen x64 VSIX below.
@@ -75,6 +80,10 @@ edits against 750 ms and keeps the unchanged steady-state phase budgets for ever
   render overtakes its canvas refresh; the form is redrawn from the current source instead.
 - The first Stable run of the ordinary product acceptance missed one native Undo in HOST-002 and passed on the
   rerun; the final run passed on both versions without retries.
+- The idle-recycle and crash-recovery scenarios (S104, S124, HOST-005, HOST-010, HOST-014) told a fresh worker from
+  an exited one by process id. Windows reuses process ids, and a shared runner gave a fresh worker the number of
+  one that had already exited. They now identify a worker by its transport session, which is new for every
+  started process.
 
 ## Product contract
 
@@ -211,8 +220,9 @@ one preparation runs at a time, and a Resume action offered by an older one no l
   dirty marker on the original editor, so closing it asks once more. No source is lost.
 - The test-only `source-map-js` override moves to 1.2.2 for a new advisory against 1.2.1 (a transitive
   dependency of `jsdom` and `vite`, not part of the packaged extension).
-- The 32 ms S122 preview budget sits close to what this machine measures: intermediate local runs missed it by
-  1–4 ms once or twice while the final run passed. It was not changed.
+- The S122 steady-state budgets judge each corpus and DPI leg by a single sample, so one slow frame fails the
+  scenario. On this machine the 32 ms preview budget is missed by up to 7 ms under shared load. The budgets were
+  not changed; the release CI run is the binding S122 result.
 - The 2.1.0 package is reconstructed from its release commit. Physical ARM64 execution, power-loss durability and
   other operating systems are not covered.
 

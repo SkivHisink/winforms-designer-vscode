@@ -287,11 +287,16 @@ export async function run(): Promise<void> {
       await waitFor(() => api.openDesignerState(uri)?.renderReady === true, () => api.openDesignerState(uri));
       const edited = api.openDesignerState(uri)!.designerText;
       const beforeGeneration = api.openDesignerState(uri)!.renderGeneration;
+      // A request is audited only once it settles; the crashed worker's session must be captured complete.
+      await waitForIdleProduct(api, kind);
+      const beforeCrash = api.productWorkerState();
       const crash = api.crashMappedEngineForRecoveryTest(kind);
       assert.ok(crash.signaled && crash.pid > 0);
+      const crashed = sessionsOfPid(beforeCrash, kind, crash.pid);
+      assert.ok(crashed.size > 0, 'the crashed worker had no audited product session');
       await waitFor(() => api.openDesignerState(uri)?.renderReady === true
         && api.openDesignerState(uri)!.renderGeneration > beforeGeneration
-        && api.engineLifecycleState().mappedEngines.some(engine => engine.kind === kind && engine.running && engine.pid !== crash.pid),
+        && hasReplacementWorker(api, kind, crashed),
       () => ({ session: api.openDesignerState(uri), lifecycle: api.engineLifecycleState() }));
       assert.strictEqual(api.openDesignerState(uri)?.designerText, edited);
       assert.strictEqual(api.openDesignerState(uri)?.dirty, true);
@@ -530,15 +535,26 @@ async function runProtocolScenarios(api: Api, source: (name: string) => vscode.U
       // The policy allows two automatic restarts per 30 s window. A form can own more than one worker of its kind
       // (render and metadata), so every attempt crashes all of them; each loss counts against the same budget.
       for (let attempt = 0; attempt < 3 && !crashLoop(); attempt++) {
+        // A request is audited only once it settles, so let every targeted worker finish before its session is captured.
+        await waitForIdleProduct(api, kind);
         const pids = running().map(engine => engine.pid);
         assert.ok(pids.length > 0, `attempt ${attempt}: ${JSON.stringify(state())}`);
+        const beforeCrash = api.productWorkerState();
+        for (const pid of pids) {
+          assert.ok(sessionsOfPid(beforeCrash, kind, pid).size > 0,
+            `attempt ${attempt}: mapped ${kind} engine ${pid} has no audited session: ${JSON.stringify(state())}`);
+        }
+        const crashed = new Set(pids.flatMap(pid => [...sessionsOfPid(beforeCrash, kind, pid)]));
         for (const pid of pids) {
           const crash = api.crashMappedEngineForRecoveryTest(kind, pid);
           assert.ok(crash.signaled && crash.pid === pid, `attempt ${attempt}: the mapped ${kind} engine ${pid} was not signaled`);
         }
-        await waitFor(() => !api.engineLifecycleState().mappedEngines.some(engine => pids.includes(engine.pid) && engine.running), state);
+        // A replacement may be given a crashed worker's PID by Windows, so the crashed workers are followed by session.
+        const crashedRunning = () => api.productWorkerState().some(worker => worker.key.runtime === kind
+          && worker.state === 'running' && worker.requests.some(request => crashed.has(sessionOf(request.requestId))));
+        await waitFor(() => !crashedRunning(), state);
         await waitFor(() => crashLoop() || (api.openDesignerState(uri)?.renderReady === true
-          && running().length > 0 && running().every(engine => !pids.includes(engine.pid))), state);
+          && running().length > 0 && hasReplacementWorker(api, kind, crashed) && !crashedRunning()), state);
       }
       assert.ok(crashLoop(), 'automatic recovery did not stop after repeated crashes');
       // Outlast every back-off an earlier restart decision could still have queued (250 ms, 500 ms).
@@ -610,6 +626,7 @@ async function runProtocolScenarios(api: Api, source: (name: string) => vscode.U
       const pending = api.rerenderOpenDesigner(uri).then(() => undefined, error => error);
       const held = await latchHeldReply(api, uri, kind, known, 'late-reply-worker-recycle',
         ['ResolveAssembly', 'SetLocalizationCulture', 'RenderWithLayout', 'RenderInterpretedWithLayout']);
+      const crashed = new Set([sessionOf(held.requestId)]);
       const crash = api.crashMappedEngineForRecoveryTest(kind);
       assert.ok(crash.signaled);
       assert.strictEqual(crash.pid, held.pid, 'the real crash hook targeted a different worker from the held product RPC');
@@ -619,7 +636,7 @@ async function runProtocolScenarios(api: Api, source: (name: string) => vscode.U
       () => ({ held, outcomes: api.productRequestOutcomes().filter(request => request.requestId === held.requestId) }));
       await waitFor(() => api.openDesignerState(uri)?.renderReady === true
         && api.openDesignerState(uri)!.renderGeneration > previousGeneration
-        && api.productWorkerState().some(worker => worker.key.runtime === kind && worker.pid !== crash.pid && worker.state === 'running'),
+        && hasReplacementWorker(api, kind, crashed),
       () => ({ session: api.openDesignerState(uri), workers: api.productWorkerState() }));
       assert.strictEqual(api.openDesignerState(uri)?.designerText, baseline);
       assert.strictEqual(api.openDesignerState(uri)?.dirty, false);
@@ -732,6 +749,24 @@ function assertProductRoute(api: Api, kind: Kind, methods: readonly string[] = [
   }
   assert.strictEqual(new Set(requests.map(request => request.requestId)).size, requests.length,
     'a request attempt identity was reused');
+}
+
+/** The transport session of a request: one session is one started worker process. Windows recycles PIDs, so a
+ * replacement may carry a crashed worker's number; only the session tells the two apart. */
+function sessionOf(requestId: string): string {
+  return requestId.slice(0, requestId.lastIndexOf(':'));
+}
+
+/** Sessions of the workers of a kind that had the given PID in a snapshot taken before that worker was crashed. */
+function sessionsOfPid(workers: ReturnType<Api['productWorkerState']>, kind: Kind, pid: number): Set<string> {
+  return new Set(workers.filter(worker => worker.key.runtime === kind && worker.pid === pid)
+    .flatMap(worker => worker.requests.map(request => sessionOf(request.requestId))));
+}
+
+/** A running worker of a kind that is not one of the given (crashed) sessions. */
+function hasReplacementWorker(api: Api, kind: Kind, crashed: ReadonlySet<string>): boolean {
+  return api.productWorkerState().some(worker => worker.key.runtime === kind && worker.state === 'running'
+    && worker.requests.length > 0 && worker.requests.every(request => !crashed.has(sessionOf(request.requestId))));
 }
 
 function workerFor(api: Api, uri: vscode.Uri, kind: Kind): ReturnType<Api['productWorkerState']>[number] | undefined {

@@ -5677,6 +5677,12 @@ function renderedDocumentWorker(
   return worker ? { worker, render } : undefined;
 }
 
+/** One started worker process: its transport session (the request id's prefix) and the supervisor start that served
+ * it (the audit records generation as supervisor start × 10^9 + render generation). */
+function workerInstance(request: EngineRequestAudit): string {
+  return `${request.requestId.slice(0, request.requestId.lastIndexOf(':'))}#${Math.floor(request.generation / 1_000_000_000)}`;
+}
+
 async function runS104IdleRecycleScenario(
   testApi: ExtensionHostTestApi,
   modernUri: vscode.Uri,
@@ -5769,6 +5775,7 @@ async function runS104IdleRecycleScenario(
     return {
       modern: modern.worker.pid,
       net48: net48.worker.pid,
+      instances: [workerInstance(modern.render), workerInstance(net48.render)],
     };
   };
 
@@ -5787,8 +5794,14 @@ async function runS104IdleRecycleScenario(
       // Closing the last framework form deliberately unloads its AppDomain so the user's build output is writable.
       // If that unload fails, the fail-closed product path replaces the whole net48 worker; replacement is correct
       // only when the old process is gone and the configured graph residency cap above still holds.
+      // Windows may already have given that number to another worker of this pool; that worker serves a different
+      // transport session, while the replaced worker is recognized by its own.
       const replacedPid = residentPids.net48;
+      const replacedSession = residentPids.instances[1].slice(0, residentPids.instances[1].lastIndexOf('#'));
       await waitFor(() => {
+        const holder = testApi.productWorkerState().filter(worker => worker.pid === replacedPid);
+        if (holder.length > 0 && holder.every(worker => worker.requests.length > 0
+          && worker.requests.every(request => !request.requestId.startsWith(`${replacedSession}:`)))) return true;
         try { process.kill(replacedPid, 0); return false; } catch { return true; }
       }, `S104 cycle ${cycle}: replaced net48 PID ${replacedPid} still exists`, 10_000);
     }
@@ -5817,13 +5830,18 @@ async function runS104IdleRecycleScenario(
       }, `S104 ${label}: observed engine PID ${pid} still exists after idle recycle`, 10_000);
     }
     console.log(`S104 ${label}: zero mapped/live processes; every observed OS PID exited: ${[...observedPids].join(', ')}`);
+    // Those numbers are free for Windows to reuse from here on; the next proof covers only processes started after it.
+    observedPids.clear();
+    for (const request of testApi.productRequestOutcomes()) previousRequests.add(request.requestId);
   };
   await recycleAndProveExit('warm cycles');
 
-  const exitedPids = new Set(observedPids);
-  const freshPids = await openPair('fresh restart');
-  assert.ok(Object.values(freshPids).every((pid) => !exitedPids.has(pid)),
-    `S104 fresh designer reused an exited worker PID: ${Object.values(freshPids).join(', ')}`);
+  // Every observed PID was proven gone above, so Windows may legitimately hand one of those numbers to a new process.
+  // Freshness is therefore proven by worker instance (transport session and supervisor start), never by PID value.
+  const recycledInstances = new Set(testApi.productRequestOutcomes().map(workerInstance));
+  const fresh = await openPair('fresh restart');
+  assert.ok(fresh.instances.every(instance => !recycledInstances.has(instance)),
+    `S104 fresh designer reused a recycled worker instance: ${fresh.instances.join(', ')}`);
   await recycleAndProveExit('fresh restart');
 }
 
@@ -7146,19 +7164,23 @@ async function runS124ProductWorkerCrashContinuation(testApi: ExtensionHostTestA
 
   await waitFor(() => {
     const state = testApi.openDesignerState(beforeCrash.uri);
-    const engine = renderedDocumentWorker(testApi, beforeCrash.uri, 'modern', beforeRecoveryRequests)?.worker;
+    const rendered = renderedDocumentWorker(testApi, beforeCrash.uri, 'modern', beforeRecoveryRequests);
+    // Windows may give the replacement the crashed worker's PID; the worker instance tells them apart.
     return state?.renderReady === true && state.engineKind === 'modern'
       && (state.renderGeneration ?? 0) > beforeState.renderGeneration
-      && !!engine && engine.pid > 0 && engine.pid !== crash.pid;
+      && !!rendered && rendered.worker.pid > 0 && workerInstance(rendered.render) !== workerInstance(preCrash.render);
   }, `S124 product recovery did not publish a fresh worker/render: ${JSON.stringify(testApi.engineLifecycleState())}`,
   60_000);
   const recovered = renderedDocumentWorker(testApi, beforeCrash.uri, 'modern', beforeRecoveryRequests);
   assert.ok(recovered, 'S124 recovered worker has no successful current-document Render audit');
   const recoveredEngine = recovered.worker;
   console.log(`S124 actual rendered worker crash/recovery: ${JSON.stringify({ before: preCrash.render, crash, recovered: recovered.render })}`);
-  let oldAlive = true;
-  try { process.kill(crash.pid, 0); } catch { oldAlive = false; }
-  assert.strictEqual(oldAlive, false, `S124 crashed worker PID ${crash.pid} still exists after replacement`);
+  // A live process with the crashed PID is the crashed worker only when the replacement does not hold that number.
+  if (recoveredEngine.pid !== crash.pid) {
+    await waitFor(() => {
+      try { process.kill(crash.pid, 0); return false; } catch { return true; }
+    }, `S124 crashed worker PID ${crash.pid} still exists after replacement`, 10_000);
+  }
   assert.strictEqual(testApi.openDesignerState(beforeCrash.uri)?.designerText, beforeCrash.designerText);
   assert.strictEqual(testApi.openDesignerState(beforeCrash.uri)?.dirty, false);
   assert.strictEqual(activeCustomTab(beforeCrash.uri)?.isDirty, false);
