@@ -30,11 +30,11 @@ The starting checkout was clean at `18a01c096502039ea913a1e8cc2ad0d320837e35`, v
 
 ## Verification
 
-All results were produced on 2026-10-07 from the final tree, on the working tree over `aa46c11`, which the
+All results were produced on 2026-10-07 from the final tree, on the working tree over `5cb83b1`, which the
 machine reports record as dirty. A release commit that adds exactly that tree needs no new evidence; any further
 product change does. The engines embed the commit id in their product version, so the same sources built from
-the release commit carry different engine hashes from the ones recorded here; the extension bundle does not. The release preflight ran in metadata-only mode: clean-tree and tag identity are checked on
-the CI checkout. A passing diagnostic probe or unit helper is not recorded as product acceptance.
+the release commit carry different engine hashes from the ones recorded here; the extension bundle does not. The
+release preflight ran in metadata-only mode: clean-tree and tag identity are checked on the CI checkout. A passing diagnostic probe or unit helper is not recorded as product acceptance.
 
 - Engine suites: **704/704** (modern) and **64/64** (.NET Framework), including the nested-property, decimal,
   string-concatenation, native-image preflight and process-containment checks.
@@ -45,16 +45,16 @@ the CI checkout. A passing diagnostic probe or unit helper is not recorded as pr
 - Archived Visual Studio reference renders, the 80 % coverage gate, the static scenario catalogue and the generated
   protocol check: PASS.
 - Strict localization parity: **578 runtime keys / 44 package keys** in every locale. Mojibake scan: **830** files.
-- Real Extension Host smoke on VS Code **1.84.0** and Stable **1.140.0**: **17/18** each on this machine. Every
-  scenario passed, including S104, S124 and the S016 first-form and S122 first-use budgets described below, except
-  one S122 steady-state sample per run: a single headless preview at 37–39 ms against 32 ms, or once a single
-  reconciliation at 532 ms against 150 ms, while other workloads shared the machine. Because the smoke did not
-  complete, the measured scenario catalogue and the adversarial evidence controls were not run on this tree. The
-  same product build passed S122 in full on the CI runner before this test-only change.
+- Real Extension Host smoke on VS Code **1.84.0**: **18/18**, including S104, S124, and the S016 first-form and
+  S122 first-use and steady-state budgets described below. On Stable **1.140.0** the smoke did not complete on this
+  machine while other workloads shared it: one run missed S016's 60 s wait for the first render of a dense form and
+  one S122 first-use reconciliation sample (752 ms against 750 ms); the rerun stopped earlier, in the setup suite's
+  classic-form delete, before the timed scenarios. Every other scenario passed. The measured scenario catalogue
+  and the adversarial evidence controls therefore were not run on this tree; the CI run is the binding result.
 - Ordinary product acceptance (`release22:extension-host`): **28/28** on each version, exit 0 —
   [1.84.0](release-2.2.0/host-1.84.0.json), [1.140.0](release-2.2.0/host-1.140.0.json). Both record the same
-  extension bundle (`320e89fa…9e96`), suite (`bd885c56…8f98`), modern engine (`752e37c2…4a46`) and .NET
-  Framework engine (`762da209…482d`).
+  extension bundle (`7fc98456…e298`), suite (`bd885c56…8f98`), modern engine (`48e352e1…2840`) and .NET
+  Framework engine (`63f37e5e…c7d7`).
 - Installed 2.1.0 → 2.2.0 → 2.1.0 on VS Code 1.84.0 and 1.140.0: **PASS**, three normal workbench phases and nine
   persistence/recovery checks each — [1.84.0](release-2.2.0/upgrade-downgrade-1.84.0.json),
   [1.140.0](release-2.2.0/upgrade-downgrade-1.140.0.json). The installed package is the frozen x64 VSIX below.
@@ -78,6 +78,10 @@ edits against 750 ms and keeps the unchanged steady-state phase budgets for ever
 
 - An accepted High-DPI quick fix, or another committed property edit, no longer reports a failure when a newer
   render overtakes its canvas refresh; the form is redrawn from the current source instead.
+- The toolbox refresh that each accepted frame starts was issued inside the frame's own preview: building its
+  request context snapshots the project's dependency graph synchronously, about 15–25 ms per full render against
+  6–9 ms for the frame itself on the 300-control form, which put S122's 32 ms preview budget out of reach. It now
+  starts once the frame is shown and its selection reconciled.
 - The first Stable run of the ordinary product acceptance missed one native Undo in HOST-002 and passed on the
   rerun; the final run passed on both versions without retries.
 - The idle-recycle and crash-recovery scenarios (S104, S124, HOST-005, HOST-010, HOST-014) told a fresh worker from
@@ -220,9 +224,9 @@ one preparation runs at a time, and a Resume action offered by an older one no l
   dirty marker on the original editor, so closing it asks once more. No source is lost.
 - The test-only `source-map-js` override moves to 1.2.2 for a new advisory against 1.2.1 (a transitive
   dependency of `jsdom` and `vite`, not part of the packaged extension).
-- The S122 steady-state budgets judge each corpus and DPI leg by a single sample, so one slow frame fails the
-  scenario. On this machine the 32 ms preview budget is missed by up to 7 ms under shared load. The budgets were
-  not changed; the release CI run is the binding S122 result.
+- The S122 steady-state budgets judge each corpus and DPI leg by a single sample, so one slow frame or one
+  reconciliation that waits behind background toolbox reflection fails the scenario. The budgets were not changed;
+  the release CI run is the binding S122 result.
 - The 2.1.0 package is reconstructed from its release commit. Physical ARM64 execution, power-loss durability and
   other operating systems are not covered.
 

@@ -81,6 +81,8 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 - Adding a control right after the form opens waits for the toolbox instead of failing with a stale generation.
 - A committed property edit or an applied High-DPI quick fix no longer reports a failure when a newer render
   overtakes its canvas refresh; the form is redrawn from the current source instead.
+- The toolbox refresh that follows a full render starts after the frame is shown and the selection is reconciled,
+  so it no longer delays every redraw by about 20 ms.
 - Adding a project reference is recorded as its own operation. A companion file that cannot be restored marks
   the operation for recovery instead of reporting success.
 - Protocol negotiation is bounded to ten seconds and the post-reply resource query to two seconds; a worker
