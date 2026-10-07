@@ -5990,6 +5990,12 @@ class DesignerSession {
     this.buildTaskName = undefined; // a fresh picture ends any build suspension, even one this session left via another engine
     DesignerHub.instance.refreshStatus(); // publish the exact selected output even when the modern runtime did not change
     }
+    // Enter the background metadata scope refreshToolbox would open for itself anyway. Each request context hashes
+    // the project's output dependencies synchronously; an extra product scope around it doubled that cost on every
+    // frame.
+    void this.withBackgroundMetadataWorkflow(() => this.refreshToolbox()).catch((error) => {
+      if (!this.disposed) this.output.appendLine(`[designer] background toolbox refresh failed: ${errMsg(error)}`);
+    });
     const previewMs = Date.now() - previewStartedAt;
     // Keep the selection across a full re-render only if it still exists — as a visual control OR a tray component
     // (a ContextMenuStrip, Timer, …); otherwise fall back to the root form. Consulting the tray too matters after
@@ -6009,20 +6015,17 @@ class DesignerSession {
     // thing) NOR reload the control's props over the item grid. The caller reloads the right props (strip or item).
     if (!skipReselect) {
       this.pushSelect(this.currentId);
-      await this.loadProps(this.currentId).catch((error) => { this.startToolboxRefreshAfterRender(); throw error; });
+      await this.loadProps(this.currentId);
     }
     await this.postDirty();
     this.pushClipboardState();
-    const reconciliationMs = Date.now() - reconciliationStartedAt;
-    // Even when a live frame (a net48 tab click) has superseded this reconciliation, this frame was accepted and the
-    // live paths do not load the toolbox themselves.
-    this.startToolboxRefreshAfterRender();
     // 1.0.0 — re-check the generation before the notice posts below. The awaits above (loadProps does real engine
     // RPCs) let a NEWER render finish first and install the correct banner/lock; this older call resuming afterwards
     // would then overwrite or hide it with its own stale view. The authoritative gates already sit on the newer
     // state, so this was UI dishonesty rather than an edit bypass — but a banner that says the wrong thing about
     // read-only-ness is exactly what 1.0 cannot ship.
     if (seq !== this.renderSeq || this.disposed) return true;
+    const reconciliationMs = Date.now() - reconciliationStartedAt;
     this.lastFullRenderTelemetry = {
       modelMs,
       captureMs,
@@ -6060,15 +6063,6 @@ class DesignerSession {
   // composeFormNotice(result) was already posted synchronously right after the render/layout/tray posts above, so a
   // stalled loadProps can never leave the canvas without its persistent notice.
     return true; // a fresh render→layout→tray was posted → the canvas forest is current
-  }
-
-  /** An accepted frame refreshes the toolbox metadata. It starts only once the frame is shown and its selection is
-   * reconciled: building the request context snapshots the dependency graph synchronously, which would otherwise
-   * hold the frame back on every full render. */
-  private startToolboxRefreshAfterRender(): void {
-    void this.withDetachedProductWorkflow(() => this.refreshToolbox()).catch((error) => {
-      if (!this.disposed) this.output.appendLine(`[designer] background toolbox refresh failed: ${errMsg(error)}`);
-    });
   }
 
   /**
