@@ -46,8 +46,6 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
   recognised from new output files rather than from timestamp-only changes.
 - Project inspection evidence is reused for five minutes when its inputs are unchanged, and MSBuild evaluation
   runs at below-normal priority.
-- A newly started modern worker compiles its source-edit path in the background and compiles methods fully
-  optimized on first use, so the first property edits of a form served by a fresh worker stay within the edit budget.
 - An explicit engine restart gives the new processes a fresh automatic-recovery budget. Once the crash-loop
   guard stops recovery, restarts that were still waiting on their back-off are cancelled.
 - A build or test task is coordinated even when no .NET Framework preview is open yet, so a form opened while
@@ -81,6 +79,8 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 - Tab-page and strip-item clicks carry the canvas generation, so a click on a frame that is being replaced
   cannot select a component from the previous frame.
 - Adding a control right after the form opens waits for the toolbox instead of failing with a stale generation.
+- A committed property edit or an applied High-DPI quick fix no longer reports a failure when a newer render
+  overtakes its canvas refresh; the form is redrawn from the current source instead.
 - Adding a project reference is recorded as its own operation. A companion file that cannot be restored marks
   the operation for recovery instead of reporting success.
 - Protocol negotiation is bounded to ten seconds and the post-reply resource query to two seconds; a worker

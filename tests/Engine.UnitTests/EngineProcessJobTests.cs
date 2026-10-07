@@ -46,15 +46,6 @@ public sealed class EngineProcessJobTests
     }
 
     [Fact]
-    public void EditPathWarmup_SourceIsAValidSafeEdit()
-    {
-        // The warmup is only worth its CPU if it runs the whole edit path, not an early refusal.
-        var result = DesignerRenderer.ApplyPropertyEdit("WarmupForm.Designer.cs", "button1", "Text", "\"warm\"", EditPathWarmup.Source);
-        Assert.True(result.Safe, result.Reason);
-        Assert.Contains("this.button1.Text = \"warm\";", result.NewText);
-    }
-
-    [Fact]
     public void CommandLineModes_StillStartHelpers()
     {
         // The test host never called ConfineServingEngine: it behaves like the CLI, which is not owned by the extension.

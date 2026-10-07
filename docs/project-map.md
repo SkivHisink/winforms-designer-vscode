@@ -50,7 +50,7 @@ VS Code extension host (TypeScript, extension/src)
 | Geometry and layout | `DesignerGeometry.cs`, `DesignerLayout.cs`, `DesignerAdornerInfo.cs` |
 | Localization | `DesignerLocalizeForm.cs`, `DesignerLocalizedResxEditor.cs`, `DesignerCultureSelection.cs` |
 | Projects and types | `ProjectResolver.cs`, `FormClassResolver.cs`, `ControlLoadContext.cs`, `CompiledRootFactory.cs` |
-| Process lifetime | `EngineProcessJob.cs` (the serving engine's kill-on-close job: helper processes end with the engine), `EditPathWarmup.cs` (compiles the source-edit path in the background when a worker starts) |
+| Process lifetime | `EngineProcessJob.cs` (the serving engine's kill-on-close job: helper processes end with the engine) |
 | Shared IR (also net48) | `DesignerIr.cs`, `DesignerIrBuilder.cs` (Roslyn front end), `DesignerIrExecutor.cs`, `InterpretedRenderPlan.cs`, `InterpretedDescribeResolver.cs`, `RenderModeDecision.cs`, `AssemblyIrHost.cs` |
 | Hosted designers | `DesignerServiceKernel.cs`, `HostedServiceKernelProduct*.cs`, `HostedDesignerAdornerContract.cs`, `DesignTimeSite.cs`, `VsNameCreationService.cs`, `DesignerInheritedOverrideEditor.cs` |
 

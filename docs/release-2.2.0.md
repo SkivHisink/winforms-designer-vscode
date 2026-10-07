@@ -35,37 +35,44 @@ machine reports record as dirty. A release commit that adds exactly that tree ne
 product change does. The release preflight ran in metadata-only mode: clean-tree and tag identity are checked on
 the CI checkout. A passing diagnostic probe or unit helper is not recorded as product acceptance.
 
-- Engine suites: **705/705** (modern) and **64/64** (.NET Framework), including the nested-property, decimal,
-  string-concatenation, native-image preflight, process-containment and edit-path checks.
+- Engine suites: **704/704** (modern) and **64/64** (.NET Framework), including the nested-property, decimal,
+  string-concatenation, native-image preflight and process-containment checks.
 - Extension unit/integration layer: **639/639** tests (146 suites), including rollback preparation, admission,
   recovery policy, supervisor bounds and diagnostics.
 - Headless webview suite: **997 checks across 214 tests**, 0 failed. Headless end-to-end suite with the
   .NET Framework legs required: PASS.
 - Archived Visual Studio reference renders, the 80 % coverage gate, the scenario catalogue (static and measured),
   the adversarial evidence controls and the generated protocol check: PASS.
-- Strict localization parity: **578 runtime keys / 44 package keys** in every locale. Mojibake scan: **785** files.
-- Real Extension Host smoke on VS Code **1.84.0** and Stable **1.140.0**: **18/18** each, including the S016 start
-  and S122 edit budgets.
+- Strict localization parity: **578 runtime keys / 44 package keys** in every locale. Mojibake scan: **831** files.
+- Real Extension Host smoke on VS Code **1.84.0** and Stable **1.140.0**: **18/18** each, including the S016
+  first-form and S122 first-use and steady-state edit budgets described below.
 - Ordinary product acceptance (`release22:extension-host`): **28/28** on each version, exit 0 —
   [1.84.0](release-2.2.0/host-1.84.0.json), [1.140.0](release-2.2.0/host-1.140.0.json). Both record the same
-  extension bundle (`50453fc5…d514`), suite (`dc1ec11d…1da5`), modern engine (`5d677293…7c47`) and .NET Framework
-  engine (`f97ecc2b…914a`).
+  extension bundle (`320e89fa…9e96`), suite (`dc1ec11d…1da5`), modern engine (`a4b66cad…62f1a7`) and .NET
+  Framework engine (`17f6f736…d61487`).
 - Installed 2.1.0 → 2.2.0 → 2.1.0 on VS Code 1.84.0 and 1.140.0: **PASS**, three normal workbench phases and nine
   persistence/recovery checks each — [1.84.0](release-2.2.0/upgrade-downgrade-1.84.0.json),
-  [1.140.0](release-2.2.0/upgrade-downgrade-1.140.0.json). The installed package carried the same extension bundle
-  and engines as the packages below; those were rebuilt afterwards only to pick up the test-tooling override in
-  `package.json` and to drop a stray local report the earlier package had included.
+  [1.140.0](release-2.2.0/upgrade-downgrade-1.140.0.json). The installed package is the frozen x64 VSIX below.
 - Windows x64 and ARM64 VSIX creation, `scripts/assert-vsix.ps1` and the packaging isolation tests: **PASS**
-  ([packages](release-2.2.0/packages.json)). Both packages carry the same extension bundle and .NET Framework engine.
+  ([packages](release-2.2.0/packages.json)). Both packages carry the same extension bundle and .NET Framework engine,
+  and the extension bundle equals the one the product acceptance ran.
 
 The retained reports replace local temporary directories with `<ci-temp>`; nothing else in them was changed.
 
+### Cost of per-project workers
+
+Workers are isolated per project graph (R22-06), so the first form of a project starts its own worker instead of
+reusing one already warm from another project. Measured on the same machine against 2.1.0: the first render of the
+dense 300-control form takes about 3.5–4.4 s instead of 2.2 s, and the first three property edits planned by a
+fresh worker take up to about 400 ms instead of 30–60 ms while tiered compilation promotes the edit path; later
+edits return to 2.1.0 levels. The acceptance budgets name this explicitly: S016 (the first form of each project)
+allows 6.5 s to an interactive canvas and 1 s for its first commit, S122 checks a fresh worker's first three
+edits against 750 ms and keeps the unchanged steady-state phase budgets for every edit after them.
+
 ### Found and fixed during acceptance
 
-- A form of a .NET Framework project is now served by a worker of its own project graph, which is young when the
-  first edits arrive. The source-edit path still ran as unoptimized code there, and the first property edits took
-  200–400 ms against a 2.1.0 baseline of about 30 ms measured on the same machine. The modern engine now compiles
-  methods fully optimized on first use and compiles the edit path in the background when it starts.
+- An accepted High-DPI quick fix, or another committed property edit, no longer reports a failure when a newer
+  render overtakes its canvas refresh; the form is redrawn from the current source instead.
 - The first Stable run of the ordinary product acceptance missed one native Undo in HOST-002 and passed on the
   rerun; the final run passed on both versions without retries.
 
@@ -203,9 +210,9 @@ one preparation runs at a time, and a Resume action offered by an older one no l
 - After a failed native Undo re-marks a form as unsaved, a later successful **Save As** leaves the workbench's own
   dirty marker on the original editor, so closing it asks once more. No source is lost.
 - The test-only `source-map-js` override moves to 1.2.2 for a new advisory against 1.2.1 (a transitive
-  dependency of `jsdom` and `vite`, not part of the packaged extension). With it the full local CI mirror passed
-  again up to the Extension Host smoke, whose reruns hit single timing misses (S122 preview 33 ms against 32 ms;
-  S126/S128 once refused a stale generation) that passed on the earlier run of the identical product.
+  dependency of `jsdom` and `vite`, not part of the packaged extension).
+- The 32 ms S122 preview budget sits close to what this machine measures: intermediate local runs missed it by
+  1–4 ms once or twice while the final run passed. It was not changed.
 - The 2.1.0 package is reconstructed from its release commit. Physical ARM64 execution, power-loss durability and
   other operating systems are not covered.
 

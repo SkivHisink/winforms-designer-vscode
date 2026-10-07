@@ -12941,6 +12941,23 @@ class DesignerSession {
     edit?: Readonly<{ beforeSourceText: string; afterSourceText: string; newValueExpr: string }>,
   ): Promise<boolean> {
     if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.patchOrRerender(id, prop, edit));
+    try {
+      return await this.patchOrRerenderCurrent(id, prop, edit);
+    } catch (error) {
+      // The edit is already committed. A newer render (the panel becoming visible again, a document change) has
+      // overtaken this refresh's generation: that is not a failed edit. Redraw once from the current text instead.
+      if ((error as { code?: unknown } | undefined)?.code !== 'STALE_GENERATION' || this.disposed) throw error;
+      this.output.appendLine(`[designer] refresh after ${id}.${prop} was superseded by a newer render; redrawing`);
+      void this.withDetachedProductWorkflow(() => this.fullRender(true)).catch(() => { /* fullRender reports its own failure */ });
+      return false;
+    }
+  }
+
+  private async patchOrRerenderCurrent(
+    id: string,
+    prop: string,
+    edit?: Readonly<{ beforeSourceText: string; afterSourceText: string; newValueExpr: string }>,
+  ): Promise<boolean> {
     this.lastModernRetainedApplied = false;
     if (!this.designerFile || this.disposed) return false;
     const eng = await this.ensureEngine();

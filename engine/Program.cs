@@ -1374,7 +1374,6 @@ namespace WinFormsDesigner.Engine
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                 await pipe.WaitForConnectionAsync();
                 await Console.Error.WriteLineAsync("[engine] client connected");
-                EditPathWarmup.Start();
                 // camelCase DTO serialization so the TypeScript client reads idiomatic JS keys
                 // (e.g. component.properties, not .Properties). Method dispatch + positional params
                 // are unaffected. Content-Length framing keeps vscode-jsonrpc interop.

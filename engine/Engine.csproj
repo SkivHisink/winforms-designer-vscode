@@ -13,10 +13,6 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>WinFormsDesigner.Engine</AssemblyName>
     <RootNamespace>WinFormsDesigner.Engine</RootNamespace>
-    <!-- Workers are isolated per project graph, so a form's worker can be young and lightly used. Compile methods
-         without precompiled code fully optimized on first call instead of running slow quick-JIT code until enough
-         calls have promoted them (the Roslyn edit path otherwise stays several times slower for its first edits). -->
-    <TieredCompilationQuickJit>false</TieredCompilationQuickJit>
   </PropertyGroup>
 
   <ItemGroup>
