@@ -30,7 +30,7 @@ The starting checkout was clean at `18a01c096502039ea913a1e8cc2ad0d320837e35`, v
 
 ## Verification
 
-All results were produced on 2026-10-07 from the final tree, on the working tree over `d1bc578`, which the
+All results were produced on 2026-10-08 from the final tree, on the working tree over `11fe898`, which the
 machine reports record as dirty. A release commit that adds exactly that tree needs no new evidence; any further
 product change does. The engines embed the commit id in their product version, so the same sources built from
 the release commit carry different engine hashes from the ones recorded here; the extension bundle does not. The
@@ -43,23 +43,19 @@ diagnostic probe or unit helper is not recorded as product acceptance.
   recovery policy, supervisor bounds and diagnostics.
 - Headless webview suite: **997 checks across 214 tests**, 0 failed. Headless end-to-end suite with the
   .NET Framework legs required: PASS.
-- Archived Visual Studio reference renders, the 80 % coverage gate, the static scenario catalogue and the generated
-  protocol check: PASS.
+- Archived Visual Studio reference renders, the 80 % coverage gate, the scenario catalogue (static and measured: 111
+  declared PASS scenarios), the adversarial evidence controls and the generated protocol check: PASS.
 - Strict localization parity: **578 runtime keys / 44 package keys** in every locale. Mojibake scan: **830** files.
-- Real Extension Host smoke on VS Code **1.84.0**: **18/18** in two of three runs, including S104, S124, and the
-  S016 first-form and S122 first-use and steady-state budgets described below; the third missed the 60 s wait for
-  S082's first render, with no recorded failure. On Stable **1.140.0**: **17/18**; the one miss was S122's first
-  edit of the .NET Framework form (890 ms against 750 ms), which found its 10 s interpreted graph expired and
-  re-interpreted the 300-control form, because the edits before it ran slowly while other workloads shared the
-  machine. The measured scenario catalogue and the adversarial evidence controls were therefore not run on this
-  tree; the CI run is the binding result.
+- Real Extension Host smoke on VS Code **1.84.0** and Stable **1.141.0**: **18/18** each, in one uninterrupted run
+  of every CI step, including S104, S124, and the S016 first-form and S122 first-use and steady-state budgets
+  described below.
 - Ordinary product acceptance (`release22:extension-host`): **28/28** on each version, exit 0 —
-  [1.84.0](release-2.2.0/host-1.84.0.json), [1.140.0](release-2.2.0/host-1.140.0.json). Both record the same
-  extension bundle (`79251679…2312`), suite (`bd885c56…8f98`), modern engine (`8df73287…7c9c`) and .NET
-  Framework engine (`003e8a71…e031`).
-- Installed 2.1.0 → 2.2.0 → 2.1.0 on VS Code 1.84.0 and 1.140.0: **PASS**, three normal workbench phases and nine
+  [1.84.0](release-2.2.0/host-1.84.0.json), [1.141.0](release-2.2.0/host-1.141.0.json). Both record the same
+  extension bundle (`2af0e0fb…e0e6`), suite (`bd885c56…8f98`), modern engine (`7da344af…b28e`) and .NET
+  Framework engine (`ed03e8ec…dde0`).
+- Installed 2.1.0 → 2.2.0 → 2.1.0 on VS Code 1.84.0 and 1.141.0: **PASS**, three normal workbench phases and nine
   persistence/recovery checks each — [1.84.0](release-2.2.0/upgrade-downgrade-1.84.0.json),
-  [1.140.0](release-2.2.0/upgrade-downgrade-1.140.0.json). The installed package is the frozen x64 VSIX below.
+  [1.141.0](release-2.2.0/upgrade-downgrade-1.141.0.json). The installed package is the frozen x64 VSIX below.
 - Windows x64 and ARM64 VSIX creation, `scripts/assert-vsix.ps1` and the packaging isolation tests: **PASS**
   ([packages](release-2.2.0/packages.json)). Both packages carry the same extension bundle and .NET Framework engine,
   and the extension bundle equals the one the product acceptance ran.
@@ -80,13 +76,17 @@ edits against 750 ms and keeps the unchanged steady-state phase budgets for ever
 
 - An accepted High-DPI quick fix, or another committed property edit, no longer reports a failure when a newer
   render overtakes its canvas refresh; the form is redrawn from the current source instead.
-- Each accepted frame starts a background toolbox refresh, and every request context hashes the project's output
-  dependencies synchronously. The refresh was started inside a redundant product scope before entering its own
-  background scope, so the identity was captured twice: about 15–25 ms per full render against 6–9 ms for the frame
-  itself on the 300-control form, which put S122's 32 ms preview budget out of reach. It now enters its background
-  scope directly; the 300-control frame measures 20–27 ms. Starting the refresh after the frame instead was tried
-  and withdrawn: the background work then outlived the render's hold on its worker and delayed the next form's
-  first render and first edit.
+- Each accepted frame starts a background toolbox refresh, and 400 ms later an automatic project-control
+  discovery pass. Every request context hashes the project's output dependencies synchronously (bounded at 100 ms),
+  and both captured one even when everything they needed was cached and no engine request followed. On the
+  300-control form that was 15–25 ms of each frame's 6–9 ms preview, beyond S122's 32 ms budget, and a discovery
+  pass firing during the first measured edit after the first-use edits put that edit's reconciliation over budget
+  on the Stable CI run (277 ms against 250 ms). Both now publish cached metadata and answer cached assemblies
+  without a context, and capture one only to load or reflect something; automatic reflection keeps background
+  priority and an explicit toolbox refresh keeps foreground priority. With one of the two captures removed the
+  300-control frame already measured 20–27 ms; the cached path now captures none.
+  Starting the refresh after the frame instead was tried and withdrawn: the background work then outlived the
+  render's hold on its worker and delayed the next form's first render and first edit.
 - The first Stable run of the ordinary product acceptance missed one native Undo in HOST-002 and passed on the
   rerun; the final run passed on both versions without retries.
 - The idle-recycle and crash-recovery scenarios (S104, S124, HOST-005, HOST-010, HOST-014) told a fresh worker from
@@ -188,7 +188,7 @@ npm run build
 npm run release22:extension-host -- --version=1.84.0
 npm run release22:extension-host -- --version=stable
 npm run release22:upgrade -- --version=1.84.0 --baseline=18a01c096502039ea913a1e8cc2ad0d320837e35
-npm run release22:upgrade -- --version=1.140.0 --baseline=18a01c096502039ea913a1e8cc2ad0d320837e35
+npm run release22:upgrade -- --version=1.141.0 --baseline=18a01c096502039ea913a1e8cc2ad0d320837e35
 ```
 
 The ordinary-product runner creates modern and net48 projects with distinct dependency graphs. It drives real
@@ -198,7 +198,7 @@ resource-journal interleavings. Its report is accepted only when all required sc
 and extension hashes remain unchanged throughout the run.
 
 The installed runner reconstructs the exact repository 2.1.0 baseline and installs real VSIX packages into
-isolated profiles. It requires an explicit cached VS Code version; 1.140.0 is the Stable distribution used for
+isolated profiles. It requires an explicit cached VS Code version; 1.141.0 is the Stable distribution used for
 this release's local acceptance. Normal workbench processes preserve actual SQLite state and CustomDocument backups.
 Before the Extension Host restart/downgrade the product's **Prepare Rollback** command freezes new edits, waits for
 running operations, refuses while an operation or transaction journal of this version is undecided, and stops the

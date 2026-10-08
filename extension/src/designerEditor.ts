@@ -178,6 +178,8 @@ interface VendorTagView {
   closesPanel: boolean;
 }
 
+/** Assemblies one automatic toolbox discovery pass may reflect. */
+const AUTO_TOOLBOX_REFLECTION_LIMIT = 24;
 const CERTIFIED_HOSTED_DESIGNER_COMPONENT = 'FakeVendor.CrashOnInitializeControl';
 const CERTIFIED_HOSTED_DESIGNER_ID = 'repo.fakevendor.hosted-designer.v1';
 const CERTIFIED_HOSTED_SERVICE_COMPONENT = 'FakeVendor.HostedServiceControl';
@@ -4286,7 +4288,8 @@ class DesignerSession {
     const generation = ++this.autoToolboxDiscoveryGeneration;
     this.autoToolboxDiscoveryTimer = setTimeout(() => {
       this.autoToolboxDiscoveryTimer = undefined;
-      void this.withBackgroundMetadataWorkflow(() => this.runAutoToolboxDiscovery(generation)).catch((error) => {
+      // Enumeration is file-system work; runAutoToolboxDiscovery opens a background scope only to reflect a miss.
+      void this.runAutoToolboxDiscovery(generation, true).catch((error) => {
         if (!this.disposed) this.output.appendLine(`[designer] background toolbox discovery failed: ${errMsg(error)}`);
       });
     }, Math.max(0, delayMs));
@@ -4360,7 +4363,7 @@ class DesignerSession {
     for (const line of lines) this.output.appendLine(line);
   }
 
-  private async runAutoToolboxDiscovery(generation: number): Promise<void> {
+  private async runAutoToolboxDiscovery(generation: number, automatic = false): Promise<void> {
     if (this.disposed || !this.designerFile || !this.autoToolboxEnabled()
       || !vscode.window.state.focused || generation !== this.autoToolboxDiscoveryGeneration) return;
 
@@ -4394,8 +4397,34 @@ class DesignerSession {
     });
     if (discovery.cancelled || generation !== this.autoToolboxDiscoveryGeneration) return;
 
+    // Reflection needs an engine only for an assembly the scan cache cannot answer. A settled workspace answers
+    // every candidate from the cache, so an automatic pass revisits it without capturing a request context; any miss
+    // is reflected under one background metadata scope, as before. The timer may inherit an unfinished render's
+    // foreground scope, so only a background scope counts. An explicit forced refresh keeps its foreground scans.
+    if (automatic && !this.inBackgroundMetadataScope()) {
+      const probes = this.toolboxProbeDirectories();
+      const hub = DesignerHub.instance;
+      if (discovery.assemblies.slice(0, AUTO_TOOLBOX_REFLECTION_LIMIT)
+        .some((candidate) => !hub.cachedToolboxScan(candidate.path, probes))) {
+        return this.withBackgroundMetadataWorkflow(
+          () => this.reflectAutoToolboxCandidates(generation, rootsInfo, discovery, automatic));
+      }
+    }
+    return this.reflectAutoToolboxCandidates(generation, rootsInfo, discovery, automatic);
+  }
+
+  private inBackgroundMetadataScope(): boolean {
+    return this.hasProductRequestScope() && currentEngineRequestContext()?.admissionPriority === 'background';
+  }
+
+  private async reflectAutoToolboxCandidates(
+    generation: number,
+    rootsInfo: { roots: string[]; projectBudgetReached: boolean; projectScanSkipped: number },
+    discovery: Awaited<ReturnType<typeof discoverBuildOutputAssemblies>>,
+    automatic: boolean,
+  ): Promise<void> {
     const reflectionStarted = Date.now();
-    const reflectionLimit = 24;
+    const reflectionLimit = AUTO_TOOLBOX_REFLECTION_LIMIT;
     const refreshedFiles = new Set<string>();
     const newItems: ToolboxItemInfo[] = [];
     let reflected = 0;
@@ -4410,7 +4439,7 @@ class DesignerSession {
       reflected++;
       try {
         const result = await this.withTimeout(
-          this.scanCandidateAssembly(candidate.path),
+          automatic ? this.scanAutoCandidate(candidate.path) : this.scanCandidateAssembly(candidate.path),
           1600,
           `toolbox metadata scan timed out: ${path.basename(candidate.path)}`,
         );
@@ -4462,6 +4491,15 @@ class DesignerSession {
         limit: truncated ? t('status.toolboxDiscoveryBudget') : '',
       }),
     });
+  }
+
+  /** Automatic discovery: a cached candidate is answered without an engine; a miss is reflected in the background
+   * metadata scope. */
+  private scanAutoCandidate(file: string): Promise<ToolboxScanCacheEntry> {
+    const cached = DesignerHub.instance.cachedToolboxScan(file, this.toolboxProbeDirectories());
+    if (cached) return Promise.resolve(cached);
+    return this.inBackgroundMetadataScope() ? this.scanCandidateAssembly(file)
+      : this.withBackgroundMetadataWorkflow(() => this.scanCandidateAssembly(file));
   }
 
   private syncAutoToolboxWatchers(directories: string[]): void {
@@ -4599,6 +4637,14 @@ class DesignerSession {
     // Constructor/focus refreshes must not enqueue reflection or project assembly resolution ahead of ownership
     // and first-frame capture. The accepted frame refreshes this metadata; explicit user refreshes remain available.
     if (!force && !this.renderOk) return;
+    // Loaded metadata needs no engine. Publishing it must not capture a request context: that hashes the project's
+    // output dependencies synchronously, and every accepted frame comes through here. Only a load opens a scope.
+    if (!force && this.toolboxItems && DesignerHub.instance.hasPalette) {
+      this.pushToolboxItems();
+      this.scheduleAutoToolboxDiscovery();
+      DesignerHub.instance.pushPaletteTo(this);
+      return;
+    }
     if (!force && (!this.hasProductRequestScope() || currentEngineRequestContext()?.admissionPriority !== 'background')) {
       return this.withBackgroundMetadataWorkflow(() => this.refreshToolbox());
     }
@@ -5990,10 +6036,9 @@ class DesignerSession {
     this.buildTaskName = undefined; // a fresh picture ends any build suspension, even one this session left via another engine
     DesignerHub.instance.refreshStatus(); // publish the exact selected output even when the modern runtime did not change
     }
-    // Enter the background metadata scope refreshToolbox would open for itself anyway. Each request context hashes
-    // the project's output dependencies synchronously; an extra product scope around it doubled that cost on every
-    // frame.
-    void this.withBackgroundMetadataWorkflow(() => this.refreshToolbox()).catch((error) => {
+    // refreshToolbox opens its own background metadata scope, and only when it has to load something: each request
+    // context hashes the project's output dependencies synchronously, which an accepted frame must not pay for.
+    void this.refreshToolbox().catch((error) => {
       if (!this.disposed) this.output.appendLine(`[designer] background toolbox refresh failed: ${errMsg(error)}`);
     });
     const previewMs = Date.now() - previewStartedAt;
