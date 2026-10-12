@@ -8,8 +8,8 @@ intentional protocol or compatibility break.
 This roadmap describes release outcomes, not calendar commitments. Security, data-loss prevention, and
 regressions in the stable workflow take priority over the order below.
 
-The detailed forward plan is **[Roadmap 2.0.0 → 3.0.0](docs/roadmap-2.0.0-to-3.0.0.md)** (Russian,
-planning baseline: 2026-09-22). It defines twelve planned 2.x minor releases, dependencies, acceptance criteria,
+The detailed forward plan is **[Roadmap 2.0.0 → 3.0.0](docs/roadmap-2.0.0-to-3.0.0.md)** (planning baseline:
+2026-09-22). It defines twelve planned 2.x minor releases, dependencies, acceptance criteria,
 capacity assumptions, and the 3.0.0 platform contract. See the [release summary below](#20-to-30-release-summary).
 
 The 1.x–2.0.0 sections below retain the historical release narrative. Dated closeout statements are evidence for

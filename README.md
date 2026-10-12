@@ -163,7 +163,7 @@ The net48 preview renders a real compiled instance of your form, so it loads you
 ## 🗺️ Roadmap & quality
 
 See the **[release roadmap](ROADMAP.md)** for the milestone history and planned release sequence.
-The **[detailed 2.0.0 → 3.0.0 roadmap](docs/roadmap-2.0.0-to-3.0.0.md)** (Russian) covers twelve 2.x minor releases,
+The **[detailed 2.0.0 → 3.0.0 roadmap](docs/roadmap-2.0.0-to-3.0.0.md)** covers twelve 2.x minor releases,
 the adapter SDK, vendor workflows, large forms, localization, data binding, accessibility and project validation,
 with dependencies and acceptance criteria for the 3.0.0 platform.
 

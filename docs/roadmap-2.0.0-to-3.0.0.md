@@ -1,479 +1,488 @@
-# Подробный roadmap: 2.0.0 → 3.0.0
+# Detailed roadmap: 2.0.0 → 3.0.0
 
-**Дата планирования:** 22 сентября 2026 года.  
-**Статус:** 2.1.0 реализован, локально проверен и упакован; 2.2.0–3.0.0 имеют статус `PLANNED`. Публикация 2.1.0 не выполнялась.  
-**Продукт:** WinForms Designer for VS Code.  
-**Горизонт:** от ограниченного, подтверждённого сценариями ядра 2.0.0 до расширяемой платформы 3.0.0 с опубликованными контрактами совместимости.
+**Planning date:** 22 September 2026.  
+**Status:** 2.1.0 is implemented, locally verified and packaged; 2.2.0–3.0.0 have the status `PLANNED`. 2.1.0 has not been published.  
+**Product:** WinForms Designer for VS Code.  
+**Horizon:** from the bounded, scenario-verified 2.0.0 core to the extensible 3.0.0 platform with published compatibility contracts.
 
-Документ определяет результаты релизов, порядок работ и критерии приёмки. Номера версий не являются календарным обещанием. Описанная возможность становится поддерживаемой только после реализации, проверки на заявленной матрице и обновления документации поддержки.
+This document defines the release outcomes, the order of work and the acceptance criteria. Version numbers are not a calendar promise. A described capability becomes supported only after it is implemented, verified on the declared matrix and reflected in the support documentation.
 
-История 1.0.0–2.0.0 сохраняется в [основном roadmap](../ROADMAP.md). Детали предыдущей программы находятся в [плане 2.0.0](roadmap-v2.0.0-implementation-plan.md), а её результаты — в [отчёте от 26 августа 2026 года](release-2.0.0-gate-record.md). Этот новый документ продолжает программу и уточняет порядок оставшихся работ.
+The 1.0.0–2.0.0 history is kept in the [main roadmap](../ROADMAP.md). The details of the previous program are in the [2.0.0 plan](roadmap-v2.0.0-implementation-plan.md), and its results are in the [record of 26 August 2026](release-2.0.0-gate-record.md). This new document continues the program and refines the order of the remaining work.
 
-## Содержание
+## Contents
 
-- [1. От какой базы начинаем](#baseline)
-- [2. Что должен получить пользователь в 3.0.0](#vision)
-- [3. Карта релизов и зависимостей](#release-map)
-- [4. Подробные релизы](#milestones)
-- [5. Архитектура и постоянные инженерные направления](#architecture)
-- [6. Матрица поддержки и приёмки](#acceptance)
-- [7. Отдельные исследования и границы программы](#research)
-- [8. Ресурсы, порядок исполнения и пересмотр плана](#execution)
-- [9. Первые 90 дней](#first-90-days)
-- [10. Источники и технические точки входа](#sources)
+- [1. The baseline we start from](#baseline)
+- [2. What the user should get in 3.0.0](#vision)
+- [3. Release map and dependencies](#release-map)
+- [4. Detailed releases](#milestones)
+- [5. Architecture and standing engineering tracks](#architecture)
+- [6. Support and acceptance matrix](#acceptance)
+- [7. Separate research and program boundaries](#research)
+- [8. Resources, execution order and plan revision](#execution)
+- [9. The first 90 days](#first-90-days)
+- [10. Sources and technical entry points](#sources)
 
 <a id="baseline"></a>
 
-## 1. От какой базы начинаем
+## 1. The baseline we start from
 
-### 1.1. Подтверждённое состояние репозитория
+### 1.1. Confirmed repository state
 
-На момент подготовки плана `extension/package.json:6` задаёт версию `2.0.0`, а `extension/package.json:8` — `preview: false`. Modern engine нацелен на `net10.0-windows`, Framework engine — на `net48` с `PlatformTarget=x64`. Эти значения описывают исходники и упаковку, но сами по себе не подтверждают публикацию или полную совместимость с Visual Studio.
+At the time this plan was prepared, `extension/package.json:6` sets the version to `2.0.0` and `extension/package.json:8` sets `preview: false`. The modern engine targets `net10.0-windows`; the Framework engine targets `net48` with `PlatformTarget=x64`. These values describe the sources and the packaging; on their own they do not confirm publication or full compatibility with Visual Studio.
 
-Текущий [каталог сценариев](v2/vs-parity-scenario-catalog.tsv) содержит 128 строк: 111 repository `PASS`, 12 `NOT_EXECUTED`, 5 `GATED`; отдельно записаны 40 reference `PASS` и 88 reference `NOT_EXECUTED`. Это пересчёт записанных статусов, а не новый прогон тестов. `HARNESS_ONLY` — отдельная характеристика автоматизации: 11 таких строк нельзя добавлять к числу продуктовых проверок.
+The current [scenario catalog](v2/vs-parity-scenario-catalog.tsv) contains 128 rows: 111 repository `PASS`, 12 `NOT_EXECUTED`, 5 `GATED`; separately it records 40 reference `PASS` and 88 reference `NOT_EXECUTED`. This is a recount of the recorded statuses, not a new test run. `HARNESS_ONLY` is a separate automation attribute: 11 such rows must not be added to the number of product checks.
 
-Августовский gate record является историческим снимком. В частности, его сведения о dirty tree и HEAD на `v1.9.0` нельзя переносить на текущую ветку: перед изменением документации рабочее дерево было чистым, HEAD — `72a4ee3`, без тега непосредственно на HEAD. Публикация в Marketplace/Open VSX в рамках подготовки roadmap не проверялась.
+The August gate record is a historical snapshot. In particular, its statements about a dirty tree and HEAD at `v1.9.0` must not be carried over to the current branch: before the documentation was changed the working tree was clean and HEAD was `72a4ee3`, with no tag directly on HEAD. Publication to Marketplace/Open VSX was not checked while the roadmap was being prepared.
 
-| Область | Что уже есть | Что остаётся предметом 2.x |
+| Area | What already exists | What remains the subject of 2.x |
 |---|---|---|
-| Основной цикл | Реальный render/select/edit/save, геометрия, дерево, toolbox, свойства, события, коллекции, меню и component tray | Более широкий корпус форм, единое поведение команд и измеримая скорость |
-| Исходники | Минимальные правки, проверки ownership и ревизий, отказ при неоднозначной записи | Расширение поддерживаемых форм записи без потери пользовательского кода |
-| Ресурсы | `.resx`, изображения, локализация, RTL, структурные операции в нейтральном языке для ограниченного набора случаев | Обзор культур, массовые операции, сложные зависимости ресурсов |
-| Документы | Snapshot/PatchSet/journal, компенсация, Save As, ограниченное восстановление hot exit | Длинная история, несколько связанных артефактов, реальные обновления и откаты |
-| Runtime | Рабочие modern/net48 процессы, повторное использование, восстановление после сбоя, координация сборок | Подключение общего supervisor к обычному трафику; политика нескольких проектов |
-| Протокол v2 | Схема и проверяемые bindings, диагностический probe | Обычные render/describe/edit-запросы через версионированный контракт |
-| Hosted services | Реальные, но узкие repository-certified сценарии smart tags, editors и adorners | Больше контрактов, реальный SDK, независимые адаптеры и vendor cohorts |
-| Adapter manifests | Product discovery уже подключён в `activate`; выдаются metadata и diagnostics | Проверенный loader, активация, отзыв доверия, совместимость исполняемых адаптеров |
-| Миграция | Реальная миграция toolbox state из global в workspace; отдельно экспериментальный контракт `v2Migration.ts` | Инвентаризация фактически сохраняемых форматов, проверка upgrade/rollback и миграция только необходимых изменений |
-| Headless | Development CLI и стенды | Проверка настоящих проектов через те же product planners и engines |
-| Качество | Unit, webview, named-pipe, Extension Host, reference traces и проверки VSIX | Расширение прямых доказательств, реальные ARM64/AT/vendor и длительные прогоны |
+| Core loop | Real render/select/edit/save, geometry, tree, toolbox, properties, events, collections, menus and the component tray | A broader corpus of forms, uniform command behavior and measurable speed |
+| Sources | Minimal edits, ownership and revision checks, refusal on an ambiguous write | Extending the supported forms of writing without losing user code |
+| Resources | `.resx`, images, localization, RTL, structural operations in the neutral language for a bounded set of cases | Culture overview, bulk operations, complex resource dependencies |
+| Documents | Snapshot/PatchSet/journal, compensation, Save As, bounded hot-exit recovery | Long history, several linked artifacts, real upgrades and rollbacks |
+| Runtime | Working modern/net48 processes, reuse, crash recovery, build coordination | Connecting the shared supervisor to ordinary traffic; a multi-project policy |
+| Protocol v2 | Schema and verifiable bindings, a diagnostic probe | Ordinary render/describe/edit requests through the versioned contract |
+| Hosted services | Real but narrow repository-certified scenarios for smart tags, editors and adorners | More contracts, a real SDK, independent adapters and vendor cohorts |
+| Adapter manifests | Product discovery is already wired into `activate`; metadata and diagnostics are produced | A verified loader, activation, trust revocation, compatibility of executable adapters |
+| Migration | Real migration of toolbox state from global to workspace; separately, the experimental `v2Migration.ts` contract | An inventory of the formats actually persisted, upgrade/rollback verification and migration of only the necessary changes |
+| Headless | Development CLI and test benches | Validating real projects through the same product planners and engines |
+| Quality | Unit, webview, named-pipe, Extension Host, reference traces and VSIX checks | Broader direct evidence, real ARM64/AT/vendor checks and long-running runs |
 
-Три ограничения особенно влияют на последовательность работ:
+Three constraints particularly affect the order of work:
 
-1. `WorkerSupervisor` сейчас обслуживает диагностический probe; наличие класса ещё не означает управление всеми сессиями дизайнера.
-2. `V2AdapterManifestRegistry` уже вызывается из activation, но специально не загружает assembly, не исполняет vendor code и не выдаёт право изменять проект.
-3. Существующие recovery, редакторы, ресурсы и binding не нужно реализовывать повторно: новые релизы расширяют их границы и объединяют существующие пути.
+1. `WorkerSupervisor` currently serves the diagnostic probe; the existence of the class does not yet mean that it manages all designer sessions.
+2. `V2AdapterManifestRegistry` is already called from activation, but it deliberately does not load an assembly, execute vendor code or grant the right to modify the project.
+3. The existing recovery, editors, resources and binding do not need to be implemented again: new releases widen their boundaries and unify the existing paths.
 
-### 1.2. Постоянные правила продукта
+### 1.2. Standing product rules
 
-- Открытие формы не переписывает проект и не нормализует код.
-- Каждая команда изменяет только заявленные артефакты; конфликт сохраняет внешние изменения пользователя.
-- Поддержанная изменяющая команда имеет одну логическую границу Undo/Redo для всех затронутых артефактов. Привязка к native history, фокусу и открытому текстовому редактору проверяется для каждого объявленного сценария; единый произвольный стек разных типов редакторов не предполагается.
-- Неподдерживаемый сценарий получает понятную причину и действие восстановления до изменения файлов.
-- Исходники и ресурсы остаются источником истины; кэш и preview можно пересоздать.
-- Состояние «проверено в тесте», «работает в продукте», «сравнено с Visual Studio» и «проверено на устройстве» учитывается раздельно.
-- Загрузка проектных и vendor assemblies исполняет доверенный код. Изоляция процесса отвечает за управление жизненным циклом и восстановление; дополнительные ограничения требуют отдельного доказательства.
-- Обновления 2.x сохраняют заявленные пользовательские сценарии. Возможные несовместимые изменения публичных контрактов заранее объявляются и готовятся к границе 3.0.0.
+- Opening a form does not rewrite the project or normalize the code.
+- Each command changes only the declared artifacts; a conflict preserves the user's external changes.
+- A supported mutating command has one logical Undo/Redo boundary for all affected artifacts. Binding to native history, focus and an open text editor is verified for every declared scenario; a single arbitrary stack across different editor types is not assumed.
+- An unsupported scenario gets a clear reason and a recovery action before any file is changed.
+- Sources and resources remain the source of truth; the cache and the preview can be recreated.
+- The states “verified in a test”, “works in the product”, “compared with Visual Studio” and “verified on a device” are tracked separately.
+- Loading project and vendor assemblies executes trusted code. Process isolation is responsible for lifecycle management and recovery; additional restrictions require separate proof.
+- 2.x updates preserve the declared user scenarios. Possible incompatible changes to public contracts are announced in advance and prepared for the 3.0.0 boundary.
 
 <a id="vision"></a>
 
-## 2. Что должен получить пользователь в 3.0.0
+## 2. What the user should get in 3.0.0
 
-**3.0.0 — повседневный WinForms designer внутри VS Code для явно перечисленных стандартных, пользовательских и сертифицированных сторонних контролов, с безопасным редактированием, расширениями и автоматизированной проверкой проектов.**
+**3.0.0 is an everyday WinForms designer inside VS Code for explicitly listed standard, custom and certified third-party controls, with safe editing, extensions and automated project validation.**
 
-### Разработчик приложения
+### Application developer
 
-Открывает решение, выбирает форму, добавляет контролы, редактирует layout, события, данные и культуры, использует поддерживаемые smart tags и editors, сохраняет и собирает проект. При переходе между VS Code и Visual Studio в заявленном сценарии сохраняются семантика формы и посторонние участки файлов. Сбой designer worker не уничтожает несохранённую работу.
+Opens a solution, picks a form, adds controls, edits layout, events, data and cultures, uses the supported smart tags and editors, saves and builds the project. When moving between VS Code and Visual Studio in a declared scenario, the semantics of the form and the unrelated parts of the files are preserved. A designer worker crash does not destroy unsaved work.
 
-### Автор собственной библиотеки контролов
+### Author of a custom control library
 
-Подключает документированный SDK, объявляет точные возможности и зависимости, проверяет адаптер локальным conformance runner и получает адресные ошибки. Простому контролу без специального дизайнера SDK не требуется. Поведение дизайнеров modern .NET и net48 описано отдельными контрактами.
+Plugs in the documented SDK, declares exact capabilities and dependencies, checks the adapter with a local conformance runner and gets targeted errors. A simple control without a special designer does not need the SDK. The behavior of modern .NET designers and net48 designers is described by separate contracts.
 
-### Команда, поддерживающая большое приложение
+### Team maintaining a large application
 
-Имеет воспроизводимую матрицу поддержки, отчёты о проблемах форм, проверку совместимости при обновлении библиотек и понятное восстановление. Диагностика не требует публикации исходного проекта. CI может проверить структуру и, на подходящем Windows runner, настоящую загрузку и render.
+Has a reproducible support matrix, reports on form problems, a compatibility check when libraries are upgraded and understandable recovery. Diagnostics do not require publishing the source project. CI can check the structure and, on a suitable Windows runner, real loading and render.
 
-### Как измеряется достижение цели
+### How reaching the goal is measured
 
-- Ключевой поддерживаемый workflow завершается без обязательного ручного исправления generated code.
-- Изменения проверяются по компонентному графу, семантике файлов, ожидаемому diff и Undo/Redo, а не по одному скриншоту.
-- Сертификация всегда называет библиотеку, версию, runtime, архитектуру и список проверенных возможностей.
-- Команда видит, какие ограничения обнаружены до обновления runtime или vendor suite.
-- В 3.0.0 не включается функция только ради номера версии: обязательны контракт, product path, тесты, документация и сценарий восстановления.
+- A key supported workflow completes without mandatory manual fixing of generated code.
+- Changes are verified by the component graph, file semantics, the expected diff and Undo/Redo, not by a single screenshot.
+- Certification always names the library, version, runtime, architecture and the list of verified capabilities.
+- The team sees which limitations were found before a runtime or vendor suite upgrade.
+- No feature is included in 3.0.0 merely for the version number: a contract, a product path, tests, documentation and a recovery scenario are mandatory.
 
 <a id="release-map"></a>
 
-## 3. Карта релизов и зависимостей
+## 3. Release map and dependencies
 
-Все строки после исходной базы являются планом. Patch-ветка 2.0.x сопровождает основную работу и не задерживает исправления потери данных или критических регрессий.
+Every row after the initial baseline is a plan. The 2.0.x patch branch accompanies the main work and does not delay fixes for data loss or critical regressions.
 
-| Версия | Основной результат | Ключевая зависимость | Условие перехода дальше |
+| Version | Main outcome | Key dependency | Condition for moving on |
 |---|---|---|---|
-| **2.0.0 / 2.0.x** | Зафиксированная база и актуальная карта ограничений | Текущее ядро | Исторические и текущие доказательства разделены, критические дефекты закрыты |
-| **2.1.0** | Предсказуемая диагностика совместимости и восстановление рабочей среды | База 2.0 | Пользователь понимает отказ и может восстановить сессию |
-| **2.2.0** | Общий протокол и supervisor на реальных командах | 2.1 + characterization | Все обязательные маршруты имеют прямой product E2E |
-| **2.3.0** | Документы, связанные изменения и надёжный hot exit | 2.2 | Crash/restart/undo проверены для заявленных сложных транзакций |
-| **2.4.0** | Hosted services и Adapter SDK Preview | 2.2–2.3 | Независимый sample использует опубликованный контракт |
-| **2.5.0** | Первая настоящая vendor cohort и полезные редакторы | 2.4 + vendor access | Точная сертификация одного доступного набора версий |
-| **2.6.0** | Быстрая работа с большими и вложенными формами | 2.2–2.3 | Зафиксированные performance budgets на реальном продукте |
-| **2.7.0** | Ресурсы, культуры и визуальная проверка локализации | 2.3 + 2.6 | Связанные resource edits и RTL проверены без потери fallback |
-| **2.8.0** | Завершённые прикладные сценарии data binding | 2.3–2.4 + 2.7 для локализованных форм | Сборка и runtime-проверка формы с изменённой моделью |
-| **2.9.0** | Переиспользуемые формы, шаблоны и рефакторинги | 2.3 + 2.7–2.8 | Повторное применение и отмена не повреждают проект |
-| **2.10.0** | Проверенная доступность и расширенная runtime-матрица | Накопленные UI/runtime функции + лаборатория | Реальные AT, DPI и аппаратные проверки заявленного набора |
-| **2.11.0** | Product CLI, проверка проекта и design advisor | 2.2–2.3 + соответствующие capabilities | CLI вызывает настоящие product paths и выдаёт воспроизводимый отчёт |
-| **2.12.0** | Заморозка контрактов, SDK RC и репетиция перехода | Все обязательные направления | Beta/RC evidence, migration и rollback готовы |
-| **3.0.0** | Стабильная расширяемая платформа | 2.12 + независимая приёмка | Все обязательные возможности заявленной матрицы приняты |
+| **2.0.0 / 2.0.x** | A fixed baseline and an up-to-date map of limitations | The current core | Historical and current evidence are separated, critical defects are closed |
+| **2.1.0** | Predictable compatibility diagnostics and recovery of the working environment | The 2.0 baseline | The user understands a refusal and can restore the session |
+| **2.2.0** | A shared protocol and supervisor on real commands | 2.1 + characterization | Every mandatory route has a direct product E2E |
+| **2.3.0** | Documents, linked changes and a reliable hot exit | 2.2 | Crash/restart/undo are verified for the declared complex transactions |
+| **2.4.0** | Hosted services and Adapter SDK Preview | 2.2–2.3 | An independent sample uses the published contract |
+| **2.5.0** | The first real vendor cohort and useful editors | 2.4 + vendor access | Exact certification of one available set of versions |
+| **2.6.0** | Fast work with large and nested forms | 2.2–2.3 | Fixed performance budgets on the real product |
+| **2.7.0** | Resources, cultures and visual localization checks | 2.3 + 2.6 | Linked resource edits and RTL are verified without losing fallback |
+| **2.8.0** | Complete applied data-binding scenarios | 2.3–2.4 + 2.7 for localized forms | Build and runtime check of a form with a changed model |
+| **2.9.0** | Reusable forms, templates and refactorings | 2.3 + 2.7–2.8 | Re-applying and undoing do not damage the project |
+| **2.10.0** | Verified accessibility and an extended runtime matrix | Accumulated UI/runtime features + the lab | Real AT, DPI and hardware checks of the declared set |
+| **2.11.0** | Product CLI, project validation and design advisor | 2.2–2.3 + the relevant capabilities | The CLI calls real product paths and produces a reproducible report |
+| **2.12.0** | Contract freeze, SDK RC and a transition rehearsal | All mandatory tracks | Beta/RC evidence, migration and rollback are ready |
+| **3.0.0** | A stable extensible platform | 2.12 + independent acceptance | All mandatory capabilities of the declared matrix are accepted |
 
 ```mermaid
 flowchart LR
-    B["2.0 / 2.0.x: база"] --> D["2.1: диагностика"]
-    D --> P["2.2: протокол и workers"]
-    P --> T["2.3: документы и история"]
+    B["2.0 / 2.0.x: baseline"] --> D["2.1: diagnostics"]
+    D --> P["2.2: protocol and workers"]
+    P --> T["2.3: documents and history"]
     T --> H["2.4: hosted SDK"]
     H --> V["2.5: vendor cohort"]
-    T --> F["2.6: большие формы"]
-    F --> L["2.7: ресурсы и культуры"]
-    H --> DB["2.8: данные"]
+    T --> F["2.6: large forms"]
+    F --> L["2.7: resources and cultures"]
+    H --> DB["2.8: data"]
     L --> DB
-    DB --> R["2.9: шаблоны и refactoring"]
-    R --> Q["2.10: runtime и accessibility"]
-    T --> C["2.11: CLI и advisor"]
-    Q --> RC["2.12: совместимость и RC"]
+    DB --> R["2.9: templates and refactoring"]
+    R --> Q["2.10: runtime and accessibility"]
+    T --> C["2.11: CLI and advisor"]
+    Q --> RC["2.12: compatibility and RC"]
     V --> RC
     C --> RC
-    RC --> GA["3.0: платформа"]
+    RC --> GA["3.0: platform"]
 ```
 
-Стрелки обозначают зависимости реализации, а не необходимость ждать выпуска всей предыдущей ветки. Исследования, accessibility-аудит, аппаратные проверки и подготовка vendor fixtures начинаются с 2.1; соответствующие номера обозначают момент консолидации результата. Независимые функции можно разрабатывать параллельно после стабилизации общих контрактов.
+The arrows denote implementation dependencies, not a need to wait for the whole preceding branch to ship. Research, the accessibility audit, hardware checks and the preparation of vendor fixtures start with 2.1; the corresponding numbers mark the moment the result is consolidated. Independent features can be developed in parallel once the shared contracts have stabilized.
 
-Vendor cohort является отдельным входом в финальную приёмку. Её недоступность не задерживает managed performance, accessibility и runtime-проверки; vendor-specific legs учитываются отдельно. Номера релизов обозначают целевую последовательность, которую можно пересмотреть с сохранением ID задач и истории переноса.
+The vendor cohort is a separate input to the final acceptance. Its unavailability does not delay managed performance, accessibility and runtime checks; vendor-specific legs are counted separately. Release numbers denote a target sequence that can be revised while keeping the task IDs and the history of the move.
 
-### 3.1. Обязательное ядро и управляемый объём
+### 3.1. Mandatory core and managed scope
 
-116 задач образуют полный предлагаемый backlog. Отметка `PLANNED` не равна обязательству реализовать все расширения до 3.0. Перед стартом minor-релиза фиксируются обязательные задачи, исследовательские решения и кандидаты; после неудачного теста нельзя менять эту классификацию только ради зелёного отчёта.
+The 120 tasks form the full proposed backlog. A `PLANNED` mark is not a commitment to implement every extension before 3.0. Before a minor release starts, its mandatory tasks, research decisions and candidates are fixed; after a failed test this classification must not be changed merely to get a green report.
 
-| Класс | Состав | Правило исполнения |
+| Class | Contents | Execution rule |
 |---|---|---|
-| Обязательное ядро | Сохранность существующих workflows, product protocol/lifecycle, документ и восстановление в доказанном scope, SDK 1.0, первая vendor cohort, заявленные CLI и support matrix | Основа R30-01–R30-08; сокращение требует явного пересмотра цели программы |
-| Расширения-кандидаты | Более широкий Lane B (R24-08), virtualization при подтверждённой потребности (R26-03), pseudo-localization/visual comparison (R27-05/06), расширенные master-detail/settings bindings (R28-04/08), Extract UserControl и межпроектный перенос (R29-03/05) | Включаются после оценки пользы, технической пробы и доступной ёмкости; перенос не ослабляет проверки уже поддерживаемых функций |
-| Исследования с решением | Общая custom/text история и восстановление redo-ветки (часть R23), modern designer ABI (часть R24), Tier D и OS sandbox | Результат исследования — доказанная модель или явное ограничение; невозможный вариант не становится скрытой обязательной зависимостью |
+| Mandatory core | Preservation of existing workflows, product protocol/lifecycle, document and recovery in the proven scope, SDK 1.0, the first vendor cohort, the declared CLI and support matrix | The basis of R30-01–R30-08; a reduction requires an explicit revision of the program goal |
+| Candidate extensions | A wider Lane B (R24-08), virtualization when the need is confirmed (R26-03), pseudo-localization/visual comparison (R27-05/06), extended master-detail/settings bindings (R28-04/08), Extract UserControl and cross-project transfer (R29-03/05) | Included after an assessment of the benefit, a technical probe and the available capacity; a postponement does not weaken the checks of already supported features |
+| Research with a decision | Shared custom/text history and restoring the redo branch (part of R23), modern designer ABI (part of R24), Tier D and the OS sandbox | The result of the research is a proven model or an explicit limitation; an impossible option does not become a hidden mandatory dependency |
 
-Приёмочные сценарии раздела 4 описывают полный целевой вариант каждого релиза. Если кандидат не включён, до начала приёмки публикуется более узкий сценарий с теми же требованиями к целостности. Базовые templates, существующие data binding и локализация остаются в обязательной регрессионной матрице независимо от судьбы дополнительных функций.
+The acceptance scenarios in section 4 describe the full target variant of each release. If a candidate is not included, a narrower scenario with the same integrity requirements is published before acceptance starts. Basic templates, the existing data binding and localization remain in the mandatory regression matrix regardless of what happens to the additional features.
 
 <a id="milestones"></a>
 
-## 4. Подробные релизы
+## 4. Detailed releases
 
-### 2.0.0 / 2.0.x — зафиксировать базу и сопровождать её
+### 2.0.0 / 2.0.x — fix the baseline and maintain it
 
-**Ценность:** пользователь получает устойчивую отправную точку; команда понимает, что можно расширять без повторного выполнения уже завершённых работ.
+**Value:** the user gets a stable starting point; the team understands what can be extended without redoing work that is already complete.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R20-01. Карта продуктовых маршрутов.** Для каждого capability записать UI entry point, extension command, engine RPC, planner, transaction, reconciliation и прямой тест. Отдельно отметить helper-only, diagnostics-only и metadata-only пути.
-- [ ] **R20-02. Актуальное приложение к baseline.** Сопоставить код, каталог, README и support matrix. Исправлять устаревшие текущие утверждения, сохраняя исторические gate records со своей датой и evidence identity.
-- [ ] **R20-03. Регрессионный набор.** Выделить быстрые обязательные сценарии: open/no-op save, property, geometry, resource, event, undo, external conflict, failed render, worker crash, net48 rebuild.
-- [ ] **R20-04. Сопровождение.** В patch-релизы включать исправления потери данных, зависаний, ложной совместимости и поломок существующих workflows. Новые возможности выпускать отдельными minor-релизами.
-- [ ] **R20-05. Карточка артефакта.** При очередной реальной сборке сохранять source identity, версии инструментов, runtime, архитектуру, хеш VSIX и список выполненных проверок. Публикацию учитывать отдельно.
+- [ ] **R20-01. Product route map.** For every capability, record the UI entry point, extension command, engine RPC, planner, transaction, reconciliation and a direct test. Mark helper-only, diagnostics-only and metadata-only paths separately.
+- [ ] **R20-02. An up-to-date appendix to the baseline.** Reconcile the code, the catalog, the README and the support matrix. Fix outdated current statements while keeping historical gate records with their own date and evidence identity.
+- [ ] **R20-03. Regression set.** Select fast mandatory scenarios: open/no-op save, property, geometry, resource, event, undo, external conflict, failed render, worker crash, net48 rebuild.
+- [ ] **R20-04. Maintenance.** Patch releases include fixes for data loss, hangs, false compatibility and breakage of existing workflows. New capabilities ship in separate minor releases.
+- [ ] **R20-05. Artifact card.** At each real build, save the source identity, tool versions, runtime, architecture, VSIX hash and the list of checks performed. Publication is tracked separately.
 
-**Доказательство готовности:** известен воспроизводимый набор базовых сценариев, каждая заявленная возможность связана с продуктовым маршрутом, а package version не используется как доказательство качества или публикации.
+**Proof of readiness:** a reproducible set of baseline scenarios is known, every declared capability is tied to a product route, and the package version is not used as proof of quality or publication.
 
-**Не повторять:** создание существующих исходных редакторов, rollback, базового binding, локализации и tab workflow с нуля.
+**Do not redo:** building the existing source editors, rollback, basic binding, localization and the tab workflow from scratch.
 
-### 2.1.0 — диагностика, совместимость и управляемое восстановление
+### 2.1.0 — diagnostics, compatibility and managed recovery
 
-**Результат на 2 октября 2026:** `IMPLEMENTED / VERIFIED LOCALLY`.
+**Result as of 2 October 2026:** `IMPLEMENTED / VERIFIED LOCALLY`.
 
-Закрыты R21-01–R21-08. В тот же релиз вошли исправления движка для issues #6 и #7.
+R21-01–R21-08 are closed. The same release included engine fixes for issues #6 and #7.
 
-Всё доказательство переснято на финальном коде:
-- 470 тестов расширения;
-- 612 тестов модерн-движка и 50 тестов net48;
-- два настоящих Extension Host прогона по 9/9;
-- установка 2.0 → 2.1 → 2.0 с реальным SQLite state, восстановлением несохранённой формы и Undo/Redo;
-- проверки обоих VSIX.
+All evidence was retaken on the final code:
+- 470 extension tests;
+- 612 modern-engine tests and 50 net48 tests;
+- two real Extension Host runs at 9/9 each;
+- a 2.0 → 2.1 → 2.0 installation with real SQLite state, recovery of an unsaved form and Undo/Redo;
+- checks of both VSIX packages.
 
-Базовый пакет 2.0 восстановлен из исходного состояния `72a4ee3`; это не утверждение о ранее опубликованном VSIX.
+The 2.0 base package was rebuilt from the source state `72a4ee3`; this is not a statement about a previously published VSIX.
 
-Сужения формулировок R21 записаны явно в разделе «Limits of this evidence». Команды, границы и машинные отчёты перечислены в [отчёте 2.1.0](release-2.1.0.md).
+The narrowings of the R21 wording are recorded explicitly in the “Limits of this evidence” section. The commands, boundaries and machine reports are listed in the [2.1.0 report](release-2.1.0.md).
 
-**Ценность:** пользователь быстро понимает, почему форма не открывается полностью, какая библиотека требуется и что именно сделает восстановление.
+**Value:** the user quickly understands why a form does not open completely, which library is required and what exactly recovery will do.
 
-**Работы:**
+**Work items:**
 
-- [x] **R21-01. Панель состояния формы.** Показать resolved project/TFM, engine/runtime/architecture, выбранную culture, источник preview, последнюю успешную сборку и ограниченные capabilities. Подробности раскрываются по необходимости.
-- [x] **R21-02. Единый каталог причин.** Связать refusal code с конкретным объектом, свойством или assembly и действием: rebuild, выбрать assembly, перейти к коду, сбросить повреждённый cache или повторить render.
-- [x] **R21-03. Диагностика bitness.** Учитывать evaluated project configuration, `PlatformTarget`, `Prefer32Bit`, PE architecture и native dependencies на обеих runtime-ветках. Различать «точно x86», «архитектура неизвестна» и «неподдерживаемый ActiveX».
-- [x] **R21-04. Явный COM request contract.** Подключить именованный отказ для toolbox/API-запросов, чтобы неподдерживаемость не зависела только от скрытой вкладки webview. Сохранить существующий source-level ActiveX gate.
-- [x] **R21-05. Диагностика adapter manifests.** Развить уже подключённый registry: объяснять несовместимый диапазон версий и runtime, дубликаты и невалидные capabilities. Принятый manifest не должен выглядеть как активированный исполняемый адаптер.
-- [x] **R21-06. Восстановление среды.** Команды пересоздания кеша, повторного обнаружения контролов и перезапуска worker показывают ожидаемый результат; пользовательские файлы и несохранённые документы сохраняются.
-- [x] **R21-07. Реальная миграция настроек.** Инвентаризировать существующие configuration, global/workspace mementos, toolbox cache, journal и backup: producer, consumer, версия, жизненный цикл. Сохранить работающую toolbox scope migration. Менять формат только при продуктовой необходимости; `v2Migration` переиспользовать после проверки пригодности, а не создавать новый cache ради подключения helper. Проверять фактически выпущенные состояния, повреждение, незавершённое обновление и возврат к выбранной поддерживаемой версии.
-- [x] **R21-08. Воспроизводимый diagnostic bundle.** Версии, capability decisions, тайминги и correlation IDs экспортируются с ограничением размера и очисткой приватных путей/данных; исходники прикладываются только отдельным осознанным действием.
+- [x] **R21-01. Form status panel.** Show the resolved project/TFM, engine/runtime/architecture, the selected culture, the preview source, the last successful build and the limited capabilities. Details expand on demand.
+- [x] **R21-02. A single catalog of reasons.** Link a refusal code to a specific object, property or assembly and to an action: rebuild, pick an assembly, go to the code, reset a corrupted cache or retry the render.
+- [x] **R21-03. Bitness diagnostics.** Take into account the evaluated project configuration, `PlatformTarget`, `Prefer32Bit`, the PE architecture and native dependencies on both runtime branches. Distinguish “definitely x86”, “architecture unknown” and “unsupported ActiveX”.
+- [x] **R21-04. An explicit COM request contract.** Wire in a named refusal for toolbox/API requests so that the lack of support does not depend only on a hidden webview tab. Keep the existing source-level ActiveX gate.
+- [x] **R21-05. Adapter manifest diagnostics.** Build on the registry that is already wired in: explain an incompatible version range and runtime, duplicates and invalid capabilities. An accepted manifest must not look like an activated executable adapter.
+- [x] **R21-06. Environment recovery.** The commands that rebuild the cache, rediscover controls and restart the worker show the expected result; user files and unsaved documents are preserved.
+- [x] **R21-07. Real settings migration.** Inventory the existing configuration, global/workspace mementos, toolbox cache, journal and backup: producer, consumer, version, lifecycle. Keep the working toolbox scope migration. Change a format only when the product needs it; reuse `v2Migration` after checking that it is fit for purpose rather than creating a new cache just to wire in a helper. Verify the states actually released, corruption, an unfinished upgrade and a return to the chosen supported version.
+- [x] **R21-08. A reproducible diagnostic bundle.** Versions, capability decisions, timings and correlation IDs are exported with a size limit and with private paths/data scrubbed; sources are attached only by a separate deliberate action.
 
-**Приёмка:** product Extension Host открывает исправную, частично поддержанную и ошибочную форму; показывает разные причины; выполняет соответствующее восстановление; сохраняет состояние документа. Старая установка действительно обновляется и откатывается, а не только проходит JSON helper test.
+**Acceptance:** the product Extension Host opens a healthy, a partially supported and a faulty form; shows different reasons; performs the corresponding recovery; preserves the document state. An old installation is really upgraded and rolled back, rather than only passing a JSON helper test.
 
-User settings, перестраиваемый cache и единственная копия несохранённых данных имеют разные правила. При downgrade старый build не должен уничтожать неизвестный backup/history format: до переключения нужен совместимый backup либо явно сохранённая копия данных с проверкой восстановления. Команда очистки cache не удаляет recovery данные.
+User settings, a rebuildable cache and the only copy of unsaved data follow different rules. On a downgrade, the old build must not destroy an unknown backup/history format: before switching there must be a compatible backup or an explicitly saved copy of the data with a verified restore. The cache-clearing command does not delete recovery data.
 
-**Зависимости:** база 2.0, `tierDCompatibility`, project resolver, registry, diagnostics и migration. Диагностика x86 не включает поддержку запуска x86 worker.
+**Dependencies:** the 2.0 baseline, `tierDCompatibility`, the project resolver, the registry, diagnostics and migration. x86 diagnostics do not include support for running an x86 worker.
 
-### 2.2.0 — рабочий протокол и управление процессами
+### 2.2.0 — working protocol and process management
 
-**Ценность:** быстрые действия, смена формы, отмена и сбой библиотеки не приводят к запоздалому preview, зависшей сессии или чужому ответу в активном документе.
+**Value:** fast actions, switching forms, cancellation and a library failure do not lead to a late preview, a hung session or someone else's reply in the active document.
 
-**Работы:**
+**Work items:**
 
-- [x] **R22-01. Characterization перед выделением модулей.** Зафиксировать DTO, коды ошибок, геометрию, минимальный diff и Undo существующего трафика. Извлекать session/commands/render/lifecycle небольшими изменениями.
-- [x] **R22-02. Version negotiation.** Реальные extension и engines согласуют protocol range, capabilities и binary build identity. Номер wire-протокола версионируется независимо от SemVer расширения.
-- [x] **R22-03. Render/describe через envelope.** Перевести открытие, render, hit-test/selection metadata и property describe на session/document/request IDs, revision/generation, deadline и cancellation.
-- [x] **R22-04. Mutations через тот же контракт.** Перевести property, geometry, structural, events и resource intents. До переключения задать стабильный operation ID отдельно от request attempt ID, fingerprint payload и commit-outcome record у единственного host commit owner на базе существующего journal. Повтор операции возвращает установленный результат без второго diff/Undo; тот же ID с другим payload отвергается. Неизвестный исход после crash сначала разрешается по journal и фактическим baselines. Этот минимальный механизм входит в 2.2, а не откладывается до общей истории 2.3.
-- [x] **R22-05. Подключить supervisor к продукту.** Перенести владение обычными workers из диагностического proof в реальный lifecycle, сохранив уже работающие lazy start, warm reuse, idle exit и rebuild release.
-- [x] **R22-06. Worker identity.** Зафиксировать эффективный owner project/configuration/TFM/platform и fingerprint зависимостей на базе существующего resolver. Определить ключи runtime × architecture × dependency graph × trust policy. Сессии несовместимых проектов не переиспользуют случайно один graph; число резидентных процессов ограничено настройкой и бюджетом.
-- [x] **R22-07. Quotas и backpressure.** Ограничить очередь, размер payload, время исполнения, память и handle growth. Metadata/render requests можно объединять; изменяющие команды нельзя терять при throttling.
-- [x] **R22-08. Partial update и recovery.** Проверить несовпавшие extension/engine версии, отсутствующий payload, late reply после recycle, повторный crash и отмену во время закрытия документа. Повреждённая установка даёт действие восстановления.
+- [x] **R22-01. Characterization before extracting modules.** Record the DTOs, error codes, geometry, minimal diff and Undo of the existing traffic. Extract session/commands/render/lifecycle in small changes.
+- [x] **R22-02. Version negotiation.** The real extension and engines negotiate the protocol range, capabilities and binary build identity. The wire protocol number is versioned independently of the extension's SemVer.
+- [x] **R22-03. Render/describe through the envelope.** Move opening, render, hit-test/selection metadata and property describe to session/document/request IDs, revision/generation, deadline and cancellation.
+- [x] **R22-04. Mutations through the same contract.** Move property, geometry, structural, events and resource intents. Before the switch, define a stable operation ID separate from the request attempt ID, a payload fingerprint and a commit-outcome record held by the single host commit owner on top of the existing journal. Repeating an operation returns the established result without a second diff/Undo; the same ID with a different payload is rejected. An unknown outcome after a crash is first resolved from the journal and the actual baselines. This minimal mechanism is part of 2.2 and is not deferred to the general history of 2.3.
+- [x] **R22-05. Connect the supervisor to the product.** Move ownership of ordinary workers from the diagnostic proof into the real lifecycle, keeping the already working lazy start, warm reuse, idle exit and rebuild release.
+- [x] **R22-06. Worker identity.** Fix the effective owner project/configuration/TFM/platform and the dependency fingerprint on top of the existing resolver. Define keys of runtime × architecture × dependency graph × trust policy. Sessions of incompatible projects do not accidentally reuse one graph; the number of resident processes is limited by a setting and a budget.
+- [x] **R22-07. Quotas and backpressure.** Limit the queue, payload size, execution time, memory and handle growth. Metadata/render requests may be coalesced; mutating commands must not be lost under throttling.
+- [x] **R22-08. Partial update and recovery.** Verify mismatched extension/engine versions, a missing payload, a late reply after a recycle, a repeated crash and cancellation while the document is closing. A damaged installation produces a recovery action.
 
-**Порядок внедрения:** read-only requests → источник patch proposals → остальные mutations → lifecycle ownership. В переходный период допустим адаптер к прежнему transport; одна команда всегда имеет одного владельца и один write path.
+**Rollout order:** read-only requests → the source of patch proposals → the remaining mutations → lifecycle ownership. During the transition an adapter to the previous transport is allowed; one command always has one owner and one write path.
 
-Граница повторения фиксируется до миграции: срок хранения operation records, restart, закрытие документа, новый revision и очистка journal. Vendor callback с неизвестным исходом автоматически не повторяется: отсутствие второго workspace diff не исключает внешних эффектов кода. Legacy peer без нужного контракта использует проверку состояния и явный отказ от автоматического retry. При переключении на прежний маршрут сначала завершаются или восстанавливаются in-flight команды; их IDs и journal не отбрасываются.
+The retry boundary is fixed before the migration: the retention period of operation records, restart, closing the document, a new revision and journal cleanup. A vendor callback with an unknown outcome is not retried automatically: the absence of a second workspace diff does not rule out external effects of the code. A legacy peer without the required contract uses a state check and an explicit refusal of automatic retry. When switching to the previous route, in-flight commands are completed or recovered first; their IDs and journal are not discarded.
 
-**Приёмка:** drag/property/resource/save/rebuild/crash выполняются через настоящий supervisor на modern и net48. Диагностический probe не заменяет эти проверки. Тесты искусственно переставляют ответы, отменяют запросы, убивают worker и открывают два несовместимых проекта.
+**Acceptance:** drag/property/resource/save/rebuild/crash run through the real supervisor on modern and net48. The diagnostic probe does not replace these checks. The tests artificially reorder replies, cancel requests, kill the worker and open two incompatible projects.
 
-**Откат:** прекратить приём новых операций, завершить либо восстановить/компенсировать pending transactions, сохранить dirty buffers и backups, инвалидировать прежние generations и снять worker ownership; после этого включать прежний маршрут. При неопределённом исходе переключение ждёт reconciliation и не создаёт второго commit owner. Перезапуск Extension Host допустим как документированное условие. Проверить откат во время pending edit и после записи journal, а не только на idle форме. До включения по умолчанию новая ветка не уступает baseline по корректности и установленным задержкам.
+**Rollback:** stop accepting new operations, complete or recover/compensate the pending transactions, preserve dirty buffers and backups, invalidate the previous generations and release worker ownership; only then enable the previous route. With an undetermined outcome the switch waits for reconciliation and does not create a second commit owner. Restarting the Extension Host is acceptable as a documented condition. Verify the rollback during a pending edit and after a journal write, not only on an idle form. Before it is enabled by default, the new branch is no worse than the baseline in correctness and in the established latencies.
 
-### 2.3.0 — единый документ, история и восстановление
+### 2.3.0 — a single document, history and recovery
 
-**Ценность:** несколько дизайнерских действий и связанных файлов переживают закрытие окна, перезапуск VS Code и внешнюю правку без потери работы.
+**Value:** several designer actions and linked files survive closing the window, restarting VS Code and an external edit without losing work.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R23-01. Полное владение документом.** Разделить on-disk bytes, unsaved editor buffers, durable journal и transient preview. Отдельно определить несколько CustomEditor views одного документа и сосуществование со стандартным TextDocument: общий источник данных не означает общий native Undo stack. До расширения выполнить техническую пробу на публичном API и минимальном/current VS Code.
-- [ ] **R23-02. Все writers в общую транзакцию.** Свести property, geometry, events, source/resource/project edits к одному orchestration contract на базе существующих PatchSet и journal.
-- [ ] **R23-03. Несколько Undo после hot exit.** После технической пробы расширить доказанный единичный сценарий до ограниченной истории, например 20 операций. Сериализовать проверяемые изменения и checkpoints, а не callbacks. Раздельно проверить undo применённых операций, новое redo после undo и восстановление redo-ветки, уже существовавшей до выхода. Последний сценарий включается только при доказанной поддержке публичным API; иначе публикуется ограничение с сохранением последнего состояния документа.
-- [ ] **R23-04. Многофайловое восстановление.** Отработать создание event handler, localized control add/delete, image import и Save As со связанными артефактами. Journal должен различать применённое, компенсированное и требующее ручного решения.
-- [ ] **R23-05. External change UX.** При внешнем изменении показать затронутые файлы и безопасные варианты: reload, сохранить текущую работу под другим именем, открыть diff. Автоматическая компенсация не перезаписывает чужие байты.
-- [ ] **R23-06. Save As и перемещение путей.** Проверить collision, изменение файловых путей, casing Windows, open buffers, связанные cultures и project membership для поддержанного Save As. Сохранение или преобразование generated names/namespace описать явно; общий semantic rename подключается к этому recovery contract в 2.9.
-- [ ] **R23-07. Recovery timeline.** Показывать последние операции, сбой и доступную точку восстановления без автоматического раскрытия исходников в diagnostic logs.
-- [ ] **R23-08. Crash injection.** Покрыть остановку после prepare, каждого write, регистрации Undo и commit; отдельно — read-only файл, нехватку места, отмену и изменение файла другим процессом.
+- [ ] **R23-01. Full document ownership.** Separate on-disk bytes, unsaved editor buffers, the durable journal and the transient preview. Separately define several CustomEditor views of one document and coexistence with the standard TextDocument: a shared data source does not mean a shared native Undo stack. Before extending, run a technical probe on the public API and on the minimum/current VS Code.
+- [ ] **R23-02. All writers in a shared transaction.** Bring property, geometry, events, source/resource/project edits under one orchestration contract on top of the existing PatchSet and journal.
+- [ ] **R23-03. Several Undo steps after hot exit.** After the technical probe, extend the proven single scenario to a bounded history, for example 20 operations. Serialize verifiable changes and checkpoints, not callbacks. Separately verify undo of applied operations, a new redo after undo and restoring a redo branch that already existed before exit. The last scenario is enabled only if support by the public API is proven; otherwise a limitation is published and the last document state is preserved.
+- [ ] **R23-04. Multi-file recovery.** Work through creating an event handler, localized control add/delete, image import and Save As with linked artifacts. The journal must distinguish applied, compensated and requiring a manual decision.
+- [ ] **R23-05. External change UX.** On an external change, show the affected files and safe options: reload, save the current work under another name, open a diff. Automatic compensation does not overwrite someone else's bytes.
+- [ ] **R23-06. Save As and path moves.** Verify collision, changed file paths, Windows casing, open buffers, linked cultures and project membership for the supported Save As. Describe explicitly whether generated names/namespace are kept or transformed; general semantic rename is connected to this recovery contract in 2.9.
+- [ ] **R23-07. Recovery timeline.** Show the latest operations, the failure and the available restore point without automatically exposing sources in diagnostic logs.
+- [ ] **R23-08. Crash injection.** Cover a stop after prepare, after each write, after Undo registration and after commit; separately, a read-only file, lack of disk space, cancellation and a change to the file by another process.
 
-**Приёмка:** реальные два запуска VS Code восстанавливают несколько действий и несколько артефактов на обеих engines; save и отмена дают ожидаемые хеши. Ограничение длины истории и поведение при превышении лимита документированы.
+**Field findings from 2.2.0.** On 12 October 2026 an installed 2.2.0 opened a real solution of two single-target `net48` projects with a shared source tree: one project includes the files through explicit `<Compile Include … Link>` items, the other imports the same directory as a `.projitems`. The tasks below are unrelated to the document-and-history theme; they are included in 2.3.0 as maintenance of already declared workflows and, if moved, remain visible under their IDs.
 
-**Ранняя техническая проба:** dirty и clean checkpoint, Save/Save All/auto-save посреди истории, закрытие с непустой redo-веткой, смена фокуса между designer/code, внешние и чередующиеся ручные правки, частичный отказ Undo, два разных документа и два CustomEditor views одного документа. При отрицательном результате базовое обязательство — восстановление данных и доказанного набора логических транзакций; общая native history и дополнительные views остаются явно ограниченными. Частный workbench API не используется как обход. Объём истории и обновлённый сценарий приёмки фиксируются до разработки широкого recovery UI.
+- [ ] **R23-09. Choosing the project context for a file with several owners.** Today `ResolveDesignerDocumentOwner` picks the owner itself only where the choice does not affect the render: all contenders provably go to the modern engine. If at least one contender is `net4x`, multi-target or declares its TFM outside its own project file, the result remains `AMBIGUOUS_OWNER`: the form does not open and the product offers no action. The gate's concern is justified: in the solution found, the owners have different `DefineConstants` and the compiled binaries can differ, so no automatic choice is added. Instead: on a refusal with a list of owners, the host offers a choice of project; the chosen project goes through the same file-membership check in the engine again; the choice is remembered for the document in workspace state and changed by a separate command; cancelling leaves the previous refusal. The chosen owner determines the net48 binary for the preview and the source tree for events. A stale choice, where the project no longer compiles the file, is not applied silently. For `AMBIGUOUS_OWNER`, the R21-02 catalog of reasons gets the choice action instead of the general advice to resolve the ambiguity. The task is a narrow early slice of R29-06: choosing configuration/TFM/platform and moving between projects stay there. The change touches the pre-render gate and requires new tests: engine unit tests and an Extension Host test on the existing `OwnerAmbiguous` fixture.
+- [ ] **R23-10. Toolbox auto-discovery budget.** On the same solution the pass finished with `controls=0; truncated=true` although the project compiles its own controls. There are three causes. First: the roots `bin`, `bin\Debug` and `bin\Release` are nested in one another and deduplication is done only by root, so every directory is walked twice and spends the file budget: 29 directories and 396 files skipped by the budget for 77 DLLs in the output. Second: the reflection limit of 24 assemblies is applied in alphabetical order, and on this output it is taken up entirely by native and third-party libraries without WinForms controls. Third: only `*.dll` files are candidates, so the own output of a project with `OutputType=Exe` does not enter the pass; before changing this, check whether another route covers it. Work: deduplicate directories across nested roots; before spending the reflection budget, cheaply filter out candidates that are certainly empty, for example non-managed PE files and satellite `*.resources.dll`; check the output of the owner and of its `ProjectReference` items first, then the rest; decide and record the behavior for `.exe`. The budgets stay bounded, and the log names the checked and the skipped assemblies so that a truncated result is explainable. Tests: unit tests for nested roots and for an output whose alphabetically first assemblies contain no controls.
+- [ ] **R23-11. MSBuild evaluation with a pinned old SDK.** The solution's `global.json` pins an SDK whose MSBuild is older than 17.8 and does not know `-getProperty`; the evaluation ends with `MSB1001` and exit code 1. The engine correctly falls back to searching `bin`, so the render is not affected, but the failed launch repeats after the 10-second negative TTL and writes a log line each time. For a single-target `net4x` project the evaluation result is discarded anyway as not loadable in the modern host. Work: do not launch the evaluation when the project's own file unambiguously declares a single-target Framework TFM; remember the “switch not supported” outcome per project and SDK version rather than for 10 seconds; show the reason once as a named item of the R21-01 status panel instead of a raw log line. A separate evidence-backed decision: whether a way to obtain `TargetPath` on an old MSBuild is needed for modern projects with a pinned SDK, or the documented fallback is enough.
+- [ ] **R23-12. Worker exit reason in the log.** When a second document was opened, the log showed `[engine] exited null` with no reason. The `null` code means that the host itself terminated the process, not that the worker crashed, but the log does not say so; which lifecycle route terminated the worker was not established during the analysis. Work: establish the route; write the exit reason to the log (idle exit, release after a build, recycle, generation replacement) and distinguish it from an abnormal exit; use the same reasons in the R21-08 diagnostic bundle.
 
-**Техническая граница:** backup восстанавливает данные; произвольные process objects, делегаты и сериализованные vendor graphs не становятся форматом документа. Поведение сверяется с [Custom Editor API VS Code](https://code.visualstudio.com/api/extension-guides/custom-editors), включая собственную ответственность расширения за backup и редактируемые custom documents.
+**Acceptance:** two real VS Code launches restore several actions and several artifacts on both engines; save and undo produce the expected hashes. The history length limit and the behavior when the limit is exceeded are documented.
 
-### 2.4.0 — hosted services и Adapter SDK Preview
+**Acceptance of the field findings:** the Extension Host opens a file that two `net48` projects compile: without a choice, a named refusal with an action; after a choice, a preview from the chosen project's binary; after a cancel and with a stale choice, a refusal again. Auto-discovery on an output with nested roots and more than 24 assemblies finds the project's controls or names the assemblies it did not check. A project whose `global.json` pins an old SDK opens without repeated failed MSBuild launches, and a worker terminated by the host itself is distinguishable in the log from a crash.
 
-**Ценность:** разработчик библиотеки может добавить специальные дизайнерские команды и редакторы через воспроизводимый публичный контракт.
+**Early technical probe:** dirty and clean checkpoint, Save/Save All/auto-save in the middle of the history, closing with a non-empty redo branch, switching focus between designer/code, external and interleaved manual edits, a partial Undo failure, two different documents and two CustomEditor views of one document. On a negative result the baseline commitment is recovery of the data and of the proven set of logical transactions; shared native history and additional views remain explicitly limited. A private workbench API is not used as a workaround. The history size and the updated acceptance scenario are fixed before a broad recovery UI is developed.
 
-**Работы:**
+**Technical boundary:** a backup restores data; arbitrary process objects, delegates and serialized vendor graphs do not become a document format. The behavior is checked against the [VS Code Custom Editor API](https://code.visualstudio.com/api/extension-guides/custom-editors), including the extension's own responsibility for backup and editable custom documents.
 
-- [ ] **R24-01. Реестр service contracts.** Для container/siting, selection, component change, naming, command, toolbox, type resolution и serialization задать методы, STA/lifetime, cancellation, reentrancy и поведение отказа.
-- [ ] **R24-02. Расширить существующий kernel.** Добавлять service по одному на modern/net48 с реальным вызовом из UI. Ненулевой `IDesignerHost` не считается достаточным доказательством полноты.
-- [ ] **R24-03. SDK 0.x.** Предоставить schema, typed intents/results, capability declaration, package layout, sample adapter, host compatibility matrix и инструкцию диагностики. Preview несовместимости обозначаются версией SDK и migration notes.
-- [ ] **R24-04. Loader поверх registry.** Проверять реальные файлы, hashes, подпись/происхождение по выбранной политике, product cohort и trust settings до загрузки. Строка `signed-vendor` в JSON не выдаёт права на исполнение.
-- [ ] **R24-05. Trusted development mode.** Автор своего адаптера может явно включить локальную разработку без утверждения vendor certification. Режим изолирован от сертифицированной product-матрицы.
-- [ ] **R24-06. Editors broker.** Расширить supported modal/dropdown editors: ownership native окна, фокус, Escape/Cancel, timeout, nested invocation, тип и invariant representation результата.
-- [ ] **R24-07. Adorners и smart tags.** Описать стабильные hit targets, клавиатурную альтернативу, disabled reasons и маршрут команды в source transaction. Render-only embellishment не получает write authority.
-- [ ] **R24-08. Lane B по доказанным типам операций.** Расширять owned-region serialization только для случаев с независимыми postconditions; неизвестные statements, ресурсы, encoding и пользовательские partials сохраняются.
-- [ ] **R24-09. Conformance runner.** Независимый sample собирается вне исходников расширения и проходит success/refusal/cancel/undo/restart без private test hooks.
+### 2.4.0 — hosted services and Adapter SDK Preview
 
-**Приёмка:** два sample adapters показывают разные контракты — designer action и property editor. Неполный service, изменённый assembly, неправильный тип результата и revoked enablement блокируются до mutation. Публикуется точный список возможностей SDK Preview.
+**Value:** a library developer can add special designer commands and editors through a reproducible public contract.
 
-**До фиксации SDK Preview:** проверить один настоящий modern designer/editor на `Microsoft.WinForms.Designer.SDK` и отдельный classic sample на `System.Design`. Записать assembly/API identities, требуемые services и границу native UI. Проба отвечает, возможна ли прямая интеграция или нужен явный адаптер; собственный sample SDK не доказывает совместимость существующих vendor binaries. Если требуются недокументированные VS/DesignToolsServer protocols или неподтверждённые redistributable binaries, такой вариант отклоняется по ADR 0003. Решение принимается до обещания первой vendor cohort.
+**Work items:**
 
-**Зависимости:** product supervisor, единая command authority, migration и transaction recovery. Modern designers и net48 designers проверяются отдельно: официальная модель [WinForms design-time API](https://learn.microsoft.com/en-us/dotnet/desktop/winforms/controls-design/designer-differences-framework) различает их namespace и взаимодействие editor UI.
+- [ ] **R24-01. Registry of service contracts.** For container/siting, selection, component change, naming, command, toolbox, type resolution and serialization, define the methods, STA/lifetime, cancellation, reentrancy and refusal behavior.
+- [ ] **R24-02. Extend the existing kernel.** Add services one at a time on modern/net48 with a real call from the UI. A non-null `IDesignerHost` is not considered sufficient proof of completeness.
+- [ ] **R24-03. SDK 0.x.** Provide the schema, typed intents/results, capability declaration, package layout, a sample adapter, a host compatibility matrix and a diagnostics guide. Preview incompatibilities are marked by the SDK version and migration notes.
+- [ ] **R24-04. A loader on top of the registry.** Verify the real files, hashes, signature/provenance under the chosen policy, product cohort and trust settings before loading. The string `signed-vendor` in JSON does not grant execution rights.
+- [ ] **R24-05. Trusted development mode.** The author of their own adapter can explicitly enable local development without a claim of vendor certification. The mode is isolated from the certified product matrix.
+- [ ] **R24-06. Editors broker.** Extend the supported modal/dropdown editors: native window ownership, focus, Escape/Cancel, timeout, nested invocation, and the type and invariant representation of the result.
+- [ ] **R24-07. Adorners and smart tags.** Describe stable hit targets, a keyboard alternative, disabled reasons and the route of a command into a source transaction. A render-only embellishment does not get write authority.
+- [ ] **R24-08. Lane B by proven operation types.** Extend owned-region serialization only for cases with independent postconditions; unknown statements, resources, encoding and user partials are preserved.
+- [ ] **R24-09. Conformance runner.** An independent sample is built outside the extension sources and passes success/refusal/cancel/undo/restart without private test hooks.
 
-### 2.5.0 — первая vendor cohort и расширенные редакторы
+**Acceptance:** two sample adapters demonstrate different contracts: a designer action and a property editor. An incomplete service, a modified assembly, a wrong result type and revoked enablement are blocked before mutation. The exact list of SDK Preview capabilities is published.
 
-**Ценность:** разработчик реального приложения знает, какие возможности конкретной версии библиотеки работают, и использует её основные дизайнерские инструменты.
+**Before the SDK Preview is fixed:** verify one real modern designer/editor on `Microsoft.WinForms.Designer.SDK` and a separate classic sample on `System.Design`. Record the assembly/API identities, the required services and the native UI boundary. The probe answers whether direct integration is possible or an explicit adapter is needed; the project's own SDK sample does not prove compatibility of existing vendor binaries. If undocumented VS/DesignToolsServer protocols or unconfirmed redistributable binaries are required, that option is rejected under ADR 0003. The decision is made before the first vendor cohort is promised.
 
-**Работы:**
+**Dependencies:** the product supervisor, a single command authority, migration and transaction recovery. Modern designers and net48 designers are verified separately: the official [WinForms design-time API](https://learn.microsoft.com/en-us/dotnet/desktop/winforms/controls-design/designer-differences-framework) model distinguishes their namespaces and the interaction of the editor UI.
 
-- [ ] **R25-01. Выбрать cohort по доступности.** Первая кандидатура — DevExpress, поскольку в репозитории есть sample и опыт интеграции. Выбор точной версии зависит от доступных лицензированных артефактов; он не считается сделанным заранее.
-- [ ] **R25-02. Сертификационный паспорт.** Зафиксировать product/version, assembly hashes, .NET/architecture, required services, editor types, известные исключения и версию reference environment.
-- [ ] **R25-03. Основной пользовательский путь.** Открыть форму с vendor controls; выбрать, изменить стандартные и специальные свойства; выполнить action list; отредактировать поддержанную коллекцию; save/undo/reopen/build.
-- [ ] **R25-04. Прикладные редакторы.** Выбрать востребованные коллекции: grid columns, tab pages, menu items или layout items. Для каждого описать идентичность элементов, имена, ссылки, ordering и сохранение неизвестных свойств.
-- [ ] **R25-05. Сосуществование версий.** Два проекта с разными версиями одной suite работают без подмены assembly graph. Обновление библиотеки инвалидирует только относящиеся к ней cache/certification decisions.
-- [ ] **R25-06. Vendor failure corpus.** Проверить зависание, исключение converter/editor, невалидный result, licensing failure и native dependency mismatch. Ошибка одного editor не отменяет здоровые документы.
-- [ ] **R25-07. Cross-tool round trip.** Архивировать VS Code → Visual Studio → VS Code с ожидаемыми semantic/source/resource changes и нормальным runtime build.
-- [ ] **R25-08. Управление адаптером.** Включение, отключение, обновление и возврат предыдущей версии сохраняют документ и дают понятный статус совместимости.
+### 2.5.0 — the first vendor cohort and extended editors
 
-**Приёмка:** хотя бы одна точная cohort имеет полноценный паспорт и проходит порог Tier C. Все обязательные сценарии и проверки целостности проходят полностью. Прочие vendor versions остаются generic/best effort или unsupported по фактическим capabilities.
+**Value:** the developer of a real application knows which capabilities of a specific library version work and uses its main designer tools.
 
-**Если артефакты недоступны:** выпускать общие улучшения editors под точным названием, а пункт сертификации оставлять `GATED`. `FakeVendor` сохраняет роль тестового fixture и никогда не подменяет независимую vendor cohort.
+**Work items:**
 
-### 2.6.0 — большие формы, точная компоновка и отзывчивость
+- [ ] **R25-01. Choose the cohort by availability.** The first candidate is DevExpress, because the repository has a sample and integration experience. The choice of the exact version depends on the licensed artifacts available; it is not considered made in advance.
+- [ ] **R25-02. Certification passport.** Record the product/version, assembly hashes, .NET/architecture, required services, editor types, known exceptions and the version of the reference environment.
+- [ ] **R25-03. Main user path.** Open a form with vendor controls; select and change standard and special properties; run an action list; edit a supported collection; save/undo/reopen/build.
+- [ ] **R25-04. Applied editors.** Choose the collections in demand: grid columns, tab pages, menu items or layout items. For each, describe the identity of the elements, names, references, ordering and preservation of unknown properties.
+- [ ] **R25-05. Coexistence of versions.** Two projects with different versions of one suite work without the assembly graph being substituted. Upgrading the library invalidates only the cache/certification decisions that relate to it.
+- [ ] **R25-06. Vendor failure corpus.** Verify a hang, a converter/editor exception, an invalid result, a licensing failure and a native dependency mismatch. A failure of one editor does not cancel healthy documents.
+- [ ] **R25-07. Cross-tool round trip.** Archive VS Code → Visual Studio → VS Code with the expected semantic/source/resource changes and a normal runtime build.
+- [ ] **R25-08. Adapter management.** Enabling, disabling, upgrading and returning to the previous version preserve the document and give a clear compatibility status.
 
-**Ценность:** форма с сотнями контролов остаётся удобной для поиска, выбора, редактирования и перемещения между вложенными контейнерами.
+**Acceptance:** at least one exact cohort has a complete passport and passes the Tier C threshold. All mandatory scenarios and integrity checks pass in full. Other vendor versions remain generic/best effort or unsupported according to their actual capabilities.
 
-**Работы:**
+**If the artifacts are unavailable:** ship the general editor improvements under an exact name and leave the certification item `GATED`. `FakeVendor` keeps its role as a test fixture and never substitutes for an independent vendor cohort.
 
-- [ ] **R26-01. Реальный performance corpus.** Зафиксировать обязательные standard/custom-managed формы на 50/300/1000 контролов: вложенные, data-bound и localizable. Vendor corpus измерять отдельной проверкой при наличии артефактов; его отсутствие не блокирует managed performance milestone и не закрывает vendor acceptance. Указывать число layout nodes и глубину дерева, а не только число полей.
-- [ ] **R26-02. Расширить incremental updates.** Существующий retained Text/leaf render использовать как исходную точку. Добавлять доказанные invalidation kinds для property, geometry и container updates; неоднозначный случай вызывает корректный полный render.
-- [ ] **R26-03. Property grid и outline.** Ввести virtualization там, где profiling показывает пользу, сохранив стабильную selection identity, поиск, раскрытие, клавиатурную навигацию и accessibility tree.
-- [ ] **R26-04. Работа с layout constraints.** Отображать причины недоступной геометрии: Dock, Anchor, AutoSize, TableLayoutPanel, FlowLayoutPanel, SplitContainer и inherited ownership. Предлагать подходящую команду контейнера.
-- [ ] **R26-05. Массовая геометрия.** Расширить существующее выравнивание и multi-selection: равные интервалы, распределение внутри контейнера, resize группы и осмысленный preview при ограничениях. Все цели проверяются до общей mutation.
-- [ ] **R26-06. Навигация по сложной форме.** Поиск по name/type/text, переход от свойства к control, breadcrumb контейнера, поиск скрытого или перекрытого элемента и временная визуальная подсветка без изменения Visible/source.
-- [ ] **R26-07. Динамические metadata.** Инвалидировать descriptor/cache по изменениям зависимых свойств; зависший converter не блокирует всю панель. Кеширование не выдаёт устаревший editor или dropdown.
-- [ ] **R26-08. Несколько открытых форм.** Приоритет активной сессии, остановка ненужного render и ограничение резидентных surfaces. Смена активного документа не теряет selection, zoom и несохранённое состояние.
-- [ ] **R26-09. Измерения полного действия.** Разделить input→feedback, command→commit, commit→authoritative render, cold open и warm open. Отчёт включает samples, p50/p95, outliers и причины полного render.
+### 2.6.0 — large forms, precise layout and responsiveness
 
-**Начальные целевые бюджеты для калибровки:**
+**Value:** a form with hundreds of controls remains convenient for searching, selecting, editing and moving between nested containers.
 
-| Операция | Цель на зафиксированной машине и corpus | Как принимать |
+**Work items:**
+
+- [ ] **R26-01. A real performance corpus.** Fix the mandatory standard/custom-managed forms of 50/300/1000 controls: nested, data-bound and localizable. Measure the vendor corpus as a separate check when artifacts are available; its absence does not block the managed performance milestone and does not close vendor acceptance. State the number of layout nodes and the tree depth, not only the number of fields.
+- [ ] **R26-02. Extend incremental updates.** Use the existing retained Text/leaf render as the starting point. Add proven invalidation kinds for property, geometry and container updates; an ambiguous case triggers a correct full render.
+- [ ] **R26-03. Property grid and outline.** Introduce virtualization where profiling shows a benefit, keeping stable selection identity, search, expansion, keyboard navigation and the accessibility tree.
+- [ ] **R26-04. Working with layout constraints.** Show the reasons geometry is unavailable: Dock, Anchor, AutoSize, TableLayoutPanel, FlowLayoutPanel, SplitContainer and inherited ownership. Offer the suitable container command.
+- [ ] **R26-05. Bulk geometry.** Extend the existing alignment and multi-selection: equal spacing, distribution within a container, group resize and a meaningful preview under constraints. All targets are verified before the shared mutation.
+- [ ] **R26-06. Navigating a complex form.** Search by name/type/text, jump from a property to a control, a container breadcrumb, finding a hidden or overlapped element and a temporary visual highlight without changing Visible/source.
+- [ ] **R26-07. Dynamic metadata.** Invalidate the descriptor/cache on changes to dependent properties; a hung converter does not block the whole panel. Caching does not return a stale editor or dropdown.
+- [ ] **R26-08. Several open forms.** Priority for the active session, stopping an unneeded render and limiting resident surfaces. Switching the active document does not lose selection, zoom or unsaved state.
+- [ ] **R26-09. Measurements of the full action.** Separate input→feedback, command→commit, commit→authoritative render, cold open and warm open. The report includes samples, p50/p95, outliers and the reasons for a full render.
+
+**Initial target budgets for calibration:**
+
+| Operation | Target on the fixed machine and corpus | How to accept |
 |---|---|---|
-| Локальная обратная связь canvas | p95 ≤16,7 мс для кадра при 60 Гц | Pointer/keyboard feedback; без требования полного WinForms repaint каждый кадр |
-| Warm scalar commit, простая форма | p95 ≤100 мс | От отправки intent до подтверждения transaction |
-| Warm scalar commit, 300 контролов | p95 ≤250 мс | Commit и render измеряются отдельно |
-| Полное scalar edit → authoritative canvas | Порог по каждому corpus/runtime утверждается на пилоте до freeze | Один operation ID от UI input до правильных pixels/layout/properties; быстрый commit без обновлённого preview не считается завершённым действием |
-| Warm open, 300 контролов | p95 ≤3 с modern / ≤5 с net48 | Готовность корректного canvas и properties |
-| 1000 контролов | Первоначально characterization; порог утверждается после измерений | Нет зависания, потери команд и неограниченного роста памяти |
-| 500 open/edit/close циклов | Нулевое число оставшихся owned processes после завершения | Память/GDI/USER оцениваются после warm-up с учётом noise envelope |
+| Local canvas feedback | p95 ≤16.7 ms per frame at 60 Hz | Pointer/keyboard feedback; without requiring a full WinForms repaint every frame |
+| Warm scalar commit, simple form | p95 ≤100 ms | From sending the intent to transaction confirmation |
+| Warm scalar commit, 300 controls | p95 ≤250 ms | Commit and render are measured separately |
+| Full scalar edit → authoritative canvas | The threshold for each corpus/runtime is approved on the pilot before the freeze | One operation ID from UI input to correct pixels/layout/properties; a fast commit without an updated preview does not count as a completed action |
+| Warm open, 300 controls | p95 ≤3 s modern / ≤5 s net48 | Readiness of a correct canvas and properties |
+| 1000 controls | Initially characterization; the threshold is approved after measurements | No hang, no lost commands and no unbounded memory growth |
+| 500 open/edit/close cycles | Zero remaining owned processes after completion | Memory/GDI/USER are assessed after warm-up, taking the noise envelope into account |
 
-Это **плановые цели**, а не результаты текущего запуска. Ранее записанное 300-control evidence и существующий `perf:baseline` не заменяют эту лабораторную матрицу. После пилота допускается изменить цель до начала приёмки с явным обоснованием и сохранением прежних измерений.
+These are **planned targets**, not the results of a current run. The previously recorded 300-control evidence and the existing `perf:baseline` do not replace this lab matrix. After the pilot, a target may be changed before acceptance starts, with an explicit justification and with the earlier measurements kept.
 
-**Протокол измерений:** перед приёмкой зафиксировать OS/CPU/RAM/DPI, версии binary/toolchain, корпус, warm-up и тайм-ауты. Для p95 действий и открытия — не менее 100 измерений на каждую заявленную комбинацию corpus/runtime/architecture, распределённых минимум по трём независимым сессиям; cold и warm не смешиваются. Сохранять raw samples, failures, timeouts и причины исключений; медленные результаты не отбрасывать для улучшения percentile. Ошибки оцениваются отдельно и не могут превратиться в быстрый успешный результат. Короткий CI smoke не подменяет этот benchmark. Для leak trend фиксируются warm-up, частота замеров и допустимый noise envelope до прогона.
+**Measurement protocol:** before acceptance, fix the OS/CPU/RAM/DPI, binary/toolchain versions, corpus, warm-up and timeouts. For p95 of actions and of opening: at least 100 measurements for every declared corpus/runtime/architecture combination, spread over at least three independent sessions; cold and warm are not mixed. Keep raw samples, failures, timeouts and the reasons for exclusions; slow results are not discarded to improve a percentile. Errors are assessed separately and cannot turn into a fast successful result. A short CI smoke does not substitute for this benchmark. For the leak trend, the warm-up, the sampling frequency and the acceptable noise envelope are fixed before the run.
 
-**Приёмка:** воспроизводимые отчёты до/после, отсутствие semantic/source regression и устойчивый ввод при 1000 controls. Оптимизация не отключает postconditions, cancellation или source preservation.
+**Acceptance:** reproducible before/after reports, no semantic/source regression and stable input at 1000 controls. An optimization does not disable postconditions, cancellation or source preservation.
 
-### 2.7.0 — ресурсы, культуры и проверка локализованных форм
+### 2.7.0 — resources, cultures and checking localized forms
 
-**Ценность:** переводчик и разработчик видят состояние ресурсов целиком, находят потерянные переводы и проверяют длинный текст/RTL до запуска приложения.
+**Value:** the translator and the developer see the state of the resources as a whole, find lost translations and check long text/RTL before running the application.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R27-01. Обзор культур.** Таблица neutral/parent/exact значений, наличие override, источник fallback и статус перевода. Поиск по control/property/resource key.
-- [ ] **R27-02. Массовые resource operations.** Создание культуры, копирование выбранных значений, удаление override и reset группы свойств проходят одной транзакцией с просмотром затронутых файлов.
-- [ ] **R27-03. Resource dependency graph.** Показывать, какие формы и свойства используют image/icon/string. Rename ключа обновляет только доказанные ссылки; неизвестные expressions блокируют опасную операцию.
-- [ ] **R27-04. Asset workflow.** Пакетный импорт изображений, обнаружение дубликатов по содержимому, замена с сохранением ссылок, проверка размеров и прозрачности. Существующий ImageList editor расширяется без изменения его идентичностей.
-- [ ] **R27-05. Pseudo-localization.** Временное удлинение текста и выделение непереведённых строк для preview. Сохранение такого результата — отдельная явная команда, а обычное переключение режима не создаёт resource diff.
-- [ ] **R27-06. Visual comparison.** Сравнение культуры с neutral, размеров текста и положения элементов при нескольких DPR. Предупреждения о возможном clipping являются советом, а не гарантией дефекта.
-- [ ] **R27-07. Структурные операции.** Расширить add/delete/reparent в localizable forms с учётом всех culture resources. По умолчанию структура меняется в neutral layer; исключения требуют отдельного контракта.
-- [ ] **R27-08. Inheritance и shared resources.** Отделить ресурс базового класса от override производной формы; не переносить ownership между ними автоматически.
-- [ ] **R27-09. RTL acceptance.** Проверить native RightToLeft/RightToLeftLayout, mirrored geometry, tab order, keyboard, menus и resource fallback на modern и net48.
+- [ ] **R27-01. Culture overview.** A table of neutral/parent/exact values, the presence of an override, the fallback source and the translation status. Search by control/property/resource key.
+- [ ] **R27-02. Bulk resource operations.** Creating a culture, copying selected values, removing an override and resetting a group of properties go through one transaction with a view of the affected files.
+- [ ] **R27-03. Resource dependency graph.** Show which forms and properties use an image/icon/string. Renaming a key updates only proven references; unknown expressions block the dangerous operation.
+- [ ] **R27-04. Asset workflow.** Batch image import, duplicate detection by content, replacement that keeps references, and checks of size and transparency. The existing ImageList editor is extended without changing its identities.
+- [ ] **R27-05. Pseudo-localization.** Temporary lengthening of text and highlighting of untranslated strings for the preview. Saving such a result is a separate explicit command, and ordinary toggling of the mode does not create a resource diff.
+- [ ] **R27-06. Visual comparison.** Comparing a culture with neutral, text sizes and element positions at several DPRs. Warnings about possible clipping are advice, not a guarantee of a defect.
+- [ ] **R27-07. Structural operations.** Extend add/delete/reparent in localizable forms, taking all culture resources into account. By default the structure changes in the neutral layer; exceptions require a separate contract.
+- [ ] **R27-08. Inheritance and shared resources.** Separate a base-class resource from the override of a derived form; do not move ownership between them automatically.
+- [ ] **R27-09. RTL acceptance.** Verify native RightToLeft/RightToLeftLayout, mirrored geometry, tab order, keyboard, menus and resource fallback on modern and net48.
 
-**Приёмка:** форма с neutral, parent и exact culture переживает импорт, переименование, structural edit, undo, restart и cross-tool round trip. Неизвестные XML nodes, comments и opaque resources сохраняются. Pseudo-localization без сохранения оставляет файлы точными.
+**Acceptance:** a form with neutral, parent and exact cultures survives import, rename, structural edit, undo, restart and a cross-tool round trip. Unknown XML nodes, comments and opaque resources are preserved. Pseudo-localization without saving leaves the files exact.
 
-**Зависимости:** многофайловые транзакции и корректная геометрия. Внешние сервисы перевода не являются обязательной зависимостью релиза.
+**Dependencies:** multi-file transactions and correct geometry. External translation services are not a mandatory dependency of the release.
 
-### 2.8.0 — прикладные сценарии data binding
+### 2.8.0 — applied data-binding scenarios
 
-**Ценность:** пользователь создаёт и сопровождает форму ввода или таблицу данных, видит связи и умеет обновить их после изменения модели.
+**Value:** the user creates and maintains a data-entry form or a data table, sees the bindings and can update them after the model changes.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R28-01. Единый обзор bindings.** Связать существующие Data Sources, BindingSource, DataBindings, DataMember, formatting и update mode в одном представлении зависимостей.
-- [ ] **R28-02. Генерация формы из выбранных полей.** Расширить существующие scaffold-команды: details, grid, labels, navigation и validation components по явному выбору пользователя. Preview перечисляет имена и файлы.
-- [ ] **R28-03. Schema refresh.** После изменения POCO/typed DataSet определить переименованные, удалённые и несовместимые поля. Предложить проверяемые изменения и сохранить пользовательские настройки колонок.
-- [ ] **R28-04. Master-detail.** Поддержать ограниченные, явно объявленные связи BindingSource/DataMember; корректно создавать и удалять зависимые components, labels и subscriptions.
-- [ ] **R28-05. Форматирование и validation.** Редактировать culture-sensitive formats, null display, value conversion и поддержанные ErrorProvider-связи, сохраняя существующие literal/typed ограничения.
-- [ ] **R28-06. Design-time sample data.** Строить временный детерминированный sample из локально описанной схемы. Preview не требует подключения к production database или сохранения test data в приложение.
-- [ ] **R28-07. Typed DataSet.** Расширить уже существующую генерацию до обновления модели с проверкой generated files, build и ownership. Provider-specific конструкции остаются отдельными capabilities.
-- [ ] **R28-08. Application settings bindings.** Исследовать и реализовать bounded subset привязок к settings с корректным reset/default, доступностью типа и сохранением проектных артефактов.
-- [ ] **R28-09. Runtime smoke.** Для каждого генерируемого сценария собрать sample и проверить начальное отображение, изменение значения и поведение formatting/update mode.
+- [ ] **R28-01. A single overview of bindings.** Link the existing Data Sources, BindingSource, DataBindings, DataMember, formatting and update mode in one dependency view.
+- [ ] **R28-02. Generating a form from selected fields.** Extend the existing scaffold commands: details, grid, labels, navigation and validation components by the user's explicit choice. The preview lists the names and files.
+- [ ] **R28-03. Schema refresh.** After a POCO/typed DataSet changes, determine the renamed, removed and incompatible fields. Offer verifiable changes and keep the user's column settings.
+- [ ] **R28-04. Master-detail.** Support bounded, explicitly declared BindingSource/DataMember relations; correctly create and remove the dependent components, labels and subscriptions.
+- [ ] **R28-05. Formatting and validation.** Edit culture-sensitive formats, null display, value conversion and the supported ErrorProvider relations, keeping the existing literal/typed constraints.
+- [ ] **R28-06. Design-time sample data.** Build a temporary deterministic sample from a locally described schema. The preview does not require a connection to a production database or saving test data into the application.
+- [ ] **R28-07. Typed DataSet.** Extend the already existing generation to updating the model, with checks of the generated files, build and ownership. Provider-specific constructs remain separate capabilities.
+- [ ] **R28-08. Application settings bindings.** Research and implement a bounded subset of bindings to settings with correct reset/default, type availability and preservation of project artifacts.
+- [ ] **R28-09. Runtime smoke.** For every generated scenario, build a sample and verify the initial display, a value change and the behavior of formatting/update mode.
 
-**Приёмка:** developer создаёт detail/grid workflow, меняет схему, обновляет binding, отменяет обновление и снова собирает приложение. Unsupported member или expression даёт отказ до структурной записи.
+**Acceptance:** a developer creates a detail/grid workflow, changes the schema, updates the binding, undoes the update and builds the application again. An unsupported member or expression produces a refusal before the structural write.
 
-**Граница:** дизайнер не становится ORM, редактором SQL, хранилищем credentials или системой миграции базы данных. Такой код остаётся ответственностью приложения и профильных инструментов.
+**Boundary:** the designer does not become an ORM, a SQL editor, a credentials store or a database migration system. Such code remains the responsibility of the application and of specialized tools.
 
-### 2.9.0 — шаблоны, переиспользование и безопасные рефакторинги
+### 2.9.0 — templates, reuse and safe refactorings
 
-**Ценность:** типовые экраны создаются быстрее, а перенос группы контролов или переименование формы не превращается в ручное редактирование множества файлов.
+**Value:** typical screens are created faster, and moving a group of controls or renaming a form does not turn into manual editing of many files.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R29-01. Шаблоны поверх scaffolding.** Расширить существующее создание Form/UserControl: локальный каталог форм, наборы controls, стартовые layout/data patterns, preview и правила параметров.
-- [ ] **R29-02. Reusable snippets.** Сохранять группу контролов с зависимостями: resources, BindingSource, ImageList, extenders, события. При вставке пересчитывать имена и проверять доступность типов.
-- [ ] **R29-03. Extract UserControl.** Реализовать ограниченную команду для доказанного поддерева. План включает source/resources/project membership, перенос координат и отказ при неопределимых внешних references.
-- [ ] **R29-04. Rename form/control.** Интегрироваться с доступным C# semantic rename и независимой проверкой references. При недоступном language service показывать точное ограничение, а не применять regex ко всему проекту.
-- [ ] **R29-05. Перенос между проектами.** Развить dependency-aware clipboard: target runtime, culture resources, assemblies, имена и generated files проверяются до mutation. Добавление package dependency требует отдельного рассмотрения конкретного изменения.
-- [ ] **R29-06. Project context UX.** Расширить интерфейс выбора configuration/TFM/platform для linked и multi-target файлов и переноса между проектами. Использовать эффективный контекст и invalidation contract, зафиксированные в 2.1–2.2; сохранять осознанный выбор пользователя.
-- [ ] **R29-07. Inheritance workflow.** Создание производной формы, навигация к базовому control, отображение protected/private ownership и обновление после изменения base project.
-- [ ] **R29-08. Обзор изменений.** Крупная генерация/рефакторинг показывает структуру результата, файлы, dependencies и diff. Подтверждение относится к конкретному плану; изменение revision требует перепланирования.
+- [ ] **R29-01. Templates on top of scaffolding.** Extend the existing Form/UserControl creation: a local catalog of forms, sets of controls, starter layout/data patterns, a preview and parameter rules.
+- [ ] **R29-02. Reusable snippets.** Save a group of controls with its dependencies: resources, BindingSource, ImageList, extenders, events. On insertion, recompute names and check type availability.
+- [ ] **R29-03. Extract UserControl.** Implement a bounded command for a proven subtree. The plan includes source/resources/project membership, coordinate translation and a refusal when external references cannot be determined.
+- [ ] **R29-04. Rename form/control.** Integrate with the available C# semantic rename and an independent check of references. When the language service is unavailable, show the exact limitation rather than applying a regex to the whole project.
+- [ ] **R29-05. Transfer between projects.** Develop a dependency-aware clipboard: the target runtime, culture resources, assemblies, names and generated files are verified before mutation. Adding a package dependency requires a separate review of the specific change.
+- [ ] **R29-06. Project context UX.** Extend the interface for choosing configuration/TFM/platform for linked and multi-target files and for transfer between projects. Use the effective context and the invalidation contract fixed in 2.1–2.2; preserve the user's deliberate choice.
+- [ ] **R29-07. Inheritance workflow.** Creating a derived form, navigating to the base control, displaying protected/private ownership and updating after the base project changes.
+- [ ] **R29-08. Change overview.** A large generation/refactoring shows the structure of the result, files, dependencies and a diff. The confirmation applies to a specific plan; a revision change requires replanning.
 
-**Приёмка:** один sample проходит создание из template → редактирование → выделение UserControl → rename → перенос в другой совместимый проект → undo/reopen/build. Повторное применение не создаёт случайные дубликаты или повреждённые links.
+**Acceptance:** one sample goes through creation from a template → editing → extracting a UserControl → rename → transfer to another compatible project → undo/reopen/build. Re-applying does not create accidental duplicates or broken links.
 
-**Граница:** доступные semantic services и поддержанный subset определяют возможности команды. Полная автоматическая переделка произвольной формы не заявляется.
+**Boundary:** the available semantic services and the supported subset determine what the command can do. Fully automatic reworking of an arbitrary form is not claimed.
 
-### 2.10.0 — доступность и подтверждённая runtime-матрица
+### 2.10.0 — accessibility and a confirmed runtime matrix
 
-**Ценность:** поддержка разных устройств, DPI, клавиатуры и screen readers подтверждается реальными пользовательскими задачами.
+**Value:** support for different devices, DPI, keyboard and screen readers is confirmed by real user tasks.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R210-01. Accessibility audit с начала программы.** С 2.1 вести список препятствий; здесь консолидировать исправления всех новых UI: property grid, dialogs, toolbox, outline, tray, smart tags, diff и recovery.
-- [ ] **R210-02. Полный keyboard workflow.** Открыть форму, найти control, изменить property, вызвать editor, выполнить layout, переключить culture, сохранить и отменить без мыши. Не допускать focus traps.
-- [ ] **R210-03. Assistive technology.** Реальные Narrator и NVDA на Windows: labels, roles, order, selection, expanded state, mixed values, validation и announcements. Один экранный диктор не подменяет проверку второго.
-- [ ] **R210-04. Масштаб и контраст.** Проверить 200%/400% UI zoom, Windows text scaling, forced colors/high contrast, focus indicators и отсутствие зависимости только от цвета.
-- [ ] **R210-05. Физический DPI.** Несколько мониторов и DPR 1/1,25/1,5/1,75/2; перенос окна, масштабирование, native editor positioning и hit testing. Логические координаты сравниваются отдельно от pixels.
-- [ ] **R210-06. ARM64 qualification.** Проверить нативный modern worker и отдельно net48 x64 compatibility, включая packaging, install, custom/vendor dependencies, rebuild и recovery на физической машине.
-- [ ] **R210-07. Runtime lifecycle policy.** Пересматривать поддерживаемые TFM и минимальный VS Code до каждого release candidate. Разделять runtime приложения, runtime bundled host и архитектуру процесса.
-- [ ] **R210-08. Clean-machine checks.** Установка обоих VSIX на подходящих чистых Windows environments, отсутствие случайной зависимости от development checkout и установленных у разработчика assemblies.
-- [ ] **R210-09. Диагностика неподдержанного окружения.** Указывать конкретную причину: OS/runtime/architecture/native dependency/AT limitation, сохраняя возможность открыть исходный код.
+- [ ] **R210-01. Accessibility audit from the start of the program.** From 2.1 on, keep a list of barriers; here, consolidate the fixes for all new UI: property grid, dialogs, toolbox, outline, tray, smart tags, diff and recovery.
+- [ ] **R210-02. Full keyboard workflow.** Open a form, find a control, change a property, invoke an editor, perform layout, switch culture, save and undo without a mouse. Do not allow focus traps.
+- [ ] **R210-03. Assistive technology.** Real Narrator and NVDA on Windows: labels, roles, order, selection, expanded state, mixed values, validation and announcements. One screen reader does not substitute for checking the other.
+- [ ] **R210-04. Scale and contrast.** Verify 200%/400% UI zoom, Windows text scaling, forced colors/high contrast, focus indicators and no reliance on color alone.
+- [ ] **R210-05. Physical DPI.** Several monitors and DPR 1/1.25/1.5/1.75/2; moving the window, scaling, native editor positioning and hit testing. Logical coordinates are compared separately from pixels.
+- [ ] **R210-06. ARM64 qualification.** Verify the native modern worker and, separately, net48 x64 compatibility, including packaging, install, custom/vendor dependencies, rebuild and recovery on a physical machine.
+- [ ] **R210-07. Runtime lifecycle policy.** Review the supported TFMs and the minimum VS Code before every release candidate. Separate the application runtime, the bundled host runtime and the process architecture.
+- [ ] **R210-08. Clean-machine checks.** Installing both VSIX packages on suitable clean Windows environments, with no accidental dependency on a development checkout or on assemblies installed on the developer's machine.
+- [ ] **R210-09. Diagnostics of an unsupported environment.** State the specific reason: OS/runtime/architecture/native dependency/AT limitation, while keeping the ability to open the source code.
 
-**Приёмка:** записи лабораторных сценариев с версиями OS, оборудования, VS Code, runtime и AT. Различать automated DOM result, native UI observation и hardware evidence.
+**Acceptance:** records of lab scenarios with the versions of the OS, hardware, VS Code, runtime and AT. Distinguish an automated DOM result, a native UI observation and hardware evidence.
 
-**Зависимости:** лаборатория и доступные устройства нужны заранее. Базовая accessibility является условием каждого предыдущего UI-релиза; её нельзя откладывать до 2.10.
+**Dependencies:** the lab and the available devices are needed in advance. Basic accessibility is a condition of every preceding UI release; it must not be postponed to 2.10.
 
-### 2.11.0 — product CLI, проверка решения и design advisor
+### 2.11.0 — product CLI, solution validation and design advisor
 
-**Ценность:** команда находит проблемы форм при review и в CI, а разработчик получает адресные подсказки с понятным diff исправления.
+**Value:** the team finds form problems during review and in CI, and the developer gets targeted hints with a clear diff of the fix.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R211-01. Product headless runner.** Переработать development CLI так, чтобы он обнаруживал реальные проекты/формы, разрешал их контекст и вызывал product planners/engines. Входной JSON с заявленным успешным результатом не является проверкой проекта.
-- [ ] **R211-02. Два режима.** Parse-only использует отдельное статическое чтение source/project metadata без MSBuild evaluation, restore, SDK resolvers, source generators, assembly loading и design-time code. Неопределимые imports/conditions остаются `UNKNOWN/NOT_EXECUTED`; переход к исполняющему resolver не происходит автоматически. Trusted render/round-trip на подходящем Windows runner включается явно. Отчёт говорит, какой режим был выполнен и что осталось непроверенным.
-- [ ] **R211-03. Стабильный report contract.** JSON schema, exit codes, diagnostics с location/capability/runtime, format version, bounded logs и машинно-читаемые `PASS/FAIL/GATED/NOT_EXECUTED`.
-- [ ] **R211-04. Отдельная поставка CLI.** Определить пакет, runtime dependencies, обновления и лицензионный состав. Менять текущий запрет включения development bundles в VSIX только вместе с новым release contract и проверкой упаковки.
-- [ ] **R211-05. Проверка обновления зависимости.** Сравнить capability map до/после выбранного изменения library/runtime на копии fixtures или в read-only режиме; показать новые несовместимости и изменение render/семантики.
-- [ ] **R211-06. Advisor в Problems.** Правила для отсутствующих AccessibleName, подозрительного tab order, локализуемого literal Text, возможного clipping и неразрешённых ресурсов. Разделять доказанный дефект и рекомендацию.
-- [ ] **R211-07. Preview и apply fix.** Расширить существующий product High-DPI preview/apply на новые правила. Исправления проходят обычный intent→PatchSet→revision check→Undo. Оставшиеся harness-only inspector/advisor сценарии заменяются прямыми тестами ingress, UI и реальной mutation/refusal.
-- [ ] **R211-08. Baseline и suppressions.** Команда хранит согласованные исключения без маскировки новых ошибок; устаревшие suppressions определяются по stable diagnostic identity.
-- [ ] **R211-09. Диагностика для поддержки.** Автоматический минимальный reproducible report без vendor binaries и пользовательских исходников по умолчанию; sensitive-value canaries проверяют настоящий export path.
+- [ ] **R211-01. Product headless runner.** Rework the development CLI so that it discovers real projects/forms, resolves their context and calls the product planners/engines. An input JSON with a declared successful result is not a project check.
+- [ ] **R211-02. Two modes.** Parse-only uses a separate static read of source/project metadata without MSBuild evaluation, restore, SDK resolvers, source generators, assembly loading or design-time code. Imports/conditions that cannot be determined remain `UNKNOWN/NOT_EXECUTED`; there is no automatic switch to an executing resolver. Trusted render/round-trip on a suitable Windows runner is enabled explicitly. The report says which mode was run and what remained unverified.
+- [ ] **R211-03. A stable report contract.** JSON schema, exit codes, diagnostics with location/capability/runtime, format version, bounded logs and machine-readable `PASS/FAIL/GATED/NOT_EXECUTED`.
+- [ ] **R211-04. Separate delivery of the CLI.** Define the package, runtime dependencies, updates and license composition. Change the current ban on including development bundles in the VSIX only together with a new release contract and a packaging check.
+- [ ] **R211-05. Dependency upgrade check.** Compare the capability map before/after a chosen library/runtime change on a copy of the fixtures or in read-only mode; show new incompatibilities and the change in render/semantics.
+- [ ] **R211-06. Advisor in Problems.** Rules for missing AccessibleName, a suspicious tab order, a localizable literal Text, possible clipping and unresolved resources. Separate a proven defect from a recommendation.
+- [ ] **R211-07. Preview and apply fix.** Extend the existing product High-DPI preview/apply to the new rules. Fixes go through the ordinary intent→PatchSet→revision check→Undo. The remaining harness-only inspector/advisor scenarios are replaced with direct tests of ingress, UI and a real mutation/refusal.
+- [ ] **R211-08. Baseline and suppressions.** The team stores agreed exceptions without masking new errors; stale suppressions are detected by stable diagnostic identity.
+- [ ] **R211-09. Diagnostics for support.** An automatic minimal reproducible report without vendor binaries and user sources by default; sensitive-value canaries verify the real export path.
 
-**Приёмка:** чистый Windows runner анализирует и рендерит sample solution, находит намеренно внесённый дефект, завершается правильным exit code и не меняет project files. Принятый пользователем advisor fix исправляет дефект и отменяется одной Undo.
+**Acceptance:** a clean Windows runner analyzes and renders a sample solution, finds a deliberately introduced defect, exits with the correct exit code and does not change project files. An advisor fix accepted by the user fixes the defect and is undone by a single Undo.
 
-Parse-only отдельно проходит fixture с исполняемым project/toolchain hook: доказано отсутствие его запуска, а требующий evaluation результат остаётся неизвестным. Производительный общий resolver допустим только в trusted режиме.
+Parse-only separately passes a fixture with an executable project/toolchain hook: it is proven that the hook is not run, and a result that requires evaluation remains unknown. A productive general resolver is allowed only in trusted mode.
 
-**Граница:** parse-only результат не означает, что control реально загрузился или отрисовался. Generic automation API не принимает произвольный source patch от клиента в обход planner.
+**Boundary:** a parse-only result does not mean that a control actually loaded or rendered. The generic automation API does not accept an arbitrary source patch from a client that bypasses the planner.
 
-### 2.12.0 — заморозка контрактов и подготовка перехода
+### 2.12.0 — contract freeze and transition preparation
 
-**Ценность:** пользователи и авторы адаптеров могут заранее проверить обновление до 3.0, узнать о несовместимостях и подготовить откат.
+**Value:** users and adapter authors can check the upgrade to 3.0 in advance, learn about incompatibilities and prepare a rollback.
 
-**Работы:**
+**Work items:**
 
-- [ ] **R212-01. Freeze support matrix.** Зафиксировать обязательные runtime/architecture/VS Code/vendor cohorts, сценарии и внешние acceptance legs. Каждое исключение имеет понятную причину и владельца.
-- [ ] **R212-02. SDK RC.** Выпустить кандидат стабильного API с примерами, capability catalogue, error taxonomy, test harness и правилами обновления schema. Независимый adapter maintainer проходит интеграцию.
-- [ ] **R212-03. Deprecation inventory.** Перечислить устаревающие команды, settings keys, adapter contracts и transport paths; показать замену и период поддержки. Предупреждения должны быть адресными и устранимыми.
-- [ ] **R212-04. Migration rehearsal.** Установить сохранённые поддерживаемые версии 2.x, создать реальные settings/cache/backup, обновиться до RC, открыть формы и откатиться. Учитывать partially installed engines и offline environment.
-- [ ] **R212-05. Заморозить document compatibility.** Подтвердить, что проектам не требуется новый proprietary format. Изменения внутреннего cache не должны автоматически нормализовать `.Designer.cs`/`.resx`.
-- [ ] **R212-06. Длительные испытания.** Не менее 8 часов product workload и 500 open/edit/close циклов для заявленных профилей, включая нескольких workers, сборки, resource edits, cancellation и recovery.
-- [ ] **R212-07. Независимый review.** Проверить trusted execution boundary, input validation, loader provenance, project writes, diagnostics redaction, update/rollback и всю матрицу критических сценариев.
-- [ ] **R212-08. Beta cohorts.** Несколько репрезентативных проектов с разными владельцами: стандартный modern, classic net48, локализованный, большой и сертифицированный vendor. Каждому blocker назначается решение, а не усреднённая оценка.
-- [ ] **R212-09. Release runbook.** Описать сборку, проверку неизменяемых артефактов, публикацию, smoke после установки и возврат предыдущего пакета. Репетиция проводится без автоматической публичной публикации.
+- [ ] **R212-01. Freeze the support matrix.** Fix the mandatory runtime/architecture/VS Code/vendor cohorts, scenarios and external acceptance legs. Every exception has a clear reason and an owner.
+- [ ] **R212-02. SDK RC.** Release a candidate of the stable API with examples, a capability catalogue, an error taxonomy, a test harness and schema update rules. An independent adapter maintainer goes through the integration.
+- [ ] **R212-03. Deprecation inventory.** List the deprecated commands, settings keys, adapter contracts and transport paths; show the replacement and the support period. Warnings must be targeted and fixable.
+- [ ] **R212-04. Migration rehearsal.** Install the retained supported 2.x versions, create real settings/cache/backup, upgrade to the RC, open forms and roll back. Account for partially installed engines and an offline environment.
+- [ ] **R212-05. Freeze document compatibility.** Confirm that projects do not need a new proprietary format. Changes to the internal cache must not automatically normalize `.Designer.cs`/`.resx`.
+- [ ] **R212-06. Long-running tests.** At least 8 hours of product workload and 500 open/edit/close cycles for the declared profiles, including several workers, builds, resource edits, cancellation and recovery.
+- [ ] **R212-07. Independent review.** Review the trusted execution boundary, input validation, loader provenance, project writes, diagnostics redaction, update/rollback and the whole matrix of critical scenarios.
+- [ ] **R212-08. Beta cohorts.** Several representative projects with different owners: standard modern, classic net48, localized, large and certified vendor. Every blocker is assigned a decision, not an averaged score.
+- [ ] **R212-09. Release runbook.** Describe the build, verification of immutable artifacts, publication, post-install smoke and returning to the previous package. The rehearsal is run without automatic public publication.
 
-**Приёмка:** нет открытого дефекта потери данных, ложного успешного сохранения или смешения документов; обязательные scenarios проходят на заявленных legs; migration/rollback выполняются на реальных установках.
+**Acceptance:** there is no open defect of data loss, false successful save or mixing of documents; the mandatory scenarios pass on the declared legs; migration/rollback are performed on real installations.
 
-**Version policy:** 2.12.0 остаётся совместимым minor-релизом. Несовместимые изменения будущего 3.0 доступны только в отдельном preview/RC канале и не включаются незаметно в stable 2.x.
+**Version policy:** 2.12.0 remains a compatible minor release. Incompatible changes of the future 3.0 are available only in a separate preview/RC channel and are not slipped into stable 2.x.
 
-RC — стадия качества, а не заранее выбранная строка package version. До публикации R212-09 фиксирует отдельные stable/pre-release последовательности и проверяет переходы обоих каналов: Marketplace требует числовое `major.minor.patch`, не принимает SemVer-суффикс `-rc.1` и не позволяет использовать одну версию одновременно для pre-release и stable. Источник: [Publishing Extensions — Pre-release extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions). Open VSX проверяется отдельно; изменение package/release-preflight не входит в подготовку этого roadmap.
+RC is a quality stage, not a package version string chosen in advance. Before publication, R212-09 fixes separate stable/pre-release sequences and verifies the transitions of both channels: Marketplace requires a numeric `major.minor.patch`, does not accept the SemVer suffix `-rc.1` and does not allow one version to be used for both pre-release and stable. Source: [Publishing Extensions — Pre-release extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions). Open VSX is checked separately; changing package/release-preflight is not part of preparing this roadmap.
 
-### 3.0.0 — стабильная расширяемая платформа
+### 3.0.0 — a stable extensible platform
 
-**Ценность:** приложение обслуживается в VS Code на известной матрице, библиотеки расширяют designer через стабильный SDK, команда проверяет формы автоматически и управляет обновлениями предсказуемо.
+**Value:** an application is maintained in VS Code on a known matrix, libraries extend the designer through a stable SDK, and the team validates forms automatically and manages upgrades predictably.
 
-**Обязательные результаты:**
+**Required outcomes:**
 
-- [ ] **R30-01. Реальный platform path.** Объявленные UI/SDK/CLI mutations используют общий command/transaction contract и product supervisor; диагностические helpers не выдают себя за реализацию.
-- [ ] **R30-02. SDK 1.0.** Опубликованы contracts, package compatibility, migration examples и conformance suite. Поддержка конкретного adapter подтверждена его реальной интеграцией.
-- [ ] **R30-03. Первая сертифицированная vendor cohort.** Есть хотя бы один доступный независимо проверенный набор; точные версии и ограничения входят в release documentation.
-- [ ] **R30-04. Повседневный workflow.** Standard controls, project context, layout, properties/editors, resources/cultures, data binding, templates и recovery приняты в заявленном scope.
-- [ ] **R30-05. Надёжность и доступность.** Пройдены agreed performance, длительные product runs, clean-machine, physical architecture, keyboard, AT и native DPI/culture tests.
-- [ ] **R30-06. Совместимость.** Поддерживаемые 2.x проекты открываются без миграции generated source. Для изменения настроек или SDK доступны upgrade path, диагностика и доказанный rollback.
-- [ ] **R30-07. Подтверждённый release artifact.** Support matrix, evidence manifest, changelog и пакеты описывают один набор исходников. Публикация и её smoke фиксируются самостоятельным результатом.
-- [ ] **R30-08. Сопровождение.** Опубликованы политика обновления runtime, поддержка adapter API, порядок исправления критических дефектов и обслуживание последнего стабильного 2.x в период перехода.
+- [ ] **R30-01. A real platform path.** The declared UI/SDK/CLI mutations use the shared command/transaction contract and the product supervisor; diagnostic helpers do not pass themselves off as the implementation.
+- [ ] **R30-02. SDK 1.0.** Contracts, package compatibility, migration examples and a conformance suite are published. Support for a specific adapter is confirmed by its real integration.
+- [ ] **R30-03. The first certified vendor cohort.** At least one available, independently verified set exists; the exact versions and limitations are part of the release documentation.
+- [ ] **R30-04. Everyday workflow.** Standard controls, project context, layout, properties/editors, resources/cultures, data binding, templates and recovery are accepted in the declared scope.
+- [ ] **R30-05. Reliability and accessibility.** The agreed performance, long product runs, clean-machine, physical architecture, keyboard, AT and native DPI/culture tests are passed.
+- [ ] **R30-06. Compatibility.** Supported 2.x projects open without migrating generated source. For a change in settings or the SDK, an upgrade path, diagnostics and a proven rollback are available.
+- [ ] **R30-07. A confirmed release artifact.** The support matrix, evidence manifest, changelog and packages describe one set of sources. Publication and its smoke are recorded as a result of their own.
+- [ ] **R30-08. Maintenance.** The runtime update policy, adapter API support, the procedure for fixing critical defects and servicing of the last stable 2.x during the transition period are published.
 
-**Зачем major:** 3.0 фиксирует стабильный platform/SDK contract после preview-периода. Если требуется удалить устаревший публичный контракт, это делается здесь после периода deprecation. Major-версия не требует обязательного изменения wire protocol и не оправдывает потерю совместимости пользовательских файлов.
+**Why a major version:** 3.0 fixes a stable platform/SDK contract after the preview period. If a deprecated public contract has to be removed, it is done here after the deprecation period. A major version does not require a mandatory change of the wire protocol and does not justify losing compatibility of user files.
 
-**Финальный критерий:** все обязательные advertised capabilities проходят свои сценарии и поддерживаемые runtime/architecture legs; опубликованные исключения не скрывают провал обязательного workflow. Если vendor или аппаратная приёмка недоступна, milestone остаётся открытым либо его scope пересматривается явно до freeze — без объявления невыполненного результата завершённым.
+**Final criterion:** all mandatory advertised capabilities pass their scenarios and the supported runtime/architecture legs; published exceptions do not hide the failure of a mandatory workflow. If vendor or hardware acceptance is unavailable, the milestone stays open or its scope is revised explicitly before the freeze, without declaring an unachieved result complete.
 
 <a id="architecture"></a>
 
-## 5. Архитектура и постоянные инженерные направления
+## 5. Architecture and standing engineering tracks
 
-### 5.1. Один маршрут изменяющей команды
+### 5.1. One route for a mutating command
 
-Целевая цепочка для canvas, property grid, smart tag, adapter и advisor:
+The target chain for the canvas, property grid, smart tag, adapter and advisor:
 
 ```text
 User intent
@@ -487,307 +496,307 @@ User intent
   → authoritative reconciliation + stale-reply rejection
 ```
 
-Workers возвращают типизированные результаты, а не право самостоятельно записывать файлы проекта. Кэширование, ускорение render и hosted services не обходят эту цепочку. Существующие `byteLocal` и source-minimality проверки сохраняются как последняя линия контроля.
+Workers return typed results, not the right to write project files themselves. Caching, render acceleration and hosted services do not bypass this chain. The existing `byteLocal` and source-minimality checks remain as the last line of control.
 
-### 5.2. Границы модулей
+### 5.2. Module boundaries
 
-| Область | Целевая ответственность | Точка входа в существующем коде |
+| Area | Target responsibility | Entry point in the existing code |
 |---|---|---|
-| Document | Buffers, identity, snapshots, backup, save и native history | `WinFormsDesignDocument`, `documentStore` |
+| Document | Buffers, identity, snapshots, backup, save and native history | `WinFormsDesignDocument`, `documentStore` |
 | Session | Selection, active culture, transient state, capabilities, render generation | `DesignerSession` |
 | Commands | Typed intents, planner selection, dependency/ownership validation | `designerEditor`, engine planners |
 | Transactions | PatchSet, journal, commit, compensation, recovery | `transactionRunner`, resource coordinator |
 | Project context | Owner project, evaluated configuration/TFM/platform, dependency invalidation | `ProjectResolver`, `csprojRef`, `solutionProjects` |
 | Runtime | Worker identity, startup/reuse/recycle, quotas, crash/build coordination | `getEngine`, `WorkerSupervisor` |
-| Protocol | Generated DTO, negotiation, cancellation, correlation и bounded results | `designer-protocol-v2.schema.json`, generated bindings |
-| Design services | Сертифицированные services, editors, actions, adorners | `DesignerServiceKernel`, product brokers |
-| Webview | Представление состояния, доступный ввод, минимальная локальная обратная связь | `designer.js`, `panel.js`, `chooseItems.js` |
+| Protocol | Generated DTO, negotiation, cancellation, correlation and bounded results | `designer-protocol-v2.schema.json`, generated bindings |
+| Design services | Certified services, editors, actions, adorners | `DesignerServiceKernel`, product brokers |
+| Webview | Presentation of state, accessible input, minimal local feedback | `designer.js`, `panel.js`, `chooseItems.js` |
 
-Выделение модулей обслуживает конкретные релизы. Не планируется отдельная многомесячная перепись продукта перед доставкой полезных возможностей. Изменение структуры и изменение поведения по возможности проверяются раздельно.
+Module extraction serves specific releases. No separate multi-month rewrite of the product is planned before useful capabilities are delivered. A change of structure and a change of behavior are verified separately where possible.
 
-### 5.3. Источник и owned-region serialization
+### 5.3. Source and owned-region serialization
 
-- **Lane A:** минимальные source/resource adapters остаются стандартным путём.
-- **Lane B:** используется только для явно принадлежащего дизайнеру участка и проверенного изменения component graph.
-- Для каждой новой операции фиксируются допустимый diff, сохранение неизвестных statements/resources, encoding/BOM/EOL и ownership пользовательских partials.
-- Неопределимая эквивалентность означает отказ или доступный Lane A, а не тихое перегенерирование формы.
-- Расширение Lane B сопровождается cross-tool fixtures; изменение output format без функциональной потребности не является целью.
+- **Lane A:** minimal source/resource adapters remain the standard path.
+- **Lane B:** used only for a region that explicitly belongs to the designer and for a verified change of the component graph.
+- For every new operation, the allowed diff, preservation of unknown statements/resources, encoding/BOM/EOL and ownership of user partials are fixed.
+- Equivalence that cannot be determined means a refusal or the available Lane A, not a silent regeneration of the form.
+- Extending Lane B is accompanied by cross-tool fixtures; changing the output format without a functional need is not a goal.
 
-### 5.4. Совместимость контрактов
+### 5.4. Contract compatibility
 
-Раздельно версионируются extension SemVer, engine build identity, wire protocol, adapter SDK, manifest schema, report schema и внутренние cache/backup formats. Например, наличие protocol version 2 уже в 2.0.0 не означает, что релиз 3.0 обязан использовать protocol version 3.
+The extension SemVer, engine build identity, wire protocol, adapter SDK, manifest schema, report schema and internal cache/backup formats are versioned separately. For example, the presence of protocol version 2 already in 2.0.0 does not mean that release 3.0 must use protocol version 3.
 
-Для каждой границы публикуются producer/consumer matrix, минимальная поддерживаемая версия, реакция на future/unknown required fields, условия upgrade/downgrade и period of deprecation. Совместимость N/N−1 проверяется там, где она обещана, на настоящих взаимодействующих binaries и состояниях.
+For each boundary, the producer/consumer matrix, the minimum supported version, the reaction to future/unknown required fields, the upgrade/downgrade conditions and the deprecation period are published. N/N−1 compatibility is verified where it is promised, on real interacting binaries and states.
 
-### 5.5. Runtime и зависимости
+### 5.5. Runtime and dependencies
 
-На дату планирования официальная политика Microsoft указывает окончание поддержки .NET 8 и .NET 9 **10 ноября 2026 года**, .NET 10 — **14 ноября 2028 года**. Эти даты определяют необходимость пересмотра host/toolchain; они не являются автоматическим запретом открывать проект старого TFM. Перед каждым RC политика проверяется заново. Источник: [.NET Support Policy](https://dotnet.microsoft.com/en-us/platform/support/policy).
+As of the planning date, Microsoft's official policy states the end of support for .NET 8 and .NET 9 as **10 November 2026** and for .NET 10 as **14 November 2028**. These dates determine the need to review the host/toolchain; they are not an automatic ban on opening a project with an old TFM. The policy is checked again before every RC. Source: [.NET Support Policy](https://dotnet.microsoft.com/en-us/platform/support/policy).
 
-Целевая политика: bundled modern host следует выбранной обслуживаемой ветке; совместимость target frameworks приложения проверяется отдельным корпусом. Следующая .NET-версия сначала проходит preview matrix, затем включается в поддержку по результатам. net48 compatibility сохраняется, пока она заявлена и проходит свою OS/architecture/vendor матрицу.
+Target policy: the bundled modern host follows the chosen serviced branch; compatibility of the application's target frameworks is verified by a separate corpus. The next .NET version first goes through a preview matrix and is then added to support based on the results. net48 compatibility is kept as long as it is declared and passes its OS/architecture/vendor matrix.
 
-Build/test/restore coordination учитывает code execution и output locks. Изменение `TargetFramework`, package references или архитектуры приложения не выполняется автоматически ради открытия designer.
+Build/test/restore coordination takes code execution and output locks into account. Changing the application's `TargetFramework`, package references or architecture is not done automatically for the sake of opening the designer.
 
-### 5.6. Trust и права расширений
+### 5.6. Trust and extension rights
 
-Существующий продукт отключён в untrusted workspaces. Возможный будущий parse-only режим требует отдельного решения и доказательства отсутствия build/restore/assembly execution; его нельзя обещать как уже доступный.
+The existing product is disabled in untrusted workspaces. A possible future parse-only mode requires a separate decision and proof that there is no build/restore/assembly execution; it must not be promised as already available.
 
-Hosted adapter получает доступ к заявленным услугам SDK и право предлагать изменения документа после проверки provenance и разрешения в конкретном workspace. Этот host API contract не ограничивает сам по себе доступ исполняемого кода к файловой системе или сети: сохраняются права процесса и модель trusted-to-execute. Отзыв разрешения останавливает новые вызовы и безопасно завершает текущую работу. Критерии включения и поведение restricted mode сверяются с [Workspace Trust Extension Guide](https://code.visualstudio.com/api/extension-guides/workspace-trust).
+A hosted adapter gets access to the declared SDK services and the right to propose document changes after provenance verification and permission in the specific workspace. This host API contract does not by itself restrict the access of executable code to the file system or the network: the process rights and the trusted-to-execute model remain. Revoking the permission stops new calls and safely completes the current work. The enablement criteria and the restricted-mode behavior are checked against the [Workspace Trust Extension Guide](https://code.visualstudio.com/api/extension-guides/workspace-trust).
 
-Секреты, исходники и vendor binaries не являются обязательной частью diagnostic bundle. Анонимная телеметрия не вводится как зависимость roadmap; первоначальные performance и reliability данные можно собирать локально и в CI.
+Secrets, sources and vendor binaries are not a mandatory part of the diagnostic bundle. Anonymous telemetry is not introduced as a roadmap dependency; the initial performance and reliability data can be collected locally and in CI.
 
 <a id="acceptance"></a>
 
-## 6. Матрица поддержки и приёмки
+## 6. Support and acceptance matrix
 
-### 6.1. Уровни совместимости
+### 6.1. Compatibility tiers
 
-Сохраняются пороги исходной parity-программы, но каждый релиз фиксирует собственный знаменатель до приёмки.
+The thresholds of the original parity program are kept, but every release fixes its own denominator before acceptance.
 
-| Tier | Объём обещания | Порог | Дополнительное условие |
+| Tier | Scope of the promise | Threshold | Additional condition |
 |---|---|---|---|
-| A — standard framework | Объявленные обязательные WinForms workflows | 100% | На каждом заявленном runtime/architecture leg |
-| B — custom managed | Зафиксированный корпус custom controls | ≥98% | Все обязательные workflows проходят; остаток явно классифицирован |
-| C — certified vendor | Конкретная версия/cohort | ≥95% для каждой cohort | Все обязательные workflows проходят; исключения перечислены отдельно |
-| D — x86/COM/ActiveX | Только отдельно принятая будущая матрица | 100% | Не входит в обязательную базу 3.0 без отдельного решения |
+| A — standard framework | The declared mandatory WinForms workflows | 100% | On every declared runtime/architecture leg |
+| B — custom managed | A fixed corpus of custom controls | ≥98% | All mandatory workflows pass; the remainder is explicitly classified |
+| C — certified vendor | A specific version/cohort | ≥95% for every cohort | All mandatory workflows pass; exceptions are listed separately |
+| D — x86/COM/ActiveX | Only a separately accepted future matrix | 100% | Not part of the mandatory 3.0 baseline without a separate decision |
 
-Проценты B/C относятся к заранее объявленному compatibility corpus, включая необязательные exploratory scenarios. Они не разрешают потерю данных, неожиданный diff, неподтверждённую запись, поломанную отмену или исключение провалившегося обязательного теста из знаменателя после прогона.
+The B/C percentages refer to a compatibility corpus declared in advance, including optional exploratory scenarios. They do not permit data loss, an unexpected diff, an unconfirmed write, a broken undo or excluding a failed mandatory test from the denominator after the run.
 
-### 6.2. Что означает статус
+### 6.2. What a status means
 
-| Статус | Значение | Чего он не доказывает |
+| Status | Meaning | What it does not prove |
 |---|---|---|
-| `PLANNED` | Утверждён или предложен объём работы | Наличие реализации |
-| `IN_PROGRESS` | Есть незавершённая работа | Приёмку или возможность использования |
-| `HARNESS_ONLY` | Проверен helper/контракт в ограниченном стенде | Работу через реальный designer/CLI |
-| `REPO_PASS` | Выполнен записанный продуктовый или автоматический сценарий для точной версии | Visual Studio parity, доступность на другом устройстве или публикацию |
-| `REFERENCE_PASS` | Архивирован соответствующий независимый reference workflow | Продуктовое выполнение этой же операции |
-| `GATED` | Проверка зависит от конкретного недоступного ресурса/решения | Допустимость утверждения о поддержке |
-| `NOT_EXECUTED` | Нет выполненного сценария | Успех или провал |
-| `RELEASE_READY` | Все обязательные gates объявленного scope пройдены | Факт публичной публикации |
-| `PUBLISHED` | Проверена публикация конкретного пакета и installation smoke | Расширение поддерживаемого scope сверх матрицы |
+| `PLANNED` | A scope of work is approved or proposed | That an implementation exists |
+| `IN_PROGRESS` | There is unfinished work | Acceptance or usability |
+| `HARNESS_ONLY` | A helper/contract was verified on a limited bench | That it works through the real designer/CLI |
+| `REPO_PASS` | A recorded product or automated scenario was run for the exact version | Visual Studio parity, availability on another device or publication |
+| `REFERENCE_PASS` | The corresponding independent reference workflow is archived | Product execution of the same operation |
+| `GATED` | The check depends on a specific unavailable resource/decision | That a support claim is admissible |
+| `NOT_EXECUTED` | No scenario was run | Success or failure |
+| `RELEASE_READY` | All mandatory gates of the declared scope are passed | The fact of public publication |
+| `PUBLISHED` | Publication of the specific package and the installation smoke are verified | An extension of the supported scope beyond the matrix |
 
-Это управленческие статусы нового плана. Они не меняют автоматически schema и значения существующего TSV-каталога. При эволюции каталога нужна явная migration его формата и consumers.
+These are management statuses of the new plan. They do not automatically change the schema and values of the existing TSV catalog. When the catalog evolves, an explicit migration of its format and consumers is needed.
 
-### 6.3. Проверки по характеру изменения
+### 6.3. Checks by the nature of the change
 
-| Изменение | Обязательная проверка | Когда нужен внешний контур |
+| Change | Mandatory check | When an external loop is needed |
 |---|---|---|
-| Source planner | Положительный/отрицательный fixture, точный diff, semantic delta, ownership | Для заявленной cross-tool совместимости |
-| Resource/project transaction | Несколько артефактов, Undo/Redo, crash/partial write и external conflict | Для native culture/vendor resource поведения |
-| RPC/lifecycle | Реальный engine, cancellation, stale reply, crash, rebuild, PID ownership | Для новой аппаратной архитектуры |
-| Webview UI | State/events, keyboard, direct product entry point | Для focus/native dialogs, AT, DPI и visual geometry |
-| Adapter/editor | Contract suite, provenance, result type, cancel, mutation/undo | Для лицензированного vendor и native UI |
-| Performance | Воспроизводимый corpus, полный action timing, память/handles | Для обещаний аппаратной производительности |
-| Packaging/update | Версии, architecture payload, clean install, upgrade/rollback | Для Marketplace/Open VSX publication smoke |
+| Source planner | Positive/negative fixture, exact diff, semantic delta, ownership | For declared cross-tool compatibility |
+| Resource/project transaction | Several artifacts, Undo/Redo, crash/partial write and external conflict | For native culture/vendor resource behavior |
+| RPC/lifecycle | Real engine, cancellation, stale reply, crash, rebuild, PID ownership | For a new hardware architecture |
+| Webview UI | State/events, keyboard, direct product entry point | For focus/native dialogs, AT, DPI and visual geometry |
+| Adapter/editor | Contract suite, provenance, result type, cancel, mutation/undo | For a licensed vendor and native UI |
+| Performance | Reproducible corpus, full action timing, memory/handles | For promises of hardware performance |
+| Packaging/update | Versions, architecture payload, clean install, upgrade/rollback | For the Marketplace/Open VSX publication smoke |
 
-Проверяются затронутые слои. Полные regression/package/runtime matrices выполняются перед RC или при изменении общей границы, а не после каждой правки документации.
+The affected layers are verified. Full regression/package/runtime matrices are run before an RC or when a shared boundary changes, not after every documentation edit.
 
 ### 6.4. Release evidence
 
-Для каждого закрываемого пункта `Rxx-yy` сохраняются: пользовательский сценарий, source/build identity, runtime/architecture/host версии, команда проверки, результат, artifact hashes, expected/actual diff, Undo/Redo и границы непроверенного.
+For every `Rxx-yy` item being closed, the following are kept: the user scenario, source/build identity, runtime/architecture/host versions, the verification command, the result, artifact hashes, expected/actual diff, Undo/Redo and the boundaries of what was not verified.
 
-Новые scenarios получают стабильные ID и прямые assertions в реальном product path. Если меняется сам проверяемый assertion или файл, старый результат не переносится без подтверждения. Существующие evidence validators и mutation self-tests остаются основой контроля.
+New scenarios get stable IDs and direct assertions in the real product path. If the assertion or the file under check itself changes, the old result is not carried over without confirmation. The existing evidence validators and mutation self-tests remain the basis of control.
 
-`docs/plans/` игнорируется текущим `.gitignore`; публичные документы программы должны жить в отслеживаемой части `docs/`. Возможные будущие артефакты, которые создаются по мере работы:
+`docs/plans/` is ignored by the current `.gitignore`; the public documents of the program must live in the tracked part of `docs/`. Possible future artifacts, created as the work progresses:
 
-- `docs/releases/2.x.y/plan.md` — точный scope и критерии minor-релиза;
-- `docs/releases/2.x.y/evidence.md` — результат приёмки с указанием артефактов;
-- `docs/compatibility/` — versioned runtime и adapter/vendor matrix;
-- `docs/adr/` — решения об изменении контракта, Lane B, bitness или изоляции.
+- `docs/releases/2.x.y/plan.md` — the exact scope and criteria of a minor release;
+- `docs/releases/2.x.y/evidence.md` — the acceptance result with the artifacts named;
+- `docs/compatibility/` — the versioned runtime and adapter/vendor matrix;
+- `docs/adr/` — decisions on changing a contract, Lane B, bitness or isolation.
 
-Эти каталоги являются предложением структуры, а не ссылкой на уже существующие результаты. Подготовка roadmap не отмечает ни один будущий пункт выполненным.
+These directories are a proposed structure, not a reference to results that already exist. Preparing the roadmap does not mark any future item as done.
 
 <a id="research"></a>
 
-## 7. Отдельные исследования и границы программы
+## 7. Separate research and program boundaries
 
-### 7.1. x86, COM и ActiveX
+### 7.1. x86, COM and ActiveX
 
-Обязательная работа 2.1 — точное обнаружение и понятный отказ. Поддержка исполнения выделена отдельно, потому что x86 worker, COM registration, AxHost resources, licensing и native dependencies требуют собственной архитектурной и тестовой матрицы.
+The mandatory work of 2.1 is exact detection and a clear refusal. Execution support is split out separately because an x86 worker, COM registration, AxHost resources, licensing and native dependencies require their own architecture and test matrix.
 
-**Последовательность исследования:**
+**Research sequence:**
 
-1. **D0 — спрос и fixtures:** несколько репрезентативных проектов, раздельно managed x86 и ActiveX; подтверждённый доступ к артефактам.
-2. **D1 — managed x86:** упаковка отдельного процесса, routing, build release, lifecycle, source-first editing и full Undo.
-3. **D2 — COM discovery:** безопасное перечисление совместимых зарегистрированных компонентов, диагностика bitness и отсутствие побочного изменения registry при просмотре.
-4. **D3 — AxHost:** создание wrapper/resources/licenses для конкретного разрешённого control, round trip с Visual Studio и cleanup тестового окружения.
-5. **D4 — product decision:** затраты сопровождения, полный corpus, installer/architecture compatibility и публикационный scope.
+1. **D0 — demand and fixtures:** several representative projects, managed x86 and ActiveX separately; confirmed access to the artifacts.
+2. **D1 — managed x86:** packaging of a separate process, routing, build release, lifecycle, source-first editing and full Undo.
+3. **D2 — COM discovery:** safe enumeration of compatible registered components, bitness diagnostics and no side-effect change to the registry while browsing.
+4. **D3 — AxHost:** creating the wrapper/resources/licenses for a specific permitted control, a round trip with Visual Studio and cleanup of the test environment.
+5. **D4 — product decision:** maintenance costs, the full corpus, installer/architecture compatibility and the publication scope.
 
-**Продолжать**, если продуктовый спрос оправдывает стоимость и каждый этап имеет доступную матрицу. **Остановить или отложить**, если результат требует непроверяемой сериализации, недоступных зависимостей либо неустранимой потери source authority. Успех managed x86 не означает успех COM/ActiveX.
+**Continue** if product demand justifies the cost and every stage has an available matrix. **Stop or postpone** if the result requires unverifiable serialization, unavailable dependencies or an irrecoverable loss of source authority. Success of managed x86 does not mean success of COM/ActiveX.
 
-При принятии направление получает отдельный release plan. Оно не увеличивает автоматически обязательный объём каждого 2.x и не превращает текущий ARM64 package в доказательство всех legacy сценариев.
+If accepted, the track gets a separate release plan. It does not automatically increase the mandatory scope of every 2.x release and does not turn the current ARM64 package into proof of all legacy scenarios.
 
-### 7.2. Ограничение исполняемого vendor code средствами ОС
+### 7.2. Restricting executable vendor code by OS means
 
-Исследовать отдельно process token, filesystem/network access, IPC и ограничения native UI. Требуется adversarial proof на настоящем worker, а не проверка, что тестовый объект «не умеет писать». До положительного результата остаётся существующая модель trusted-to-execute.
+Research separately the process token, filesystem/network access, IPC and the limitations of native UI. An adversarial proof on a real worker is required, not a check that a test object “cannot write”. Until there is a positive result, the existing trusted-to-execute model remains.
 
-Критерий полезности: уменьшение доступных ресурсов совместимо с нужными licensing/UI/dependency сценариями и не ломает поддержку. Непригодный sandbox не блокирует улучшения lifecycle, но не позволяет делать новое security-обещание.
+Usefulness criterion: reducing the available resources is compatible with the required licensing/UI/dependency scenarios and does not break support. An unsuitable sandbox does not block lifecycle improvements, but it does not allow a new security promise to be made.
 
-### 7.3. Что не входит в обязательный scope 3.0
+### 7.3. What is not in the mandatory 3.0 scope
 
-- Нативный WinForms runtime на Linux/macOS или браузерный WinForms designer.
-- WPF/MAUI/Avalonia designer и полноценная замена всей Visual Studio IDE.
-- Совместимость с любым неизвестным designer/editor без адаптера и проверки.
-- Исполнение произвольного пользовательского `InitializeComponent` как способ обойти безопасный interpreter.
-- Собственный package manager, SQL designer, runtime debugger или миграции базы данных.
-- Обязательные cloud accounts, marketplace адаптеров, совместное редактирование в реальном времени и подписочная модель.
-- Генерация UI с помощью AI как условие 3.0. Если она появится позднее, результат должен использовать те же preview, planner и transaction contracts.
+- A native WinForms runtime on Linux/macOS or a browser-based WinForms designer.
+- A WPF/MAUI/Avalonia designer and a full replacement of the whole Visual Studio IDE.
+- Compatibility with any unknown designer/editor without an adapter and verification.
+- Executing an arbitrary user `InitializeComponent` as a way to bypass the safe interpreter.
+- Its own package manager, SQL designer, runtime debugger or database migrations.
+- Mandatory cloud accounts, an adapter marketplace, real-time collaborative editing and a subscription model.
+- AI-based UI generation as a condition of 3.0. If it appears later, the result must use the same preview, planner and transaction contracts.
 
-Это перечень границ текущей программы. Перенос направления в основной scope требует нового пользовательского результата, оценки, владельца и критериев приёмки.
+This is the list of boundaries of the current program. Moving a track into the main scope requires a new user outcome, an estimate, an owner and acceptance criteria.
 
 <a id="execution"></a>
 
-## 8. Ресурсы, порядок исполнения и пересмотр плана
+## 8. Resources, execution order and plan revision
 
-### 8.1. Приоритеты
+### 8.1. Priorities
 
-**P0 — всегда раньше нового функционала:** потеря данных, перезапись внешних изменений, ложное успешное сохранение, выполнение за пределами заявленного trust contract, сломанная Undo/Redo и смешение документов.
+**P0 — always ahead of new functionality:** data loss, overwriting external changes, a false successful save, execution outside the declared trust contract, broken Undo/Redo and mixing of documents.
 
-**P1 — критический путь программы:** product protocol/supervisor, общая command authority, многофайловая recovery, реальные migration/rollback, hosted service contracts и SDK.
+**P1 — the critical path of the program:** product protocol/supervisor, a shared command authority, multi-file recovery, real migration/rollback, hosted service contracts and the SDK.
 
-**P2 — пользовательская продуктивность:** vendor editors, большие формы, resources/cultures, data workflows, templates и advisor. Их порядок внутри независимых веток можно пересматривать по обратной связи.
+**P2 — user productivity:** vendor editors, large forms, resources/cultures, data workflows, templates and the advisor. Their order within independent branches can be revised based on feedback.
 
-**P3 — условные расширения:** x86/COM, OS sandbox, дополнительные vendor cohorts, remote/cloud и другие направления вне обязательной матрицы.
+**P3 — conditional extensions:** x86/COM, the OS sandbox, additional vendor cohorts, remote/cloud and other tracks outside the mandatory matrix.
 
-### 8.2. Рабочие потоки и ответственность
+### 8.2. Workstreams and responsibility
 
-| Поток | Основная ответственность | Результат |
+| Workstream | Main responsibility | Outcome |
 |---|---|---|
-| Core/runtime | C#, RPC, worker lifecycle, source authority | 2.2–2.4, runtime часть 2.10 |
-| VS Code/UX | Документ, webview, команды, accessibility | 2.1–2.3, 2.6–2.9 |
+| Core/runtime | C#, RPC, worker lifecycle, source authority | 2.2–2.4, the runtime part of 2.10 |
+| VS Code/UX | Document, webview, commands, accessibility | 2.1–2.3, 2.6–2.9 |
 | Extensibility | SDK, services, brokers, adapter validation | 2.4–2.5, SDK RC |
-| Quality/compatibility | Fixtures, reference traces, аппаратная матрица, измерения | Gates каждого релиза и 2.10–2.12 |
-| Product/release | Scope, документация поддержки, beta projects, артефакты | Актуальная матрица и принятие релиза |
+| Quality/compatibility | Fixtures, reference traces, hardware matrix, measurements | The gates of every release and 2.10–2.12 |
+| Product/release | Scope, support documentation, beta projects, artifacts | An up-to-date matrix and release acceptance |
 
-Роли могут совмещаться. Владелец реализации и независимый проверяющий должны быть определены до закрытия критического пункта, даже если это внешняя review-помощь одному maintainer.
+Roles can be combined. The implementation owner and an independent reviewer must be identified before a critical item is closed, even if this is external review help for a single maintainer.
 
-### 8.3. Оценка масштаба
+### 8.3. Scale estimate
 
-Ниже — первоначальная инженерная оценка, основанная на объёме плана и неопределённости интеграций. Она не получена из измеренной скорости команды и не является датой выпуска. Человеко-месяц означает месяц полной работы одного специалиста, включая необходимые тесты и документацию.
+Below is an initial engineering estimate based on the size of the plan and the uncertainty of the integrations. It is not derived from a measured team velocity and is not a release date. A person-month means a month of full-time work by one specialist, including the necessary tests and documentation.
 
-**Уверенность в оценке низкая.** Таблица моделирует полный backlog, включая кандидатов из раздела 3.1, а не минимальное ядро. Для календарного обязательства нужны назначенные исполнители, доступная доля их времени, результаты технических проб R22/R23/R24 и наблюдаемая скорость первых законченных сценариев. Сроки предполагают использование доступных инженерных инструментов; неизвестный коэффициент ускорения от автоматизации в расчёт не заложен.
+**Confidence in the estimate is low.** The table models the full backlog, including the candidates from section 3.1, not the minimal core. A calendar commitment requires assigned people, the available share of their time, the results of the R22/R23/R24 technical probes and the observed velocity of the first completed scenarios. The timelines assume the use of the available engineering tools; an unknown speed-up factor from automation is not built into the calculation.
 
-| Группа | Ориентир, человеко-месяцев | Основной источник разброса |
+| Group | Guide figure, person-months | Main source of spread |
 |---|---:|---|
-| Baseline, 2.1–2.3 | 10–18 | Фактическое число несведённых product paths и сложность recovery |
-| Hosted SDK и первая cohort, 2.4–2.5 | 12–24 | Vendor design-time contracts, native UI, лицензированные fixtures |
-| Productivity, 2.6–2.9 | 16–28 | Сложные layouts, references, resource/data graph и semantic refactoring |
-| Compatibility, CLI и RC, 2.10–3.0 | 12–20 | Устройства, AT, update/rollback, независимый review |
-| **Итого до резерва** | **50–90** | Scope уточняется по итогам 2.1 и 2.4 |
+| Baseline, 2.1–2.3 | 10–18 | The actual number of product paths not yet unified and the complexity of recovery |
+| Hosted SDK and the first cohort, 2.4–2.5 | 12–24 | Vendor design-time contracts, native UI, licensed fixtures |
+| Productivity, 2.6–2.9 | 16–28 | Complex layouts, references, the resource/data graph and semantic refactoring |
+| Compatibility, CLI and RC, 2.10–3.0 | 12–20 | Devices, AT, update/rollback, independent review |
+| **Total before the reserve** | **50–90** | The scope is refined after 2.1 and 2.4 |
 
-Резерв 20–30% на интеграции, дефекты и обновление зависимостей даёт ориентир порядка **60–117 человеко-месяцев**. Он не покрывает новую большую vendor suite или полноценный Tier D, добавленный после freeze.
+A reserve of 20–30% for integrations, defects and dependency updates gives a guide figure of about **60–117 person-months**. It does not cover a new large vendor suite or a full Tier D added after the freeze.
 
-- **Один maintainer:** полный scope — многолетняя программа, потенциально 5–10 лет полной занятости по этой модели. Практический путь — небольшие полезные релизы и сокращённая обязательная матрица, а не обещание всех пунктов к близкой дате.
-- **Команда 3–4 человека:** предварительный календарный диапазон 24–42 месяца при совмещении ролей и доступных внешних проверках.
-- **Команда 6–8 человек:** предварительный диапазон 18–30 месяцев с параллельными потоками; критические зависимости, beta feedback и vendor access ограничивают ускорение.
+- **One maintainer:** the full scope is a multi-year program, potentially 5–10 years of full-time work under this model. The practical path is small useful releases and a reduced mandatory matrix, not a promise of every item by a near date.
+- **A team of 3–4 people:** a preliminary calendar range of 24–42 months with combined roles and available external checks.
+- **A team of 6–8 people:** a preliminary range of 18–30 months with parallel workstreams; critical dependencies, beta feedback and vendor access limit the speed-up.
 
-Диапазоны не вычисляются простым делением effort на headcount: часть специалистов занята сопровождением, а архитектурные и внешние зависимости последовательны. Через первые 90 дней эти оценки заменяются прогнозом по фактической скорости закрытия vertical slices.
+The ranges are not computed by simply dividing effort by headcount: some specialists are busy with maintenance, and the architectural and external dependencies are sequential. After the first 90 days these estimates are replaced by a forecast based on the actual rate at which vertical slices are closed.
 
-### 8.4. Контрольные точки и пересмотр
+### 8.4. Checkpoints and revision
 
-- После **2.1**: проверить, отражает ли диагностика реальные причины проблем и какие product paths остаются только в helpers.
-- После **2.2–2.3**: подтвердить цену общей архитектуры и восстановления; не расширять hosted mutation, пока общий маршрут нестабилен.
-- После **2.4**: внешний автор собирает sample adapter; по его результату корректируются SDK и оценка vendor cohort.
-- После **2.5**: оценить стоимость каждой следующей suite; не обещать несколько vendor families по успеху одной.
-- После **2.9**: заморозить функциональный scope 3.0; переносить необязательные функции, сохраняя качество обязательных.
-- После **2.12**: решение о выпуске по матрице и доказательствам, с отдельно записанной публикационной готовностью.
+- After **2.1**: check whether the diagnostics reflect the real causes of problems and which product paths remain only in helpers.
+- After **2.2–2.3**: confirm the cost of the shared architecture and of recovery; do not extend hosted mutation while the shared route is unstable.
+- After **2.4**: an external author builds a sample adapter; the SDK and the vendor cohort estimate are adjusted based on the result.
+- After **2.5**: assess the cost of each next suite; do not promise several vendor families on the success of one.
+- After **2.9**: freeze the functional scope of 3.0; move optional features out while keeping the quality of the mandatory ones.
+- After **2.12**: a release decision based on the matrix and the evidence, with publication readiness recorded separately.
 
-Каждые 4–6 недель обновлять статус задач, новые риски, требуемую ёмкость, результаты реальных проектов и ближайший vertical slice. Пересмотр scope оставляет запись причины и обновляет все затронутые критерии, а не только номер версии.
+Every 4–6 weeks, update the task status, new risks, the required capacity, the results from real projects and the nearest vertical slice. A scope revision leaves a record of the reason and updates all affected criteria, not only the version number.
 
-### 8.5. Основные риски
+### 8.5. Main risks
 
-| Риск | Ранний сигнал | План реакции |
+| Risk | Early signal | Response plan |
 |---|---|---|
-| Две параллельные архитектуры | Новая функция обходит общий dispatcher или transaction | Остановить добавление обходного пути; подключить существующий маршрут |
-| Невоспроизводимые «зелёные» проверки | PASS без product entry point или с caller-supplied результатом | Прямые assertions, provenance и mutation self-test |
-| Vendor scope растёт бесконтрольно | Каждый control требует уникальных services | Ограничить cohort, опубликовать capability gaps, пересмотреть SDK |
-| Изменение runtime/VS Code | Падает min/current host или новые framework metadata | Preview lane, compatibility test, своевременный toolchain update |
-| Ложное ускорение | Быстрый canvas при неподтверждённом source state | Измерять commit/reconcile отдельно, сохранять authoritative revision |
-| Слабая лабораторная доступность | ARM64/AT/soak остаются недоступны к RC | Бронировать устройства и внешнее review с начала программы |
-| Слишком крупный minor | Несколько несвязанных требований задерживают полезную функцию | Выпускать завершённый bounded slice, переносить остальное явно |
-| Восстановление повреждает внешнюю работу | Journal содержит устаревший fingerprint | Тесты реальной конкуренции, отказ от автоматической перезаписи |
+| Two parallel architectures | A new feature bypasses the shared dispatcher or transaction | Stop adding the bypass; connect the existing route |
+| Irreproducible “green” checks | A PASS without a product entry point or with a caller-supplied result | Direct assertions, provenance and a mutation self-test |
+| Vendor scope grows uncontrolled | Every control requires unique services | Limit the cohort, publish the capability gaps, revise the SDK |
+| A runtime/VS Code change | The min/current host or new framework metadata fails | A preview lane, a compatibility test, a timely toolchain update |
+| False speed-up | A fast canvas with an unconfirmed source state | Measure commit/reconcile separately, keep the authoritative revision |
+| Weak lab availability | ARM64/AT/soak remain unavailable by the RC | Book the devices and the external review from the start of the program |
+| A minor that is too large | Several unrelated requirements delay a useful feature | Ship a completed bounded slice, move the rest explicitly |
+| Recovery damages external work | The journal contains a stale fingerprint | Tests of real concurrency, refusing automatic overwrite |
 
-### 8.6. Повторная проверка качества плана — 22 сентября 2026 года
+### 8.6. Repeat quality review of the plan — 22 September 2026
 
-**Вердикт:** после уточнений документ пригоден как поэтапный roadmap разработки. Он задаёт проверяемые результаты и зависимости, но не заменяет release-specific design и не подтверждает сроки. Проверка охватила текущие исходники, независимые обзоры архитектуры и продуктовых ограничений, а также актуальные первичные документы VS Code/.NET.
+**Verdict:** after the refinements, the document is fit to serve as a staged development roadmap. It sets verifiable outcomes and dependencies, but it does not replace release-specific design and does not confirm timelines. The review covered the current sources, independent reviews of the architecture and of the product constraints, and the current primary VS Code/.NET documents.
 
-| Найденный риск плана | Принятое уточнение |
+| Plan risk found | Refinement adopted |
 |---|---|
-| Обещание общей native history без подтверждения API | Разделены логическая транзакция, custom/text history, backup и redo; добавлена ранняя техническая проба R23 |
-| Внедрение искусственной cache schema ради тестового модуля | R21 начинается с реальных persisted states и существующей toolbox migration; отдельно защищены unsaved backups |
-| Повтор команды и routing rollback без определённой границы | В R22 включены operation identity, durable outcome, unknown-outcome reconciliation и процедура смены владельца |
-| Сертификация vendor могла задерживать всю аппаратную приёмку | Vendor gate отделён от managed runtime/accessibility; общий RC собирает оба результата |
-| Собственный SDK sample не доказывает modern designer ABI | До SDK Preview проверяются modern/classic contracts с сохранением запрета private VS dependencies |
-| Быстрый commit мог скрыть медленный canvas и слабую статистику | Добавлены end-to-end criterion, минимальный объём выборки, независимые сессии и правила failures/outliers |
-| Parse-only мог незаметно исполнить MSBuild resolver | Задан отдельный static path, статус неизвестных значений и fixture на отсутствие исполнения |
-| Объём и сроки выглядели более обязательными, чем имеющиеся данные | Выделены кандидаты и исследования, оценка помечена низкой уверенностью, будущий прогноз привязан к измеренной скорости |
-| RC-label мог превратиться в неподдержанный package version | Отделены стадия RC и правила stable/pre-release публикации |
+| A promise of shared native history without API confirmation | The logical transaction, custom/text history, backup and redo are separated; the early R23 technical probe is added |
+| Introducing an artificial cache schema for the sake of a test module | R21 starts from the real persisted states and the existing toolbox migration; unsaved backups are protected separately |
+| Command retry and routing rollback without a defined boundary | R22 includes operation identity, durable outcome, unknown-outcome reconciliation and an owner-change procedure |
+| Vendor certification could delay the whole hardware acceptance | The vendor gate is separated from managed runtime/accessibility; the overall RC collects both results |
+| The project's own SDK sample does not prove the modern designer ABI | Before the SDK Preview, the modern/classic contracts are verified while keeping the ban on private VS dependencies |
+| A fast commit could hide a slow canvas and weak statistics | An end-to-end criterion, a minimum sample size, independent sessions and rules for failures/outliers are added |
+| Parse-only could silently execute the MSBuild resolver | A separate static path, a status for unknown values and a fixture for the absence of execution are defined |
+| The scope and timelines looked more binding than the available data | Candidates and research are singled out, the estimate is marked as low-confidence, the future forecast is tied to measured velocity |
+| An RC label could turn into an unsupported package version | The RC stage is separated from the stable/pre-release publication rules |
 
-Технические пробы R22/R23/R24, физические устройства и первая vendor cohort остаются будущими условиями исполнения. При этой проверке продуктовые тесты, benchmark, сборка VSIX и публикация не выполнялись; успешная проверка структуры документа не закрывает эти gates.
+The R22/R23/R24 technical probes, physical devices and the first vendor cohort remain future execution conditions. During this review, product tests, the benchmark, the VSIX build and publication were not run; a successful check of the document structure does not close these gates.
 
 <a id="first-90-days"></a>
 
-## 9. Первые 90 дней
+## 9. The first 90 days
 
-Это порядок стартовых работ для доступной команды, а не обещание выпустить несколько версий за квартал. При меньшей ёмкости сохраняются зависимости и сокращается число одновременно активных задач.
+This is the order of the starting work for the available team, not a promise to ship several versions in a quarter. With less capacity the dependencies are kept and the number of simultaneously active tasks is reduced.
 
-| Период | Работа | Проверяемый результат |
+| Period | Work | Verifiable outcome |
 |---|---|---|
-| Дни 1–14 | R20-01/02: актуальная product-route map, различия с архивными документами, минимальный regression corpus | У каждой возможности есть вход, writer и evidence boundary |
-| Дни 15–30 | Первый vertical slice 2.1: диагностика конкретного отказа → действие восстановления → успешное открытие | Реальный Extension Host workflow и понятное состояние UI |
-| Дни 31–45 | Settings/cache producer/consumer, миграция старой установки, rollback; архитектурный ADR перехода | Два реальных installation states и воспроизводимое восстановление |
-| Дни 46–60 | Первый read-only render/describe через v2 envelope и supervisor | Реальные modern/net48 запросы, cancellation и late-reply rejection |
-| Дни 61–75 | Одна scalar mutation через общий dispatcher и transaction, реальный Undo | Полный UI→engine→PatchSet→Undo→reconcile с исходными файлами |
-| Дни 76–90 | Crash/restart этого slice, замеры, независимый review; пересчёт сроков остальной программы | Evidence небольшой законченной функции, список пробелов и обновлённая оценка |
+| Days 1–14 | R20-01/02: an up-to-date product-route map, differences from the archived documents, a minimal regression corpus | Every capability has an entry point, a writer and an evidence boundary |
+| Days 15–30 | The first vertical slice of 2.1: diagnostics of a specific refusal → recovery action → successful open | A real Extension Host workflow and a clear UI state |
+| Days 31–45 | Settings/cache producer/consumer, migration of an old installation, rollback; the architectural ADR for the transition | Two real installation states and reproducible recovery |
+| Days 46–60 | The first read-only render/describe through the v2 envelope and the supervisor | Real modern/net48 requests, cancellation and late-reply rejection |
+| Days 61–75 | One scalar mutation through the shared dispatcher and transaction, a real Undo | A full UI→engine→PatchSet→Undo→reconcile with the original files |
+| Days 76–90 | Crash/restart of this slice, measurements, an independent review; recalculating the timelines of the rest of the program | Evidence of a small completed feature, a list of gaps and an updated estimate |
 
-Параллельно: подобрать реальные проекты для beta corpus, выяснить доступность первой vendor cohort, запланировать ARM64/AT sessions и собрать исходные performance samples. Эти действия не должны ждать 2.5 или 2.10.
+In parallel: select real projects for the beta corpus, find out the availability of the first vendor cohort, schedule the ARM64/AT sessions and collect the initial performance samples. These actions must not wait for 2.5 or 2.10.
 
-В этом же периоде начать ограниченные пробы native history R23 и modern designer ABI R24: результат нужен до выбора общей модели и фиксации SDK. Инвентаризация существующих форматов предшествует созданию нового cache; проверка старой установки использует реально выпущенное состояние. Для одного maintainer эти пробы выполняются последовательно с основным сценарием, а не предполагают дополнительную свободную команду.
+In the same period, start bounded probes of native history (R23) and the modern designer ABI (R24): the result is needed before the shared model is chosen and the SDK is fixed. The inventory of existing formats precedes the creation of a new cache; the check of an old installation uses a state that was actually released. For a single maintainer these probes run sequentially with the main scenario and do not assume an additional free team.
 
-### Правило готовности отдельной задачи
+### Readiness rule for an individual task
 
-Задача `Rxx-yy` закрывается, когда есть: пользовательский путь, реализация в продукте, положительный и существенный отрицательный сценарий, сохранение source/resources/history, документация capability и подтверждённый результат на нужных runtime legs. Если задача только исследовательская, результатом является решение с доказательствами и явным продолжением/остановкой.
+A task `Rxx-yy` is closed when there is: a user path, an implementation in the product, a positive and a substantial negative scenario, preservation of source/resources/history, capability documentation and a confirmed result on the required runtime legs. If the task is research only, the result is an evidence-backed decision with an explicit continue/stop.
 
-### Правило готовности minor-релиза
+### Readiness rule for a minor release
 
-Релиз закрывается после всех обязательных задач и внутренних/внешних gates его зафиксированного scope, подходящей regression/packaging проверки и актуальной support matrix. Открытыми могут оставаться проверки возможностей вне объявленного scope; его сокращение оформляется явно до закрытия релиза. Перенесённый пункт остаётся видимым в плане следующей версии; он не исчезает из учёта.
+A release is closed after all the mandatory tasks and the internal/external gates of its fixed scope, a suitable regression/packaging check and an up-to-date support matrix. Checks of capabilities outside the declared scope may stay open; a reduction of the scope is recorded explicitly before the release is closed. A moved item remains visible in the plan of the next version; it does not disappear from the record.
 
 <a id="sources"></a>
 
-## 10. Источники и технические точки входа
+## 10. Sources and technical entry points
 
-Ссылки ниже фиксируют основу планирования. Номера строк относятся к исходникам, прочитанным 22 сентября 2026 года, и могут сдвигаться при реализации. Ни одна ссылка на старый тестовый отчёт не означает повторного запуска в эту дату.
+The links below record the basis of the planning. The line numbers refer to the sources as read on 22 September 2026 and may shift during implementation. No link to an old test report means a rerun on that date.
 
-| Источник | Что использовано |
+| Source | What was used |
 |---|---|
-| [extension/package.json:6](../extension/package.json#L6), [engine/Engine.csproj:5](../engine/Engine.csproj#L5), [engine-net48/Engine.Net48.csproj:13](../engine-net48/Engine.Net48.csproj#L13) | Версия продукта, modern host TFM, net48 и архитектура |
-| [release-2.0.0-gate-record.md:3](release-2.0.0-gate-record.md#L3) | Датированный scope и границы августовского evidence |
-| [vs-parity-scenario-catalog.tsv:1](v2/vs-parity-scenario-catalog.tsv#L1) | Отдельные repo/reference/automation статусы 128 сценариев |
-| [extension/src/extension.ts:509](../extension/src/extension.ts#L509), [v2AdapterManifestRegistry.ts:8](../extension/src/v2AdapterManifestRegistry.ts#L8) | Уже подключённое metadata-only обнаружение manifests |
-| [extension/src/v2Migration.ts:3](../extension/src/v2Migration.ts#L3) | Экспериментальная граница миграции settings/cache |
-| [extension/src/designerEditor.ts:657](../extension/src/designerEditor.ts#L657) | Существующие mementos и реальная toolbox scope migration |
-| [extension/src/engineClient.ts:1316](../extension/src/engineClient.ts#L1316), [extension.ts:1381](../extension/src/extension.ts#L1381) | Probe-only тип supervisor и прямое обозначение diagnostics-only |
-| [extension/src/workerSupervisor.ts:112](../extension/src/workerSupervisor.ts#L112), [workerSupervisor.ts:139](../extension/src/workerSupervisor.ts#L139) | Новый request ID на каждый вызов; текущий command ID не является durable operation identity |
-| [extension/src/extension.ts:1557](../extension/src/extension.ts#L1557), [extension.ts:2235](../extension/src/extension.ts#L2235) | Существующий product lifecycle и idle recycle |
-| [extension/src/designerEditor.ts:984](../extension/src/designerEditor.ts#L984), [designerEditor.ts:2442](../extension/src/designerEditor.ts#L2442) | Document/session границы для последовательного выделения модулей |
-| [extension/src/designerEditor.ts:4527](../extension/src/designerEditor.ts#L4527), [transactionRunner.ts:253](../extension/src/transactionRunner.ts#L253) | Source/revision firewall и реальный PatchSet transaction runner |
-| [extension/src/documentStore.ts:210](../extension/src/documentStore.ts#L210), [resourceTransactionCoordinator.ts:123](../extension/src/resourceTransactionCoordinator.ts#L123) | Save As и существующая orchestration ресурсов |
-| [extension/src/designerEditor.ts:1234](../extension/src/designerEditor.ts#L1234), [designerEditor.ts:8145](../extension/src/designerEditor.ts#L8145), [extension.ts:588](../extension/src/extension.ts#L588) | Ограниченное восстановление native Undo, отдельная text history и single-view регистрация provider |
-| [engine/DesignerOwnedRegionSerializer.cs:62](../engine/DesignerOwnedRegionSerializer.cs#L62), [engineClient.ts:2614](../extension/src/engineClient.ts#L2614) | Уже существующая bounded Lane B и product client |
-| [engine/HostedServiceKernelProductBroker.cs:17](../engine/HostedServiceKernelProductBroker.cs#L17), [engine-net48/HostedDesignerBroker.cs:19](../engine-net48/HostedDesignerBroker.cs#L19) | Узкие certified hosted routes и disposable worker |
-| [engine/DesignerUiTypeEditorWorker.cs:42](../engine/DesignerUiTypeEditorWorker.cs#L42) | Существующий editor worker как основа расширения |
-| [engine/ProjectResolver.cs:81](../engine/ProjectResolver.cs#L81), [ProjectResolver.cs:579](../engine/ProjectResolver.cs#L579) | Design-time evaluation и multi-target project context |
-| [extension/src/designerEditor.ts:12148](../extension/src/designerEditor.ts#L12148), [extension/media/panel.js:752](../extension/media/panel.js#L752) | Retained rendering и существующий accessible outline |
-| [extension/src/v2HeadlessValidateCli.ts:1](../extension/src/v2HeadlessValidateCli.ts#L1), [extension/package.json:477](../extension/package.json#L477) | Development CLI, который предстоит сделать продуктовым |
-| [extension/src/extension.ts:635](../extension/src/extension.ts#L635) | Уже существующий product High-DPI advisor с preview и подтверждённым apply |
-| [adapter-sdk-version-policy.md:25](v2/adapter-sdk-version-policy.md#L25) | Trust declarations и отдельная ответственность loader |
-| [ADR 0003:20](adr/0003-v2-hosted-services-and-dual-lane-persistence.md#L20) | Публичные services, command authority, trust и dual-lane contracts |
-| [docs/TESTING.md:9](TESTING.md#L9), [ROADMAP.md:780](../ROADMAP.md#L780) | Пирамида проверок и ранее определённые пороги parity |
+| [extension/package.json:6](../extension/package.json#L6), [engine/Engine.csproj:5](../engine/Engine.csproj#L5), [engine-net48/Engine.Net48.csproj:13](../engine-net48/Engine.Net48.csproj#L13) | Product version, modern host TFM, net48 and architecture |
+| [release-2.0.0-gate-record.md:3](release-2.0.0-gate-record.md#L3) | The dated scope and the boundaries of the August evidence |
+| [vs-parity-scenario-catalog.tsv:1](v2/vs-parity-scenario-catalog.tsv#L1) | The separate repo/reference/automation statuses of the 128 scenarios |
+| [extension/src/extension.ts:509](../extension/src/extension.ts#L509), [v2AdapterManifestRegistry.ts:8](../extension/src/v2AdapterManifestRegistry.ts#L8) | The already wired-in metadata-only discovery of manifests |
+| [extension/src/v2Migration.ts:3](../extension/src/v2Migration.ts#L3) | The experimental boundary of settings/cache migration |
+| [extension/src/designerEditor.ts:657](../extension/src/designerEditor.ts#L657) | The existing mementos and the real toolbox scope migration |
+| [extension/src/engineClient.ts:1316](../extension/src/engineClient.ts#L1316), [extension.ts:1381](../extension/src/extension.ts#L1381) | The probe-only supervisor type and its direct diagnostics-only designation |
+| [extension/src/workerSupervisor.ts:112](../extension/src/workerSupervisor.ts#L112), [workerSupervisor.ts:139](../extension/src/workerSupervisor.ts#L139) | A new request ID for every call; the current command ID is not a durable operation identity |
+| [extension/src/extension.ts:1557](../extension/src/extension.ts#L1557), [extension.ts:2235](../extension/src/extension.ts#L2235) | The existing product lifecycle and idle recycle |
+| [extension/src/designerEditor.ts:984](../extension/src/designerEditor.ts#L984), [designerEditor.ts:2442](../extension/src/designerEditor.ts#L2442) | The document/session boundaries for extracting modules step by step |
+| [extension/src/designerEditor.ts:4527](../extension/src/designerEditor.ts#L4527), [transactionRunner.ts:253](../extension/src/transactionRunner.ts#L253) | The source/revision firewall and the real PatchSet transaction runner |
+| [extension/src/documentStore.ts:210](../extension/src/documentStore.ts#L210), [resourceTransactionCoordinator.ts:123](../extension/src/resourceTransactionCoordinator.ts#L123) | Save As and the existing resource orchestration |
+| [extension/src/designerEditor.ts:1234](../extension/src/designerEditor.ts#L1234), [designerEditor.ts:8145](../extension/src/designerEditor.ts#L8145), [extension.ts:588](../extension/src/extension.ts#L588) | Bounded restoration of native Undo, the separate text history and the single-view provider registration |
+| [engine/DesignerOwnedRegionSerializer.cs:62](../engine/DesignerOwnedRegionSerializer.cs#L62), [engineClient.ts:2614](../extension/src/engineClient.ts#L2614) | The already existing bounded Lane B and the product client |
+| [engine/HostedServiceKernelProductBroker.cs:17](../engine/HostedServiceKernelProductBroker.cs#L17), [engine-net48/HostedDesignerBroker.cs:19](../engine-net48/HostedDesignerBroker.cs#L19) | The narrow certified hosted routes and the disposable worker |
+| [engine/DesignerUiTypeEditorWorker.cs:42](../engine/DesignerUiTypeEditorWorker.cs#L42) | The existing editor worker as the basis for extension |
+| [engine/ProjectResolver.cs:81](../engine/ProjectResolver.cs#L81), [ProjectResolver.cs:579](../engine/ProjectResolver.cs#L579) | Design-time evaluation and the multi-target project context |
+| [extension/src/designerEditor.ts:12148](../extension/src/designerEditor.ts#L12148), [extension/media/panel.js:752](../extension/media/panel.js#L752) | Retained rendering and the existing accessible outline |
+| [extension/src/v2HeadlessValidateCli.ts:1](../extension/src/v2HeadlessValidateCli.ts#L1), [extension/package.json:477](../extension/package.json#L477) | The development CLI that is to become a product one |
+| [extension/src/extension.ts:635](../extension/src/extension.ts#L635) | The already existing product High-DPI advisor with preview and confirmed apply |
+| [adapter-sdk-version-policy.md:25](v2/adapter-sdk-version-policy.md#L25) | Trust declarations and the separate responsibility of the loader |
+| [ADR 0003:20](adr/0003-v2-hosted-services-and-dual-lane-persistence.md#L20) | Public services, command authority, trust and dual-lane contracts |
+| [docs/TESTING.md:9](TESTING.md#L9), [ROADMAP.md:780](../ROADMAP.md#L780) | The test pyramid and the previously defined parity thresholds |
 
-Внешние первичные источники проверены при подготовке документа:
+External primary sources checked while the document was prepared:
 
-- [.NET Support Policy](https://dotnet.microsoft.com/en-us/platform/support/policy) — текущие сроки обслуживания runtime; будущие release decisions требуют повторной проверки.
-- [WinForms designer differences since .NET Framework](https://learn.microsoft.com/en-us/dotnet/desktop/winforms/controls-design/designer-differences-framework) — различия modern/net48 design-time модели и UI editors; продуктовый дизайн SDK в этом roadmap является проектным решением.
-- [VS Code Custom Editor API](https://code.visualstudio.com/api/extension-guides/custom-editors) — document, editing и backup responsibilities; многоартефактная transaction model реализуется самим расширением.
-- [VS Code Workspace Trust Extension Guide](https://code.visualstudio.com/api/extension-guides/workspace-trust) — поведение расширений в trusted/restricted workspace; предлагаемый adapter enablement дополняет этот механизм.
-- [Publishing Extensions — Pre-release extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) — числовые версии и отдельные pre-release/stable артефакты; RC-стадия roadmap не задаёт несовместимый с Marketplace SemVer-суффикс.
+- [.NET Support Policy](https://dotnet.microsoft.com/en-us/platform/support/policy) — the current runtime servicing dates; future release decisions require a recheck.
+- [WinForms designer differences since .NET Framework](https://learn.microsoft.com/en-us/dotnet/desktop/winforms/controls-design/designer-differences-framework) — the differences between the modern/net48 design-time model and UI editors; the product design of the SDK in this roadmap is a design decision of the project.
+- [VS Code Custom Editor API](https://code.visualstudio.com/api/extension-guides/custom-editors) — document, editing and backup responsibilities; the multi-artifact transaction model is implemented by the extension itself.
+- [VS Code Workspace Trust Extension Guide](https://code.visualstudio.com/api/extension-guides/workspace-trust) — the behavior of extensions in a trusted/restricted workspace; the proposed adapter enablement complements this mechanism.
+- [Publishing Extensions — Pre-release extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) — numeric versions and separate pre-release/stable artifacts; the RC stage of the roadmap does not define a SemVer suffix incompatible with Marketplace.
