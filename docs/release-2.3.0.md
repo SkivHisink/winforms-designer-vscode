@@ -309,6 +309,15 @@ controls, and the normal-host evidence validator refused all **25** negative con
 The local preflight ran as `npm run release:preflight -- --metadata-only`, the sole local substitution. Git cleanliness
 and tag identity are **NOT ASSERTED** locally; CI checks them on the release commit.
 
+**After local acceptance.** The first CI run on the release commit failed one minimum-version smoke scenario,
+`V2-FND-001-S104`: its final check that every observed engine PID has left the operating system timed out, after the
+product had already reported zero live engine processes. The observed set includes PIDs of workers replaced in earlier
+cycles, and a shared runner can give such a number to an unrelated, newer process. The suite now treats a PID held by a
+process created after it was first observed as exited, and allows 30 s instead of 10 s for teardown. The product is
+unchanged; the smoke passed **18/18** on 1.84.0 and stable locally. This acceptance-suite change postdates the retained
+local evidence, so that one test file's input hash differs from the index; the complete check of the final tree is the
+CI run on the commit that contains it.
+
 ## Document and history contract
 
 The generated-source buffer, the last saved byte image, linked artifacts, durable transaction records and the

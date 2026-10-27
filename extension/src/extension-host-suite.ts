@@ -5606,12 +5606,25 @@ async function runS104IdleRecycleScenario(
   assert.strictEqual(configuredLimit, 4, 'S104 must exercise the default four-process residency cap');
   const previousRequests = new Set(testApi.productRequestOutcomes().map(request => request.requestId));
   const observedPids = new Set<number>();
+  // When each PID was first seen. The observed process already existed then, so a process holding the same number
+  // that was created later is a different process: Windows reused the number after the observed one exited.
+  const observedAt = new Map<number, number>();
   const rememberPids = () => {
     const state = testApi.engineLifecycleState();
     for (const pid of [...state.liveProcessPids, ...state.mappedEngines.map(engine => engine.pid),
       ...testApi.productRequestOutcomes().filter(request => !previousRequests.has(request.requestId)).map(request => request.pid)]) {
-      if (pid > 0) observedPids.add(pid);
+      if (pid > 0 && !observedPids.has(pid)) { observedPids.add(pid); observedAt.set(pid, Date.now()); }
     }
+  };
+  const observedProcessExited = (pid: number): boolean => {
+    try { process.kill(pid, 0); } catch { return true; }
+    let created: string;
+    try {
+      created = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { [DateTimeOffset]::new($p.CreationDate).ToUnixTimeMilliseconds() }`],
+      { encoding: 'utf8', timeout: 10_000, windowsHide: true }).trim();
+    } catch { return false; } // an unanswered query proves nothing; keep waiting within the bound
+    return created === '' || Number(created) > (observedAt.get(pid) ?? Number.POSITIVE_INFINITY);
   };
   rememberPids();
 
@@ -5728,15 +5741,16 @@ async function runS104IdleRecycleScenario(
       30_000,
     );
     // The host sees a child's exit before Windows has necessarily torn down its process object (a launcher's isolated
-    // engine ends with the launcher's job). Allow that teardown the same bound as a replaced worker above.
+    // engine ends with the launcher's job). Shared runners can be slow to tear it down, and an earlier cycle's PID may
+    // already belong to an unrelated newer process.
     for (const pid of observedPids) {
-      await waitFor(() => {
-        try { process.kill(pid, 0); return false; } catch { return true; }
-      }, `S104 ${label}: observed engine PID ${pid} still exists after idle recycle`, 10_000);
+      await waitFor(() => observedProcessExited(pid),
+        `S104 ${label}: observed engine PID ${pid} still exists after idle recycle`, 30_000);
     }
     console.log(`S104 ${label}: zero mapped/live processes; every observed OS PID exited: ${[...observedPids].join(', ')}`);
     // Those numbers are free for Windows to reuse from here on; the next proof covers only processes started after it.
     observedPids.clear();
+    observedAt.clear();
     for (const request of testApi.productRequestOutcomes()) previousRequests.add(request.requestId);
   };
   await recycleAndProveExit('warm cycles');
