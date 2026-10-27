@@ -1,0 +1,370 @@
+[
+  {
+    "name": "Build engine (Release)",
+    "env": {},
+    "command": "dotnet build engine -c Release\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "01-build-engine-release-.ps1",
+    "log": "01-build-engine-release-.log"
+  },
+  {
+    "name": "Build .NET Framework engine (Release, x64)",
+    "env": {},
+    "command": "dotnet build engine-net48 -c Release -p:PlatformTarget=x64\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "02-build-.net-framework-engine-release-x64-.ps1",
+    "log": "02-build-.net-framework-engine-release-x64-.log"
+  },
+  {
+    "name": "Unit tests (engine)",
+    "env": {},
+    "command": "dotnet test tests/Engine.UnitTests -c Release --logger \"trx;LogFileName=modern.trx\" --results-directory \"$env:RUNNER_TEMP\\v2-scenario-evidence\\test-results\\modern\"\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "03-unit-tests-engine-.ps1",
+    "log": "03-unit-tests-engine-.log"
+  },
+  {
+    "name": "Unit tests (engine, net48)",
+    "env": {},
+    "command": "dotnet test tests/Engine.Net48.UnitTests -c Release --logger \"trx;LogFileName=net48.trx\" --results-directory \"$env:RUNNER_TEMP\\v2-scenario-evidence\\test-results\\net48\"\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "04-unit-tests-engine-net48-.ps1",
+    "log": "04-unit-tests-engine-net48-.log"
+  },
+  {
+    "name": "Compare product renders with archived Visual Studio references",
+    "env": {
+      "WFD_VISUAL_REFERENCE_EVIDENCE_FILE": "<ci-temp>\\v2-scenario-evidence\\visual-reference.json"
+    },
+    "command": "./scripts/compare-visual-studio-reference-renders.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "05-compare-product-renders-with-archived-visual-studio-references.ps1",
+    "log": "05-compare-product-renders-with-archived-visual-studio-references.log"
+  },
+  {
+    "name": "M6 coverage gate (engine samples)",
+    "env": {},
+    "command": "dotnet run --project engine -c Release --coverage-report engine/samples --min-rate 80\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "06-m6-coverage-gate-engine-samples-.ps1",
+    "log": "06-m6-coverage-gate-engine-samples-.log"
+  },
+  {
+    "name": "Build sample fixtures",
+    "env": {},
+    "command": "dotnet build samples/CustomControls -c Release\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ndotnet build samples/ComplexProject -f net8.0-windows -c Debug -p:TargetFrameworks=net8.0-windows\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ndotnet build samples/ComplexProject -f net9.0-windows -c Debug -p:TargetFrameworks=net9.0-windows\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ndotnet build samples/ComplexProject -f net10.0-windows -c Debug -p:TargetFrameworks=net10.0-windows\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ndotnet build fixtures/Net48CtxFixture -c Release -p:PlatformTarget=x64\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ndotnet build fixtures/FakeVendor -c Release -p:PlatformTarget=x64\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "07-build-sample-fixtures.ps1",
+    "log": "07-build-sample-fixtures.log"
+  },
+  {
+    "name": "Install extension dependencies",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm ci\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "08-install-extension-dependencies.ps1",
+    "log": "08-install-extension-dependencies.log"
+  },
+  {
+    "name": "Audit extension dependencies",
+    "env": {},
+    "cwd": "extension",
+    "command": "for ($i = 1; $i -le 3; $i++) {\n  npm audit --audit-level=moderate\n  if ($LASTEXITCODE -eq 0) { exit 0 }\n  if ($i -lt 3) { Start-Sleep -Seconds (10 * $i) }\n}\nexit 1",
+    "script": "09-audit-extension-dependencies.ps1",
+    "log": "09-audit-extension-dependencies.log"
+  },
+  {
+    "name": "Adapter SDK independent contract tests",
+    "env": {},
+    "command": "node --test adapter-sdk/test/*.test.mjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "10-adapter-sdk-independent-contract-tests.ps1",
+    "log": "10-adapter-sdk-independent-contract-tests.log"
+  },
+  {
+    "name": "Adapter SDK public type contract",
+    "env": {},
+    "command": "node extension/node_modules/typescript/bin/tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext adapter-sdk/test/type-contract.mts\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "11-adapter-sdk-public-type-contract.ps1",
+    "log": "11-adapter-sdk-public-type-contract.log"
+  },
+  {
+    "name": "Build independent Adapter SDK samples",
+    "env": {},
+    "command": "node samples/AdapterSdkPreview/build.mjs\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "12-build-independent-adapter-sdk-samples.ps1",
+    "log": "12-build-independent-adapter-sdk-samples.log"
+  },
+  {
+    "name": "Pack independent Adapter SDK artifact",
+    "env": {},
+    "command": "$destination = Join-Path $env:RUNNER_TEMP 'release24-sdk-package'\nNew-Item -ItemType Directory -Force -Path $destination | Out-Null\n$pack = npm pack ./adapter-sdk --pack-destination $destination --json\nif ($LASTEXITCODE -ne 0) { throw 'Adapter SDK npm pack failed.' }\n$package = @(($pack -join [Environment]::NewLine) | ConvertFrom-Json)\n$expected = @('LICENSE', 'README.md', 'adapter-package.schema.json', 'index.d.mts', 'index.mjs', 'package.json') | Sort-Object\n$actual = @($package[0].files | ForEach-Object { $_.path } | Sort-Object)\nif ($package.Count -ne 1 -or $package[0].name -ne '@winforms-designer/adapter-sdk' -or $package[0].version -ne '0.1.0' -or (Compare-Object $expected $actual)) {\n  throw 'Adapter SDK package identity or independent six-file payload does not match the public contract.'\n}\n$archive = Join-Path $destination $package[0].filename\n$package[0] | Add-Member -NotePropertyName sha256 -NotePropertyValue (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()\n$package | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $destination 'pack.json') -Encoding utf8\n$pack | Write-Output",
+    "script": "13-pack-independent-adapter-sdk-artifact.ps1",
+    "log": "13-pack-independent-adapter-sdk-artifact.log"
+  },
+  {
+    "name": "Independent Designer SDK ABI probe",
+    "env": {},
+    "command": "$probe = Join-Path $env:RUNNER_TEMP ('release24-abi-' + [Guid]::NewGuid().ToString('N'))\ntry {\n  ./samples/DesignerSdkAbiProbe/run-probe.ps1 -OutputDirectory $probe\n  if ($LASTEXITCODE -ne 0) { throw 'Independent Designer SDK ABI probe failed.' }\n  if (@(Get-ChildItem -LiteralPath $probe -File -Filter '*.log').Count -ne 6 -or @(Get-ChildItem -LiteralPath $probe -File -Filter '*.json').Count -ne 3) {\n    throw 'Independent Designer SDK ABI probe must produce six command logs and three JSON reports.'\n  }\n} finally {\n  if (Test-Path -LiteralPath $probe) {\n    $destination = Join-Path $env:RUNNER_TEMP 'release24-abi-evidence'\n    New-Item -ItemType Directory -Force -Path $destination | Out-Null\n    Get-ChildItem -LiteralPath $probe -File | Where-Object { $_.Extension -in @('.log', '.json') } | Copy-Item -Destination $destination -Force\n  }\n}",
+    "script": "14-independent-designer-sdk-abi-probe.ps1",
+    "log": "14-independent-designer-sdk-abi-probe.log"
+  },
+  {
+    "name": "Validate v2 scenario catalog and archived traces",
+    "env": {},
+    "command": "./scripts/validate-v2-scenario-catalog.ps1 -StaticOnly\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "15-validate-v2-scenario-catalog-and-archived-traces.ps1",
+    "log": "15-validate-v2-scenario-catalog-and-archived-traces.log"
+  },
+  {
+    "name": "Validate generated v2 protocol contract",
+    "env": {},
+    "command": "node ./scripts/generate-v2-protocol.mjs --check\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "16-validate-generated-v2-protocol-contract.ps1",
+    "log": "16-validate-generated-v2-protocol-contract.log"
+  },
+  {
+    "name": "Release metadata preflight",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm run release:preflight -- --metadata-only\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "17-release-metadata-preflight.ps1",
+    "log": "17-release-metadata-preflight.log"
+  },
+  {
+    "name": "VSIX packaging isolation tests",
+    "env": {},
+    "command": "./scripts/test-vsix-isolation.ps1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "18-vsix-packaging-isolation-tests.ps1",
+    "log": "18-vsix-packaging-isolation-tests.log"
+  },
+  {
+    "name": "Typecheck",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm run typecheck\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "19-typecheck.ps1",
+    "log": "19-typecheck.log"
+  },
+  {
+    "name": "Unit tests (extension)",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm test -- --reporter=json --outputFile=\"$env:RUNNER_TEMP\\v2-scenario-evidence\\test-results\\vitest.json\"\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "20-unit-tests-extension-.ps1",
+    "log": "20-unit-tests-extension-.log"
+  },
+  {
+    "name": "Build xUnit and Vitest scenario evidence",
+    "env": {},
+    "command": "node ./scripts/collect-v2-test-evidence.mjs --kind=xunit \"--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/modern/modern.trx')\" \"--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/xunit-modern.json')\" --invocation=xunit-modern-net10\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode ./scripts/collect-v2-test-evidence.mjs --kind=xunit \"--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/net48/net48.trx')\" \"--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/xunit-net48.json')\" --invocation=xunit-net48\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode ./scripts/collect-v2-test-evidence.mjs --kind=vitest \"--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/vitest.json')\" \"--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/vitest.json')\" --invocation=vitest-4.1.12\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "21-build-xunit-and-vitest-scenario-evidence.ps1",
+    "log": "21-build-xunit-and-vitest-scenario-evidence.log"
+  },
+  {
+    "name": "Build extension",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm run build\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "22-build-extension.ps1",
+    "log": "22-build-extension.log"
+  },
+  {
+    "name": "Performance baseline",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm run perf:baseline\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "23-performance-baseline.ps1",
+    "log": "23-performance-baseline.log"
+  },
+  {
+    "name": "Syntax-check webview scripts",
+    "env": {},
+    "cwd": "extension",
+    "command": "node --check media/designer.js\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode --check media/panel.js\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nnode --check media/chooseItems.js\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "24-syntax-check-webview-scripts.ps1",
+    "log": "24-syntax-check-webview-scripts.log"
+  },
+  {
+    "name": "Mojibake scan",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm run mojibake:scan\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "25-mojibake-scan.ps1",
+    "log": "25-mojibake-scan.log"
+  },
+  {
+    "name": "Localization parity",
+    "env": {},
+    "cwd": "extension",
+    "command": "npm run l10n:parity -- --strict\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "26-localization-parity.ps1",
+    "log": "26-localization-parity.log"
+  },
+  {
+    "name": "End-to-end (headless)",
+    "env": {
+      "WFD_REQUIRE_NET48": "1"
+    },
+    "cwd": "extension",
+    "command": "npm run e2e\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "27-end-to-end-headless-.ps1",
+    "log": "27-end-to-end-headless-.log"
+  },
+  {
+    "name": "Live-webview tests (headless jsdom)",
+    "env": {
+      "WFD_SCENARIO_EVIDENCE_FILE": "<ci-temp>\\v2-scenario-evidence\\webview.json"
+    },
+    "cwd": "extension",
+    "command": "npm run webview-e2e\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "28-live-webview-tests-headless-jsdom-.ps1",
+    "log": "28-live-webview-tests-headless-jsdom-.log"
+  },
+  {
+    "name": "VS Code 1.84 Extension Host smoke",
+    "env": {
+      "WFD_SCENARIO_EVIDENCE_DIR": "<ci-temp>\\v2-scenario-evidence"
+    },
+    "cwd": "extension",
+    "command": "npm run extension-host-e2e -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "29-vs-code-1.84-extension-host-smoke.ps1",
+    "log": "29-vs-code-1.84-extension-host-smoke.log"
+  },
+  {
+    "name": "VS Code Stable Extension Host smoke",
+    "env": {
+      "WFD_SCENARIO_EVIDENCE_DIR": "<ci-temp>\\v2-scenario-evidence"
+    },
+    "cwd": "extension",
+    "command": "npm run extension-host-e2e -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "30-vs-code-stable-extension-host-smoke.ps1",
+    "log": "30-vs-code-stable-extension-host-smoke.log"
+  },
+  {
+    "name": "Release 2.2 ordinary product acceptance (VS Code 1.84)",
+    "env": {
+      "WFD_RELEASE22_EVIDENCE_FILE": "<ci-temp>\\release22-product-evidence\\release22-host-1.84.0.json"
+    },
+    "cwd": "extension",
+    "command": "npm run release22:extension-host -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "31-release-2.2-ordinary-product-acceptance-vs-code-1.84-.ps1",
+    "log": "31-release-2.2-ordinary-product-acceptance-vs-code-1.84-.log"
+  },
+  {
+    "name": "Release 2.2 ordinary product acceptance (VS Code Stable)",
+    "env": {
+      "WFD_RELEASE22_EVIDENCE_FILE": "<ci-temp>\\release22-product-evidence\\release22-host-stable.json"
+    },
+    "cwd": "extension",
+    "command": "npm run release22:extension-host -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "32-release-2.2-ordinary-product-acceptance-vs-code-stable-.ps1",
+    "log": "32-release-2.2-ordinary-product-acceptance-vs-code-stable-.log"
+  },
+  {
+    "name": "Release 2.3 history and hot exit (VS Code 1.84)",
+    "env": {
+      "WFD_RELEASE23_EVIDENCE_FILE": "<ci-temp>\\release23-product-evidence\\release23-host-1.84.0.json"
+    },
+    "cwd": "extension",
+    "command": "npm run release23:extension-host -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "33-release-2.3-history-and-hot-exit-vs-code-1.84-.ps1",
+    "log": "33-release-2.3-history-and-hot-exit-vs-code-1.84-.log"
+  },
+  {
+    "name": "Release 2.3 history and hot exit (VS Code Stable)",
+    "env": {
+      "WFD_RELEASE23_EVIDENCE_FILE": "<ci-temp>\\release23-product-evidence\\release23-host-stable.json"
+    },
+    "cwd": "extension",
+    "command": "npm run release23:extension-host -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "34-release-2.3-history-and-hot-exit-vs-code-stable-.ps1",
+    "log": "34-release-2.3-history-and-hot-exit-vs-code-stable-.log"
+  },
+  {
+    "name": "Release 2.3 Adapter SDK Preview (R24) (VS Code 1.84)",
+    "env": {
+      "WFD_RELEASE24_EVIDENCE_FILE": "<ci-temp>\\release24-product-evidence\\release24-host-1.84.0.json"
+    },
+    "cwd": "extension",
+    "command": "npm run release24:extension-host -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "35-release-2.3-adapter-sdk-preview-r24-vs-code-1.84-.ps1",
+    "log": "35-release-2.3-adapter-sdk-preview-r24-vs-code-1.84-.log"
+  },
+  {
+    "name": "Release 2.3 Adapter SDK Preview (R24) (VS Code Stable)",
+    "env": {
+      "WFD_RELEASE24_EVIDENCE_FILE": "<ci-temp>\\release24-product-evidence\\release24-host-stable.json"
+    },
+    "cwd": "extension",
+    "command": "npm run release24:extension-host -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "36-release-2.3-adapter-sdk-preview-r24-vs-code-stable-.ps1",
+    "log": "36-release-2.3-adapter-sdk-preview-r24-vs-code-stable-.log"
+  },
+  {
+    "name": "Validate measured v2 scenario evidence",
+    "env": {},
+    "command": "./scripts/validate-v2-scenario-catalog.ps1 -EvidenceDirectory (Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence')\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "37-validate-measured-v2-scenario-evidence.ps1",
+    "log": "37-validate-measured-v2-scenario-evidence.log"
+  },
+  {
+    "name": "Prove all v2 evidence adversarial controls fail closed",
+    "env": {},
+    "command": "node ./scripts/test-v2-execution-evidence-gate.mjs \"--evidence-dir=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence')\"\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "38-prove-all-v2-evidence-adversarial-controls-fail-closed.ps1",
+    "log": "38-prove-all-v2-evidence-adversarial-controls-fail-closed.log"
+  },
+  {
+    "name": "Package VSIX (Windows x64)",
+    "env": {
+      "WFD_BUNDLE_RID": "win-x64"
+    },
+    "cwd": "extension",
+    "command": "npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "39-package-vsix-windows-x64-.ps1",
+    "log": "39-package-vsix-windows-x64-.log"
+  },
+  {
+    "name": "Assert VSIX contains the bundled engines (Windows x64)",
+    "env": {},
+    "cwd": "extension",
+    "command": "../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "40-assert-vsix-contains-the-bundled-engines-windows-x64-.ps1",
+    "log": "40-assert-vsix-contains-the-bundled-engines-windows-x64-.log"
+  },
+  {
+    "name": "Freeze verified VSIX (Windows x64)",
+    "env": {},
+    "cwd": "extension",
+    "command": "Copy-Item -LiteralPath winforms-designer-win32-x64.vsix -Destination (Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix') -Force",
+    "script": "41-freeze-verified-vsix-windows-x64-.ps1",
+    "log": "41-freeze-verified-vsix-windows-x64-.log"
+  },
+  {
+    "name": "Release 2.2 installed upgrade and downgrade (VS Code 1.84 and Stable)",
+    "env": {},
+    "cwd": "extension",
+    "command": "$evidence = Join-Path $env:RUNNER_TEMP 'release22-upgrade-evidence'\nNew-Item -ItemType Directory -Force -Path $evidence | Out-Null\n$vsix = Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix'\n$stable = Get-ChildItem .vscode-test -Directory -Filter 'vscode-win32-x64-archive-*' |\n  ForEach-Object { $_.Name -replace '^vscode-win32-x64-archive-', '' } |\n  Where-Object { $_ -ne '1.84.0' } | Sort-Object { [version]$_ } | Select-Object -Last 1\nif (-not $stable) { throw 'No cached VS Code Stable build for the installed upgrade acceptance.' }\nforeach ($version in @('1.84.0', $stable)) {\n  npm run release22:upgrade -- \"--version=$version\" --baseline=18a01c096502039ea913a1e8cc2ad0d320837e35 \"--new-vsix=$vsix\" \"--report=$(Join-Path $evidence \"release22-upgrade-$version.json\")\"\n  if ($LASTEXITCODE -ne 0) { throw \"Installed upgrade/downgrade acceptance failed on VS Code $version\" }\n}",
+    "script": "42-release-2.2-installed-upgrade-and-downgrade-vs-code-1.84-and-stable-.ps1",
+    "log": "42-release-2.2-installed-upgrade-and-downgrade-vs-code-1.84-and-stable-.log"
+  },
+  {
+    "name": "Package VSIX (Windows ARM64)",
+    "env": {
+      "WFD_BUNDLE_RID": "win-arm64"
+    },
+    "cwd": "extension",
+    "command": "npx --yes @vscode/vsce@3.9.2 package --target win32-arm64 --no-dependencies -o winforms-designer-win32-arm64.vsix\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "43-package-vsix-windows-arm64-.ps1",
+    "log": "43-package-vsix-windows-arm64-.log"
+  },
+  {
+    "name": "Assert VSIX contains the bundled engines (Windows ARM64)",
+    "env": {},
+    "cwd": "extension",
+    "command": "../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-arm64.vsix -ExpectedTarget win32-arm64 -ExpectedRuntimeIdentifier win-arm64 -ExpectedModernMachine 0xAA64 -ExpectedNet48Machine 0x8664\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "44-assert-vsix-contains-the-bundled-engines-windows-arm64-.ps1",
+    "log": "44-assert-vsix-contains-the-bundled-engines-windows-arm64-.log"
+  },
+  {
+    "name": "Freeze and re-verify both VSIX artifacts",
+    "env": {},
+    "cwd": "extension",
+    "command": "Copy-Item -LiteralPath winforms-designer-win32-arm64.vsix -Destination (Join-Path $env:RUNNER_TEMP 'frozen-win32-arm64.vsix') -Force\nCopy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix') -Destination winforms-designer-win32-x64.vsix -Force\nCopy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'frozen-win32-arm64.vsix') -Destination winforms-designer-win32-arm64.vsix -Force\n../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-arm64.vsix -ExpectedTarget win32-arm64 -ExpectedRuntimeIdentifier win-arm64 -ExpectedModernMachine 0xAA64 -ExpectedNet48Machine 0x8664\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    "script": "45-freeze-and-re-verify-both-vsix-artifacts.ps1",
+    "log": "45-freeze-and-re-verify-both-vsix-artifacts.log"
+  }
+]

@@ -1,0 +1,123 @@
+{
+  "version": "2.3.0",
+  "runId": "combined23-467d3cef-14d1-449e-8250-4a743dc96f91",
+  "positiveBindingValidated": true,
+  "negativeControlsRefused": 25,
+  "scope": "Pure evidence validator self-test; no product or CI command rerun.",
+  "measuredNormalHosts": [
+    {
+      "report": "adapter-host-1.84.0.json",
+      "vscodeVersion": "1.84.0",
+      "hostMode": "normal-development-host",
+      "realVSCodeLaunches": 2,
+      "privateTestHooks": "disabled; verified runner deletion and pre-scenario suite assertion",
+      "normalHostHarnessSha256": {
+        "harness.cjs": "7708f6b2a9d49aebc03b09fdd07112010b508b47fe84b034f58fb0c7d1b1aa6c",
+        "package.json": "abc10418bee5ed35c167847175d7bae7eb6ad6d96c1af381dea0c4000c489f4a",
+        "suite.cjs": "3b41c85465305fe5400dce7ff62c90a998b6a5c9912005da9146fc3e366e58e0"
+      },
+      "productMementoKey": "SkivHisink.winforms-designer-vscode",
+      "grantKey": "winformsDesigner.adapterDevelopmentGrants.v1",
+      "database": "User/workspaceStorage/70abe40df16090a979e2fe5b47f38e06/state.vscdb",
+      "receipts": [
+        {
+          "phase": "setup",
+          "databaseSha256": "40ac77a969582153d7f35e32c9b00cac9331ae860d0a974eeb86cea66ef3d49a",
+          "productMementoSha256": "f1916f0d47c22bc9578ac845ba8384ee663bc6ed53c8a33397dea6d82684250f",
+          "readOnlyInspection": true,
+          "grants": [
+            {
+              "packagePath": "adapters/action/adapter-package.json",
+              "packageSha256": "c8024294bdbfda9e75ab4d6834add46bf70d9e22ecd256c047e437e054b3690c"
+            },
+            {
+              "packagePath": "adapters/editor/adapter-package.json",
+              "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0"
+            }
+          ]
+        },
+        {
+          "phase": "restore",
+          "databaseSha256": "812b6931ee0bf2ad3de78e7604c281fd9c2ad9bfe771ca72a745ddbe9cce8a69",
+          "productMementoSha256": "3338f16482b5ffdf5e019ee905989c2b5d4c10112e30c806e45bdadad4a485dc",
+          "readOnlyInspection": true,
+          "grants": [
+            {
+              "packagePath": "adapters/action/adapter-package.json",
+              "packageSha256": "c8024294bdbfda9e75ab4d6834add46bf70d9e22ecd256c047e437e054b3690c"
+            },
+            {
+              "packagePath": "adapters/changed-entry/adapter-package.json",
+              "packageSha256": "6ef6771c1218b4cbb2362c19a4c60fdcd7d92f63ae83d99c4f75fda6bcc861cc"
+            },
+            {
+              "packagePath": "adapters/wrong-result/adapter-package.json",
+              "packageSha256": "2c331570c5aeba575e0191149c05ee4aebd3314ba6240ab938b6eab4895314ce"
+            },
+            {
+              "packagePath": "adapters/editor/adapter-package.json",
+              "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "report": "adapter-host-stable.json",
+      "vscodeVersion": "1.143.1",
+      "hostMode": "normal-development-host",
+      "realVSCodeLaunches": 2,
+      "privateTestHooks": "disabled; verified runner deletion and pre-scenario suite assertion",
+      "normalHostHarnessSha256": {
+        "harness.cjs": "7708f6b2a9d49aebc03b09fdd07112010b508b47fe84b034f58fb0c7d1b1aa6c",
+        "package.json": "abc10418bee5ed35c167847175d7bae7eb6ad6d96c1af381dea0c4000c489f4a",
+        "suite.cjs": "3b41c85465305fe5400dce7ff62c90a998b6a5c9912005da9146fc3e366e58e0"
+      },
+      "productMementoKey": "SkivHisink.winforms-designer-vscode",
+      "grantKey": "winformsDesigner.adapterDevelopmentGrants.v1",
+      "database": "User/workspaceStorage/674a0df52c675828590b535355c199be/state.vscdb",
+      "receipts": [
+        {
+          "phase": "setup",
+          "databaseSha256": "692bf4d5f94abfabeba5c2af02621414d3d6ff418b8ebfe6490969d4d94968c4",
+          "productMementoSha256": "9b8ac248ba193ccd2ad2c5249810524ce2e9e615dcaa1c2ce4fbe11f62b7c73e",
+          "readOnlyInspection": true,
+          "grants": [
+            {
+              "packagePath": "adapters/action/adapter-package.json",
+              "packageSha256": "c8024294bdbfda9e75ab4d6834add46bf70d9e22ecd256c047e437e054b3690c"
+            },
+            {
+              "packagePath": "adapters/editor/adapter-package.json",
+              "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0"
+            }
+          ]
+        },
+        {
+          "phase": "restore",
+          "databaseSha256": "56f6445e7190d3dcfeb20d2732877817cec3c53b8736d963811911953cbff692",
+          "productMementoSha256": "64bda030a572dbdc44986fad11c4a050575cf0f280f3f0b8ee9b9a950866df0a",
+          "readOnlyInspection": true,
+          "grants": [
+            {
+              "packagePath": "adapters/action/adapter-package.json",
+              "packageSha256": "c8024294bdbfda9e75ab4d6834add46bf70d9e22ecd256c047e437e054b3690c"
+            },
+            {
+              "packagePath": "adapters/changed-entry/adapter-package.json",
+              "packageSha256": "6ef6771c1218b4cbb2362c19a4c60fdcd7d92f63ae83d99c4f75fda6bcc861cc"
+            },
+            {
+              "packagePath": "adapters/wrong-result/adapter-package.json",
+              "packageSha256": "2c331570c5aeba575e0191149c05ee4aebd3314ba6240ab938b6eab4895314ce"
+            },
+            {
+              "packagePath": "adapters/editor/adapter-package.json",
+              "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

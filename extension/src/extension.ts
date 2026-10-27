@@ -40,6 +40,7 @@ import { resolveFrameworkOutput } from './csprojRef';
 import { currentLang, setLocale, t } from './i18n';
 import { EngineRecoveryPolicy } from './engineRecovery';
 import { EngineRegistry } from './engineRegistry';
+import { EngineExitReason, latestEngineExit, terminateEngineProcess } from './engineLifecycle';
 import { currentEngineRequestContext, engineOwnedByCurrentRequest, engineRequestScopeActive, engineWorkerKey, retainEngineForCurrentRequest } from './engineRequestContext';
 import { EngineAdmissionGate } from './engineAdmission';
 import { refreshControlSourceStatus } from './controlSourceStatus';
@@ -50,7 +51,6 @@ import { BuildWriteOrigin, classifyOutputEvent, ExternalBuildRelease, intermedia
 import { formSiblingsToDelete } from './formSiblings';
 import { shouldSuppressAutoOpen } from './autoOpen';
 import {
-  applyScaffoldPlanAtomically,
   createScaffoldPlan,
   detectUsingPlacement,
   normalizeScaffoldTypeName,
@@ -60,7 +60,10 @@ import {
   ScaffoldKind,
   suggestScaffoldTypeName,
 } from './scaffolding';
-import { atomicWriteLocalFile } from './atomicFile';
+import { atomicCreateLocalFile, atomicWriteLocalFile } from './atomicFile';
+import { assertLocalArtifactPath } from './localArtifactPath';
+import { sha256Hex } from './documentStore';
+import { DesignerResourceTransactionTarget, runDesignerResourceTransaction } from './resourceTransactionCoordinator';
 import { recoverPendingTransactions } from './transactionRecovery';
 import { planRemoveFormMembership, resolveFormMembershipProject } from './formProjectMembership';
 import {
@@ -74,6 +77,7 @@ import { classifyToolboxRequest } from './toolboxRequest';
 import type { HostMutationRecord, HostMutationResult } from './mutationOperation';
 import { hostMutationAdmissionFrozen, onRollbackPreparationInvalidated, rollbackInvalidationEpoch, ROLLBACK_PREPARED, setHostMutationAdmissionFrozen, settleAllHostMutations, trackHostMutation } from './mutationOperation';
 import { prepareRollback, RollbackPreparationResult } from './rollbackPreparation';
+import { registerAdapterCommands } from './adapterCommands';
 
 export interface ScaffoldCommandOptions {
   /** Optional non-interactive type name. Explorer calls omit this and keep the normal VS-style prompt. */
@@ -90,6 +94,8 @@ export interface ScaffoldCommandResult {
 }
 
 export interface ExtensionHostTestApi {
+  selectOpenDesignerProjectContext(source: vscode.Uri, projectPath: string | null): Promise<boolean>;
+  openDesignerOwnerEventSourcePaths(source: vscode.Uri): Promise<readonly string[]>;
   adapterManifestRegistryState(): readonly V2AdapterManifestProductStatus[];
   refreshAdapterManifests(): Promise<readonly V2AdapterManifestProductStatus[]>;
   engineLifecycleState(): {
@@ -118,10 +124,12 @@ export interface ExtensionHostTestApi {
     /** VS Code considers this designer's panel the active editor, the object custom-editor Undo/Redo routing uses. */
     panelActive: boolean;
     renderReady: boolean;
+    recoveryConflictOffered: boolean;
     engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;
+    ownerAssemblyPath: string | null;
     ownerPaths: readonly string[];
     renderFailureCause: string | null;
     renderFailureMessage: string | null;
@@ -579,6 +587,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     doViewCode,
     (file, dll) => setControlSource(file, dll),
   );
+  registerAdapterCommands(context, designerProvider, output);
   const highDpiAdvisorDocuments = new HighDpiAdvisorContentProvider();
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(
@@ -725,6 +734,50 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       void vscode.window.showInformationMessage(t('status.diagnosticsCopied'));
     }),
     vscode.commands.registerCommand('winformsDesigner.showFormStatus', () => openFormStatus(context, adapterManifestRegistry)),
+    vscode.commands.registerCommand('winformsDesigner.showRecoveryTimeline', (uri?: vscode.Uri) => designerProvider.showRecoveryTimeline(uri)),
+    vscode.commands.registerCommand('winformsDesigner.reloadDesignerFromDisk', async (uri?: vscode.Uri) => {
+      try {
+        const reloaded = await designerProvider.reloadDesignerFromDisk(uri);
+        if (!reloaded) void vscode.window.showInformationMessage(t('host.recoveryTimeline.noDocument'));
+        return reloaded;
+      } catch {
+        const review = t('host.recoveryTimeline.review');
+        void vscode.window.showErrorMessage(t('host.recoveryHistory.failed'), review).then((selected) => {
+          if (selected === review) void designerProvider.showRecoveryTimeline(uri);
+        });
+        return false;
+      }
+    }),
+    ...(['undo', 'redo'] as const).map((direction) => vscode.commands.registerCommand(
+      direction === 'undo' ? 'winformsDesigner.undoDesignerHistory' : 'winformsDesigner.redoDesignerHistory',
+      async () => {
+        const uri = DesignerHub.instance.activeSession?.documentUri;
+        try { await designerProvider.handleDesignerHistoryKey(direction); }
+        catch {
+          const review = t('host.recoveryTimeline.review');
+          void vscode.window.showErrorMessage(t('host.recoveryHistory.failed'), review).then((selected) => {
+            if (selected === review) void designerProvider.showRecoveryTimeline(uri);
+          });
+        }
+      },
+    )),
+    ...(['undo', 'redo'] as const).map((direction) => vscode.commands.registerCommand(
+      direction === 'undo' ? 'winformsDesigner.undoRecoveredAction' : 'winformsDesigner.redoRecoveredAction',
+      async (uri?: vscode.Uri) => {
+        try {
+          const applied = direction === 'undo' ? await designerProvider.undoRecoveredAction(uri)
+            : await designerProvider.redoRecoveredAction(uri);
+          if (!applied) void vscode.window.showInformationMessage(t('host.recoveryHistory.unavailable'));
+          return applied;
+        } catch {
+          const review = t('host.recoveryTimeline.review');
+          void vscode.window.showErrorMessage(t('host.recoveryHistory.failed'), review).then((selected) => {
+            if (selected === review) void designerProvider.showRecoveryTimeline(uri);
+          });
+          return false;
+        }
+      },
+    )),
     vscode.commands.registerCommand('winformsDesigner.rebuildToolboxCache', async () => {
       const session = DesignerHub.instance.activeSession;
       await DesignerHub.instance.clearToolboxMetadataCache();
@@ -759,6 +812,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   // (Project Controls) and render, exactly like an auto-resolved project. Persisted per form (workspaceState).
   context.subscriptions.push(
     vscode.commands.registerCommand('winformsDesigner.selectControlAssembly', () => selectControlAssembly(context)),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('winformsDesigner.selectProjectContext',
+      () => DesignerHub.instance.activeSession?.selectProjectContext()),
   );
 
   // v1.5.0 VS-style Language selector: neutral plus discovered/created culture-specific sibling .resx files.
@@ -1082,6 +1140,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   // inspect its open custom document. Packaged/normal extension hosts never receive this surface.
   if (process.env.WFD_EXTENSION_HOST_E2E === '1') {
     return {
+      selectOpenDesignerProjectContext: (source, projectPath) => designerProvider.selectOpenDocumentProjectContext(source, projectPath),
+      openDesignerOwnerEventSourcePaths: (source) => designerProvider.openDocumentOwnerEventSourcePaths(source),
       adapterManifestRegistryState: () => adapterManifestRegistry.snapshot(),
       refreshAdapterManifests: () => adapterManifestRegistry.refresh(),
       engineLifecycleState: () => engineLifecycleState(),
@@ -1267,8 +1327,10 @@ async function addScaffoldFromExplorer(
     const targetDir = isDirectory ? resource.fsPath : path.dirname(resource.fsPath);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(targetDir));
     if (!workspaceFolder) throw new ScaffoldError('outsideWorkspace', targetDir);
+    await assertLocalArtifactPath(workspaceFolder.uri.fsPath, targetDir);
     const selectedProject = !isDirectory && /\.csproj$/i.test(resource.fsPath) ? resource.fsPath : undefined;
     const projectPath = resolveScaffoldProject(targetDir, workspaceFolder.uri.fsPath, selectedProject);
+    await assertLocalArtifactPath(workspaceFolder.uri.fsPath, projectPath);
 
     let entries: string[];
     try { entries = fs.readdirSync(targetDir); }
@@ -1316,61 +1378,39 @@ async function addScaffoldFromExplorer(
     });
 
     // The files and project edit are durable writes: held to rollback admission like any designer operation.
-    const applied = await trackHostMutation(() => applyScaffoldPlanAtomically(plan, {
-      async writeFile(filePath, content) {
-        if (testHooks?.failWriteFileName === path.basename(filePath)) {
-          throw new Error(`Extension Host injected write failure for ${path.basename(filePath)}`);
-        }
-        const handle = await fs.promises.open(filePath, 'wx');
-        let writeSucceeded = false;
-        let closeSucceeded = false;
-        try {
-          await handle.writeFile(content, 'utf8');
-          writeSucceeded = true;
-        } finally {
-          try {
-            await handle.close();
-            closeSucceeded = true;
-          } finally {
-            if (!writeSucceeded || !closeSucceeded) {
-              try { await fs.promises.rm(filePath, { force: true }); } catch { /* best effort cleanup of this partial create */ }
-            }
-          }
-        }
-      },
-      async deleteFile(filePath) {
-        await fs.promises.rm(filePath, { force: true });
-      },
-      async applyProjectInsertion(_projectPath, insertion) {
-        // Classic project files are part of the generated-item transaction, not a dirty editor left for the user to
-        // notice and save later. Refuse an already-dirty project: silently persisting unrelated project WIP would be
-        // worse than declining Add. Bind the insertion to both any user-open document and the exact bytes captured
-        // above. The command itself never creates a hidden project buffer. If replacement fails, the scaffold wrapper
-        // removes every generated file and the original project remains intact.
-        const liveDocument = vscode.workspace.textDocuments.find(
-          (document) => document.uri.toString() === projectUri.toString(),
-        );
-        if (liveDocument?.isDirty
-          || (projectDocument && liveDocument === projectDocument && liveDocument.version !== projectVersion)
-          || (liveDocument && liveDocument.getText() !== projectText)) {
-          throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
-        }
-        const diskBytes = await fs.promises.readFile(projectPath);
-        const currentDocument = vscode.workspace.textDocuments.find(
-          (document) => document.uri.toString() === projectUri.toString(),
-        );
-        if (!diskBytes.equals(projectBytes)
-          || currentDocument?.isDirty
-          || (projectDocument && currentDocument === projectDocument && currentDocument.version !== projectVersion)
-          || (currentDocument && currentDocument.getText() !== projectText)) {
-          throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
-        }
-        const nextText = projectText.slice(0, insertion.offset) + insertion.text + projectText.slice(insertion.offset);
-        const body = Buffer.from(nextText, 'utf8');
-        const nextBytes = projectHadBom ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]) : body;
-        await atomicWriteLocalFile(projectPath, nextBytes);
-      },
+    if (!extContext || !['file', 'vscode-userdata'].includes(extContext.globalStorageUri.scheme)) {
+      throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
+    }
+    const liveProject = vscode.workspace.textDocuments.find((document) => document.uri.toString() === projectUri.toString());
+    if (liveProject?.isDirty || (projectDocument && liveProject === projectDocument && liveProject.version !== projectVersion)
+      || (liveProject && liveProject.getText() !== projectText)) throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
+    const targets: DesignerResourceTransactionTarget[] = plan.files.map((file) => ({
+      filePath: path.join(plan.targetDir, file.name), before: null, after: file.content, bom: false,
     }));
+    if (plan.projectInsertion) {
+      const insertion = plan.projectInsertion;
+      targets.push({ filePath: projectPath, before: projectText,
+        after: projectText.slice(0, insertion.offset) + insertion.text + projectText.slice(insertion.offset), bom: projectHadBom });
+    }
+    const transaction = await trackHostMutation(() => runDesignerResourceTransaction({
+      label: `Add ${plan.kind}`, workspaceRoot: workspaceFolder.uri.fsPath,
+      journalRoot: path.join(extContext!.globalStorageUri.fsPath, 'v2-transactions', sha256Hex(path.resolve(workspaceFolder.uri.fsPath)).slice(0, 16)),
+      targets,
+      readBytes: async (filePath) => {
+        if (vscode.workspace.textDocuments.some((document) => normalize(document.uri.fsPath) === normalize(filePath) && document.isDirty))
+          throw new ScaffoldError('applyFailed', t('host.scaffold.error.projectChanged'));
+        try { return await fs.promises.readFile(filePath); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+      },
+      writeBytes: async (filePath, bytes) => {
+        if (testHooks?.failWriteFileName === path.basename(filePath)) throw new Error(`Extension Host injected write failure for ${path.basename(filePath)}`);
+        if (normalize(filePath) === normalize(projectPath)) await atomicWriteLocalFile(filePath, bytes);
+        else await atomicCreateLocalFile(filePath, bytes);
+      },
+      deleteFile: (filePath) => fs.promises.unlink(filePath), registerUndo: () => true,
+    }));
+    if (transaction.status !== 'committed') throw new ScaffoldError('applyFailed', transaction.error ?? transaction.status);
+    const applied = { createdFiles: plan.files.map((file) => path.join(plan.targetDir, file.name)), projectUpdated: !!plan.projectInsertion };
 
     const mainUri = vscode.Uri.file(path.join(plan.targetDir, plan.mainFileName));
     output.appendLine(
@@ -1476,6 +1516,7 @@ async function openFormStatus(context: vscode.ExtensionContext, registry: V2Adap
     loadFailed: t('support.loadFailed'), actionFailed: t('support.actionFailed'), language: currentLang(),
     severity: { info: t('support.severity.info'), warning: t('support.severity.warning'), error: t('support.severity.error') },
     actions: { retry: t('support.action.retry'), rebuild: t('support.action.rebuild'), chooseAssembly: t('support.action.chooseAssembly'),
+      chooseProjectContext: t('designer.ownerContext.choose'),
       viewCode: t('support.action.viewCode'), clearCache: t('support.action.clearCache'), restart: t('support.action.restart'),
       reinstall: t('support.action.reinstall'), refresh: t('support.action.refresh') },
   };
@@ -1492,6 +1533,7 @@ async function openFormStatus(context: vscode.ExtensionContext, registry: V2Adap
       case 'retry': await supportWithinBudget(session.rerenderFromDoc(), 20_000); break;
       case 'rebuild': await runCoordinatedTask('build'); break;
       case 'chooseAssembly': await selectControlAssembly(context); break;
+      case 'chooseProjectContext': await session.selectProjectContext(); break;
       case 'clearCache':
         await supportWithinBudget(DesignerHub.instance.clearToolboxMetadataCache(), 10_000);
         await supportWithinBudget(session.refreshToolbox(true), 20_000);
@@ -1548,8 +1590,12 @@ async function collectSafeDiagnosticReport(context: vscode.ExtensionContext, reg
     generatedAt: new Date().toISOString(), correlationId: randomUUID(),
     versions: { extension: String(context.extension.packageJSON.version ?? ''), vscode: vscode.version, node: process.versions.node },
     platform: process.platform, architecture: process.arch, workspaceTrusted: vscode.workspace.isTrusted,
-    engines: (['modern', 'net48'] as const).map(kind => ({ kind, running: engines.has(kind), starts: engineHealth.get(kind)?.starts ?? 0,
-      recentCrashes: engineRecovery.recentCrashCount(kind), lastStartupMs: engineHealth.get(kind)?.lastStartupMs })),
+    engines: (['modern', 'net48'] as const).map(kind => {
+      const exit = latestEngineExit(kind);
+      return { kind, running: engines.has(kind), starts: engineHealth.get(kind)?.starts ?? 0,
+        recentCrashes: engineRecovery.recentCrashCount(kind), lastStartupMs: engineHealth.get(kind)?.lastStartupMs,
+        lastExitCode: exit?.code, lastExitReason: exit?.reason, lastExitIntentional: exit?.intentional };
+    }),
     session: support ? { engineKind: support.engineKind, net48RenderMode: support.net48RenderMode ?? undefined,
       renderOk: support.renderOk, dirty: support.dirty, revision: support.revision,
       controlCount: support.controlCount, componentCount: support.componentCount } : undefined,
@@ -1732,10 +1778,10 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
       engines.deleteValue(idleHandle);
       // Remove the resolved startup promise of the same graph before recycling it.
       for (const pending of engineStarts.values()) if (pending.value === idleHandle) engineStarts.deleteValue(pending);
-      if (idleKind === 'net48') await recycleNet48Engine(idleHandle);
+      if (idleKind === 'net48') await recycleNet48Engine(idleHandle, 'budgetRecycle');
       else {
         const exited = new Promise<boolean>((resolve) => idleHandle.process.once('exit', () => resolve(true)));
-        idleHandle.dispose();
+        idleHandle.dispose('budgetRecycle');
         const gone = idleHandle.process.exitCode != null || idleHandle.process.signalCode != null
           || await Promise.race([exited, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000))]);
         if (!gone) throw new Error('WORKER_PROCESS_RECYCLE_BLOCKED');
@@ -1768,14 +1814,14 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
         const drop = (): void => { liveProcs.delete(proc); };
         proc.once('exit', drop);
         proc.once('close', drop);
-        if (start?.isAbandoned) { try { proc.kill(); } catch { /* already gone */ } }
+        if (start?.isAbandoned) terminateEngineProcess(proc, 'startupCancelled');
       },
       }),
       publish: (handle) => {
         // The window/extension can deactivate while this start is still connecting; deactivate() only disposes handles
         // already in the map, so a start that resolves afterward would reinsert and LEAK a live process + pinned dll
         // Refuse to install it — dispose and throw a shutdown error instead.
-        if (shuttingDown) { try { handle.dispose(); } catch { /* ignore */ } throw new Error('extension is shutting down'); }
+        if (shuttingDown) { try { handle.dispose('shutdown'); } catch { /* ignore */ } throw new Error('extension is shutting down'); }
         engines.set(kind, handle, startupKey);
         const health = engineHealth.get(kind) ?? { starts: 0 };
         health.starts += 1;
@@ -1813,7 +1859,7 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
             let recovered = false;
             const recoverOnce = (): void => { if (recovered || shuttingDown) return; recovered = true; scheduleRecovery(); };
             handle.process.once('exit', recoverOnce);
-            void recycleNet48Engine(handle).then((freed) => { if (freed) recoverOnce(); });
+            void recycleNet48Engine(handle, 'transportFailure').then((freed) => { if (freed) recoverOnce(); });
           } else {
             scheduleRecovery();
           }
@@ -1821,7 +1867,7 @@ async function getEngine(context: vscode.ExtensionContext, kind: EngineKind = 'm
         handle.process.once('exit', (code, signal) => onLost(`process exit code=${code ?? 'null'} signal=${signal ?? 'none'}`, true));
         handle.connection.onClose(() => onLost('RPC connection closed', false));
       },
-      cancelPending: () => { try { startupChild?.kill(); } catch { /* already gone */ } },
+      cancelPending: () => { if (startupChild) terminateEngineProcess(startupChild, shuttingDown ? 'shutdown' : 'startupCancelled'); },
       confirmStopped: () => confirmEngineStartupExit(startupChild),
       remove: () => {
         if (start?.value) engines.deleteValue(start.value);
@@ -1946,7 +1992,7 @@ async function releaseNet48OutputFrom(engine: EngineHandle, assemblyPath: string
       // dll. "Nothing was loaded" would be a lie. Recycle the exact engine process to free
       // the handles the OS way; do NOT block on it (this path is fire-and-forget from a session close).
       output.appendLine(`[engine:net48] release ${assemblyPath}: unload FAILED (still pinning) — recycling engine`);
-      void recycleNet48Engine(engine);
+      void recycleNet48Engine(engine, 'buildRelease');
       return false;
     }
     output.appendLine(`[engine:net48] release ${assemblyPath}: `
@@ -1994,12 +2040,12 @@ async function autoReleaseNet48WorkerOnBlur(eng: EngineHandle): Promise<boolean>
     ]);
   } catch (err) {
     output.appendLine('[release:blur] engine did not answer in time; recycling: ' + String(err));
-    await recycleNet48Engine(eng); // frees the handles the OS way
+    await recycleNet48Engine(eng, 'buildRelease'); // frees the handles the OS way
     return true;
   }
   if (result.failed > 0) {
     output.appendLine(`[release:blur] ${result.failed}/${result.attempted} domains would not unload; recycling engine`);
-    await recycleNet48Engine(eng);
+    await recycleNet48Engine(eng, 'buildRelease');
     return true;
   }
   if (result.released > 0) {
@@ -2037,13 +2083,13 @@ async function releaseNet48WorkerForTask(eng: EngineHandle, taskName: string): P
     ]);
     if (result.failed > 0) {
       output.appendLine(`[release:task] ${taskName}: ${result.failed}/${result.attempted} domains would not unload; recycling engine`);
-      return recycleNet48Engine(eng);
+      return recycleNet48Engine(eng, 'buildRelease');
     }
     output.appendLine(`[release:task] ${taskName}: released ${result.released} net48 output(s) for the task`);
     return true;
   } catch (err) {
     output.appendLine(`[release:task] ${taskName}: release failed/timed out; recycling engine: ${String(err)}`);
-    return recycleNet48Engine(eng);
+    return recycleNet48Engine(eng, 'buildRelease');
   }
 }
 
@@ -2336,7 +2382,7 @@ async function releaseFrameworkWorkerAssemblies(eng: EngineHandle): Promise<void
  *  confirmed gone (its handles are then freed); otherwise a warning, because a lingering process still pins the dll and
  *  the rebuild would still fail. */
 async function reportRecycle(handle: EngineHandle | undefined): Promise<void> {
-  const freed = await recycleNet48Engine(handle);
+  const freed = await recycleNet48Engine(handle, 'buildRelease');
   if (freed) void vscode.window.showInformationMessage(t('host.notify.releaseAssembly.recycled'));
   else void vscode.window.showWarningMessage(t('host.notify.releaseAssembly.stuck'));
 }
@@ -2357,17 +2403,17 @@ const blockedNet48Processes = new Set<EngineHandle['process']>();
  * this operation rather than re-reading the map — an `onLost` (which also fires on a mere RPC-connection close) can
  * clear the map entry while the process is still alive, so the map is not a reliable source of the process to kill.
  */
-function recycleNet48Engine(handle: EngineHandle | undefined): Promise<boolean> {
+function recycleNet48Engine(handle: EngineHandle | undefined, reason: EngineExitReason = 'recycle'): Promise<boolean> {
   const target = handle ?? engines.get('net48');
   if (!target) return Promise.resolve(true);
   const existing = net48Recycling.get(target);
   if (existing) return existing;
-  const pending = doRecycleNet48(target).finally(() => { net48Recycling.delete(target); });
+  const pending = doRecycleNet48(target, reason).finally(() => { net48Recycling.delete(target); });
   net48Recycling.set(target, pending);
   return pending;
 }
 
-async function doRecycleNet48(handle: EngineHandle | undefined): Promise<boolean> {
+async function doRecycleNet48(handle: EngineHandle | undefined, reason: EngineExitReason): Promise<boolean> {
   const target = handle ?? engines.get('net48');
   if (target) engines.deleteValue(target);
   for (const pending of engineStarts.values()) if (pending.value === target) engineStarts.deleteValue(pending);
@@ -2383,10 +2429,10 @@ async function doRecycleNet48(handle: EngineHandle | undefined): Promise<boolean
   // real exit event or an already-recorded exit/signal code — never from `killed`.
   const exited = new Promise<boolean>((resolve) => proc.once('exit', () => resolve(true)));
   const deadline = (ms: number) => new Promise<boolean>((r) => setTimeout(() => r(false), ms));
-  try { target.dispose(); } catch { /* already dead */ }
+  try { target.dispose(reason); } catch { /* already dead */ }
   if (await Promise.race([exited, deadline(3000)])) return true;
   // Lingering (a wedged native thread) — escalate to an unconditional kill and wait a little longer.
-  try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+  terminateEngineProcess(proc, reason, 'SIGKILL');
   return Promise.race([exited, deadline(2000)]); // if this resolves false, net48Blocked stays true until the exit lands
 }
 
@@ -2466,19 +2512,19 @@ async function runRollbackPreparation(context: vscode.ExtensionContext, interact
   return result;
 }
 
-async function stopEnginesCore(): Promise<number> {
-  return (await stopEnginesConfirmed()).stopped;
+async function stopEnginesCore(reason: EngineExitReason = 'manualStop'): Promise<number> {
+  return (await stopEnginesConfirmed(reason)).stopped;
 }
 
 /** Stop every engine and report how many processes still have no confirmed exit — the mapped handles, and any spawned
  * child (a failed recycle may already have dropped its handle from the map while the process lives on). */
-async function stopEnginesConfirmed(): Promise<{ stopped: number; survivors: number }> {
-  const stopped = await stopMappedEngines();
+async function stopEnginesConfirmed(reason: EngineExitReason = 'manualStop'): Promise<{ stopped: number; survivors: number }> {
+  const stopped = await stopMappedEngines(reason);
   const survivors = [...liveProcs].filter((proc) => proc.exitCode == null && proc.signalCode == null).length;
   return { stopped, survivors };
 }
 
-async function stopMappedEngines(): Promise<number> {
+async function stopMappedEngines(reason: EngineExitReason): Promise<number> {
   const live = (h: EngineHandle | undefined): boolean =>
     !!h && h.process.exitCode == null && h.process.signalCode == null;
   const net48 = [...engines.entries()].filter(([kind, handle]) => kind === 'net48' && live(handle)).map(([, handle]) => handle);
@@ -2488,7 +2534,7 @@ async function stopMappedEngines(): Promise<number> {
   if (running === 0 && pendingStarts.length === 0) return 0;
   for (const startup of pendingStarts) startup.stop();
   // net48 first: recycle also releases the pinned dll and clears net48Blocked once the exit is confirmed.
-  for (const handle of net48) await recycleNet48Engine(handle);
+  for (const handle of net48) await recycleNet48Engine(handle, reason);
   const deadline = (ms: number) => new Promise<boolean>((r) => setTimeout(() => r(false), ms));
   for (const h of modern) {
     const proc = h.process;
@@ -2498,9 +2544,9 @@ async function stopMappedEngines(): Promise<number> {
     for (const pending of engineStarts.values()) if (pending.value === h) engineStarts.deleteValue(pending);
     if (proc.exitCode != null || proc.signalCode != null) continue;
     const exited = new Promise<boolean>((resolve) => proc.once('exit', () => resolve(true)));
-    try { h.dispose(); } catch { /* already dead */ }
+    try { h.dispose(reason); } catch { /* already dead */ }
     if (await Promise.race([exited, deadline(3000)])) continue;
-    try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+    terminateEngineProcess(proc, reason, 'SIGKILL');
     await Promise.race([exited, deadline(2000)]);
   }
   await Promise.all(pendingStarts.map((startup) => startup.waitForCleanup()));
@@ -2570,7 +2616,7 @@ function scheduleIdleEngineRecycle(): void {
   idleEngineRecycleTimer = setTimeout(() => {
     idleEngineRecycleTimer = undefined;
     if (shuttingDown || DesignerHub.instance.openSessionCount !== 0 || idleEngineRecycleInFlight) return;
-    const run = stopEnginesCore().then((stopped) => {
+    const run = stopEnginesCore('idle').then((stopped) => {
       if (stopped > 0) output.appendLine(`[engine:idle] recycled ${stopped} preview engine(s) after the last designer closed`);
       return stopped;
     }, (error) => {
@@ -2602,7 +2648,7 @@ async function stopPreviewEngines(): Promise<void> {
  */
 async function restartPreviewEngines(): Promise<void> {
   const session = DesignerHub.instance.activeSession;
-  const stopped = await stopEnginesCore();
+  const stopped = await stopEnginesCore('recycle');
   // The user chose to restart (often from the crash-loop notice): give the new processes a fresh recovery budget.
   for (const kind of ['modern', 'net48'] as const) engineRecovery.reset(kind);
   if (session) {
@@ -2772,7 +2818,7 @@ export function deactivate(): void | Promise<void> {
   shuttingDown = true;
   cancelIdleEngineRecycle();
   nextIdleEngineRecycleDelayForTest = undefined;
-  v2WorkerSupervisor?.dispose();
+  v2WorkerSupervisor?.dispose('shutdown');
   v2WorkerSupervisor = undefined;
   closeExternalBuildWatch(); // a watch that fires during teardown would only try to release engines already going away
   // dispose() already kills the mapped engines' processes; remember which so the pending-scan below does NOT signal them
@@ -2781,7 +2827,7 @@ export function deactivate(): void | Promise<void> {
   const disposedProcs = new Set<EngineHandle['process']>();
   for (const handle of engines.values()) {
     disposedProcs.add(handle.process);
-    try { handle.dispose(); } catch { /* ignore */ }
+    try { handle.dispose('shutdown'); } catch { /* ignore */ }
   }
   for (const startup of engineStarts.values()) if (!startup.value) startup.stop();
   engines.clear();
@@ -2800,7 +2846,7 @@ export function deactivate(): void | Promise<void> {
     // misses a recycling process — doRecycleNet48 removes it from `engines` before disposing — so ALSO skip one that is
     // already `killed`. Here `killed` means "a termination signal was already SENT" (its correct Node meaning), used to
     // avoid a redundant second signal — NOT as proof of exit (that stays exitCode/signalCode/'exit').
-    if (!disposedProcs.has(proc) && !proc.killed) { try { proc.kill(); } catch { /* already gone */ } }
+    if (!disposedProcs.has(proc) && !proc.killed) terminateEngineProcess(proc, 'shutdown');
   }));
   return Promise.race([
     Promise.all(exits).then(() => undefined),

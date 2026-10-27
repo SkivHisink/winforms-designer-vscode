@@ -28,6 +28,8 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
     <!-- Real named-pipe protocol tests need the same complete RPC runtime dependency graph as the engine. -->
     <PackageReference Include="StreamJsonRpc" Version="2.25.29" />
+    <!-- Pin the patched transitive formatter while retaining the existing RPC contract. -->
+    <PackageReference Include="MessagePack" Version="2.5.303" />
   </ItemGroup>
 
   <ItemGroup>

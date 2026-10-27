@@ -10,6 +10,7 @@ import {
 } from './documentStore';
 import { PatchOperation, PatchSet } from './patchSet';
 import { TransactionJournalRecord, writeJournalFile } from './transactionJournal';
+import { assertLocalArtifactPath } from './localArtifactPath';
 import {
   PlannedTargetMutation,
   TransactionCrashPoint,
@@ -24,7 +25,7 @@ const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 export interface DesignerResourceTransactionTarget {
   filePath: string;
   before: string | null;
-  after: string;
+  after: string | null;
   bom: boolean;
 }
 
@@ -36,6 +37,7 @@ export interface DesignerResourceTransactionOptions {
   transactionId?: string;
   hostOperation?: TransactionJournalRecord['hostOperation'];
   nowUtc?: () => string;
+  isCancellationRequested?(): boolean;
   readBytes(filePath: string): Promise<Uint8Array | null>;
   writeBytes(filePath: string, bytes: Uint8Array): Promise<void>;
   deleteFile(filePath: string): Promise<void>;
@@ -97,9 +99,9 @@ export function createDesignerResourcePatchSet(
   const root = normalizeTransactionRoot(workspaceRoot);
   const operations: PatchOperation[] = targets.map((target) => {
     const beforeEol = detectEol(target.before ?? '');
-    const afterEol = detectEol(target.after);
+    const afterEol = detectEol(target.after ?? '');
     const beforeBom = target.before !== null && target.bom;
-    const afterBom = target.bom;
+    const afterBom = target.after !== null && target.bom;
     return {
       kind: 'writeResourceText',
       target: resourceTransactionRelativeTarget(root, target.filePath),
@@ -141,10 +143,16 @@ export async function runDesignerResourceTransaction(
   };
   const snapshotOf = (target: string, bytes: Uint8Array | null): ArtifactSnapshot =>
     bytes === null ? snapshotMissingArtifact(target) : snapshotArtifactBytes(target, bytes);
+  const readTarget = async (target: string): Promise<Uint8Array | null> => {
+    const filePath = targetSpec(target).filePath;
+    await assertLocalArtifactPath(root, filePath);
+    return options.readBytes(filePath);
+  };
 
   const adapters: TransactionRunnerAdapters = {
+    isCancellationRequested: options.isCancellationRequested,
     snapshot: async (target) => {
-      const bytes = await options.readBytes(targetSpec(target).filePath);
+      const bytes = await readTarget(target);
       const copy = bytes === null ? null : Buffer.from(bytes);
       pendingSnapshotBytes.set(resourceTransactionTargetKey(target), copy);
       return snapshotOf(target, copy);
@@ -156,7 +164,7 @@ export async function runDesignerResourceTransaction(
         pendingSnapshotBytes.delete(key);
         return bytes === null ? null : Buffer.from(bytes);
       }
-      const bytes = await options.readBytes(targetSpec(target).filePath);
+      const bytes = await readTarget(target);
       return bytes === null ? null : Buffer.from(bytes);
     },
     planTargetMutation: async ({ target, baseBytes }): Promise<PlannedTargetMutation> => {
@@ -167,15 +175,22 @@ export async function runDesignerResourceTransaction(
         : Buffer.from(declaredBefore).equals(Buffer.from(baseBytes));
       if (!baselineMatches) throw new Error(`resource transaction baseline is stale: ${target}`);
       const afterBytes = resourceTextBytes(spec.after, spec.bom);
-      if (afterBytes === null) throw new Error(`resource transaction has no forward bytes: ${target}`);
       return {
         target,
         afterBytes,
         expectedAfterFingerprint: artifactFingerprint(snapshotOf(target, afterBytes)),
       };
     },
-    write: (target, bytes) => options.writeBytes(targetSpec(target).filePath, bytes),
-    delete: (target) => options.deleteFile(targetSpec(target).filePath),
+    write: async (target, bytes) => {
+      const filePath = targetSpec(target).filePath;
+      await assertLocalArtifactPath(root, filePath);
+      await options.writeBytes(filePath, bytes);
+    },
+    delete: async (target) => {
+      const filePath = targetSpec(target).filePath;
+      await assertLocalArtifactPath(root, filePath);
+      await options.deleteFile(filePath);
+    },
     persistJournal: async (record) => {
       await options.beforePersistJournal?.(record);
       await writeJournalFile(journalPath, record);
@@ -191,7 +206,7 @@ export async function runDesignerResourceTransaction(
       for (const target of context.appliedTargets) {
         const expected = expectedFingerprints[target];
         if (!expected) return false;
-        const bytes = await options.readBytes(targetSpec(target).filePath);
+        const bytes = await readTarget(target);
         if (!sameArtifactFingerprint(artifactFingerprint(snapshotOf(target, bytes)), expected)) return false;
       }
       return options.afterVerifiedPostconditions

@@ -22,7 +22,8 @@ namespace WinFormsDesigner.Engine
         AmbiguousOwner,
         MissingInitializeComponent,
         UnsupportedNestedDesigner,
-        NoProject
+        NoProject,
+        StaleProjectContext
     }
 
     public sealed class DesignerDocumentOwnerResolution
@@ -48,6 +49,14 @@ namespace WinFormsDesigner.Engine
         {
             Status = DesignerDocumentOwnerStatus.NoProject,
             DiagnosticCode = "NO_PROJECT"
+        };
+
+        public static DesignerDocumentOwnerResolution StaleProjectContext(IEnumerable<string> owners, string typeName) => new()
+        {
+            Status = DesignerDocumentOwnerStatus.StaleProjectContext,
+            DiagnosticCode = "STALE_PROJECT_CONTEXT",
+            TypeName = typeName,
+            Owners = owners.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray()
         };
 
         public static DesignerDocumentOwnerResolution UnsupportedNested(string typeName) => new()
@@ -117,6 +126,7 @@ namespace WinFormsDesigner.Engine
         // One entry per csproj full path (overwritten on mtime change), so the cache is bounded to the
         // number of distinct projects seen — not monotonic growth across edits/builds.
         private static readonly ConcurrentDictionary<string, CacheEntry> _cache = new();
+        private static readonly UnsupportedMSBuildCache UnsupportedGetProperty = new();
 
         // A failed evaluation (null candidates) is retried after this window, so a transient miss
         // (dotnet briefly unavailable) recovers without re-running a failing eval on every render.
@@ -174,7 +184,8 @@ namespace WinFormsDesigner.Engine
             string designerFilePath,
             IEnumerable<string> projectPaths,
             string? designerSourceText = null,
-            string? codeBehindSourceText = null)
+            string? codeBehindSourceText = null,
+            string? preferredProjectPath = null)
         {
             string source;
             try { source = designerSourceText ?? File.ReadAllText(designerFilePath); }
@@ -212,6 +223,21 @@ namespace WinFormsDesigner.Engine
             var owners = normalizedProjects
                 .Where(projectPath => ProjectContainsCompileFile(projectPath, fullDesignerPath, normalizedProjects))
                 .ToArray();
+
+            // A chosen context grants no membership authority: run the same bounded Compile-item proof first.
+            // A deleted, excluded or non-candidate project refuses rather than silently selecting another owner.
+            if (preferredProjectPath != null)
+            {
+                string? preferred = TryFullPath(preferredProjectPath);
+                string? selected = owners.FirstOrDefault(owner =>
+                    string.Equals(owner, preferred, StringComparison.OrdinalIgnoreCase));
+                if (selected == null)
+                    return DesignerDocumentOwnerResolution.StaleProjectContext(owners, typeName);
+                var result = DesignerDocumentOwnerResolution.Resolved(
+                    selected, typeName, emptyInitializeComponentSurface, owners);
+                result.SelectedAmongEquivalentOwners = false;
+                return result;
+            }
 
             if (owners.Length == 0) return DesignerDocumentOwnerResolution.NoProject();
             if (owners.Length > 1)
@@ -302,7 +328,10 @@ namespace WinFormsDesigner.Engine
             {
                 return null;
             }
+            // A Framework-only assembly cannot be loaded by this modern host. Do not evaluate it just to discard it.
+            if (IsDeclaredSingleFrameworkProject(full)) return null;
             long now = DateTime.UtcNow.Ticks;
+            if (allowEval && UnsupportedGetProperty.ShouldSkip(full, now, () => SelectedSdkVersion(full))) return null;
 
             if (_cache.TryGetValue(full, out CacheEntry? entry) && entry.CsprojMtimeTicks == mtime)
             {
@@ -328,6 +357,63 @@ namespace WinFormsDesigner.Engine
             IReadOnlyList<string>? candidates = EvaluateCandidates(full);
             _cache[full] = new CacheEntry { CsprojMtimeTicks = mtime, Candidates = candidates, EvaluatedAtUtcTicks = now };
             return candidates == null ? null : FreshestExisting(candidates);
+        }
+
+        /// <summary>Only unconditional, literal own-file declarations prove a Framework-only target.</summary>
+        internal static bool IsDeclaredSingleFrameworkProject(string projectPath)
+        {
+            try
+            {
+                var root = XDocument.Load(projectPath);
+                var targets = root.Descendants().Where(e => e.Name.LocalName is "TargetFramework" or "TargetFrameworks" or "TargetFrameworkVersion").ToArray();
+                if (targets.Length != 1) return false;
+                var target = targets[0];
+                if (target.Name.LocalName == "TargetFrameworks" || target.AncestorsAndSelf().Any(e => e.Attribute("Condition") != null)) return false;
+                string value = target.Value.Trim();
+                return target.Name.LocalName == "TargetFrameworkVersion"
+                    ? Regex.IsMatch(value, @"^v[234]\.\d+(?:\.\d+)?$", RegexOptions.IgnoreCase)
+                    : FrameworkTfm.IsMatch(value);
+            }
+            catch { return false; }
+        }
+
+        internal static bool IsGetPropertyUnsupported(string stdout, string stderr) =>
+            Regex.IsMatch(stdout + "\n" + stderr, @"\bMSB1001\b", RegexOptions.IgnoreCase)
+            && (stdout + stderr).IndexOf("getProperty", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        private static void ReportUnsupportedGetProperty(string projectPath)
+        {
+            Console.Error.WriteLine("[project-evaluation] " + new JObject
+            {
+                ["code"] = "MSBUILD_GETPROPERTY_UNSUPPORTED", ["projectPath"] = projectPath
+            }.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        // This SDK selection probe never evaluates the project or executes targets. It runs only after an
+        // unsupported-switch result, at most once per retry interval, so SDK changes can recover without restart.
+        private static string? SelectedSdkVersion(string projectPath)
+        {
+            try
+            {
+                if (!EngineProcessJob.HelpersAllowed) return null;
+                var psi = new ProcessStartInfo(DotnetExe(), "--version")
+                {
+                    UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+                    CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(projectPath)!
+                };
+                psi.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+                using var process = Process.Start(psi);
+                if (process == null) return null;
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(3_000)) { try { process.Kill(true); } catch { } return null; }
+#pragma warning disable VSTHRD002 // bounded SDK version probe, never on the render thread
+                if (!Task.WaitAll(new Task[] { output, error }, 1_000) || process.ExitCode != 0) return null;
+                string version = output.Result.Trim();
+#pragma warning restore VSTHRD002
+                return Regex.IsMatch(version, @"^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$") ? version : null;
+            }
+            catch { return null; }
         }
 
         private sealed class ProjectDocument
@@ -706,6 +792,12 @@ namespace WinFormsDesigner.Engine
 #pragma warning restore VSTHRD002
                 if (p.ExitCode != 0)
                 {
+                    if (IsGetPropertyUnsupported(stdout, stderr))
+                    {
+                        if (UnsupportedGetProperty.Remember(csprojFullPath, SelectedSdkVersion(csprojFullPath) ?? "unavailable", DateTime.UtcNow.Ticks))
+                            ReportUnsupportedGetProperty(csprojFullPath);
+                        return null;
+                    }
                     // MSBuild reports its own errors on STDOUT (e.g. MSB1001 "Unknown switch" when a global.json pins an
                     // SDK whose MSBuild predates 17.8 and lacks -getProperty), so an empty stderr must not hide the reason.
                     // The first non-empty stdout line covers a localized message without the word "error".
@@ -717,7 +809,12 @@ namespace WinFormsDesigner.Engine
                     Console.Error.WriteLine($"[engine] msbuild eval exit {p.ExitCode} for {csprojFullPath}: {firstLine}");
                     return null;
                 }
-                return ParseProps(stdout);
+                var properties = ParseProps(stdout);
+                if (properties != null) Console.Error.WriteLine("[project-evaluation] " + new JObject
+                {
+                    ["code"] = "MSBUILD_EVALUATION_AVAILABLE", ["projectPath"] = csprojFullPath
+                }.ToString(Newtonsoft.Json.Formatting.None));
+                return properties;
             }
             catch (Exception ex)
             {

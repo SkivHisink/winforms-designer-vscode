@@ -9,6 +9,59 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-26
+
+### Added
+
+- Designer backups retain up to 20 verified logical operations with linked source and resource changes.
+  After hot exit, source/resource-only histories restore native Undo for the applied suffix after the last
+  matching saved checkpoint. Composite histories with code-behind buffers use explicit recovery Undo/Redo
+  commands from the designer. The ordinary code editor keeps its own native stack; a changed companion blocks
+  aggregate operations until reconciled. An existing Redo branch remains in the recovery data. Native history before
+  the saved checkpoint and a shared history with the code editor remain outside the public API contract.
+- A recovery timeline shows recent operation outcomes, affected file names and available restore points.
+  Conflict recovery offers explicit reload, Save As and diff actions while preserving external bytes.
+- A form compiled by several projects offers an explicit project-context choice, remembered per document.
+  The engine revalidates membership on every resolution; a stale choice refuses preview until replaced.
+- Adapter SDK Preview 0.1.0 publishes closed action/editor intents, schema, package integrity, capability and service
+  requirements, two independently built samples and a public-command conformance runner.
+- Explicit local development enablement binds trusted execution to exact package bytes. The separate executable
+  loader checks hashes, provenance, cohort and services before a fresh bounded child runs, then validates its result
+  and current authorization before a normal designer transaction. A manifest signature label grants no authority.
+- Hosted service profile 0.1.0 lists nine precise contracts and adds bounded toolbox, admitted type resolution and
+  owned-property serialization services on modern/net48. Public inspection executes those real services on the STA.
+- Host-owned property editor UI declares ownership, cancellation, focus and deadlines. SDK actions use one pointer
+  and keyboard command route; render-only adorners have no mutation authority.
+- Single-property Reset can use a proven owned region with independent semantic, preservation and Lane A equality
+  checks. Unsupported shapes retain the source-first route; localized resource Reset keeps its resource transaction.
+
+### Fixed
+
+- Toolbox discovery deduplicates nested output roots, checks owner and referenced project assemblies first,
+  filters native PE images and satellite resources before reflection, and includes managed EXE outputs.
+  Bounded diagnostics name checked and skipped assemblies when a discovery budget is exhausted.
+- Single-target Framework projects avoid unnecessary modern MSBuild evaluation. An old SDK that does not
+  support property queries receives a named diagnostic and does not repeatedly run the failed query.
+- Worker exit logs and exported diagnostics distinguish intentional lifecycle termination from crashes.
+- Creating an event handler on the .NET Framework route recognizes its own exact code-behind buffer change,
+  then refreshes the preview after the composite commit. External source changes retain their refusal guards.
+- A repeated file-change notification for code-behind text the designer has already seen no longer makes a reloaded
+  designer read-only and refuse the next edit. A real code-behind change still refreshes the preview.
+- Transaction compensation checks every target before Undo and accounts for writes that land before an
+  error is reported. Recovery preserves any bytes that no longer match the transaction's own result.
+- Save As validates linked destinations and open buffers before creating files; its supported type rename
+  preserves comments, string literals and namespaces and refuses unclassified semantic references.
+- Dependency security patches update Vitest to 4.1.12, Vite to 8.2.4, the test-only undici to 7.30.1 and
+  MessagePack to 2.5.303, including the .NET Framework test project.
+- Held hosted-service references reject use after disposal or on the wrong owner thread before effects.
+- Bounded component patch validation preserves unrelated statement bytes and order, including whitespace in literals.
+- Native editor windows are refused by name under the headless engine contract. The independent official modern SDK
+  ABI probe requires an explicit adapter; no Visual Studio or DesignToolsServer runtime is bundled.
+
+Combined release verification, exact history boundaries and the Adapter SDK Preview contract are recorded in
+[the 2.3.0 release record](https://github.com/SkivHisink/winforms-designer-vscode/blob/v2.3.0/docs/release-2.3.0.md).
+The record separates local verification from publication.
+
 ## [2.2.0] - 2026-10-05
 
 ### Added

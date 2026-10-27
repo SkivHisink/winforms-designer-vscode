@@ -64,6 +64,12 @@ export const PERSISTED_DESIGNER_STATE_INVENTORY: readonly PersistedDesignerState
     lifecycle: 'Explicit per-form assembly overrides survive reload and cache clear.',
   },
   {
+    key: 'designerProjectContext:<document-path>', storage: 'workspaceMemento', category: 'settings',
+    producer: 'DesignerHub.setProjectContext', consumer: 'DesignerSession.ensureDocumentOwner',
+    format: 'Per-document project path; fresh engine membership validation on every resolution',
+    lifecycle: 'Explicit choice survives cache clearing and reload; a stale choice is refused without automatic fallback.',
+  },
+  {
     key: 'v2-transactions/<workspace-hash>/*.json', storage: 'globalStorage', category: 'unsavedRecovery',
     producer: 'transactionJournal.writeJournalFile', consumer: 'transactionRecovery.recoverPendingTransactions',
     format: 'TransactionJournalRecord schemaVersion 2.0.0',
@@ -86,6 +92,12 @@ export const PERSISTED_DESIGNER_STATE_INVENTORY: readonly PersistedDesignerState
     producer: 'WinFormsDesignDocument.backup', consumer: 'WinFormsDesignerProvider.openCustomDocument',
     format: 'Exact generated-source bytes, including original UTF-8 BOM; no JSON envelope',
     lifecycle: 'Owned by VS Code CustomDocument backup lifecycle; preserves unsaved source across host restarts.',
+  },
+  {
+    key: 'CustomDocumentBackupContext.destination.history.json', storage: 'hostBackup', category: 'unsavedRecovery',
+    producer: 'WinFormsDesignDocument.backup', consumer: 'WinFormsDesignDocument.restoreHistory',
+    format: 'winforms-designer-history-v1; raw source remains the independent legacy-compatible backup',
+    lifecycle: 'At most 20 operations and 16 MiB operation data; validated form-owned targets, checkpoints and redo data; never a cache-clear target.',
   },
 ];
 

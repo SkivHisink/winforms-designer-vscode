@@ -1,4 +1,5 @@
 import { RecoverableEngineKind, RecoveryDecision } from './engineRecovery';
+import type { EngineExitReason } from './engineLifecycle';
 import { WorkerKey, WorkerPayloadIdentity, workerKeyId } from './workerSelection';
 import {
   V2_PROTOCOL_CAPABILITIES,
@@ -47,7 +48,7 @@ export interface SupervisedWorker<TPayload, TResult> {
   send(envelope: WorkerEnvelope<TPayload>): Promise<WorkerReply<TResult>>;
   cancel?(envelope: WorkerEnvelope<TPayload>): void;
   usage?(): Promise<{ memoryBytes: number; handleCount: number }>;
-  dispose?(): void;
+  dispose?(reason?: EngineExitReason): void;
 }
 
 export interface WorkerAdapter<TPayload, TResult> {
@@ -194,7 +195,7 @@ export class WorkerSupervisor<TPayload, TResult> {
     const started = await this.raceWorkerReply(startup.then((worker) => ({
       sessionId: this.options.sessionId, generation, requestId, status: 'ok' as const, result: worker as unknown as TResult,
     })), requestId, generation, deadlineAt - this.clock.now(), cancellation);
-    if (started.status !== 'reply') { this.recycle(key); return started.result; }
+    if (started.status !== 'reply') { this.recycle(key, started.result.status === 'cancelled' ? 'startupCancelled' : 'requestDeadline'); return started.result; }
     const worker = started.reply.result as unknown as SupervisedWorker<TPayload, TResult>;
     if (!worker) {
       return problem('faulted', 'WORKER_START_FAILED', requestId, slot.generation);
@@ -259,7 +260,7 @@ export class WorkerSupervisor<TPayload, TResult> {
         try { worker.cancel?.(envelope); } catch { /* disconnected */ }
         if (measured.result.status === 'deadlineExceeded' && usageBound < remaining) {
           // The worker answered the request but cannot report its own health in time: treat it as wedged.
-          this.recycle(key);
+          this.recycle(key, 'requestDeadline');
           return problem('faulted', 'WORKER_USAGE_DEADLINE_EXCEEDED', requestId, generation);
         }
         return measured.result;
@@ -268,7 +269,7 @@ export class WorkerSupervisor<TPayload, TResult> {
       if (usage) {
         slot.initialHandleCount ??= usage.handleCount;
         if (this.exceedsUsageBudget(slot, usage)) {
-          this.recycle(key);
+          this.recycle(key, 'usageBudget');
           return problem('faulted', 'WORKER_RESOURCE_BUDGET_EXCEEDED', requestId, generation);
         }
       }
@@ -308,9 +309,9 @@ export class WorkerSupervisor<TPayload, TResult> {
     };
   }
 
-  recycle(key: WorkerKey): void {
+  recycle(key: WorkerKey, reason: EngineExitReason = 'recycle'): void {
     const slot = this.slotFor(key);
-    this.disposeWorker(slot);
+    this.disposeWorker(slot, reason);
     slot.worker = undefined;
     slot.startPromise = undefined;
     slot.generation += 1;
@@ -323,11 +324,11 @@ export class WorkerSupervisor<TPayload, TResult> {
     return [...this.slots.values()].map((slot) => this.state(slot.key));
   }
 
-  dispose(): void {
+  dispose(reason: EngineExitReason = 'recycle'): void {
     if (this.disposed) return;
     this.disposed = true;
     for (const slot of this.slots.values()) {
-      this.disposeWorker(slot);
+      this.disposeWorker(slot, reason);
       slot.worker = undefined;
       slot.state = 'idle';
       slot.startPromise = undefined;
@@ -343,7 +344,7 @@ export class WorkerSupervisor<TPayload, TResult> {
       slot.state = 'starting';
       slot.startPromise = this.adapter.start(slot.key, slot.generation).then((worker) => {
         if (this.disposed || slot.generation !== generation || slot.state === 'crashLoop' || workerKeyId(slot.key) !== workerKeyId(worker.key)) {
-          try { worker.dispose?.(); } catch { /* already unusable */ }
+          try { worker.dispose?.('generationReplacement'); } catch { /* already unusable */ }
           throw new Error('stale worker start');
         }
         slot.worker = worker;
@@ -435,7 +436,7 @@ export class WorkerSupervisor<TPayload, TResult> {
       if (stopped) return;
       stopped = true;
       pollTimer?.cancel(); probeTimer?.cancel();
-      this.recycle(slot.key);
+      this.recycle(slot.key, code === 'WORKER_RESOURCE_BUDGET_EXCEEDED' ? 'usageBudget' : 'requestDeadline');
       finish(problem('faulted', code, requestId, generation));
     };
     const poll = (): void => {
@@ -453,7 +454,7 @@ export class WorkerSupervisor<TPayload, TResult> {
   }
 
   private replaceCrashedWorker(slot: WorkerSlot<TPayload, TResult>, decision: RecoveryDecision): void {
-    this.disposeWorker(slot);
+    this.disposeWorker(slot, 'unexpectedExit');
     slot.recentCrashes = decision.recentCrashes;
     slot.startPromise = undefined;
     slot.worker = undefined;
@@ -471,8 +472,8 @@ export class WorkerSupervisor<TPayload, TResult> {
     slot.quarantineUntil = undefined;
   }
 
-  private disposeWorker(slot: WorkerSlot<TPayload, TResult>): void {
-    try { slot.worker?.dispose?.(); } catch { /* best effort */ }
+  private disposeWorker(slot: WorkerSlot<TPayload, TResult>, reason: EngineExitReason): void {
+    try { slot.worker?.dispose?.(reason); } catch { /* best effort */ }
   }
 
   private slotFor(key: WorkerKey): WorkerSlot<TPayload, TResult> {

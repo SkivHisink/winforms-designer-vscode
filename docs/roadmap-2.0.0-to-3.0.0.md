@@ -1,7 +1,8 @@
 # Detailed roadmap: 2.0.0 → 3.0.0
 
 **Planning date:** 22 September 2026.  
-**Status:** 2.1.0 is implemented, locally verified and packaged; 2.2.0–3.0.0 have the status `PLANNED`. 2.1.0 has not been published.  
+**Revised:** 23 October 2026 — the former 2.3.0 and 2.4.0 scopes are combined into one 2.3.0 release and every later minor moves one version earlier; task IDs are unchanged. See [the revision record](#roadmap-revision-2026-10-23).  
+**Status:** 2.1.0 and 2.2.0 are implemented, locally verified and packaged. Later milestones use the status recorded in their release sections. Public distribution remains a separate gate.<br>
 **Product:** WinForms Designer for VS Code.  
 **Horizon:** from the bounded, scenario-verified 2.0.0 core to the extensible 3.0.0 platform with published compatibility contracts.
 
@@ -95,40 +96,38 @@ Has a reproducible support matrix, reports on form problems, a compatibility che
 
 ## 3. Release map and dependencies
 
-Every row after the initial baseline is a plan. The 2.0.x patch branch accompanies the main work and does not delay fixes for data loss or critical regressions.
+Completed milestones are identified by their acceptance records; later rows remain planned until their own release section records acceptance. The 2.0.x patch branch accompanies the main work and does not delay fixes for data loss or critical regressions.
 
 | Version | Main outcome | Key dependency | Condition for moving on |
 |---|---|---|---|
 | **2.0.0 / 2.0.x** | A fixed baseline and an up-to-date map of limitations | The current core | Historical and current evidence are separated, critical defects are closed |
 | **2.1.0** | Predictable compatibility diagnostics and recovery of the working environment | The 2.0 baseline | The user understands a refusal and can restore the session |
-| **2.2.0** | A shared protocol and supervisor on real commands | 2.1 + characterization | Every mandatory route has a direct product E2E |
-| **2.3.0** | Documents, linked changes and a reliable hot exit | 2.2 | Crash/restart/undo are verified for the declared complex transactions |
-| **2.4.0** | Hosted services and Adapter SDK Preview | 2.2–2.3 | An independent sample uses the published contract |
-| **2.5.0** | The first real vendor cohort and useful editors | 2.4 + vendor access | Exact certification of one available set of versions |
-| **2.6.0** | Fast work with large and nested forms | 2.2–2.3 | Fixed performance budgets on the real product |
-| **2.7.0** | Resources, cultures and visual localization checks | 2.3 + 2.6 | Linked resource edits and RTL are verified without losing fallback |
-| **2.8.0** | Complete applied data-binding scenarios | 2.3–2.4 + 2.7 for localized forms | Build and runtime check of a form with a changed model |
-| **2.9.0** | Reusable forms, templates and refactorings | 2.3 + 2.7–2.8 | Re-applying and undoing do not damage the project |
-| **2.10.0** | Verified accessibility and an extended runtime matrix | Accumulated UI/runtime features + the lab | Real AT, DPI and hardware checks of the declared set |
-| **2.11.0** | Product CLI, project validation and design advisor | 2.2–2.3 + the relevant capabilities | The CLI calls real product paths and produces a reproducible report |
-| **2.12.0** | Contract freeze, SDK RC and a transition rehearsal | All mandatory tracks | Beta/RC evidence, migration and rollback are ready |
-| **3.0.0** | A stable extensible platform | 2.12 + independent acceptance | All mandatory capabilities of the declared matrix are accepted |
+| **2.2.0** | **Accepted locally:** a shared protocol and supervisor on real commands; [evidence](release-2.2.0.md) | 2.1 + characterization | 28/28 product scenarios on both hosts; installed upgrade/downgrade verified |
+| **2.3.0** | **Accepted locally:** documents, linked changes and a reliable hot exit; hosted services and Adapter SDK Preview; [evidence](release-2.3.0.md) | 2.2 | Crash/restart/undo are verified for the declared complex transactions; an independent sample uses the published contract; one complete acceptance of the final tree covers both scopes |
+| **2.4.0** | The first real vendor cohort and useful editors | 2.3 + vendor access | Exact certification of one available set of versions |
+| **2.5.0** | Fast work with large and nested forms | 2.2–2.3 | Fixed performance budgets on the real product |
+| **2.6.0** | Resources, cultures and visual localization checks | 2.3 + 2.5 | Linked resource edits and RTL are verified without losing fallback |
+| **2.7.0** | Complete applied data-binding scenarios | 2.3 + 2.6 for localized forms | Build and runtime check of a form with a changed model |
+| **2.8.0** | Reusable forms, templates and refactorings | 2.3 + 2.6–2.7 | Re-applying and undoing do not damage the project |
+| **2.9.0** | Verified accessibility and an extended runtime matrix | Accumulated UI/runtime features + the lab | Real AT, DPI and hardware checks of the declared set |
+| **2.10.0** | Product CLI, project validation and design advisor | 2.2–2.3 + the relevant capabilities | The CLI calls real product paths and produces a reproducible report |
+| **2.11.0** | Contract freeze, SDK RC and a transition rehearsal | All mandatory tracks | Beta/RC evidence, migration and rollback are ready |
+| **3.0.0** | A stable extensible platform | 2.11 + independent acceptance | All mandatory capabilities of the declared matrix are accepted |
 
 ```mermaid
 flowchart LR
     B["2.0 / 2.0.x: baseline"] --> D["2.1: diagnostics"]
     D --> P["2.2: protocol and workers"]
-    P --> T["2.3: documents and history"]
-    T --> H["2.4: hosted SDK"]
-    H --> V["2.5: vendor cohort"]
-    T --> F["2.6: large forms"]
-    F --> L["2.7: resources and cultures"]
-    H --> DB["2.8: data"]
+    P --> T["2.3: documents, history and hosted SDK"]
+    T --> V["2.4: vendor cohort"]
+    T --> F["2.5: large forms"]
+    F --> L["2.6: resources and cultures"]
+    T --> DB["2.7: data"]
     L --> DB
-    DB --> R["2.9: templates and refactoring"]
-    R --> Q["2.10: runtime and accessibility"]
-    T --> C["2.11: CLI and advisor"]
-    Q --> RC["2.12: compatibility and RC"]
+    DB --> R["2.8: templates and refactoring"]
+    R --> Q["2.9: runtime and accessibility"]
+    T --> C["2.10: CLI and advisor"]
+    Q --> RC["2.11: compatibility and RC"]
     V --> RC
     C --> RC
     RC --> GA["3.0: platform"]
@@ -149,6 +148,34 @@ The 120 tasks form the full proposed backlog. A `PLANNED` mark is not a commitme
 | Research with a decision | Shared custom/text history and restoring the redo branch (part of R23), modern designer ABI (part of R24), Tier D and the OS sandbox | The result of the research is a proven model or an explicit limitation; an impossible option does not become a hidden mandatory dependency |
 
 The acceptance scenarios in section 4 describe the full target variant of each release. If a candidate is not included, a narrower scenario with the same integrity requirements is published before acceptance starts. Basic templates, the existing data binding and localization remain in the mandatory regression matrix regardless of what happens to the additional features.
+
+<a id="roadmap-revision-2026-10-23"></a>
+
+### 3.2. Revision of 23 October 2026: 2.3.0 and 2.4.0 combined
+
+**Reason:** 2.3.0 was accepted locally on 22 October 2026 but was not published. The 2.4.0 scope was then implemented in the same unpublished working tree over `b7717b4`. The two scopes ship as one release, closed by one complete acceptance of the final tree, instead of separating the tree to publish an intermediate version.
+
+| Scope | Task IDs | Before the revision | After the revision |
+|---|---|---|---|
+| Documents, history and recovery | R23-01–R23-12 | 2.3.0 | **2.3.0** |
+| Hosted services and Adapter SDK Preview | R24-01–R24-09 | 2.4.0 | **2.3.0** |
+| The first vendor cohort and extended editors | R25-01–R25-08 | 2.5.0 | **2.4.0** |
+| Large forms, precise layout and responsiveness | R26-01–R26-09 | 2.6.0 | **2.5.0** |
+| Resources, cultures and localized forms | R27-01–R27-09 | 2.7.0 | **2.6.0** |
+| Applied data-binding scenarios | R28-01–R28-09 | 2.8.0 | **2.7.0** |
+| Templates, reuse and safe refactorings | R29-01–R29-08 | 2.9.0 | **2.8.0** |
+| Accessibility and a confirmed runtime matrix | R210-01–R210-09 | 2.10.0 | **2.9.0** |
+| Product CLI, solution validation and design advisor | R211-01–R211-09 | 2.11.0 | **2.10.0** |
+| Contract freeze and transition preparation | R212-01–R212-09 | 2.12.0 | **2.11.0** |
+| A stable extensible platform | R30-01–R30-08 | 3.0.0 | 3.0.0 |
+
+**Rules of the move:**
+
+- Task IDs keep their original prefix. The number in an ID names the task, not the release: R25-03 is delivered in 2.4.0, and R212-09 is delivered in 2.11.0. Evidence, test scenarios and release records that cite these IDs remain valid references.
+- No task is added, removed or narrowed. Acceptance criteria, budgets and gates are unchanged; only the version that consolidates them moves. 2.12.0 is no longer planned, and 3.0.0 stays the target.
+- The 22 October 2026 local acceptance of the document scope was taken on an intermediate tree. It remains a historical record and does not close the combined release.
+- The combined 2.3.0 is closed by one acceptance run of the final tree: every executable CI step, both frozen VSIX packages and artifact-bound evidence for R23 and R24 together. The product version, package identities, the Adapter SDK Preview product cohort, the changelog and the release records move from 2.4.0 to 2.3.0 as part of that closure. The cohort is declared in the sample packages and their tests, so this is a product change and not a documentation rename.
+- The record that was prepared for the former 2.5.0 becomes the 2.4.0 record.
 
 <a id="milestones"></a>
 
@@ -208,6 +235,8 @@ User settings, a rebuildable cache and the only copy of unsaved data follow diff
 
 ### 2.2.0 — working protocol and process management
 
+**Status: accepted locally on 2026-10-08.** All R22-01–R22-08 are closed against the archived 2.2.0 artifacts. Ordinary product acceptance passed 28/28 scenarios on VS Code 1.84.0 and 1.141.0; installed 2.1.0 → 2.2.0 → 2.1.0 passed three workbench phases and nine persistence/recovery checks on each host. See the [release record, package hashes and evidence limits](release-2.2.0.md). Publication and physical ARM64 acceptance retain their separate gates.
+
 **Value:** fast actions, switching forms, cancellation and a library failure do not lead to a late preview, a hung session or someone else's reply in the active document.
 
 **Work items:**
@@ -229,27 +258,31 @@ The retry boundary is fixed before the migration: the retention period of operat
 
 **Rollback:** stop accepting new operations, complete or recover/compensate the pending transactions, preserve dirty buffers and backups, invalidate the previous generations and release worker ownership; only then enable the previous route. With an undetermined outcome the switch waits for reconciliation and does not create a second commit owner. Restarting the Extension Host is acceptable as a documented condition. Verify the rollback during a pending edit and after a journal write, not only on an idle form. Before it is enabled by default, the new branch is no worse than the baseline in correctness and in the established latencies.
 
-### 2.3.0 — a single document, history and recovery
+### 2.3.0 — documents, history, recovery, hosted services and Adapter SDK Preview
+
+**Status: accepted locally on 2026-10-27.** Since the [23 October 2026 revision](#roadmap-revision-2026-10-23) this release also contains the former 2.4.0 scope. One complete acceptance of the final tree passed all 45 executable CI steps and covers R23-01–R23-12 and R24-01–R24-09 together, within the documented public API, ownership and Preview boundaries; the earlier document-scope acceptance of 2026-10-22 was taken on an intermediate tree and is superseded. See the [release record and artifact-bound evidence](release-2.3.0.md). Publication, physical ARM64 and licensed vendor qualification remain separate gates.
+
+#### Documents, history and recovery
 
 **Value:** several designer actions and linked files survive closing the window, restarting VS Code and an external edit without losing work.
 
 **Work items:**
 
-- [ ] **R23-01. Full document ownership.** Separate on-disk bytes, unsaved editor buffers, the durable journal and the transient preview. Separately define several CustomEditor views of one document and coexistence with the standard TextDocument: a shared data source does not mean a shared native Undo stack. Before extending, run a technical probe on the public API and on the minimum/current VS Code.
-- [ ] **R23-02. All writers in a shared transaction.** Bring property, geometry, events, source/resource/project edits under one orchestration contract on top of the existing PatchSet and journal.
-- [ ] **R23-03. Several Undo steps after hot exit.** After the technical probe, extend the proven single scenario to a bounded history, for example 20 operations. Serialize verifiable changes and checkpoints, not callbacks. Separately verify undo of applied operations, a new redo after undo and restoring a redo branch that already existed before exit. The last scenario is enabled only if support by the public API is proven; otherwise a limitation is published and the last document state is preserved.
-- [ ] **R23-04. Multi-file recovery.** Work through creating an event handler, localized control add/delete, image import and Save As with linked artifacts. The journal must distinguish applied, compensated and requiring a manual decision.
-- [ ] **R23-05. External change UX.** On an external change, show the affected files and safe options: reload, save the current work under another name, open a diff. Automatic compensation does not overwrite someone else's bytes.
-- [ ] **R23-06. Save As and path moves.** Verify collision, changed file paths, Windows casing, open buffers, linked cultures and project membership for the supported Save As. Describe explicitly whether generated names/namespace are kept or transformed; general semantic rename is connected to this recovery contract in 2.9.
-- [ ] **R23-07. Recovery timeline.** Show the latest operations, the failure and the available restore point without automatically exposing sources in diagnostic logs.
-- [ ] **R23-08. Crash injection.** Cover a stop after prepare, after each write, after Undo registration and after commit; separately, a read-only file, lack of disk space, cancellation and a change to the file by another process.
+- [x] **R23-01. Full document ownership.** Separate on-disk bytes, unsaved editor buffers, the durable journal and the transient preview. Separately define several CustomEditor views of one document and coexistence with the standard TextDocument: a shared data source does not mean a shared native Undo stack. Before extending, run a technical probe on the public API and on the minimum/current VS Code.
+- [x] **R23-02. All writers in a shared transaction.** Bring property, geometry, events, source/resource/project edits under one orchestration contract on top of the existing PatchSet and journal.
+- [x] **R23-03. Several Undo steps after hot exit.** After the technical probe, extend the proven single scenario to a bounded history, for example 20 operations. Serialize verifiable changes and checkpoints, not callbacks. Separately verify undo of applied operations, a new redo after undo and restoring a redo branch that already existed before exit. The last scenario is enabled only if support by the public API is proven; otherwise a limitation is published and the last document state is preserved.
+- [x] **R23-04. Multi-file recovery.** Work through creating an event handler, localized control add/delete, image import and Save As with linked artifacts. The journal must distinguish applied, compensated and requiring a manual decision.
+- [x] **R23-05. External change UX.** On an external change, show the affected files and safe options: reload, save the current work under another name, open a diff. Automatic compensation does not overwrite someone else's bytes.
+- [x] **R23-06. Save As and path moves.** Verify collision, changed file paths, Windows casing, open buffers, linked cultures and project membership for the supported Save As. Describe explicitly whether generated names/namespace are kept or transformed; general semantic rename is connected to this recovery contract in 2.8 (R29-04).
+- [x] **R23-07. Recovery timeline.** Show the latest operations, the failure and the available restore point without automatically exposing sources in diagnostic logs.
+- [x] **R23-08. Crash injection.** Cover a stop after prepare, after each write, after Undo registration and after commit; separately, a read-only file, lack of disk space, cancellation and a change to the file by another process.
 
 **Field findings from 2.2.0.** On 12 October 2026 an installed 2.2.0 opened a real solution of two single-target `net48` projects with a shared source tree: one project includes the files through explicit `<Compile Include … Link>` items, the other imports the same directory as a `.projitems`. The tasks below are unrelated to the document-and-history theme; they are included in 2.3.0 as maintenance of already declared workflows and, if moved, remain visible under their IDs.
 
-- [ ] **R23-09. Choosing the project context for a file with several owners.** Today `ResolveDesignerDocumentOwner` picks the owner itself only where the choice does not affect the render: all contenders provably go to the modern engine. If at least one contender is `net4x`, multi-target or declares its TFM outside its own project file, the result remains `AMBIGUOUS_OWNER`: the form does not open and the product offers no action. The gate's concern is justified: in the solution found, the owners have different `DefineConstants` and the compiled binaries can differ, so no automatic choice is added. Instead: on a refusal with a list of owners, the host offers a choice of project; the chosen project goes through the same file-membership check in the engine again; the choice is remembered for the document in workspace state and changed by a separate command; cancelling leaves the previous refusal. The chosen owner determines the net48 binary for the preview and the source tree for events. A stale choice, where the project no longer compiles the file, is not applied silently. For `AMBIGUOUS_OWNER`, the R21-02 catalog of reasons gets the choice action instead of the general advice to resolve the ambiguity. The task is a narrow early slice of R29-06: choosing configuration/TFM/platform and moving between projects stay there. The change touches the pre-render gate and requires new tests: engine unit tests and an Extension Host test on the existing `OwnerAmbiguous` fixture.
-- [ ] **R23-10. Toolbox auto-discovery budget.** On the same solution the pass finished with `controls=0; truncated=true` although the project compiles its own controls. There are three causes. First: the roots `bin`, `bin\Debug` and `bin\Release` are nested in one another and deduplication is done only by root, so every directory is walked twice and spends the file budget: 29 directories and 396 files skipped by the budget for 77 DLLs in the output. Second: the reflection limit of 24 assemblies is applied in alphabetical order, and on this output it is taken up entirely by native and third-party libraries without WinForms controls. Third: only `*.dll` files are candidates, so the own output of a project with `OutputType=Exe` does not enter the pass; before changing this, check whether another route covers it. Work: deduplicate directories across nested roots; before spending the reflection budget, cheaply filter out candidates that are certainly empty, for example non-managed PE files and satellite `*.resources.dll`; check the output of the owner and of its `ProjectReference` items first, then the rest; decide and record the behavior for `.exe`. The budgets stay bounded, and the log names the checked and the skipped assemblies so that a truncated result is explainable. Tests: unit tests for nested roots and for an output whose alphabetically first assemblies contain no controls.
-- [ ] **R23-11. MSBuild evaluation with a pinned old SDK.** The solution's `global.json` pins an SDK whose MSBuild is older than 17.8 and does not know `-getProperty`; the evaluation ends with `MSB1001` and exit code 1. The engine correctly falls back to searching `bin`, so the render is not affected, but the failed launch repeats after the 10-second negative TTL and writes a log line each time. For a single-target `net4x` project the evaluation result is discarded anyway as not loadable in the modern host. Work: do not launch the evaluation when the project's own file unambiguously declares a single-target Framework TFM; remember the “switch not supported” outcome per project and SDK version rather than for 10 seconds; show the reason once as a named item of the R21-01 status panel instead of a raw log line. A separate evidence-backed decision: whether a way to obtain `TargetPath` on an old MSBuild is needed for modern projects with a pinned SDK, or the documented fallback is enough.
-- [ ] **R23-12. Worker exit reason in the log.** When a second document was opened, the log showed `[engine] exited null` with no reason. The `null` code means that the host itself terminated the process, not that the worker crashed, but the log does not say so; which lifecycle route terminated the worker was not established during the analysis. Work: establish the route; write the exit reason to the log (idle exit, release after a build, recycle, generation replacement) and distinguish it from an abnormal exit; use the same reasons in the R21-08 diagnostic bundle.
+- [x] **R23-09. Choosing the project context for a file with several owners.** Today `ResolveDesignerDocumentOwner` picks the owner itself only where the choice does not affect the render: all contenders provably go to the modern engine. If at least one contender is `net4x`, multi-target or declares its TFM outside its own project file, the result remains `AMBIGUOUS_OWNER`: the form does not open and the product offers no action. The gate's concern is justified: in the solution found, the owners have different `DefineConstants` and the compiled binaries can differ, so no automatic choice is added. Instead: on a refusal with a list of owners, the host offers a choice of project; the chosen project goes through the same file-membership check in the engine again; the choice is remembered for the document in workspace state and changed by a separate command; cancelling leaves the previous refusal. The chosen owner determines the net48 binary for the preview and the source tree for events. A stale choice, where the project no longer compiles the file, is not applied silently. For `AMBIGUOUS_OWNER`, the R21-02 catalog of reasons gets the choice action instead of the general advice to resolve the ambiguity. The task is a narrow early slice of R29-06: choosing configuration/TFM/platform and moving between projects stay there. The change touches the pre-render gate and requires new tests: engine unit tests and an Extension Host test on the existing `OwnerAmbiguous` fixture.
+- [x] **R23-10. Toolbox auto-discovery budget.** On the same solution the pass finished with `controls=0; truncated=true` although the project compiles its own controls. There are three causes. First: the roots `bin`, `bin\Debug` and `bin\Release` are nested in one another and deduplication is done only by root, so every directory is walked twice and spends the file budget: 29 directories and 396 files skipped by the budget for 77 DLLs in the output. Second: the reflection limit of 24 assemblies is applied in alphabetical order, and on this output it is taken up entirely by native and third-party libraries without WinForms controls. Third: only `*.dll` files are candidates, so the own output of a project with `OutputType=Exe` does not enter the pass; before changing this, check whether another route covers it. Work: deduplicate directories across nested roots; before spending the reflection budget, cheaply filter out candidates that are certainly empty, for example non-managed PE files and satellite `*.resources.dll`; check the output of the owner and of its `ProjectReference` items first, then the rest; decide and record the behavior for `.exe`. The budgets stay bounded, and the log names the checked and the skipped assemblies so that a truncated result is explainable. Tests: unit tests for nested roots and for an output whose alphabetically first assemblies contain no controls.
+- [x] **R23-11. MSBuild evaluation with a pinned old SDK.** The solution's `global.json` pins an SDK whose MSBuild is older than 17.8 and does not know `-getProperty`; the evaluation ends with `MSB1001` and exit code 1. The engine correctly falls back to searching `bin`, so the render is not affected, but the failed launch repeats after the 10-second negative TTL and writes a log line each time. For a single-target `net4x` project the evaluation result is discarded anyway as not loadable in the modern host. Work: do not launch the evaluation when the project's own file unambiguously declares a single-target Framework TFM; remember the “switch not supported” outcome per project and SDK version rather than for 10 seconds; show the reason once as a named item of the R21-01 status panel instead of a raw log line. A separate evidence-backed decision: whether a way to obtain `TargetPath` on an old MSBuild is needed for modern projects with a pinned SDK, or the documented fallback is enough.
+- [x] **R23-12. Worker exit reason in the log.** When a second document was opened, the log showed `[engine] exited null` with no reason. The `null` code alone does not establish the cause: the log did not identify a requested host termination or an abnormal worker exit, and the lifecycle route was not established during the analysis. Work: establish the route; write the exit reason to the log (idle exit, release after a build, recycle, generation replacement) and distinguish it from an abnormal exit; use the same reasons in the R21-08 diagnostic bundle.
 
 **Acceptance:** two real VS Code launches restore several actions and several artifacts on both engines; save and undo produce the expected hashes. The history length limit and the behavior when the limit is exceeded are documented.
 
@@ -259,21 +292,21 @@ The retry boundary is fixed before the migration: the retention period of operat
 
 **Technical boundary:** a backup restores data; arbitrary process objects, delegates and serialized vendor graphs do not become a document format. The behavior is checked against the [VS Code Custom Editor API](https://code.visualstudio.com/api/extension-guides/custom-editors), including the extension's own responsibility for backup and editable custom documents.
 
-### 2.4.0 — hosted services and Adapter SDK Preview
+#### Hosted services and Adapter SDK Preview (former 2.4.0 scope)
 
 **Value:** a library developer can add special designer commands and editors through a reproducible public contract.
 
 **Work items:**
 
-- [ ] **R24-01. Registry of service contracts.** For container/siting, selection, component change, naming, command, toolbox, type resolution and serialization, define the methods, STA/lifetime, cancellation, reentrancy and refusal behavior.
-- [ ] **R24-02. Extend the existing kernel.** Add services one at a time on modern/net48 with a real call from the UI. A non-null `IDesignerHost` is not considered sufficient proof of completeness.
-- [ ] **R24-03. SDK 0.x.** Provide the schema, typed intents/results, capability declaration, package layout, a sample adapter, a host compatibility matrix and a diagnostics guide. Preview incompatibilities are marked by the SDK version and migration notes.
-- [ ] **R24-04. A loader on top of the registry.** Verify the real files, hashes, signature/provenance under the chosen policy, product cohort and trust settings before loading. The string `signed-vendor` in JSON does not grant execution rights.
-- [ ] **R24-05. Trusted development mode.** The author of their own adapter can explicitly enable local development without a claim of vendor certification. The mode is isolated from the certified product matrix.
-- [ ] **R24-06. Editors broker.** Extend the supported modal/dropdown editors: native window ownership, focus, Escape/Cancel, timeout, nested invocation, and the type and invariant representation of the result.
-- [ ] **R24-07. Adorners and smart tags.** Describe stable hit targets, a keyboard alternative, disabled reasons and the route of a command into a source transaction. A render-only embellishment does not get write authority.
-- [ ] **R24-08. Lane B by proven operation types.** Extend owned-region serialization only for cases with independent postconditions; unknown statements, resources, encoding and user partials are preserved.
-- [ ] **R24-09. Conformance runner.** An independent sample is built outside the extension sources and passes success/refusal/cancel/undo/restart without private test hooks.
+- [x] **R24-01. Registry of service contracts.** For container/siting, selection, component change, naming, command, toolbox, type resolution and serialization, define the methods, STA/lifetime, cancellation, reentrancy and refusal behavior.
+- [x] **R24-02. Extend the existing kernel.** Add services one at a time on modern/net48 with a real call from the UI. A non-null `IDesignerHost` is not considered sufficient proof of completeness.
+- [x] **R24-03. SDK 0.x.** Provide the schema, typed intents/results, capability declaration, package layout, a sample adapter, a host compatibility matrix and a diagnostics guide. Preview incompatibilities are marked by the SDK version and migration notes.
+- [x] **R24-04. A loader on top of the registry.** Verify the real files, hashes, signature/provenance under the chosen policy, product cohort and trust settings before loading. The string `signed-vendor` in JSON does not grant execution rights.
+- [x] **R24-05. Trusted development mode.** The author of their own adapter can explicitly enable local development without a claim of vendor certification. The mode is isolated from the certified product matrix.
+- [x] **R24-06. Editors broker.** Extend the supported modal/dropdown editors: native window ownership, focus, Escape/Cancel, timeout, nested invocation, and the type and invariant representation of the result.
+- [x] **R24-07. Adorners and smart tags.** Describe stable hit targets, a keyboard alternative, disabled reasons and the route of a command into a source transaction. A render-only embellishment does not get write authority.
+- [x] **R24-08. Lane B by proven operation types.** Extend owned-region serialization only for cases with independent postconditions; unknown statements, resources, encoding and user partials are preserved.
+- [x] **R24-09. Conformance runner.** An independent sample is built outside the extension sources and passes success/refusal/cancel/undo/restart without private test hooks.
 
 **Acceptance:** two sample adapters demonstrate different contracts: a designer action and a property editor. An incomplete service, a modified assembly, a wrong result type and revoked enablement are blocked before mutation. The exact list of SDK Preview capabilities is published.
 
@@ -281,7 +314,11 @@ The retry boundary is fixed before the migration: the retention period of operat
 
 **Dependencies:** the product supervisor, a single command authority, migration and transaction recovery. Modern designers and net48 designers are verified separately: the official [WinForms design-time API](https://learn.microsoft.com/en-us/dotnet/desktop/winforms/controls-design/designer-differences-framework) model distinguishes their namespaces and the interaction of the editor UI.
 
-### 2.5.0 — the first vendor cohort and extended editors
+#### Closing the combined release
+
+**Acceptance of the combined release:** R23 and R24 are accepted together on one final tree. Every executable CI step passes, both VSIX packages are frozen, and the evidence of both scopes is bound to their hashes. A result taken on an earlier tree, including the 22 October 2026 document-scope acceptance, does not substitute for this run. The fixed performance budgets are not relaxed to close the release; a budget failure stays blocking until a complete run on the supported hosts passes.
+
+### 2.4.0 — the first vendor cohort and extended editors
 
 **Value:** the developer of a real application knows which capabilities of a specific library version work and uses its main designer tools.
 
@@ -300,7 +337,7 @@ The retry boundary is fixed before the migration: the retention period of operat
 
 **If the artifacts are unavailable:** ship the general editor improvements under an exact name and leave the certification item `GATED`. `FakeVendor` keeps its role as a test fixture and never substitutes for an independent vendor cohort.
 
-### 2.6.0 — large forms, precise layout and responsiveness
+### 2.5.0 — large forms, precise layout and responsiveness
 
 **Value:** a form with hundreds of controls remains convenient for searching, selecting, editing and moving between nested containers.
 
@@ -334,7 +371,7 @@ These are **planned targets**, not the results of a current run. The previously 
 
 **Acceptance:** reproducible before/after reports, no semantic/source regression and stable input at 1000 controls. An optimization does not disable postconditions, cancellation or source preservation.
 
-### 2.7.0 — resources, cultures and checking localized forms
+### 2.6.0 — resources, cultures and checking localized forms
 
 **Value:** the translator and the developer see the state of the resources as a whole, find lost translations and check long text/RTL before running the application.
 
@@ -354,7 +391,7 @@ These are **planned targets**, not the results of a current run. The previously 
 
 **Dependencies:** multi-file transactions and correct geometry. External translation services are not a mandatory dependency of the release.
 
-### 2.8.0 — applied data-binding scenarios
+### 2.7.0 — applied data-binding scenarios
 
 **Value:** the user creates and maintains a data-entry form or a data table, sees the bindings and can update them after the model changes.
 
@@ -374,7 +411,7 @@ These are **planned targets**, not the results of a current run. The previously 
 
 **Boundary:** the designer does not become an ORM, a SQL editor, a credentials store or a database migration system. Such code remains the responsibility of the application and of specialized tools.
 
-### 2.9.0 — templates, reuse and safe refactorings
+### 2.8.0 — templates, reuse and safe refactorings
 
 **Value:** typical screens are created faster, and moving a group of controls or renaming a form does not turn into manual editing of many files.
 
@@ -393,7 +430,7 @@ These are **planned targets**, not the results of a current run. The previously 
 
 **Boundary:** the available semantic services and the supported subset determine what the command can do. Fully automatic reworking of an arbitrary form is not claimed.
 
-### 2.10.0 — accessibility and a confirmed runtime matrix
+### 2.9.0 — accessibility and a confirmed runtime matrix
 
 **Value:** support for different devices, DPI, keyboard and screen readers is confirmed by real user tasks.
 
@@ -411,9 +448,9 @@ These are **planned targets**, not the results of a current run. The previously 
 
 **Acceptance:** records of lab scenarios with the versions of the OS, hardware, VS Code, runtime and AT. Distinguish an automated DOM result, a native UI observation and hardware evidence.
 
-**Dependencies:** the lab and the available devices are needed in advance. Basic accessibility is a condition of every preceding UI release; it must not be postponed to 2.10.
+**Dependencies:** the lab and the available devices are needed in advance. Basic accessibility is a condition of every preceding UI release; it must not be postponed to 2.9.
 
-### 2.11.0 — product CLI, solution validation and design advisor
+### 2.10.0 — product CLI, solution validation and design advisor
 
 **Value:** the team finds form problems during review and in CI, and the developer gets targeted hints with a clear diff of the fix.
 
@@ -435,7 +472,7 @@ Parse-only separately passes a fixture with an executable project/toolchain hook
 
 **Boundary:** a parse-only result does not mean that a control actually loaded or rendered. The generic automation API does not accept an arbitrary source patch from a client that bypasses the planner.
 
-### 2.12.0 — contract freeze and transition preparation
+### 2.11.0 — contract freeze and transition preparation
 
 **Value:** users and adapter authors can check the upgrade to 3.0 in advance, learn about incompatibilities and prepare a rollback.
 
@@ -453,7 +490,7 @@ Parse-only separately passes a fixture with an executable project/toolchain hook
 
 **Acceptance:** there is no open defect of data loss, false successful save or mixing of documents; the mandatory scenarios pass on the declared legs; migration/rollback are performed on real installations.
 
-**Version policy:** 2.12.0 remains a compatible minor release. Incompatible changes of the future 3.0 are available only in a separate preview/RC channel and are not slipped into stable 2.x.
+**Version policy:** 2.11.0 remains a compatible minor release. Incompatible changes of the future 3.0 are available only in a separate preview/RC channel and are not slipped into stable 2.x.
 
 RC is a quality stage, not a package version string chosen in advance. Before publication, R212-09 fixes separate stable/pre-release sequences and verifies the transitions of both channels: Marketplace requires a numeric `major.minor.patch`, does not accept the SemVer suffix `-rc.1` and does not allow one version to be used for both pre-release and stable. Source: [Publishing Extensions — Pre-release extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions). Open VSX is checked separately; changing package/release-preflight is not part of preparing this roadmap.
 
@@ -662,10 +699,10 @@ This is the list of boundaries of the current program. Moving a track into the m
 
 | Workstream | Main responsibility | Outcome |
 |---|---|---|
-| Core/runtime | C#, RPC, worker lifecycle, source authority | 2.2–2.4, the runtime part of 2.10 |
-| VS Code/UX | Document, webview, commands, accessibility | 2.1–2.3, 2.6–2.9 |
-| Extensibility | SDK, services, brokers, adapter validation | 2.4–2.5, SDK RC |
-| Quality/compatibility | Fixtures, reference traces, hardware matrix, measurements | The gates of every release and 2.10–2.12 |
+| Core/runtime | C#, RPC, worker lifecycle, source authority | 2.2–2.3, the runtime part of 2.9 |
+| VS Code/UX | Document, webview, commands, accessibility | 2.1–2.3, 2.5–2.8 |
+| Extensibility | SDK, services, brokers, adapter validation | 2.3–2.4, SDK RC |
+| Quality/compatibility | Fixtures, reference traces, hardware matrix, measurements | The gates of every release and 2.9–2.11 |
 | Product/release | Scope, support documentation, beta projects, artifacts | An up-to-date matrix and release acceptance |
 
 Roles can be combined. The implementation owner and an independent reviewer must be identified before a critical item is closed, even if this is external review help for a single maintainer.
@@ -678,11 +715,11 @@ Below is an initial engineering estimate based on the size of the plan and the u
 
 | Group | Guide figure, person-months | Main source of spread |
 |---|---:|---|
-| Baseline, 2.1–2.3 | 10–18 | The actual number of product paths not yet unified and the complexity of recovery |
-| Hosted SDK and the first cohort, 2.4–2.5 | 12–24 | Vendor design-time contracts, native UI, licensed fixtures |
-| Productivity, 2.6–2.9 | 16–28 | Complex layouts, references, the resource/data graph and semantic refactoring |
-| Compatibility, CLI and RC, 2.10–3.0 | 12–20 | Devices, AT, update/rollback, independent review |
-| **Total before the reserve** | **50–90** | The scope is refined after 2.1 and 2.4 |
+| Baseline, 2.1–2.3 (document and recovery scope) | 10–18 | The actual number of product paths not yet unified and the complexity of recovery |
+| Hosted SDK (2.3) and the first cohort (2.4) | 12–24 | Vendor design-time contracts, native UI, licensed fixtures |
+| Productivity, 2.5–2.8 | 16–28 | Complex layouts, references, the resource/data graph and semantic refactoring |
+| Compatibility, CLI and RC, 2.9–3.0 | 12–20 | Devices, AT, update/rollback, independent review |
+| **Total before the reserve** | **50–90** | The scope is refined after 2.1 and 2.3 |
 
 A reserve of 20–30% for integrations, defects and dependency updates gives a guide figure of about **60–117 person-months**. It does not cover a new large vendor suite or a full Tier D added after the freeze.
 
@@ -695,11 +732,10 @@ The ranges are not computed by simply dividing effort by headcount: some special
 ### 8.4. Checkpoints and revision
 
 - After **2.1**: check whether the diagnostics reflect the real causes of problems and which product paths remain only in helpers.
-- After **2.2–2.3**: confirm the cost of the shared architecture and of recovery; do not extend hosted mutation while the shared route is unstable.
-- After **2.4**: an external author builds a sample adapter; the SDK and the vendor cohort estimate are adjusted based on the result.
-- After **2.5**: assess the cost of each next suite; do not promise several vendor families on the success of one.
-- After **2.9**: freeze the functional scope of 3.0; move optional features out while keeping the quality of the mandatory ones.
-- After **2.12**: a release decision based on the matrix and the evidence, with publication readiness recorded separately.
+- After **2.2–2.3**: confirm the cost of the shared architecture and of recovery; do not extend hosted mutation while the shared route is unstable. An external author builds a sample adapter against the SDK Preview; the SDK and the vendor cohort estimate are adjusted based on the result.
+- After **2.4**: assess the cost of each next suite; do not promise several vendor families on the success of one.
+- After **2.8**: freeze the functional scope of 3.0; move optional features out while keeping the quality of the mandatory ones.
+- After **2.11**: a release decision based on the matrix and the evidence, with publication readiness recorded separately.
 
 Every 4–6 weeks, update the task status, new risks, the required capacity, the results from real projects and the nearest vertical slice. A scope revision leaves a record of the reason and updates all affected criteria, not only the version number.
 
@@ -749,7 +785,7 @@ This is the order of the starting work for the available team, not a promise to 
 | Days 61–75 | One scalar mutation through the shared dispatcher and transaction, a real Undo | A full UI→engine→PatchSet→Undo→reconcile with the original files |
 | Days 76–90 | Crash/restart of this slice, measurements, an independent review; recalculating the timelines of the rest of the program | Evidence of a small completed feature, a list of gaps and an updated estimate |
 
-In parallel: select real projects for the beta corpus, find out the availability of the first vendor cohort, schedule the ARM64/AT sessions and collect the initial performance samples. These actions must not wait for 2.5 or 2.10.
+In parallel: select real projects for the beta corpus, find out the availability of the first vendor cohort, schedule the ARM64/AT sessions and collect the initial performance samples. These actions must not wait for 2.4 or 2.9.
 
 In the same period, start bounded probes of native history (R23) and the modern designer ABI (R24): the result is needed before the shared model is chosen and the SDK is fixed. The inventory of existing formats precedes the creation of a new cache; the check of an old installation uses a state that was actually released. For a single maintainer these probes run sequentially with the main scenario and do not assume an additional free team.
 

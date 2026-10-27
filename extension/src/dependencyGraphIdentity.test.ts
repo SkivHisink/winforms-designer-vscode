@@ -7,6 +7,8 @@ import { engineWorkerKey } from './engineRequestContext';
 import { workerKeyId } from './workerSelection';
 
 const directories: string[] = [];
+// Content and path assertions should not depend on unrelated build activity consuming the production deadline.
+const clock = () => 0;
 afterEach(() => { vi.restoreAllMocks(); for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-dependency-content-')); directories.push(root);
@@ -19,9 +21,9 @@ describe('effective dependency graph content identity', () => {
     const { project, assembly } = fixture();
     fs.utimesSync(assembly, new Date('2020-01-01'), new Date('2020-01-01'));
     const original = fs.statSync(assembly);
-    const first = captureDependencyGraphIdentity([project, assembly]);
+    const first = captureDependencyGraphIdentity([project, assembly], { clock });
     fs.writeFileSync(assembly, 'BBBB'); fs.utimesSync(assembly, original.atime, original.mtime);
-    const second = captureDependencyGraphIdentity([project, assembly]);
+    const second = captureDependencyGraphIdentity([project, assembly], { clock });
     expect(fs.statSync(assembly).size).toBe(original.size);
     expect(fs.statSync(assembly).mtimeMs).toBe(original.mtimeMs);
     expect(first.mode).toBe('content'); expect(second.mode).toBe('content');
@@ -33,9 +35,9 @@ describe('effective dependency graph content identity', () => {
   });
   it('is deterministic across resolver order, duplicate paths and timestamp-only changes', () => {
     const { project, assembly } = fixture();
-    const first = captureDependencyGraphIdentity([project, assembly]);
+    const first = captureDependencyGraphIdentity([project, assembly], { clock });
     fs.utimesSync(assembly, new Date(), new Date('2020-01-01'));
-    const second = captureDependencyGraphIdentity([assembly, project, assembly]);
+    const second = captureDependencyGraphIdentity([assembly, project, assembly], { clock });
     expect(second.mode).toBe('content'); expect(second.fingerprint).toBe(first.fingerprint);
     expect(second.files).toBe(2); expect(second.bytes).toBe(15);
   });
@@ -44,9 +46,21 @@ describe('effective dependency graph content identity', () => {
     ['maxTotalBytes', 12, 'TOTAL_BYTES_LIMIT'], ['maxElapsedMs', 0, 'TIME_LIMIT'],
   ] as const)('isolates a graph exceeding %s without authorizing reuse', (limit, value, reason) => {
     const { project, assembly } = fixture();
-    const first = captureDependencyGraphIdentity([project, assembly], { [limit]: value });
-    const second = captureDependencyGraphIdentity([project, assembly], { [limit]: value });
+    const first = captureDependencyGraphIdentity([project, assembly], { clock, [limit]: value });
+    const second = captureDependencyGraphIdentity([project, assembly], { clock, [limit]: value });
     expect(first).toMatchObject({ mode: 'opaque', reason }); expect(second.fingerprint).not.toBe(first.fingerprint);
+  });
+  it('isolates a graph when its default deadline expires during a file read', () => {
+    const { assembly } = fixture();
+    const read = fs.readSync;
+    let elapsed = 0;
+    vi.spyOn(fs, 'readSync').mockImplementation(((...args: Parameters<typeof fs.readSync>) => {
+      const count = read(...args);
+      elapsed = 100;
+      return count;
+    }) as typeof fs.readSync);
+    expect(captureDependencyGraphIdentity([assembly], { clock: () => elapsed }))
+      .toMatchObject({ mode: 'opaque', reason: 'TIME_LIMIT', files: 0 });
   });
   it('does not read secret, unsupported, relative, missing or linked dependency content', () => {
     const { root, assembly } = fixture();
@@ -58,9 +72,9 @@ describe('effective dependency graph content identity', () => {
       [path.join(root, 'secrets', 'private.dll'), 'SECRET_PATH'], [path.join(root, 'note.txt'), 'UNSUPPORTED_FILE'],
       ['relative.dll', 'INVALID_PATH'], [path.join(root, 'missing.dll'), 'UNREADABLE'],
       [path.join(linked, 'linked.dll'), 'LINK_PATH'],
-    ]) expect(captureDependencyGraphIdentity([file])).toMatchObject({ mode: 'opaque', reason, bytes: 0 });
+    ]) expect(captureDependencyGraphIdentity([file], { clock })).toMatchObject({ mode: 'opaque', reason, bytes: 0 });
     expect(read).not.toHaveBeenCalled();
-    expect(captureDependencyGraphIdentity([assembly]).mode).toBe('content');
+    expect(captureDependencyGraphIdentity([assembly], { clock }).mode).toBe('content');
   });
   it('isolates a graph whose file is replaced while a content snapshot is read', () => {
     const { assembly } = fixture();
@@ -71,6 +85,6 @@ describe('effective dependency graph content identity', () => {
       if (!replaced) { replaced = true; fs.writeFileSync(assembly, 'changed'); }
       return count;
     }) as typeof fs.readSync);
-    expect(captureDependencyGraphIdentity([assembly])).toMatchObject({ mode: 'opaque', reason: 'CHANGED_DURING_READ' });
+    expect(captureDependencyGraphIdentity([assembly], { clock })).toMatchObject({ mode: 'opaque', reason: 'CHANGED_DURING_READ' });
   });
 });

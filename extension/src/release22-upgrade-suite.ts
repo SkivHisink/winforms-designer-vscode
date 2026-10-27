@@ -49,6 +49,8 @@ function records(root: string): StoredRecord[] {
 
 /** Normal installed hosts use real SQLite mementos and CustomDocument hot-exit backups, unlike extensionTestsPath. */
 export async function run(): Promise<void> {
+  const currentVersion = process.env.WFD_RELEASE22_EXPECTED_CURRENT_VERSION;
+  assert.ok(currentVersion && /^\d+\.\d+\.\d+$/.test(currentVersion), 'Expected current release version is missing or invalid.');
   const phase = process.env.WFD_RELEASE22_UPGRADE_PHASE;
   assert.ok(phase === 'old-initialize' || phase === 'upgrade' || phase === 'downgrade');
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -59,7 +61,7 @@ export async function run(): Promise<void> {
   const product = vscode.extensions.all.find(candidate => candidate.id.toLowerCase() === 'skivhisink.winforms-designer-vscode');
   const harness = vscode.extensions.getExtension('local-test.release22-upgrade-harness');
   assert.ok(product && harness, 'the installed product or unrelated harness is absent');
-  assert.strictEqual(product.packageJSON.version, phase === 'upgrade' ? '2.2.0' : '2.1.0');
+  assert.strictEqual(product.packageJSON.version, phase === 'upgrade' ? currentVersion : '2.1.0');
   assert.notStrictEqual(product.extensionPath, harness.extensionPath);
   const api = await product.activate() as Api;
   assert.ok(api?.openDesignerState, 'installed product activation failed or E2E seam is absent');
@@ -206,6 +208,22 @@ export async function run(): Promise<void> {
         lifecycle: api.engineLifecycleState(), journals, operations });
       checks.push('no-worker-owner-before-host-restart', 'all-durable-journals-and-operations-reconciled-before-downgrade');
     } else if (phase === 'downgrade') {
+      const serializedBackups = process.env.WFD_RELEASE22_EXPECTED_BACKUPS;
+      assert.ok(serializedBackups, 'the downgrade phase has no captured dirty backups');
+      const expectedBackups = JSON.parse(serializedBackups) as {
+        path: string; sha256: string; historySidecar: { path: string; sha256: string };
+      }[];
+      assert.strictEqual(expectedBackups.length, 2);
+      for (const backup of expectedBackups) {
+        for (const file of [backup, backup.historySidecar]) {
+          const relative = path.relative(path.dirname(root), file.path);
+          assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'backup is outside the isolated fixture');
+          assert.strictEqual(sha(fs.readFileSync(file.path)), file.sha256,
+            'the older installed product modified a dirty source backup or its logical-history sidecar');
+        }
+      }
+      observations.push({ scenario: 'old-product-activation-preserved-dirty-backups-and-logical-history', backups: expectedBackups });
+      checks.push('old-product-activation-preserved-dirty-backup-and-history-bytes');
       for (const [name, kind] of [['Modern', 'modern'], ['Framework', 'net48']] as const) {
         const uri = vscode.Uri.file(path.join(root, name, 'UpgradeForm.cs'));
         const designer = path.join(root, name, 'UpgradeForm.Designer.cs');

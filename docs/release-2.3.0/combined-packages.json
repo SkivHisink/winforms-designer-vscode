@@ -1,0 +1,2104 @@
+{
+  "version": "2.3.0",
+  "artifacts": [
+    {
+      "path": "extension/winforms-designer-win32-x64.vsix",
+      "bytes": 18405725,
+      "sha256": "628ff96db940a6fdec94b860ec522e74eeb254da5fab3cbcd73949e8751b1e48",
+      "entries": 204,
+      "version": "2.3.0",
+      "modernRuntimeIdentifier": "win-x64",
+      "modernMachine": "0x8664",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "ee9545adb5259976b86141a284d94de87dbac9cf48dc0ff3165c334badfa7a83",
+      "changelogSha256": "a3326888691dbbcc55c491c3b1941a7cbf7dc9225f083376652cee8bd4ea8079",
+      "changelogSourceSha256": "446179a37c038de752563147b2fcbca6d96a7ddd228e2914f8522e0dd1f8b0ff",
+      "packageManifestSha256": "e1751454c7f5d49fa8fb4fb301c8d46cdb91631727bf12ffc8e2da70cd569c8a",
+      "modernEngineSha256": "0c9487b6d2cd1e56e51741441df1df58efe3fa9c29b27db17e6408befba1e470",
+      "net48EngineSha256": "7aa0ffad368e59ab378a68a2d9f7128926d3bd7d2ee550374a6dabcbdf5b6754",
+      "modernRuntimeConfigSha256": "96bc2946dff8790400d652ec7f8de7bb043e954980d59470c112788b68a1fbd3",
+      "modernDependencyManifestSha256": "e21024bad33de7e5ffe6ed76d4209b7de836b374600f3c3def35a561bfbeee17",
+      "net48RuntimeConfigSha256": "cfe7d84d370da48ffbf8ff0ad7a88e7d5d3c159dc1786bfdca0db14125065636",
+      "modernAssemblyVersion": "2.3.0.0",
+      "net48AssemblyVersion": "2.3.0.0",
+      "messagePackModernSha256": "1ebc0c2baec5a89b3738e892d61c92f037dd588db52412e1e3bdf2adc407aa94",
+      "messagePackNet48Sha256": "bb9609eb3dd3c74c86501547b36cff827a13bea7c47483fa3714efc5dcb7d496",
+      "acceptanceSuitesAbsent": true,
+      "independentSdkProbeAndMicrosoftSdkReferencesAbsent": true,
+      "physicalArm64Execution": "NOT_APPLICABLE",
+      "payload": [
+        {
+          "path": "[Content_Types].xml",
+          "bytes": 885,
+          "sha256": "dc4d6e03553770af80d9a64169bf05b93f83d05b52bb8b05b71f935a260b5c0a"
+        },
+        {
+          "path": "extension.vsixmanifest",
+          "bytes": 3506,
+          "sha256": "19fda94ce57ed61026ea40d559d79c3b7391374b7817a96b005e287121913310"
+        },
+        {
+          "path": "extension/changelog.md",
+          "bytes": 232035,
+          "sha256": "a3326888691dbbcc55c491c3b1941a7cbf7dc9225f083376652cee8bd4ea8079"
+        },
+        {
+          "path": "extension/dist/extension.js",
+          "bytes": 2094043,
+          "sha256": "ee9545adb5259976b86141a284d94de87dbac9cf48dc0ff3165c334badfa7a83"
+        },
+        {
+          "path": "extension/dist/performance-baseline.cjs",
+          "bytes": 199541,
+          "sha256": "8c64491d7e1dc566388dff46d113ba7e6032acd089d466c5359434faf66f756a"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 450856,
+          "sha256": "e8557494f51d09a3f8252b59b208184ad719f62b450d315a5f380ce6aae98d41"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40744,
+          "sha256": "a16a1550927476eed145993c8a5d45f568f8f87eb0a8bed9aa5676bf968e2fcf"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "354a74d17e44a7a1b5038eab1900dcb721cdde828a65a0ac967f304528a1da07"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "973cba36af303018dabebd006880972ae7b9aafcdf435413cb2be113d3492a0d"
+        },
+        {
+          "path": "extension/engine-net48/cs/StreamJsonRpc.resources.dll",
+          "bytes": 25992,
+          "sha256": "df7500652f84fbb32ebb341815c218acd212245263b3effe3e9df53cc015b925"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 482640,
+          "sha256": "1ff4503fbbf6c02ed18aa57b4d21bfa9b34811a9ad10b050e2280794ebb0b114"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "5a6b46a7c8321a75584d7bd120b13db8024f18e29e82fb82bc73b7241c9f61fa"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "7229cd0b0ee02af3cdc84697a42e6d4a6a06088a36394c2f7c68fe10baf5f894"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "9358bd5636767eea10a97e4608deac1677bccd0577535f014157ddd382273401"
+        },
+        {
+          "path": "extension/engine-net48/de/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "138c731f4122c0a9bf4a613a9587564276f9b4887862110b6d223f23fbbc336d"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 471848,
+          "sha256": "56fb905d8a3fd85f7b9353b2d93dcb440eda9e1166efa5c559300ee805dcc8d8"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41808,
+          "sha256": "7c4318fb6485cb1601232df9b5c1ea560e85574312c2054edf07a542f36ce85e"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "a5549afb21b452fb522d0a9289fe985aa53d477bc555b0680101479e4439ce9d"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "fec853587245b778eab5cbaa3ce815a4835b9815712cb0d46789cf967c5ee2ec"
+        },
+        {
+          "path": "extension/engine-net48/es/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "4d0403fe8e121c2d2bad7e604c803b55d656a0ef5449169680f1c28ed5869bad"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 485672,
+          "sha256": "120044becb3339aa8c561b788b28fb6afcf148b852152de4e2198543d7013324"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42320,
+          "sha256": "b640e5683fe59cb9b806a71737e8da9bcc8603ae2b4fd24a5dfbdaea1df8fbe8"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "e0168a245f2eb50689db5607939fcd865b6706e0b27cdf708c50a579f0e8e7ff"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "aad365780310c6e63b5e2cba0b4686ab8dad045ca34ea1055c6404604c75b3f6"
+        },
+        {
+          "path": "extension/engine-net48/fr/StreamJsonRpc.resources.dll",
+          "bytes": 27008,
+          "sha256": "5cf95048fa21c5e78fa8f6a6a06ebab72a8ad5150ddaaae1dcab1380bbf3e578"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 478032,
+          "sha256": "2c38a679293d7fc4b854ec4fa931d8839ef5d8f3d70f1efbbf2abc0823a0e835"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42320,
+          "sha256": "69e46b71b7f88a33d0762357146ca45a03db282ec9ae4d13dbe1d11b8d0701d0"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18472,
+          "sha256": "29dd178e01ba78c4b1930b7bb9f61cfc61ff68fdb9519628e7651e58a5c897a3"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "7fdc334e7c2662ba1915655b333954f043ab5d1319ccd15686932467a87049ae"
+        },
+        {
+          "path": "extension/engine-net48/it/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "bcdae1af1ffce9d9c2e5a29697e8177ef71930b0f3b8b059919aaae854b426df"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 527184,
+          "sha256": "5f6e699e6672ccf231cea332b0ca3b9e5b5bff30feda2f48fce58f5aac23cec3"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 44880,
+          "sha256": "525eb92795998742012940bfd34d6170c856c835e58a01862ce67623426ec2c7"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18464,
+          "sha256": "2d27176726faffa974704e24cbe0f0e3460edbf925bc9028dc8825db6ed3716c"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "637b1e787f901ae181d1d97b0867555f55188de884fcae67ff908c02d00c11c3"
+        },
+        {
+          "path": "extension/engine-net48/ja/StreamJsonRpc.resources.dll",
+          "bytes": 28552,
+          "sha256": "fb5ab08abdc9fb979080a5dc9a30cd34118c650d7adf492621f2c32e1f4a00b8"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 483152,
+          "sha256": "11a3329a5220e7b768f0374b25a0a3ea924796518c6f03b7cd437c8731f36dd2"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "20f59b8f4cb94d0e7e82235eaebe202e606119f050ea07275e151f24db9f37c7"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17952,
+          "sha256": "f62192a8331cc9fe25fa40332cecf34e0d848092288b756686effcb0b7749cab"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "837884d24443f6d9b7506126ca50905786ec72de87bef757fda3dfb4281112e2"
+        },
+        {
+          "path": "extension/engine-net48/ko/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "7f434a6914bd278ffbd573e150ef8bcd75d2a8d6e7b7d6db0b90b3676d150ea0"
+        },
+        {
+          "path": "extension/engine-net48/MessagePack.Annotations.dll",
+          "bytes": 34304,
+          "sha256": "bd364b1513c9df5d4063b6ee3602a5bf951507484f46a2366a6f2a9aeb1c4cf2"
+        },
+        {
+          "path": "extension/engine-net48/MessagePack.dll",
+          "bytes": 418304,
+          "sha256": "bb9609eb3dd3c74c86501547b36cff827a13bea7c47483fa3714efc5dcb7d496"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.Bcl.AsyncInterfaces.dll",
+          "bytes": 28432,
+          "sha256": "b0e3846b989ce190d3472567054187669b648b962dab20472f54a3bfda1fb207"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.Bcl.HashCode.dll",
+          "bytes": 26920,
+          "sha256": "3a4e851ee5fc0f6182aa5a3d65dc56fcd6979b65334b5c3b92fbdc791457c0ab"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.CodeAnalysis.CSharp.dll",
+          "bytes": 7484752,
+          "sha256": "8599347cb1066a96c5092531b2cace43b6f08ea7020b530dfeedc2f57c96bacd"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.CodeAnalysis.dll",
+          "bytes": 3384144,
+          "sha256": "59a567de2d0c06df4d3fc1e562ac89f9e699c22a7a6c2340e297c7b687ed47a8"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.NET.StringTools.dll",
+          "bytes": 33040,
+          "sha256": "c91ee622ceb67b03d40c11f98284deaaa5ef4f22053210b9a2a254a286da15e3"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.VisualStudio.Threading.dll",
+          "bytes": 614416,
+          "sha256": "b82dec8c27f5f6d1e0afd53ee2783cc28d75af4655486b84daf95523237c60a9"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.VisualStudio.Validation.dll",
+          "bytes": 45072,
+          "sha256": "c71a29348790ad1b51c7056c5c395dd572ee31135677dc0e30e15154f43e4282"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.Win32.Registry.dll",
+          "bytes": 26496,
+          "sha256": "e9a9d281c1a708aaae366f82fd6a1742f65da2918cc4fa5eaaaada0be24277d9"
+        },
+        {
+          "path": "extension/engine-net48/Nerdbank.MessagePack.dll",
+          "bytes": 629760,
+          "sha256": "953a8c2a649fc609e4a9d9473a7059cad87261449b8c51039be8429dfcd1a811"
+        },
+        {
+          "path": "extension/engine-net48/Nerdbank.Streams.dll",
+          "bytes": 238952,
+          "sha256": "a652d7943695d4b3125e5406eadf054b6f9ece17e09cf87eaa444cd70d38a5d7"
+        },
+        {
+          "path": "extension/engine-net48/Newtonsoft.Json.dll",
+          "bytes": 711952,
+          "sha256": "e1e27af7b07eeedf5ce71a9255f0422816a6fc5849a483c6714e1b472044fa9d"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 484648,
+          "sha256": "4ace2b6fb4df9ba8fd574e3b32c85f55605ec28d3e0e84a8b33f44f062296ef7"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "ac4d44bec37cfc24dc9de386043b00dc78ce3e77accb673f52719351e7053c42"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "a26f25db47aab3ad4124705d66afccdfd799da54db8c89501cc785fe6bb5bb33"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "b10719131a3c8eda32c130db704522ccd498fdc3dde2f550f139e54d8bfe9805"
+        },
+        {
+          "path": "extension/engine-net48/pl/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "bdf2577d96661daf259895bf16d5a9083079a8a4d7d6b39c0908a0999704503d"
+        },
+        {
+          "path": "extension/engine-net48/PolyType.dll",
+          "bytes": 343552,
+          "sha256": "7621357620e31331c1276222688952e5d38ecdd171113673d0ed72b0336e2ce5"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 463656,
+          "sha256": "1f4a7848252c8acfa4e47889d522664a1e9cf17c8065b1613cf6a1908d3f09fc"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41296,
+          "sha256": "98aa4d64b32228a2d036114833722f41b7babded8a321e86190afaa93614ae9b"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17944,
+          "sha256": "c5bed6755ece24dfd2ee20bc5d10dd9d9dbbeb0692283abf75e6f251c7e50b2d"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "0a5bdf4e31daddc84919a7705a26cef59f33379217977d55c33d009002a8ae68"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/StreamJsonRpc.resources.dll",
+          "bytes": 26504,
+          "sha256": "944444d67d341af91e0f5a2bc4a6e5448e8435136d2775f3e10d843979f8425a"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 636200,
+          "sha256": "320c21dcb32568660e1b97a32397bcbd8e386672e71e28b15b1f5eb542006c8a"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 50512,
+          "sha256": "398e1e92fa70b3a6361a24bffb9f9c398123150d83e650d8df421232ebd9c2a8"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 19488,
+          "sha256": "508650fd13a4ebdb04ffeaef8ea782a57f00d7651f32b70ae2cfa01d0bcb9716"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 15376,
+          "sha256": "7e57e62bc9d0abab92814e7bc08ce8c2661af041ed7b21931b344e529b69bf8c"
+        },
+        {
+          "path": "extension/engine-net48/ru/StreamJsonRpc.resources.dll",
+          "bytes": 30040,
+          "sha256": "ca5c6783d987671816266e0fb6a959712d117046ed12adc38121101c1a1e96a3"
+        },
+        {
+          "path": "extension/engine-net48/StreamJsonRpc.dll",
+          "bytes": 799624,
+          "sha256": "94f9b29f546728e2765cd60cc597c3c9ed7c04624cab4a96993eca829e31b869"
+        },
+        {
+          "path": "extension/engine-net48/System.Buffers.dll",
+          "bytes": 23816,
+          "sha256": "2d78d770c9cb997199154ae8c018b9f1d1efbc86729f7264dde6dbad2a12cac3"
+        },
+        {
+          "path": "extension/engine-net48/System.Collections.Immutable.dll",
+          "bytes": 253192,
+          "sha256": "5baa117252ee684e26903603596854b649bc25eddcb0cdef3b100658fc3c334c"
+        },
+        {
+          "path": "extension/engine-net48/System.Diagnostics.DiagnosticSource.dll",
+          "bytes": 189104,
+          "sha256": "1887592615fc08bbc91ad62307c8c11dfc14c45bf120d271d66be4a0d1a149a7"
+        },
+        {
+          "path": "extension/engine-net48/System.IO.Pipelines.dll",
+          "bytes": 84744,
+          "sha256": "07a57b9c555a278c359267674aa139aba352b464fea3cc4714a664ad999faf42"
+        },
+        {
+          "path": "extension/engine-net48/System.Memory.dll",
+          "bytes": 145200,
+          "sha256": "d5e8e4866f9cfa66f7765660f84b210198893e55335487afe5ebda342c0e913d"
+        },
+        {
+          "path": "extension/engine-net48/System.Numerics.Vectors.dll",
+          "bytes": 110344,
+          "sha256": "20c2fa81b8c70d651099d762954f285fd4f942e63b2d7217c145dab8d4b2f4c9"
+        },
+        {
+          "path": "extension/engine-net48/System.Reflection.Metadata.dll",
+          "bytes": 515336,
+          "sha256": "a1a9aaabf7651b26177e99e982d9f7dbe57b9aece693f4f2770c28b27c2d26df"
+        },
+        {
+          "path": "extension/engine-net48/System.Runtime.CompilerServices.Unsafe.dll",
+          "bytes": 19256,
+          "sha256": "08cbd7278b66f1e68425a82d4b97181a4130d93e3dd91831407aba7212ccdacf"
+        },
+        {
+          "path": "extension/engine-net48/System.Security.AccessControl.dll",
+          "bytes": 33672,
+          "sha256": "1fda491eebdb19ea0a83cf6c16ab5dd004a1bfdfc845ede017ebe0945beb927f"
+        },
+        {
+          "path": "extension/engine-net48/System.Security.Principal.Windows.dll",
+          "bytes": 18312,
+          "sha256": "b4d8e15adc235d0e858e39b5133e5d00a4baa8c94f4f39e3b5e791b0f9c0c806"
+        },
+        {
+          "path": "extension/engine-net48/System.Text.Encoding.CodePages.dll",
+          "bytes": 766224,
+          "sha256": "b77ee852824a6e8098fbade000beb42ce9df32fa4189a00d5e7f472f6c6a5030"
+        },
+        {
+          "path": "extension/engine-net48/System.Text.Encodings.Web.dll",
+          "bytes": 79024,
+          "sha256": "e9c4f5eed186cb129c527c4b8d67d163ea2f2396e9d8b96e30b5e7c12203ce84"
+        },
+        {
+          "path": "extension/engine-net48/System.Text.Json.dll",
+          "bytes": 644904,
+          "sha256": "0cf5a9763c98f09e94dfcdaa4437e9508eabe2e50b408ba421d5faf734c5556a"
+        },
+        {
+          "path": "extension/engine-net48/System.Threading.Tasks.Dataflow.dll",
+          "bytes": 182552,
+          "sha256": "5719d19f2f88595c6893cab2796f70d55eaa48c8769b7b15f0457a3618e978d3"
+        },
+        {
+          "path": "extension/engine-net48/System.Threading.Tasks.Extensions.dll",
+          "bytes": 27960,
+          "sha256": "af4e13ef418fd89b432de20cd1dfb7fa10a7179c8dd049c9856316e50c5949ca"
+        },
+        {
+          "path": "extension/engine-net48/System.ValueTuple.dll",
+          "bytes": 25232,
+          "sha256": "e905d102585b22c6df04f219af5cbdbfa7bc165979e9788b62df6dcc165e10f4"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 459048,
+          "sha256": "af04ab20ca75e2599ac3e1ffe089614d84533bed2c3e9443f7d9a27222ca20d7"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40744,
+          "sha256": "4f92f5219d67d7f2411e08e6ee927e62182c6e62e4a3b728b6212d0bedb0c13c"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "54bf9a88c932b745e8631d439f54abd5b499b2029ca86652aeb4df1d8f3edd88"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "32ebc0979d04467e1ffdfac475a27e2abb473961b135bb944608a4869c2060c1"
+        },
+        {
+          "path": "extension/engine-net48/tr/StreamJsonRpc.resources.dll",
+          "bytes": 25952,
+          "sha256": "6bcea16b79d4beca0b388c2a4b8047b8fbcfdb5e6931f80f4e00c8f8ec7cc873"
+        },
+        {
+          "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe",
+          "bytes": 559616,
+          "sha256": "7aa0ffad368e59ab378a68a2d9f7128926d3bd7d2ee550374a6dabcbdf5b6754"
+        },
+        {
+          "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe.config",
+          "bytes": 4279,
+          "sha256": "cfe7d84d370da48ffbf8ff0ad7a88e7d5d3c159dc1786bfdca0db14125065636"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408872,
+          "sha256": "04ada2b5791856ade3c576a9ad1480274e094206f155083813f6c69fb4ec14d2"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38184,
+          "sha256": "4bb7f2816acb5a8e393abeccb26b8d460222c11acba54cc23acc3efe2d1fa16b"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 16400,
+          "sha256": "aec686ddf8a826a0669a9cfcbce790c246608996831ddcd134fa12da7fa5da55"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "901d04403434a573f2a97b8b05d0aa69a1e6d8cab78d68f1fb72470742e75d19"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/StreamJsonRpc.resources.dll",
+          "bytes": 24968,
+          "sha256": "cd1cf26a7b64646f24530f5277b371f04f43eaa986ec652924a9263b538c5d5b"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408360,
+          "sha256": "076be0c039ea7dbc6f430f0d67720037930f7206578618cd1b222476abdb5a2c"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38224,
+          "sha256": "bab0e6f54400001375af20bc1ea838995804e46619ed66180f1d8ca46e26a2df"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17424,
+          "sha256": "804b0ee6a9d27e88d23e5ba4e3688bae4c48da866a2f1f890e1780c169d717f3"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14872,
+          "sha256": "746bf581007b945d9e1b3374aec553adcea1b38f8088952a85e656d2c1f87da3"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/StreamJsonRpc.resources.dll",
+          "bytes": 24968,
+          "sha256": "050e1d4d8caeb77996e81d8003ffa08847a7d4cef812b67c9706e8855b7d7e5d"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 450856,
+          "sha256": "cbd08c351120e81ff9b6ddef91b217381e117700625db27174989f17e372e5e0"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40784,
+          "sha256": "e8433aeb949fc31c560a7bac7cf7983589529b1e65d94857eb4704f8d39f63af"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "d11e4bc48fe7d73ffe50585f16873a2b48f185d52a5e2160c5667bb01b5d4cf0"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "830b54077b4f3febe75ed87aa163eb49fb58362c61be5ca26cf42d4e13c51f3c"
+        },
+        {
+          "path": "extension/engine/cs/StreamJsonRpc.resources.dll",
+          "bytes": 25944,
+          "sha256": "5115a8c09c591d1caa16359b5a45eccece63d9c337e703d89c05a69264ba291b"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 482600,
+          "sha256": "bb746a8aba19b954a99274cf2b263fce51b740a30ea8e558505570757f5df14b"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "b6e3f1948987b8f2899bb19e7cceab1de2a5d10c536caf55205ea03f419d1bef"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "024e0b69d6b0574d5efc1c3aeb5aeebed96c3839da531e5daf02c41054a8bb77"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "fd7edef2b3f30903f2c287c49d62cb3394f9656fd82ff1c98eb122ad62a04a56"
+        },
+        {
+          "path": "extension/engine/de/StreamJsonRpc.resources.dll",
+          "bytes": 27016,
+          "sha256": "01e2c454d751b89aba08d4270ca00d8e07fa8af861650ecd704481ce06b87b24"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 471848,
+          "sha256": "c87a88b09458a944c6f20f50895382c754d46bf2da511318eb16905e6957bb26"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41768,
+          "sha256": "3e852dec573d4993d1eff734057fc09fec4edf32399ad4da9f21dab0d5b12145"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18488,
+          "sha256": "7fd956867b824216964e8f55a805b1ecc058d27d65da8eb4a6c62c355995ad1b"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "c40129bf64177dbfbd79bf977e11d46f2888c20c3e807336a36dac82370f6d83"
+        },
+        {
+          "path": "extension/engine/es/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "bacf7fadae7361e00f097dcafbe9a4a759f4346f364676389304a688fdb3b636"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 485712,
+          "sha256": "476e91ee5e84fccc2445998d98b7d3e628c3dbfb54ca650aa965a084e99a3fa5"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "f17bb793907ea7d7c382814c5a33cd1234f3328d463af6d24a048c70738bbc0e"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "a893679887ffd4635802c91756f55c07e0b939c75d2275499dd325f7a3d436d6"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "e56fe93ab669c22850389bdb685bbc45317d962849cc683d412bc9e8ad637740"
+        },
+        {
+          "path": "extension/engine/fr/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "99ee72e2ea1de18367345b83884d0aa8c4192f98f2f3fb6b50bdbbebd6960afc"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 478032,
+          "sha256": "df51ee4f9f5caa44a6ae88226ab27d594bdecf20231b45a0443c6d86cf3e2559"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "47ef1da8fafb8f778864e28ad22289d72ea751fbe7fc5a30d054739b8b341f62"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18464,
+          "sha256": "3c0146541f847f9b3da4d75cf7dea9792cbe8c9b095ed147d2310bef5e13bc8a"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "8918618aaf356bf03333f62507ed4b2511c98850388c3856afe970c41672fae0"
+        },
+        {
+          "path": "extension/engine/it/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "31741ef214310f03ec256b3dd8643e5d4151c9123bd6994bb8f53381ca348244"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 527184,
+          "sha256": "288ba88bbb3db85899631536fdad32bdcba48130089d69b75019f698de1dd818"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 44840,
+          "sha256": "ab650b2093310e0ca9d953738efd419dc988ef4eaa40224ac276debe80764865"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "0414c033672e6af5cb5041801d4795fa2c3cafd027d6ebf02518ecb1d889bf43"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "89963143a49c629f52776c88715544a8a53b12f1f6c7b4cd6c686d0751ea0d5b"
+        },
+        {
+          "path": "extension/engine/ja/StreamJsonRpc.resources.dll",
+          "bytes": 28512,
+          "sha256": "36897272170334ea43284e4f7c8f908e170bc1f082e9612528787ca03ae9e7ce"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 483152,
+          "sha256": "ff843b9eeface795101b07bf104bee7001f1c507a1129e778cfd3266f0c3c9d5"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42320,
+          "sha256": "e686070f5d242822a410558446d6d8320398bf88dcd537d27fe4e3dbee1ece8c"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "95eeb3fd4cd59bdd9df153ea9ff89f727de67c9536955af772d48fec8ca175e3"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "a2be5cbddafa74c4d64b6cb46e60a64b151d46056566e3fc39b810e431cf047f"
+        },
+        {
+          "path": "extension/engine/ko/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "53ce6c7e88dd7228d968fc26ff7cbf35bcdc81ee88275ca2325eaf8feffe47bc"
+        },
+        {
+          "path": "extension/engine/MessagePack.Annotations.dll",
+          "bytes": 34304,
+          "sha256": "bd364b1513c9df5d4063b6ee3602a5bf951507484f46a2366a6f2a9aeb1c4cf2"
+        },
+        {
+          "path": "extension/engine/MessagePack.dll",
+          "bytes": 397312,
+          "sha256": "1ebc0c2baec5a89b3738e892d61c92f037dd588db52412e1e3bdf2adc407aa94"
+        },
+        {
+          "path": "extension/engine/Microsoft.CodeAnalysis.CSharp.dll",
+          "bytes": 7013712,
+          "sha256": "1af1de8a162d2312eb2f6b781f5edbe8cec7d5cd268c7e4de24396225e54260f"
+        },
+        {
+          "path": "extension/engine/Microsoft.CodeAnalysis.dll",
+          "bytes": 3085096,
+          "sha256": "42c9ce7891470f430267e2dc02d03571f9d046a7e7e121107754bee58d344613"
+        },
+        {
+          "path": "extension/engine/Microsoft.NET.StringTools.dll",
+          "bytes": 33552,
+          "sha256": "887dec541cd0a719b7111458eb90a83b4491d6dd24eff2b16cf03d2782fd26a0"
+        },
+        {
+          "path": "extension/engine/Microsoft.VisualStudio.Threading.dll",
+          "bytes": 442400,
+          "sha256": "4f5dae28645b3b8f368a55098c3997cbec07d584038df1cb9bd8ec3e6f12b662"
+        },
+        {
+          "path": "extension/engine/Microsoft.VisualStudio.Validation.dll",
+          "bytes": 37392,
+          "sha256": "59cd5e953cce597847e515a73a1c0975cd5a6b94921a7b91e81045fa9922f57c"
+        },
+        {
+          "path": "extension/engine/Nerdbank.MessagePack.dll",
+          "bytes": 641024,
+          "sha256": "fc086ce3623a9a3f9213159d438c642d225046e371489e8e7f126d4c62f188fa"
+        },
+        {
+          "path": "extension/engine/Nerdbank.Streams.dll",
+          "bytes": 222048,
+          "sha256": "e5c90ffcb7a0bd0cedf51ac33e818b9f64045e9839b19701eb73460356631872"
+        },
+        {
+          "path": "extension/engine/Newtonsoft.Json.dll",
+          "bytes": 712464,
+          "sha256": "22c649f75fce5be7c7ccda8880473b634ef69ecf33f5d1ab8ad892caf47d5a07"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 484688,
+          "sha256": "4054a69b64d8ab6d0605818f640fa32983b81f300e59471188540e716e5cf344"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "8fee9282f5d83bb0793c19d5dc92c1f4f1cb4ef327fd8e8034a9fd0fda1bed84"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "eba88d2a7081f6fe13885ea1e07670f9a15e7385547fe56a2cc8965b5960dc6b"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "f77bd918ee6d7e3dfade1bbbf192fdd0fcd4f2ceb6296d14775f235f1562aea5"
+        },
+        {
+          "path": "extension/engine/pl/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "2e3d2bc745170f9b323711bf584b56246a6b9e4235e5e1dcac2ce83b7a9a1e1f"
+        },
+        {
+          "path": "extension/engine/PolyType.dll",
+          "bytes": 323072,
+          "sha256": "33d30bc1baf80b85ad9b428a388d9999eaf20999d555a6e684aa758f4f679968"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 463656,
+          "sha256": "3274d92c268933e063e4fb711d25a983cf9e7ac547e40397559529406d5234d4"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41256,
+          "sha256": "fc943e0d5725cd4e0aa0319550c2d74d388e5ee14ff2f760078c7c3b2f955bf4"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "09d6a23de1129a14b1eeaab540da578e920f6839cf0be30ceccccda783e5e1f2"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "656bcea3398e47aff8e86741bfb097940b589f52ebca2236ec104129d0d3014d"
+        },
+        {
+          "path": "extension/engine/pt-BR/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "990e5f544dd810cc9af2921cd4809c45a4c216697d9a5c4bd22d42700f57d8fc"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 636240,
+          "sha256": "592c3a69cbc0c808cae3ffb83829d7a61fbadb5d4038b48b488ee0b8a1dc5b2c"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 50512,
+          "sha256": "1f5dde5e271d99ac33503137a39e5521fb8cef705ba5e2b42bdcd099fd64ddbc"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 19488,
+          "sha256": "d1f00723b1f113c301df269bb63d00a7c8e012f6d6e1130df002195dcc3d87d5"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 15392,
+          "sha256": "db19d56c8e725fc91182ffc75c3803c5d6ca9f0dc6d99d695cbf4e30acc56fce"
+        },
+        {
+          "path": "extension/engine/ru/StreamJsonRpc.resources.dll",
+          "bytes": 30088,
+          "sha256": "5a32d75f02d6de17cfabe4f1f7fe57191a5549fcc11d5975fe77427826b38dea"
+        },
+        {
+          "path": "extension/engine/StreamJsonRpc.dll",
+          "bytes": 647048,
+          "sha256": "ddc6a4d60e6cc940aae31faafc1fdcdbe520dfa51bec8dfc7f505449291536d5"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 459048,
+          "sha256": "2ba089cdfff33a5a7b0e1e84e87a43ae7a7d592e1ab68effe9a657b8722d2c3a"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40744,
+          "sha256": "c7c3c901e4880ff74cc3aaccd05cd49ba3b8c8c0e6e0c640393f398206ba2052"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "4725106e1748c4720391ff6074686cad48fc31ac66106f9a61449e9e4172c053"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "620295974b05a36b268169cd94b39f99848224f7774b9748db014c2a2d027073"
+        },
+        {
+          "path": "extension/engine/tr/StreamJsonRpc.resources.dll",
+          "bytes": 25952,
+          "sha256": "1df15719aa69c7915028419f93bdb27cf8814f1ea6455e6d4f23dc110d81f1f1"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.deps.json",
+          "bytes": 16317,
+          "sha256": "e21024bad33de7e5ffe6ed76d4209b7de836b374600f3c3def35a561bfbeee17"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.dll",
+          "bytes": 1174528,
+          "sha256": "0c9487b6d2cd1e56e51741441df1df58efe3fa9c29b27db17e6408befba1e470"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.exe",
+          "bytes": 162816,
+          "sha256": "f681e13e1392dd177c2ca5e31f0641b59739621f2b57e8e1cd62c73895873d4f"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.runtimeconfig.json",
+          "bytes": 519,
+          "sha256": "96bc2946dff8790400d652ec7f8de7bb043e954980d59470c112788b68a1fbd3"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408872,
+          "sha256": "a93cb177ebbaab9a87794201e49782d13de8eba8f13a43218d222ace3850ac0b"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38224,
+          "sha256": "f081716d350008d6c787722e14b866438db7175d05f9a9a6374efa19d91d2ee4"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 16416,
+          "sha256": "4f98bd0d404ae92d7ccd20514fc6036a0c12900e9494030bb063e04499e4a26f"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "158f33332fa83a4c01f136482305a1d7d7feffa626fb082d65bfef4a0ce493a3"
+        },
+        {
+          "path": "extension/engine/zh-Hans/StreamJsonRpc.resources.dll",
+          "bytes": 24928,
+          "sha256": "0c3a6e2b27cd768f6b94b9ffcd86097811f2be89583bef4f1bb24fd81a18fd47"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408360,
+          "sha256": "ae1e5a860e76eea43d2737bda8f7c6ebbf01dfea679d23f2de0838b379ec2759"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38184,
+          "sha256": "2055f2333251aa48f90d16ddee0315b825659bcecacbc3d68309df48a4ae2a45"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17424,
+          "sha256": "29bacb0904a503a612ab54fa4dacc740009583550f4131ac4d700e5bd1ddeb49"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "8a3bffea88dc96fca9c307a9a8843a20fe1c7cafc2534b1cb95d688f07b6dbfd"
+        },
+        {
+          "path": "extension/engine/zh-Hant/StreamJsonRpc.resources.dll",
+          "bytes": 24968,
+          "sha256": "23e40ffa7c609dbb2b79e8fc38b7097d9d9d9a86f9a03abfd744e5f6bc8330a0"
+        },
+        {
+          "path": "extension/LICENSE.txt",
+          "bytes": 1067,
+          "sha256": "8f0127e9015458887968d9f75ac2b5e1682f5dc0d5fae4d9f9158cf12ab63158"
+        },
+        {
+          "path": "extension/media/chooseItems.js",
+          "bytes": 13208,
+          "sha256": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1"
+        },
+        {
+          "path": "extension/media/codicon.ttf",
+          "bytes": 125828,
+          "sha256": "2bb558cb693451e73c28c33fe64aa89bc19b1a4b70f95948322c243f93476920"
+        },
+        {
+          "path": "extension/media/designer-dark.svg",
+          "bytes": 255,
+          "sha256": "1e4b3b7e03fa3c192ab8322a5e1773285f8a42b3c4e2244f1f2d2003e1af6943"
+        },
+        {
+          "path": "extension/media/designer-light.svg",
+          "bytes": 255,
+          "sha256": "9750711d5cae73baaf3a77ad75128c8d7d9d5e804e88dc268b3f153bcdd6deaf"
+        },
+        {
+          "path": "extension/media/designer.js",
+          "bytes": 204721,
+          "sha256": "e19973b78a7b4c074468ee9d0859893549a31e57301a5e9669009eb011adb968"
+        },
+        {
+          "path": "extension/media/icon.png",
+          "bytes": 22246,
+          "sha256": "1e065b1bea53fa30d0eb6b36ed7ac40c005aab566fcdb913ba7e83058b9d5f76"
+        },
+        {
+          "path": "extension/media/panel.js",
+          "bytes": 182086,
+          "sha256": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908"
+        },
+        {
+          "path": "extension/media/winforms-activity.svg",
+          "bytes": 269,
+          "sha256": "86257659a4cfb37638b7a0b7312f6c757bf44889306f4ad79d857353de88f318"
+        },
+        {
+          "path": "extension/package.json",
+          "bytes": 19630,
+          "sha256": "e1751454c7f5d49fa8fb4fb301c8d46cdb91631727bf12ffc8e2da70cd569c8a"
+        },
+        {
+          "path": "extension/package.nls.de.json",
+          "bytes": 11657,
+          "sha256": "b19b89db38fbf131b11699691ad829ed9c67bb5b5d26655e25390ad0ec06535b"
+        },
+        {
+          "path": "extension/package.nls.es.json",
+          "bytes": 11877,
+          "sha256": "57ce7087e7dc9d669bd6486a9b5cb171f0fabb48ee3e06c2702d6fcf804ac994"
+        },
+        {
+          "path": "extension/package.nls.fr.json",
+          "bytes": 12077,
+          "sha256": "3161455424eb05e905cee01d055f2ab6d0e71f6e31eb2b43c1326324ccd5f8fe"
+        },
+        {
+          "path": "extension/package.nls.hi.json",
+          "bytes": 20538,
+          "sha256": "4dc07972013de9c560604a49ab2d60a27299c9ae0b5c8931e8ab6caa8dbf3afb"
+        },
+        {
+          "path": "extension/package.nls.json",
+          "bytes": 10049,
+          "sha256": "a8062d5f56072a5b9328fa5bae51147c89a1721c782978a36ce41e2f4431f681"
+        },
+        {
+          "path": "extension/package.nls.ru.json",
+          "bytes": 17315,
+          "sha256": "88b382dba84225c2d556cf5b4985d48907436f0c8f40a684e5e3e2085b17cd77"
+        },
+        {
+          "path": "extension/package.nls.zh-cn.json",
+          "bytes": 9652,
+          "sha256": "8b4dd2a07ea73a9a20d966b0b0096494d3537d3e6731050269d05c0ef2713d7e"
+        },
+        {
+          "path": "extension/readme.md",
+          "bytes": 13719,
+          "sha256": "b115193a8cc7cdf1ba10b49763f0f85031d8998d8b4f0f691ff439d44a939973"
+        },
+        {
+          "path": "extension/THIRD-PARTY-NOTICES.md",
+          "bytes": 11967,
+          "sha256": "3e79c11ea0e96fc808544f181074e2f1ed8a0fbf19acf7326558e3eebd66352e"
+        },
+        {
+          "path": "extension/vitest.config.ts",
+          "bytes": 732,
+          "sha256": "cfb3e8088605e0dc221034d9dcda0318870911be62fb48db3885b32887785df1"
+        }
+      ]
+    },
+    {
+      "path": "extension/winforms-designer-win32-arm64.vsix",
+      "bytes": 18393519,
+      "sha256": "48add7608d9eaf3a3431c3fda940b57bfe8c1f1a2f40108ad5993cc3347bd68a",
+      "entries": 204,
+      "version": "2.3.0",
+      "modernRuntimeIdentifier": "win-arm64",
+      "modernMachine": "0xAA64",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "ee9545adb5259976b86141a284d94de87dbac9cf48dc0ff3165c334badfa7a83",
+      "changelogSha256": "a3326888691dbbcc55c491c3b1941a7cbf7dc9225f083376652cee8bd4ea8079",
+      "changelogSourceSha256": "446179a37c038de752563147b2fcbca6d96a7ddd228e2914f8522e0dd1f8b0ff",
+      "packageManifestSha256": "e1751454c7f5d49fa8fb4fb301c8d46cdb91631727bf12ffc8e2da70cd569c8a",
+      "modernEngineSha256": "543e26d38e955fa54db740b0a47c802196743b05e56ac2e59fd7b1b0192d2ce3",
+      "net48EngineSha256": "7aa0ffad368e59ab378a68a2d9f7128926d3bd7d2ee550374a6dabcbdf5b6754",
+      "modernRuntimeConfigSha256": "96bc2946dff8790400d652ec7f8de7bb043e954980d59470c112788b68a1fbd3",
+      "modernDependencyManifestSha256": "c6f866d13c6352c28d79e9c0105452a896a63d4980030510dadad23885aab17d",
+      "net48RuntimeConfigSha256": "cfe7d84d370da48ffbf8ff0ad7a88e7d5d3c159dc1786bfdca0db14125065636",
+      "modernAssemblyVersion": "2.3.0.0",
+      "net48AssemblyVersion": "2.3.0.0",
+      "messagePackModernSha256": "1ebc0c2baec5a89b3738e892d61c92f037dd588db52412e1e3bdf2adc407aa94",
+      "messagePackNet48Sha256": "bb9609eb3dd3c74c86501547b36cff827a13bea7c47483fa3714efc5dcb7d496",
+      "acceptanceSuitesAbsent": true,
+      "independentSdkProbeAndMicrosoftSdkReferencesAbsent": true,
+      "physicalArm64Execution": "NOT_EXECUTED",
+      "payload": [
+        {
+          "path": "[Content_Types].xml",
+          "bytes": 885,
+          "sha256": "dc4d6e03553770af80d9a64169bf05b93f83d05b52bb8b05b71f935a260b5c0a"
+        },
+        {
+          "path": "extension.vsixmanifest",
+          "bytes": 3508,
+          "sha256": "ee557cfc4b4a1cd93a11fbece460a304a5936d04c2db6b8659e6f0e9ac72a901"
+        },
+        {
+          "path": "extension/changelog.md",
+          "bytes": 232035,
+          "sha256": "a3326888691dbbcc55c491c3b1941a7cbf7dc9225f083376652cee8bd4ea8079"
+        },
+        {
+          "path": "extension/dist/extension.js",
+          "bytes": 2094043,
+          "sha256": "ee9545adb5259976b86141a284d94de87dbac9cf48dc0ff3165c334badfa7a83"
+        },
+        {
+          "path": "extension/dist/performance-baseline.cjs",
+          "bytes": 199541,
+          "sha256": "8c64491d7e1dc566388dff46d113ba7e6032acd089d466c5359434faf66f756a"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 450856,
+          "sha256": "e8557494f51d09a3f8252b59b208184ad719f62b450d315a5f380ce6aae98d41"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40744,
+          "sha256": "a16a1550927476eed145993c8a5d45f568f8f87eb0a8bed9aa5676bf968e2fcf"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "354a74d17e44a7a1b5038eab1900dcb721cdde828a65a0ac967f304528a1da07"
+        },
+        {
+          "path": "extension/engine-net48/cs/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "973cba36af303018dabebd006880972ae7b9aafcdf435413cb2be113d3492a0d"
+        },
+        {
+          "path": "extension/engine-net48/cs/StreamJsonRpc.resources.dll",
+          "bytes": 25992,
+          "sha256": "df7500652f84fbb32ebb341815c218acd212245263b3effe3e9df53cc015b925"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 482640,
+          "sha256": "1ff4503fbbf6c02ed18aa57b4d21bfa9b34811a9ad10b050e2280794ebb0b114"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "5a6b46a7c8321a75584d7bd120b13db8024f18e29e82fb82bc73b7241c9f61fa"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "7229cd0b0ee02af3cdc84697a42e6d4a6a06088a36394c2f7c68fe10baf5f894"
+        },
+        {
+          "path": "extension/engine-net48/de/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "9358bd5636767eea10a97e4608deac1677bccd0577535f014157ddd382273401"
+        },
+        {
+          "path": "extension/engine-net48/de/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "138c731f4122c0a9bf4a613a9587564276f9b4887862110b6d223f23fbbc336d"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 471848,
+          "sha256": "56fb905d8a3fd85f7b9353b2d93dcb440eda9e1166efa5c559300ee805dcc8d8"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41808,
+          "sha256": "7c4318fb6485cb1601232df9b5c1ea560e85574312c2054edf07a542f36ce85e"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "a5549afb21b452fb522d0a9289fe985aa53d477bc555b0680101479e4439ce9d"
+        },
+        {
+          "path": "extension/engine-net48/es/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "fec853587245b778eab5cbaa3ce815a4835b9815712cb0d46789cf967c5ee2ec"
+        },
+        {
+          "path": "extension/engine-net48/es/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "4d0403fe8e121c2d2bad7e604c803b55d656a0ef5449169680f1c28ed5869bad"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 485672,
+          "sha256": "120044becb3339aa8c561b788b28fb6afcf148b852152de4e2198543d7013324"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42320,
+          "sha256": "b640e5683fe59cb9b806a71737e8da9bcc8603ae2b4fd24a5dfbdaea1df8fbe8"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "e0168a245f2eb50689db5607939fcd865b6706e0b27cdf708c50a579f0e8e7ff"
+        },
+        {
+          "path": "extension/engine-net48/fr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "aad365780310c6e63b5e2cba0b4686ab8dad045ca34ea1055c6404604c75b3f6"
+        },
+        {
+          "path": "extension/engine-net48/fr/StreamJsonRpc.resources.dll",
+          "bytes": 27008,
+          "sha256": "5cf95048fa21c5e78fa8f6a6a06ebab72a8ad5150ddaaae1dcab1380bbf3e578"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 478032,
+          "sha256": "2c38a679293d7fc4b854ec4fa931d8839ef5d8f3d70f1efbbf2abc0823a0e835"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42320,
+          "sha256": "69e46b71b7f88a33d0762357146ca45a03db282ec9ae4d13dbe1d11b8d0701d0"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18472,
+          "sha256": "29dd178e01ba78c4b1930b7bb9f61cfc61ff68fdb9519628e7651e58a5c897a3"
+        },
+        {
+          "path": "extension/engine-net48/it/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "7fdc334e7c2662ba1915655b333954f043ab5d1319ccd15686932467a87049ae"
+        },
+        {
+          "path": "extension/engine-net48/it/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "bcdae1af1ffce9d9c2e5a29697e8177ef71930b0f3b8b059919aaae854b426df"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 527184,
+          "sha256": "5f6e699e6672ccf231cea332b0ca3b9e5b5bff30feda2f48fce58f5aac23cec3"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 44880,
+          "sha256": "525eb92795998742012940bfd34d6170c856c835e58a01862ce67623426ec2c7"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18464,
+          "sha256": "2d27176726faffa974704e24cbe0f0e3460edbf925bc9028dc8825db6ed3716c"
+        },
+        {
+          "path": "extension/engine-net48/ja/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "637b1e787f901ae181d1d97b0867555f55188de884fcae67ff908c02d00c11c3"
+        },
+        {
+          "path": "extension/engine-net48/ja/StreamJsonRpc.resources.dll",
+          "bytes": 28552,
+          "sha256": "fb5ab08abdc9fb979080a5dc9a30cd34118c650d7adf492621f2c32e1f4a00b8"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 483152,
+          "sha256": "11a3329a5220e7b768f0374b25a0a3ea924796518c6f03b7cd437c8731f36dd2"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "20f59b8f4cb94d0e7e82235eaebe202e606119f050ea07275e151f24db9f37c7"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17952,
+          "sha256": "f62192a8331cc9fe25fa40332cecf34e0d848092288b756686effcb0b7749cab"
+        },
+        {
+          "path": "extension/engine-net48/ko/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "837884d24443f6d9b7506126ca50905786ec72de87bef757fda3dfb4281112e2"
+        },
+        {
+          "path": "extension/engine-net48/ko/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "7f434a6914bd278ffbd573e150ef8bcd75d2a8d6e7b7d6db0b90b3676d150ea0"
+        },
+        {
+          "path": "extension/engine-net48/MessagePack.Annotations.dll",
+          "bytes": 34304,
+          "sha256": "bd364b1513c9df5d4063b6ee3602a5bf951507484f46a2366a6f2a9aeb1c4cf2"
+        },
+        {
+          "path": "extension/engine-net48/MessagePack.dll",
+          "bytes": 418304,
+          "sha256": "bb9609eb3dd3c74c86501547b36cff827a13bea7c47483fa3714efc5dcb7d496"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.Bcl.AsyncInterfaces.dll",
+          "bytes": 28432,
+          "sha256": "b0e3846b989ce190d3472567054187669b648b962dab20472f54a3bfda1fb207"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.Bcl.HashCode.dll",
+          "bytes": 26920,
+          "sha256": "3a4e851ee5fc0f6182aa5a3d65dc56fcd6979b65334b5c3b92fbdc791457c0ab"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.CodeAnalysis.CSharp.dll",
+          "bytes": 7484752,
+          "sha256": "8599347cb1066a96c5092531b2cace43b6f08ea7020b530dfeedc2f57c96bacd"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.CodeAnalysis.dll",
+          "bytes": 3384144,
+          "sha256": "59a567de2d0c06df4d3fc1e562ac89f9e699c22a7a6c2340e297c7b687ed47a8"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.NET.StringTools.dll",
+          "bytes": 33040,
+          "sha256": "c91ee622ceb67b03d40c11f98284deaaa5ef4f22053210b9a2a254a286da15e3"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.VisualStudio.Threading.dll",
+          "bytes": 614416,
+          "sha256": "b82dec8c27f5f6d1e0afd53ee2783cc28d75af4655486b84daf95523237c60a9"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.VisualStudio.Validation.dll",
+          "bytes": 45072,
+          "sha256": "c71a29348790ad1b51c7056c5c395dd572ee31135677dc0e30e15154f43e4282"
+        },
+        {
+          "path": "extension/engine-net48/Microsoft.Win32.Registry.dll",
+          "bytes": 26496,
+          "sha256": "e9a9d281c1a708aaae366f82fd6a1742f65da2918cc4fa5eaaaada0be24277d9"
+        },
+        {
+          "path": "extension/engine-net48/Nerdbank.MessagePack.dll",
+          "bytes": 629760,
+          "sha256": "953a8c2a649fc609e4a9d9473a7059cad87261449b8c51039be8429dfcd1a811"
+        },
+        {
+          "path": "extension/engine-net48/Nerdbank.Streams.dll",
+          "bytes": 238952,
+          "sha256": "a652d7943695d4b3125e5406eadf054b6f9ece17e09cf87eaa444cd70d38a5d7"
+        },
+        {
+          "path": "extension/engine-net48/Newtonsoft.Json.dll",
+          "bytes": 711952,
+          "sha256": "e1e27af7b07eeedf5ce71a9255f0422816a6fc5849a483c6714e1b472044fa9d"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 484648,
+          "sha256": "4ace2b6fb4df9ba8fd574e3b32c85f55605ec28d3e0e84a8b33f44f062296ef7"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "ac4d44bec37cfc24dc9de386043b00dc78ce3e77accb673f52719351e7053c42"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "a26f25db47aab3ad4124705d66afccdfd799da54db8c89501cc785fe6bb5bb33"
+        },
+        {
+          "path": "extension/engine-net48/pl/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "b10719131a3c8eda32c130db704522ccd498fdc3dde2f550f139e54d8bfe9805"
+        },
+        {
+          "path": "extension/engine-net48/pl/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "bdf2577d96661daf259895bf16d5a9083079a8a4d7d6b39c0908a0999704503d"
+        },
+        {
+          "path": "extension/engine-net48/PolyType.dll",
+          "bytes": 343552,
+          "sha256": "7621357620e31331c1276222688952e5d38ecdd171113673d0ed72b0336e2ce5"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 463656,
+          "sha256": "1f4a7848252c8acfa4e47889d522664a1e9cf17c8065b1613cf6a1908d3f09fc"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41296,
+          "sha256": "98aa4d64b32228a2d036114833722f41b7babded8a321e86190afaa93614ae9b"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17944,
+          "sha256": "c5bed6755ece24dfd2ee20bc5d10dd9d9dbbeb0692283abf75e6f251c7e50b2d"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "0a5bdf4e31daddc84919a7705a26cef59f33379217977d55c33d009002a8ae68"
+        },
+        {
+          "path": "extension/engine-net48/pt-BR/StreamJsonRpc.resources.dll",
+          "bytes": 26504,
+          "sha256": "944444d67d341af91e0f5a2bc4a6e5448e8435136d2775f3e10d843979f8425a"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 636200,
+          "sha256": "320c21dcb32568660e1b97a32397bcbd8e386672e71e28b15b1f5eb542006c8a"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 50512,
+          "sha256": "398e1e92fa70b3a6361a24bffb9f9c398123150d83e650d8df421232ebd9c2a8"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 19488,
+          "sha256": "508650fd13a4ebdb04ffeaef8ea782a57f00d7651f32b70ae2cfa01d0bcb9716"
+        },
+        {
+          "path": "extension/engine-net48/ru/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 15376,
+          "sha256": "7e57e62bc9d0abab92814e7bc08ce8c2661af041ed7b21931b344e529b69bf8c"
+        },
+        {
+          "path": "extension/engine-net48/ru/StreamJsonRpc.resources.dll",
+          "bytes": 30040,
+          "sha256": "ca5c6783d987671816266e0fb6a959712d117046ed12adc38121101c1a1e96a3"
+        },
+        {
+          "path": "extension/engine-net48/StreamJsonRpc.dll",
+          "bytes": 799624,
+          "sha256": "94f9b29f546728e2765cd60cc597c3c9ed7c04624cab4a96993eca829e31b869"
+        },
+        {
+          "path": "extension/engine-net48/System.Buffers.dll",
+          "bytes": 23816,
+          "sha256": "2d78d770c9cb997199154ae8c018b9f1d1efbc86729f7264dde6dbad2a12cac3"
+        },
+        {
+          "path": "extension/engine-net48/System.Collections.Immutable.dll",
+          "bytes": 253192,
+          "sha256": "5baa117252ee684e26903603596854b649bc25eddcb0cdef3b100658fc3c334c"
+        },
+        {
+          "path": "extension/engine-net48/System.Diagnostics.DiagnosticSource.dll",
+          "bytes": 189104,
+          "sha256": "1887592615fc08bbc91ad62307c8c11dfc14c45bf120d271d66be4a0d1a149a7"
+        },
+        {
+          "path": "extension/engine-net48/System.IO.Pipelines.dll",
+          "bytes": 84744,
+          "sha256": "07a57b9c555a278c359267674aa139aba352b464fea3cc4714a664ad999faf42"
+        },
+        {
+          "path": "extension/engine-net48/System.Memory.dll",
+          "bytes": 145200,
+          "sha256": "d5e8e4866f9cfa66f7765660f84b210198893e55335487afe5ebda342c0e913d"
+        },
+        {
+          "path": "extension/engine-net48/System.Numerics.Vectors.dll",
+          "bytes": 110344,
+          "sha256": "20c2fa81b8c70d651099d762954f285fd4f942e63b2d7217c145dab8d4b2f4c9"
+        },
+        {
+          "path": "extension/engine-net48/System.Reflection.Metadata.dll",
+          "bytes": 515336,
+          "sha256": "a1a9aaabf7651b26177e99e982d9f7dbe57b9aece693f4f2770c28b27c2d26df"
+        },
+        {
+          "path": "extension/engine-net48/System.Runtime.CompilerServices.Unsafe.dll",
+          "bytes": 19256,
+          "sha256": "08cbd7278b66f1e68425a82d4b97181a4130d93e3dd91831407aba7212ccdacf"
+        },
+        {
+          "path": "extension/engine-net48/System.Security.AccessControl.dll",
+          "bytes": 33672,
+          "sha256": "1fda491eebdb19ea0a83cf6c16ab5dd004a1bfdfc845ede017ebe0945beb927f"
+        },
+        {
+          "path": "extension/engine-net48/System.Security.Principal.Windows.dll",
+          "bytes": 18312,
+          "sha256": "b4d8e15adc235d0e858e39b5133e5d00a4baa8c94f4f39e3b5e791b0f9c0c806"
+        },
+        {
+          "path": "extension/engine-net48/System.Text.Encoding.CodePages.dll",
+          "bytes": 766224,
+          "sha256": "b77ee852824a6e8098fbade000beb42ce9df32fa4189a00d5e7f472f6c6a5030"
+        },
+        {
+          "path": "extension/engine-net48/System.Text.Encodings.Web.dll",
+          "bytes": 79024,
+          "sha256": "e9c4f5eed186cb129c527c4b8d67d163ea2f2396e9d8b96e30b5e7c12203ce84"
+        },
+        {
+          "path": "extension/engine-net48/System.Text.Json.dll",
+          "bytes": 644904,
+          "sha256": "0cf5a9763c98f09e94dfcdaa4437e9508eabe2e50b408ba421d5faf734c5556a"
+        },
+        {
+          "path": "extension/engine-net48/System.Threading.Tasks.Dataflow.dll",
+          "bytes": 182552,
+          "sha256": "5719d19f2f88595c6893cab2796f70d55eaa48c8769b7b15f0457a3618e978d3"
+        },
+        {
+          "path": "extension/engine-net48/System.Threading.Tasks.Extensions.dll",
+          "bytes": 27960,
+          "sha256": "af4e13ef418fd89b432de20cd1dfb7fa10a7179c8dd049c9856316e50c5949ca"
+        },
+        {
+          "path": "extension/engine-net48/System.ValueTuple.dll",
+          "bytes": 25232,
+          "sha256": "e905d102585b22c6df04f219af5cbdbfa7bc165979e9788b62df6dcc165e10f4"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 459048,
+          "sha256": "af04ab20ca75e2599ac3e1ffe089614d84533bed2c3e9443f7d9a27222ca20d7"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40744,
+          "sha256": "4f92f5219d67d7f2411e08e6ee927e62182c6e62e4a3b728b6212d0bedb0c13c"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "54bf9a88c932b745e8631d439f54abd5b499b2029ca86652aeb4df1d8f3edd88"
+        },
+        {
+          "path": "extension/engine-net48/tr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "32ebc0979d04467e1ffdfac475a27e2abb473961b135bb944608a4869c2060c1"
+        },
+        {
+          "path": "extension/engine-net48/tr/StreamJsonRpc.resources.dll",
+          "bytes": 25952,
+          "sha256": "6bcea16b79d4beca0b388c2a4b8047b8fbcfdb5e6931f80f4e00c8f8ec7cc873"
+        },
+        {
+          "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe",
+          "bytes": 559616,
+          "sha256": "7aa0ffad368e59ab378a68a2d9f7128926d3bd7d2ee550374a6dabcbdf5b6754"
+        },
+        {
+          "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe.config",
+          "bytes": 4279,
+          "sha256": "cfe7d84d370da48ffbf8ff0ad7a88e7d5d3c159dc1786bfdca0db14125065636"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408872,
+          "sha256": "04ada2b5791856ade3c576a9ad1480274e094206f155083813f6c69fb4ec14d2"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38184,
+          "sha256": "4bb7f2816acb5a8e393abeccb26b8d460222c11acba54cc23acc3efe2d1fa16b"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 16400,
+          "sha256": "aec686ddf8a826a0669a9cfcbce790c246608996831ddcd134fa12da7fa5da55"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "901d04403434a573f2a97b8b05d0aa69a1e6d8cab78d68f1fb72470742e75d19"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hans/StreamJsonRpc.resources.dll",
+          "bytes": 24968,
+          "sha256": "cd1cf26a7b64646f24530f5277b371f04f43eaa986ec652924a9263b538c5d5b"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408360,
+          "sha256": "076be0c039ea7dbc6f430f0d67720037930f7206578618cd1b222476abdb5a2c"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38224,
+          "sha256": "bab0e6f54400001375af20bc1ea838995804e46619ed66180f1d8ca46e26a2df"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17424,
+          "sha256": "804b0ee6a9d27e88d23e5ba4e3688bae4c48da866a2f1f890e1780c169d717f3"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14872,
+          "sha256": "746bf581007b945d9e1b3374aec553adcea1b38f8088952a85e656d2c1f87da3"
+        },
+        {
+          "path": "extension/engine-net48/zh-Hant/StreamJsonRpc.resources.dll",
+          "bytes": 24968,
+          "sha256": "050e1d4d8caeb77996e81d8003ffa08847a7d4cef812b67c9706e8855b7d7e5d"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 450856,
+          "sha256": "cbd08c351120e81ff9b6ddef91b217381e117700625db27174989f17e372e5e0"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40784,
+          "sha256": "e8433aeb949fc31c560a7bac7cf7983589529b1e65d94857eb4704f8d39f63af"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "d11e4bc48fe7d73ffe50585f16873a2b48f185d52a5e2160c5667bb01b5d4cf0"
+        },
+        {
+          "path": "extension/engine/cs/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "830b54077b4f3febe75ed87aa163eb49fb58362c61be5ca26cf42d4e13c51f3c"
+        },
+        {
+          "path": "extension/engine/cs/StreamJsonRpc.resources.dll",
+          "bytes": 25944,
+          "sha256": "5115a8c09c591d1caa16359b5a45eccece63d9c337e703d89c05a69264ba291b"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 482600,
+          "sha256": "bb746a8aba19b954a99274cf2b263fce51b740a30ea8e558505570757f5df14b"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "b6e3f1948987b8f2899bb19e7cceab1de2a5d10c536caf55205ea03f419d1bef"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "024e0b69d6b0574d5efc1c3aeb5aeebed96c3839da531e5daf02c41054a8bb77"
+        },
+        {
+          "path": "extension/engine/de/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "fd7edef2b3f30903f2c287c49d62cb3394f9656fd82ff1c98eb122ad62a04a56"
+        },
+        {
+          "path": "extension/engine/de/StreamJsonRpc.resources.dll",
+          "bytes": 27016,
+          "sha256": "01e2c454d751b89aba08d4270ca00d8e07fa8af861650ecd704481ce06b87b24"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 471848,
+          "sha256": "c87a88b09458a944c6f20f50895382c754d46bf2da511318eb16905e6957bb26"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41768,
+          "sha256": "3e852dec573d4993d1eff734057fc09fec4edf32399ad4da9f21dab0d5b12145"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18488,
+          "sha256": "7fd956867b824216964e8f55a805b1ecc058d27d65da8eb4a6c62c355995ad1b"
+        },
+        {
+          "path": "extension/engine/es/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "c40129bf64177dbfbd79bf977e11d46f2888c20c3e807336a36dac82370f6d83"
+        },
+        {
+          "path": "extension/engine/es/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "bacf7fadae7361e00f097dcafbe9a4a759f4346f364676389304a688fdb3b636"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 485712,
+          "sha256": "476e91ee5e84fccc2445998d98b7d3e628c3dbfb54ca650aa965a084e99a3fa5"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "f17bb793907ea7d7c382814c5a33cd1234f3328d463af6d24a048c70738bbc0e"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "a893679887ffd4635802c91756f55c07e0b939c75d2275499dd325f7a3d436d6"
+        },
+        {
+          "path": "extension/engine/fr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "e56fe93ab669c22850389bdb685bbc45317d962849cc683d412bc9e8ad637740"
+        },
+        {
+          "path": "extension/engine/fr/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "99ee72e2ea1de18367345b83884d0aa8c4192f98f2f3fb6b50bdbbebd6960afc"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 478032,
+          "sha256": "df51ee4f9f5caa44a6ae88226ab27d594bdecf20231b45a0443c6d86cf3e2559"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "47ef1da8fafb8f778864e28ad22289d72ea751fbe7fc5a30d054739b8b341f62"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18464,
+          "sha256": "3c0146541f847f9b3da4d75cf7dea9792cbe8c9b095ed147d2310bef5e13bc8a"
+        },
+        {
+          "path": "extension/engine/it/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "8918618aaf356bf03333f62507ed4b2511c98850388c3856afe970c41672fae0"
+        },
+        {
+          "path": "extension/engine/it/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "31741ef214310f03ec256b3dd8643e5d4151c9123bd6994bb8f53381ca348244"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 527184,
+          "sha256": "288ba88bbb3db85899631536fdad32bdcba48130089d69b75019f698de1dd818"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 44840,
+          "sha256": "ab650b2093310e0ca9d953738efd419dc988ef4eaa40224ac276debe80764865"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "0414c033672e6af5cb5041801d4795fa2c3cafd027d6ebf02518ecb1d889bf43"
+        },
+        {
+          "path": "extension/engine/ja/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "89963143a49c629f52776c88715544a8a53b12f1f6c7b4cd6c686d0751ea0d5b"
+        },
+        {
+          "path": "extension/engine/ja/StreamJsonRpc.resources.dll",
+          "bytes": 28512,
+          "sha256": "36897272170334ea43284e4f7c8f908e170bc1f082e9612528787ca03ae9e7ce"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 483152,
+          "sha256": "ff843b9eeface795101b07bf104bee7001f1c507a1129e778cfd3266f0c3c9d5"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42320,
+          "sha256": "e686070f5d242822a410558446d6d8320398bf88dcd537d27fe4e3dbee1ece8c"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "95eeb3fd4cd59bdd9df153ea9ff89f727de67c9536955af772d48fec8ca175e3"
+        },
+        {
+          "path": "extension/engine/ko/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "a2be5cbddafa74c4d64b6cb46e60a64b151d46056566e3fc39b810e431cf047f"
+        },
+        {
+          "path": "extension/engine/ko/StreamJsonRpc.resources.dll",
+          "bytes": 26976,
+          "sha256": "53ce6c7e88dd7228d968fc26ff7cbf35bcdc81ee88275ca2325eaf8feffe47bc"
+        },
+        {
+          "path": "extension/engine/MessagePack.Annotations.dll",
+          "bytes": 34304,
+          "sha256": "bd364b1513c9df5d4063b6ee3602a5bf951507484f46a2366a6f2a9aeb1c4cf2"
+        },
+        {
+          "path": "extension/engine/MessagePack.dll",
+          "bytes": 397312,
+          "sha256": "1ebc0c2baec5a89b3738e892d61c92f037dd588db52412e1e3bdf2adc407aa94"
+        },
+        {
+          "path": "extension/engine/Microsoft.CodeAnalysis.CSharp.dll",
+          "bytes": 7013712,
+          "sha256": "1af1de8a162d2312eb2f6b781f5edbe8cec7d5cd268c7e4de24396225e54260f"
+        },
+        {
+          "path": "extension/engine/Microsoft.CodeAnalysis.dll",
+          "bytes": 3085096,
+          "sha256": "42c9ce7891470f430267e2dc02d03571f9d046a7e7e121107754bee58d344613"
+        },
+        {
+          "path": "extension/engine/Microsoft.NET.StringTools.dll",
+          "bytes": 33552,
+          "sha256": "887dec541cd0a719b7111458eb90a83b4491d6dd24eff2b16cf03d2782fd26a0"
+        },
+        {
+          "path": "extension/engine/Microsoft.VisualStudio.Threading.dll",
+          "bytes": 442400,
+          "sha256": "4f5dae28645b3b8f368a55098c3997cbec07d584038df1cb9bd8ec3e6f12b662"
+        },
+        {
+          "path": "extension/engine/Microsoft.VisualStudio.Validation.dll",
+          "bytes": 37392,
+          "sha256": "59cd5e953cce597847e515a73a1c0975cd5a6b94921a7b91e81045fa9922f57c"
+        },
+        {
+          "path": "extension/engine/Nerdbank.MessagePack.dll",
+          "bytes": 641024,
+          "sha256": "fc086ce3623a9a3f9213159d438c642d225046e371489e8e7f126d4c62f188fa"
+        },
+        {
+          "path": "extension/engine/Nerdbank.Streams.dll",
+          "bytes": 222048,
+          "sha256": "e5c90ffcb7a0bd0cedf51ac33e818b9f64045e9839b19701eb73460356631872"
+        },
+        {
+          "path": "extension/engine/Newtonsoft.Json.dll",
+          "bytes": 712464,
+          "sha256": "22c649f75fce5be7c7ccda8880473b634ef69ecf33f5d1ab8ad892caf47d5a07"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 484688,
+          "sha256": "4054a69b64d8ab6d0605818f640fa32983b81f300e59471188540e716e5cf344"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 42280,
+          "sha256": "8fee9282f5d83bb0793c19d5dc92c1f4f1cb4ef327fd8e8034a9fd0fda1bed84"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 18448,
+          "sha256": "eba88d2a7081f6fe13885ea1e07670f9a15e7385547fe56a2cc8965b5960dc6b"
+        },
+        {
+          "path": "extension/engine/pl/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "f77bd918ee6d7e3dfade1bbbf192fdd0fcd4f2ceb6296d14775f235f1562aea5"
+        },
+        {
+          "path": "extension/engine/pl/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "2e3d2bc745170f9b323711bf584b56246a6b9e4235e5e1dcac2ce83b7a9a1e1f"
+        },
+        {
+          "path": "extension/engine/PolyType.dll",
+          "bytes": 323072,
+          "sha256": "33d30bc1baf80b85ad9b428a388d9999eaf20999d555a6e684aa758f4f679968"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 463656,
+          "sha256": "3274d92c268933e063e4fb711d25a983cf9e7ac547e40397559529406d5234d4"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 41256,
+          "sha256": "fc943e0d5725cd4e0aa0319550c2d74d388e5ee14ff2f760078c7c3b2f955bf4"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "09d6a23de1129a14b1eeaab540da578e920f6839cf0be30ceccccda783e5e1f2"
+        },
+        {
+          "path": "extension/engine/pt-BR/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "656bcea3398e47aff8e86741bfb097940b589f52ebca2236ec104129d0d3014d"
+        },
+        {
+          "path": "extension/engine/pt-BR/StreamJsonRpc.resources.dll",
+          "bytes": 26464,
+          "sha256": "990e5f544dd810cc9af2921cd4809c45a4c216697d9a5c4bd22d42700f57d8fc"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 636240,
+          "sha256": "592c3a69cbc0c808cae3ffb83829d7a61fbadb5d4038b48b488ee0b8a1dc5b2c"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 50512,
+          "sha256": "1f5dde5e271d99ac33503137a39e5521fb8cef705ba5e2b42bdcd099fd64ddbc"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 19488,
+          "sha256": "d1f00723b1f113c301df269bb63d00a7c8e012f6d6e1130df002195dcc3d87d5"
+        },
+        {
+          "path": "extension/engine/ru/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 15392,
+          "sha256": "db19d56c8e725fc91182ffc75c3803c5d6ca9f0dc6d99d695cbf4e30acc56fce"
+        },
+        {
+          "path": "extension/engine/ru/StreamJsonRpc.resources.dll",
+          "bytes": 30088,
+          "sha256": "5a32d75f02d6de17cfabe4f1f7fe57191a5549fcc11d5975fe77427826b38dea"
+        },
+        {
+          "path": "extension/engine/StreamJsonRpc.dll",
+          "bytes": 647048,
+          "sha256": "ddc6a4d60e6cc940aae31faafc1fdcdbe520dfa51bec8dfc7f505449291536d5"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 459048,
+          "sha256": "2ba089cdfff33a5a7b0e1e84e87a43ae7a7d592e1ab68effe9a657b8722d2c3a"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 40744,
+          "sha256": "c7c3c901e4880ff74cc3aaccd05cd49ba3b8c8c0e6e0c640393f398206ba2052"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17936,
+          "sha256": "4725106e1748c4720391ff6074686cad48fc31ac66106f9a61449e9e4172c053"
+        },
+        {
+          "path": "extension/engine/tr/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "620295974b05a36b268169cd94b39f99848224f7774b9748db014c2a2d027073"
+        },
+        {
+          "path": "extension/engine/tr/StreamJsonRpc.resources.dll",
+          "bytes": 25952,
+          "sha256": "1df15719aa69c7915028419f93bdb27cf8814f1ea6455e6d4f23dc110d81f1f1"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.deps.json",
+          "bytes": 16321,
+          "sha256": "c6f866d13c6352c28d79e9c0105452a896a63d4980030510dadad23885aab17d"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.dll",
+          "bytes": 1174528,
+          "sha256": "543e26d38e955fa54db740b0a47c802196743b05e56ac2e59fd7b1b0192d2ce3"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.exe",
+          "bytes": 140288,
+          "sha256": "9533570f8ddd3204892acbbc52a8e2ab3dfc27820b9f5c27872a4259b3bccc30"
+        },
+        {
+          "path": "extension/engine/WinFormsDesigner.Engine.runtimeconfig.json",
+          "bytes": 519,
+          "sha256": "96bc2946dff8790400d652ec7f8de7bb043e954980d59470c112788b68a1fbd3"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408872,
+          "sha256": "a93cb177ebbaab9a87794201e49782d13de8eba8f13a43218d222ace3850ac0b"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38224,
+          "sha256": "f081716d350008d6c787722e14b866438db7175d05f9a9a6374efa19d91d2ee4"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 16416,
+          "sha256": "4f98bd0d404ae92d7ccd20514fc6036a0c12900e9494030bb063e04499e4a26f"
+        },
+        {
+          "path": "extension/engine/zh-Hans/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14880,
+          "sha256": "158f33332fa83a4c01f136482305a1d7d7feffa626fb082d65bfef4a0ce493a3"
+        },
+        {
+          "path": "extension/engine/zh-Hans/StreamJsonRpc.resources.dll",
+          "bytes": 24928,
+          "sha256": "0c3a6e2b27cd768f6b94b9ffcd86097811f2be89583bef4f1bb24fd81a18fd47"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.CodeAnalysis.CSharp.resources.dll",
+          "bytes": 408360,
+          "sha256": "ae1e5a860e76eea43d2737bda8f7c6ebbf01dfea679d23f2de0838b379ec2759"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.CodeAnalysis.resources.dll",
+          "bytes": 38184,
+          "sha256": "2055f2333251aa48f90d16ddee0315b825659bcecacbc3d68309df48a4ae2a45"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.VisualStudio.Threading.resources.dll",
+          "bytes": 17424,
+          "sha256": "29bacb0904a503a612ab54fa4dacc740009583550f4131ac4d700e5bd1ddeb49"
+        },
+        {
+          "path": "extension/engine/zh-Hant/Microsoft.VisualStudio.Validation.resources.dll",
+          "bytes": 14864,
+          "sha256": "8a3bffea88dc96fca9c307a9a8843a20fe1c7cafc2534b1cb95d688f07b6dbfd"
+        },
+        {
+          "path": "extension/engine/zh-Hant/StreamJsonRpc.resources.dll",
+          "bytes": 24968,
+          "sha256": "23e40ffa7c609dbb2b79e8fc38b7097d9d9d9a86f9a03abfd744e5f6bc8330a0"
+        },
+        {
+          "path": "extension/LICENSE.txt",
+          "bytes": 1067,
+          "sha256": "8f0127e9015458887968d9f75ac2b5e1682f5dc0d5fae4d9f9158cf12ab63158"
+        },
+        {
+          "path": "extension/media/chooseItems.js",
+          "bytes": 13208,
+          "sha256": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1"
+        },
+        {
+          "path": "extension/media/codicon.ttf",
+          "bytes": 125828,
+          "sha256": "2bb558cb693451e73c28c33fe64aa89bc19b1a4b70f95948322c243f93476920"
+        },
+        {
+          "path": "extension/media/designer-dark.svg",
+          "bytes": 255,
+          "sha256": "1e4b3b7e03fa3c192ab8322a5e1773285f8a42b3c4e2244f1f2d2003e1af6943"
+        },
+        {
+          "path": "extension/media/designer-light.svg",
+          "bytes": 255,
+          "sha256": "9750711d5cae73baaf3a77ad75128c8d7d9d5e804e88dc268b3f153bcdd6deaf"
+        },
+        {
+          "path": "extension/media/designer.js",
+          "bytes": 204721,
+          "sha256": "e19973b78a7b4c074468ee9d0859893549a31e57301a5e9669009eb011adb968"
+        },
+        {
+          "path": "extension/media/icon.png",
+          "bytes": 22246,
+          "sha256": "1e065b1bea53fa30d0eb6b36ed7ac40c005aab566fcdb913ba7e83058b9d5f76"
+        },
+        {
+          "path": "extension/media/panel.js",
+          "bytes": 182086,
+          "sha256": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908"
+        },
+        {
+          "path": "extension/media/winforms-activity.svg",
+          "bytes": 269,
+          "sha256": "86257659a4cfb37638b7a0b7312f6c757bf44889306f4ad79d857353de88f318"
+        },
+        {
+          "path": "extension/package.json",
+          "bytes": 19630,
+          "sha256": "e1751454c7f5d49fa8fb4fb301c8d46cdb91631727bf12ffc8e2da70cd569c8a"
+        },
+        {
+          "path": "extension/package.nls.de.json",
+          "bytes": 11657,
+          "sha256": "b19b89db38fbf131b11699691ad829ed9c67bb5b5d26655e25390ad0ec06535b"
+        },
+        {
+          "path": "extension/package.nls.es.json",
+          "bytes": 11877,
+          "sha256": "57ce7087e7dc9d669bd6486a9b5cb171f0fabb48ee3e06c2702d6fcf804ac994"
+        },
+        {
+          "path": "extension/package.nls.fr.json",
+          "bytes": 12077,
+          "sha256": "3161455424eb05e905cee01d055f2ab6d0e71f6e31eb2b43c1326324ccd5f8fe"
+        },
+        {
+          "path": "extension/package.nls.hi.json",
+          "bytes": 20538,
+          "sha256": "4dc07972013de9c560604a49ab2d60a27299c9ae0b5c8931e8ab6caa8dbf3afb"
+        },
+        {
+          "path": "extension/package.nls.json",
+          "bytes": 10049,
+          "sha256": "a8062d5f56072a5b9328fa5bae51147c89a1721c782978a36ce41e2f4431f681"
+        },
+        {
+          "path": "extension/package.nls.ru.json",
+          "bytes": 17315,
+          "sha256": "88b382dba84225c2d556cf5b4985d48907436f0c8f40a684e5e3e2085b17cd77"
+        },
+        {
+          "path": "extension/package.nls.zh-cn.json",
+          "bytes": 9652,
+          "sha256": "8b4dd2a07ea73a9a20d966b0b0096494d3537d3e6731050269d05c0ef2713d7e"
+        },
+        {
+          "path": "extension/readme.md",
+          "bytes": 13719,
+          "sha256": "b115193a8cc7cdf1ba10b49763f0f85031d8998d8b4f0f691ff439d44a939973"
+        },
+        {
+          "path": "extension/THIRD-PARTY-NOTICES.md",
+          "bytes": 11967,
+          "sha256": "3e79c11ea0e96fc808544f181074e2f1ed8a0fbf19acf7326558e3eebd66352e"
+        },
+        {
+          "path": "extension/vitest.config.ts",
+          "bytes": 732,
+          "sha256": "cfb3e8088605e0dc221034d9dcda0318870911be62fb48db3885b32887785df1"
+        }
+      ]
+    }
+  ],
+  "bothAssemblyVersions": "2.3.0.0",
+  "published": false,
+  "assertions": "Read-only ZIP identity, every entry hash, target/RID/actual PE, assembly metadata, frozen-byte equality and excluded-payload checks; the packaged changelog equals the source after the packager links bare issue numbers; CI assertion verdicts are bound separately."
+}

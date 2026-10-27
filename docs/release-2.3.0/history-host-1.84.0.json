@@ -1,0 +1,2003 @@
+{
+  "suite": "release23-extension-host",
+  "passed": true,
+  "focusedScenario": null,
+  "completeReleaseAcceptance": true,
+  "realVSCodeLaunches": 2,
+  "testedBuild": {
+    "requestedVSCodeVersion": "1.84.0",
+    "startedAt": "2026-10-22T13:52:40.080Z",
+    "environment": {
+      "commit": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+      "workingTree": "dirty (92 changed or untracked paths)",
+      "os": "Windows_NT 10.0.26100 x64",
+      "nodeArch": "x64",
+      "windowsDesktopRuntime": "10.0.9",
+      "netFrameworkRelease": 533320
+    },
+    "sha256": {
+      "extension/dist/extension.js": "1f5ae7ccc190eff76e133c2a421f2008b9a07aa00a5965dd7fb1a0429cce3775",
+      "extension/dist/release23-extension-host-suite.cjs": "dddd9c6e2aa61aabcaef50e08756a72e9ba7710c1f4fdacae38aacd63d2b12e2",
+      "scripts/run-release23-extension-host-tests.mjs": "1f1b6b0783994606feb393dda62a8851f1ff12a7fc625e771820af855717c8e5",
+      "extension/package.json": "4b4369ab4f8ff5e38ce3a69e47535510d59809b4b71548c9045bda5dd16fde5f",
+      "extension/media/designer.js": "67239ce6ee2e8bb21eb95bf3dd0cab50dc7ee7a91686fe3284f4d4cb8a740672",
+      "extension/media/panel.js": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908",
+      "extension/media/chooseItems.js": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1",
+      "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "eff605b1a07a27652f1c68b0d5d01e7688d8c7d097bc89747cf731dd83d265f6",
+      "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "895f71fa251e5356c4252ed6cb85a76862ad7ac82161b90ff2a54101f3ccc1f4"
+    }
+  },
+  "backupObservations": [
+    {
+      "documentName": "Moderncheckpoint",
+      "sha256": "e010e861e9c926a6aea69351416936c0ea13cdff03a332ccd56ef3063f3d0e3d",
+      "bytes": 764,
+      "historySha256": "ccd3402ee3247abb2eb902263efc980e9529fb0d1eb43dd4de298bd7acef0363",
+      "historyBytes": 12716,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 6,
+      "activeIndex": 6,
+      "checkpointIndex": 3,
+      "editorCheckpointCount": 0,
+      "editorCheckpointImages": [],
+      "linkedArtifactCount": 0
+    },
+    {
+      "documentName": "Frameworkcheckpoint",
+      "sha256": "f9adf520924face36855c0947a0c758516a1368a8538ebb4f4acc2753e201626",
+      "bytes": 770,
+      "historySha256": "0dd771eab00f2ce075c4fd6ee24b7de8bbc924acd1d15eb5ca43abbe244b9602",
+      "historyBytes": 12779,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 6,
+      "activeIndex": 6,
+      "checkpointIndex": 3,
+      "editorCheckpointCount": 0,
+      "editorCheckpointImages": [],
+      "linkedArtifactCount": 0
+    },
+    {
+      "documentName": "Modernlinked",
+      "sha256": "2f6579e77207db083ec0d35f154d56bd6bd335e099ecc120bec1486edae9b22e",
+      "bytes": 1081,
+      "historySha256": "780be45353d80596fa68b1d72b962624dd329876a28c14066694f026743db644",
+      "historyBytes": 44533,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 5,
+      "activeIndex": 5,
+      "checkpointIndex": 0,
+      "editorCheckpointCount": 1,
+      "editorCheckpointImages": [
+        {
+          "beforeSha256": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+          "afterSha256": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f"
+        }
+      ],
+      "linkedArtifactCount": 2
+    },
+    {
+      "documentName": "Frameworklinked",
+      "sha256": "4b3f4f3e2399f2ff08fb0efff2972e19ab23108589f86db305623d48330370de",
+      "bytes": 1087,
+      "historySha256": "476129e59d0e785f539d8bce951b0221886d476485de45884984fca7b90cfa36",
+      "historyBytes": 44611,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 5,
+      "activeIndex": 5,
+      "checkpointIndex": 0,
+      "editorCheckpointCount": 1,
+      "editorCheckpointImages": [
+        {
+          "beforeSha256": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+          "afterSha256": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f"
+        }
+      ],
+      "linkedArtifactCount": 2
+    },
+    {
+      "documentName": "Modernbranch",
+      "sha256": "be452f93c9f70a29f87504da0edcd23154825de6442fb342a7eb0d22918cf9b1",
+      "bytes": 756,
+      "historySha256": "f25511019f92a4fc34964af92a895a3603295bbac1c8801a2d2566b60e07ffdb",
+      "historyBytes": 7035,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 3,
+      "activeIndex": 2,
+      "checkpointIndex": 0,
+      "editorCheckpointCount": 0,
+      "editorCheckpointImages": [],
+      "linkedArtifactCount": 0
+    },
+    {
+      "documentName": "Frameworkbranch",
+      "sha256": "47d73d46687d9602221c2ddf423dc2d707af572f682e1086f6cc41e9af5a057e",
+      "bytes": 762,
+      "historySha256": "8ca3343703a361327f50f0d24c080cf6daeb66d63460f0f3837f20743e639bbd",
+      "historyBytes": 7080,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 3,
+      "activeIndex": 2,
+      "checkpointIndex": 0,
+      "editorCheckpointCount": 0,
+      "editorCheckpointImages": [],
+      "linkedArtifactCount": 0
+    },
+    {
+      "documentName": "Modernlocalized",
+      "sha256": "6d980dd2452e44e1660e2a02a3ed7bad1a1356ef50a704984cfe175345f9c8b0",
+      "bytes": 764,
+      "historySha256": "2267c70efd39614d6e6d1bcccf3703a10a1d98f7000fddc23edf32aef63e9e39",
+      "historyBytes": 23812,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 3,
+      "activeIndex": 3,
+      "checkpointIndex": 0,
+      "editorCheckpointCount": 0,
+      "editorCheckpointImages": [],
+      "linkedArtifactCount": 6
+    },
+    {
+      "documentName": "Frameworklocalized",
+      "sha256": "d8aa859c3c9b8e4c36aae60e07c90c4bab7e2fcaae68341dfd416a5f4cd2f0c3",
+      "bytes": 767,
+      "historySha256": "695dc6ed36624a790ff6dbbff6d308716f85a2bbaec77add34db7e95e2d74b21",
+      "historyBytes": 23866,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 3,
+      "activeIndex": 3,
+      "checkpointIndex": 0,
+      "editorCheckpointCount": 0,
+      "editorCheckpointImages": [],
+      "linkedArtifactCount": 6
+    },
+    {
+      "documentName": "Modernevicted",
+      "sha256": "7341c6f35f126fc904c7aa7094cf86e8083d327a94f92ddd25fb171b4e006afb",
+      "bytes": 831,
+      "historySha256": "6bfd2ae24916f87b07a384c6c97e513298dfa2ab2c3062322e91401a4b41a573",
+      "historyBytes": 42709,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 20,
+      "activeIndex": 20,
+      "checkpointIndex": null,
+      "editorCheckpointCount": 1,
+      "editorCheckpointImages": [
+        {
+          "beforeSha256": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+          "afterSha256": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f"
+        }
+      ],
+      "linkedArtifactCount": 0
+    },
+    {
+      "documentName": "Frameworkevicted",
+      "sha256": "1ada688c3d0c5c69b0d54e1baada48467b40a6ceef1d70509e321c3babd66729",
+      "bytes": 837,
+      "historySha256": "87984168c1b843d5a3e6ebfe0aec3a5f29ecb0fe4176313aacd7252be7a27950",
+      "historyBytes": 42961,
+      "format": "winforms-designer-history-v1",
+      "historyLength": 20,
+      "activeIndex": 20,
+      "checkpointIndex": null,
+      "editorCheckpointCount": 1,
+      "editorCheckpointImages": [
+        {
+          "beforeSha256": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+          "afterSha256": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f"
+        }
+      ],
+      "linkedArtifactCount": 0
+    }
+  ],
+  "lifecycleCapacityProbe": {
+    "maximumResidentProcesses": 4,
+    "documentOwners": 8,
+    "lifecycleWitnesses": [
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      },
+      {
+        "code": "null",
+        "signal": "SIGTERM",
+        "reason": "budgetRecycle",
+        "intentional": true
+      }
+    ]
+  },
+  "phases": [
+    {
+      "suite": "release23-extension-host",
+      "phase": "setup",
+      "vscodeVersion": "1.84.0",
+      "extensionVersion": "2.3.0",
+      "completedAt": "2026-10-22T13:54:16.907Z",
+      "focusedScenario": null,
+      "expectedScenarioCount": 15,
+      "failed": 0,
+      "scenarios": [
+        {
+          "id": "R23-HOST-setup-four-worker-capacity",
+          "passed": true,
+          "elapsedMs": 28200
+        },
+        {
+          "id": "R23-HOST-setup-modern-native-history-above-20",
+          "passed": true,
+          "elapsedMs": 13183
+        },
+        {
+          "id": "R23-HOST-setup-modern-save-saveAll-autoSave",
+          "passed": true,
+          "elapsedMs": 697
+        },
+        {
+          "id": "R23-HOST-setup-net48-native-history-above-20",
+          "passed": true,
+          "elapsedMs": 10755
+        },
+        {
+          "id": "R23-HOST-setup-net48-save-saveAll-autoSave",
+          "passed": true,
+          "elapsedMs": 596
+        },
+        {
+          "id": "R23-HOST-setup-modern-checkpoint",
+          "passed": true,
+          "elapsedMs": 528
+        },
+        {
+          "id": "R23-HOST-setup-net48-checkpoint",
+          "passed": true,
+          "elapsedMs": 464
+        },
+        {
+          "id": "R23-HOST-setup-modern-linked",
+          "passed": true,
+          "elapsedMs": 5020
+        },
+        {
+          "id": "R23-HOST-setup-net48-linked",
+          "passed": true,
+          "elapsedMs": 4390
+        },
+        {
+          "id": "R23-HOST-setup-modern-branch",
+          "passed": true,
+          "elapsedMs": 3806
+        },
+        {
+          "id": "R23-HOST-setup-net48-branch",
+          "passed": true,
+          "elapsedMs": 2278
+        },
+        {
+          "id": "R23-HOST-setup-modern-localized",
+          "passed": true,
+          "elapsedMs": 4714
+        },
+        {
+          "id": "R23-HOST-setup-net48-localized",
+          "passed": true,
+          "elapsedMs": 2901
+        },
+        {
+          "id": "R23-HOST-setup-modern-evicted",
+          "passed": true,
+          "elapsedMs": 9129
+        },
+        {
+          "id": "R23-HOST-setup-net48-evicted",
+          "passed": true,
+          "elapsedMs": 7785
+        }
+      ],
+      "observations": [
+        {
+          "capacityProbe": {
+            "maximumResidentProcesses": 4,
+            "documentOwners": 8
+          },
+          "historyContract": {
+            "maximumResidentProcesses": 16,
+            "autoDiscoverProjectControls": false
+          }
+        },
+        {
+          "name": "Moderncheckpoint",
+          "liveUndoCount": 21,
+          "liveRedoCount": 21,
+          "serializableLimit": 20,
+          "historyAfterCrossingRetainedBoundary": {
+            "length": 0,
+            "activeIndex": 0,
+            "checkpointIndex": null,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "sourceSha256": "2530a11a20c49cb40bc321c294dcf2a45fcc099beb080647ea9ae9968e5f75b1"
+        },
+        {
+          "name": "Moderncheckpoint",
+          "savedBy": [
+            "Save",
+            "Save All",
+            "auto-save"
+          ],
+          "history": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": null
+          }
+        },
+        {
+          "name": "Frameworkcheckpoint",
+          "liveUndoCount": 21,
+          "liveRedoCount": 21,
+          "serializableLimit": 20,
+          "historyAfterCrossingRetainedBoundary": {
+            "length": 0,
+            "activeIndex": 0,
+            "checkpointIndex": null,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "sourceSha256": "ca9e2f1289e79c1a090f4eae21a668069eade004d861f5ed0da651f4f637dce0"
+        },
+        {
+          "name": "Frameworkcheckpoint",
+          "savedBy": [
+            "Save",
+            "Save All",
+            "auto-save"
+          ],
+          "history": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": null
+          }
+        },
+        {
+          "name": "Moderncheckpoint",
+          "history": {
+            "length": 6,
+            "activeIndex": 6,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "cb6f8a310697456d0c72989a33d1b501d5d1a492de9a50bd287f0e88f92c9e3a",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "36bb21d1ca4c9e5def498ddaec446ebc38a002779b6869beabf8aeb5011e3a18",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "69594ace54ce656468797a664a093f5ca8825440c6f397fcd86b6cdc2f985cdf",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "e010e861e9c926a6aea69351416936c0ea13cdff03a332ccd56ef3063f3d0e3d",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          ],
+          "activeIndex": 3,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Frameworkcheckpoint",
+          "history": {
+            "length": 6,
+            "activeIndex": 6,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "98476ee0520d99f1778d65c6a6969a38b3520750afba941d533c418291b8f059",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "801d364fc405cf188d0e9239725c13a88933005700bc24eaa5bf2453728b35af",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "19473ef3a6239b7967c1633ca29b59118f82d42b57cddcfadf5a52c9e983fc5e",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "f9adf520924face36855c0947a0c758516a1368a8538ebb4f4acc2753e201626",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          ],
+          "activeIndex": 3,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Modernlinked",
+          "history": {
+            "length": 5,
+            "activeIndex": 5,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "063dd08db0ea6cfc527eac73765550afdde38fb30fccd9292dca00312d84c20a",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "adef4dc62b0af1704d6ce44f468904d62e682db71538a4edd7a60d7afeeb6676",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "7ba49ab261e3994884109968e18ccc00142160ee66c5782e840cbaaf72b05ea1",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "2b0de53c850d342a1b0c05f3adb28a1dba4bdb0aae067960fd0eb303434340fc",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "44a889f30dfd57ce39bb16ba08deba20f38b39c02fdc1c8254271e13c6d0acaf",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            },
+            {
+              "designer": "2f6579e77207db083ec0d35f154d56bd6bd335e099ecc120bec1486edae9b22e",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            }
+          ],
+          "activeIndex": 5,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Frameworklinked",
+          "history": {
+            "length": 5,
+            "activeIndex": 5,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "73a45c792e94573e378206922cf32ca6febc8f5254bc7b1dddcb0934b14ae6fe",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "4aeca7646884838baf2c81f1be135df1a4b66a03e9bfd5f5f5916c56169d451e",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "a07177ca5384ce3eb7b31cf5c81c2793718fbdf8f891b484fc0dda86b53e7744",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "7d15a11dd109969ea6f2151a46e42c06a3a1cc7d2695691e4b4bb8843da9adab",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "0b0530aaaf9d23f787aadc267ce5837f3bc31a52788521ec8926e4f9acf91734",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            },
+            {
+              "designer": "4b3f4f3e2399f2ff08fb0efff2972e19ab23108589f86db305623d48330370de",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            }
+          ],
+          "activeIndex": 5,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Modernbranch",
+          "history": {
+            "length": 3,
+            "activeIndex": 2,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 1,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "0957cf376000849f97f682580d12fab69da80a0d65d739c6d50e44de09427a77",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "4d4eba5398ff53d5da87a57428370480ef272c1b586f34572dbc6ef76cd1ed68",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "be452f93c9f70a29f87504da0edcd23154825de6442fb342a7eb0d22918cf9b1",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "e513a9055ebc153b745e8b0336e9281d81b3421b13042cddf6bb72755ad2a386",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          ],
+          "activeIndex": 2,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Frameworkbranch",
+          "history": {
+            "length": 3,
+            "activeIndex": 2,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 1,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "3c09830c75ec8af2fc53a1132cd94f8bfb3a0fa1f98e4aa1c96b8d9b7aec1e9b",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "07f5d807a45950918f4312fb61df5ef0f7af744760014aaae25a45d7f5393bea",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "47d73d46687d9602221c2ddf423dc2d707af572f682e1086f6cc41e9af5a057e",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "982f2ab91b22bc599ee1a37c71c3494e41c08f36d3cefb060f9fa2efd49facd6",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          ],
+          "activeIndex": 2,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Modernlocalized",
+          "history": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": false,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "6d980dd2452e44e1660e2a02a3ed7bad1a1356ef50a704984cfe175345f9c8b0",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "8dfa1853ac390bdb1c868d1d21fc305e2710c5438d792c8769e5ca65407405c0",
+              "culture:Release23Form.fr.resx": "b7895cd4bae1a0abb6c05b1a6b213d50a36991682170bc232bd44cf9dc94291b"
+            },
+            {
+              "designer": "c6a8f1e7c11e9148d9284a89e287a2c7322f494460e9a3f0f61228d93dbce5a2",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "f1a2ab357df999af8e3d998d4e994dfa9bbf86fe52f5e62d74a4999e204ebd5a",
+              "culture:Release23Form.fr.resx": "b7895cd4bae1a0abb6c05b1a6b213d50a36991682170bc232bd44cf9dc94291b"
+            },
+            {
+              "designer": "c6a8f1e7c11e9148d9284a89e287a2c7322f494460e9a3f0f61228d93dbce5a2",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "f1a2ab357df999af8e3d998d4e994dfa9bbf86fe52f5e62d74a4999e204ebd5a",
+              "culture:Release23Form.fr.resx": "dbbf4d111a1f84e63516e8b1648d03688054948294470df845bc3bb9b9cc840e"
+            },
+            {
+              "designer": "6d980dd2452e44e1660e2a02a3ed7bad1a1356ef50a704984cfe175345f9c8b0",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "04796ff4890ba2eebe7a054ee404ca30ef5b47cd3d2b5c2ea65dc4cabacf776a",
+              "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+            }
+          ],
+          "activeIndex": 3,
+          "generatedSourceDirty": false,
+          "generatedSourceMatchesDisk": true,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Frameworklocalized",
+          "history": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": false,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "d8aa859c3c9b8e4c36aae60e07c90c4bab7e2fcaae68341dfd416a5f4cd2f0c3",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "8dfa1853ac390bdb1c868d1d21fc305e2710c5438d792c8769e5ca65407405c0",
+              "culture:Release23Form.fr.resx": "b7895cd4bae1a0abb6c05b1a6b213d50a36991682170bc232bd44cf9dc94291b"
+            },
+            {
+              "designer": "29358745a22a7ba16af7093adf38d770490fc3ab084d1e5263166d234ba7acf0",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "f1a2ab357df999af8e3d998d4e994dfa9bbf86fe52f5e62d74a4999e204ebd5a",
+              "culture:Release23Form.fr.resx": "b7895cd4bae1a0abb6c05b1a6b213d50a36991682170bc232bd44cf9dc94291b"
+            },
+            {
+              "designer": "29358745a22a7ba16af7093adf38d770490fc3ab084d1e5263166d234ba7acf0",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "f1a2ab357df999af8e3d998d4e994dfa9bbf86fe52f5e62d74a4999e204ebd5a",
+              "culture:Release23Form.fr.resx": "dbbf4d111a1f84e63516e8b1648d03688054948294470df845bc3bb9b9cc840e"
+            },
+            {
+              "designer": "d8aa859c3c9b8e4c36aae60e07c90c4bab7e2fcaae68341dfd416a5f4cd2f0c3",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "04796ff4890ba2eebe7a054ee404ca30ef5b47cd3d2b5c2ea65dc4cabacf776a",
+              "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+            }
+          ],
+          "activeIndex": 3,
+          "generatedSourceDirty": false,
+          "generatedSourceMatchesDisk": true,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Modernevicted",
+          "history": {
+            "length": 20,
+            "activeIndex": 20,
+            "checkpointIndex": null,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "c495275af4db83d088fe212defcfd14181ee7b21643c38099565ee4cf3706494",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "0d4abae72e34cac3993e9d75eecca045d6f86e998d28697e04c0eed66b069e0b",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "09936319b47ca55be8e58d4db77fb8278980f527e41b66253005daa6232d60f9",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "9d3274a342082985cc218e1c8a22107d48aafb4a8461b2797b3a594a2c5431c2",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "e1a7460ad0d0a7f08790d46943092cc398a454e28ad98afa1be3ddbacddc6477",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "6e157ccf026e8a624a5a03ca9bfbbe70c35e6a2bf82f03165822ffdeb2529e99",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "a59e80ff0d319f2abecb59bcd8458df27f43fdbc476ac3d4fbf3df029d1a3b1b",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "60b8acf9955b11dc54324e743b73c6cf6f9f2acd8f191779698a871fa910320e",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "ba8be08da3329040e3478b01f018f102651fa76de1333c8815224f510b254a19",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "004e0f26e70a7ffbaf311028836e49c0c58ba18488b54048a827f78d97031cbd",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "f7b42d880aa9904a79d17970aa2a24ab50b67a592cebf757ae5728382d77a448",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "cc77fbd8ce69ca66e9eded9f38c3cc0b59c4106083e5e8f331633a3da81d560f",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "ca24ca31b6cd0d401136f5d0bed009459c6d76da5b6c04978bd6914e6fc64b0a",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "94fb10a0eee533074e56d848b5c9ed98b87d671ad4500fb422ac4bc9dec56d68",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "88ae8fb4c6d51511f6ffaa18ac2abb5052fdcb545822d1d76746ebb5a6fd6684",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "49a0f99e4d16eed73e5ea895258245ed3bdeb622f31f857d023f63356969e9ba",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "bf3ecf2c3e80d6fec718137c7b6066df4be265489dc9c70c73fbb6f00b9e6b2f",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "85e43a90fabbffd535ae888f760d642fe9bfc5df7ba6938589b74f6f34d05d25",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "9157d5737a99bd41e21c9149b38c4792f18d71809afe4e50af4b1dad84b4cca2",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "6af70a36362daa0c61bcb47ab2a8ca54dc72bcc80518b8f509d9fe1b98eba6f4",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "7341c6f35f126fc904c7aa7094cf86e8083d327a94f92ddd25fb171b4e006afb",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          ],
+          "activeIndex": 20,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        },
+        {
+          "name": "Frameworkevicted",
+          "history": {
+            "length": 20,
+            "activeIndex": 20,
+            "checkpointIndex": null,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": null
+          },
+          "snapshots": [
+            {
+              "designer": "9dedebc073c6b1ae28939c5443e819f2511e16cef9f6dbf1f934686c7fbdcfab",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "5ccba6e9efb7e66930bfa8a8f55d86268f0c7d7b32c745b72c9bb4a90fbc4fb7",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "c87862a05b16b5f92abe9431581dc4518e95cdc97f4a62c48b082ec6fb7b2e99",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "4cbc4afa78e513b7813d1825e4e699fa1b02397edbba8d82e455e2926a199b1f",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "9af9f203c86f6bb21cc75abfcc65b269ba9ea9d1a3861804332beccb0232021d",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "7c07ddefe8f915f7712c8fe35c8642326e06909bfbbf5053369d62ecf46dfd13",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "3d70f4da329c80f2f8e9742d3dc59e8c3bccd20e61b9407ccd8d10c4ce84dbf3",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "4dd29bbcb088c65e4e28ce11d59dc7f06081222280864683249b2a1c5a918f74",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "29011fc1803c34b52119ec5854cc91ec3233d098cbdf599a73afda0e4cdccb0c",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "22ea085727f812fa8fe707b19897656b6b2c399e26c70a7b811297b3c285aa3b",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "0c813d43b9c22e835a964d1f51b95cdfe052a7733b00827f580392d5bd381e95",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "feb76d1e8c416faf447fdc0b278abfe22a7f92538c995e28ad5a6dfcf4cff011",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "62dadd310015eab24ede272494cc5b8db9d5461a47c2dbfb26de29cc92f27aeb",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "04075268f38d2187413fb3b096d509f21f1540c533c50a1b6df6abf98f68c8a3",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "ea0e023205cd0e960c28e6a28377a4a0fde4c9f27aeb03b29c5e539fcb6e98ad",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "bd4c385087e018bef095bec300b962cad8b7ab7d714640e2cd5284fab1bfe6c4",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "06e60e1ff6b0479683f02aaa74f29d3b2d315f9af637d10c8dc9ab4ab844f643",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "d0d355222580e64306877a72119473762d754119f650e0c6829d92e019578b09",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "0013462d7ca74a075db12602654ceec3ddc71ca7145b850f00b62d5b68980254",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "e02e82a636bbc13d91cf6160fab86734a85aa1285b7c0a9f09636c2c1117999d",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            {
+              "designer": "1ada688c3d0c5c69b0d54e1baada48467b40a6ceef1d70509e321c3babd66729",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          ],
+          "activeIndex": 20,
+          "generatedSourceDirty": true,
+          "generatedSourceMatchesDisk": false,
+          "nativeCustomModelDirty": true
+        }
+      ],
+      "configuration": {
+        "maximumResidentProcesses": 16,
+        "autoDiscoverProjectControls": false
+      },
+      "publicApiBoundary": "Source/disk-only native history restores the applied suffix after a matching saved checkpoint. Editor artifacts use the public recovered-action commands because native WorkspaceEdit history shares the source URI. Existing native redo branches remain validated data; ordinary text history and a second CustomEditor view have separate boundaries."
+    },
+    {
+      "suite": "release23-extension-host",
+      "phase": "restore",
+      "vscodeVersion": "1.84.0",
+      "extensionVersion": "2.3.0",
+      "completedAt": "2026-10-22T13:55:31.980Z",
+      "focusedScenario": null,
+      "expectedScenarioCount": 10,
+      "failed": 0,
+      "scenarios": [
+        {
+          "id": "R23-HOST-restore-modern-checkpoint",
+          "passed": true,
+          "elapsedMs": 5719
+        },
+        {
+          "id": "R23-HOST-restore-net48-checkpoint",
+          "passed": true,
+          "elapsedMs": 4335
+        },
+        {
+          "id": "R23-HOST-restore-modern-linked",
+          "passed": true,
+          "elapsedMs": 6967
+        },
+        {
+          "id": "R23-HOST-restore-net48-linked",
+          "passed": true,
+          "elapsedMs": 7231
+        },
+        {
+          "id": "R23-HOST-restore-modern-branch",
+          "passed": true,
+          "elapsedMs": 5402
+        },
+        {
+          "id": "R23-HOST-restore-net48-branch",
+          "passed": true,
+          "elapsedMs": 4423
+        },
+        {
+          "id": "R23-HOST-restore-modern-localized",
+          "passed": true,
+          "elapsedMs": 7850
+        },
+        {
+          "id": "R23-HOST-restore-net48-localized",
+          "passed": true,
+          "elapsedMs": 6689
+        },
+        {
+          "id": "R23-HOST-restore-modern-evicted",
+          "passed": true,
+          "elapsedMs": 10006
+        },
+        {
+          "id": "R23-HOST-restore-net48-evicted",
+          "passed": true,
+          "elapsedMs": 8565
+        }
+      ],
+      "observations": [
+        {
+          "name": "Moderncheckpoint",
+          "restoredHistory": {
+            "length": 6,
+            "activeIndex": 6,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "finalHistory": {
+            "length": 6,
+            "activeIndex": 6,
+            "checkpointIndex": 6,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "historyIngress": "native-undo-redo",
+          "verifiedUndoCount": 3,
+          "verifiedRedoCount": 3,
+          "saved": {
+            "designer": "e010e861e9c926a6aea69351416936c0ea13cdff03a332ccd56ef3063f3d0e3d",
+            "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+            "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+          }
+        },
+        {
+          "name": "Frameworkcheckpoint",
+          "restoredHistory": {
+            "length": 6,
+            "activeIndex": 6,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "finalHistory": {
+            "length": 6,
+            "activeIndex": 6,
+            "checkpointIndex": 6,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "historyIngress": "native-undo-redo",
+          "verifiedUndoCount": 3,
+          "verifiedRedoCount": 3,
+          "saved": {
+            "designer": "f9adf520924face36855c0947a0c758516a1368a8538ebb4f4acc2753e201626",
+            "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+            "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+          }
+        },
+        {
+          "name": "Modernlinked",
+          "nativeSourceHistoryBoundary": {
+            "nativeUndoChangedOnlyOrdinarySourceBuffer": true,
+            "aggregateProviderSaveRefused": true,
+            "publicRecoveredUndoRefused": true,
+            "generatedResourceDiskAndCursorPreserved": true,
+            "editorCheckpointRetained": true,
+            "nativeRedoRestoredExactSourceBuffer": true,
+            "current": {
+              "designer": "2f6579e77207db083ec0d35f154d56bd6bd335e099ecc120bec1486edae9b22e",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            },
+            "independent": {
+              "designer": "2f6579e77207db083ec0d35f154d56bd6bd335e099ecc120bec1486edae9b22e",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            }
+          }
+        },
+        {
+          "name": "Modernlinked",
+          "restoredHistory": {
+            "length": 5,
+            "activeIndex": 5,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 5,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "finalHistory": {
+            "length": 5,
+            "activeIndex": 5,
+            "checkpointIndex": 5,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 5,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "historyIngress": "public-recovered-action-commands",
+          "shortcutHandlers": {
+            "undo": "winformsDesigner.undoDesignerHistory",
+            "redo": "winformsDesigner.redoDesignerHistory",
+            "scope": "Registered public handlers invoked; operating-system keyboard delivery was not synthesized."
+          },
+          "verifiedUndoCount": 5,
+          "verifiedRedoCount": 5,
+          "saved": {
+            "designer": "2f6579e77207db083ec0d35f154d56bd6bd335e099ecc120bec1486edae9b22e",
+            "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+            "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+          }
+        },
+        {
+          "name": "Modernlinked",
+          "cleanCompanionReload": {
+            "publicCommand": "winformsDesigner.reloadDesignerFromDisk",
+            "dirtyCompanionReloadRefused": true,
+            "dirtyCompanionBufferDiskHistoryAndGeneratedArtifactsPreserved": true,
+            "savedCommentConflictDetected": true,
+            "generatedAndCustomModelStayedClean": true,
+            "conflictingPropertyEditRefused": true,
+            "retainedHistoryUnchangedOnRefusal": true,
+            "savedCommentBufferAndDiskPreserved": true,
+            "generatedAndResourcesPreserved": true,
+            "companionConflictCleared": true,
+            "ordinaryPropertyEditAndSupportedUndo": true,
+            "undoCommand": "winformsDesigner.undoDesignerHistory",
+            "reloadedHistory": {
+              "length": 0,
+              "activeIndex": 0,
+              "checkpointIndex": 0,
+              "retainedRedoCount": 0,
+              "recoveredUndoCount": 0,
+              "recoveryMode": "native",
+              "logicalUndoCount": 0,
+              "logicalRedoCount": 0,
+              "editorCheckpointCount": 0,
+              "companionConflict": false,
+              "logicalDirty": false,
+              "unsavedBufferChanges": false,
+              "limitation": null
+            },
+            "finalHistory": {
+              "length": 1,
+              "activeIndex": 0,
+              "checkpointIndex": 0,
+              "retainedRedoCount": 1,
+              "recoveredUndoCount": 0,
+              "recoveryMode": "native",
+              "logicalUndoCount": 0,
+              "logicalRedoCount": 0,
+              "editorCheckpointCount": 0,
+              "companionConflict": false,
+              "logicalDirty": false,
+              "unsavedBufferChanges": false,
+              "limitation": null
+            },
+            "saved": {
+              "designer": "2f6579e77207db083ec0d35f154d56bd6bd335e099ecc120bec1486edae9b22e",
+              "source": "2da4298fd5eec3ee86cc49c5c76228303cf7842546f4882ad6e1a9ab780a4be5",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            }
+          }
+        },
+        {
+          "name": "Frameworklinked",
+          "nativeSourceHistoryBoundary": {
+            "nativeUndoChangedOnlyOrdinarySourceBuffer": true,
+            "aggregateProviderSaveRefused": true,
+            "publicRecoveredUndoRefused": true,
+            "generatedResourceDiskAndCursorPreserved": true,
+            "editorCheckpointRetained": true,
+            "nativeRedoRestoredExactSourceBuffer": true,
+            "current": {
+              "designer": "4b3f4f3e2399f2ff08fb0efff2972e19ab23108589f86db305623d48330370de",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            },
+            "independent": {
+              "designer": "4b3f4f3e2399f2ff08fb0efff2972e19ab23108589f86db305623d48330370de",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            }
+          }
+        },
+        {
+          "name": "Frameworklinked",
+          "restoredHistory": {
+            "length": 5,
+            "activeIndex": 5,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 5,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "finalHistory": {
+            "length": 5,
+            "activeIndex": 5,
+            "checkpointIndex": 5,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 5,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "historyIngress": "public-recovered-action-commands",
+          "shortcutHandlers": {
+            "undo": "winformsDesigner.undoDesignerHistory",
+            "redo": "winformsDesigner.redoDesignerHistory",
+            "scope": "Registered public handlers invoked; operating-system keyboard delivery was not synthesized."
+          },
+          "verifiedUndoCount": 5,
+          "verifiedRedoCount": 5,
+          "saved": {
+            "designer": "4b3f4f3e2399f2ff08fb0efff2972e19ab23108589f86db305623d48330370de",
+            "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+            "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+          }
+        },
+        {
+          "name": "Frameworklinked",
+          "cleanCompanionReload": {
+            "publicCommand": "winformsDesigner.reloadDesignerFromDisk",
+            "dirtyCompanionReloadRefused": true,
+            "dirtyCompanionBufferDiskHistoryAndGeneratedArtifactsPreserved": true,
+            "savedCommentConflictDetected": true,
+            "generatedAndCustomModelStayedClean": true,
+            "conflictingPropertyEditRefused": true,
+            "retainedHistoryUnchangedOnRefusal": true,
+            "savedCommentBufferAndDiskPreserved": true,
+            "generatedAndResourcesPreserved": true,
+            "companionConflictCleared": true,
+            "ordinaryPropertyEditAndSupportedUndo": true,
+            "undoCommand": "winformsDesigner.undoDesignerHistory",
+            "reloadedHistory": {
+              "length": 0,
+              "activeIndex": 0,
+              "checkpointIndex": 0,
+              "retainedRedoCount": 0,
+              "recoveredUndoCount": 0,
+              "recoveryMode": "native",
+              "logicalUndoCount": 0,
+              "logicalRedoCount": 0,
+              "editorCheckpointCount": 0,
+              "companionConflict": false,
+              "logicalDirty": false,
+              "unsavedBufferChanges": false,
+              "limitation": null
+            },
+            "finalHistory": {
+              "length": 1,
+              "activeIndex": 0,
+              "checkpointIndex": 0,
+              "retainedRedoCount": 1,
+              "recoveredUndoCount": 0,
+              "recoveryMode": "native",
+              "logicalUndoCount": 0,
+              "logicalRedoCount": 0,
+              "editorCheckpointCount": 0,
+              "companionConflict": false,
+              "logicalDirty": false,
+              "unsavedBufferChanges": false,
+              "limitation": null
+            },
+            "saved": {
+              "designer": "4b3f4f3e2399f2ff08fb0efff2972e19ab23108589f86db305623d48330370de",
+              "source": "2da4298fd5eec3ee86cc49c5c76228303cf7842546f4882ad6e1a9ab780a4be5",
+              "resource": "69b4689c6dd334d4f38922589d5e2018cb03a614ccc876079d4c567a9e8076bc"
+            }
+          }
+        },
+        {
+          "name": "Modernbranch",
+          "restoredHistory": {
+            "length": 3,
+            "activeIndex": 2,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 1,
+            "recoveredUndoCount": 2,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "finalHistory": {
+            "length": 3,
+            "activeIndex": 2,
+            "checkpointIndex": 2,
+            "retainedRedoCount": 1,
+            "recoveredUndoCount": 2,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "historyIngress": "native-undo-redo",
+          "verifiedUndoCount": 2,
+          "verifiedRedoCount": 2,
+          "saved": {
+            "designer": "be452f93c9f70a29f87504da0edcd23154825de6442fb342a7eb0d22918cf9b1",
+            "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+            "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+          }
+        },
+        {
+          "name": "Frameworkbranch",
+          "restoredHistory": {
+            "length": 3,
+            "activeIndex": 2,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 1,
+            "recoveredUndoCount": 2,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "finalHistory": {
+            "length": 3,
+            "activeIndex": 2,
+            "checkpointIndex": 2,
+            "retainedRedoCount": 1,
+            "recoveredUndoCount": 2,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "historyIngress": "native-undo-redo",
+          "verifiedUndoCount": 2,
+          "verifiedRedoCount": 2,
+          "saved": {
+            "designer": "47d73d46687d9602221c2ddf423dc2d707af572f682e1086f6cc41e9af5a057e",
+            "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+            "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+          }
+        },
+        {
+          "name": "Modernlocalized",
+          "restoredHistory": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": false,
+            "limitation": null
+          },
+          "finalHistory": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "historyIngress": "native-undo-redo",
+          "verifiedUndoCount": 3,
+          "verifiedRedoCount": 3,
+          "saved": {
+            "designer": "6d980dd2452e44e1660e2a02a3ed7bad1a1356ef50a704984cfe175345f9c8b0",
+            "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+            "resource": "04796ff4890ba2eebe7a054ee404ca30ef5b47cd3d2b5c2ea65dc4cabacf776a",
+            "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+          }
+        },
+        {
+          "name": "Modernlocalized",
+          "resourceOnlyExternalWatcher": {
+            "sourceStayedCleanWithPendingResourceHistory": true,
+            "actualWatcherNoticeObservedTwice": true,
+            "generatedBufferHistoryAndResourcesPreservedBeforeReload": true,
+            "externalDiskBytesPreserved": true,
+            "publicReloadAdoptedExternalSourceAndResetHistory": true,
+            "noticeLatchResetAfterReload": true,
+            "laterResourceEditAndNativeUndo": true,
+            "publicCommand": "winformsDesigner.reloadDesignerFromDisk",
+            "notices": [
+              {
+                "cycle": 1,
+                "retainedHistory": {
+                  "length": 4,
+                  "activeIndex": 4,
+                  "checkpointIndex": 3,
+                  "retainedRedoCount": 0,
+                  "recoveredUndoCount": 3,
+                  "recoveryMode": "native",
+                  "logicalUndoCount": 0,
+                  "logicalRedoCount": 0,
+                  "editorCheckpointCount": 0,
+                  "companionConflict": false,
+                  "logicalDirty": true,
+                  "unsavedBufferChanges": false,
+                  "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+                },
+                "adopted": {
+                  "designer": "2c9846ba170259f3d1a56312518a03682b30549194779353101b9225c00d11f0",
+                  "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+                  "resource": "e454c088cc47f81cd6f42ffca1c534937f8e0e5f9d16f09dd80d232f1a1411d8",
+                  "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+                }
+              },
+              {
+                "cycle": 2,
+                "retainedHistory": {
+                  "length": 1,
+                  "activeIndex": 1,
+                  "checkpointIndex": 0,
+                  "retainedRedoCount": 0,
+                  "recoveredUndoCount": 0,
+                  "recoveryMode": "native",
+                  "logicalUndoCount": 0,
+                  "logicalRedoCount": 0,
+                  "editorCheckpointCount": 0,
+                  "companionConflict": false,
+                  "logicalDirty": true,
+                  "unsavedBufferChanges": false,
+                  "limitation": null
+                },
+                "adopted": {
+                  "designer": "758c60175555530f423ea135ee5d9d341d6722ba56ec5ebec45a9f5f50292b6b",
+                  "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+                  "resource": "d7b79bb9bedf33d9277a84045d308ece6a99c33a191a05a73043ab6f0f9be664",
+                  "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+                }
+              }
+            ],
+            "final": {
+              "designer": "758c60175555530f423ea135ee5d9d341d6722ba56ec5ebec45a9f5f50292b6b",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "d7b79bb9bedf33d9277a84045d308ece6a99c33a191a05a73043ab6f0f9be664",
+              "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+            }
+          }
+        },
+        {
+          "name": "Frameworklocalized",
+          "restoredHistory": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 0,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": false,
+            "limitation": null
+          },
+          "finalHistory": {
+            "length": 3,
+            "activeIndex": 3,
+            "checkpointIndex": 3,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 3,
+            "recoveryMode": "native",
+            "logicalUndoCount": 0,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 0,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+          },
+          "historyIngress": "native-undo-redo",
+          "verifiedUndoCount": 3,
+          "verifiedRedoCount": 3,
+          "saved": {
+            "designer": "d8aa859c3c9b8e4c36aae60e07c90c4bab7e2fcaae68341dfd416a5f4cd2f0c3",
+            "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+            "resource": "04796ff4890ba2eebe7a054ee404ca30ef5b47cd3d2b5c2ea65dc4cabacf776a",
+            "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+          }
+        },
+        {
+          "name": "Frameworklocalized",
+          "resourceOnlyExternalWatcher": {
+            "sourceStayedCleanWithPendingResourceHistory": true,
+            "actualWatcherNoticeObservedTwice": true,
+            "generatedBufferHistoryAndResourcesPreservedBeforeReload": true,
+            "externalDiskBytesPreserved": true,
+            "publicReloadAdoptedExternalSourceAndResetHistory": true,
+            "noticeLatchResetAfterReload": true,
+            "laterResourceEditAndNativeUndo": true,
+            "publicCommand": "winformsDesigner.reloadDesignerFromDisk",
+            "notices": [
+              {
+                "cycle": 1,
+                "retainedHistory": {
+                  "length": 4,
+                  "activeIndex": 4,
+                  "checkpointIndex": 3,
+                  "retainedRedoCount": 0,
+                  "recoveredUndoCount": 3,
+                  "recoveryMode": "native",
+                  "logicalUndoCount": 0,
+                  "logicalRedoCount": 0,
+                  "editorCheckpointCount": 0,
+                  "companionConflict": false,
+                  "logicalDirty": true,
+                  "unsavedBufferChanges": false,
+                  "limitation": "Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data."
+                },
+                "adopted": {
+                  "designer": "17b99f64f58f5be3b7b1b3a43cf40a08d24950b78806f89364c348c34ea591ed",
+                  "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+                  "resource": "e454c088cc47f81cd6f42ffca1c534937f8e0e5f9d16f09dd80d232f1a1411d8",
+                  "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+                }
+              },
+              {
+                "cycle": 2,
+                "retainedHistory": {
+                  "length": 1,
+                  "activeIndex": 1,
+                  "checkpointIndex": 0,
+                  "retainedRedoCount": 0,
+                  "recoveredUndoCount": 0,
+                  "recoveryMode": "native",
+                  "logicalUndoCount": 0,
+                  "logicalRedoCount": 0,
+                  "editorCheckpointCount": 0,
+                  "companionConflict": false,
+                  "logicalDirty": true,
+                  "unsavedBufferChanges": false,
+                  "limitation": null
+                },
+                "adopted": {
+                  "designer": "b3a308337b81b7f57293140b581eed7884c7f0111af3ae5bf694b3b91867edb0",
+                  "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+                  "resource": "d7b79bb9bedf33d9277a84045d308ece6a99c33a191a05a73043ab6f0f9be664",
+                  "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+                }
+              }
+            ],
+            "final": {
+              "designer": "b3a308337b81b7f57293140b581eed7884c7f0111af3ae5bf694b3b91867edb0",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "d7b79bb9bedf33d9277a84045d308ece6a99c33a191a05a73043ab6f0f9be664",
+              "culture:Release23Form.fr.resx": "a1920faf902dd80d144ddb866866b9d4274d3cd92402cbb3ac0ddbf01702011e"
+            }
+          }
+        },
+        {
+          "name": "Modernevicted",
+          "nativeSourceHistoryBoundary": {
+            "nativeUndoChangedOnlyOrdinarySourceBuffer": true,
+            "aggregateProviderSaveRefused": true,
+            "publicRecoveredUndoRefused": true,
+            "generatedResourceDiskAndCursorPreserved": true,
+            "editorCheckpointRetained": true,
+            "nativeRedoRestoredExactSourceBuffer": true,
+            "current": {
+              "designer": "7341c6f35f126fc904c7aa7094cf86e8083d327a94f92ddd25fb171b4e006afb",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            "independent": {
+              "designer": "7341c6f35f126fc904c7aa7094cf86e8083d327a94f92ddd25fb171b4e006afb",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          }
+        },
+        {
+          "name": "Modernevicted",
+          "restoredHistory": {
+            "length": 20,
+            "activeIndex": 20,
+            "checkpointIndex": null,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 20,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "finalHistory": {
+            "length": 20,
+            "activeIndex": 20,
+            "checkpointIndex": 20,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 20,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "historyIngress": "public-recovered-action-commands",
+          "shortcutHandlers": {
+            "undo": "winformsDesigner.undoDesignerHistory",
+            "redo": "winformsDesigner.redoDesignerHistory",
+            "scope": "Registered public handlers invoked; operating-system keyboard delivery was not synthesized."
+          },
+          "verifiedUndoCount": 20,
+          "verifiedRedoCount": 20,
+          "saved": {
+            "designer": "7341c6f35f126fc904c7aa7094cf86e8083d327a94f92ddd25fb171b4e006afb",
+            "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+            "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+          }
+        },
+        {
+          "name": "Frameworkevicted",
+          "nativeSourceHistoryBoundary": {
+            "nativeUndoChangedOnlyOrdinarySourceBuffer": true,
+            "aggregateProviderSaveRefused": true,
+            "publicRecoveredUndoRefused": true,
+            "generatedResourceDiskAndCursorPreserved": true,
+            "editorCheckpointRetained": true,
+            "nativeRedoRestoredExactSourceBuffer": true,
+            "current": {
+              "designer": "1ada688c3d0c5c69b0d54e1baada48467b40a6ceef1d70509e321c3babd66729",
+              "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            },
+            "independent": {
+              "designer": "1ada688c3d0c5c69b0d54e1baada48467b40a6ceef1d70509e321c3babd66729",
+              "source": "bc09099fcd8df22df4f6be8c5cca233354e1fc4abb5608a0cfef299a9d106482",
+              "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+            }
+          }
+        },
+        {
+          "name": "Frameworkevicted",
+          "restoredHistory": {
+            "length": 20,
+            "activeIndex": 20,
+            "checkpointIndex": null,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 20,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": true,
+            "unsavedBufferChanges": true,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "finalHistory": {
+            "length": 20,
+            "activeIndex": 20,
+            "checkpointIndex": 20,
+            "retainedRedoCount": 0,
+            "recoveredUndoCount": 0,
+            "recoveryMode": "logical",
+            "logicalUndoCount": 20,
+            "logicalRedoCount": 0,
+            "editorCheckpointCount": 1,
+            "companionConflict": false,
+            "logicalDirty": false,
+            "unsavedBufferChanges": false,
+            "limitation": "Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate."
+          },
+          "historyIngress": "public-recovered-action-commands",
+          "shortcutHandlers": {
+            "undo": "winformsDesigner.undoDesignerHistory",
+            "redo": "winformsDesigner.redoDesignerHistory",
+            "scope": "Registered public handlers invoked; operating-system keyboard delivery was not synthesized."
+          },
+          "verifiedUndoCount": 20,
+          "verifiedRedoCount": 20,
+          "saved": {
+            "designer": "1ada688c3d0c5c69b0d54e1baada48467b40a6ceef1d70509e321c3babd66729",
+            "source": "34c29b5a6bda5c09a6f9c1b063bac9227f6b07fb5c1266ef0cc4e1eedd1b7e0f",
+            "resource": "cc4b97238ce5d90e7178447ff625c794efb30c76c5c59e1564f1c8da916b1988"
+          }
+        }
+      ],
+      "configuration": {
+        "maximumResidentProcesses": 16,
+        "autoDiscoverProjectControls": false
+      },
+      "publicApiBoundary": "Source/disk-only native history restores the applied suffix after a matching saved checkpoint. Editor artifacts use the public recovered-action commands because native WorkspaceEdit history shares the source URI. Existing native redo branches remain validated data; ordinary text history and a second CustomEditor view have separate boundaries."
+    }
+  ]
+}

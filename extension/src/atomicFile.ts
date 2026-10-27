@@ -80,6 +80,7 @@ export async function durableDeleteLocalFile(target: string): Promise<void> {
 export async function atomicWriteLocalFile(target: string, bytes: Uint8Array): Promise<void> {
   const tmp = stagingPath(target);
   let staged: fs.promises.FileHandle | undefined;
+  let published = false;
   try {
     staged = await fs.promises.open(tmp, 'wx');
     await staged.writeFile(bytes);
@@ -89,12 +90,43 @@ export async function atomicWriteLocalFile(target: string, bytes: Uint8Array): P
     await staged.close();
     staged = undefined;
     await replaceWithRetry(tmp, target);
+    published = true;
     await syncDirectory(path.dirname(target));
   } catch (error) {
+    if (error && typeof error === 'object') Object.assign(error, {
+      transactionWriteNotApplied: !published, transactionWriteLanded: published,
+    });
     // Clean up a partially staged temp after EITHER a failed write or a failed replace, so an interrupted save
     // does not leak a `.wfd-…tmp` sibling next to the form.
     try { await staged?.close(); } catch { /* best effort */ }
     try { await fs.promises.unlink(tmp); } catch { /* best effort */ }
     throw error;
+  }
+}
+
+/** Publish a fully flushed new file without replacing an existing name, even if another writer creates it after
+ * the picker closes. The staging file and target share a directory/volume; link() is an atomic create-if-absent. */
+export async function atomicCreateLocalFile(target: string, bytes: Uint8Array): Promise<void> {
+  const tmp = stagingPath(target);
+  let staged: fs.promises.FileHandle | undefined;
+  let published = false;
+  try {
+    staged = await fs.promises.open(tmp, 'wx');
+    await staged.writeFile(bytes);
+    await staged.sync();
+    await staged.close(); staged = undefined;
+    await fs.promises.link(tmp, target);
+    published = true;
+    await syncDirectory(path.dirname(target));
+  } catch (error) {
+    // In particular EEXIST from link() proves this attempt never owned the destination. The runner must not
+    // compensate an independently created file merely because its bytes happen to equal the planned image.
+    if (error && typeof error === 'object') Object.assign(error, {
+      transactionWriteNotApplied: !published, transactionWriteLanded: published,
+    });
+    throw error;
+  } finally {
+    try { await staged?.close(); } catch { /* the original error remains authoritative */ }
+    try { await fs.promises.unlink(tmp); } catch { /* the published target is never removed */ }
   }
 }

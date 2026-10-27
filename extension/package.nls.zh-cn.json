@@ -1,4 +1,11 @@
 {
+  "command.reloadDesignerFromDisk.title": "WinForms: 从磁盘重新加载设计器",
+  "command.undoDesignerHistory.title": "WinForms: 撤销设计器操作",
+  "command.redoDesignerHistory.title": "WinForms: 重做设计器操作",
+  "command.undoRecoveredAction.title": "WinForms: 撤销恢复的操作",
+  "command.redoRecoveredAction.title": "WinForms: 重做恢复的操作",
+  "command.showRecoveryTimeline.title": "WinForms: 显示恢复时间线",
+  "command.ownerContext.title": "WinForms: 选择项目上下文…",
   "description": "在 VS Code 中实时可视化并编辑 WinForms .Designer.cs 窗体 — 提供 Visual Studio 风格的设计器界面、属性网格、工具箱和事件关联，由 .NET 10 渲染引擎驱动。",
   "editor.displayName": "WinForms Designer",
   "viewsContainers.title": "WinForms Designer",
@@ -42,5 +49,12 @@
   "command.rebuildToolboxCache.title": "WinForms: 重新生成工具箱缓存",
   "command.refreshToolbox.title": "WinForms: 刷新工具箱",
   "command.requestToolboxItems.title": "WinForms: 选择工具箱项",
-  "config.workers.maximumResidentProcesses.description": "不同项目可同时驻留的预览工作引擎数量上限（1–16，默认 4）。每个 .NET Framework 工作引擎包含一个启动进程和一个隔离渲染进程。不会为了打开另一个项目而卸载正在处理请求的引擎；请在当前请求完成后重试，或关闭一个设计器。"
+  "config.workers.maximumResidentProcesses.description": "不同项目可同时驻留的预览工作引擎数量上限（1–16，默认 4）。每个 .NET Framework 工作引擎包含一个启动进程和一个隔离渲染进程。不会为了打开另一个项目而卸载正在处理请求的引擎；请在当前请求完成后重试，或关闭一个设计器。",
+  "command.inspectAdapterPackage": "WinForms: 检查适配器包…",
+  "command.enableAdapterDevelopment": "WinForms: 启用本地适配器开发…",
+  "command.disableAdapter": "WinForms: 禁用适配器…",
+  "command.invokeAdapterAction": "WinForms: 运行适配器操作…",
+  "command.editAdapterProperty": "WinForms: 使用适配器编辑属性…",
+  "command.inspectHostedServices": "WinForms: 检查托管设计服务",
+  "command.inspectDocument": "WinForms: 检查设计器文档"
 }

@@ -32,6 +32,19 @@ describe('designer reason catalogue', () => {
     expect(engineInstallationDiagnosticCode(null)).toBe('ENGINE_UNAVAILABLE');
   });
 
+  test('ambiguous and stale project contexts offer an explicit choice instead of automatic fallback', () => {
+    for (const code of ['AMBIGUOUS_OWNER', 'STALE_PROJECT_CONTEXT']) {
+      expect(createDesignerDiagnostic(code)).toMatchObject({
+        code, severity: 'error', actions: ['chooseProjectContext', 'viewCode'],
+      });
+    }
+  });
+
+  test('discloses a retained assembly override separately from project ownership', () => {
+    expect(createDesignerDiagnostic('PROJECT_CONTEXT_ASSEMBLY_OVERRIDE')).toMatchObject({
+      severity: 'info', actions: ['chooseAssembly'],
+    });
+  });
   test('distinguishes missing type, failed initialization and unsupported source without copying exception detail', () => {
     const raw = [
       'this.widget1 = new Acme.Widget(); [TypeLoadException: unresolved type Acme.Widget]',
@@ -71,7 +84,7 @@ describe('designer reason catalogue', () => {
   });
 
   test('only permits the documented recovery action identifiers and refuses path/statement context', () => {
-    const allowed = new Set(['retry', 'rebuild', 'chooseAssembly', 'viewCode', 'clearCache', 'restart', 'reinstall']);
+    const allowed = new Set(['retry', 'rebuild', 'chooseAssembly', 'chooseProjectContext', 'viewCode', 'clearCache', 'restart', 'reinstall']);
     for (const reason of Object.values(DESIGNER_DIAGNOSTIC_REASONS)) {
       expect(reason.actions.every((action) => allowed.has(action))).toBe(true);
     }

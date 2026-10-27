@@ -1,0 +1,359 @@
+{
+  "schemaVersion": 1,
+  "version": "2.3.0",
+  "recordedAt": "2026-10-23T06:23:31.254Z",
+  "status": "BLOCKED",
+  "releaseReady": false,
+  "acceptanceComplete": false,
+  "published": false,
+  "basedOnCommit": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+  "artifactBinding": {
+    "x64": null,
+    "arm64": null,
+    "status": "NOT_BUILT_OR_FROZEN_FOR_COMBINED_RELEASE"
+  },
+  "reason": "The net48 test project restores StreamJsonRpc 2.25.29 -> MessagePack 2.5.302; NuGet audit refuses it with NU1902. Dependency changes are prohibited for this closeout. No audit/gate bypass applied.",
+  "advisory": {
+    "id": "GHSA-qhrr-8q5h-9q3h",
+    "url": "https://github.com/advisories/GHSA-qhrr-8q5h-9q3h",
+    "affectedRestoredVersion": "2.5.302",
+    "patchedVersion": "2.5.303",
+    "verifiedOn": "2026-10-23"
+  },
+  "attempt": {
+    "runId": "combined23-1ea43690-3575-48f2-ad16-0f342203fc55",
+    "startedAt": "2026-10-23T06:18:45.629Z",
+    "endedAt": "2026-10-23T06:20:11.435Z",
+    "expectedExecutableSteps": 45,
+    "executed": 4,
+    "passed": 3,
+    "failed": 1,
+    "notExecuted": 41,
+    "inputsUnchangedDuringAttempt": true,
+    "sourceCount": 667,
+    "workflowSha256": "e6a2e7bcc60f896fc6bc2c53cb7f6267d8d1d9b05329480544f1a32ec996ff11",
+    "stepResults": [
+      {
+        "name": "Build engine (Release)",
+        "result": "PASS",
+        "exitCode": 0,
+        "startedAt": "2026-10-23T06:18:45.698Z",
+        "endedAt": "2026-10-23T06:19:05.874Z"
+      },
+      {
+        "name": "Build .NET Framework engine (Release, x64)",
+        "result": "PASS",
+        "exitCode": 0,
+        "startedAt": "2026-10-23T06:19:06.127Z",
+        "endedAt": "2026-10-23T06:19:12.447Z"
+      },
+      {
+        "name": "Unit tests (engine)",
+        "result": "PASS",
+        "exitCode": 0,
+        "startedAt": "2026-10-23T06:19:12.687Z",
+        "endedAt": "2026-10-23T06:20:07.086Z"
+      },
+      {
+        "name": "Unit tests (engine, net48)",
+        "result": "FAIL",
+        "exitCode": 1,
+        "startedAt": "2026-10-23T06:20:07.284Z",
+        "endedAt": "2026-10-23T06:20:11.246Z"
+      },
+      {
+        "name": "Compare product renders with archived Visual Studio references",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "M6 coverage gate (engine samples)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Build sample fixtures",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Install extension dependencies",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Audit extension dependencies",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Adapter SDK independent contract tests",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Adapter SDK public type contract",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Build independent Adapter SDK samples",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Pack independent Adapter SDK artifact",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Independent Designer SDK ABI probe",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Validate v2 scenario catalog and archived traces",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Validate generated v2 protocol contract",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release metadata preflight",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "VSIX packaging isolation tests",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Typecheck",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Unit tests (extension)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Build xUnit and Vitest scenario evidence",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Build extension",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Performance baseline",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Syntax-check webview scripts",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Mojibake scan",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Localization parity",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "End-to-end (headless)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Live-webview tests (headless jsdom)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "VS Code 1.84 Extension Host smoke",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "VS Code Stable Extension Host smoke",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release 2.2 ordinary product acceptance (VS Code 1.84)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release 2.2 ordinary product acceptance (VS Code Stable)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release 2.3 history and hot exit (VS Code 1.84)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release 2.3 history and hot exit (VS Code Stable)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release 2.3 Adapter SDK Preview (R24) (VS Code 1.84)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release 2.3 Adapter SDK Preview (R24) (VS Code Stable)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Validate measured v2 scenario evidence",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Prove all v2 evidence adversarial controls fail closed",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Package VSIX (Windows x64)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Assert VSIX contains the bundled engines (Windows x64)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Freeze verified VSIX (Windows x64)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Release 2.2 installed upgrade and downgrade (VS Code 1.84 and Stable)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Package VSIX (Windows ARM64)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Assert VSIX contains the bundled engines (Windows ARM64)",
+        "result": "NOT_EXECUTED"
+      },
+      {
+        "name": "Freeze and re-verify both VSIX artifacts",
+        "result": "NOT_EXECUTED"
+      }
+    ]
+  },
+  "tests": {
+    "modern": {
+      "passed": 797,
+      "failed": 0,
+      "skipped": 0
+    },
+    "net48": {
+      "status": "RESTORE_FAILED",
+      "executed": 0
+    },
+    "focusedAdapterExtension": {
+      "passed": 101,
+      "files": 2
+    },
+    "independentSdkContract": {
+      "passed": 11
+    }
+  },
+  "minimumHostPrecheck": {
+    "command": "npm run extension-host-e2e -- --version=1.84.0",
+    "exitCode": 0,
+    "startedAt": "2026-10-23T06:11:34.111Z",
+    "endedAt": "2026-10-23T06:18:37.981Z",
+    "rawLogSha256": "4a2cd88b2972fcbf80c05cabeed4a470c9aa22fd5c7518779a006b63c0d113cf",
+    "tailGroups": {
+      "passed": 18,
+      "total": 18
+    },
+    "s003SecondLaunchRestore": "PASS",
+    "s016": {
+      "initialBudgetMs": 6500,
+      "commitReconciliationBudgetMs": 1000,
+      "modern": {
+        "initialMs": 4217,
+        "commitReconciliationMs": 484
+      },
+      "net48": {
+        "initialMs": 4029,
+        "commitReconciliationMs": 643
+      }
+    },
+    "s122Net48Standard300": {
+      "perPhaseBudgetMs": 750,
+      "firstUses": [
+        {
+          "planCommitMs": 494,
+          "reconciliationMs": 127
+        },
+        {
+          "planCommitMs": 338,
+          "reconciliationMs": 127
+        },
+        {
+          "planCommitMs": 387,
+          "reconciliationMs": 113
+        }
+      ]
+    },
+    "productFixes": [],
+    "budgetsAssertionsTimeoutsAndGatesChanged": false,
+    "completeFinalAcceptance": false
+  },
+  "dependencyWitness": {
+    "project": "tests/Engine.Net48.UnitTests/Engine.Net48.UnitTests.csproj",
+    "projectSha256": "938b2188779f61e67209b6853f6737bd2cc5264f84f1e5239a0044257f145d3f",
+    "assetsSha256": "5630423d36bd394d5b48dca3aa09de116a0095ef0bca1e6291345109f8ffb621",
+    "streamJsonRpc": "2.25.29",
+    "streamJsonRpcDependencies": {
+      "MessagePack": "2.5.302",
+      "Microsoft.Bcl.AsyncInterfaces": "10.0.1",
+      "Microsoft.VisualStudio.Threading.Only": "17.14.15",
+      "Microsoft.VisualStudio.Validation": "17.13.22",
+      "Nerdbank.MessagePack": "1.2.4",
+      "Nerdbank.Streams": "2.13.16",
+      "Newtonsoft.Json": "13.0.3",
+      "System.Collections.Immutable": "8.0.0",
+      "System.Diagnostics.DiagnosticSource": "8.0.1",
+      "System.IO.Pipelines": "8.0.0",
+      "System.Text.Json": "8.0.6",
+      "System.Threading.Tasks.Dataflow": "8.0.1"
+    },
+    "resolvedMessagePack": "2.5.302",
+    "nuspecSha256": "ded76e786e0f2f58f33c9a56e06cf1d0f564a674f01947714fffaed23b0098f7",
+    "productEngineMessagePack": "2.5.303",
+    "auditPolicy": "NuGetAudit=true; NuGetAuditMode=all; NuGetAuditLevel=moderate; NU1902/NU1903/NU1904 remain errors",
+    "rawFailureLogSha256": "7def831f895adc2e625f189f0ac1fc3f80169e08b917be7487548a8790ec00bf",
+    "failureLog": "  Determining projects to restore...\r\n<repo>\\tests\\Engine.Net48.UnitTests\\Engine.Net48.UnitTests.csproj : error NU1902: Warning As Error: Package 'MessagePack' 2.5.302 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-qhrr-8q5h-9q3h\r\n  Failed to restore <repo>\\tests\\Engine.Net48.UnitTests\\Engine.Net48.UnitTests.csproj (in 1,97 sec).\r\n  2 of 3 projects are up-to-date for restore.\r\n"
+  },
+  "reports": [
+    {
+      "source": "<ci-temp>/combined-ci\\checks.json",
+      "path": "combined-ci-attempt.json",
+      "scope": "Stopped at step4; three steps passed; final acceptance incomplete and failed.",
+      "rawSha256": "94b6e56af70df1b03cc1ec0664d4060008969f69e282768610b96f2211947c10",
+      "retainedSha256": "94b6e56af70df1b03cc1ec0664d4060008969f69e282768610b96f2211947c10",
+      "bytes": 82180
+    },
+    {
+      "source": "<ci-temp>\\perf-rerun-evidence\\extension-host-1.84.0.json",
+      "path": "combined-minimum-host-precheck.json",
+      "scope": "Successful full minimum host precheck before final acceptance; no VSIX binding.",
+      "rawSha256": "dae6bf325f1f40ce5a397485699eee906ebd237ec8f0388f3ffdca889e5786f0",
+      "retainedSha256": "dae6bf325f1f40ce5a397485699eee906ebd237ec8f0388f3ffdca889e5786f0",
+      "bytes": 491532
+    },
+    {
+      "source": "<ci-temp>\\perf-rerun-evidence\\extension-host-1.84.0-s003.json",
+      "path": "combined-minimum-host-precheck-s003.json",
+      "scope": "Successful second-launch hot-exit restore; no VSIX binding.",
+      "rawSha256": "a2d5bc4ad776cc84ba3429ea5b91a06d1c95fc8fa9bc5d991e39d1fefc667f5b",
+      "retainedSha256": "a2d5bc4ad776cc84ba3429ea5b91a06d1c95fc8fa9bc5d991e39d1fefc667f5b",
+      "bytes": 11915
+    },
+    {
+      "source": "<ci-temp>\\s122-first-rerun.json",
+      "path": "combined-performance-precheck.json",
+      "scope": "Actual successful S122 product measurements; no VSIX binding.",
+      "rawSha256": "ed434a3c435dc12aa9a6749a989533b9fedc3a1d451eb3d20e6d32a1a1d25d36",
+      "retainedSha256": "ed434a3c435dc12aa9a6749a989533b9fedc3a1d451eb3d20e6d32a1a1d25d36",
+      "bytes": 416425
+    }
+  ],
+  "limitations": [
+    "These are diagnostic attempt/precheck reports, not artifact-bound acceptance of the combined release.",
+    "Stable smoke, both R23/R24 host matrices, installed upgrade/downgrade and 41 remaining CI commands were not executed in the attempted full run.",
+    "No combined-release VSIX was built, frozen or assigned a release SHA-256. Historical package reports remain superseded.",
+    "After this failed attempt, the changelog date is returned to Unreleased; the attempted input hashes are retained without a final-tree acceptance claim.",
+    "No dependencies, budgets, assertions, timeouts, audit policy or security gates were changed."
+  ]
+}

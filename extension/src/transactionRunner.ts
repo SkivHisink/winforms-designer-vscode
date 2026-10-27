@@ -65,6 +65,8 @@ export interface TransactionUndoRegistration {
 }
 
 export interface TransactionRunnerAdapters {
+  /** Cancellation is observed between durable phases; compensation itself must always run to completion. */
+  isCancellationRequested?(): boolean;
   snapshot(target: string): Promise<ArtifactSnapshot>;
   read(target: string): Promise<Uint8Array | null>;
   planTargetMutation(context: TransactionTargetContext): Promise<PlannedTargetMutation>;
@@ -199,8 +201,23 @@ async function compensateTargets(
   const applied = new Set(appliedTargets);
   const reverse = [...targets].filter((target) => applied.has(target.target)).reverse();
 
+  // Validate the complete set before restoring its first member. A later conflict must not turn a rejected
+  // composite Undo into a partially undone document. Baseline images are allowed for idempotent compensation,
+  // including a write that failed before replacing its target.
   for (const target of reverse) {
     const current = artifactFingerprint(await adapters.snapshot(target.target));
+    if (!sameArtifactFingerprint(current, target.expectedAfterFingerprint)
+      && !sameArtifactFingerprint(current, target.baseFingerprint)) {
+      const message = `${reason} refused: ${target.target} no longer matches the expected post-write fingerprint`;
+      record = withState(record, 'recoveryRequired', now(), { error: message });
+      await adapters.persistJournal(record);
+      return { status: 'recoveryRequired', journal: record, error: message };
+    }
+  }
+
+  for (const target of reverse) {
+    const current = artifactFingerprint(await adapters.snapshot(target.target));
+    if (sameArtifactFingerprint(current, target.baseFingerprint)) continue;
     if (!sameArtifactFingerprint(current, target.expectedAfterFingerprint)) {
       const message = `${reason} refused: ${target.target} no longer matches the expected post-write fingerprint`;
       record = withState(record, 'recoveryRequired', now(), { error: message });
@@ -303,6 +320,13 @@ export async function runPatchSetTransaction(
   record = transitionJournal(record, 'prepared', { nowUtc: now() });
   await persist(adapters, 'preparedPersisted', record);
 
+  if (adapters.isCancellationRequested?.()) {
+    const message = 'transaction cancelled before first write';
+    record = transitionJournal(record, 'aborted', { nowUtc: now(), error: message });
+    await adapters.persistJournal(record);
+    return { status: 'aborted', journal: record, error: message };
+  }
+
   for (const target of targets) {
     const current = artifactFingerprint(await adapters.snapshot(target.target));
     if (!sameArtifactFingerprint(current, target.baseFingerprint)) {
@@ -316,14 +340,24 @@ export async function runPatchSetTransaction(
   record = transitionJournal(record, 'applying', { nowUtc: now() });
   await persist(adapters, 'applyingPersisted', record);
 
+  const attemptedTargets: string[] = [];
+  let uncertainWrite: TargetMutationState | undefined;
   try {
     for (const target of targets) {
+      if (adapters.isCancellationRequested?.()) throw new Error('transaction cancelled between writes');
       const current = artifactFingerprint(await adapters.snapshot(target.target));
       if (!sameArtifactFingerprint(current, target.baseFingerprint)) {
         throw new Error(`${target.target} changed before write`);
       }
 
-      await writeTarget(adapters, target, target.afterBytes);
+      attemptedTargets.push(target.target);
+      try { await writeTarget(adapters, target, target.afterBytes); }
+      catch (error) {
+        if (error && typeof error === 'object' && (error as { transactionWriteNotApplied?: unknown }).transactionWriteNotApplied === true)
+          attemptedTargets.pop();
+        else if (!(error && typeof error === 'object' && (error as { transactionWriteLanded?: unknown }).transactionWriteLanded === true)) uncertainWrite = target;
+        throw error;
+      }
 
       const written = await verifyFingerprint(adapters, target.target, target.expectedAfterFingerprint);
       if (!written) throw new Error(`${target.target} did not match the expected post-write fingerprint`);
@@ -349,6 +383,7 @@ export async function runPatchSetTransaction(
       appliedTargets: record.appliedTargets,
     });
     if (postconditionsOk === false) throw new Error('transaction postcondition verification failed');
+    if (adapters.isCancellationRequested?.()) throw new Error('transaction cancelled before undo registration');
 
     const undoRegistration: TransactionUndoRegistration = {
       transactionId: options.transactionId,
@@ -393,7 +428,19 @@ export async function runPatchSetTransaction(
     record = transitionJournal(record, 'rollingBack', { nowUtc: now(), error: message });
     await adapters.persistJournal(record);
 
-    const rollback = await compensateTargets(adapters, patchSet, targets, record.appliedTargets, record, now, 'rollback');
+    if (uncertainWrite) {
+      const current = artifactFingerprint(await adapters.snapshot(uncertainWrite.target));
+      if (!sameArtifactFingerprint(current, uncertainWrite.baseFingerprint)) {
+        const detail = `rollback refused: ownership of unacknowledged write ${uncertainWrite.target} is unknown`;
+        record = withState(record, 'recoveryRequired', now(), { error: detail });
+        await adapters.persistJournal(record);
+        return { status: 'recoveryRequired', journal: record, error: detail };
+      }
+    }
+
+    // A provider can replace bytes and then reject (flush/verification failure). Track attempts before awaiting the
+    // provider, but never compensate a planned target whose baseline check refused before its write was attempted.
+    const rollback = await compensateTargets(adapters, patchSet, targets, attemptedTargets, record, now, 'rollback');
     if (rollback.status === 'recoveryRequired') return rollback;
 
     record = transitionJournal(rollback.journal, 'rolledBack', { nowUtc: now(), error: message });

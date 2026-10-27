@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteLocalFile, durableDeleteLocalFile } from './atomicFile';
+import { assertLocalArtifactPath } from './localArtifactPath';
 import { HostMutationRecord, canonicalHostDocumentId, hostMutationRecordPath } from './mutationOperation';
 import { sha256Hex, stripUtf8Bom } from './documentStore';
 import {
@@ -122,6 +123,7 @@ async function rollbackIncompleteJournal(
   try {
     for (const target of targets) {
       const absolute = resolveJournalTarget(record, target);
+      await assertLocalArtifactPath(record.workspaceRoot, absolute);
       observations.push({
         target,
         absolute,
@@ -146,6 +148,17 @@ async function rollbackIncompleteJournal(
     return { journalPath, transactionId: record.transactionId, outcome: 'manual', detail };
   }
 
+  // Matching bytes alone cannot establish ownership of a write that never received a durable receipt.
+  // Another process may have independently written exactly the planned image. Keep bytes and journal for a manual
+  // decision, including the unavoidable process-death gap between a physical write and targetApplied.
+  const unacknowledgedCreate = observations.find((entry) => !equalBytes(entry.current, entry.before)
+    && !record.appliedTargets.includes(entry.target));
+  if (unacknowledgedCreate) {
+    const detail = `manual recovery required: ownership of unacknowledged write ${unacknowledgedCreate.target} is unknown`;
+    await writeJournalFile(journalPath, recoveryRequired(record, detail, (options.nowUtc ?? (() => new Date().toISOString()))()));
+    return { journalPath, transactionId: record.transactionId, outcome: 'manual', detail };
+  }
+
   const now = options.nowUtc ?? (() => new Date().toISOString());
   // A resource journal can reach runner-committed immediately before its host source/Undo owner commits.
   // That acknowledged gap is recoverable, even though ordinary committed journals remain terminal.
@@ -158,12 +171,22 @@ async function rollbackIncompleteJournal(
 
   try {
     for (const entry of [...observations].reverse()) {
-      if (equalBytes(entry.current, entry.before)) continue;
+      // The set-wide observation can become stale while an earlier member is restored. Re-read immediately before
+      // replacing this member so a concurrent writer keeps its bytes and recovery remains explicitly incomplete.
+      await assertLocalArtifactPath(record.workspaceRoot, entry.absolute);
+      const current = await readBytes(entry.absolute);
+      if (equalBytes(current, entry.before)) continue;
+      if (!equalBytes(current, entry.after)) throw new Error(`${entry.target} changed during rollback`);
+      if (!record.appliedTargets.includes(entry.target)) throw new Error(`ownership of unacknowledged write ${entry.target} is unknown`);
       await restoreBytes(entry.absolute, entry.before);
       if (!equalBytes(await readBytes(entry.absolute), entry.before)) {
         throw new Error(`${entry.target} did not match its baseline after restore`);
       }
       await options.afterRestoreTarget?.(entry.absolute, rollingBack);
+    }
+    for (const entry of observations) {
+      await assertLocalArtifactPath(record.workspaceRoot, entry.absolute);
+      if (!equalBytes(await readBytes(entry.absolute), entry.before)) throw new Error(`${entry.target} changed before rollback completed`);
     }
   } catch (error) {
     const detail = `manual recovery required: rollback failed: ${error instanceof Error ? error.message : String(error)}`;

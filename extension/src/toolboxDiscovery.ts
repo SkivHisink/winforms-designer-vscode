@@ -1,9 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
+import { inspectPeArchitecture } from './projectCompatibility';
 
 const MAX_PROBE_ASSEMBLIES = 256;
 const MAX_REGISTERED_ASSEMBLIES = 512;
+const MAX_DISCOVERY_DIAGNOSTICS = 256;
+const MAX_DISCOVERY_IMAGE_BYTES = 64 * 1024;
 
 const DEFAULT_BUILD_OUTPUT_DISCOVERY_LIMITS = {
   maxFiles: 1024,
@@ -30,10 +33,13 @@ export interface BuildOutputDiscoveryBudgets {
 
 export interface BuildOutputDiscoverySkipped {
   duplicateRoots: number;
+  duplicateDirectories: number;
   missingRoots: number;
   inaccessibleDirectories: number;
   inaccessibleFiles: number;
   duplicateAssemblies: number;
+  nativeAssemblies: number;
+  satelliteAssemblies: number;
   filesByBudget: number;
   directoriesByBudget: number;
   directoriesByDepth: number;
@@ -48,6 +54,14 @@ export interface BuildOutputDiscoveryResult {
   skipped: BuildOutputDiscoverySkipped;
   truncated: boolean;
   cancelled: boolean;
+  /** Bounded path/reason details; omitted entries remain represented by skipped counters. */
+  assemblyDiagnostics: BuildOutputAssemblyDiagnostic[];
+  assemblyDiagnosticsOmitted: number;
+}
+
+export interface BuildOutputAssemblyDiagnostic {
+  path: string;
+  outcome: 'candidate' | 'native-image' | 'satellite' | 'file-budget' | 'inaccessible';
 }
 
 export interface BuildOutputDiscoveryOptions {
@@ -59,6 +73,8 @@ export interface BuildOutputDiscoveryOptions {
   shouldCancel?: () => boolean;
   now?: () => number;
   yieldNow?: () => Promise<void>;
+  /** Owner AssemblyName first, followed by its explicit ProjectReference outputs. */
+  preferredAssemblyNames?: readonly string[];
 }
 
 export interface ProjectBuildOutputRootOptions {
@@ -76,6 +92,7 @@ export interface ProjectBuildOutputRootResult {
   missingBuildOutputs: number;
   projectBudgetReached: boolean;
   cancelled: boolean;
+  preferredAssemblyNames: string[];
 }
 
 export type ToolboxProvenanceKind = 'framework' | 'project' | 'choose-items';
@@ -400,10 +417,13 @@ function buildOutputBudgets(options: BuildOutputDiscoveryOptions): BuildOutputDi
 function emptySkipped(): BuildOutputDiscoverySkipped {
   return {
     duplicateRoots: 0,
+    duplicateDirectories: 0,
     missingRoots: 0,
     inaccessibleDirectories: 0,
     inaccessibleFiles: 0,
     duplicateAssemblies: 0,
+    nativeAssemblies: 0,
+    satelliteAssemblies: 0,
     filesByBudget: 0,
     directoriesByBudget: 0,
     directoriesByDepth: 0,
@@ -445,6 +465,7 @@ export async function discoverProjectBuildOutputRoots(
     missingBuildOutputs: 0,
     projectBudgetReached: false,
     cancelled: false,
+    preferredAssemblyNames: [],
   };
   if (!owningProject) {
     result.skippedProjects++;
@@ -472,6 +493,19 @@ export async function discoverProjectBuildOutputRoots(
       continue;
     }
     result.projects.push(project);
+
+    // Literal names are hints for ordering, never MSBuild evaluation or a claim about a configuration. Keep every
+    // concrete declaration (conditional AssemblyName values may differ), plus the conventional project filename.
+    const projectNames = [...text.replace(/<!--[\s\S]*?-->/g, '')
+      .matchAll(/<AssemblyName\b[^>]*>\s*([^<]+?)\s*<\/AssemblyName>/gi)]
+      .slice(0, 16).map((match) => match[1].trim())
+      .filter((name) => !!name && !/\$\(|%\(|[\\/]/.test(name));
+    projectNames.push(path.basename(project, path.extname(project)));
+    for (const name of projectNames) {
+      if (!result.preferredAssemblyNames.some((prior) => prior.toLowerCase() === name.toLowerCase())) {
+        result.preferredAssemblyNames.push(name);
+      }
+    }
 
     let foundBuildOutput = false;
     for (const output of projectBuildOutputDirectories(project, text)) {
@@ -514,6 +548,17 @@ export async function discoverProjectBuildOutputRoots(
 
 function candidateKey(fullPath: string, stat: fs.Stats): string {
   return `${normalized(fullPath)}|${stat.size}|${Math.trunc(stat.mtimeMs)}`;
+}
+
+async function isNativeToolboxImage(file: string): Promise<boolean> {
+  const handle = await fs.promises.open(file, 'r');
+  try {
+    const bytes = Buffer.alloc(MAX_DISCOVERY_IMAGE_BYTES);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    // Only a well-formed PE with no CLR directory is certainly native. A torn build or a header outside this
+    // bounded read stays a candidate so that the engine can diagnose it instead of silently hiding controls.
+    return inspectPeArchitecture(bytes.subarray(0, bytesRead)).managed === false;
+  } finally { await handle.close(); }
 }
 
 function dllsBelow(root: string, maxDepth: number, maxItems: number, acceptTop?: (name: string) => boolean): string[] {
@@ -608,8 +653,18 @@ export async function discoverBuildOutputAssemblies(
   const skipped = emptySkipped();
   const assemblies: BuildOutputAssemblyCandidate[] = [];
   const scannedDirectories: string[] = [];
+  const assemblyDiagnostics: BuildOutputAssemblyDiagnostic[] = [];
+  let assemblyDiagnosticsOmitted = 0;
+  const diagnose = (file: string, outcome: BuildOutputAssemblyDiagnostic['outcome']): void => {
+    if (assemblyDiagnostics.length < MAX_DISCOVERY_DIAGNOSTICS) assemblyDiagnostics.push({ path: file, outcome });
+    else assemblyDiagnosticsOmitted++;
+  };
   const seenRoots = new Set<string>();
+  const queuedDirectories = new Set<string>();
   const seenAssemblies = new Set<string>();
+  const preferredNames = new Map((options.preferredAssemblyNames ?? []).map((name, index) => [name.toLowerCase(), index]));
+  const priority = (file: string): number => preferredNames.get(path.basename(file, path.extname(file)).toLowerCase())
+    ?? Number.MAX_SAFE_INTEGER;
   let filesScanned = 0;
   let truncated = false;
   let cancelled = false;
@@ -642,9 +697,10 @@ export async function discoverBuildOutputAssemblies(
       continue;
     }
     queue.push({ dir: full, depth: 0 });
+    queuedDirectories.add(rootKey);
   }
 
-  while (queue.length) {
+  directoryTraversal: while (queue.length) {
     if (options.shouldCancel?.()) {
       cancelled = true;
       truncated = true;
@@ -677,33 +733,58 @@ export async function discoverBuildOutputAssemblies(
       continue;
     }
     scannedDirectories.push(current.dir);
-    entries.sort((a, b) => a.name.localeCompare(b.name));
+    entries.sort((a, b) => priority(a.name) - priority(b.name) || a.name.localeCompare(b.name));
 
     for (const entry of entries) {
+      if (options.shouldCancel?.()) {
+        cancelled = true;
+        truncated = true;
+        skipped.cancelled++;
+        break directoryTraversal;
+      }
+      if (now() - start >= budgets.maxMilliseconds) {
+        truncated = true;
+        skipped.timeBudget++;
+        break directoryTraversal;
+      }
       const full = path.join(current.dir, entry.name);
       if (entry.isDirectory()) {
-        if (current.depth >= budgets.maxDepth) {
+        const directoryKey = normalized(full);
+        if (queuedDirectories.has(directoryKey)) {
+          skipped.duplicateDirectories++;
+        } else if (current.depth >= budgets.maxDepth) {
           skipped.directoriesByDepth++;
           truncated = true;
         } else {
+          queuedDirectories.add(directoryKey);
           queue.push({ dir: full, depth: current.depth + 1 });
         }
         continue;
       }
 
-      if (!entry.isFile() || !/\.dll$/i.test(entry.name)) continue;
+      // Managed .NET Framework applications can declare public controls in their EXE. Both engine scanners accept
+      // these images; native modern apphosts are excluded by the same PE check as native DLL dependencies.
+      if (!entry.isFile() || !/\.(dll|exe)$/i.test(entry.name)) continue;
       if (filesScanned >= budgets.maxFiles) {
         skipped.filesByBudget++;
+        diagnose(full, 'file-budget');
         truncated = true;
         continue;
       }
       filesScanned++;
+
+      if (/\.resources\.dll$/i.test(entry.name)) {
+        skipped.satelliteAssemblies++;
+        diagnose(full, 'satellite');
+        continue;
+      }
 
       let stat: fs.Stats;
       try {
         stat = await fs.promises.stat(full);
       } catch {
         skipped.inaccessibleFiles++;
+        diagnose(full, 'inaccessible');
         continue;
       }
       if (!stat.isFile()) continue;
@@ -714,6 +795,18 @@ export async function discoverBuildOutputAssemblies(
         continue;
       }
       seenAssemblies.add(assemblyPathKey);
+      try {
+        if (await isNativeToolboxImage(full)) {
+          skipped.nativeAssemblies++;
+          diagnose(full, 'native-image');
+          continue;
+        }
+      } catch {
+        skipped.inaccessibleFiles++;
+        diagnose(full, 'inaccessible');
+        continue;
+      }
+      diagnose(full, 'candidate');
       assemblies.push({
         path: full,
         size: stat.size,
@@ -726,12 +819,14 @@ export async function discoverBuildOutputAssemblies(
   }
 
   return {
-    assemblies,
+    assemblies: assemblies.sort((a, b) => priority(a.path) - priority(b.path)),
     scannedDirectories,
     budgets,
     skipped,
     truncated,
-    cancelled
+    cancelled,
+    assemblyDiagnostics,
+    assemblyDiagnosticsOmitted,
   };
 }
 

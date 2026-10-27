@@ -14,6 +14,44 @@ namespace Engine.Net48.UnitTests
     public sealed class RuntimeProtocolTests
     {
         [Fact]
+        public async Task ActualNet48HostedPreviewServices_MarshalsMtaReadRpcAndPreservesCancellation()
+        {
+            var api = Load();
+            var build = Get<string>(Call(api, "NegotiateProtocol", Handshake()), "BuildId");
+            var envelope = Envelope(build, "InspectHostedPreviewServices", args: "[\"UserControl\"]")
+                .Replace("\"commandId\":\"operation-1\",", "");
+            var result = await Task.Run(async () =>
+            {
+                Assert.Equal(ApartmentState.MTA, Thread.CurrentThread.GetApartmentState());
+                return await Send(api, envelope);
+            });
+            Assert.Equal("OK", Code(result));
+            var json = Get<string>(result, "ResultJson");
+            Assert.Contains("\"ok\":true", json);
+            Assert.Contains("\"apartmentState\":\"STA\"", json);
+            Assert.Contains("\"rootType\":\"System.Windows.Forms.UserControl\"", json);
+            Assert.Contains("\"serviceProfileVersion\":\"0.1.0\"", json);
+            Assert.Contains("\"capability\":\"ToolboxCatalog\"", json);
+            Assert.Contains("\"capability\":\"TypeResolution\"", json);
+            Assert.Contains("\"capability\":\"PropertySerialization\"", json);
+            Assert.Contains("\"unsupportedClassicSerializationRefused\":true", json);
+            Assert.Contains("\"incompleteHostWithheld\":true", json);
+            using (var cancellation = new CancellationTokenSource())
+            {
+                cancellation.Cancel();
+                var task = (Task)Call(api, "InspectHostedPreviewServices", "Form", cancellation.Token);
+                await Within(task, 2000);
+                Assert.Equal("REQUEST_CANCELLED", Get<string>(Get<object>(task, "Result"), "ErrorCode"));
+            }
+            var refused = (Task)Call(api, "InspectHostedPreviewServices", "UnsupportedRoot", CancellationToken.None);
+            await Within(refused, 5000);
+            Assert.Equal("HOSTED_SERVICE_REFUSED", Get<string>(Get<object>(refused, "Result"), "ErrorCode"));
+            var next = (Task)Call(api, "InspectHostedPreviewServices", "Form", CancellationToken.None);
+            await Within(next, 5000);
+            Assert.True(Get<bool>(Get<object>(next, "Result"), "Ok"));
+        }
+
+        [Fact]
         public async Task ActualNet48NamedPipe_ControlRequestsBypassBlockedSynchronousOrdinaryDispatch()
         {
             var api = Load();

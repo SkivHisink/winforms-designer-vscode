@@ -1,0 +1,45 @@
+{
+  "id": "@winforms-designer/adapter-sdk@0.1.0",
+  "name": "@winforms-designer/adapter-sdk",
+  "version": "0.1.0",
+  "size": 10836,
+  "unpackedSize": 36023,
+  "shasum": "b77563a7229a275715af15d6ef77f5aae1920024",
+  "integrity": "sha512-P838NUjuh+s/43khcNO/pqcBoUfjm3hDb/Hbq76JhmI/CRcEtSSeT/kuX5OUHNFnZ909Fn6p6SwWwEnG6RDasg==",
+  "filename": "winforms-designer-adapter-sdk-0.1.0.tgz",
+  "files": [
+    {
+      "path": "LICENSE",
+      "size": 1067,
+      "mode": 420
+    },
+    {
+      "path": "README.md",
+      "size": 7878,
+      "mode": 420
+    },
+    {
+      "path": "adapter-package.schema.json",
+      "size": 5724,
+      "mode": 420
+    },
+    {
+      "path": "index.d.mts",
+      "size": 3917,
+      "mode": 420
+    },
+    {
+      "path": "index.mjs",
+      "size": 16984,
+      "mode": 420
+    },
+    {
+      "path": "package.json",
+      "size": 453,
+      "mode": 420
+    }
+  ],
+  "entryCount": 6,
+  "bundled": [],
+  "sha256": "676b7312a0694b68bb8427d894f264ba54bb2558524e82411c9694608fd8532f"
+}

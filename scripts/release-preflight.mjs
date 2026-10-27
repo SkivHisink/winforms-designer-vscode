@@ -23,6 +23,10 @@ const modernBundleScript = fs.readFileSync(path.join(repo, 'scripts', 'bundle-mo
 const net48BundleScript = fs.readFileSync(path.join(repo, 'scripts', 'bundle-net48-engine.mjs'), 'utf8');
 const assertVsixScript = fs.readFileSync(path.join(repo, 'scripts', 'assert-vsix.ps1'), 'utf8');
 const vscodeIgnore = fs.readFileSync(path.join(extensionDir, '.vscodeignore'), 'utf8');
+const extensionBuild = fs.readFileSync(path.join(extensionDir, 'build.mjs'), 'utf8');
+const isolationTests = fs.readFileSync(path.join(repo, 'scripts', 'test-vsix-isolation.ps1'), 'utf8');
+const sdkManifest = readJson(path.join(repo, 'adapter-sdk', 'package.json'));
+const modernAbiProject = fs.readFileSync(path.join(repo, 'samples', 'DesignerSdkAbiProbe', 'ModernDesigner', 'ModernDesigner.csproj'), 'utf8');
 const failures = [];
 const metadataOnly = process.argv.includes('--metadata-only');
 
@@ -186,6 +190,88 @@ for (const [name, workflow] of [['CI', ciWorkflow], ['Release', releaseWorkflow]
   expect((workflow.match(/ExpectedRuntimeIdentifier win-x64/g) || []).length >= 2
     && (workflow.match(/ExpectedRuntimeIdentifier win-arm64/g) || []).length >= 2,
   `${name} workflow must re-verify both restored immutable artifacts after cross-target packaging`);
+}
+
+expect(manifest.scripts?.['release23:extension-host'] === 'node ../scripts/run-release23-extension-host-tests.mjs',
+  'package.json must expose release 2.3 two-launch product acceptance');
+expect(vscodeIgnore.includes('dist/release23-extension-host-suite.cjs'),
+  'the release 2.3 acceptance bundle must not ship in the VSIX');
+for (const [name, workflow] of [['CI', ciWorkflow], ['Release', releaseWorkflow]]) {
+  expect((workflow.match(/npm run release23:extension-host -- --version=/g) || []).length === 2
+    && workflow.includes('WFD_RELEASE23_EVIDENCE_FILE:') && workflow.includes('name: release23-product-evidence'),
+    name + ' workflow must run and retain release 2.3 history acceptance on minimum and Stable VS Code');
+}
+
+expect(manifest.scripts?.['release24:extension-host'] === 'node ../scripts/run-release24-extension-host-tests.mjs',
+  'package.json must expose release 2.3 R24 Adapter SDK Preview product acceptance');
+expect(vscodeIgnore.includes('dist/release24-extension-host-suite.cjs')
+  && extensionBuild.includes("entryPoints: ['src/release24-extension-host-suite.ts']")
+  && extensionBuild.includes("outfile: 'dist/release24-extension-host-suite.cjs'"),
+  'release 2.3 R24 acceptance must build independently and stay excluded from the VSIX');
+expect(assertVsixScript.includes('extension-host-suite')
+  && isolationTests.includes("ExtraEntries = @('extension/dist/release24-extension-host-suite.cjs')")
+  && isolationTests.includes("-ShouldFail -ExpectedMessage 'release24-extension-host-suite.cjs'"),
+  'VSIX verification must reject the release 2.3 R24 acceptance bundle and exercise that refusal');
+expect(sdkManifest.name === '@winforms-designer/adapter-sdk' && sdkManifest.version === '0.1.0'
+  && sdkManifest.type === 'module' && sdkManifest.license === 'MIT',
+  'the independent Adapter SDK Preview package must retain its named 0.1.0 contract');
+expect(sdkManifest.exports?.['.']?.types === './index.d.mts'
+  && sdkManifest.exports?.['.']?.import === './index.mjs'
+  && JSON.stringify(sdkManifest.files) === JSON.stringify(['index.mjs', 'index.d.mts', 'adapter-package.schema.json', 'README.md'])
+  && Object.keys(sdkManifest.dependencies ?? {}).length === 0
+  && Object.keys(sdkManifest.devDependencies ?? {}).length === 0,
+  'Adapter SDK must publish only its independent runtime, public declarations, schema and documentation without extension dependencies');
+expect(modernAbiProject.includes('Include="Microsoft.WinForms.Designer.SDK" Version="[1.6.0]"')
+  && !engineProject.includes('Microsoft.WinForms.Designer.SDK')
+  && !net48EngineProject.includes('Microsoft.WinForms.Designer.SDK'),
+  'the pinned Microsoft Designer SDK belongs only to the independent ABI probe, never to either product engine');
+for (const relative of [
+  'adapter-sdk/LICENSE',
+  'adapter-sdk/index.mjs',
+  'adapter-sdk/index.d.mts',
+  'adapter-sdk/adapter-package.schema.json',
+  'adapter-sdk/test/type-contract.mts',
+  'adapter-sdk/test/contract.test.mjs',
+  'adapter-sdk/test/samples.test.mjs',
+  'samples/AdapterSdkPreview/build.mjs',
+  'samples/AdapterSdkPreview/conformance.mjs',
+  'samples/AdapterSdkPreview/action/adapter.mjs',
+  'samples/AdapterSdkPreview/editor/adapter.mjs',
+  'samples/DesignerSdkAbiProbe/run-probe.ps1',
+  'samples/DesignerSdkAbiProbe/ModernDesigner/packages.lock.json',
+  'samples/DesignerSdkAbiProbe/ClassicDesigner/ClassicDesigner.csproj',
+  'samples/DesignerSdkAbiProbe/MetadataProbe/MetadataProbe.csproj',
+  'scripts/run-release24-extension-host-tests.mjs',
+  'extension/src/release24-extension-host-suite.ts',
+]) {
+  expect(fs.existsSync(path.join(repo, relative)), relative + ' is required by the release 2.3 R24 gate');
+}
+for (const [name, workflow] of [['CI', ciWorkflow], ['Release', releaseWorkflow]]) {
+  expect(workflow.includes('run: node --test adapter-sdk/test/*.test.mjs'),
+    name + ' workflow must run independent SDK tests, including real sample child processes');
+  expect(workflow.includes('run: node extension/node_modules/typescript/bin/tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext adapter-sdk/test/type-contract.mts'),
+    name + ' workflow must compile the public SDK type contract');
+  expect(workflow.includes('run: node samples/AdapterSdkPreview/build.mjs'),
+    name + ' workflow must build both independent adapter samples');
+  expect(workflow.includes('npm pack ./adapter-sdk --pack-destination $destination --json')
+    && workflow.includes("'release24-sdk-package'")
+    && workflow.includes('name: release24-sdk-package')
+    && workflow.includes("'pack.json'") && workflow.includes('NotePropertyName sha256')
+    && workflow.includes("@('LICENSE', 'README.md', 'adapter-package.schema.json', 'index.d.mts', 'index.mjs', 'package.json')"),
+    name + ' workflow must pack and retain the actual independent SDK artifact, its exact payload and SHA-256');
+  expect(workflow.includes('./samples/DesignerSdkAbiProbe/run-probe.ps1 -OutputDirectory $probe')
+    && workflow.includes("-Filter '*.log').Count -ne 6")
+    && workflow.includes("-Filter '*.json').Count -ne 3")
+    && workflow.includes("'release24-abi-evidence'")
+    && workflow.includes("$_.Extension -in @('.log', '.json')")
+    && workflow.includes('name: release24-abi-evidence'),
+    name + ' workflow must run the real ABI probe and retain six command logs and three reports without redistributing SDK references');
+  expect((workflow.match(/npm run release24:extension-host -- --version=/g) || []).length === 2
+    && workflow.includes('run: npm run release24:extension-host -- --version=1.84.0')
+    && workflow.includes('run: npm run release24:extension-host -- --version=stable')
+    && (workflow.match(/WFD_RELEASE24_EVIDENCE_FILE:/g) || []).length === 2
+    && workflow.includes('name: release24-product-evidence'),
+    name + ' workflow must run and retain release 2.3 R24 acceptance on minimum and Stable VS Code');
 }
 
 const explicitTag = process.argv.find((arg) => arg.startsWith('--tag='))?.slice('--tag='.length);

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Independent.ModernDesigner</AssemblyName>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile against the official ABI. The package supplies reference assemblies, not a runtime host. -->
+    <PackageReference Include="Microsoft.WinForms.Designer.SDK" Version="[1.6.0]" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

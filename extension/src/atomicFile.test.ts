@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { atomicWriteLocalFile, stagingPath } from './atomicFile';
+import { atomicCreateLocalFile, atomicWriteLocalFile, stagingPath } from './atomicFile';
 
 const scratch: string[] = [];
 
@@ -17,6 +17,25 @@ function tempDir(): string {
 }
 
 describe('atomic local file replacement', () => {
+  it('exports complete bytes create-only and preserves an existing file', async () => {
+    const dir = tempDir(); const target = path.join(dir, 'Recovered.Designer.cs');
+    const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('preserved\r\nsource')]);
+    await atomicCreateLocalFile(target, bytes);
+    expect(fs.readFileSync(target)).toEqual(bytes);
+    await expect(atomicCreateLocalFile(target, Buffer.from('replacement'))).rejects.toMatchObject({ code: 'EEXIST', transactionWriteNotApplied: true });
+    expect(fs.readFileSync(target)).toEqual(bytes);
+    expect(fs.readdirSync(dir)).toEqual(['Recovered.Designer.cs']);
+  });
+
+  it('allows only one of two concurrent create-only exports to publish the target', async () => {
+    const dir = tempDir(); const target = path.join(dir, 'Recovered.Designer.cs');
+    const results = await Promise.allSettled([atomicCreateLocalFile(target, Buffer.from('first')),
+      atomicCreateLocalFile(target, Buffer.from('second'))]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(['first', 'second']).toContain(fs.readFileSync(target, 'utf8'));
+    expect(fs.readdirSync(dir)).toEqual(['Recovered.Designer.cs']);
+  });
+
   it('replaces the target contents and leaves no staging file behind', async () => {
     const dir = tempDir();
     const target = path.join(dir, 'Form1.Designer.cs');

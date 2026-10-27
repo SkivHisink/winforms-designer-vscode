@@ -42,6 +42,7 @@ function New-TestVsix([string] $Name, [hashtable] $Options) {
   $rid = if ($Options.ContainsKey('Rid')) { $Options.Rid } else { 'win-x64' }
   $machine = if ($Options.ContainsKey('Machine')) { $Options.Machine } else { '0x8664' }
   $net48Machine = if ($Options.ContainsKey('Net48Machine')) { $Options.Net48Machine } else { '0x8664' }
+  $messagePack = if ($Options.ContainsKey('MessagePackVersion')) { $Options.MessagePackVersion } else { '2.5.303' }
 
   Set-TestText (Join-Path $source 'extension.vsixmanifest') "<PackageManifest><InstallationTarget TargetPlatform=`"$target`" /></PackageManifest>"
   Set-TestText (Join-Path $source 'extension/package.json') '{"version":"1.15.0","preview":false}'
@@ -53,7 +54,7 @@ function New-TestVsix([string] $Name, [hashtable] $Options) {
     '.NETCoreApp,Version=v10.0' = @{}
     ".NETCoreApp,Version=v10.0/$rid" = @{
       'StreamJsonRpc/2.25.29' = @{}
-      'MessagePack/2.5.302' = @{}
+      ("MessagePack/$messagePack") = @{}
     }
   }
   if ($Options.ContainsKey('IncludeSiblingRid') -and $Options.IncludeSiblingRid) {
@@ -110,6 +111,9 @@ try {
   New-Item -ItemType Directory -Path $workspace | Out-Null
 
   Invoke-AssertVsix (New-TestVsix 'valid-x64' @{})
+  Invoke-AssertVsix (New-TestVsix 'old-messagepack' @{
+      MessagePackVersion = '2.5.302'
+    }) -ShouldFail -ExpectedMessage 'audited StreamJsonRpc/MessagePack versions'
   Invoke-AssertVsix (New-TestVsix 'net48-in-modern-dir' @{
       ExtraEntries = @('extension/engine/WinFormsDesigner.Engine.Net48.exe')
     }) -ShouldFail -ExpectedMessage 'wrong target directory'
@@ -134,6 +138,14 @@ try {
   Invoke-AssertVsix (New-TestVsix 'development-release22-upgrade' @{
       ExtraEntries = @('extension/dist/release22-upgrade-suite.cjs')
     }) -ShouldFail -ExpectedMessage 'release22-upgrade-suite.cjs'
+
+  Invoke-AssertVsix (New-TestVsix 'development-release23-host' @{
+      ExtraEntries = @('extension/dist/release23-extension-host-suite.cjs')
+    }) -ShouldFail -ExpectedMessage 'release23-extension-host-suite.cjs'
+
+  Invoke-AssertVsix (New-TestVsix 'development-release24-host' @{
+      ExtraEntries = @('extension/dist/release24-extension-host-suite.cjs')
+    }) -ShouldFail -ExpectedMessage 'release24-extension-host-suite.cjs'
 
   Write-Host 'assert-vsix isolation tests passed.'
 } finally {

@@ -142,7 +142,7 @@ try {
   }
 
   $deps = Read-ZipText 'extension/engine/WinFormsDesigner.Engine.deps.json'
-  if ($deps -notmatch 'StreamJsonRpc/2\.25\.29' -or $deps -notmatch 'MessagePack/2\.5\.302') {
+  if ($deps -notmatch 'StreamJsonRpc/2\.25\.29' -or $deps -notmatch 'MessagePack/2\.5\.303') {
     throw 'Bundled modern engine does not contain the audited StreamJsonRpc/MessagePack versions.'
   }
   $depsJson = $deps | ConvertFrom-Json

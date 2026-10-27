@@ -191,6 +191,8 @@ interface DataSourceGenerationResult {
 }
 
 interface ExtensionHostTestApi {
+  selectOpenDesignerProjectContext(source: vscode.Uri, projectPath: string | null): Promise<boolean>;
+  openDesignerOwnerEventSourcePaths(source: vscode.Uri): Promise<readonly string[]>;
   adapterManifestRegistryState(): readonly V2AdapterManifestProductStatus[];
   refreshAdapterManifests(): Promise<readonly V2AdapterManifestProductStatus[]>;
   engineLifecycleState(): { openDesignerSessions: number; mappedEngines: readonly { kind: 'modern' | 'net48'; pid: number; running: boolean }[]; liveProcessPids: readonly number[]; idleRecycleScheduled: boolean; idleRecycleInFlight: boolean; idleRecycleBudgetMs: number }; armNextIdleEngineRecycle(delayMs: number): void;
@@ -214,6 +216,7 @@ interface ExtensionHostTestApi {
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;
+    ownerAssemblyPath: string | null;
     ownerPaths: readonly string[];
     emptyInitializeComponentSurface: boolean;
     renderFailureCause: string | null;
@@ -637,6 +640,10 @@ export async function run(): Promise<void> {
   const workspaceRoot = path.join(workspaceFolder.uri.fsPath, 'DemoApp');
   assert.ok(fs.existsSync(path.join(workspaceRoot, 'DemoApp.csproj')), 'disposable DemoApp workspace copy is missing');
 
+  if (process.env.WFD_EXTENSION_HOST_OWNER_CONTEXT_ONLY === '1') {
+    await runOwnerContextScenario(testApi, workspaceRoot, path.join(workspaceRoot, 'DemoApp.csproj'));
+    return;
+  }
   if (process.env.WFD_EXTENSION_HOST_S122_ONLY === '1') {
     await runS122ProductPerformanceValidationScenario(testApi);
     return;
@@ -1832,109 +1839,7 @@ export async function run(): Promise<void> {
   fs.rmSync(externalSolutionProjectDir, { recursive: true, force: true });
   fs.rmSync(slnxPath, { force: true });
 
-  // V2-FND-001-S010 — two explicit projects own one shared partial. Remove that folder from the disposable root SDK
-  // project's implicit glob so the gate sees exactly the two real contenders. Both halves are proved below: two
-  // MODERN co-owners resolve to a deterministic ordinal-first pick and render (the owner never reaches the renderer
-  // there), while a modern + classic pair stays fail-closed AMBIGUOUS_OWNER because the owner would select which
-  // compiled binary the form is instantiated from. Neither half mutates a byte.
-  const ambiguousDir = path.join(workspaceRoot, 'OwnerAmbiguous');
-  const appOneDir = path.join(ambiguousDir, 'AppOne');
-  const appTwoDir = path.join(ambiguousDir, 'AppTwo');
-  fs.mkdirSync(appOneDir, { recursive: true });
-  fs.mkdirSync(appTwoDir, { recursive: true });
-  const rootProjectText = fs.readFileSync(sdkProject, 'utf8');
-  assert.ok(rootProjectText.includes('</Project>'));
-  fs.writeFileSync(
-    sdkProject,
-    rootProjectText.replace(
-      '</Project>',
-      '  <ItemGroup>\r\n    <Compile Remove="OwnerAmbiguous/SharedForm.cs" />\r\n    <Compile Remove="OwnerAmbiguous/SharedForm.Designer.cs" />\r\n  </ItemGroup>\r\n\r\n</Project>',
-    ),
-    'utf8',
-  );
-  const ambiguousSource = path.join(ambiguousDir, 'SharedForm.cs');
-  const ambiguousDesigner = path.join(ambiguousDir, 'SharedForm.Designer.cs');
-  const ambiguousSourceText = 'namespace DemoApp; public partial class SharedForm : System.Windows.Forms.Form { public SharedForm() => InitializeComponent(); }\r\n';
-  const ambiguousDesignerText = 'namespace DemoApp; partial class SharedForm { private void InitializeComponent() { this.Name = "SharedForm"; } }\r\n';
-  fs.writeFileSync(ambiguousSource, ambiguousSourceText, 'utf8');
-  fs.writeFileSync(ambiguousDesigner, ambiguousDesignerText, 'utf8');
-  const explicitSharedProject = (name: string) => [
-    '<Project Sdk="Microsoft.NET.Sdk">',
-    '  <PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms></PropertyGroup>',
-    '  <ItemGroup>',
-    `    <Compile Include="..\\SharedForm.cs" Link="${name}.cs" />`,
-    `    <Compile Include="..\\SharedForm.Designer.cs" Link="${name}.Designer.cs" />`,
-    '  </ItemGroup>',
-    '</Project>',
-    '',
-  ].join('\r\n');
-  const appOneProject = path.join(appOneDir, 'AppOne.csproj');
-  const appTwoProject = path.join(appTwoDir, 'AppTwo.csproj');
-  fs.writeFileSync(appOneProject, explicitSharedProject('AppOneSharedForm'), 'utf8');
-  fs.writeFileSync(appTwoProject, explicitSharedProject('AppTwoSharedForm'), 'utf8');
-  const ambiguousBefore = [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject]
-    .map((file) => Buffer.from(fs.readFileSync(file)));
-  const ambiguousUri = vscode.Uri.file(ambiguousSource);
-  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
-  // Both contenders are modern SDK projects, so neither can influence the render: the host passes no assembly and
-  // the engine finds its own project by walking up from the designer file. Refusing this layout made every linked
-  // file and every shared project unrenderable — worse than the previous release. The owner is now the ordinal-first
-  // contender, deterministically, and BOTH are still reported so nothing about the topology is hidden.
-  await waitFor(
-    () => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
-    () => 'two modern co-owners did not render after the deterministic owner pick: '
-      + JSON.stringify(testApi.openDesignerState(ambiguousUri)),
-    30_000,
-  );
-  const sharedState = testApi.openDesignerState(ambiguousUri);
-  assert.strictEqual(sharedState?.renderFailureCause, null,
-    'a resolved co-owner pick still published a render failure');
-  assert.strictEqual(
-    path.normalize(sharedState?.ownerProjectPath ?? ''),
-    path.normalize([appOneProject, appTwoProject].sort()[0]),
-    'the co-owner pick is not the ordinal-first contender',
-  );
-  assert.deepStrictEqual(
-    [...(sharedState?.ownerPaths ?? [])].map(path.normalize).sort(),
-    [appOneProject, appTwoProject].map(path.normalize).sort(),
-  );
-  [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject].forEach((file, index) => {
-    assert.deepStrictEqual(fs.readFileSync(file), ambiguousBefore[index], `shared-owner open mutated ${path.basename(file)}`);
-  });
-  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-
-  // The refusal itself is NOT gone — it is now scoped to contenders that CAN change the render. Make AppTwo a
-  // classic .NET Framework project: the host would instantiate the form from one specific project's compiled
-  // binary, so picking between them could render the wrong build, and the gate must stay fail-closed.
-  fs.writeFileSync(appTwoProject, [
-    '<Project ToolsVersion="15.0">',
-    '  <PropertyGroup><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup>',
-    '  <ItemGroup>',
-    '    <Compile Include="..\\SharedForm.cs" Link="AppTwoSharedForm.cs" />',
-    '    <Compile Include="..\\SharedForm.Designer.cs" Link="AppTwoSharedForm.Designer.cs" />',
-    '  </ItemGroup>',
-    '</Project>',
-    '',
-  ].join('\r\n'), 'utf8');
-  const mixedBefore = [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject]
-    .map((file) => Buffer.from(fs.readFileSync(file)));
-  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
-  await waitFor(
-    () => testApi.openDesignerState(ambiguousUri)?.ownerDiagnosticCode === 'AMBIGUOUS_OWNER',
-    'ambiguous owner refusal did not reach the product open gate',
-    30_000,
-  );
-  const ambiguousState = testApi.openDesignerState(ambiguousUri);
-  assert.strictEqual(ambiguousState?.renderReady, false);
-  assert.strictEqual(ambiguousState?.renderFailureCause, 'AMBIGUOUS_OWNER');
-  assert.deepStrictEqual(
-    [...(ambiguousState?.ownerPaths ?? [])].map(path.normalize).sort(),
-    [appOneProject, appTwoProject].map(path.normalize).sort(),
-  );
-  [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject].forEach((file, index) => {
-    assert.deepStrictEqual(fs.readFileSync(file), mixedBefore[index], `ambiguous open mutated ${path.basename(file)}`);
-  });
-  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  await runOwnerContextScenario(testApi, workspaceRoot, sdkProject);
 
   // V2-FND-001-S012 — Visual Studio 18.7 opens a proven empty partial as a blank surface even without
   // InitializeComponent. Match that bounded OPEN behavior without synthesizing source: the product surface is
@@ -7431,4 +7336,247 @@ async function runS126HighDpiAdvisorScenario(testApi: ExtensionHostTestApi): Pro
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   await waitFor(() => testApi.engineLifecycleState().openDesignerSessions === 0,
     'S126/S128 advisor sessions did not close', 30_000);
+}
+
+async function runOwnerContextScenario(
+  testApi: ExtensionHostTestApi, workspaceRoot: string, sdkProject: string,
+): Promise<void> {
+  // V2-FND-001-S010 — two explicit projects own one shared partial. Remove that folder from the disposable root SDK
+  // project's implicit glob so the gate sees exactly the two real contenders. Both halves are proved below: two
+  // MODERN co-owners resolve to a deterministic ordinal-first pick and render (the owner never reaches the renderer
+  // there), while a modern + classic pair stays fail-closed AMBIGUOUS_OWNER because the owner would select which
+  // compiled binary the form is instantiated from. Neither half mutates a byte.
+  const ambiguousDir = path.join(workspaceRoot, 'OwnerAmbiguous');
+  const appOneDir = path.join(ambiguousDir, 'AppOne');
+  const appTwoDir = path.join(ambiguousDir, 'AppTwo');
+  fs.mkdirSync(appOneDir, { recursive: true });
+  fs.mkdirSync(appTwoDir, { recursive: true });
+  const rootProjectText = fs.readFileSync(sdkProject, 'utf8');
+  assert.ok(rootProjectText.includes('</Project>'));
+  fs.writeFileSync(
+    sdkProject,
+    rootProjectText.replace(
+      '</Project>',
+      '  <ItemGroup>\r\n    <Compile Remove="OwnerAmbiguous/SharedForm.cs" />\r\n    <Compile Remove="OwnerAmbiguous/SharedForm.Designer.cs" />\r\n  </ItemGroup>\r\n\r\n</Project>',
+    ),
+    'utf8',
+  );
+  const ambiguousSource = path.join(ambiguousDir, 'SharedForm.cs');
+  const ambiguousDesigner = path.join(ambiguousDir, 'SharedForm.Designer.cs');
+  const ambiguousSourceText = 'namespace DemoApp; public partial class SharedForm : System.Windows.Forms.Form { public SharedForm() => InitializeComponent(); }\r\n';
+  const ambiguousDesignerText = 'namespace DemoApp; partial class SharedForm { private void InitializeComponent() { this.Name = "SharedForm"; } }\r\n';
+  fs.writeFileSync(ambiguousSource, ambiguousSourceText, 'utf8');
+  fs.writeFileSync(ambiguousDesigner, ambiguousDesignerText, 'utf8');
+  const explicitSharedProject = (name: string) => [
+    '<Project Sdk="Microsoft.NET.Sdk">',
+    '  <PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms></PropertyGroup>',
+    '  <ItemGroup>',
+    `    <Compile Include="..\\SharedForm.cs" Link="${name}.cs" />`,
+    `    <Compile Include="..\\SharedForm.Designer.cs" Link="${name}.Designer.cs" />`,
+    '  </ItemGroup>',
+    '</Project>',
+    '',
+  ].join('\r\n');
+  const appOneProject = path.join(appOneDir, 'AppOne.csproj');
+  const appTwoProject = path.join(appTwoDir, 'AppTwo.csproj');
+  fs.writeFileSync(appOneProject, explicitSharedProject('AppOneSharedForm'), 'utf8');
+  fs.writeFileSync(appTwoProject, explicitSharedProject('AppTwoSharedForm'), 'utf8');
+  const ambiguousBefore = [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject]
+    .map((file) => Buffer.from(fs.readFileSync(file)));
+  const ambiguousUri = vscode.Uri.file(ambiguousSource);
+  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
+  // Both contenders are modern SDK projects, so neither can influence the render: the host passes no assembly and
+  // the engine finds its own project by walking up from the designer file. Refusing this layout made every linked
+  // file and every shared project unrenderable — worse than the previous release. The owner is now the ordinal-first
+  // contender, deterministically, and BOTH are still reported so nothing about the topology is hidden.
+  await waitFor(
+    () => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
+    () => 'two modern co-owners did not render after the deterministic owner pick: '
+      + JSON.stringify(testApi.openDesignerState(ambiguousUri)),
+    30_000,
+  );
+  const sharedState = testApi.openDesignerState(ambiguousUri);
+  assert.strictEqual(sharedState?.renderFailureCause, null,
+    'a resolved co-owner pick still published a render failure');
+  assert.strictEqual(
+    path.normalize(sharedState?.ownerProjectPath ?? ''),
+    path.normalize([appOneProject, appTwoProject].sort()[0]),
+    'the co-owner pick is not the ordinal-first contender',
+  );
+  assert.deepStrictEqual(
+    [...(sharedState?.ownerPaths ?? [])].map(path.normalize).sort(),
+    [appOneProject, appTwoProject].map(path.normalize).sort(),
+  );
+  [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject].forEach((file, index) => {
+    assert.deepStrictEqual(fs.readFileSync(file), ambiguousBefore[index], `shared-owner open mutated ${path.basename(file)}`);
+  });
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+  // The refusal itself is NOT gone — it is now scoped to contenders that CAN change the render. Make AppTwo a
+  // classic .NET Framework project: the host would instantiate the form from one specific project's compiled
+  // binary, so picking between them could render the wrong build, and the gate must stay fail-closed.
+  fs.writeFileSync(appTwoProject, [
+    '<Project ToolsVersion="15.0">',
+    '  <PropertyGroup><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup>',
+    '  <ItemGroup>',
+    '    <Compile Include="..\\SharedForm.cs" Link="AppTwoSharedForm.cs" />',
+    '    <Compile Include="..\\SharedForm.Designer.cs" Link="AppTwoSharedForm.Designer.cs" />',
+    '  </ItemGroup>',
+    '</Project>',
+    '',
+  ].join('\r\n'), 'utf8');
+  const mixedBefore = [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject]
+    .map((file) => Buffer.from(fs.readFileSync(file)));
+  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
+  await waitFor(
+    () => testApi.openDesignerState(ambiguousUri)?.ownerDiagnosticCode === 'AMBIGUOUS_OWNER',
+    'ambiguous owner refusal did not reach the product open gate',
+    30_000,
+  );
+  const ambiguousState = testApi.openDesignerState(ambiguousUri);
+  assert.strictEqual(ambiguousState?.renderReady, false);
+  assert.strictEqual(ambiguousState?.renderFailureCause, 'AMBIGUOUS_OWNER');
+  assert.deepStrictEqual(
+    [...(ambiguousState?.ownerPaths ?? [])].map(path.normalize).sort(),
+    [appOneProject, appTwoProject].map(path.normalize).sort(),
+  );
+  [ambiguousSource, ambiguousDesigner, appOneProject, appTwoProject].forEach((file, index) => {
+    assert.deepStrictEqual(fs.readFileSync(file), mixedBefore[index], `ambiguous open mutated ${path.basename(file)}`);
+  });
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+  // R23-09 — the explicit context resolves the same OwnerAmbiguous fixture without relaxing membership.
+  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
+  await waitFor(() => testApi.openDesignerState(ambiguousUri)?.ownerDiagnosticCode === 'AMBIGUOUS_OWNER',
+    () => 'OwnerAmbiguous refusal was not retained: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)));
+  assert.strictEqual(await testApi.selectOpenDesignerProjectContext(ambiguousUri, null), false);
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.ownerDiagnosticCode, 'AMBIGUOUS_OWNER',
+    'canceling the project picker changed its refusal');
+  assert.strictEqual(await testApi.selectOpenDesignerProjectContext(ambiguousUri, appOneProject), true);
+  await waitFor(() => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
+    () => 'the explicitly chosen modern owner did not render: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)));
+  assert.strictEqual(path.normalize(testApi.openDesignerState(ambiguousUri)?.ownerProjectPath ?? ''), path.normalize(appOneProject));
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.engineKind, 'modern');
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
+  await waitFor(() => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
+    () => 'the workspace project preference did not survive reopening: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)));
+  assert.strictEqual(path.normalize(testApi.openDesignerState(ambiguousUri)?.ownerProjectPath ?? ''), path.normalize(appOneProject));
+
+  // Choosing the classic project switches the route to net48. This fixture is deliberately unbuilt: choosing a
+  // context must not invent an output or silently continue using the modern owner's preview.
+  assert.strictEqual(await testApi.selectOpenDesignerProjectContext(ambiguousUri, appTwoProject), true);
+  assert.strictEqual(path.normalize(testApi.openDesignerState(ambiguousUri)?.ownerProjectPath ?? ''), path.normalize(appTwoProject));
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.ownerDiagnosticCode, 'NONE');
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.engineKind, 'net48');
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.renderReady, false);
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+  const selectedProjectText = fs.readFileSync(appTwoProject, 'utf8');
+  fs.writeFileSync(appTwoProject, selectedProjectText.replace(
+    /<Compile Include="[^"\r\n]*SharedForm\.Designer\.cs"[^>]*\/>/, ''), 'utf8');
+  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
+  await waitFor(() => testApi.openDesignerState(ambiguousUri)?.ownerDiagnosticCode === 'STALE_PROJECT_CONTEXT',
+    () => 'a removed Compile item silently applied the stale owner: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)));
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.renderReady, false);
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.ownerProjectPath, '');
+  assert.strictEqual(await testApi.selectOpenDesignerProjectContext(ambiguousUri, appTwoProject), false,
+    'a project whose Compile membership disappeared was accepted by the picker');
+  assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.ownerDiagnosticCode, 'STALE_PROJECT_CONTEXT');
+  assert.strictEqual(await testApi.selectOpenDesignerProjectContext(ambiguousUri, appOneProject), true);
+  await waitFor(() => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
+    () => 'replacing the stale context did not restore the preview: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)));
+  assert.strictEqual(fs.readFileSync(ambiguousSource, 'utf8'), ambiguousSourceText);
+  assert.strictEqual(fs.readFileSync(ambiguousDesigner, 'utf8'), ambiguousDesignerText);
+  assert.strictEqual(fs.readFileSync(appOneProject, 'utf8'), explicitSharedProject('AppOneSharedForm'));
+  fs.writeFileSync(appTwoProject, selectedProjectText, 'utf8');
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+  // The two net48 owners build the SAME linked source with different DefineConstants. Their inherited base
+  // constructor makes the output distinction visible on the real preview/Properties route, including interpreted
+  // preview; merely reporting an owner or refusing an unbuilt route cannot establish this contract.
+  const net48SharedSource = [
+    'namespace DemoApp;',
+    'public class OwnerContextBase : System.Windows.Forms.Form',
+    '{',
+    '    public OwnerContextBase()',
+    '    {',
+    '#if OWNER_TWO',
+    '        this.Text = "Owner context two";',
+    '#else',
+    '        this.Text = "Owner context one";',
+    '#endif',
+    '    }',
+    '}',
+    'public partial class SharedForm : OwnerContextBase { public SharedForm() => InitializeComponent(); }',
+    '',
+  ].join('\r\n');
+  fs.writeFileSync(ambiguousSource, net48SharedSource, 'utf8');
+  const sharedCodeDocument = await vscode.workspace.openTextDocument(ambiguousSource);
+  await waitFor(() => sharedCodeDocument.getText() === net48SharedSource, 'the linked code-behind did not refresh before building its owners');
+  const ownerProjects = [appOneProject, appTwoProject];
+  const ownerEventPaths: string[] = [];
+  for (let index = 0; index < ownerProjects.length; index++) {
+    const project = ownerProjects[index];
+    fs.writeFileSync(project, [
+      '<Project Sdk="Microsoft.NET.Sdk">',
+      '  <PropertyGroup><TargetFramework>net48</TargetFramework><UseWindowsForms>true</UseWindowsForms>',
+      '    <PlatformTarget>x64</PlatformTarget><LangVersion>latest</LangVersion><EnableDefaultCompileItems>false</EnableDefaultCompileItems>',
+      '    <AssemblyName>OwnerContext' + (index + 1) + '</AssemblyName><DefineConstants>OWNER_' + (index === 0 ? 'ONE' : 'TWO') + '</DefineConstants>',
+      '  </PropertyGroup><ItemGroup>',
+      '    <Compile Include="..\\SharedForm.cs" Link="SharedForm.cs" />',
+      '    <Compile Include="..\\SharedForm.Designer.cs" Link="SharedForm.Designer.cs" />',
+      '    <Compile Include="OwnerEvents.cs" />',
+      '  </ItemGroup>',
+      '</Project>', '',
+    ].join('\r\n'), 'utf8');
+    const eventPath = path.join(path.dirname(project), 'OwnerEvents.cs');
+    ownerEventPaths.push(eventPath);
+    fs.writeFileSync(eventPath, 'namespace DemoApp; public partial class SharedForm { private void Owner' + (index + 1)
+      + 'Load(object sender, System.EventArgs e) { } }\r\n', 'utf8');
+    execFileSync('dotnet.exe', ['build', project, '-c', 'Release', '--nologo', '-v:q'], {
+      cwd: path.dirname(project), windowsHide: true, timeout: 120_000, stdio: 'pipe',
+    });
+  }
+  const builtFixtureFiles = [ambiguousSource, ambiguousDesigner, ...ownerProjects, ...ownerEventPaths];
+  const builtFixtureBytes = builtFixtureFiles.map(file => fs.readFileSync(file));
+  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
+  await waitFor(() => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
+    () => 'the initial net48 owner did not render before choosing: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)), 60_000);
+  for (const index of [0, 1, 0]) {
+    const project = ownerProjects[index];
+    assert.strictEqual(await testApi.selectOpenDesignerProjectContext(ambiguousUri, project), true);
+    await waitFor(() => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
+      () => 'the chosen net48 build did not render: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)), 60_000);
+    await testApi.selectOpenDesignerControl(ambiguousUri, 'this');
+    const expectedText = index === 0 ? 'Owner context one' : 'Owner context two';
+    await waitFor(() => testApi.openDesignerProperties(ambiguousUri)?.properties
+      .some(property => property.name === 'Text' && property.value === expectedText) === true,
+    () => 'the preview did not use the selected build: ' + JSON.stringify({ state: testApi.openDesignerState(ambiguousUri),
+      properties: testApi.openDesignerProperties(ambiguousUri) }), 30_000);
+    assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.engineKind, 'net48');
+    assert.strictEqual(path.normalize(testApi.openDesignerState(ambiguousUri)?.ownerProjectPath ?? ''), path.normalize(project));
+    const expectedAssembly = path.join(path.dirname(project), 'bin', 'Release', 'net48', 'OwnerContext' + (index + 1) + '.dll');
+    assert.strictEqual(path.normalize(testApi.openDesignerState(ambiguousUri)?.ownerAssemblyPath ?? ''), path.normalize(expectedAssembly));
+    // Read the actual snapshot used by handler discovery, navigation and generation. Only the chosen project's
+    // directory may contribute additional partials; the other compiled owner's event source stays out.
+    const eventPaths = (await testApi.openDesignerOwnerEventSourcePaths(ambiguousUri)).map(file => path.normalize(file).toLowerCase());
+    assert.ok(eventPaths.includes(path.normalize(ownerEventPaths[index]).toLowerCase()),
+      'the chosen owner event partial was not available');
+    assert.ok(!eventPaths.includes(path.normalize(ownerEventPaths[index === 0 ? 1 : 0]).toLowerCase()),
+      'the event source search crossed into another owner project');
+    assert.strictEqual(testApi.openDesignerState(ambiguousUri)?.dirty, false);
+  }
+  builtFixtureFiles.forEach((file, index) => assert.deepStrictEqual(fs.readFileSync(file), builtFixtureBytes[index],
+    'selecting a built owner changed fixture bytes: ' + path.basename(file)));
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  await vscode.commands.executeCommand('vscode.openWith', ambiguousUri, designerViewType);
+  await waitFor(() => testApi.openDesignerState(ambiguousUri)?.renderReady === true,
+    () => 'persisted net48 owner did not reopen: ' + JSON.stringify(testApi.openDesignerState(ambiguousUri)), 60_000);
+  assert.strictEqual(path.normalize(testApi.openDesignerState(ambiguousUri)?.ownerProjectPath ?? ''), path.normalize(appOneProject));
+  await testApi.selectOpenDesignerControl(ambiguousUri, 'this');
+  assert.strictEqual(testApi.openDesignerProperties(ambiguousUri)?.properties.find(property => property.name === 'Text')?.value,
+    'Owner context one', 'reopening the document changed its selected net48 build');
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
 }

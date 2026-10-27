@@ -133,6 +133,81 @@ public sealed class V2DocumentResolverScenarioTests
         }
     }
 
+    [Theory]
+    [InlineData("classic")]
+    [InlineData("multiTarget")]
+    [InlineData("modern")]
+    public void ExplicitProjectContext_RevalidatesMembershipAndSelectsExactlyTheChosenOwner(string shape)
+    {
+        string root = CreateTempDir();
+        try
+        {
+            var (shared, first, second) = shape switch
+            {
+                "classic" => SharedByTwo(root, ClassicProjectWithCompile),
+                "multiTarget" => SharedByTwo(root, MultiTargetProjectWithCompile),
+                _ => SharedByTwo(root, include => SdkProjectWithCompile(include, "net10.0-windows")),
+            };
+            string original = File.ReadAllText(shared);
+            foreach (string chosen in new[] { first, second })
+            {
+                var selected = ProjectResolver.ResolveDesignerDocumentOwner(
+                    shared, new[] { first, second }, preferredProjectPath: chosen);
+                Assert.Equal(DesignerDocumentOwnerStatus.Resolved, selected.Status);
+                Assert.Equal(chosen, selected.ProjectPath);
+                Assert.False(selected.SelectedAmongEquivalentOwners);
+                Assert.Equal(new[] { first, second }.OrderBy(p => p, StringComparer.OrdinalIgnoreCase), selected.Owners);
+            }
+            Assert.Equal(original, File.ReadAllText(shared));
+        }
+        finally { TryDelete(root); }
+    }
+
+    [Theory]
+    [InlineData("excluded")]
+    [InlineData("deleted")]
+    [InlineData("notCandidate")]
+    [InlineData("notOwner")]
+    public void ExplicitProjectContext_StaleOrUnprovenChoiceNeverFallsBackToAnotherOwner(string change)
+    {
+        string root = CreateTempDir();
+        try
+        {
+            var (shared, first, second) = SharedByTwo(root, ClassicProjectWithCompile);
+            Assert.Equal(DesignerDocumentOwnerStatus.Resolved, ProjectResolver.ResolveDesignerDocumentOwner(
+                shared, new[] { first, second }, preferredProjectPath: second).Status);
+            string[] candidates = { first, second };
+            if (change == "excluded") File.WriteAllText(second, """<Project><ItemGroup><Compile Remove="..\Shared\SharedForm.Designer.cs" /></ItemGroup></Project>""");
+            else if (change == "deleted") File.Delete(second);
+            else if (change == "notCandidate") candidates = new[] { first };
+            else File.WriteAllText(second, "<Project />");
+            var rejected = ProjectResolver.ResolveDesignerDocumentOwner(shared, candidates, preferredProjectPath: second);
+            Assert.Equal(DesignerDocumentOwnerStatus.StaleProjectContext, rejected.Status);
+            Assert.Equal("STALE_PROJECT_CONTEXT", rejected.DiagnosticCode);
+            Assert.Equal("", rejected.ProjectPath);
+            Assert.Equal(new[] { first }, rejected.Owners);
+            Assert.False(rejected.SelectedAmongEquivalentOwners);
+        }
+        finally { TryDelete(root); }
+    }
+
+    [Fact]
+    public void ExplicitProjectContext_CannotBypassSourceOrNestedDesignerGate()
+    {
+        string root = CreateTempDir();
+        try
+        {
+            var (shared, first, second) = SharedByTwo(root, ClassicProjectWithCompile);
+            var missing = ProjectResolver.ResolveDesignerDocumentOwner(shared, new[] { first, second },
+                "namespace Catalog { partial class SharedForm { } }", preferredProjectPath: first);
+            Assert.Equal("MISSING_INITIALIZE_COMPONENT", missing.DiagnosticCode);
+            var nested = ProjectResolver.ResolveDesignerDocumentOwner(shared, new[] { first, second },
+                "class Outer { partial class Nested { void InitializeComponent() { } } }", preferredProjectPath: first);
+            Assert.Equal("NESTED_DESIGNER_UNSUPPORTED", nested.DiagnosticCode);
+        }
+        finally { TryDelete(root); }
+    }
+
     [Fact]
     public void SharedProjitemsForm_ResolvesToTheImportingProject()
     {

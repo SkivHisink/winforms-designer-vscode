@@ -58,7 +58,23 @@ await esbuild.build({
   external: ['vscode'],
 });
 
-// Installed 2.1 -> 2.2 -> 2.1 upgrade and rollback uses isolated VS Code profiles.
+// Focused 2.3 history and linked-artifact hot exit uses two actual VS Code launches.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/release23-extension-host-suite.ts'],
+  outfile: 'dist/release23-extension-host-suite.cjs',
+  external: ['vscode'],
+});
+
+// Focused 2.4 Adapter SDK Preview acceptance stays outside the packaged extension.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/release24-extension-host-suite.ts'],
+  outfile: 'dist/release24-extension-host-suite.cjs',
+  external: ['vscode'],
+});
+
+// Installed baseline upgrade and rollback uses isolated VS Code profiles.
 await esbuild.build({
   ...common,
   entryPoints: ['src/release22-upgrade-suite.ts'],

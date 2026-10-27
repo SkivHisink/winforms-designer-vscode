@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.IO;
 using System.Reflection;
@@ -12,7 +13,7 @@ using System.Threading.Tasks;
 namespace WinFormsDesigner.Engine
 {
     /// <summary>
-    /// Wire request for the deliberately small UITypeEditor worker protocol. The future process host writes one
+    /// Wire request for the deliberately small UITypeEditor worker protocol. The process host writes one
     /// JSON request to the child process's standard input and accepts exactly one JSON response on standard output.
     /// No assembly path or arbitrary type is accepted here: the worker must resolve the policy-approved framework
     /// type names from its own trusted runtime.
@@ -53,6 +54,28 @@ namespace WinFormsDesigner.Engine
         [JsonPropertyName("collectionItems")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public List<string>? CollectionItems { get; init; }
+
+        [JsonPropertyName("uiContext")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public DesignerUiTypeEditorUiContext? UiContext { get; init; }
+    }
+
+    /// <summary>Optional v2 interaction contract. Owner and focus identities are opaque host-issued tokens, never
+    /// native window handles or workspace paths. Host UI adapters own presentation; the engine remains headless.</summary>
+    public sealed class DesignerUiTypeEditorUiContext
+    {
+        [JsonPropertyName("version")]
+        public int Version { get; init; } = 2;
+        [JsonPropertyName("ownerId")]
+        public string OwnerId { get; init; } = "";
+        [JsonPropertyName("focusToken")]
+        public string FocusToken { get; init; } = "";
+        [JsonPropertyName("presentation")]
+        public string Presentation { get; init; } = "headless";
+        [JsonPropertyName("invocationDepth")]
+        public int InvocationDepth { get; init; }
+        [JsonPropertyName("requiresNativeWindow")]
+        public bool RequiresNativeWindow { get; init; }
     }
 
     /// <summary>
@@ -78,6 +101,26 @@ namespace WinFormsDesigner.Engine
         [JsonPropertyName("collectionItems")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public List<string>? CollectionItems { get; init; }
+
+        [JsonPropertyName("ownerId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? OwnerId { get; init; }
+
+        [JsonPropertyName("focusToken")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? FocusToken { get; init; }
+
+        [JsonPropertyName("resultValueTypeName")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ResultValueTypeName { get; init; }
+
+        [JsonPropertyName("resultCollectionItemTypeName")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ResultCollectionItemTypeName { get; init; }
+
+        [JsonPropertyName("dismissalReason")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? DismissalReason { get; init; }
 
         [JsonPropertyName("errorCode")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -117,6 +160,11 @@ namespace WinFormsDesigner.Engine
         public bool Dismissed { get; init; }
         public string? InvariantValue { get; init; }
         public List<string>? CollectionItems { get; init; }
+        public string? ResultValueTypeName { get; init; }
+        public string? ResultCollectionItemTypeName { get; init; }
+        public string? OwnerId { get; init; }
+        public string? FocusToken { get; init; }
+        public string? DismissalReason { get; init; }
         public string ErrorCode { get; init; } = "";
         public string Reason { get; init; } = "";
     }
@@ -152,10 +200,11 @@ namespace WinFormsDesigner.Engine
     }
 
     /// <summary>
-    /// Security policy for modal/drop-down editor execution. Only framework editors whose invariant values already
-    /// round-trip through <see cref="DesignerValueConverter"/> are enabled. File, folder, image, binary/resource,
-    /// custom/vendor, and assembly-qualified editors are intentionally absent: they need separate source/resource
-    /// transactions and must never become executable merely because a project advertises an EditorAttribute.
+    /// Security policy for editor data contracts. Framework invariant values must round-trip through
+    /// <see cref="DesignerValueConverter"/>; their native UI is explicitly unavailable in the headless worker.
+    /// Only exact certified headless fixtures may execute here. File, folder, image, binary/resource, arbitrary
+    /// custom/vendor and assembly-qualified editors require separate contracts and cannot become executable merely
+    /// because a project advertises an EditorAttribute.
     /// </summary>
     public static class DesignerUiTypeEditorPolicy
     {
@@ -166,6 +215,7 @@ namespace WinFormsDesigner.Engine
         public const int MaximumCollectionItems = 128;
         public const int MaximumCollectionItemLength = 1024;
         public const string InvalidEditorResultCode = "INVALID_EDITOR_RESULT";
+        public const string NativeEditorUiUnsupportedCode = "NATIVE_EDITOR_UI_UNSUPPORTED";
         public const string CollectionEditorTypeName = "System.ComponentModel.Design.CollectionEditor";
         public const string CollectionValueTypeName = "System.Collections.IList";
 
@@ -193,6 +243,8 @@ namespace WinFormsDesigner.Engine
                 ["conversion_failed"] = "The editor result could not be converted to a supported invariant value.",
                 ["runtime_unsupported"] = "The supported editor is unavailable in this runtime.",
                 ["worker_cancelled"] = "The editor worker was cancelled.",
+                [NativeEditorUiUnsupportedCode] = "Native editor windows are unavailable; use an explicit host UI adapter.",
+                ["HOST_EDITOR_UI_REQUIRED"] = "The requested presentation requires an explicit host UI adapter.",
                 [InvalidEditorResultCode] = "The editor result was rejected before any source mutation.",
             };
 
@@ -394,6 +446,32 @@ namespace WinFormsDesigner.Engine
             return true;
         }
 
+        internal static bool TryValidateUiContext(DesignerUiTypeEditorUiContext? context, out string errorCode)
+        {
+            errorCode = "";
+            if (context == null) return true;
+            if (context.RequiresNativeWindow || context.Presentation is "native-modal" or "native-dropdown")
+            {
+                errorCode = NativeEditorUiUnsupportedCode;
+                return false;
+            }
+            if (context.Version != 2 || !IsSafeRequestId(context.OwnerId) || !IsSafeRequestId(context.FocusToken)
+                || context.Presentation is not ("headless" or "host-modal" or "host-dropdown")
+                || context.InvocationDepth < 0)
+            {
+                errorCode = "invalid_ui_context";
+                return false;
+            }
+            if (context.InvocationDepth != 0)
+            {
+                errorCode = "nested_editor_invocation";
+                return false;
+            }
+            return true;
+        }
+
+        internal static bool IsSafeDismissalReason(string? reason) => reason is "escape" or "cancel" or "unchanged";
+
         internal static bool IsSafeRequestId(string requestId)
         {
             if (string.IsNullOrEmpty(requestId) || requestId.Length > MaximumRequestIdLength) return false;
@@ -557,6 +635,7 @@ namespace WinFormsDesigner.Engine
         private static readonly TimeSpan MinimumTimeout = TimeSpan.FromMilliseconds(10);
         private static readonly TimeSpan MaximumTimeout = TimeSpan.FromMinutes(2);
 
+        private static readonly ConcurrentDictionary<string, byte> ActiveOwners = new(StringComparer.Ordinal);
         private readonly IDesignerUiTypeEditorProcessRunner _runner;
         private readonly TimeSpan _timeout;
 
@@ -578,6 +657,40 @@ namespace WinFormsDesigner.Engine
         public async Task<DesignerUiTypeEditorBrokerResult> EditAsync(
             DesignerUiTypeEditorRequest request,
             CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested) return Error("request_cancelled", "The editor request was cancelled.");
+            if (request == null) return Error("invalid_request", "The editor request is required.");
+            if (!DesignerUiTypeEditorPolicy.TryValidateUiContext(request.UiContext, out string contextError))
+                return Error(contextError, "The editor interaction context is unavailable or invalid.");
+            if (request.UiContext == null) return await EditCoreAsync(request, cancellationToken).ConfigureAwait(false);
+
+            if (!ActiveOwners.TryAdd(request.UiContext.OwnerId, 0))
+                return Error("nested_editor_invocation", "The owner already has an active editor interaction.");
+            try
+            {
+                DesignerUiTypeEditorBrokerResult result = await EditCoreAsync(request, cancellationToken).ConfigureAwait(false);
+                return new DesignerUiTypeEditorBrokerResult
+                {
+                    Ok = result.Ok,
+                    Applied = result.Applied,
+                    Dismissed = result.Dismissed,
+                    InvariantValue = result.InvariantValue,
+                    CollectionItems = result.CollectionItems,
+                    ResultValueTypeName = result.ResultValueTypeName,
+                    ResultCollectionItemTypeName = result.ResultCollectionItemTypeName,
+                    OwnerId = request.UiContext.OwnerId,
+                    FocusToken = request.UiContext.FocusToken,
+                    DismissalReason = result.DismissalReason,
+                    ErrorCode = result.ErrorCode,
+                    Reason = result.Reason,
+                };
+            }
+            finally { ActiveOwners.TryRemove(request.UiContext.OwnerId, out _); }
+        }
+
+        private async Task<DesignerUiTypeEditorBrokerResult> EditCoreAsync(
+            DesignerUiTypeEditorRequest request,
+            CancellationToken cancellationToken)
         {
             if (cancellationToken.IsCancellationRequested) return Error("request_cancelled", "The editor request was cancelled.");
             if (request == null) return Error("invalid_request", "The editor request is required.");
@@ -677,9 +790,21 @@ namespace WinFormsDesigner.Engine
                 || !string.Equals(response.RequestId, request.RequestId, StringComparison.Ordinal))
                 return Error("malformed_output", "The editor worker returned malformed output.");
 
+            if (request.UiContext == null)
+            {
+                if (response.OwnerId != null || response.FocusToken != null || response.ResultValueTypeName != null
+                    || response.ResultCollectionItemTypeName != null || response.DismissalReason != null)
+                    return Error("malformed_output", "The legacy editor response contains an unrequested interaction contract.");
+            }
+            else if (!string.Equals(response.OwnerId, request.UiContext.OwnerId, StringComparison.Ordinal)
+                || !string.Equals(response.FocusToken, request.UiContext.FocusToken, StringComparison.Ordinal))
+                return Error("stale_editor_context", "The editor result belongs to a different owner or focus interaction.");
+
             if (string.Equals(response.Status, "applied", StringComparison.Ordinal))
             {
-                if (!string.IsNullOrEmpty(response.ErrorCode) || !string.IsNullOrEmpty(response.ErrorMessage))
+                if (!string.IsNullOrEmpty(response.ErrorCode) || !string.IsNullOrEmpty(response.ErrorMessage)
+                    || response.DismissalReason != null
+                    || (request.UiContext != null && !string.Equals(response.ResultValueTypeName, request.ValueTypeName, StringComparison.Ordinal)))
                     return Error(DesignerUiTypeEditorPolicy.InvalidEditorResultCode, "The editor worker returned an unsafe value.");
                 DesignerUiTypeEditorPolicy.TryGetRequestContract(
                     request, out DesignerUiTypeEditorContract responseContract, out _, out _);
@@ -689,6 +814,7 @@ namespace WinFormsDesigner.Engine
                 if (collectionRequest)
                 {
                     if (response.InvariantValue != null
+                        || (request.UiContext != null && !string.Equals(response.ResultCollectionItemTypeName, request.CollectionItemTypeName, StringComparison.Ordinal))
                         || !DesignerUiTypeEditorPolicy.IsSafeCollectionItems(request.CollectionItemTypeName, response.CollectionItems))
                         return Error(DesignerUiTypeEditorPolicy.InvalidEditorResultCode, "The editor worker returned an unsafe collection.");
                     return new DesignerUiTypeEditorBrokerResult
@@ -696,9 +822,12 @@ namespace WinFormsDesigner.Engine
                         Ok = true,
                         Applied = true,
                         CollectionItems = response.CollectionItems,
+                        ResultValueTypeName = request.ValueTypeName,
+                        ResultCollectionItemTypeName = request.CollectionItemTypeName,
                     };
                 }
                 if (response.CollectionItems != null || response.InvariantValue == null
+                    || response.ResultCollectionItemTypeName != null
                     || !DesignerUiTypeEditorPolicy.IsSafeWorkerResultValue(request, response.InvariantValue))
                     return Error(DesignerUiTypeEditorPolicy.InvalidEditorResultCode, "The editor worker returned an unsafe value.");
                 return new DesignerUiTypeEditorBrokerResult
@@ -706,20 +835,25 @@ namespace WinFormsDesigner.Engine
                     Ok = true,
                     Applied = true,
                     InvariantValue = response.InvariantValue,
+                    ResultValueTypeName = request.ValueTypeName,
                 };
             }
 
             if (string.Equals(response.Status, "dismissed", StringComparison.Ordinal))
             {
                 if (response.InvariantValue != null || response.CollectionItems != null || !string.IsNullOrEmpty(response.ErrorCode)
-                    || !string.IsNullOrEmpty(response.ErrorMessage))
+                    || !string.IsNullOrEmpty(response.ErrorMessage) || response.ResultValueTypeName != null
+                    || response.ResultCollectionItemTypeName != null
+                    || (request.UiContext != null && !DesignerUiTypeEditorPolicy.IsSafeDismissalReason(response.DismissalReason)))
                     return Error("malformed_output", "The editor worker returned malformed output.");
-                return new DesignerUiTypeEditorBrokerResult { Ok = true, Dismissed = true };
+                return new DesignerUiTypeEditorBrokerResult { Ok = true, Dismissed = true, DismissalReason = response.DismissalReason };
             }
 
             if (string.Equals(response.Status, "error", StringComparison.Ordinal)
                 && response.InvariantValue == null
                 && response.CollectionItems == null
+                && response.ResultValueTypeName == null && response.ResultCollectionItemTypeName == null
+                && response.DismissalReason == null
                 && !string.IsNullOrEmpty(response.ErrorCode)
                 && DesignerUiTypeEditorPolicy.TryGetWorkerErrorReason(response.ErrorCode, out string reason))
                 return Error(response.ErrorCode, reason);

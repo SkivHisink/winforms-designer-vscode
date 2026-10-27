@@ -20,6 +20,10 @@ namespace WinFormsDesigner.Engine
     /// </summary>
     internal static class HostedServiceKernelProductBroker
     {
+        public static HostedServiceKernelCapabilitiesResult InspectPreviewServices(
+            string rootKind = "Form", CancellationToken cancellationToken = default) =>
+            DesignerServiceKernel.InspectPreviewServices(rootKind, cancellationToken);
+
         internal const string CertificationId = "repo.fakevendor.hosted-service-kernel.v1";
         internal const string CommandId = "applyServicePreset";
         internal const string ReentrantCommandId = "cancelReentrantServiceAction";
@@ -190,7 +194,8 @@ namespace WinFormsDesigner.Engine
                                 CertificationId = certificationId,
                                 AssemblySha256 = sha,
                                 ApartmentState = Thread.CurrentThread.GetApartmentState().ToString(),
-                                Capabilities = session.Capabilities.Select(capability => capability.ToString()).ToList(),
+                                Capabilities = HostedServiceKernelV1Contract.ProjectCapabilities(
+                                    session.Capabilities.Select(capability => capability.ToString())),
                                 CompleteHostAdvertised = completeHostAdvertised,
                                 IncompleteHostWithheld = incompleteHostWithheld,
                                 IncompleteHostReason = incompleteHostReason,
@@ -235,7 +240,8 @@ namespace WinFormsDesigner.Engine
                         CertificationId = certificationId,
                         AssemblySha256 = sha,
                         ApartmentState = Thread.CurrentThread.GetApartmentState().ToString(),
-                        Capabilities = session.Capabilities.Select(capability => capability.ToString()).ToList(),
+                        Capabilities = HostedServiceKernelV1Contract.ProjectCapabilities(
+                            session.Capabilities.Select(capability => capability.ToString())),
                         CompleteHostAdvertised = completeHostAdvertised,
                         IncompleteHostWithheld = incompleteHostWithheld,
                         IncompleteHostReason = incompleteHostReason,

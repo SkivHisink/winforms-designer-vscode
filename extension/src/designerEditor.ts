@@ -1,9 +1,17 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { EngineRequestContext, currentEngineRequestContext, withEngineRequestContext, engineRequestScopeActive, engineRequestGraphProven, releaseEngineForCurrentRequest } from './engineRequestContext';
 import { BUILD_TASK_ACTIVE } from './engineTransport';
+import { DocumentHistory, DocumentHistoryEdit, DocumentHistoryUnit, DocumentHistoryArtifact, DocumentHistoryCheckpoint } from './documentHistory';
+import { CompanionChangeGuard } from './companionChangeGuard';
+import { SourceTransactionGuard, SourceTransactionImage } from './sourceTransactionGuard';
+import { inspectHostedPreviewServices, HostedServiceKernelCapabilitiesResult, resetPropertyViaProvenOwnedRegion } from './engineClient';
+import type { SetPropertyIntent, PropertyType, AdapterContribution } from '../../adapter-sdk/index.mjs';
+import { ADAPTER_ACTION_COMMAND, AdapterActionPublication, PublishedAdapterAction, validateAdapterActionPublication, resolveAdapterActionIntent } from './adapterActions';
+import { observedAdapterScalar } from './adapterPropertyContext';
+import { DocumentSaveBaselineError, readDocumentSaveBaselines } from './documentSaveBaselines';
 import { HostMutationLedger, HostMutationResult, HostMutationRecord, ROLLBACK_PREPARED, canonicalHostDocumentId, beginHostMutation, trackHostMutation, trackUnrefusableHostMutation, currentHostMutationOperationId, currentHostMutationIdentity } from './mutationOperation';
 import { designerDpiScale, displayDprChanged } from './dpiScale';
 import { captureDependencyGraphIdentity } from './dependencyGraphIdentity';
@@ -186,8 +194,11 @@ const CERTIFIED_HOSTED_SERVICE_COMPONENT = 'FakeVendor.HostedServiceControl';
 const CERTIFIED_HOSTED_SERVICE_ID = 'repo.fakevendor.hosted-service-kernel.v1';
 const CERTIFIED_HOSTED_SERVICE_ACTION = 'applyServicePreset';
 const CERTIFIED_HOSTED_SERVICE_REENTRANT_ACTION = 'cancelReentrantServiceAction';
-import { atomicWriteLocalFile } from './atomicFile';
+import { atomicCreateLocalFile, atomicWriteLocalFile } from './atomicFile';
 import { formSiblingsToDelete } from './formSiblings';
+import { renameSavedFormType, saveAsTypeName, verifySaveAsSourceSnapshot } from './formSaveAs';
+import { readRecoveryTimeline } from './recoveryTimeline';
+import { assertLocalArtifactPath } from './localArtifactPath';
 import { collectProjectEventSourcePaths } from './projectEventSources';
 import { projectPathsFromSolutionFile } from './solutionProjects';
 import { fileHasInlineInitializeComponent, mergeInlineEventEdits } from './inlineDesigner';
@@ -212,6 +223,7 @@ import { intersectMultiProperties, normalizeMultiSelection } from './multiProper
 import {
   planWinFormsSaveAs,
   sha256Hex,
+  stripUtf8Bom,
 } from './documentStore';
 import {
   DesignerResourceTransactionTarget,
@@ -223,6 +235,7 @@ import { TransactionRunnerResult, TransactionUndoRegistration } from './transact
 import { TransactionJournalState, writeJournalFile } from './transactionJournal';
 import { reconcileRestoredDocumentTransactions } from './transactionRecovery';
 import { activeXControlsInDesignerSource } from './tierDCompatibility';
+import { projectEvaluationDiagnosticCodes } from './projectEvaluationStatus';
 import { compatibilityForRender, inspectCachedProjectCompatibility, inspectImageCompatibility, ProjectCompatibilityResult, selectedOutputCompatibilityOptions } from './projectCompatibility';
 import { createDesignerDiagnostic, diagnosticsFromRenderItems, DesignerDiagnostic, engineInstallationDiagnosticCode } from './designerDiagnostics';
 import { loadPersistedDesignerState, persistToolboxScanCache, clearDisposableDesignerCaches } from './persistedDesignerState';
@@ -285,7 +298,7 @@ const STALE_RENDER_BLOCKED = new Set<string>([
   'dropControl', 'dropDataSource', 'removeControl', 'removeControls', 'cut', 'cutControls', 'paste', 'duplicate', 'duplicateDrag',
   'bringToFront', 'bringToFrontGroup', 'sendToBack', 'sendToBackGroup', 'tabRename',
   'stripAdd', 'stripMove', 'stripRename', 'stripRetype', 'stripDelete', 'trayRename', 'renameComponent', 'createDefaultHandler', 'addTab', 'deleteTab', 'moveTab',
-  'designerActionCommand',
+  'designerActionCommand', 'adapterAction',
   // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
   'editNested', 'importImage', 'pickProjectImageResource', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
   'setGenericList', 'uiTypeEditor', 'uiCollectionEditor',
@@ -298,7 +311,7 @@ const STALE_RENDER_BLOCKED = new Set<string>([
 // message cannot act on the newer authoritative graph.
 // tabClick and selectItem resolve a point/row on the drawn bitmap just like a pick, so an old frame must not land on
 // a newer graph either.
-const CANVAS_GENERATION_GUARDED = new Set<string>(['pick', 'manipulate', 'manipulateGroup', 'tabClick', 'selectItem']);
+const CANVAS_GENERATION_GUARDED = new Set<string>(['pick', 'manipulate', 'manipulateGroup', 'tabClick', 'selectItem', 'adapterAction']);
 /** How long a render waits for a cached MSBuild-evaluated compatibility result before using the image evidence. */
 
 const LOCALIZABLE_SOURCE_BLOCKED = new Set<string>(
@@ -442,6 +455,7 @@ function documentOwnerFailureMessage(owner: DesignerDocumentOwnerResolution | un
     const owners = owner?.owners?.map((file) => path.basename(file)).join(', ') || 'multiple projects';
     return t('designer.owner.ambiguous', { owners });
   }
+  if (code === 'STALE_PROJECT_CONTEXT') return t('designer.ownerContext.stale');
   if (code === 'NESTED_DESIGNER_UNSUPPORTED') {
     return t('designer.owner.nestedUnsupported', { type: owner?.typeName || 'nested Form' });
   }
@@ -784,6 +798,17 @@ export class DesignerHub {
     void this.workspaceMemento.update('designerViewStates', all);
   }
 
+  /** A project choice is document-specific and workspace-local. The engine revalidates it before each render. */
+  projectContext(file: string): string | undefined {
+    const value = this.workspaceMemento?.get<unknown>('designerProjectContext:' + normalize(file));
+    return typeof value === 'string' && path.isAbsolute(value) && !value.includes('\0') ? value : undefined;
+  }
+
+  async setProjectContext(file: string, projectPath: string): Promise<void> {
+    if (!this.workspaceMemento) throw new Error('workspace project-context persistence is unavailable');
+    await this.workspaceMemento.update('designerProjectContext:' + normalize(file), projectPath);
+  }
+
   get activeSession(): DesignerSession | null { return this.active; }
 
   /** Fires when the mirrored (focused) designer changes — the status bar reflects the active form's control source. */
@@ -990,22 +1015,7 @@ class DesignerSourceConflictError extends Error {
   }
 }
 
-function saveAsTypeName(designerText: string, destinationStem: string): { sourceType: string; destinationType: string } {
-  const sourceType = /\bpartial\s+class\s+([\p{L}_][\p{L}\p{N}_]*)/u.exec(designerText)?.[1];
-  if (!sourceType || !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(destinationStem)) {
-    throw new Error(`Save As refused: ${destinationStem} is not a valid C# form type name`);
-  }
-  return { sourceType, destinationType: destinationStem };
-}
-
-function renameSavedFormType(text: string, sourceType: string, destinationType: string): string {
-  if (sourceType === destinationType) return text;
-  const escaped = sourceType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return text.replace(
-    new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'gu'),
-    destinationType,
-  );
-}
+interface HistoryDocumentEditEvent extends vscode.CustomDocumentEditEvent<WinFormsDesignDocument> { historyId?: string; }
 
 export class WinFormsDesignDocument implements vscode.CustomDocument {
   /** Live designer text the engine renders/edits (BOM-less, matching VS Code's getText() semantics). */
@@ -1040,6 +1050,12 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
    * Register exactly one recovered edit for the frozen S003 contract (one unsaved move / one undo unit), so the
    * native stack again has the saved disk image below the recovered image instead of a permanently dirty dead end. */
   private recoveredUndoRegistered = false;
+  private history: DocumentHistory;
+  private recoveredHistory = false;
+  private recoveredUndoCount = 0;
+  private recoveredNativeFloor: number | null = null;
+  private logicalRecovery = false;
+  private readonly historyRoot: string;
 
   constructor(
     readonly uri: vscode.Uri,
@@ -1052,18 +1068,85 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     baselineUnknown = false,
     private readonly saveWholeFormAs?: (document: WinFormsDesignDocument, destination: vscode.Uri) => Promise<void>,
     private readonly recoveredFromBackup = false,
+    private readonly historyStorageRoot?: string,
   ) {
     this.designerText = initialText;
     this.savedDesignerText = savedText;
     this.hadBom = hadBom;
     this.savedExisted = savedExisted;
     this._baselineUnknown = baselineUnknown;
+    this.historyRoot = vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath ?? path.dirname(uri.fsPath);
+    this.history = new DocumentHistory(canonicalHostDocumentId(uri.fsPath), this.historyRoot, initialText);
   }
 
+  /** Source badges describe the unsaved generated text. A persisted resource-only history step leaves it clean. */
   get isDirty(): boolean { return this.designerText !== this.savedDesignerText; }
+  get hasUnsavedBufferChanges(): boolean {
+    return this.isDirty || this.history.editorImages.some((artifact) => vscode.workspace.textDocuments.some((document) =>
+      normalize(document.uri.fsPath) === normalize(artifact.target) && document.isDirty));
+  }
+  /** Native edit/checkpoint state still needs a backup even when every resource byte is already persisted. */
+  get needsRecoveryBackup(): boolean { return this.hasUnsavedBufferChanges || this.history.dirty; }
+  recordHistoryEdit(edit: DocumentHistoryEdit): string { return this.history.record(edit); }
+  moveHistory(id: string, direction: 'undo' | 'redo'): void { this.history.alignAfterNativeMove(id, direction, this.designerText); }
+  historyTimeline(): readonly { id: string; label: string; applied: boolean }[] { return this.history.timeline; }
+  get historyState(): DocumentHistory['state'] & {
+    recoveredUndoCount: number; limitation: string | null; recoveryMode: 'native' | 'logical';
+    logicalUndoCount: number; logicalRedoCount: number; editorCheckpointCount: number; companionConflict: boolean;
+    logicalDirty: boolean; unsavedBufferChanges: boolean;
+  } {
+    const state = this.history.state;
+    return { ...state, recoveredUndoCount: this.recoveredUndoCount,
+      recoveryMode: this.logicalRecovery ? 'logical' : 'native',
+      logicalUndoCount: this.logicalRecovery ? state.activeIndex : 0,
+      logicalRedoCount: this.logicalRecovery ? state.length - state.activeIndex : 0,
+      editorCheckpointCount: this.history.editorImages.length,
+      companionConflict: !this.companionAlignmentMatches(),
+      logicalDirty: this.history.dirty, unsavedBufferChanges: this.hasUnsavedBufferChanges,
+      limitation: this.logicalRecovery ? 'Restored source-buffer transactions use the explicit recovery Undo and Redo actions; their native editor histories remain separate.'
+        : this.recoveredHistory && (state.retainedRedoCount > 0 || (state.checkpointIndex ?? 0) > 0)
+        ? 'Only applied operations after the saved checkpoint enter native history; the earlier prefix and existing redo branch remain recovery data.' : null };
+  }
+
+  restoreHistory(serialized: string): void {
+    this.history = DocumentHistory.restore(serialized, canonicalHostDocumentId(this.uri.fsPath), this.historyRoot, this.designerText, this.savedDesignerText);
+    this.recoveredHistory = true;
+    this.logicalRecovery = this.history.editorImages.length > 0;
+    // Serialized metadata cannot recreate the engine's event-wiring capability. A recovered localizable source
+    // edit keeps its exact bytes but must pass a fresh engine authorization before a source save can accept it.
+    this.authorizeLocalizableEventText(null);
+  }
 
   /** No trustworthy on-disk baseline (the opening read failed for something other than "not there"). Read-only. */
   get baselineUnknown(): boolean { return this._baselineUnknown || this._transactionRecoveryRequired; }
+  get transactionRecoveryRequired(): boolean { return this._transactionRecoveryRequired; }
+  companionAlignmentMatches(transition?: { target: string; before: string; after: string }): boolean {
+    const expected = this.history.editorImages;
+    for (const artifact of expected) {
+      const open = vscode.workspace.textDocuments.find((document) => normalize(document.uri.fsPath) === normalize(artifact.target));
+      const permitted = transition && normalize(transition.target) === normalize(artifact.target);
+      if (permitted && artifact.after !== transition.before) return false;
+      if (!open || open.getText() !== (permitted ? transition.after : artifact.after)) return false;
+    }
+    if (transition && !expected.some((artifact) => normalize(artifact.target) === normalize(transition.target))) {
+      const open = vscode.workspace.textDocuments.find((document) => normalize(document.uri.fsPath) === normalize(transition.target));
+      if (!open || open.getText() !== transition.after) return false;
+    }
+    return true;
+  }
+
+  async assertCompanionAlignment(): Promise<void> {
+    for (const artifact of this.history.editorImages) {
+      const actual = await this.readHistoryArtifact(artifact);
+      if (actual.text !== artifact.after) throw Object.assign(new Error(t('host.recovery.companionConflict')), { code: 'COMPANION_CHECKPOINT_CONFLICT' });
+    }
+    if (!this.companionAlignmentMatches()) throw Object.assign(new Error(t('host.recovery.companionConflict')), { code: 'COMPANION_CHECKPOINT_CONFLICT' });
+  }
+  get nativeHistoryNeedsDirtyMarker(): boolean {
+    const state = this.history.state;
+    return this.needsRecoveryBackup && ((state.checkpointIndex === null && state.activeIndex === 0)
+      || (this.recoveredNativeFloor !== null && state.activeIndex === this.recoveredNativeFloor));
+  }
   markTransactionRecoveryRequired(): void { this._transactionRecoveryRequired = true; }
   /** Latch the read-only state when a read FAILS after opening (deleted / locked / provider error): from that moment
    * we no longer know what our buffer relates to. Only a successful read (adoptDiskBaseline) may clear it. */
@@ -1099,14 +1182,26 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     this.savedExisted = true; // we just read it off disk …
     this._baselineUnknown = false; // … so the baseline is trustworthy again
     this.authorizedLocalizableEventText = null;
+    this.history.reset(text);
+  }
+
+  finishPublicRevert(): void {
+    this.logicalRecovery = false;
+    this.recoveredHistory = false;
+    this.recoveredUndoRegistered = false;
+    this.recoveredUndoCount = 0;
+    this.recoveredNativeFloor = null;
   }
 
   /** Persist to the .Designer.cs on disk (called by VS Code's save), preserving the original BOM. */
   async save(): Promise<void> {
+    await this.assertCompanionAlignment();
     if (!this.designerFile) return;
     // Snapshot the exact text we write: if an edit/undo commits during the async write, the file holds this
     // snapshot, so only mark THAT as saved (a newer edit stays dirty — no silent data loss / reload-drop).
     const snapshot = this.designerText;
+    const saveRevision = this.rev;
+    const checkpoint = this.history.checkpointToken;
     // Refuse to flush a DIRTY generated-source buffer for a localizable form. Resource-first v1.5 edits
     // never dirty .Designer.cs, so the only way this state exists is a recovered hot-exit backup that a PRE-v1.5
     // version left holding a direct `this.x.Prop = …` assignment which diverges from the .resx. This native
@@ -1114,10 +1209,33 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // source boundary forbids. Throw so VS Code keeps the document dirty and surfaces the reason — the user
     // must revert the file (or hand-resolve the recovered content). A CLEAN localizable form is never dirty
     // (isDirty === false → this is a no-op), so this never spuriously fails an ordinary save.
-    if (this.isDirty && isLocalizableDesigner(snapshot) && !this.isAuthorizedLocalizableEventText(snapshot)) {
+    if (snapshot !== this.savedDesignerText && isLocalizableDesigner(snapshot) && !this.isAuthorizedLocalizableEventText(snapshot)) {
       throw new Error(t('status.localizableSaveRefused'));
     }
-    await this.flushToDisk(snapshot);
+    // Save All can deduplicate the form's shared URI to the custom editor and omit an invisible dirty code buffer.
+    // Save that tracked main buffer through its public owner, then verify the exact captured version and disk image
+    // before flushing generated source or moving the logical save checkpoint.
+    const mainCode = this.uri.fsPath.replace(/\.Designer\.cs$/i, '.cs');
+    const savedCompanions: Array<{ document: vscode.TextDocument; version: number; text: string }> = [];
+    for (const artifact of this.history.editorImages) {
+      if (normalize(artifact.target) !== normalize(mainCode)) continue;
+      const companion = vscode.workspace.textDocuments.find((document) => normalize(document.uri.fsPath) === normalize(artifact.target));
+      if (!companion) throw new Error(t('host.recovery.companionConflict'));
+      const codeVersion = companion.version;
+      const codeSnapshot = companion.getText();
+      if (codeSnapshot !== artifact.after) throw new Error(t('host.recovery.companionConflict'));
+      savedCompanions.push({ document: companion, version: codeVersion, text: codeSnapshot });
+      if (!companion.isDirty) continue;
+      await this.assertHistoryTargetHasNoLinks(artifact.target);
+      if (this.rev !== saveRevision || companion.version !== codeVersion || companion.getText() !== codeSnapshot) {
+        throw new Error(t('host.recovery.companionSaveFailed'));
+      }
+      if (!await companion.save()) throw new Error(t('host.recovery.companionSaveFailed'));
+      const savedCode = await readDesignerBytesUri(companion.uri);
+      if (this.rev !== saveRevision || companion.version !== codeVersion || companion.getText() !== codeSnapshot
+        || companion.isDirty || savedCode.text !== codeSnapshot) throw new Error(t('host.recovery.companionSaveFailed'));
+    }
+    await this.flushToDisk(snapshot, checkpoint, savedCompanions);
   }
 
   /**
@@ -1140,7 +1258,8 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
   }
 
   /** The write itself, with the on-disk conflict guards — shared by save() and the localizable conversion. */
-  private async flushToDisk(snapshot: string): Promise<void> {
+  private async flushToDisk(snapshot: string, checkpoint = this.history.checkpointToken,
+    companionSnapshots: readonly { document: vscode.TextDocument; version: number; text: string }[] = []): Promise<void> {
     if (!this.designerFile) return;
     // Never clobber a change someone else made since our on-disk baseline. `savedDesignerText` is what WE last
     // saw on disk; if the real file no longer matches it, an external writer (git checkout, Visual Studio, a
@@ -1154,34 +1273,50 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     // No trustworthy baseline (the opening read failed for something other than "not there") → we cannot tell an
     // external change from our own, so there is nothing to compare against and writing would be a blind overwrite.
     if (this.baselineUnknown) throw new DesignerSourceConflictError();
+    if (vscode.workspace.textDocuments.some((document) => document.isDirty
+      && path.normalize(document.uri.fsPath).toLowerCase() === path.normalize(this.designerFile!).toLowerCase())) {
+      throw new DesignerSourceConflictError();
+    }
     let onDisk: { text: string; hadBom: boolean } | null = null;
     try {
-      onDisk = await readDesignerBytesUri(vscode.Uri.file(this.designerFile));
-    } catch (e) {
-      // Only a genuine "not there" is benign, and only if it was NEVER there: a file that existed when we took our
-      // baseline and is gone now was deleted by someone else — an external change, not permission to recreate it.
-      // Any other read failure (locked, permissions, transient) must surface rather than become a blind write.
-      if (!isFileNotFound(e)) throw e;
-      if (this.savedExisted) throw new DesignerSourceConflictError();
+      onDisk = await readDocumentSaveBaselines(readDesignerBytesUri(vscode.Uri.file(this.designerFile)),
+        companionSnapshots.map((companion) => ({ read: readDesignerBytesUri(companion.document.uri), expectedText: companion.text })),
+        this.savedExisted, isFileNotFound);
+    } catch (error) {
+      if (error instanceof DocumentSaveBaselineError) {
+        if (error.code === 'COMPANION_CHANGED') throw new Error(t('host.recovery.companionConflict'));
+        throw new DesignerSourceConflictError();
+      }
+      throw error;
     }
     // Compare the BOM too: readDesignerBytesUri strips it, so a rewrite that only added/removed the BOM has identical
     // text and would otherwise slip through — and bytesOf would then write OUR old byte form back over it.
     if (onDisk !== null && (onDisk.text !== this.savedDesignerText || onDisk.hadBom !== this.hadBom)) {
       throw new DesignerSourceConflictError();
     }
+    const companionsStillMatch = () => this.companionAlignmentMatches() && companionSnapshots.every((companion) =>
+      companion.document.version === companion.version && companion.document.getText() === companion.text);
+    if (!companionsStillMatch()) throw new Error(t('host.recovery.companionConflict'));
     // Atomic (temp+rename): an interrupted write must never truncate the user's form. The read→compare→write window
     // above is inherent — VS Code's FS API has no compare-and-swap — but nothing awaits between the comparison and
     // this call, so it is as small as the platform allows.
     await atomicWrite(vscode.Uri.file(this.designerFile), this.bytesOf(snapshot));
     this.savedDesignerText = snapshot;
     this.savedExisted = true;
+    for (const companion of companionSnapshots) {
+      const persisted = await readDesignerBytesUri(companion.document.uri);
+      if (persisted.text !== companion.text) throw new Error(t('host.recovery.companionConflict'));
+    }
+    if (!companionsStillMatch()) throw new Error(t('host.recovery.companionConflict'));
     this.authorizedLocalizableEventText = null;
+    this.history.checkpoint(snapshot, checkpoint);
     this.session?.notifySaved();
   }
   async saveAs(dest: vscode.Uri): Promise<void> {
+    await this.assertCompanionAlignment();
     // 0.10.0 trust-floor — same recovered-dirty-buffer guard as save(): don't copy a divergent localizable
     // buffer to a new file. A clean localizable form (isDirty === false) still saves-as a faithful copy.
-    if (this.isDirty && isLocalizableDesigner(this.designerText)
+    if (this.designerText !== this.savedDesignerText && isLocalizableDesigner(this.designerText)
       && !this.isAuthorizedLocalizableEventText(this.designerText)) throw new Error(t('status.localizableSaveRefused'));
     // Without a trustworthy baseline we don't know what this buffer is relative to — don't copy it anywhere.
     if (this.baselineUnknown) throw new Error(t('status.designerDiskConflict'));
@@ -1255,10 +1390,34 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
     this.adoptDiskBaseline(text, hadBom);
   }
   async backup(dest: vscode.Uri): Promise<vscode.CustomDocumentBackup> {
+    await this.assertCompanionAlignment();
+    const revision = this.rev;
+    const sourceBytes = this.bytesOf(this.designerText);
+    const editorSnapshots = this.history.editorImages.map((artifact) => {
+      const open = vscode.workspace.textDocuments.find((candidate) => normalize(candidate.uri.fsPath) === normalize(artifact.target));
+      return { artifact, open, version: open?.version, after: open?.getText() };
+    });
+    const editorImages: DocumentHistoryArtifact[] = [];
+    for (const snapshot of editorSnapshots) {
+      await this.assertHistoryTargetHasNoLinks(snapshot.artifact.target);
+      const disk = await readDesignerBytesUri(vscode.Uri.file(snapshot.artifact.target));
+      editorImages.push({ ...snapshot.artifact, before: disk.text, after: snapshot.after ?? disk.text });
+    }
+    if (this.rev !== revision || editorSnapshots.some((snapshot) => snapshot.open && snapshot.open.version !== snapshot.version)) {
+      throw new Error('recovery backup snapshot changed while capturing linked buffers');
+    }
+    const historyBytes = Buffer.from(this.history.serialize(this.designerText, this.savedDesignerText, editorImages), 'utf8');
     // The backup destination's parent directory may not exist yet (per the VS Code API contract).
     try { await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(dest, '..')); } catch { /* exists */ }
-    await vscode.workspace.fs.writeFile(dest, this.bytesOf(this.designerText));
-    return { id: dest.toString(), delete: async () => { try { await vscode.workspace.fs.delete(dest); } catch { /* ignore */ } } };
+    await atomicWrite(dest, sourceBytes);
+    const historyDestination = dest.with({ path: dest.path + '.history.json' });
+    // The source payload remains compatible with older releases. Only this optional, hash-bound sidecar contains
+    // serialized logical operations; a crash between writes can never make source restoration depend on metadata.
+    await atomicWrite(historyDestination, historyBytes);
+    return { id: dest.toString(), delete: async () => {
+      try { await vscode.workspace.fs.delete(dest); } catch { /* ignore */ }
+      try { await vscode.workspace.fs.delete(historyDestination); } catch { /* ignore */ }
+    } };
   }
 
   /** Recreate the one source-only native undo unit represented by a recovered hot-exit backup.
@@ -1267,29 +1426,224 @@ export class WinFormsDesignDocument implements vscode.CustomDocument {
    * the edit's before state, and the recovered backup is its after state. Firing this only after the real session is
    * attached lets native Undo/Redo perform the same rerender/net48 reconciliation as an ordinary live designer edit. */
   registerRecoveredUndo(
-    fireEdit: (event: vscode.CustomDocumentEditEvent<WinFormsDesignDocument>) => void,
+    fireEdit: (event: HistoryDocumentEditEvent) => void,
   ): void {
-    if (!this.recoveredFromBackup || this.recoveredUndoRegistered || !this.isDirty) return;
+    if (!this.recoveredFromBackup || this.recoveredUndoRegistered || this.baselineUnknown) return;
     this.recoveredUndoRegistered = true;
+    if (this.recoveredHistory) {
+      if (this.logicalRecovery) return;
+      const units = this.history.recoverableUnits(this.savedDesignerText);
+      this.recoveredUndoCount = units.length;
+      this.recoveredNativeFloor = this.history.state.activeIndex - units.length;
+      for (const unit of units) fireEdit({ document: this, label: unit.label, historyId: unit.id,
+        undo: () => this.replayRecoveredUnit(unit, 'undo'), redo: () => this.replayRecoveredUnit(unit, 'redo') });
+      return;
+    }
+    if (!this.isDirty) return;
     const before = this.savedDesignerText;
     const after = this.designerText;
+    this.history.reset(before);
+    const historyId = this.history.record({ label: 'Restore unsaved designer changes', before, after, linkedArtifacts: [] });
+    this.recoveredUndoCount = 1;
     fireEdit({
       document: this,
       label: 'Restore unsaved designer changes',
+      historyId,
       undo: async () => {
+        if (this.designerText !== after) throw new DesignerSourceConflictError();
         this.rev++;
         this.designerText = before;
         this.authorizeLocalizableEventText(null);
+        this.moveHistory(historyId, 'undo');
         await this.session?.rerenderFromDoc();
       },
       redo: async () => {
+        if (this.designerText !== before) throw new DesignerSourceConflictError();
         this.rev++;
         this.designerText = after;
         this.authorizeLocalizableEventText(null);
+        this.moveHistory(historyId, 'redo');
         await this.session?.rerenderFromDoc();
       },
     });
   }
+
+  /** Recover dirty code buffers independently of the on-disk resource journal. Only the exact captured base or
+   * already-restored current image is accepted; an interleaved manual edit is left for an explicit decision. */
+  async restoreLinkedEditorBuffers(): Promise<void> {
+    if (!this.recoveredHistory) return;
+    const targets = new Map<string, DocumentHistoryArtifact>();
+    for (const artifact of this.history.editorImages) targets.set(path.normalize(artifact.target).toLowerCase(), artifact);
+    const transitions: DocumentHistoryArtifact[] = [];
+    for (const artifact of targets.values()) {
+      await this.assertHistoryTargetHasNoLinks(artifact.target);
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(artifact.target));
+      const text = document.getText();
+      if (text === artifact.after) continue;
+      if (text !== artifact.before) throw new Error(`recovered code buffer conflict: ${artifact.target}`);
+      transitions.push(artifact);
+    }
+    await this.transitionHistoryArtifacts(transitions, 'redo');
+  }
+
+  private async assertHistoryTargetHasNoLinks(target: string): Promise<void> {
+    await assertLocalArtifactPath(this.historyRoot, target);
+  }
+
+  private async transitionHistoryArtifacts(artifacts: readonly DocumentHistoryArtifact[], direction: 'undo' | 'redo'): Promise<void> {
+    for (const artifact of artifacts) await this.assertHistoryTargetHasNoLinks(artifact.target);
+    await transitionResourceSetAtomic(artifacts.map((artifact) => ({ target: artifact,
+      before: { text: artifact.before, bom: artifact.bom }, after: { text: artifact.after, bom: artifact.bom } })), direction, {
+      describe: (artifact) => path.normalize(artifact.target).toLowerCase(),
+      read: (artifact) => this.readHistoryArtifact(artifact),
+      write: async (artifact, state) => {
+        if (artifact.storage === 'editor') {
+          const document = await vscode.workspace.openTextDocument(vscode.Uri.file(artifact.target));
+          const before = document.getText();
+          const after = state.text!;
+          let start = 0; let suffix = 0;
+          while (start < before.length && start < after.length && before[start] === after[start]) start++;
+          while (suffix < before.length - start && suffix < after.length - start && before[before.length - suffix - 1] === after[after.length - suffix - 1]) suffix++;
+          const edit = new vscode.WorkspaceEdit();
+          edit.replace(document.uri, new vscode.Range(document.positionAt(start), document.positionAt(before.length - suffix)), after.slice(start, after.length - suffix));
+          if (!await vscode.workspace.applyEdit(edit) || document.getText() !== after) throw new Error(`recovered code buffer transition failed: ${artifact.target}`);
+          return;
+        }
+        const uri = vscode.Uri.file(artifact.target);
+        if (state.text === null) { await vscode.workspace.fs.delete(uri); return; }
+        const body = Buffer.from(state.text, 'utf8');
+        await atomicWrite(uri, state.bom ? Buffer.concat([UTF8_BOM, body]) : body);
+      },
+    });
+  }
+
+  private async readHistoryArtifact(artifact: DocumentHistoryArtifact): Promise<{ text: string | null; bom: boolean }> {
+    await this.assertHistoryTargetHasNoLinks(artifact.target);
+    if (artifact.storage === 'editor') return { text: (await vscode.workspace.openTextDocument(vscode.Uri.file(artifact.target))).getText(), bom: artifact.bom };
+    if (vscode.workspace.textDocuments.some((document) => document.isDirty
+      && path.normalize(document.uri.fsPath).toLowerCase() === path.normalize(artifact.target).toLowerCase())) {
+      throw new Error(`recovered history conflicts with an unsaved text editor: ${artifact.target}`);
+    }
+    try { const disk = await readDesignerBytesUri(vscode.Uri.file(artifact.target)); return { text: disk.text, bom: disk.hadBom }; }
+    catch (error) { if (!isFileNotFound(error)) throw error; return { text: null, bom: false }; }
+  }
+
+  private async replayRecoveredUnit(unit: DocumentHistoryUnit, direction: 'undo' | 'redo'): Promise<void> {
+    await this.assertCompanionAlignment();
+    const expected = direction === 'undo' ? unit.after : unit.before;
+    const next = direction === 'undo' ? unit.before : unit.after;
+    const revision = this.rev;
+    const precondition = () => { if (this.designerText !== expected || this.rev !== revision) throw new DesignerSourceConflictError(); };
+    precondition();
+    if (!this.historyStorageRoot) throw new Error('recovered history has no durable transaction storage');
+    const ledger = new HostMutationLedger(this.historyStorageRoot, this.uri.fsPath,
+      () => ({ sourceText: this.designerText, revision: this.rev, sourceFilePath: this.designerFile ?? undefined }), () => [this.historyRoot]);
+    await ledger.run({ method: 'recoveredHistory', unitId: unit.id, direction }, async () => {
+      const disk = unit.linkedArtifacts.filter((artifact) => artifact.storage === 'disk');
+      const editors = unit.linkedArtifacts.filter((artifact) => artifact.storage === 'editor');
+      const bytes = (text: string | null, bom: boolean): Buffer | null => text === null ? null
+        : bom ? Buffer.concat([UTF8_BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8');
+      const transactionId = disk.length ? createDesignerResourceTransactionId() : undefined;
+      const journalRoot = path.join(this.historyStorageRoot!, 'v2-transactions', sha256Hex(path.resolve(this.historyRoot)).slice(0, 16));
+      ledger.stageCommit(next, disk.map((artifact) => {
+        const before = bytes(direction === 'undo' ? artifact.after : artifact.before, artifact.bom);
+        const after = bytes(direction === 'undo' ? artifact.before : artifact.after, artifact.bom);
+        return { filePath: artifact.target, beforeSha256: before === null ? null : sha256Hex(before), afterSha256: after === null ? null : sha256Hex(after) };
+      }), transactionId);
+      for (const editor of editors) ledger.stageCompanionBuffer(editor.target,
+        (direction === 'undo' ? editor.after : editor.before)!, (direction === 'undo' ? editor.before : editor.after)!);
+      // Check every ordinary buffer and disk target before preparing a write to any one of them.
+      for (const artifact of unit.linkedArtifacts) {
+        const actual = await this.readHistoryArtifact(artifact);
+        const from = direction === 'undo' ? artifact.after : artifact.before;
+        if (actual.text !== from || (from !== null && actual.bom !== artifact.bom)) throw new Error(`recovered history baseline changed: ${artifact.target}`);
+      }
+      precondition();
+      const diskSource = disk.find((artifact) => this.designerFile
+        && path.normalize(artifact.target).toLowerCase() === path.normalize(this.designerFile).toLowerCase());
+      // A recovered Redo can start at a clean cursor. Keep both exact source images owned until every write,
+      // possible compensation, and the source/baseline/cursor adoption have finished; a watcher must not reset the
+      // history after observing the runner's write but before registerUndo checks the original revision.
+      const releaseSourceImages = diskSource ? this.session?.beginSourceTransactionImages([
+        { text: diskSource.before, bom: diskSource.bom }, { text: diskSource.after, bom: diskSource.bom },
+      ]) : undefined;
+      try {
+        let transaction: TransactionRunnerResult | undefined;
+        let diskAttempted = false;
+        let editorsMoved = false;
+        try {
+          if (disk.length) {
+            diskAttempted = true;
+            const identity = currentHostMutationIdentity();
+            transaction = await runDesignerResourceTransaction({ label: unit.label, workspaceRoot: this.historyRoot, journalRoot,
+              transactionId, hostOperation: identity ? { ...identity, commit: 'pending' } : undefined,
+              targets: disk.map((artifact) => ({ filePath: artifact.target,
+                before: direction === 'undo' ? artifact.after : artifact.before,
+                after: direction === 'undo' ? artifact.before : artifact.after, bom: artifact.bom })),
+              readBytes: async (target) => {
+                const artifact = disk.find((candidate) => candidate.target === target)!;
+                const state = await this.readHistoryArtifact(artifact);
+                return bytes(state.text, state.bom);
+              },
+              writeBytes: (target, value) => {
+                const artifact = disk.find((candidate) => candidate.target === target)!;
+                const baseline = direction === 'undo' ? artifact.after : artifact.before;
+                return baseline === null ? atomicCreateLocalFile(target, value) : atomicWrite(vscode.Uri.file(target), value);
+              },
+              deleteFile: async (target) => { try { await vscode.workspace.fs.delete(vscode.Uri.file(target)); } catch (error) { if (!isFileNotFound(error)) throw error; } },
+              registerUndo: () => { precondition(); return true; },
+            });
+            if (transaction.status !== 'committed') {
+              ledger.finishResourceFailure(transaction.status === 'recoveryRequired', `HISTORY_${transaction.status.toUpperCase()}`);
+              throw new Error(transaction.error ?? `recovered history disk transaction failed: ${transaction.status}`);
+            }
+          }
+          await this.transitionHistoryArtifacts(editors, direction);
+          editorsMoved = true;
+          precondition();
+        } catch (error) {
+          let compensationFailed = (diskAttempted && !transaction) || transaction?.status === 'recoveryRequired'
+            || /compensation incomplete/i.test(errMsg(error));
+          if (editorsMoved) {
+            try { await this.transitionHistoryArtifacts(editors, direction === 'undo' ? 'redo' : 'undo'); }
+            catch { compensationFailed = true; }
+          }
+          if (transaction?.status === 'committed') {
+            try {
+              const rollback = await transaction.undoRegistration?.undo();
+              if (rollback?.status !== 'rolledBack') compensationFailed = true;
+            } catch { compensationFailed = true; }
+          }
+          if (compensationFailed) this.markTransactionRecoveryRequired();
+          ledger.finishResourceFailure(compensationFailed, compensationFailed ? 'HISTORY_COMPENSATION_INCOMPLETE' : 'HISTORY_COMPENSATED');
+          throw error;
+        }
+        // Source and the bounded cursor change only after every linked artifact reached its verified image.
+        if (diskSource) this.adoptTransactionBaseline(direction === 'undo' ? diskSource.before : diskSource.after, diskSource.bom);
+        this.designerText = next; this.rev++;
+        this.authorizeLocalizableEventText(null);
+        this.moveHistory(unit.id, direction);
+        try {
+          ledger.finishCommit(true, true);
+          if (transaction?.journal.hostOperation) await writeJournalFile(path.join(journalRoot, `${transaction.journal.transactionId}.json`), {
+            ...transaction.journal, hostOperation: { ...transaction.journal.hostOperation, commit: 'committed' },
+          });
+        } catch (error) { this.markTransactionRecoveryRequired(); throw error; }
+      } finally { releaseSourceImages?.(); }
+    });
+    await this.session?.rerenderFromDoc();
+  }
+
+  async replayRecoveredAction(direction: 'undo' | 'redo'): Promise<boolean> {
+    if (this.baselineUnknown) throw new DesignerSourceConflictError();
+    if (!this.logicalRecovery) return false;
+    const unit = this.history.operation(direction);
+    if (!unit) return false;
+    await this.replayRecoveredUnit(unit, direction);
+    return true;
+  }
+
+  get usesLogicalRecovery(): boolean { return this.logicalRecovery; }
 
   dispose(): void { this._onDispose.fire(); this._onDispose.dispose(); }
 }
@@ -1312,6 +1666,10 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
   readonly onDidChangeCustomDocument = this._onDidChangeCustomDocument.event as
     vscode.Event<vscode.CustomDocumentEditEvent<WinFormsDesignDocument>>;
   private readonly openDocuments = new Map<string, WinFormsDesignDocument>();
+  private readonly reloadCompletions = new Map<WinFormsDesignDocument, { resolve(): void; reject(error: unknown): void }>();
+  private readonly saveAsTokens = new Map<WinFormsDesignDocument, vscode.CancellationToken>();
+  private readonly recoveryDiffContent = new Map<string, string>();
+  private recoveryDiffProvider: vscode.Disposable | undefined;
   /** Serializes updates from concurrent CustomDocument backups. VS Code normally persists the backup id as part of
    * its editor input; this small workspace-local index is a fallback for a host restart followed by an explicit
    * "Open Designer" when the host could not persist editor state (notably Extension Development Host test profiles). */
@@ -1328,6 +1686,47 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
 
   private documentKey(uri: vscode.Uri): string {
     return process.platform === 'win32' ? uri.fsPath.toLocaleLowerCase('en-US') : uri.toString();
+  }
+
+  /** Public automation reads the same live document used by the canvas, independently of the test activation API. */
+  async inspectDocument(uri: vscode.Uri): Promise<ReturnType<DesignerSession['publicDocumentSnapshot']>> {
+    return (await this.publicDesignerSession(uri)).publicDocumentSnapshot();
+  }
+
+  async inspectAdapterContext(uri: vscode.Uri, componentId?: string, propertyName?: string, propertyType?: PropertyType) {
+    return (await this.publicDesignerSession(uri)).inspectAdapterContext(componentId, propertyName, propertyType);
+  }
+
+  async applyAdapterIntent(uri: vscode.Uri, intent: SetPropertyIntent, revision: number, sourceText: string,
+    isStillEnabled: () => boolean, verifyPackage?: () => Promise<boolean>, documentInstanceId?: string): Promise<{ status: 'ok' | 'refused'; code?: string; applied?: boolean }> {
+    const session = await this.publicDesignerSession(uri);
+    if (!documentInstanceId || session.publicDocumentSnapshot().documentInstanceId !== documentInstanceId)
+      return { status: 'refused', code: 'ADAPTER_DOCUMENT_CHANGED' };
+    return session.applyAdapterIntent(intent, revision, sourceText, isStillEnabled, verifyPackage);
+  }
+
+  async resetDesignerProperty(uri: vscode.Uri, componentId: string, propertyName: string) {
+    return (await this.publicDesignerSession(uri)).resetPublicProperty(componentId, propertyName);
+  }
+
+  async configureAdapterActions(uri: vscode.Uri, packageUri: string, packageSha256: string, actions: readonly AdapterContribution[]): Promise<void> {
+    (await this.publicDesignerSession(uri)).configureAdapterActions(packageUri, packageSha256, actions);
+  }
+
+  removeAdapterActions(packageUri: string): void {
+    for (const document of this.openDocuments.values()) document.session?.removeAdapterActions(packageUri);
+  }
+
+  private async publicDesignerSession(uri: vscode.Uri): Promise<DesignerSession> {
+    if (uri.scheme !== 'file') throw new Error('ADAPTER_DOCUMENT_UNAVAILABLE');
+    const end = Date.now() + 30_000;
+    do {
+      const session = this.openDocuments.get(this.documentKey(uri))?.session;
+      if (session?.publicDocumentSnapshot().ready) return session;
+      if (session?.publicDocumentSnapshot().disposed) throw new Error('ADAPTER_DOCUMENT_UNAVAILABLE');
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    } while (Date.now() < end);
+    throw new Error('ADAPTER_DOCUMENT_UNAVAILABLE');
   }
 
   private hotExitRegistryUri(): vscode.Uri | undefined {
@@ -1438,7 +1837,7 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
   }
 
   private async clearHotExitBackupIfClean(document: WinFormsDesignDocument): Promise<void> {
-    if (document.isDirty) return;
+    if (document.needsRecoveryBackup) return;
     try { await this.removeHotExitBackup(document.uri); }
     catch (error) { this.output.appendLine(`[hot-exit] Clean-document recovery index could not be cleared: ${String(error)}`); }
   }
@@ -1449,28 +1848,63 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
    * against source it no longer matches. */
   private reassertDirtyAfterFailedStep(document: WinFormsDesignDocument, error: unknown): void {
     this.output.appendLine(`[designer] history step or revert failed; the unsaved source is kept: ${errMsg(error)}`);
-    if (document.isDirty) this._onDidChangeCustomDocument.fire({ document });
+    if (document.needsRecoveryBackup) this._onDidChangeCustomDocument.fire({ document });
   }
 
-  private fireDocumentEdit(event: vscode.CustomDocumentEditEvent<WinFormsDesignDocument>): void {
+  private fireDocumentEdit(event: HistoryDocumentEditEvent): void {
+    event.document.session?.notifyHistoryChanged();
+    if (event.document.usesLogicalRecovery) { this._onDidChangeCustomDocument.fire({ document: event.document }); return; }
     this._onDidChangeCustomDocument.fire({
       document: event.document,
       label: event.label,
       // VS Code has already moved its edit index when it calls these, so they are never refused: during a prepared
       // rollback they run and cancel the preparation instead (see trackUnrefusableHostMutation).
       undo: () => trackUnrefusableHostMutation(async () => {
-        try { await event.undo(); } catch (error) { this.reassertDirtyAfterFailedStep(event.document, error); throw error; }
+        try {
+          await event.undo();
+          if (event.historyId) event.document.moveHistory(event.historyId, 'undo');
+          event.document.session?.notifyHistoryChanged();
+          if (event.document.nativeHistoryNeedsDirtyMarker) {
+            this._onDidChangeCustomDocument.fire({ document: event.document });
+          }
+        } catch (error) { this.reassertDirtyAfterFailedStep(event.document, error); throw error; }
         await this.clearHotExitBackupIfClean(event.document);
       }),
       redo: () => trackUnrefusableHostMutation(async () => {
-        try { await event.redo(); } catch (error) { this.reassertDirtyAfterFailedStep(event.document, error); throw error; }
+        try {
+          await event.redo();
+          if (event.historyId) event.document.moveHistory(event.historyId, 'redo');
+          event.document.session?.notifyHistoryChanged();
+        } catch (error) { this.reassertDirtyAfterFailedStep(event.document, error); throw error; }
         await this.clearHotExitBackupIfClean(event.document);
       }),
     });
   }
 
+  async undoRecoveredAction(uri?: vscode.Uri): Promise<boolean> { return this.replayRecoveredAction('undo', uri); }
+  async redoRecoveredAction(uri?: vscode.Uri): Promise<boolean> { return this.replayRecoveredAction('redo', uri); }
+  private async replayRecoveredAction(direction: 'undo' | 'redo', uri?: vscode.Uri): Promise<boolean> {
+    const document = uri ? this.openDocuments.get(this.documentKey(uri))
+      : [...this.openDocuments.values()].find((candidate) => candidate.session === DesignerHub.instance.activeSession);
+    if (!document) return false;
+    return trackHostMutation(async () => {
+      try {
+        const applied = await document.replayRecoveredAction(direction);
+        if (applied) { this._onDidChangeCustomDocument.fire({ document }); document.session?.notifyHistoryChanged(); }
+        return applied;
+      } catch (error) { this.reassertDirtyAfterFailedStep(document, error); throw error; }
+    });
+  }
+
+  async handleDesignerHistoryKey(direction: 'undo' | 'redo'): Promise<void> {
+    const document = [...this.openDocuments.values()].find((candidate) => candidate.session === DesignerHub.instance.activeSession);
+    if (document?.usesLogicalRecovery) await this.replayRecoveredAction(direction, document.uri);
+    else await vscode.commands.executeCommand(direction);
+  }
+
   openDocumentState(uri: vscode.Uri): {
     dirty: boolean;
+    history: WinFormsDesignDocument['historyState'];
     designerFile: string | null;
     designerText: string;
     /** Bumped by every text mutation (commit/undo/redo/revert). A deterministic "the history callback actually ran
@@ -1482,10 +1916,12 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
      * failure can say which one disagreed. */
     panelActive: boolean;
     renderReady: boolean;
+    recoveryConflictOffered: boolean;
     engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;
+    ownerAssemblyPath: string | null;
     ownerPaths: readonly string[];
     emptyInitializeComponentSurface: boolean;
     renderFailureCause: string | null;
@@ -1528,15 +1964,18 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     const session = document?.session?.extensionHostTestState();
     return document ? {
       dirty: document.isDirty,
+      history: document.historyState,
       designerFile: document.designerFile,
       designerText: document.designerText,
       revision: document.rev,
       panelActive: session?.panelActive ?? false,
       renderReady: session?.renderReady ?? false,
+      recoveryConflictOffered: session?.recoveryConflictOffered ?? false,
       engineKind: session?.engineKind ?? null, net48RenderMode: session?.net48RenderMode ?? null,
       ownerDiagnosticCode: session?.ownerDiagnosticCode ?? null,
       ownerTypeName: session?.ownerTypeName ?? null,
       ownerProjectPath: session?.ownerProjectPath ?? null,
+      ownerAssemblyPath: session?.ownerAssemblyPath ?? null,
       ownerPaths: session?.ownerPaths ?? [],
       emptyInitializeComponentSurface: session?.emptyInitializeComponentSurface ?? false,
       renderFailureCause: session?.renderFailureCause ?? null,
@@ -1658,6 +2097,18 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     return document.session.extensionHostTestSetLocalizationCulture(culture);
   }
 
+  async openDocumentOwnerEventSourcePaths(uri: vscode.Uri): Promise<readonly string[]> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.extensionHostTestOwnerEventSourcePaths();
+  }
+
+  async selectOpenDocumentProjectContext(uri: vscode.Uri, projectPath: string | null): Promise<boolean> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document?.session) throw new Error(`No resolved WinForms designer session for ${uri.fsPath}`);
+    return document.session.selectProjectContext(projectPath);
+  }
+
   /** Extension Host E2E reads the full live layout through a dedicated surface so the stable open-state snapshot
    * remains intentionally small and exact-comparison friendly. */
   openDocumentLayout(uri: vscode.Uri): readonly LayoutControl[] {
@@ -1682,7 +2133,132 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     finally { cancellation.dispose(); }
   }
 
+  /** Explicit reload reaches the public custom-document revert callback even when the workbench was already clean.
+   * That callback owns the source/history reset; the temporary dirty event only admits the public Revert command. */
+  async reloadDesignerFromDisk(uri?: vscode.Uri): Promise<boolean> {
+    const document = uri ? this.openDocuments.get(this.documentKey(uri))
+      : [...this.openDocuments.values()].find((candidate) => candidate.session === DesignerHub.instance.activeSession);
+    if (!document?.designerFile) return false;
+    if (this.reloadCompletions.has(document)) throw new Error(t('host.recoveryTimeline.unresolved'));
+    const codeBefore = this.historyCodeBuffers(document);
+    if (codeBefore.some((buffer) => buffer.dirty)) throw new Error(t('host.recovery.reloadDirtyCode'));
+    await vscode.commands.executeCommand('vscode.openWith', document.uri, WinFormsDesignerProvider.viewType);
+    const codeAfterReveal = this.historyCodeBuffers(document);
+    if (codeAfterReveal.some((buffer) => buffer.dirty)) throw new Error(t('host.recovery.reloadDirtyCode'));
+    if (codeBefore.some((before) => {
+      const current = codeAfterReveal.find((candidate) => candidate.uri.toString() === before.uri.toString());
+      return !current || current.version !== before.version || current.text !== before.text;
+    })) throw new Error(t('host.recovery.companionConflict'));
+    let resolve!: () => void; let reject!: (error: unknown) => void;
+    const completed = new Promise<void>((onResolve, onReject) => { resolve = onResolve; reject = onReject; });
+    void completed.catch(() => {});
+    this.reloadCompletions.set(document, { resolve, reject });
+    const timer = setTimeout(() => reject(new Error(t('host.recoveryTimeline.unresolved'))), 30_000);
+    try {
+      this._onDidChangeCustomDocument.fire({ document });
+      await vscode.commands.executeCommand('workbench.action.files.revert', document.uri);
+      await completed;
+      for (const before of codeBefore) {
+        const current = await vscode.workspace.openTextDocument(before.uri);
+        if (current.getText() !== before.text) throw new Error(t('host.recovery.companionConflict'));
+      }
+      if (document.transactionRecoveryRequired) void vscode.window.showWarningMessage(t('host.recoveryTimeline.unresolved'));
+      return true;
+    } finally { clearTimeout(timer); this.reloadCompletions.delete(document); }
+  }
+
+  private historyCodeBuffers(document: WinFormsDesignDocument): readonly { uri: vscode.Uri; text: string; version: number; dirty: boolean }[] {
+    const main = document.uri.fsPath.replace(/\.Designer\.cs$/i, '.cs');
+    return vscode.workspace.textDocuments.filter((candidate) => normalize(candidate.uri.fsPath) === normalize(main))
+      .map((candidate) => ({ uri: candidate.uri, text: candidate.getText(), version: candidate.version, dirty: candidate.isDirty }));
+  }
+
+  async recoveryTimelineState(uri: vscode.Uri): Promise<{
+    operations: Awaited<ReturnType<typeof readRecoveryTimeline>>;
+    history: readonly { id: string; label: string; applied: boolean }[];
+  }> {
+    const document = this.openDocuments.get(this.documentKey(uri));
+    if (!document) throw new Error(t('host.recoveryTimeline.noDocument'));
+    return { operations: await readRecoveryTimeline(this.context.globalStorageUri.fsPath, document.uri.fsPath, document.designerFile),
+      history: document.historyTimeline() };
+  }
+
+  /** The timeline is an explicit, read-only projection. Its actions require a separate, named user selection. */
+  async showRecoveryTimeline(uri?: vscode.Uri): Promise<void> {
+    const document = uri ? this.openDocuments.get(this.documentKey(uri))
+      : [...this.openDocuments.values()].find((candidate) => candidate.session === DesignerHub.instance.activeSession);
+    if (!document?.designerFile) { void vscode.window.showInformationMessage(t('host.recoveryTimeline.noDocument')); return; }
+    const state = await this.recoveryTimelineState(document.uri);
+    const items: vscode.QuickPickItem[] = [...state.history].reverse().map((entry) => ({
+      label: entry.label, description: t(entry.applied ? 'host.recoveryTimeline.applied' : 'host.recoveryTimeline.redo'),
+      detail: t('host.recoveryTimeline.restorePoint'),
+    }));
+    if (document.historyState.recoveryMode === 'logical') items.unshift({ label: t('host.recoveryHistory.mode'),
+      detail: t('host.recoveryHistory.limitation'), alwaysShow: true });
+    if (document.historyState.companionConflict) items.unshift({ label: `$(warning) ${t('host.recoveryHistory.mode')}`,
+      detail: t('host.recovery.companionConflict'), alwaysShow: true });
+    items.push(...state.operations.map((entry) => ({ label: `${entry.failure ? '$(warning) ' : ''}${entry.timeUtc}`,
+      description: t(`host.recoveryTimeline.state.${entry.state}`),
+      detail: `${entry.affectedFiles.join(', ')}${entry.restorePoint ? ` · ${t('host.recoveryTimeline.restorePoint')}` : ''}`,
+    })));
+    if (!items.length) items.push({ label: t('host.recoveryTimeline.empty') });
+    const selected = await vscode.window.showQuickPick(items, { title: t('host.recoveryTimeline.title'),
+      placeHolder: t('host.recoveryTimeline.choose'), matchOnDescription: true, matchOnDetail: true });
+    if (!selected) return;
+    const actions = [
+      { label: t('host.recoveryTimeline.diff'), action: 'diff' },
+      { label: t('host.recoveryTimeline.saveAs'), action: 'saveAs' },
+      { label: t('host.recoveryTimeline.reload'), action: 'reload' },
+    ];
+    if (document.historyState.recoveryMode === 'logical') actions.unshift(
+      { label: t('host.recoveryHistory.undo'), action: 'undoRecovered' },
+      { label: t('host.recoveryHistory.redo'), action: 'redoRecovered' },
+    );
+    const action = await vscode.window.showQuickPick(actions,
+      { title: t('host.recoveryTimeline.actions'), placeHolder: path.basename(document.designerFile) });
+    if (!action) return;
+    if (action.action === 'undoRecovered' || action.action === 'redoRecovered') {
+      await vscode.commands.executeCommand(action.action === 'undoRecovered'
+        ? 'winformsDesigner.undoRecoveredAction' : 'winformsDesigner.redoRecoveredAction', document.uri);
+      return;
+    }
+    if (action.action === 'diff') {
+      if (!this.recoveryDiffProvider) {
+        this.recoveryDiffProvider = vscode.workspace.registerTextDocumentContentProvider('wfd-recovery', {
+          provideTextDocumentContent: (target) => this.recoveryDiffContent.get(target.toString()) ?? '',
+        });
+        this.context.subscriptions.push(this.recoveryDiffProvider);
+      }
+      const snapshot = vscode.Uri.from({ scheme: 'wfd-recovery', path: `/${path.basename(document.designerFile)}`,
+        query: Date.now().toString(36) });
+      this.recoveryDiffContent.set(snapshot.toString(), document.designerText);
+      while (this.recoveryDiffContent.size > 20) this.recoveryDiffContent.delete(this.recoveryDiffContent.keys().next().value!);
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(document.designerFile), snapshot, t('host.recoveryTimeline.diffTitle'));
+    } else if (action.action === 'saveAs') {
+      const destination = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(document.designerFile.replace(/\.Designer\.cs$/i, '.Recovered.Designer.cs')), filters: { 'C#': ['cs'] },
+      });
+      if (destination) {
+        if (destination.scheme !== 'file' || /^w:/i.test(destination.fsPath)) throw new Error(t('host.recoveryTimeline.exportRefused'));
+        await assertLocalArtifactPath(path.dirname(destination.fsPath), destination.fsPath);
+        if (vscode.workspace.textDocuments.some((buffer) => normalize(buffer.uri.fsPath) === normalize(destination.fsPath))) {
+          throw new Error(t('host.saveAs.openBuffer', { file: path.basename(destination.fsPath) }));
+        }
+        const body = Buffer.from(document.designerText, 'utf8');
+        await atomicCreateLocalFile(destination.fsPath, document.bom ? Buffer.concat([UTF8_BOM, body]) : body);
+        void vscode.window.showInformationMessage(t('host.recoveryTimeline.exported'));
+      }
+    } else {
+      await this.reloadDesignerFromDisk(document.uri);
+    }
+  }
+
   private async saveWholeFormAs(document: WinFormsDesignDocument, destination: vscode.Uri): Promise<void> {
+    const sourceRevision = document.rev;
+    const sourceText = document.designerText;
+    const sourceBom = document.bom;
+    const cancellation = this.saveAsTokens.get(document);
+    if (cancellation?.isCancellationRequested) throw new vscode.CancellationError();
     if (!document.designerFile || document.uri.scheme !== 'file' || destination.scheme !== 'file') {
       throw new Error(t('status.designerDiskConflict'));
     }
@@ -1691,6 +2267,9 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
       throw new Error(t('status.designerDiskConflict'));
     }
     const workspaceRoot = path.resolve(workspace.uri.fsPath);
+    await assertLocalArtifactPath(workspaceRoot, document.uri.fsPath);
+    await assertLocalArtifactPath(workspaceRoot, document.designerFile);
+    await assertLocalArtifactPath(workspaceRoot, destination.fsPath);
     const storagePath = this.context.globalStorageUri.fsPath;
     if (!['file', 'vscode-userdata'].includes(this.context.globalStorageUri.scheme)
       || !path.isAbsolute(storagePath)) {
@@ -1702,7 +2281,13 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     const sourceStem = path.basename(sourceMain).replace(/\.cs$/i, '');
     const destinationDirectory = path.dirname(destination.fsPath);
     const destinationStem = path.basename(destination.fsPath).replace(/\.cs$/i, '');
-    const typeRename = saveAsTypeName(document.designerText, destinationStem);
+    let typeRename: { sourceType: string; destinationType: string };
+    try { typeRename = saveAsTypeName(sourceText, destinationStem); }
+    catch { throw new Error(t('host.saveAs.renameUnsupported')); }
+    const renamed = (text: string): string => {
+      try { return renameSavedFormType(text, typeRename.sourceType, typeRename.destinationType); }
+      catch { throw new Error(t('host.saveAs.renameUnsupported')); }
+    };
     let sourceEntries: string[];
     try { sourceEntries = await fs.promises.readdir(sourceDirectory); }
     catch (error) { throw new Error(`cannot enumerate form companions: ${errMsg(error)}`); }
@@ -1717,6 +2302,15 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
       return { source, destination: path.join(destinationDirectory, destinationStem + suffix) };
     });
     const destinationPaths = artifactPairs.map((pair) => pair.destination);
+    for (const pair of artifactPairs) {
+      await assertLocalArtifactPath(workspaceRoot, pair.source);
+      await assertLocalArtifactPath(workspaceRoot, pair.destination);
+    }
+    const openDestination = vscode.workspace.textDocuments.find((candidate) =>
+      destinationPaths.some((target) => normalize(target) === normalize(candidate.uri.fsPath)));
+    if (openDestination) throw new Error(t('host.saveAs.openBuffer', { file: path.basename(openDestination.uri.fsPath) }));
+    const openGenerated = vscode.workspace.textDocuments.find((candidate) => normalize(candidate.uri.fsPath) === normalize(document.designerFile!));
+    if (openGenerated?.isDirty) throw new Error(t('host.saveAs.openBuffer', { file: path.basename(document.designerFile) }));
 
     // The picker only authorizes the main .cs name. Sidecars were not covered by an overwrite prompt, so the
     // operation is create-only and reports all collisions before the durable transaction begins.
@@ -1736,6 +2330,10 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
 
     const membershipProject = resolveFormMembershipProject(destination.fsPath, workspaceRoot);
     if (!membershipProject) throw new Error('Save As refused: no unambiguous destination project membership file');
+    await assertLocalArtifactPath(workspaceRoot, membershipProject);
+    const sourceMembershipProject = resolveFormMembershipProject(sourceMain, workspaceRoot);
+    if (typeRename.sourceType === typeRename.destinationType && sourceMembershipProject
+      && normalize(sourceMembershipProject) === normalize(membershipProject)) throw new Error(t('host.saveAs.renameUnsupported'));
     const openProject = vscode.workspace.textDocuments.find(
       (candidate) => normalize(candidate.uri.fsPath) === normalize(membershipProject),
     );
@@ -1755,13 +2353,24 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     );
 
     const targets: DesignerResourceTransactionTarget[] = [];
+    const sourceImages = new Map<string, Uint8Array | null>();
+    const readSourceImage = async (filePath: string): Promise<Uint8Array | null> => {
+      await assertLocalArtifactPath(workspaceRoot, filePath);
+      if (vscode.workspace.textDocuments.some((buffer) => normalize(buffer.uri.fsPath) === normalize(filePath) && buffer.isDirty))
+        throw new Error(t('host.saveAs.openBuffer', { file: path.basename(filePath) }));
+      try { return await fs.promises.readFile(filePath); }
+      catch (error) { if (isFileNotFound(error)) return null; throw error; }
+    };
     for (const pair of artifactPairs) {
+      await assertLocalArtifactPath(workspaceRoot, pair.source);
+      const sourceImage = await readSourceImage(pair.source);
+      sourceImages.set(pair.source, sourceImage);
       if (normalize(pair.source) === normalize(document.designerFile)) {
         targets.push({
           filePath: pair.destination,
           before: null,
-          after: renameSavedFormType(document.designerText, typeRename.sourceType, typeRename.destinationType),
-          bom: document.bom,
+          after: renamed(sourceText),
+          bom: sourceBom,
         });
         continue;
       }
@@ -1769,14 +2378,16 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
         (candidate) => normalize(candidate.uri.fsPath) === normalize(pair.source),
       );
       if (openSource?.isDirty) throw new Error(`Save As refused: ${path.basename(pair.source)} has unsaved changes`);
-      const source = await readDesignerBytesUri(vscode.Uri.file(pair.source));
+      if (sourceImage === null) throw new Error(t('status.designerDiskConflict'));
+      const source = stripUtf8Bom(sourceImage);
+      if (openSource && openSource.getText() !== source.text) throw new Error(t('host.saveAs.openBuffer', { file: path.basename(pair.source) }));
       targets.push({
         filePath: pair.destination,
         before: null,
         after: normalize(pair.source) === normalize(sourceMain)
-          ? renameSavedFormType(source.text, typeRename.sourceType, typeRename.destinationType)
+          ? renamed(source.text)
           : source.text,
-        bom: source.hadBom,
+        bom: source.bom,
       });
     }
     if (projectEdit) {
@@ -1788,22 +2399,35 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
       });
     }
 
+    const snapshotStillCurrent = async (): Promise<boolean> => {
+      if (!await verifySaveAsSourceSnapshot(sourceRevision, () => document.rev, sourceImages, readSourceImage)) return false;
+      const currentEntries = await fs.promises.readdir(sourceDirectory);
+      const currentSources = [sourceMain, ...formSiblingsToDelete(sourceMain, currentEntries)].map(normalize).sort();
+      return currentSources.length === sourceArtifacts.length
+        && currentSources.every((entry, index) => entry === sourceArtifacts.map(normalize).sort()[index]);
+    };
+    if (!await snapshotStillCurrent()) throw new Error(t('status.designerDiskConflict'));
     const journalRoot = path.join(storagePath, 'v2-transactions', sha256Hex(workspaceRoot).slice(0, 16));
     const result = await runDesignerResourceTransaction({
       label: `Save As ${path.basename(destination.fsPath)}`,
       workspaceRoot,
       journalRoot,
       targets,
+      isCancellationRequested: () => !!cancellation?.isCancellationRequested,
       readBytes: async (filePath) => {
+        const buffer = vscode.workspace.textDocuments.find((candidate) => normalize(candidate.uri.fsPath) === normalize(filePath));
+        if (buffer?.isDirty) throw new Error(t('host.saveAs.openBuffer', { file: path.basename(filePath) }));
         try { return await fs.promises.readFile(filePath); }
         catch (error) { if (isFileNotFound(error)) return null; throw error; }
       },
-      writeBytes: (filePath, bytes) => atomicWrite(vscode.Uri.file(filePath), bytes),
+      writeBytes: (filePath, bytes) => targets.find((target) => normalize(target.filePath) === normalize(filePath))?.before === null
+        ? atomicCreateLocalFile(filePath, bytes) : atomicWrite(vscode.Uri.file(filePath), bytes),
       deleteFile: async (filePath) => {
         try { await vscode.workspace.fs.delete(vscode.Uri.file(filePath)); }
         catch (error) { if (!isFileNotFound(error)) throw error; }
       },
-      registerUndo: () => true,
+      afterVerifiedPostconditions: (phase) => phase !== 'forward' || snapshotStillCurrent(),
+      registerUndo: snapshotStillCurrent,
     });
     if (result.status !== 'committed') {
       throw new Error(result.error ?? `Save As transaction failed: ${result.status}`);
@@ -2290,12 +2914,18 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     const fallbackBackupId = openContext.backupId ? undefined : await this.takeHotExitBackup(uri);
     const backupId = openContext.backupId ?? fallbackBackupId;
     let recoveredFromBackup = false;
+    let serializedHistory: string | undefined;
+    let historyReadFailure: unknown;
     if (backupId) {
       try {
         const r = await readDesignerBytesUri(vscode.Uri.parse(backupId));
         text = r.text;
         if (!designerFile) hadBom = r.hadBom;
         recoveredFromBackup = true;
+        try {
+          const backupUri = vscode.Uri.parse(backupId);
+          serializedHistory = Buffer.from(await vscode.workspace.fs.readFile(backupUri.with({ path: backupUri.path + '.history.json' }))).toString('utf8');
+        } catch (error) { if (!isFileNotFound(error)) historyReadFailure = error; }
         // A native VS Code restore can coexist with our fallback index. Consume the duplicate after a successful read
         // so a later ordinary reopen cannot resurrect the same stale dirty image.
         if (openContext.backupId) await this.removeHotExitBackup(uri, backupId);
@@ -2314,7 +2944,18 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
       baselineUnknown,
       (openDocument, destination) => this.saveWholeFormAs(openDocument, destination),
       recoveredFromBackup,
+      this.context.globalStorageUri.fsPath,
     );
+    try {
+      if (historyReadFailure) throw historyReadFailure;
+      if (serializedHistory !== undefined) {
+        document.restoreHistory(serializedHistory);
+        await document.restoreLinkedEditorBuffers();
+      }
+    } catch (error) {
+      document.markTransactionRecoveryRequired();
+      this.output.appendLine(`[hot-exit] Source recovered; history needs a manual decision: ${errMsg(error)}`);
+    }
     if (sourceRecovery.requiresManual) document.markTransactionRecoveryRequired();
     const key = this.documentKey(uri);
     this.openDocuments.set(key, document);
@@ -2334,26 +2975,37 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
       document, panel, (event) => this.fireDocumentEdit(event), this.setAssemblyOverride,
     );
     document.registerRecoveredUndo((event) => this.fireDocumentEdit(event));
+    if (document.historyState.recoveredUndoCount === 0 && document.needsRecoveryBackup) this._onDidChangeCustomDocument.fire({ document });
   }
 
   // Saving writes the user's files: a rollback preparation waits for a save already running and refuses a new one.
   async saveCustomDocument(document: WinFormsDesignDocument, _c: vscode.CancellationToken): Promise<void> {
     await trackHostMutation(async () => {
-      await document.save();
+      try { await document.save(); }
+      catch (error) {
+        if ((error as { code?: string })?.code === 'STALE_SOURCE' && document.designerFile) document.session?.offerRecoveryActions([document.designerFile]);
+        throw error;
+      }
       await this.clearHotExitBackupIfClean(document);
     });
   }
   async saveCustomDocumentAs(document: WinFormsDesignDocument, dest: vscode.Uri, _c: vscode.CancellationToken): Promise<void> {
     await trackHostMutation(async () => {
-      await document.saveAs(dest);
-      await this.clearHotExitBackupIfClean(document);
+      if (_c.isCancellationRequested) throw new vscode.CancellationError();
+      this.saveAsTokens.set(document, _c);
+      try {
+        await document.saveAs(dest);
+        await this.clearHotExitBackupIfClean(document);
+      } finally { if (this.saveAsTokens.get(document) === _c) this.saveAsTokens.delete(document); }
     });
   }
   async revertCustomDocument(document: WinFormsDesignDocument, _c: vscode.CancellationToken): Promise<void> {
     // Revert is not awaited by the workbench either: run it, cancelling a prepared rollback, rather than refuse it.
-    await trackUnrefusableHostMutation(async () => {
+    try { await trackUnrefusableHostMutation(async () => {
       try {
         await document.adoptDiskImage();
+        document.finishPublicRevert();
+        document.session?.notifyDiskBaselineAdopted();
       } catch (error) {
         // The disk image could not be read: keep the unsaved source, distrust the baseline (no save may proceed on
         // it), and put back the dirty marker the workbench already cleared. Rethrown so VS Code keeps the existing
@@ -2367,19 +3019,26 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
       try { await document.session?.rerenderFromDoc(); }
       catch (error) { this.output.appendLine(`[designer] reverted; preview refresh failed: ${errMsg(error)}`); }
       await this.clearHotExitBackupIfClean(document);
-    });
+    }); this.reloadCompletions.get(document)?.resolve(); }
+    catch (error) { this.reloadCompletions.get(document)?.reject(error); throw error; }
   }
   async backupCustomDocument(
     document: WinFormsDesignDocument,
     context: vscode.CustomDocumentBackupContext,
     _c: vscode.CancellationToken,
   ): Promise<vscode.CustomDocumentBackup> {
-    const backup = await document.backup(context.destination);
+    let backup: vscode.CustomDocumentBackup;
+    try { backup = await document.backup(context.destination); }
+    catch (error) {
+      this.output.appendLine(`[hot-exit] Complete backup refused: ${errMsg(error)}`);
+      void vscode.window.showErrorMessage(t('host.recovery.backupFailed'));
+      throw error;
+    }
     try {
       // Older hosts can deliver a debounced backup callback after Save/Undo already made the document clean. The
       // VS Code-owned backup object still has to be returned, but indexing it would resurrect a completed edit on the
       // next explicit reopen. Re-check current state after the async write and only retain genuinely dirty recovery.
-      if (document.isDirty) await this.persistHotExitBackup(document.uri, backup.id);
+      if (document.needsRecoveryBackup) await this.persistHotExitBackup(document.uri, backup.id);
       else await this.removeHotExitBackup(document.uri);
     } catch (error) {
       // VS Code still owns and records the returned backup id; this index is only the explicit-reopen fallback.
@@ -2660,15 +3319,14 @@ class DesignerSession {
   // the byte-local firewall in commit(), not from any fidelity inference. Instead composeFormNotice shows an
   // UNCONDITIONAL "this is your last build; rebuild is authoritative" banner on every net48 render. The wire fields
   // liveInstanceId / liveBuildId remain for diagnostics + the release/rebuild e2e, but grant no editing authority.
-  /** Monotonic id per reloadFromDiskIfClean run; a read that resumes after a newer one started is discarded. */
-  private reloadEpoch = 0;
-  /** Exact forward source images currently being written by the durable source+resource transaction runner.
+  private conflictNoticeShown = false;
+  /** Exact source images currently being written by the durable source+resource transaction runner.
    * The generated-source watcher is allowed to observe one of these images before the runner registers the native
    * CustomDocument edit (notably on VS Code 1.84). Treating that self-write as an external clean-file change bumps the
    * document revision, makes the final commit fail its own stale guard, and rolls an otherwise valid transaction back.
    * Keep the comparison exact (text + BOM) and scoped to the runner lifetime; every other watcher image still follows
-   * the normal external-change path. An array deliberately supports two concurrently dispatched webview commands. */
-  private readonly pendingSourceTransactionImages: Array<{ text: string; bom: boolean }> = [];
+   * the normal external-change path. Includes compensating writes and recovered/native history replay. */
+  private readonly sourceTransactionGuard = new SourceTransactionGuard();
   private toolStripItems: ToolStripItemBounds[] = []; // per-item geometry from the last render (on-canvas "Type Here")
   /** Live CurrentAutoScaleDimensions of the last render ("6F, 13F"), reported by whichever engine drew it. */
   private renderedAutoScale = '';
@@ -2688,6 +3346,7 @@ class DesignerSession {
   private renderScale: 1 | 2 = 1;
   private debounce?: ReturnType<typeof setTimeout>;
   private codeBehindDebounce?: ReturnType<typeof setTimeout>;
+  private readonly companionChangeGuard = new CompanionChangeGuard();
   private disposed = false;
   private gotReady = false;
   /** Signature of the last #formNotice payload actually posted — so composeFormNotice skips a re-post identical to
@@ -2785,8 +3444,10 @@ class DesignerSession {
   private readonly offeredReferences = new Set<string>();
   /** The toolbox tab the open Choose-Items window targets (checked items land here); undefined = none. */
   private chooseItemsTab: string | undefined;
-  /** One-shot v2 document-owner gate. A refused owner is render-failed/read-only until the document is reopened. */
+  /** Document-owner gate; explicit contexts are revalidated on every full render. */
   private documentOwnerChecked = false;
+  private projectContextChoiceBusy = false;
+  private projectContextOfferShown = false;
   private lastDocumentOwner: DesignerDocumentOwnerResolution | undefined;
   /** Visual Studio opens a proven empty Form/UserControl partial even when its generated method is absent. We render
    * the same blank surface from a transient engine-only method, but keep every mutation fail-closed until the real
@@ -2801,11 +3462,139 @@ class DesignerSession {
   /** Last read-only High-DPI advisor proposal. It is deliberately session-local and revision-bound: any intervening
    * edit (including edit then Undo back to byte-identical source) makes Apply refuse instead of silently replanning. */
   private pendingHighDpiQuickFix: PendingHighDpiQuickFix | undefined;
+  private readonly adapterPackages = new Map<string, { sha256: string; actions: readonly AdapterContribution[] }>();
+  private readonly documentInstanceId = randomUUID();
+  private adapterPublication: AdapterActionPublication | undefined;
+  private adapterActionTargets = new Map<string, { packageUri: string; packageSha256: string; contributionId: string }>();
+
+  configureAdapterActions(packageUri: string, sha256: string, actions: readonly AdapterContribution[]): void {
+    packageUri = vscode.Uri.file(path.resolve(vscode.Uri.parse(packageUri).fsPath)).toString().toLocaleLowerCase('en-US');
+    this.adapterPackages.set(packageUri, { sha256, actions: actions.map(action => ({ ...action })) });
+    this.publishAdapterActions();
+  }
+
+  removeAdapterActions(packageUri: string): void {
+    packageUri = vscode.Uri.file(path.resolve(vscode.Uri.parse(packageUri).fsPath)).toString().toLocaleLowerCase('en-US');
+    this.adapterPackages.delete(packageUri);
+    this.publishAdapterActions();
+  }
+
+  private publishAdapterActions(): void {
+    this.adapterPublication = undefined;
+    this.adapterActionTargets.clear();
+    if (this.disposed) return;
+    const binding = { documentUri: this.documentUri.toString(), revision: this.doc.rev, componentId: this.currentId };
+    const metadata = this.publishedPropertyComponent;
+    const component = metadata?.rev === this.doc.rev && metadata.ids.length === 1 && metadata.ids[0] === this.currentId
+      ? metadata.component : undefined;
+    const actions: PublishedAdapterAction[] = [];
+    for (const [packageUri, entry] of this.adapterPackages) for (const contribution of entry.actions) {
+      if (actions.length >= 32) break;
+      const id = `sdk.${createHash('sha256').update(packageUri).update('#').update(contribution.id).digest('hex').slice(0, 24)}`;
+      const property = component?.properties.find(candidate => candidate.name === contribution.propertyName);
+      const supported = this.renderOk && !this.localizable && this.currentSelectionIds.length === 1
+        && this.currentSelectionIds[0] === this.currentId && component?.editable !== false
+        && component?.ownership !== 'inherited' && property && !property.readOnly && !property.isEnum
+        && property.type === contribution.propertyType;
+      const disabledReasonCode = contribution.disabledReasonCode ?? (supported ? undefined : 'ADAPTER_PROPERTY_UNAVAILABLE');
+      actions.push({ id, title: contribution.title, ...(disabledReasonCode ? { disabledReasonCode } : {}),
+        commandId: ADAPTER_ACTION_COMMAND, keyboardCommandId: ADAPTER_ACTION_COMMAND });
+      this.adapterActionTargets.set(id, { packageUri, packageSha256: entry.sha256, contributionId: contribution.id });
+    }
+    const publication = validateAdapterActionPublication({ type: 'adapterActions', ...binding, publicationId: randomUUID(), actions }, binding);
+    if (!publication) return;
+    this.adapterPublication = publication;
+    this.post(publication);
+  }
 
   readonly documentUri: vscode.Uri;
   /** The custom document whose in-memory .Designer.cs text this session renders and edits (issue #2). */
   private readonly doc: WinFormsDesignDocument;
-  get isDocumentDirty(): boolean { return this.doc.isDirty; }
+  get isDocumentDirty(): boolean { return this.doc.hasUnsavedBufferChanges; }
+
+  publicDocumentSnapshot() {
+    return { documentUri: this.documentUri.toString(), documentInstanceId: this.documentInstanceId, ready: this.renderOk && !this.disposed
+      && !!this.designerFile && !this.emptyInitializeComponentSurface, disposed: this.disposed,
+      revision: this.doc.rev, sourceText: this.doc.designerText, engineKind: this.engineKind,
+      dirty: this.doc.isDirty, persistenceLane: this.lastPropertyPersistenceLane };
+  }
+
+  async resetPublicProperty(componentId: string, propertyName: string): Promise<{
+    status: 'ok' | 'refused'; code?: string; applied?: boolean; revision?: number; persistenceLane?: 'ownedRegion' | 'sourceFirst' | null;
+  }> {
+    if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.resetPublicProperty(componentId, propertyName));
+    const component = await this.describeFor(componentId);
+    const property = component?.properties.find(candidate => candidate.name === propertyName);
+    if (!component || component.editable === false || component.ownership === 'inherited' || !property || property.readOnly || this.localizable)
+      return { status: 'refused' as const, code: 'ADAPTER_PROPERTY_UNAVAILABLE' };
+    const outcome = { accepted: false, applied: false };
+    await this.resetFromGrid(componentId, propertyName, false, applied => { outcome.accepted = true; outcome.applied = applied; });
+    return outcome.accepted
+      ? { status: 'ok' as const, applied: outcome.applied, revision: this.doc.rev, persistenceLane: this.lastPropertyPersistenceLane }
+      : { status: 'refused' as const, code: 'ADAPTER_SOURCE_PLAN_REFUSED' };
+  }
+
+  async inspectAdapterContext(componentId?: string, propertyName?: string, propertyType?: PropertyType): Promise<{
+    documentUri: string; documentInstanceId: string; revision: number; sourceText: string; runtime: 'modern' | 'net48'; architecture: 'x64' | 'arm64';
+    serviceProfile: HostedServiceKernelCapabilitiesResult; invariantValue?: string;
+  }> {
+    if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.inspectAdapterContext(componentId, propertyName, propertyType));
+    if (!this.publicDocumentSnapshot().ready || (this.engineKind !== 'modern' && this.engineKind !== 'net48'))
+      throw new Error('ADAPTER_DOCUMENT_UNAVAILABLE');
+    const revision = this.doc.rev;
+    const sourceText = this.doc.designerText;
+    const engine = await this.ensureEngine(this.engineKind);
+    const architecture = engine.workerState?.().key.workerArchitecture;
+    if (architecture !== 'x64' && architecture !== 'arm64') throw new Error('ADAPTER_COHORT_UNSUPPORTED');
+    const serviceProfile = await inspectHostedPreviewServices(engine);
+    if (!serviceProfile.ok || serviceProfile.serviceProfileVersion !== '0.1.0') throw new Error('ADAPTER_SERVICE_UNAVAILABLE');
+    let invariantValue: string | undefined;
+    if (componentId !== undefined || propertyName !== undefined || propertyType !== undefined) {
+      if (!componentId || !propertyName || !propertyType) throw new Error('ADAPTER_RESULT_TARGET_MISMATCH');
+      const component = await this.describeFor(componentId);
+      const property = component?.properties.find((candidate) => candidate.name === propertyName);
+      if (!component || component.id !== componentId || component.editable === false || component.ownership === 'inherited'
+        || !property || property.readOnly || property.isEnum || property.type !== propertyType)
+        throw new Error('ADAPTER_PROPERTY_UNAVAILABLE');
+      invariantValue = observedAdapterScalar(propertyType, property.value);
+      if (invariantValue === undefined) throw new Error('ADAPTER_PROPERTY_UNAVAILABLE');
+    }
+    if (this.doc.rev !== revision || this.doc.designerText !== sourceText) throw new Error('ADAPTER_DOCUMENT_CHANGED');
+    return { documentUri: this.documentUri.toString(), documentInstanceId: this.documentInstanceId, revision, sourceText, runtime: this.engineKind,
+      architecture, serviceProfile, invariantValue };
+  }
+
+  async applyAdapterIntent(intent: SetPropertyIntent, revision: number, sourceText: string,
+    isStillEnabled: () => boolean, verifyPackage?: () => Promise<boolean>): Promise<{ status: 'ok' | 'refused'; code?: string; applied?: boolean }> {
+    if (!currentHostMutationOperationId()) return this.withProductMutation({ method: 'applyAdapterIntent',
+      componentId: intent.componentId, propertyName: intent.propertyName, propertyType: intent.propertyType,
+      invariantValue: intent.invariantValue, expectedRevision: revision },
+    () => this.applyAdapterIntent(intent, revision, sourceText, isStillEnabled, verifyPackage));
+    const refused = (code: string) => ({ status: 'refused' as const, code });
+    if (!isStillEnabled()) return refused('ADAPTER_ENABLEMENT_REVOKED');
+    if (this.disposed || this.doc.rev !== revision || this.doc.designerText !== sourceText) return refused('ADAPTER_DOCUMENT_CHANGED');
+    if (this.localizable) return refused('ADAPTER_LOCALIZABLE_UNSUPPORTED');
+    const target = await this.inspectAdapterContext(intent.componentId, intent.propertyName, intent.propertyType);
+    if (target.revision !== revision || target.sourceText !== sourceText) return refused('ADAPTER_DOCUMENT_CHANGED');
+    const expression = toCSharpExpression(intent.propertyType, false, intent.invariantValue);
+    if (expression === null) return refused('ADAPTER_RESULT_INVALID');
+    const planner = await this.ensureEngine('modern');
+    const planned = await setPropertyViaProvenOwnedRegion(planner, this.designerFile!, intent.componentId,
+      intent.propertyName, expression, sourceText, this.engineKind === 'modern' ? this.modernGraphToken : undefined);
+    if (!planned.safe || planned.text === null) return refused('ADAPTER_SOURCE_PLAN_REFUSED');
+    if (verifyPackage && !await verifyPackage()) return refused('ADAPTER_PACKAGE_CHANGED');
+    if (!isStillEnabled()) return refused('ADAPTER_ENABLEMENT_REVOKED');
+    if (this.disposed || this.doc.rev !== revision || this.doc.designerText !== sourceText) return refused('ADAPTER_DOCUMENT_CHANGED');
+    if (planned.text === sourceText) return { status: 'ok', applied: false };
+    if (!this.commit(sourceText, planned.text, t('adapter.historyLabel', { id: intent.componentId, property: intent.propertyName })))
+      return refused('ADAPTER_SOURCE_COMMIT_REFUSED');
+    this.lastPropertyPersistenceLane = planned.persistenceLane;
+    try {
+      await withEngineRequestContext(this.productRequestContext(currentHostMutationOperationId()), () => this.fullRender());
+    } catch { this.output.appendLine('[adapter] source committed; preview reconciliation unavailable'); }
+    await this.postDirty();
+    return { status: 'ok', applied: true };
+  }
   /** One isolated modal editor at a time per designer session. The engine broker is cancellable/fail-closed, but
    * serialising this ingress also prevents two dialogs racing to apply values against the same document revision. */
   private uiTypeEditorBusy = false;
@@ -2841,7 +3630,7 @@ class DesignerSession {
     document: WinFormsDesignDocument,
     private readonly panel: vscode.WebviewPanel,
     /** Register an undoable custom-document edit with VS Code (drives native Ctrl+Z/Y + dirty/save). */
-    private readonly fireEdit: (e: vscode.CustomDocumentEditEvent<WinFormsDesignDocument>) => void,
+    private readonly fireEdit: (e: HistoryDocumentEditEvent) => void,
     /** Persist a control-source override for this form (T1.3 cross-runtime switch → net48 compiled preview). */
     private readonly setAssemblyOverride: SetAssemblyOverride,
   ) {
@@ -2892,10 +3681,22 @@ class DesignerSession {
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(path.dirname(this.designerFile), '*'),
     );
+    // The code-behind text the render was last invalidated for. One save reaches the watcher as several change
+    // notifications, the later ones up to hundreds of milliseconds afterwards; invalidating again for a buffer that
+    // already holds that text made a freshly reloaded canvas read-only and refused the next edit.
+    let invalidatedCodeBehindText: string | undefined;
     const onFs = (uri: vscode.Uri) => {
       const changed = normalize(uri.fsPath);
       if (changed === key) this.scheduleRerender();
-      else if (codeKey && changed === codeKey) this.scheduleCodeBehindRerender();
+      else if (codeKey && changed === codeKey) {
+        // The render reads an open buffer, dirty or clean, and VS Code reports a clean buffer's disk reload as a text
+        // change below. An open buffer that still holds the invalidated text therefore leaves the render input unchanged.
+        const open = vscode.workspace.textDocuments.find((document) => normalize(document.uri.fsPath) === codeKey);
+        const current = open?.getText();
+        if (current !== undefined && current === invalidatedCodeBehindText) return;
+        invalidatedCodeBehindText = current;
+        this.scheduleCodeBehindRerender();
+      }
     };
     watcher.onDidChange(onFs);
     watcher.onDidCreate(onFs);
@@ -2911,7 +3712,16 @@ class DesignerSession {
       if (!isUserEditDocument(event.document.uri.scheme)) return;
       this.cancelAutoToolboxDiscovery();
       this.scheduleAutoToolboxDiscovery(1200);
-      if (codeKey && normalize(event.document.uri.fsPath) === codeKey) this.scheduleCodeBehindRerender();
+      if (codeKey && normalize(event.document.uri.fsPath) === codeKey && event.contentChanges.length > 0) {
+        // The event operation has already validated this exact minimal handler insert. Its own editor notification
+        // must not invalidate net48's render before the generated wiring reaches the common commit boundary.
+        const ownCompanionChange = this.companionChangeGuard.isOwnChange(
+          codeKey, event.document.version, event.document.getText());
+        if (!ownCompanionChange) {
+          invalidatedCodeBehindText = event.document.getText();
+          this.scheduleCodeBehindRerender();
+        }
+      }
     }));
     this.disposables.push(vscode.window.onDidChangeWindowState((state) => {
       if (!state.focused) this.cancelAutoToolboxDiscovery();
@@ -3777,6 +4587,7 @@ class DesignerSession {
       || explicit !== (this.designerFile ? this.getAssemblyOverride(this.designerFile) : undefined)) throw new Error('DOCUMENT_CHANGED');
     const diagnostics: DesignerDiagnostic[] = diagnosticsFromRenderItems(this.lastRenderDiagnostic?.items ?? []);
     if (compatibility.code !== 'ARCHITECTURE_COMPATIBLE') diagnostics.push(createDesignerDiagnostic(compatibility.code));
+    for (const code of projectEvaluationDiagnosticCodes(projectPath)) diagnostics.push(createDesignerDiagnostic(code));
     if (this.invalidAssemblyOverride || route.frameworkUnbuilt) diagnostics.push(createDesignerDiagnostic('ASSEMBLY_UNRESOLVED'));
     if (this.lastRenderDiagnostic?.kind === 'failure') {
       const diagnostic = createDesignerDiagnostic(this.supportFailureCode ?? this.lastRenderDiagnostic.cause,
@@ -3786,6 +4597,8 @@ class DesignerSession {
     const previewAuthority: 'liveSource' | 'compiled' | 'stale' = !this.renderOk ? 'stale'
       : this.engineKind === 'net48' && this.net48RenderMode !== 'interpreted' ? 'compiled' : 'liveSource';
     if (previewAuthority === 'compiled') diagnostics.push(createDesignerDiagnostic('COMPILED_PREVIEW'));
+    if (this.designerFile && DesignerHub.instance.projectContext(this.designerFile) && this.getAssemblyOverride(this.designerFile))
+      diagnostics.push(createDesignerDiagnostic('PROJECT_CONTEXT_ASSEMBLY_OVERRIDE'));
     for (const code of DesignerHub.instance.persistedStateIssues) diagnostics.push(createDesignerDiagnostic(code));
     const timings: Record<string, number> = this.lastFullRenderTelemetry ? { ...this.lastFullRenderTelemetry } : {};
     return {
@@ -3837,6 +4650,7 @@ class DesignerSession {
 
   extensionHostTestState(): {
     renderReady: boolean;
+    recoveryConflictOffered: boolean;
     /** See openDocumentState.panelActive. Read through the disposed flag: WebviewPanel.active throws once the panel
      * is gone, and this getter is polled by every waitFor predicate. */
     panelActive: boolean;
@@ -3844,6 +4658,7 @@ class DesignerSession {
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;
+    ownerAssemblyPath: string | null;
     ownerPaths: readonly string[];
     emptyInitializeComponentSurface: boolean;
     renderFailureCause: string | null;
@@ -3890,11 +4705,13 @@ class DesignerSession {
       : null;
     return {
       renderReady: this.renderOk,
+      recoveryConflictOffered: this.conflictNoticeShown,
       panelActive: !this.disposed && this.panel.active,
       engineKind: this.engineKind, net48RenderMode: this.engineKind === 'net48' ? this.net48RenderMode as 'interpreted' | 'compiledFallback' | 'compiled' : null,
       ownerDiagnosticCode: this.lastDocumentOwner?.diagnosticCode ?? null,
       ownerTypeName: this.lastDocumentOwner?.typeName ?? null,
       ownerProjectPath: this.lastDocumentOwner?.projectPath ?? null,
+      ownerAssemblyPath: this.asm() ?? null,
       ownerPaths: this.lastDocumentOwner?.owners ?? [],
       emptyInitializeComponentSurface: this.emptyInitializeComponentSurface,
       renderFailureCause: this.lastRenderDiagnostic?.kind === 'failure'
@@ -4196,11 +5013,16 @@ class DesignerSession {
   /** Post to THIS editor's canvas webview (render/layout/patch/select/manip/status/dirty/error/loading). */
   private post(message: unknown): void {
     if (this.disposed) return;
+    const frame = message && typeof message === 'object' ? message as { type?: string } : undefined;
+    const rebind = frame?.type === 'render' || frame?.type === 'layout' || frame?.type === 'select' || frame?.type === 'tasks';
+    if (rebind || frame?.type === 'loading') this.adapterPublication = undefined;
+    const payload = rebind ? { ...frame, documentUri: this.documentUri.toString(), revision: this.doc.rev } : message;
     try {
       // A render/describe RPC may settle after the user closes the tab. Older VS Code hosts throw synchronously when
       // the disposed webview getter is touched; newer hosts can instead reject postMessage. Closing a designer is a
       // normal lifecycle transition, so absorb both forms without leaking an unhandled Extension Host rejection.
-      void this.panel.webview.postMessage(message).then(undefined, () => undefined);
+      void this.panel.webview.postMessage(payload).then(undefined, () => undefined);
+      if (rebind) this.publishAdapterActions();
     } catch {
       // The panel was disposed between the guard and the getter. No UI remains to receive this best-effort message.
     }
@@ -4303,6 +5125,7 @@ class DesignerSession {
 
   private async workspaceBuildOutputRoots(generation: number): Promise<{
     roots: string[];
+    preferredAssemblyNames: string[];
     projectBudgetReached: boolean;
     projectScanSkipped: number;
     missingBuildOutputs: number;
@@ -4310,11 +5133,11 @@ class DesignerSession {
   }> {
     const folder = vscode.workspace.getWorkspaceFolder(this.documentUri);
     if (!folder || !this.designerFile || generation !== this.autoToolboxDiscoveryGeneration) {
-      return { roots: [], projectBudgetReached: false, projectScanSkipped: 0, missingBuildOutputs: 0, cancelled: false };
+      return { roots: [], preferredAssemblyNames: [], projectBudgetReached: false, projectScanSkipped: 0, missingBuildOutputs: 0, cancelled: false };
     }
-    const owningProject = findOwningCsproj(path.dirname(this.designerFile), folder.uri.fsPath);
+    const owningProject = this.supportProjectPath();
     if (!owningProject) {
-      return { roots: [], projectBudgetReached: false, projectScanSkipped: 1, missingBuildOutputs: 0, cancelled: false };
+      return { roots: [], preferredAssemblyNames: [], projectBudgetReached: false, projectScanSkipped: 1, missingBuildOutputs: 0, cancelled: false };
     }
     const result = await discoverProjectBuildOutputRoots(owningProject, {
       maxProjects: 64,
@@ -4324,6 +5147,7 @@ class DesignerSession {
     });
     return {
       roots: result.roots,
+      preferredAssemblyNames: result.preferredAssemblyNames,
       projectBudgetReached: result.projectBudgetReached,
       projectScanSkipped: result.skippedProjects + result.skippedReferences + result.missingBuildOutputs,
       missingBuildOutputs: result.missingBuildOutputs,
@@ -4368,7 +5192,7 @@ class DesignerSession {
       || !vscode.window.state.focused || generation !== this.autoToolboxDiscoveryGeneration) return;
 
     let rootsInfo: {
-      roots: string[]; projectBudgetReached: boolean; projectScanSkipped: number;
+      roots: string[]; preferredAssemblyNames: string[]; projectBudgetReached: boolean; projectScanSkipped: number;
       missingBuildOutputs: number; cancelled: boolean;
     };
     try { rootsInfo = await this.workspaceBuildOutputRoots(generation); }
@@ -4387,6 +5211,7 @@ class DesignerSession {
     }
 
     const discovery = await discoverBuildOutputAssemblies(rootsInfo.roots, {
+      preferredAssemblyNames: rootsInfo.preferredAssemblyNames,
       maxFiles: 96,
       maxDirectories: 128,
       maxDepth: 3,
@@ -4430,13 +5255,16 @@ class DesignerSession {
     let reflected = 0;
     let reflectionSkipped = 0;
     let reflectionErrors = 0;
+    const reflectionDiagnostics: Array<{ path: string; outcome: 'checked' | 'count-budget' | 'time-budget' | 'error' }> = [];
     for (const candidate of discovery.assemblies) {
       if (generation !== this.autoToolboxDiscoveryGeneration || !vscode.window.state.focused) return;
       if (reflected >= reflectionLimit || Date.now() - reflectionStarted >= 5000) {
         reflectionSkipped++;
+        reflectionDiagnostics.push({ path: candidate.path, outcome: reflected >= reflectionLimit ? 'count-budget' : 'time-budget' });
         continue;
       }
       reflected++;
+      reflectionDiagnostics.push({ path: candidate.path, outcome: 'checked' });
       try {
         const result = await this.withTimeout(
           automatic ? this.scanAutoCandidate(candidate.path) : this.scanCandidateAssembly(candidate.path),
@@ -4446,6 +5274,7 @@ class DesignerSession {
         if (generation !== this.autoToolboxDiscoveryGeneration) return;
         if (result.error && !result.items.length) {
           reflectionErrors++;
+          reflectionDiagnostics.push({ path: candidate.path, outcome: 'error' });
           continue;
         }
         refreshedFiles.add(normalize(candidate.path));
@@ -4455,6 +5284,7 @@ class DesignerSession {
         }
       } catch {
         reflectionErrors++;
+        reflectionDiagnostics.push({ path: candidate.path, outcome: 'error' });
       }
     }
 
@@ -4478,6 +5308,8 @@ class DesignerSession {
       + `assemblies=${discovery.assemblies.length}; reflected=${reflected}; controls=${this.autoToolboxItems.length}; `
       + `skipped=${skipped}; truncated=${truncated}; cancelled=false`,
       `[toolbox auto-discovery] scanned directories: ${discovery.scannedDirectories.join('; ') || '<none>'}`,
+      `[toolbox auto-discovery] assembly detail: ${JSON.stringify({ discovery: discovery.assemblyDiagnostics,
+        omitted: discovery.assemblyDiagnosticsOmitted, reflection: reflectionDiagnostics })}`,
       ...(skipped ? [
         `[toolbox auto-discovery] skipped detail: ${JSON.stringify({ ...discovery.skipped, reflectionSkipped, reflectionErrors, projectScanSkipped: rootsInfo.projectScanSkipped, projectBudgetReached: rootsInfo.projectBudgetReached })}`,
       ] : []),
@@ -4516,7 +5348,7 @@ class DesignerSession {
     }
     for (const [key, directory] of desired) {
       if (this.autoToolboxWatchers.has(key)) continue;
-      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(directory, '*.dll'));
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(directory, '*.{dll,exe}'));
       const enqueue = (uri: vscode.Uri) => this.scheduleAutoToolboxAssemblyRefresh(uri.fsPath);
       const composite = vscode.Disposable.from(
         watcher,
@@ -4529,7 +5361,7 @@ class DesignerSession {
   }
 
   private scheduleAutoToolboxAssemblyRefresh(file: string): void {
-    if (this.disposed || !this.autoToolboxEnabled() || !vscode.window.state.focused || !/\.dll$/i.test(file)) return;
+    if (this.disposed || !this.autoToolboxEnabled() || !vscode.window.state.focused || !/\.(dll|exe)$/i.test(file)) return;
     const key = normalize(file);
     const prior = this.autoToolboxRefreshTimers.get(key);
     if (prior) clearTimeout(prior);
@@ -4769,6 +5601,19 @@ class DesignerSession {
     }, 120);
   }
 
+  /** Share the exact-image ownership boundary with recovered history and live native Undo/Redo. Scope release also
+   * takes a fresh read: an external change delivered while a prior read was invalidated must still be reported. */
+  beginSourceTransactionImages(images: readonly SourceTransactionImage[]): () => void {
+    const release = this.sourceTransactionGuard.begin(images);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+      if (!this.disposed) this.scheduleRerender();
+    };
+  }
+
   /**
    * An external write to the .Designer.cs reached disk. If we have NO unsaved designer edits, adopt the disk
    * text and re-render; if the user has unsaved edits, keep them and just note the conflict. Our own save
@@ -4778,35 +5623,46 @@ class DesignerSession {
     if (this.disposed || !this.designerFile) return;
     // Serialize overlapping watcher deliveries: two debounced reloads can be in flight, and an OLDER read resuming
     // after a newer one already adopted would re-adopt superseded text and re-render it. Newest wins.
-    const epoch = ++this.reloadEpoch;
+    const read = this.sourceTransactionGuard.beginRead(this.doc.rev);
+    const stillCurrent = (): boolean => {
+      if (this.disposed || !this.sourceTransactionGuard.isLatest(read)) return false;
+      if (this.sourceTransactionGuard.isCurrent(read, this.doc.rev)) return true;
+      // A document edit/Undo/Revert completed while the disk read was pending. Re-read against that revision rather
+      // than adopting an old image (or losing an external conflict notification) after the newer document change.
+      this.scheduleRerender();
+      return false;
+    };
     let onDisk: { text: string; hadBom: boolean };
     try {
       onDisk = await readDesignerBytesUri(vscode.Uri.file(this.designerFile));
-    } catch {
+    } catch (error) {
       // The file was DELETED, locked, or the provider failed — after we had a baseline. Swallowing this left the old
       // canvas on screen, still editable, against a source that no longer exists: the .resx paths would even
       // keep writing. Latch the same read-only state an unreadable file gets at open; a later successful read clears
       // it. renderOk is dropped too so commit()'s backstop refuses regardless of which gate a caller passed.
-      if (epoch !== this.reloadEpoch || this.disposed) return;
+      if (!stillCurrent()) return;
+      if (isFileNotFound(error) && this.sourceTransactionGuard.owns({ text: null, bom: false })) return;
       this.doc.markBaselineUnknown();
       this.renderOk = false;
       this.post({ type: 'status', message: t('status.designerDiskConflict') });
       return;
     }
-    if (epoch !== this.reloadEpoch || this.disposed) return; // a newer reload superseded this read
+    if (!stillCurrent()) return;
     // A journaled source+resource transaction writes the generated source before it can register the native custom
     // document edit. Older VS Code hosts can deliver that watcher read inside the narrow gap. The transaction runner
     // owns this exact byte image and verifies it again before reporting success, so it is neither an external change
     // nor a new document revision. After the runner leaves this scope, an identical watcher delivery is a no-op because
     // applyPreflightedCommit has already adopted the same source baseline and in-memory text.
-    if (this.pendingSourceTransactionImages.some((image) =>
-      image.text === onDisk.text && image.bom === onDisk.hadBom)) return;
+    if (this.sourceTransactionGuard.owns({ text: onDisk.text, bom: onDisk.hadBom })) return;
     // Decide what actually changed BEFORE touching the document: adopting first would make the text comparison
     // trivially true and skip the re-render, leaving the canvas showing the OLD source while the buffer holds the
     // new one — an edit would then be spliced into text the user never saw.
     const textChanged = onDisk.text !== this.doc.designerText;
-    if (this.doc.isDirty) {
-      if (textChanged) this.post({ type: 'status', message: t('status.diskChanged') });
+    if (this.doc.needsRecoveryBackup) {
+      if (textChanged) {
+        this.post({ type: 'status', message: t('status.diskChanged') });
+        this.offerRecoveryActions([this.designerFile]);
+      }
     return; // keep the user's unsaved edits; save()'s guard catches the conflict
     }
     // Clean buffer. This read SUCCEEDED, so a baseline is knowable again — adopt it even when only the BOM moved, or
@@ -4820,7 +5676,21 @@ class DesignerSession {
     // aimed at it would splice into the freshly adopted text. Lock first, adopt, then render.
     if (textChanged) this.renderOk = false;
     this.doc.adoptDiskBaseline(onDisk.text, onDisk.hadBom);
+    this.conflictNoticeShown = false;
   if (textChanged) await this.fullRender(); // the canvas must never keep showing superseded source
+  }
+
+  notifyDiskBaselineAdopted(): void { this.conflictNoticeShown = false; }
+
+  offerRecoveryActions(files: readonly string[]): void {
+    if (this.conflictNoticeShown || this.disposed) return;
+    this.conflictNoticeShown = true;
+    const review = t('host.recoveryTimeline.review');
+    void vscode.window.showWarningMessage(t('host.recoveryTimeline.conflict', {
+      files: files.map((file) => path.basename(file)).join(', '),
+    }), review).then((selected) => {
+      if (selected === review && !this.disposed) void vscode.commands.executeCommand('winformsDesigner.showRecoveryTimeline', this.documentUri);
+    });
   }
 
   /**
@@ -4859,7 +5729,7 @@ class DesignerSession {
     this.mutationLedger.stageCommit(after);
     const companionChanged = !!companionText && companionText.before !== companionText.after;
     if (!this.preflightCommit(
-      before, after, label, resxList, expectedRevision, localizableSourceCapability, companionChanged,
+      before, after, label, resxList, expectedRevision, localizableSourceCapability, companionChanged, companionText,
     )) { this.mutationLedger.finishCommit(false, false); return false; }
     const accepted = this.applyPreflightedCommit(
       before, after, label, resxList, expectedRevision, durableUndo, localizableSourceCapability, companionText);
@@ -4883,8 +5753,12 @@ class DesignerSession {
     expectedRevision?: number,
     localizableSourceCapability?: 'event',
     companionChanged = false,
+    companionText?: CompanionTextTx,
   ): boolean {
     if (this.disposed) return false;
+    if (!this.doc.companionAlignmentMatches(companionText ? {
+      target: companionText.document.uri.fsPath, before: companionText.before, after: companionText.after,
+    } : undefined)) { this.post({ type: 'status', message: t('host.recovery.companionConflict') }); return false; }
     if (this.emptyInitializeComponentSurface) {
       this.output.appendLine('[designer] edit refused — empty InitializeComponent compatibility surface is read-only (' + label + ')');
       this.post({ type: 'status', message: t('designer.owner.emptyInitializeComponentReadOnly') });
@@ -4960,6 +5834,9 @@ class DesignerSession {
     localizableSourceCapability?: 'event',
     companionText?: CompanionTextTx,
   ): boolean {
+    if (!this.doc.companionAlignmentMatches(companionText ? {
+      target: companionText.document.uri.fsPath, before: companionText.before, after: companionText.after,
+    } : undefined)) { this.post({ type: 'status', message: t('host.recovery.companionConflict') }); return false; }
     const resxChanged = resxList.some((tx) => tx.before !== tx.after);
     const companionChanged = !!companionText && companionText.before !== companionText.after;
     if (after === before && !resxChanged && !companionChanged) return true;
@@ -4984,14 +5861,45 @@ class DesignerSession {
     this.postDirty();
     let durableRegistration = durableUndo;
     // Admission for the whole history step is taken in fireDocumentEdit; this only groups the disk-touching part.
-    const durableHistory = <T>(work: () => Promise<T>): Promise<T> => work();
+    const durableHistory = async <T>(work: () => Promise<T>): Promise<T> => {
+      const releaseSourceImages = persistedDesigner ? this.beginSourceTransactionImages([
+        { text: persistedDesigner.before, bom: persistedDesigner.bom },
+        { text: persistedDesigner.after, bom: persistedDesigner.bom },
+      ]) : undefined;
+      try { return await work(); }
+      finally { releaseSourceImages?.(); }
+    };
+    const historyId = this.doc.recordHistoryEdit({ label, before, after,
+      linkedArtifacts: [...resxList.map((tx) => ({ target: tx.uri.fsPath, before: tx.before, after: tx.after,
+        bom: tx.bom, storage: 'disk' as const })), ...(companionText ? [{ target: companionText.document.uri.fsPath,
+        before: companionText.before, after: companionText.after, bom: false, storage: 'editor' as const }] : [])],
+      sourceOnDisk: !!persistedDesigner, beforeEventAuthorized, afterEventAuthorized });
+    const preserveSourceAfterHistoryRace = async (direction: 'undo' | 'redo'): Promise<never> => {
+      try {
+        if (durableRegistration) {
+          const result = direction === 'undo' ? await durableRegistration.redo() : await durableRegistration.undo();
+          if (result.status !== (direction === 'undo' ? 'committed' : 'rolledBack')) throw new Error('history resource compensation requires manual recovery');
+          if (direction === 'undo' && result.undoRegistration) durableRegistration = result.undoRegistration;
+        } else await this.transitionResourceSet(resxList, direction === 'undo' ? 'redo' : 'undo');
+      } catch {
+        this.doc.markTransactionRecoveryRequired();
+      }
+      if (this.designerFile) this.offerRecoveryActions([this.designerFile, ...resxList.map((tx) => tx.uri.fsPath)]);
+      throw new DesignerSourceConflictError();
+    };
     this.fireEdit({
       document: this.doc,
       label,
+      historyId,
       // Do the resx disk op FIRST (it can fail — a locked/permission-denied file): if it throws, the in-memory
       // designerText is left untouched and the undo/redo promise rejects, so the two halves never split (
       // mutating text before a fallible resx op leaves the code reverted while the resource didn't move).
       undo: async () => {
+        if (this.doc.designerText !== after) {
+          if (this.designerFile) this.offerRecoveryActions([this.designerFile]);
+          throw new DesignerSourceConflictError();
+        }
+        const historyRevision = this.doc.rev;
         // A code-behind replay finishes on a later turn: it stays admitted and counted until it has really run.
         const settleCompanion = companionText ? beginHostMutation() : undefined;
         try {
@@ -5005,9 +5913,11 @@ class DesignerSession {
             } else {
               await this.transitionResourceSet(resxList, 'undo');
             }
+            if (this.doc.rev !== historyRevision || this.doc.designerText !== after) await preserveSourceAfterHistoryRace('undo');
             if (persistedDesigner) this.doc.adoptTransactionBaseline(persistedDesigner.before, persistedDesigner.bom);
             this.doc.rev++; this.doc.designerText = before;
             this.doc.authorizeLocalizableEventText(beforeEventAuthorized ? before : null);
+            this.doc.moveHistory(historyId, 'undo');
             return transition;
           });
           await this.rerenderFromDoc();
@@ -5016,6 +5926,11 @@ class DesignerSession {
       },
       redo: async () => {
         // A code-behind replay finishes on a later turn: it stays admitted and counted until it has really run.
+        if (this.doc.designerText !== before) {
+          if (this.designerFile) this.offerRecoveryActions([this.designerFile]);
+          throw new DesignerSourceConflictError();
+        }
+        const historyRevision = this.doc.rev;
         const settleCompanion = companionText ? beginHostMutation() : undefined;
         try {
           const companionTransition = await durableHistory(async () => {
@@ -5031,9 +5946,11 @@ class DesignerSession {
             } else {
               await this.transitionResourceSet(resxList, 'redo');
             }
+            if (this.doc.rev !== historyRevision || this.doc.designerText !== before) await preserveSourceAfterHistoryRace('redo');
             if (persistedDesigner) this.doc.adoptTransactionBaseline(persistedDesigner.after, persistedDesigner.bom);
             this.doc.rev++; this.doc.designerText = after;
             this.doc.authorizeLocalizableEventText(afterEventAuthorized ? after : null);
+            this.doc.moveHistory(historyId, 'redo');
             return transition;
           });
           await this.rerenderFromDoc();
@@ -5082,6 +5999,8 @@ class DesignerSession {
     this.post({ type: 'status', message: t('status.saved') });
     this.postDirty();
   }
+
+  notifyHistoryChanged(): void { if (!this.disposed) this.postDirty(); }
 
   /**
    * Resource/source boundary for a [Localizable(true)] form. Returns true (and shows the status) when this form is
@@ -5205,6 +6124,7 @@ class DesignerSession {
   }
 
   private async withProductMutation<T>(payload: unknown, action: () => Promise<T>): Promise<T> {
+    await this.doc.assertCompanionAlignment();
     if (currentHostMutationOperationId() && this.hasProductRequestScope()) return action();
     let value!: T;
     await this.mutationLedger.run(payload, async () => {
@@ -5221,6 +6141,7 @@ class DesignerSession {
       return undefined;
     }
     try {
+      await this.doc.assertCompanionAlignment();
       return await this.mutationLedger.run(message,
         () => withEngineRequestContext(this.productRequestContext(currentHostMutationOperationId()), action), message.operationId);
     } catch (error) {
@@ -5242,7 +6163,7 @@ class DesignerSession {
     sizeEdits?: Array<{ id: string; width: number; height: number }>; hostId?: string; pageId?: string;
     axis?: 'h' | 'v'; direction?: 'left' | 'right'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; targetParentItemId?: string | null; targetIndex?: number; token?: number; reopenToken?: number;
     schemaKey?: string; includeNavigator?: boolean; existingBindingSourceId?: string | null;
-    commandId?: string; certificationId?: string;
+    commandId?: string; certificationId?: string; publicationId?: string; componentId?: string; contributionId?: string;
     dpr?: number; newName?: string; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy';
     dropX?: number; dropY?: number; adornerId?: string; gen?: number;
   }): Promise<void> {
@@ -5307,6 +6228,16 @@ class DesignerSession {
         await this.applyGroupMove(m.ids, m.dx ?? 0, m.dy ?? 0);
       } else if (m.type === 'designerActionCommand' && m.id && m.commandId && m.certificationId) {
         await this.applyHostedServiceKernelCommand(m.id, m.commandId, m.certificationId);
+      } else if (m.type === 'adapterAction') {
+        if (this.currentSelectionIds.length !== 1 || this.currentSelectionIds[0] !== this.currentId) return;
+        const binding = { documentUri: this.documentUri.toString(), revision: this.doc.rev, componentId: this.currentId };
+        const action = this.adapterPublication && resolveAdapterActionIntent(m, this.adapterPublication, binding);
+        const target = action && this.adapterActionTargets.get(action.id);
+        if (!target) return;
+        await vscode.commands.executeCommand(ADAPTER_ACTION_COMMAND, { documentUri: binding.documentUri,
+          packageUri: target.packageUri, expectedPackageSha256: target.packageSha256,
+          expectedDocumentRevision: binding.revision, expectedDocumentInstanceId: this.documentInstanceId,
+          contributionId: target.contributionId, componentId: binding.componentId });
       } else if (m.type === 'edit' && m.id && m.prop) {
         // tab-order editing (Phase 2) commits a TabIndex from the canvas through the proven grid-edit path
         await this.editFromGrid(m.id, m.prop, m.propType ?? '', !!m.isEnum, m.value ?? '');
@@ -6255,9 +7186,7 @@ class DesignerSession {
     return vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.designerFile))?.uri.fsPath;
   }
 
-  private async ensureDocumentOwnerBeforeRender(isCurrent: () => boolean = () => true): Promise<boolean> {
-    if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.ensureDocumentOwnerBeforeRender(isCurrent));
-    if (this.documentOwnerChecked || !this.designerFile) return true;
+  private async documentOwnerProjectPaths(): Promise<string[]> {
     const [projects, solutions, solutionXml] = await Promise.all([
       vscode.workspace.findFiles('**/*.csproj', '**/{bin,obj,node_modules}/**', 200),
       vscode.workspace.findFiles('**/*.sln', '**/{bin,obj,node_modules}/**', 50),
@@ -6275,6 +7204,77 @@ class DesignerSession {
     projects.forEach((project) => addProject(project.fsPath));
     for (const solution of [...solutions, ...solutionXml])
       projectPathsFromSolutionFile(solution.fsPath).forEach(addProject);
+    return projectPaths;
+  }
+
+  /** Choice is authoritative only after the engine proves current membership. Cancelling never changes state. */
+  async selectProjectContext(requestedProjectPath?: string | null): Promise<boolean> {
+    if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.selectProjectContext(requestedProjectPath));
+    if (!this.designerFile || this.disposed || this.projectContextChoiceBusy) return false;
+    this.projectContextChoiceBusy = true;
+    const revision = this.doc.rev;
+    const sequence = this.renderSeq;
+    const isCurrent = () => !this.disposed && this.doc.rev === revision && this.renderSeq === sequence;
+    let eng: EngineHandle | undefined;
+    try {
+      const projectPaths = await this.documentOwnerProjectPaths();
+      if (!isCurrent()) return false;
+      eng = await this.withTimeout(this.ensureEngine('modern'), 12000, 'engine did not start for project-context selection');
+      const source = await this.currentText() ?? this.doc.designerText;
+      const code = await this.currentCodeText();
+      const discover = () => resolveDesignerDocumentOwner(eng!, this.designerFile!, projectPaths, source, code);
+      const available = await this.withTimeout(discover(), 12000, 'project-context discovery timed out');
+      if (!isCurrent()) return false;
+      let selected = requestedProjectPath;
+      if (selected == null) {
+        const current = DesignerHub.instance.projectContext(this.designerFile);
+        const override = this.getAssemblyOverride(this.designerFile);
+        const picks = available.owners.map((projectPath) => ({
+          label: path.basename(projectPath), description: path.dirname(projectPath), projectPath,
+          picked: current !== undefined && normalize(current) === normalize(projectPath),
+        }));
+        const pick = requestedProjectPath === null ? undefined : await vscode.window.showQuickPick(picks, {
+          title: t('designer.ownerContext.title'), placeHolder: override
+            ? t('designer.ownerContext.override', { assembly: path.basename(override) })
+            : t('designer.ownerContext.placeholder'),
+        });
+        if (!pick) return false;
+        selected = pick.projectPath;
+      }
+      if (!isCurrent()) { this.post({ type: 'status', message: t('designer.ownerContext.changed') }); return false; }
+      // The projects may have changed while QuickPick was open. The resolver reads them again; the picker list is
+      // never used as membership evidence, and arbitrary/stale choices never gain a fallback owner.
+      const currentProjectPaths = await this.documentOwnerProjectPaths();
+      if (!isCurrent()) { this.post({ type: 'status', message: t('designer.ownerContext.changed') }); return false; }
+      const checked = await this.withTimeout(resolveDesignerDocumentOwner(
+        eng, this.designerFile, currentProjectPaths, await this.currentText() ?? this.doc.designerText,
+        await this.currentCodeText(), selected), 12000, 'project-context membership validation timed out');
+      if (!isCurrent()) { this.post({ type: 'status', message: t('designer.ownerContext.changed') }); return false; }
+      if (!isResolvedDocumentOwner(checked)) {
+        this.documentOwnerChecked = false;
+        this.lastDocumentOwner = checked;
+        this.postRenderFailure(documentOwnerFailureMessage(checked), 'this', checked.diagnosticCode);
+        return false;
+      }
+      const priorOutput = this.pinnedNet48Output;
+      await DesignerHub.instance.setProjectContext(this.designerFile, checked.projectPath);
+      if (this.disposed) return false;
+      this.documentOwnerChecked = false;
+      this.lastDocumentOwner = checked;
+      await this.reloadControlSource(priorOutput);
+      return true;
+    } finally {
+      if (eng && !engineRequestGraphProven()) releaseEngineForCurrentRequest(eng);
+      this.projectContextChoiceBusy = false;
+    }
+  }
+
+  private async ensureDocumentOwnerBeforeRender(isCurrent: () => boolean = () => true): Promise<boolean> {
+    if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.ensureDocumentOwnerBeforeRender(isCurrent));
+    if (!this.designerFile) return true;
+    const preferred = DesignerHub.instance.projectContext(this.designerFile);
+    if (this.documentOwnerChecked && !preferred) return true;
+    const projectPaths = await this.documentOwnerProjectPaths();
     // A render superseded while the searches ran (a newer render, or the crash-loop stop) must not acquire a worker.
     if (!isCurrent()) return false;
     const eng = await this.withTimeout(
@@ -6292,10 +7292,12 @@ class DesignerSession {
           projectPaths,
           sourceText ?? this.doc.designerText,
           codeBehindSourceText,
+          preferred,
         ),
         12000,
         'designer document ownership validation timed out',
       );
+      if (!isCurrent()) return false;
       this.lastDocumentOwner = owner;
       if (isResolvedDocumentOwner(owner)) {
         this.documentOwnerChecked = true;
@@ -6307,7 +7309,16 @@ class DesignerSession {
       }
       const message = documentOwnerFailureMessage(owner);
       this.output.appendLine(`[designer] document owner refused: ${this.designerFile}: ${message}`);
+      this.documentOwnerChecked = false;
       this.postRenderFailure(message, 'this', owner?.diagnosticCode || message);
+      if (!this.projectContextOfferShown && owner.owners.length > 0
+        && ['AMBIGUOUS_OWNER', 'STALE_PROJECT_CONTEXT'].includes(owner.diagnosticCode)) {
+        this.projectContextOfferShown = true;
+        const action = t('designer.ownerContext.choose');
+        void vscode.window.showWarningMessage(message, action).then((pick) => {
+          if (pick === action && !this.disposed) void this.selectProjectContext().catch((error) => this.fail(error));
+        });
+      }
       return false;
     } finally {
       if (!engineRequestGraphProven()) releaseEngineForCurrentRequest(eng);
@@ -8859,6 +9870,7 @@ class DesignerSession {
     const document = tx.document.isClosed
       ? await vscode.workspace.openTextDocument(tx.document.uri)
       : tx.document;
+    const sourceVersion = document.version;
     if (document.getText() !== source) {
       throw new Error(`code-behind transaction conflict: ${document.uri.fsPath} changed before ${direction}`);
     }
@@ -8875,10 +9887,15 @@ class DesignerSession {
     // listener can immediately redirect Foo.cs back into the designer and steal the edit target.
     this.onViewCode(document.uri);
     const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
-    const applied = await editor.edit((edit) => edit.replace(
-      new vscode.Range(document.positionAt(prefix), document.positionAt(sourceEnd)),
-      target.slice(prefix, targetEnd),
-    ), { undoStopBefore: true, undoStopAfter: true });
+    if (document.getText() !== source || document.version !== sourceVersion) throw new Error(`code-behind transaction conflict: ${document.uri.fsPath} changed before ${direction}`);
+    const releaseOwnChange = this.companionChangeGuard.begin(normalize(document.uri.fsPath), document.version, target);
+    let applied: boolean;
+    try {
+      applied = await editor.edit((edit) => edit.replace(
+        new vscode.Range(document.positionAt(prefix), document.positionAt(sourceEnd)),
+        target.slice(prefix, targetEnd),
+      ), { undoStopBefore: true, undoStopAfter: true });
+    } finally { releaseOwnChange(); }
     if (!applied || document.getText() !== target) {
       throw new Error(`code-behind transaction failed: ${document.uri.fsPath} did not reach the ${direction} image`);
     }
@@ -9017,13 +10034,15 @@ class DesignerSession {
       const bytes = (text: string) => tx.bom ? Buffer.concat([UTF8_BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8');
       return { filePath: tx.uri.fsPath, beforeSha256: tx.before === null ? null : sha256Hex(bytes(tx.before)), afterSha256: sha256Hex(bytes(tx.after)) };
     }), transactionId);
-    const pendingImage = sourceTx ? { text: sourceTx.after, bom: sourceTx.bom } : null;
     // The runner invokes this adapter again when replaying its durable registration. That replay is already owned by
     // the existing CustomDocument history entry and revalidates every resource baseline/postcondition itself; applying
     // the original document revision here would make every legitimate Redo refuse after Undo incremented the revision.
     // Only the first forward transaction authorizes creation of the native history entry.
     let initialUndoRegistrationAuthorized = false;
-    if (pendingImage) this.pendingSourceTransactionImages.push(pendingImage);
+    let writesMayHaveStarted = false;
+    const releaseSourceImages = sourceTx ? this.beginSourceTransactionImages([
+      { text: sourceTx.before, bom: sourceTx.bom }, { text: sourceTx.after, bom: sourceTx.bom },
+    ]) : undefined;
     try {
       const identity = currentHostMutationIdentity();
       const result = await runDesignerResourceTransaction({
@@ -9039,12 +10058,14 @@ class DesignerSession {
           bom: tx.bom,
         })),
         readBytes: (filePath) => this.readResxBytes(vscode.Uri.file(filePath)),
-        writeBytes: (filePath, bytes) => this.atomicWriteFile(vscode.Uri.file(filePath), bytes),
+        writeBytes: (filePath, bytes) => transactionTxs.find((tx) => normalize(tx.uri.fsPath) === normalize(filePath))?.before === null
+          ? atomicCreateLocalFile(filePath, bytes) : this.atomicWriteFile(vscode.Uri.file(filePath), bytes),
         deleteFile: async (filePath) => {
           try { await vscode.workspace.fs.delete(vscode.Uri.file(filePath)); }
           catch (error) { if (!isFileNotFound(error)) throw error; }
         },
         beforePersistJournal: async (record) => {
+          if (record.state === 'applying') writesMayHaveStarted = true;
           if (record.state === 'prepared' && this.extensionHostAfterJournaledResourceBaseline) {
             const interleave = this.extensionHostAfterJournaledResourceBaseline;
             this.extensionHostAfterJournaledResourceBaseline = undefined;
@@ -9076,7 +10097,11 @@ class DesignerSession {
         },
       });
       if (result.status !== 'committed') {
+        if (result.status === 'recoveryRequired') { this.doc.markTransactionRecoveryRequired(); this.renderOk = false; }
         this.mutationLedger.finishResourceFailure(result.status === 'recoveryRequired', `TRANSACTION_${result.status.toUpperCase()}`);
+        if (result.status === 'recoveryRequired' || result.status === 'aborted') {
+          this.offerRecoveryActions(transactionTxs.map((tx) => tx.uri.fsPath));
+        }
         if (result.status === 'rolledBack' && sourceTx) {
           await this.reconcileRolledBackSourceTransaction(sourceTx, beforeDesignerText, afterDesignerText);
         }
@@ -9097,6 +10122,10 @@ class DesignerSession {
       )) {
         const rollback = await result.undoRegistration?.undo();
         if (!rollback) throw new Error('journaled resource commit lost its rollback registration');
+        if (rollback.status === 'recoveryRequired') {
+          this.doc.markTransactionRecoveryRequired(); this.renderOk = false;
+          this.offerRecoveryActions(transactionTxs.map((tx) => tx.uri.fsPath));
+        }
         if (rollback.status === 'rolledBack' && sourceTx) {
           await this.reconcileRolledBackSourceTransaction(sourceTx, beforeDesignerText, afterDesignerText);
         }
@@ -9107,11 +10136,15 @@ class DesignerSession {
         await writeJournalFile(path.join(journalRoot, `${transactionId}.json`), result.journal);
       }
       return result;
-    } finally {
-      if (pendingImage) {
-        const index = this.pendingSourceTransactionImages.indexOf(pendingImage);
-        if (index >= 0) this.pendingSourceTransactionImages.splice(index, 1);
+    } catch (error) {
+      if (writesMayHaveStarted) {
+        this.doc.markTransactionRecoveryRequired(); this.renderOk = false;
+        this.mutationLedger.finishResourceFailure(true, 'TRANSACTION_COMPENSATION_UNKNOWN');
+        this.offerRecoveryActions(transactionTxs.map((tx) => tx.uri.fsPath));
       }
+      throw error;
+    } finally {
+      releaseSourceImages?.();
     }
   }
 
@@ -9140,7 +10173,7 @@ class DesignerSession {
     // Invalidate an in-flight read of the transient forward image and cancel a queued one. A later watcher delivery
     // will observe the same restored baseline and become a no-op (or preserve a genuinely newer dirty edit).
     if (this.debounce) { clearTimeout(this.debounce); this.debounce = undefined; }
-    this.reloadEpoch++;
+    this.sourceTransactionGuard.invalidateReads();
     const hostOwnedImage = this.doc.designerText === beforeDesignerText
       || this.doc.designerText === afterDesignerText;
     this.doc.adoptTransactionBaseline(sourceTx.before, sourceTx.bom);
@@ -9873,9 +10906,9 @@ class DesignerSession {
    * safe-save-gated, no-op-safe ResetProperty (a pure net9 text splice, engine-agnostic), then refresh the picture.
    * net9 re-renders the interpreted graph from the edited text; net48 renders the COMPILED assembly (stale after a
    * text-only edit), so it resets the LIVE instance (pd.ResetValue) for an immediate, matching picture. */
-  async resetFromGrid(id: string, prop: string, multi = false): Promise<void> {
+  async resetFromGrid(id: string, prop: string, multi = false, accepted?: (applied: boolean) => void): Promise<void> {
     if (!currentHostMutationOperationId()) return this.withProductMutation({ method: 'resetFromGrid', id, prop, multi },
-      () => this.resetFromGrid(id, prop, multi));
+      () => this.resetFromGrid(id, prop, multi, accepted));
     if (!this.designerFile) return;
     try {
       if (multi) {
@@ -9951,12 +10984,14 @@ class DesignerSession {
         }
         return;
       }
-      const eng = await this.ensureEngine();
-      const res = await resetProperty(eng, this.designerFile, id, prop, before);
+      const eng = await this.ensureEngine('modern');
+      const res = await resetPropertyViaProvenOwnedRegion(eng, this.designerFile, id, prop, before);
+      this.lastPropertyPersistenceLane = res.persistenceLane;
       if (!res.safe) { this.post({ type: 'status', message: t('status.resetRejected', { reason: res.reason || 'unsafe' }) }); await this.loadProps(id); return; }
-      if (res.text == null) { this.post({ type: 'status', message: t('status.alreadyDefault', { id, prop }) }); await this.loadProps(id); return; }
+      if (res.text == null) { accepted?.(false); this.post({ type: 'status', message: t('status.alreadyDefault', { id, prop }) }); await this.loadProps(id); return; }
       if (this.doc.rev !== revBefore) { this.post({ type: 'status', message: t('status.docChangedShort') }); await this.loadProps(id); return; }
       if (!this.commit(before, res.text, `Reset ${id}.${prop}`)) return;
+      accepted?.(true);
       this.output.appendLine(`reset ${id}.${prop} → default (unsaved)`);
       this.post({ type: 'status', message: t('status.propReset', { id, prop }) });
       if (this.engineKind === 'net48') {
@@ -11694,6 +12729,10 @@ class DesignerSession {
   /** Snapshot every bounded C# source candidate in the owning project. The engine filters these by the exact partial
    * form identity; keeping the TextDocuments here also gives the mutation path a version precondition across all
    * partials, not only the conventional sibling Form1.cs. */
+  async extensionHostTestOwnerEventSourcePaths(): Promise<readonly string[]> {
+    return (await this.projectEventSourceSnapshot()).paths.slice();
+  }
+
   private async projectEventSourceSnapshot(): Promise<ProjectEventSourceSnapshot> {
     const primaryPath = this.codeFile();
     // A deterministic pick among co-owning projects is inert for the RENDER, but not here: this walks the owner
@@ -11791,14 +12830,17 @@ class DesignerSession {
   ): Promise<void> {
     if (!currentHostMutationOperationId()) return this.withProductMutation({ type: 'createHandler', id, eventName, handlerName, ownerId },
       () => this.createHandler(id, eventName, handlerName, ownerId, interleaveAfterGeneration));
+    const testRefusal = (phase: string): void => {
+      if (process.env.WFD_EXTENSION_HOST_E2E === '1') this.output.appendLine(`[event-handler-test] refusal=${phase}`);
+    };
     if (!this.designerFile) return;
     // Event wiring is structural metadata, not a localizable value. Both ordinary and ApplyResources-backed forms use
     // the same engine-verified wiring + signature gates, so localizable forms deliberately remain supported here.
-    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
+    if (this.refuseUnknownBaselineMutation()) { testRefusal('BASELINE_UNKNOWN'); return; } // no trustworthy baseline → no file write
     // Same reasoning for the render gate: navigateHandler is not a LOCALIZABLE_BLOCKED message, so nothing stopped
     // this path on a failed-render form — the .cs stub was written and only the wiring was refused by commit(),
     // leaving an orphan handler behind. Navigating to an EXISTING handler is unaffected (that branch never gets here).
-    if (this.refuseStaleRenderMutation()) return;
+    if (this.refuseStaleRenderMutation()) { testRefusal('STALE_RENDER'); return; }
     const eventSources = await this.projectEventSourceSnapshot();
     const codePath = eventSources.primaryPath;
     const codeDoc = eventSources.primaryDocument;
@@ -11816,22 +12858,23 @@ class DesignerSession {
       eng, this.designerFile, id, eventName, handlerName ?? null, designerBefore, codeBefore,
       this.asm() ?? null, projectTexts,
     );
-    if (!gen.safe) { this.post({ type: 'status', message: t('status.createHandlerRejected', { reason: gen.reason || 'unsafe' }) }); return; }
-    if (this.disposed) return;
+    if (!gen.safe) { testRefusal('GENERATION_REJECTED'); this.post({ type: 'status', message: t('status.createHandlerRejected', { reason: gen.reason || 'unsafe' }) }); return; }
+    if (this.disposed) { testRefusal('DISPOSED'); return; }
     if (interleaveAfterGeneration) await interleaveAfterGeneration();
 
     if (this.doc.rev !== designerRev || (codeDoc && codeDoc.version !== codeVer)
       || !this.projectEventSnapshotUnchanged(eventSources)) {
+      testRefusal(`SOURCE_CHANGED:designer=${this.doc.rev !== designerRev};code=${!!codeDoc && codeDoc.version !== codeVer}`);
       this.post({ type: 'status', message: t('status.docChanged') });
       return;
     }
 
-    if (this.refuseUnknownBaselineMutation()) return; // no trustworthy baseline → no file write
+    if (this.refuseUnknownBaselineMutation()) { testRefusal('BASELINE_UNKNOWN_AFTER_GENERATION'); return; } // no trustworthy baseline → no file write
     // Same for the render gate: a concurrent fullRender can FAIL during the engine round-trip above without moving
     // doc.rev (a control-source reload, a webview reinit), so the rev check misses it. Without this fresh look the
     // stub still lands and only commit() refuses the wiring — recreating the orphan handler the entry guard exists
     // to prevent.
-    if (this.refuseStaleRenderMutation()) return;
+    if (this.refuseStaleRenderMutation()) { testRefusal('STALE_RENDER_AFTER_GENERATION'); return; }
     if (inlineDocument && gen.codeText != null) {
       if (!codePath || codeBefore == null || gen.designerText == null
         || gen.codeInsertText == null || gen.codeInsertOffset < 0) {
@@ -11910,6 +12953,7 @@ class DesignerSession {
       const revisionChanged = this.doc.rev !== designerRev;
       if (revisionChanged) this.post({ type: 'status', message: t('status.docChanged') });
       if (gateRefused || revisionChanged) {
+        testRefusal(`GATE_AFTER_STUB:gate=${gateRefused};revision=${revisionChanged}`);
         await this.compensateCompanion(companionText);
         return;
       }
@@ -11919,6 +12963,7 @@ class DesignerSession {
     // code untouched and is surfaced in the output channel.
     if (!this.commit(designerBefore, gen.designerText ?? designerBefore, `Wire ${id}.${eventName}`,
       undefined, undefined, undefined, 'event', companionText)) {
+      testRefusal('COMMIT_REFUSED');
       if (companionText) {
         await this.compensateCompanion(companionText);
       }
@@ -11926,6 +12971,7 @@ class DesignerSession {
     }
 
     this.output.appendLine(`created handler ${gen.handlerName} for ${id}.${eventName}${gen.alreadyWired ? ' (already wired)' : ''} (unsaved)`);
+    if (companionText) await this.rerenderFromDoc();
     await this.refreshAfterWiring(id, ownerId);
     await this.postDirty();
     await this.openProjectHandlerAt(gen.handlerName);

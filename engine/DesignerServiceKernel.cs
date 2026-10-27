@@ -23,6 +23,9 @@ namespace WinFormsDesigner.Engine
         Selection,
         Transactions,
         MenuCommands,
+        ToolboxCatalog,
+        TypeResolution,
+        PropertySerialization,
     }
 
     internal static class DesignerServiceKernelGuard
@@ -95,6 +98,117 @@ namespace WinFormsDesigner.Engine
 
     internal static class DesignerServiceKernel
     {
+        public const string ServiceProfileVersion = "0.1.0";
+
+        public static IReadOnlyList<HostedServiceContractDescriptor> ServiceContracts => new[]
+        {
+            Contract(DesignerServiceKernelCapability.ContainerSiting, typeof(IContainer),
+                "Components;Add(component);Add(component,name);Remove(component);Dispose();ISite.Name;ISite.Component;ISite.Container;ISite.DesignMode;ISite.GetService(type)",
+                "Session-owned named components and design-mode sites; no workspace or window ownership."),
+            Contract(DesignerServiceKernelCapability.Naming, typeof(INameCreationService),
+                "CreateName(container,type);IsValidName(name);ValidateName(name)",
+                "C# identifiers and unique names in the owning container."),
+            Contract(DesignerServiceKernelCapability.ComponentChange, typeof(IComponentChangeService),
+                "OnComponentChanging(component,member);OnComponentChanged(component,member,oldValue,newValue);ComponentChanging/Changed/Adding/Added/Removing/Removed/Rename events",
+                "Synchronous notifications for owned components; no persistence authority."),
+            Contract(DesignerServiceKernelCapability.Selection, typeof(ISelectionService),
+                "PrimarySelection;SelectionCount;GetSelectedComponents();GetComponentSelected(component);SetSelectedComponents(components);SetSelectedComponents(components,selectionType);SelectionChanging/Changed events",
+                "Owned component identities only; no global Visual Studio selection service."),
+            Contract(DesignerServiceKernelCapability.Transactions, typeof(DesignerTransaction),
+                "CreateTransaction();CreateTransaction(description);Commit();Cancel();TransactionOpening/Opened/Closing/Closed events",
+                "One non-nested disposable graph transaction. Cancellation notification alone does not roll back arbitrary hosted code."),
+            Contract(DesignerServiceKernelCapability.MenuCommands, typeof(IMenuCommandService),
+                "AddCommand(command);AddVerb(verb);FindCommand(id);GlobalInvoke(id);RemoveCommand(command);RemoveVerb(verb);Verbs;ShowContextMenu(id,x,y)",
+                "Headless command/verb registry. Disabled commands do not invoke; native context-menu UI is explicitly refused."),
+            Contract(DesignerServiceKernelCapability.ToolboxCatalog, typeof(IHostedToolboxCatalog),
+                "GetItems(cancellationToken);CreateComponent(itemId,name,cancellationToken)",
+                "Exact Button, Label, Panel and TextBox framework types, created through the owning design host; no assembly discovery, clipboard or native toolbox UI.", true),
+            Contract(DesignerServiceKernelCapability.TypeResolution, typeof(ITypeResolutionService),
+                "GetAssembly(name);GetAssembly(name,throwOnError);GetPathOfAssembly(name);GetType(name);GetType(name,throwOnError);GetType(name,throwOnError,ignoreCase);ReferenceAssembly(name)",
+                "Lookup in admitted, already-loaded framework/design/root/owned-component assemblies; legacy System.Design 4.0 framework-designer metadata maps to the current loaded framework design assembly. No ambient probing, project mutation or assembly loading."),
+            Contract(DesignerServiceKernelCapability.PropertySerialization, typeof(IHostedPropertySerialization),
+                "Capture(components,cancellationToken);ReadProposals(snapshots,cancellationToken)",
+                "Data-only Text/Size property snapshots for at most 16 exact framework controls; proposals remain subject to the source planner. No general classic clipboard/CodeDOM serialization.", true),
+        };
+
+        private static HostedServiceContractDescriptor Contract(DesignerServiceKernelCapability capability,
+            Type serviceType, string methods, string scope, bool cancellable = false) => new()
+            {
+                Capability = capability.ToString(),
+                ServiceType = serviceType.FullName ?? serviceType.Name,
+                Methods = methods.Split(';').ToList(),
+                Cancellation = capability == DesignerServiceKernelCapability.ToolboxCatalog
+                    ? "CancellationToken checked before component creation; an admitted synchronous framework callback finishes normally; the caller owns disposal of an aborted graph"
+                    : cancellable
+                    ? "CancellationToken checked before admission, for each bounded item and before publishing data; cancellation never grants file authority"
+                    : "Synchronous public design-time API has no CancellationToken; caller checks before STA dispatch; running hosted callbacks require worker deadline/termination",
+                Reentrancy = capability == DesignerServiceKernelCapability.Transactions
+                    ? "Nested transactions refused before opening another transaction"
+                    : cancellable || capability == DesignerServiceKernelCapability.TypeResolution
+                        ? "Nested Preview service calls refused before mutation"
+                        : "Synchronous events may call read APIs; recursive service construction/designer creation is refused; callers must not start nested graph mutations",
+                Scope = scope,
+            };
+
+        /// <summary>Product call-through proof: all three Preview extensions execute against a disposable graph on
+        /// the engine STA and only bounded data is returned. This is not a full designer-host compatibility claim.</summary>
+        public static HostedServiceKernelCapabilitiesResult InspectPreviewServices(string rootKind = "Form",
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                EnsureStaThread();
+                using var session = rootKind == "Form" ? CreateFormSession()
+                    : rootKind == "UserControl" ? CreateUserControlSession()
+                    : throw new NotSupportedException("UNSUPPORTED_HOSTED_ROOT_KIND: only Form and UserControl are admitted.");
+                var toolbox = (IHostedToolboxCatalog)session.GetService(typeof(IHostedToolboxCatalog))!;
+                var types = (ITypeResolutionService)session.GetService(typeof(ITypeResolutionService))!;
+                var serializer = (IHostedPropertySerialization)session.GetService(typeof(IHostedPropertySerialization))!;
+                var items = toolbox.GetItems(cancellationToken);
+                var component = (Control)toolbox.CreateComponent("Button", "previewButton1", cancellationToken);
+                component.Text = "Hosted Preview";
+                component.Size = new Size(144, 32);
+                var resolved = types.GetType(component.GetType().AssemblyQualifiedName!, throwOnError: true);
+                var snapshots = serializer.Capture(new[] { component }, cancellationToken);
+                var proposals = serializer.ReadProposals(snapshots, cancellationToken);
+                bool classicRefused = session.GetService(typeof(IDesignerSerializationService)) == null
+                    && session.TryGetServiceRefusal(typeof(IDesignerSerializationService), out _);
+                using var incomplete = CreateFormSession(capabilities: ImplementedCapabilities.Where(
+                    capability => capability != DesignerServiceKernelCapability.PropertySerialization));
+                bool withheld = !incomplete.AdvertisesDesignerHost
+                    && incomplete.GetService(typeof(IDesignerHost)) == null
+                    && incomplete.GetService(typeof(IHostedPropertySerialization)) == null;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (resolved != typeof(Button) || snapshots.Count != 1 || proposals.Count != 2
+                    || !classicRefused || !withheld)
+                    throw new InvalidOperationException("INCOMPLETE_SERVICE_CONTRACT: Preview service postconditions were not proved.");
+                return new HostedServiceKernelCapabilitiesResult
+                {
+                    Ok = true,
+                    Status = "ready",
+                    ApartmentState = Thread.CurrentThread.GetApartmentState().ToString(),
+                    RootType = session.RootComponent.GetType().FullName ?? "",
+                    Contracts = ServiceContracts.ToList(),
+                    ToolboxItems = items.ToList(),
+                    ResolvedType = resolved?.FullName ?? "",
+                    SerializedProperties = snapshots.ToList(),
+                    Proposals = proposals.ToList(),
+                    UnsupportedClassicSerializationRefused = classicRefused,
+                    IncompleteHostWithheld = withheld,
+                };
+            }
+            catch (Exception ex)
+            {
+                return new HostedServiceKernelCapabilitiesResult
+                {
+                    ErrorCode = ex is OperationCanceledException ? "REQUEST_CANCELLED" : "HOSTED_SERVICE_REFUSED",
+                    Reason = ex.Message,
+                    Contracts = ServiceContracts.ToList(),
+                };
+            }
+        }
+
         public static IReadOnlyCollection<DesignerServiceKernelCapability> ImplementedCapabilities { get; } =
             Enum.GetValues(typeof(DesignerServiceKernelCapability))
                 .Cast<DesignerServiceKernelCapability>()
@@ -141,8 +255,11 @@ namespace WinFormsDesigner.Engine
         /// certificate validation; this factory only composes the bounded service contract on the engine STA.</summary>
         internal static DesignerServiceKernelSession CreateHostedSession(IComponent rootComponent,
             string rootName, IEnumerable<DesignerServiceKernelCapability>? capabilities = null,
-            KernelDesignerCreator? designerCreator = null) =>
-            CreateSessionCore(rootComponent, rootName, capabilities, designerCreator);
+            KernelDesignerCreator? designerCreator = null)
+        {
+            EnsureStaThread();
+            return CreateSessionCore(rootComponent, rootName, capabilities, designerCreator);
+        }
 
         private static DesignerServiceKernelSession CreateSessionCore(IComponent rootComponent, string rootName,
             IEnumerable<DesignerServiceKernelCapability>? capabilities,
@@ -244,6 +361,8 @@ namespace WinFormsDesigner.Engine
         private readonly KernelNameCreationService? _nameService;
         private readonly KernelSelectionService? _selectionService;
         private readonly KernelMenuCommandService? _menuCommandService;
+        private readonly int _creatingThreadId = Thread.CurrentThread.ManagedThreadId;
+        private bool _previewServiceInProgress;
         private readonly string[] _missingHostCapabilities;
         private KernelDesignerTransaction? _activeTransaction;
 
@@ -270,9 +389,8 @@ namespace WinFormsDesigner.Engine
             if (IsEnabled(DesignerServiceKernelCapability.MenuCommands))
                 _menuCommandService = new KernelMenuCommandService(this);
 
-            // Vendor designers interpret a non-null IDesignerHost as a complete Visual Studio-style service promise.
-            // Keep that promise conjunctive: individual partial services may be queried truthfully, but the aggregate
-            // host is withheld until every capability in this bounded contract is present.
+            // Advertise the aggregate only when all entries of this bounded service profile are present. This does
+            // not promise the entire Visual Studio service surface: classic serializers and native UI stay refused.
             if (AdvertisesDesignerHost)
             {
                 RegisterService(typeof(IDesignerHost), this);
@@ -289,6 +407,12 @@ namespace WinFormsDesigner.Engine
             if (_nameService != null) RegisterService(typeof(INameCreationService), _nameService);
             if (_selectionService != null) RegisterService(typeof(ISelectionService), _selectionService);
             if (_menuCommandService != null) RegisterService(typeof(IMenuCommandService), _menuCommandService);
+            if (IsEnabled(DesignerServiceKernelCapability.ToolboxCatalog))
+                RegisterService(typeof(IHostedToolboxCatalog), new KernelToolboxCatalog(this));
+            if (IsEnabled(DesignerServiceKernelCapability.TypeResolution))
+                RegisterService(typeof(ITypeResolutionService), new KernelTypeResolutionService(this, rootComponent.GetType()));
+            if (IsEnabled(DesignerServiceKernelCapability.PropertySerialization))
+                RegisterService(typeof(IHostedPropertySerialization), new KernelPropertySerialization(this));
 
             Container.Add(rootComponent, rootName);
         }
@@ -311,7 +435,11 @@ namespace WinFormsDesigner.Engine
         public event EventHandler? TransactionOpened;
         public event EventHandler? TransactionOpening;
 
-        public void Activate() => Activated?.Invoke(this, EventArgs.Empty);
+        public void Activate()
+        {
+            ThrowIfDisposed();
+            Activated?.Invoke(this, EventArgs.Empty);
+        }
 
         public IComponent CreateComponent(Type componentClass) =>
             CreateComponent(componentClass, CreateGeneratedName(componentClass));
@@ -432,6 +560,7 @@ namespace WinFormsDesigner.Engine
 
         public Type? GetType(string typeName)
         {
+            ThrowIfDisposed();
             if (string.IsNullOrWhiteSpace(typeName)) return null;
             return Type.GetType(typeName, ResolveLoadedAssembly, ResolveLoadedType, throwOnError: false,
                 ignoreCase: false);
@@ -858,6 +987,7 @@ namespace WinFormsDesigner.Engine
 
         internal void ValidateNameForAdd(string? name, IComponent? existingComponent)
         {
+            ThrowIfDisposed();
             if (string.IsNullOrEmpty(name)) return;
             if (!KernelNameCreationService.IsValidIdentifier(name))
                 throw new ArgumentException("Invalid component name: " + name, nameof(name));
@@ -897,10 +1027,30 @@ namespace WinFormsDesigner.Engine
         internal void RecordServiceRefusal(Type serviceType, string capability, string reason) =>
             Refuse(serviceType, capability, reason);
 
+        internal IDisposable BeginPreviewService(Type serviceType, CancellationToken cancellationToken)
+        {
+            if (IsDisposed) throw new ObjectDisposedException(nameof(DesignerServiceKernelSession));
+            if (Thread.CurrentThread.ManagedThreadId != _creatingThreadId
+                || Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
+                throw PreviewRefusal(serviceType, "HOSTED_SERVICE_REQUIRES_OWNING_STA: use the creating engine STA.");
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_previewServiceInProgress)
+                throw PreviewRefusal(serviceType, "HOSTED_SERVICE_REENTRANT: nested Preview service calls are refused.");
+            _previewServiceInProgress = true;
+            return new PreviewServiceLease(() => _previewServiceInProgress = false);
+        }
+
+        internal NotSupportedException PreviewRefusal(Type serviceType, string reason)
+        {
+            Refuse(serviceType, CapabilityNameFor(serviceType), reason);
+            return new NotSupportedException(reason);
+        }
+
         internal void CloseTransaction(KernelDesignerTransaction transaction, bool commit)
         {
             if (!ReferenceEquals(_activeTransaction, transaction))
                 return;
+            ThrowIfDisposed();
 
             TransactionClosing?.Invoke(this, new DesignerTransactionCloseEventArgs(commit, lastTransaction: true));
             _activeTransaction = null;
@@ -910,6 +1060,7 @@ namespace WinFormsDesigner.Engine
         public void Dispose()
         {
             if (IsDisposed) return;
+            ThrowIfDisposed();
             _activeTransaction?.Cancel();
             IsDisposed = true;
             foreach (var designer in _designers.Values.ToArray())
@@ -946,7 +1097,10 @@ namespace WinFormsDesigner.Engine
             || serviceType == typeof(IComponentChangeService)
             || serviceType == typeof(INameCreationService)
             || serviceType == typeof(ISelectionService)
-            || serviceType == typeof(IMenuCommandService);
+            || serviceType == typeof(IMenuCommandService)
+            || serviceType == typeof(IHostedToolboxCatalog)
+            || serviceType == typeof(ITypeResolutionService)
+            || serviceType == typeof(IHostedPropertySerialization);
 
         private bool IsKernelControlledService(Type serviceType) =>
             IsBuiltInService(serviceType)
@@ -976,7 +1130,16 @@ namespace WinFormsDesigner.Engine
         private void ThrowIfDisposed()
         {
             if (IsDisposed) throw new ObjectDisposedException(nameof(DesignerServiceKernelSession));
+            EnsureOwningThread();
         }
+
+        internal void EnsureOwningThread()
+        {
+            if (Thread.CurrentThread.ManagedThreadId != _creatingThreadId)
+                throw new NotSupportedException("DESIGNER_SERVICE_REQUIRES_OWNING_THREAD: use the creating engine STA.");
+        }
+
+        internal void EnsureServiceAccess() => ThrowIfDisposed();
 
         private void Refuse(Type serviceType, string capability, string reason)
         {
@@ -1002,6 +1165,12 @@ namespace WinFormsDesigner.Engine
                 return nameof(DesignerServiceKernelCapability.MenuCommands);
             if (serviceType == typeof(DesignerTransaction))
                 return nameof(DesignerServiceKernelCapability.Transactions);
+            if (serviceType == typeof(IHostedToolboxCatalog))
+                return nameof(DesignerServiceKernelCapability.ToolboxCatalog);
+            if (serviceType == typeof(ITypeResolutionService))
+                return nameof(DesignerServiceKernelCapability.TypeResolution);
+            if (serviceType == typeof(IHostedPropertySerialization))
+                return nameof(DesignerServiceKernelCapability.PropertySerialization);
             return "Unsupported";
         }
 
@@ -1339,6 +1508,250 @@ namespace WinFormsDesigner.Engine
 
     }
 
+    internal sealed class PreviewServiceLease : IDisposable
+    {
+        private Action? _release;
+        public PreviewServiceLease(Action release) => _release = release;
+        public void Dispose()
+        {
+            var release = _release;
+            _release = null;
+            release?.Invoke();
+        }
+    }
+
+    internal static class KernelPreviewTypes
+    {
+        public static readonly Type[] Toolbox = { typeof(Button), typeof(Label), typeof(Panel), typeof(TextBox) };
+        public static bool IsSerializable(Type type) => Toolbox.Contains(type)
+            || type == typeof(Form) || type == typeof(UserControl);
+    }
+
+    internal sealed class KernelToolboxCatalog : IHostedToolboxCatalog
+    {
+        private readonly KernelDesignerHost _host;
+        public KernelToolboxCatalog(KernelDesignerHost host) => _host = host;
+
+        public IReadOnlyList<HostedToolboxItem> GetItems(CancellationToken cancellationToken = default)
+        {
+            using var lease = _host.BeginPreviewService(typeof(IHostedToolboxCatalog), cancellationToken);
+            return KernelPreviewTypes.Toolbox.Select(type => new HostedToolboxItem
+            {
+                Id = type.Name,
+                TypeName = type.FullName ?? type.Name,
+            }).ToArray();
+        }
+
+        public IComponent CreateComponent(string itemId, string name, CancellationToken cancellationToken = default)
+        {
+            using var lease = _host.BeginPreviewService(typeof(IHostedToolboxCatalog), cancellationToken);
+            Type? type = KernelPreviewTypes.Toolbox.FirstOrDefault(candidate => candidate.Name == itemId);
+            if (type == null)
+                throw _host.PreviewRefusal(typeof(IHostedToolboxCatalog),
+                    "TOOLBOX_ITEM_UNAVAILABLE: only exact framework catalogue identities are admitted.");
+            if (string.IsNullOrEmpty(name) || name.Length > 128 || !KernelNameCreationService.IsValidIdentifier(name))
+                throw _host.PreviewRefusal(typeof(IHostedToolboxCatalog), "TOOLBOX_NAME_INVALID: a bounded C# component name is required.");
+            if (_host.Container.Components.Count >= 128)
+                throw _host.PreviewRefusal(typeof(IHostedToolboxCatalog), "TOOLBOX_COMPONENT_LIMIT: the disposable session already owns 128 components.");
+            // Cancellation is an admission boundary for this synchronous framework operation. No callback or source
+            // mutation is started when it is already cancelled; cancellation during a callback is observed by its caller.
+            cancellationToken.ThrowIfCancellationRequested();
+            return _host.CreateComponent(type, name);
+        }
+    }
+
+    internal sealed class KernelTypeResolutionService : ITypeResolutionService
+    {
+        private readonly KernelDesignerHost _host;
+        private readonly Assembly[] _assemblies;
+
+        public KernelTypeResolutionService(KernelDesignerHost host, Type rootType)
+        {
+            _host = host;
+            _assemblies = new[] { typeof(object).Assembly, typeof(Component).Assembly,
+                typeof(Control).Assembly, typeof(ControlDesigner).Assembly, typeof(ComponentDesigner).Assembly,
+                rootType.Assembly }.Distinct().ToArray();
+        }
+
+        private Assembly[] AdmittedAssemblies => _assemblies.Concat(_host.Container.Components.Cast<IComponent>()
+            .Select(component => component.GetType().Assembly)).Distinct().ToArray();
+
+        public Assembly? GetAssembly(AssemblyName name) => GetAssembly(name, false);
+
+        public Assembly? GetAssembly(AssemblyName name, bool throwOnError)
+        {
+            using var lease = _host.BeginPreviewService(typeof(ITypeResolutionService), default);
+            return FindAssembly(name, throwOnError);
+        }
+
+        private Assembly? FindAssembly(AssemblyName name, bool throwOnError)
+        {
+            DesignerServiceKernelGuard.ThrowIfNull(name);
+            var assembly = AdmittedAssemblies.FirstOrDefault(candidate =>
+                string.Equals(candidate.GetName().FullName, name.FullName, StringComparison.Ordinal));
+            if (assembly == null)
+            {
+                var refusal = _host.PreviewRefusal(typeof(ITypeResolutionService),
+                    "TYPE_ASSEMBLY_NOT_ADMITTED: exact already-loaded assembly identity is required.");
+                if (throwOnError) throw refusal;
+            }
+            return assembly;
+        }
+
+        public string? GetPathOfAssembly(AssemblyName name)
+        {
+            using var lease = _host.BeginPreviewService(typeof(ITypeResolutionService), default);
+            return FindAssembly(name, false)?.Location;
+        }
+
+        public void ReferenceAssembly(AssemblyName name)
+        {
+            using var lease = _host.BeginPreviewService(typeof(ITypeResolutionService), default);
+            // Existing session admission is idempotent. This never adds a project reference or loads an assembly.
+            FindAssembly(name, true);
+        }
+
+        public Type? GetType(string name) => GetType(name, false, false);
+        public Type? GetType(string name, bool throwOnError) => GetType(name, throwOnError, false);
+
+        public Type? GetType(string name, bool throwOnError, bool ignoreCase)
+        {
+            using var lease = _host.BeginPreviewService(typeof(ITypeResolutionService), default);
+            Type? found = null;
+            if (!string.IsNullOrWhiteSpace(name) && name.Length <= 1024
+                && name.IndexOfAny(new[] { '[', ']', '\0' }) < 0)
+            {
+                try
+                {
+                    var admitted = AdmittedAssemblies;
+                    if (name.IndexOf(',') >= 0)
+                        found = Type.GetType(name,
+                            requested => admitted.FirstOrDefault(candidate =>
+                                string.Equals(candidate.GetName().FullName, requested.FullName, StringComparison.Ordinal))
+                                ?? ResolveFrameworkDesignMetadataAlias(requested),
+                            (assembly, typeName, caseInsensitive) => assembly?.GetType(typeName, false, caseInsensitive),
+                            false, ignoreCase);
+                    else
+                    {
+                        var matches = admitted.Select(assembly => assembly.GetType(name, false, ignoreCase))
+                            .Where(type => type != null).Distinct().Take(2).ToArray();
+                        if (matches.Length == 1) found = matches[0];
+                    }
+                }
+                catch (ArgumentException) { /* malformed names receive the same bounded refusal */ }
+                catch (System.IO.FileNotFoundException) { /* never fall through to ambient loading */ }
+                catch (TypeLoadException) { /* unresolved metadata remains unavailable */ }
+            }
+            if (found == null)
+            {
+                var refusal = _host.PreviewRefusal(typeof(ITypeResolutionService),
+                    "TYPE_NOT_ADMITTED: a unique non-generic type in an admitted loaded assembly is required.");
+                if (throwOnError) throw refusal;
+            }
+            return found;
+        }
+
+        private static Assembly? ResolveFrameworkDesignMetadataAlias(AssemblyName requested) =>
+            string.Equals(requested.FullName,
+                "System.Design, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+                StringComparison.Ordinal)
+                ? typeof(ControlDesigner).Assembly
+                : null;
+    }
+
+    internal sealed class KernelPropertySerialization : IHostedPropertySerialization
+    {
+        private readonly KernelDesignerHost _host;
+        public KernelPropertySerialization(KernelDesignerHost host) => _host = host;
+
+        public IReadOnlyList<HostedComponentPropertySnapshot> Capture(
+            IReadOnlyList<IComponent> components, CancellationToken cancellationToken = default)
+        {
+            using var lease = _host.BeginPreviewService(typeof(IHostedPropertySerialization), cancellationToken);
+            CheckCount(components?.Count ?? -1);
+            var snapshots = new List<HostedComponentPropertySnapshot>();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var component in components!)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (component == null || !_host.ContainsComponent(component)
+                    || !KernelPreviewTypes.IsSerializable(component.GetType()))
+                    throw Refuse("PROPERTY_SERIALIZATION_TYPE_REFUSED: only owned exact framework controls are admitted.");
+                var control = (Control)component;
+                var snapshot = new HostedComponentPropertySnapshot
+                {
+                    ComponentName = component.Site?.Name ?? "",
+                    ComponentType = component.GetType().FullName ?? "",
+                    Text = control.Text,
+                    Width = control.Width,
+                    Height = control.Height,
+                };
+                ValidateSnapshot(snapshot, names);
+                snapshots.Add(snapshot);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return snapshots.ToArray();
+        }
+
+        public IReadOnlyList<HostedComponentPropertyProposal> ReadProposals(
+            IReadOnlyList<HostedComponentPropertySnapshot> snapshots, CancellationToken cancellationToken = default)
+        {
+            using var lease = _host.BeginPreviewService(typeof(IHostedPropertySerialization), cancellationToken);
+            CheckCount(snapshots?.Count ?? -1);
+            var proposals = new List<HostedComponentPropertyProposal>();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var snapshot in snapshots!)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidateSnapshot(snapshot, names);
+                var component = _host.Container.Components.Cast<IComponent>().FirstOrDefault(candidate =>
+                    string.Equals(candidate.Site?.Name, snapshot.ComponentName, StringComparison.Ordinal));
+                if (component == null || !KernelPreviewTypes.IsSerializable(component.GetType())
+                    || component.GetType().FullName != snapshot.ComponentType)
+                    throw Refuse("PROPERTY_SERIALIZATION_OWNER_MISMATCH: component identity/type is not owned by this session.");
+                proposals.Add(new HostedComponentPropertyProposal
+                {
+                    ComponentName = snapshot.ComponentName,
+                    ComponentType = snapshot.ComponentType,
+                    PropertyName = nameof(Control.Text),
+                    PropertyType = typeof(string).FullName!,
+                    InvariantValue = snapshot.Text,
+                });
+                proposals.Add(new HostedComponentPropertyProposal
+                {
+                    ComponentName = snapshot.ComponentName,
+                    ComponentType = snapshot.ComponentType,
+                    PropertyName = nameof(Control.Size),
+                    PropertyType = typeof(Size).FullName!,
+                    InvariantValue = snapshot.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + ", " + snapshot.Height.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                });
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return proposals.ToArray();
+        }
+
+        private void CheckCount(int count)
+        {
+            if (count < 1 || count > 16)
+                throw Refuse("PROPERTY_SERIALIZATION_LIMIT: between 1 and 16 components are required.");
+        }
+
+        private void ValidateSnapshot(HostedComponentPropertySnapshot? snapshot, HashSet<string> names)
+        {
+            if (snapshot == null || string.IsNullOrEmpty(snapshot.ComponentName) || snapshot.ComponentName.Length > 128
+                || !KernelNameCreationService.IsValidIdentifier(snapshot.ComponentName)
+                || string.IsNullOrEmpty(snapshot.ComponentType) || snapshot.ComponentType.Length > 512
+                || snapshot.Text == null || snapshot.Text.Length > 4096
+                || snapshot.Width < 0 || snapshot.Width > 32767 || snapshot.Height < 0 || snapshot.Height > 32767
+                || !names.Add(snapshot.ComponentName))
+                throw Refuse("PROPERTY_SERIALIZATION_DATA_INVALID: identity, duplicate, text or geometry limit was violated.");
+        }
+
+        private NotSupportedException Refuse(string reason) =>
+            _host.PreviewRefusal(typeof(IHostedPropertySerialization), reason);
+    }
+
     internal sealed class KernelDesignContainer : IContainer
     {
         private readonly KernelDesignerHost _host;
@@ -1347,7 +1760,10 @@ namespace WinFormsDesigner.Engine
 
         public KernelDesignContainer(KernelDesignerHost host) => _host = host;
 
-        public ComponentCollection Components => new ComponentCollection(_components.ToArray());
+        public ComponentCollection Components
+        {
+            get { _host.EnsureServiceAccess(); return new ComponentCollection(_components.ToArray()); }
+        }
 
         public void Add(IComponent? component) => Add(component, null);
 
@@ -1355,6 +1771,7 @@ namespace WinFormsDesigner.Engine
         {
             if (component == null) return;
             if (_disposed) throw new ObjectDisposedException(nameof(KernelDesignContainer));
+            _host.EnsureServiceAccess();
 
             _host.ValidateNameForAdd(name, existingComponent: component);
             _host.RaiseComponentAdding(component);
@@ -1371,6 +1788,7 @@ namespace WinFormsDesigner.Engine
         {
             if (component == null) return;
             if (_disposed) return;
+            _host.EnsureServiceAccess();
             if (!_components.Contains(component)) return;
 
             _host.RaiseComponentRemoving(component);
@@ -1384,6 +1802,7 @@ namespace WinFormsDesigner.Engine
         public void Dispose()
         {
             if (_disposed) return;
+            _host.EnsureOwningThread();
             _disposed = true;
             for (int i = _components.Count - 1; i >= 0; i--)
             {
@@ -1435,6 +1854,7 @@ namespace WinFormsDesigner.Engine
 
         public string CreateName(IContainer? container, Type dataType)
         {
+            _host.EnsureServiceAccess();
             DesignerServiceKernelGuard.ThrowIfNull(dataType);
             container ??= _host.Container;
 
@@ -1449,11 +1869,15 @@ namespace WinFormsDesigner.Engine
             throw new InvalidOperationException("Unable to create a unique component name for " + dataType.FullName);
         }
 
-        public bool IsValidName(string name) =>
-            IsValidIdentifier(name) && IsAvailable(_host.Container, name);
+        public bool IsValidName(string name)
+        {
+            _host.EnsureServiceAccess();
+            return IsValidIdentifier(name) && IsAvailable(_host.Container, name);
+        }
 
         public void ValidateName(string name)
         {
+            _host.EnsureServiceAccess();
             if (!IsValidIdentifier(name))
                 throw new ArgumentException("Invalid component name: " + name, nameof(name));
             if (!IsAvailable(_host.Container, name))
@@ -1500,6 +1924,7 @@ namespace WinFormsDesigner.Engine
 
         private void ValidateOwnedComponent(object? component)
         {
+            _host.EnsureServiceAccess();
             if (component is IComponent typed && _host.ContainsComponent(typed)) return;
             _host.RecordServiceRefusal(typeof(IComponentChangeService),
                 nameof(DesignerServiceKernelCapability.ComponentChange),
@@ -1534,18 +1959,33 @@ namespace WinFormsDesigner.Engine
         public event EventHandler? SelectionChanged;
         public event EventHandler? SelectionChanging;
 
-        public object? PrimarySelection => _selection.Count == 0 ? null : _selection[0];
-        public int SelectionCount => _selection.Count;
+        public object? PrimarySelection
+        {
+            get { _host.EnsureServiceAccess(); return _selection.Count == 0 ? null : _selection[0]; }
+        }
+        public int SelectionCount
+        {
+            get { _host.EnsureServiceAccess(); return _selection.Count; }
+        }
 
-        public bool GetComponentSelected(object component) => _selection.Contains(component);
+        public bool GetComponentSelected(object component)
+        {
+            _host.EnsureServiceAccess();
+            return _selection.Contains(component);
+        }
 
-        public ICollection GetSelectedComponents() => _selection.ToArray();
+        public ICollection GetSelectedComponents()
+        {
+            _host.EnsureServiceAccess();
+            return _selection.ToArray();
+        }
 
         public void SetSelectedComponents(ICollection? components) =>
             SetSelectedComponents(components, SelectionTypes.Replace);
 
         public void SetSelectedComponents(ICollection? components, SelectionTypes selectionType)
         {
+            _host.EnsureServiceAccess();
             var incoming = components == null
                 ? new List<object>()
                 : components.Cast<object>().Distinct().ToList();
@@ -1608,10 +2048,14 @@ namespace WinFormsDesigner.Engine
 
         public KernelMenuCommandService(KernelDesignerHost host) => _host = host;
 
-        public DesignerVerbCollection Verbs => new DesignerVerbCollection(_verbs.ToArray());
+        public DesignerVerbCollection Verbs
+        {
+            get { _host.EnsureServiceAccess(); return new DesignerVerbCollection(_verbs.ToArray()); }
+        }
 
         public void AddCommand(MenuCommand command)
         {
+            _host.EnsureServiceAccess();
             DesignerServiceKernelGuard.ThrowIfNull(command);
             var commandId = command.CommandID
                 ?? throw new ArgumentException("Menu command must have a CommandID.", nameof(command));
@@ -1623,6 +2067,7 @@ namespace WinFormsDesigner.Engine
 
         public void AddVerb(DesignerVerb verb)
         {
+            _host.EnsureServiceAccess();
             DesignerServiceKernelGuard.ThrowIfNull(verb);
             if (!_verbs.Contains(verb))
                 _verbs.Add(verb);
@@ -1630,6 +2075,7 @@ namespace WinFormsDesigner.Engine
 
         public MenuCommand? FindCommand(CommandID commandID)
         {
+            _host.EnsureServiceAccess();
             DesignerServiceKernelGuard.ThrowIfNull(commandID);
             _commands.TryGetValue(Key(commandID), out var command);
             return command;
@@ -1637,6 +2083,7 @@ namespace WinFormsDesigner.Engine
 
         public bool GlobalInvoke(CommandID commandID)
         {
+            _host.EnsureServiceAccess();
             DesignerServiceKernelGuard.ThrowIfNull(commandID);
             if (!_commands.TryGetValue(Key(commandID), out var command))
                 return false;
@@ -1648,6 +2095,7 @@ namespace WinFormsDesigner.Engine
 
         public void RemoveCommand(MenuCommand command)
         {
+            _host.EnsureServiceAccess();
             DesignerServiceKernelGuard.ThrowIfNull(command);
             var commandId = command.CommandID
                 ?? throw new ArgumentException("Menu command must have a CommandID.", nameof(command));
@@ -1656,12 +2104,14 @@ namespace WinFormsDesigner.Engine
 
         public void RemoveVerb(DesignerVerb verb)
         {
+            _host.EnsureServiceAccess();
             DesignerServiceKernelGuard.ThrowIfNull(verb);
             _verbs.Remove(verb);
         }
 
         public void ShowContextMenu(CommandID menuID, int x, int y)
         {
+            _host.EnsureServiceAccess();
             _host.RecordServiceRefusal(typeof(IMenuCommandService),
                 nameof(DesignerServiceKernelCapability.MenuCommands),
                 "Context menu UI display is outside this headless kernel slice.");

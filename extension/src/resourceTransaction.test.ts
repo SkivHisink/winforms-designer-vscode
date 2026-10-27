@@ -66,6 +66,19 @@ describe('resource transaction', () => {
     expect(mem.files.get('Form.fr.resx')).toEqual(state('fr-before', true));
   });
 
+  it('compensates a provider write that landed before its promise rejected', async () => {
+    const mem = memoryIo({ 'Form.fr.resx': state('fr-before', true) });
+    const write = mem.io.write;
+    let failed = false;
+    mem.io.write = async (target, value) => {
+      await write(target, value);
+      if (!failed && target === 'Form.ar.resx') { failed = true; throw new Error('flush failed after replace'); }
+    };
+    await expect(transitionResourceSetAtomic(transitions, 'forward', mem.io)).rejects.toThrow('flush failed after replace');
+    expect(mem.files.get('Form.fr.resx')).toEqual(state('fr-before', true));
+    expect(mem.files.get('Form.ar.resx')).toEqual(state(null));
+  });
+
   it('rechecks each target after set preflight and compensates when a later target changed', async () => {
     const mem = memoryIo({ 'Form.fr.resx': state('fr-before', true) });
     const read = mem.io.read;

@@ -537,6 +537,13 @@ async function runProtocolScenarios(api: Api, source: (name: string) => vscode.U
       for (let attempt = 0; attempt < 3 && !crashLoop(); attempt++) {
         // A request is audited only once it settles, so let every targeted worker finish before its session is captured.
         await waitForIdleProduct(api, kind);
+        // A replacement worker is mapped as soon as it starts, before its first request settles. Give every running
+        // worker of the kind time to settle an audited request, then let that request finish too.
+        await waitFor(() => {
+          const workers = api.productWorkerState();
+          return running().length > 0 && running().every(engine => sessionsOfPid(workers, kind, engine.pid).size > 0);
+        }, state);
+        await waitForIdleProduct(api, kind);
         const pids = running().map(engine => engine.pid);
         assert.ok(pids.length > 0, `attempt ${attempt}: ${JSON.stringify(state())}`);
         const beforeCrash = api.productWorkerState();

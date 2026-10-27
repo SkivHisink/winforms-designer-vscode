@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { recoverPendingTransactions } from './transactionRecovery';
+import { readJournalFile } from './transactionJournal';
 import { TransactionCrashPoint } from './transactionRunner';
 
 const scratch: string[] = [];
@@ -66,8 +67,8 @@ describe('real process termination transaction recovery', () => {
     ['createdPersisted', 1, 'before'],
     ['preparedPersisted', 1, 'before'],
     ['applyingPersisted', 1, 'before'],
-    ['targetWritten', 1, 'before'],
-    ['targetWritten', 2, 'before'],
+    ['targetWritten', 1, 'manual'],
+    ['targetWritten', 2, 'manual'],
     ['targetApplied', 1, 'before'],
     ['targetApplied', 2, 'before'],
     ['appliedPersisted', 1, 'before'],
@@ -102,12 +103,46 @@ describe('real process termination transaction recovery', () => {
       );
       await terminateAt(child, crashPoint, crashOccurrence);
 
+      const journalPath = path.join(journalRoot, `${config.transactionId}.json`);
+      if (expectedImage === 'manual') {
+        const crashDesigner = await fs.promises.readFile(designer);
+        const crashResx = await fs.promises.readFile(resx);
+        expect(crashDesigner).toEqual(Buffer.from('designer-after'));
+        expect(crashResx).toEqual(Buffer.from(crashOccurrence === 1 ? 'resx-before' : 'resx-after'));
+        const crashJournal = await readJournalFile(journalPath);
+        expect(crashJournal?.state).toBe('applying');
+        expect(crashJournal?.appliedTargets).toEqual(crashOccurrence === 1 ? [] : ['Form1.Designer.cs']);
+
+        const summary = await recoverPendingTransactions(globalStorage);
+        expect(summary.manual).toBe(1);
+        expect(summary.corrupt + summary.rolledBack + summary.committed + summary.discarded + summary.deferred).toBe(0);
+        expect(summary.entries[0].outcome).toBe('manual');
+        expect(summary.entries[0].detail).toContain('ownership of unacknowledged write');
+        expect(await fs.promises.readFile(designer)).toEqual(crashDesigner);
+        expect(await fs.promises.readFile(resx)).toEqual(crashResx);
+        expect((await fs.promises.readdir(workspaceRoot)).sort()).toEqual(['Form1.Designer.cs', 'Form1.resx']);
+        const retainedJournal = await readJournalFile(journalPath);
+        expect(retainedJournal?.state).toBe('recoveryRequired');
+        expect(retainedJournal?.beforeBytesBase64).toEqual(crashJournal?.beforeBytesBase64);
+        expect(retainedJournal?.afterBytesBase64).toEqual(crashJournal?.afterBytesBase64);
+        expect(retainedJournal?.appliedTargets).toEqual(crashJournal?.appliedTargets);
+
+        // A second activation cannot silently turn an unresolved write into a rollback or delete its restore point.
+        const retainedJournalBytes = await fs.promises.readFile(journalPath);
+        expect((await recoverPendingTransactions(globalStorage)).manual).toBe(1);
+        expect(await fs.promises.readFile(journalPath)).toEqual(retainedJournalBytes);
+        expect(await fs.promises.readFile(designer)).toEqual(crashDesigner);
+        expect(await fs.promises.readFile(resx)).toEqual(crashResx);
+        return;
+      }
+
       const summary = await recoverPendingTransactions(globalStorage);
       const committed = expectedImage === 'after';
       expect(summary.manual + summary.corrupt).toBe(0);
       expect(summary.committed).toBe(committed ? 1 : 0);
       expect(await fs.promises.readFile(designer, 'utf8')).toBe(committed ? 'designer-after' : 'designer-before');
       expect(await fs.promises.readFile(resx, 'utf8')).toBe(committed ? 'resx-after' : 'resx-before');
+      expect(fs.existsSync(journalPath)).toBe(false);
     },
     20_000,
   );

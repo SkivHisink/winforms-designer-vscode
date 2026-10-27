@@ -3327,6 +3327,112 @@ test('V2-FND-001-S089/S090 product smart tag: certified DesignerAction command p
   h.destroy();
 });
 
+// ---- R24-07: public Adapter SDK actions share pointer/keyboard identity-only routing -------------------
+function adapterActionPublication(): Record<string, any> {
+  return { type: 'adapterActions', documentUri: 'file:///workspace/Form1.Designer.cs', revision: 3,
+    publicationId: 'publication-123', componentId: 'button1', actions: [{ id: 'sdk.0123456789abcdef01234567',
+      title: 'Apply <caption>', commandId: 'winformsDesigner.invokeAdapterAction',
+      keyboardCommandId: 'winformsDesigner.invokeAdapterAction' }] };
+}
+function setupAdapterAction(h: Harness, candidate = adapterActionPublication()): void {
+  h.send({ type: 'render', png: '', width: 160, height: 100, gen: 7,
+    documentUri: 'file:///workspace/Form1.Designer.cs', revision: 3 });
+  h.send({ type: 'layout', controls: [mkCtrl(), mkCtrl({ id: 'button2', name: 'button2', x: 100 })],
+    documentUri: 'file:///workspace/Form1.Designer.cs', revision: 3 });
+  h.send({ type: 'select', id: 'button1' });
+  h.send({ type: 'tasks', id: 'button1', component: { id: 'button1', type: 'System.Windows.Forms.Button',
+    properties: [], designerActions: [], events: [] }, documentUri: 'file:///workspace/Form1.Designer.cs', revision: 3 });
+  h.send(candidate);
+  h.resetPosted();
+}
+test('R24-07 SDK canvas action: stable button target and Enter/Space use the same public action identity as pointer', () => {
+  const h = loadDesigner();
+  setupAdapterAction(h);
+  const glyph = h.document.querySelector('.smarttag');
+  ok(glyph.style.display !== 'none' && glyph.tabIndex === 0 && glyph.getAttribute('role') === 'button',
+    'SDK actions alone expose a focusable smart-tag glyph');
+  const expected = { type: 'adapterAction', publicationId: 'publication-123', componentId: 'button1',
+    contributionId: 'sdk.0123456789abcdef01234567', gen: 7 };
+  h.click(glyph);
+  let row = h.document.querySelector('.tfAdapterAction');
+  ok(row.tagName === 'BUTTON' && row.type === 'button' && row.textContent === 'Apply <caption>'
+    && row.getAttribute('data-adapter-contribution') === expected.contributionId && !row.querySelector('caption'),
+    'bounded author metadata is literal text in a stable semantic button, never HTML');
+  h.click(row);
+  eq(payloadMessages(h.posted), [expected], 'pointer posts only the publication, component, contribution and drawn generation');
+  ok(/^webview-operation-[\w-]+$/.test(h.posted[0].operationId)
+    && /^webview-attempt-[\w-]+$/.test(h.posted[0].requestAttemptId), 'the public action intent uses the existing mutation envelope');
+  const pointerOperation = h.posted[0].operationId;
+  for (const key of ['Enter', ' ']) {
+    h.resetPosted();
+    const open = h.key('keydown', { key }, glyph);
+    row = h.document.querySelector('.tfAdapterAction');
+    ok(open.defaultPrevented && row === h.document.activeElement, 'keyboard opens the same flyout and focuses its action button');
+    const invoke = h.key('keydown', { key }, row);
+    ok(invoke.defaultPrevented, 'keyboard invocation consumes browser activation so one intent is posted');
+    eq(payloadMessages(h.posted), [expected], 'Enter and Space post exactly the pointer action identity');
+    ok(h.posted[0].operationId !== pointerOperation, 'a new activation receives a separate operation identity');
+  }
+  h.destroy();
+});
+test('R24-07 SDK canvas action: disabled reason stays visible and neither pointer nor keyboard can invoke it', () => {
+  const h = loadDesigner();
+  const candidate = adapterActionPublication();
+  candidate.actions[0].disabledReasonCode = 'ADAPTER_SERVICE_UNAVAILABLE';
+  setupAdapterAction(h, candidate);
+  h.click(h.document.querySelector('.smarttag'));
+  const row = h.document.querySelector('.tfAdapterAction');
+  ok(row.disabled && row.getAttribute('aria-disabled') === 'true'
+    && row.textContent.includes('ADAPTER_SERVICE_UNAVAILABLE'), 'disabled metadata shows its stable reason without write authority');
+  h.click(row);
+  h.key('keydown', { key: 'Enter' }, row);
+  h.key('keydown', { key: ' ' }, row);
+  eq(h.posted, [], 'even synthetic disabled pointer and keyboard events cannot emit an SDK invocation');
+  h.destroy();
+});
+test('R24-07 SDK canvas action: selection, host render/layout/tasks/loading and replacement publication retire old hit targets', () => {
+  const retire = [
+    (h: Harness) => { h.send({ type: 'select', id: 'button2' }); h.send({ type: 'select', id: 'button1' }); },
+    (h: Harness) => h.send({ type: 'render', png: '', width: 160, height: 100, gen: 8,
+      documentUri: 'file:///workspace/Form1.Designer.cs', revision: 4 }),
+    (h: Harness) => h.send({ type: 'layout', controls: [mkCtrl()],
+      documentUri: 'file:///workspace/Form1.Designer.cs', revision: 4 }),
+    (h: Harness) => h.send({ type: 'tasks', id: 'button1', component: { id: 'button1', type: 'System.Windows.Forms.Button',
+      properties: [], designerActions: [] }, documentUri: 'file:///workspace/Form1.Designer.cs', revision: 4 }),
+    (h: Harness) => h.send({ type: 'loading', message: 'Loading' }),
+    (h: Harness) => h.send({ ...adapterActionPublication(), publicationId: 'publication-456' }),
+  ];
+  for (const invalidate of retire) {
+    const h = loadDesigner();
+    setupAdapterAction(h);
+    h.click(h.document.querySelector('.smarttag'));
+    const stale = h.document.querySelector('.tfAdapterAction');
+    invalidate(h);
+    h.click(stale);
+    h.key('keydown', { key: 'Enter' }, stale);
+    eq(h.posted, [], 'a detached old pointer/keyboard target never invokes after its publication was retired');
+    h.destroy();
+  }
+});
+test('R24-07 SDK canvas action: forged command/value metadata, stale bindings and render-only adorners never become actions', () => {
+  const invalid = [
+    { ...adapterActionPublication(), revision: 2 },
+    { ...adapterActionPublication(), documentUri: 'file:///workspace/Other.Designer.cs' },
+    { ...adapterActionPublication(), componentId: 'button2' },
+    { ...adapterActionPublication(), actions: [{ ...adapterActionPublication().actions[0], commandId: 'workbench.action.files.save' }] },
+    { ...adapterActionPublication(), actions: [{ ...adapterActionPublication().actions[0], invariantValue: 'injected' }] },
+    { ...adapterActionPublication(), actions: [{ ...adapterActionPublication().actions[0], adornerId: 'render-only' }] },
+  ];
+  for (const candidate of invalid) {
+    const h = loadDesigner();
+    setupAdapterAction(h, candidate);
+    ok(h.document.querySelector('.smarttag').style.display === 'none' && !h.document.querySelector('.tfAdapterAction'),
+      'invalid, stale or payload-bearing metadata never exposes an executable hit target');
+    eq(h.posted, [], 'refused metadata emits no edit or SDK invocation');
+    h.destroy();
+  }
+});
+
 test('v1.15 Data Sources pane: persists as a main tab and routes detail/grid/column/settings actions with opaque keys', () => {
   const h = loadPanel();
   const root = mkCtrl({ id: 'this', name: 'Form1', type: 'System.Windows.Forms.Form', parentId: null, isRoot: true });

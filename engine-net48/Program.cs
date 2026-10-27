@@ -754,6 +754,59 @@ namespace WinFormsDesigner.Engine.Net48
             string componentTypeName, string certificationId) =>
             _hostedDesigners.Inspect(assemblyPath, componentTypeName, certificationId);
 
+        private readonly SemaphoreSlim _hostedPreviewGate = new SemaphoreSlim(1, 1);
+
+        /// <summary>Framework-only Preview calls require an actual STA; the JSON-RPC parent has none. One bounded
+        /// disposable STA is admitted at a time. Cancellation/deadline return promptly, while a stalled worker retains
+        /// admission until its finally completes, preventing repeated calls from creating unbounded threads.</summary>
+        public async Task<HostedServiceKernelCapabilitiesResult> InspectHostedPreviewServices(
+            string rootKind = "Form", CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return HostedPreviewRefused("REQUEST_CANCELLED", "Hosted Preview inspection was cancelled before dispatch.");
+            if (!_hostedPreviewGate.Wait(0))
+                return HostedPreviewRefused("HOSTED_SERVICE_BUSY", "A previous hosted Preview STA inspection has not completed.");
+            var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linked.CancelAfter(5000);
+            var token = linked.Token;
+            var completion = new TaskCompletionSource<HostedServiceKernelCapabilitiesResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (token.Register(() => cancelled.TrySetResult(true)))
+            {
+                var thread = new Thread(() =>
+                {
+                    HostedServiceKernelCapabilitiesResult result;
+                    try { result = _hostedServices.InspectPreviewServices(rootKind, token); }
+                    catch (Exception ex) { result = HostedPreviewRefused("HOSTED_SERVICE_REFUSED", ex.GetBaseException().Message); }
+                    finally
+                    {
+                        _hostedPreviewGate.Release();
+                        linked.Dispose();
+                    }
+                    completion.TrySetResult(result);
+                }) { IsBackground = true, Name = "WinFormsDesigner.PreviewServices.STA" };
+                try
+                {
+                    thread.SetApartmentState(ApartmentState.STA);
+                    thread.Start();
+                }
+                catch (Exception ex)
+                {
+                    _hostedPreviewGate.Release();
+                    linked.Dispose();
+                    return HostedPreviewRefused("HOSTED_SERVICE_REFUSED", ex.GetBaseException().Message);
+                }
+                if (await Task.WhenAny(completion.Task, cancelled.Task).ConfigureAwait(false) == completion.Task)
+                    return await completion.Task.ConfigureAwait(false);
+                return cancellationToken.IsCancellationRequested
+                    ? HostedPreviewRefused("REQUEST_CANCELLED", "Hosted Preview inspection was cancelled.")
+                    : HostedPreviewRefused("HOSTED_SERVICE_TIMEOUT", "Hosted Preview inspection exceeded its 5000 ms deadline.");
+            }
+        }
+
+        private static HostedServiceKernelCapabilitiesResult HostedPreviewRefused(string code, string reason) =>
+            new HostedServiceKernelCapabilitiesResult { ErrorCode = code, Reason = reason };
+
         public HostedServiceKernelProductResult InspectCertifiedHostedServiceKernel(
             string assemblyPath, string componentTypeName, string certificationId) =>
             _hostedServices.Inspect(assemblyPath, componentTypeName, certificationId);

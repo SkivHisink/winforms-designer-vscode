@@ -94,8 +94,8 @@ reproduced per component, followed by the single MIT permission notice that appl
 
 | Component | Version | Upstream | Copyright |
 | --- | --- | --- | --- |
-| MessagePack | 2.5.302 | https://github.com/MessagePack-CSharp/MessagePack-CSharp | © Yoshifumi Kawai and contributors. All rights reserved. |
-| MessagePack.Annotations | 2.5.302 | https://github.com/MessagePack-CSharp/MessagePack-CSharp | © Yoshifumi Kawai and contributors. All rights reserved. |
+| MessagePack | 2.5.303 | https://github.com/MessagePack-CSharp/MessagePack-CSharp | © Yoshifumi Kawai and contributors. All rights reserved. |
+| MessagePack.Annotations | 2.5.303 | https://github.com/MessagePack-CSharp/MessagePack-CSharp | © Yoshifumi Kawai and contributors. All rights reserved. |
 | Microsoft.Bcl.AsyncInterfaces | 10.0.1 | https://dot.net/ | © Microsoft Corporation. All rights reserved. |
 | Microsoft.Bcl.HashCode | 6.0.0 | https://github.com/dotnet/maintenance-packages | © Microsoft Corporation. All rights reserved. |
 | Microsoft.CodeAnalysis.Common | 5.6.0 | https://github.com/dotnet/roslyn | © Microsoft Corporation. All rights reserved. |

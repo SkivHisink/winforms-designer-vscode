@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "combined-release-diagnostic.1",
+  "version": "2.3.0",
+  "status": "BLOCKED",
+  "diagnosticOnly": true,
+  "acceptedLocally": false,
+  "publication": false,
+  "date": "2026-10-26",
+  "runId": "combined23-92993e9c-0b20-4927-a13a-59ec9a1cba27",
+  "startedAt": "2026-10-26T08:03:35.618Z",
+  "endedAt": "2026-10-26T08:07:24.201Z",
+  "failedStep": {
+    "index": 8,
+    "total": 45,
+    "name": "Install extension dependencies",
+    "command": "npm ci",
+    "exitCode": 1
+  },
+  "counts": {
+    "passed": 7,
+    "failed": 1,
+    "notExecuted": 37
+  },
+  "inputFileCount": 667,
+  "rootCause": {
+    "observed": "The npm registry metadata requests for xmlchars and why-is-node-running each exhausted three fetch attempts with ECONNRESET. npm ci terminated on the xmlchars socket read reset.",
+    "category": "external network/registry access",
+    "productDefectProven": false,
+    "unresolved": "The logs do not distinguish registry-side, intermediary, or local connection termination. No proxy/configuration cause is asserted.",
+    "policy": "Stop when the failed step has no proven product defect that can be corrected within the authorized scope. No extra acceptance retry or cache substitution was performed."
+  },
+  "failureWitness": {
+    "output": "npm error code ECONNRESET\nnpm error syscall read\nnpm error errno ECONNRESET\nnpm error network request to https://registry.npmjs.org/xmlchars failed, reason: read ECONNRESET\nnpm error network This is a problem related to network connectivity.\nnpm error network In most cases you are behind a proxy or have bad network settings.\nnpm error network\nnpm error network If you are behind a proxy, please make sure that the\nnpm error network 'proxy' config is set properly.  See: 'npm help config'\nnpm error A complete log of this run can be found in: <ci-temp>\\npm-cache\\_logs\\2026-10-26T08_05_26_358Z-debug-0.log",
+    "networkWitnesses": [
+      "186 http fetch GET https://registry.npmjs.org/xmlchars attempt 1 failed with ECONNRESET",
+      "190 http fetch GET https://registry.npmjs.org/why-is-node-running attempt 1 failed with ECONNRESET",
+      "206 http fetch GET https://registry.npmjs.org/why-is-node-running attempt 2 failed with ECONNRESET",
+      "208 http fetch GET https://registry.npmjs.org/xmlchars attempt 2 failed with ECONNRESET",
+      "399 http fetch GET https://registry.npmjs.org/xmlchars attempt 3 failed with ECONNRESET",
+      "498 http fetch GET https://registry.npmjs.org/why-is-node-running attempt 3 failed with ECONNRESET"
+    ],
+    "npmDebugLog": {
+      "path": "npm-cache/_logs/2026-10-26T08_05_26_358Z-debug-0.log",
+      "rawSha256": "d3b7c66d31508c5a315543d3a7e01670c45566fd66c9b04aed467997fd2d29bf",
+      "retainedSha256": "9bed67d0938419001f3cb242e38c1489eb254e2686a9e3fcf96cfdcdf1c134d1"
+    }
+  },
+  "authorizedCorrections": [
+    {
+      "scope": "independent net48 test graph",
+      "package": "MessagePack",
+      "version": "2.5.303",
+      "alreadyAppliedBeforeRun": true,
+      "changedInThisRun": false
+    },
+    {
+      "scope": "development-only jsdom test graph",
+      "package": "undici",
+      "version": "7.30.1",
+      "alreadyAppliedBeforeRun": true,
+      "changedInThisRun": false,
+      "shippedVSIXImpact": "Development-test dependency pin; not a shipped product dependency. No new VSIX was produced in this attempt."
+    }
+  ],
+  "attemptReport": {
+    "path": "combined-install-ci-attempt.json",
+    "sha256": "50c3451be2e78a5b72a8fedd39c918857120aa6065064d0a6e254e8e0730cec7",
+    "bytes": 199235
+  },
+  "priorInterruptedAttempt": {
+    "date": "2026-10-26",
+    "passedExecutableSteps": 28,
+    "interruptedStep": 29,
+    "interruptedStepName": "VS Code 1.84 Extension Host smoke",
+    "classification": "execution-session infrastructure interruption; runner terminated",
+    "productFailureInferred": false,
+    "countedTowardAcceptance": false
+  },
+  "packageAcceptanceBinding": {
+    "status": "NOT_BUILT_OR_FROZEN_FOR_COMBINED_RELEASE",
+    "acceptedArtifactSha256": null
+  },
+  "limitations": [
+    "Steps 9 through 45, including audit, all Extension Host suites, installed upgrade/downgrade, evidence gates, strict localization, mojibake and both packages were not executed.",
+    "Earlier acceptance, interrupted attempts, prechecks and correction controls supply no results for unexecuted steps.",
+    "The interrupted earlier attempt used identical input hashes but is not counted toward acceptance.",
+    "Git cleanliness and tag identity are not asserted locally; metadata-only preflight was prepared and not reached.",
+    "No dependency, product, workflow, gate, assertion, timeout or budget change was made.",
+    "The failed npm ci can leave the ignored node_modules installation incomplete; it was not repaired or reused as acceptance evidence."
+  ]
+}

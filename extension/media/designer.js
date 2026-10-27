@@ -40,7 +40,7 @@
     bringToFrontGroup: true, sendToBack: true, sendToBackGroup: true, tabRename: true,
     stripAdd: true, stripMove: true, stripRename: true, stripRetype: true,
     stripDelete: true, trayRename: true, renameComponent: true, createDefaultHandler: true,
-    addTab: true, deleteTab: true, moveTab: true, designerActionCommand: true
+    addTab: true, deleteTab: true, moveTab: true, designerActionCommand: true, adapterAction: true
   };
   var mutationIdentitySequence = 0;
   function nextMutationIdentity(kind) {
@@ -110,7 +110,7 @@
     if (!document.getElementById('wfd-designer-a11y-style')) {
       var style = document.createElement('style');
       style.id = 'wfd-designer-a11y-style';
-      style.textContent = '.handle{min-width:10px;min-height:10px}.handle:focus,.typehereslot:focus,.smarttag:focus,#surfaceWrap:focus{outline:2px solid var(--vscode-focusBorder, Highlight);outline-offset:2px}@media (forced-colors: active){#sel,.selsec,.stripitemsel,.hoverhint,.rubberband,.toolboxdroptarget,.containeroutline,.anchortether,.snapguide,.stripdropindicator,.typehereslot,.smarttag,.lockbadge,.designeradorner{forced-color-adjust:auto;border-color:Highlight!important;color:CanvasText!important;background:Canvas!important}#sel .handle,.handle{background:Highlight!important;border-color:CanvasText!important}.snapguide{background:Highlight!important}}';
+      style.textContent = '.tfAdapterAction{display:block;width:100%;text-align:left;font:inherit;border:0;border-radius:0;background:transparent;color:inherit;min-height:24px;padding:4px 8px;cursor:pointer}.tfAdapterAction:disabled{cursor:default}.tfAdapterAction:focus{outline:2px solid var(--vscode-focusBorder,Highlight);outline-offset:-2px}.handle{min-width:10px;min-height:10px}.handle:focus,.typehereslot:focus,.smarttag:focus,#surfaceWrap:focus{outline:2px solid var(--vscode-focusBorder, Highlight);outline-offset:2px}@media (forced-colors: active){#sel,.selsec,.stripitemsel,.hoverhint,.rubberband,.toolboxdroptarget,.containeroutline,.anchortether,.snapguide,.stripdropindicator,.typehereslot,.smarttag,.lockbadge,.designeradorner{forced-color-adjust:auto;border-color:Highlight!important;color:CanvasText!important;background:Canvas!important}#sel .handle,.handle{background:Highlight!important;border-color:CanvasText!important}.snapguide{background:Highlight!important}}';
       document.head.appendChild(style);
     }
   }
@@ -1422,6 +1422,7 @@
   function ensureLockBadge() { if (!lockBadgeEl) { lockBadgeEl = document.createElement('div'); lockBadgeEl.className = 'lockbadge'; lockBadgeEl.textContent = '🔒'; lockBadgeEl.title = T('designer.menu.lockControls'); lockBadgeEl.style.display = 'none'; surfaceWrap.appendChild(lockBadgeEl); } return lockBadgeEl; }
   // render the WHOLE selection: primary box + handles, outline boxes for the rest, name/Delete state.
   function renderSelection() {
+    if (adapterActionsState && (selection.length !== 1 || current !== adapterActionsState.componentId)) clearAdapterActions();
     renderStripItemSel(); // validate/position the on-canvas item highlight FIRST (may clear a vanished selectedItem)
     if (!current) { selBox.style.display = 'none'; if (lockBadgeEl) lockBadgeEl.style.display = 'none'; }
     else positionPrimary(current);
@@ -1464,6 +1465,60 @@
   // top-right corner; clicking it opens the property items supplied by the control's real ComponentDesigner /
   // DesignerActionList, edited inline through the SAME source-first 'edit' message as the property grid. ----
   var tasksState = null;   // { id, comp } for the current single selection (from the host 'tasks' message)
+  var adapterActionsState = null; // host-published data only; the host retains the exact package grant and revision
+  var adapterCanvasBinding = null; // optional document/revision carried by the current host render/tasks
+  var adapterCommandId = 'winformsDesigner.invokeAdapterAction';
+  function clearAdapterActions() {
+    if (adapterActionsState) { adapterActionsState = null; closeFlyout(); }
+  }
+  function adapterActionsNow() {
+    return adapterActionsState && adapterActionsState.componentId === current && selection.length === 1
+      ? adapterActionsState.actions : [];
+  }
+  function receiveAdapterActions(m) {
+    // No property/value, package path, method name or render-only adorner can become executable metadata here.
+    // The extension host independently repeats this data validation and re-authorizes every invocation.
+    function ownKeys(value, allowed, required) {
+      return value && typeof value === 'object' && !Array.isArray(value)
+        && Object.keys(value).every(function (key) { return allowed.indexOf(key) >= 0; })
+        && required.every(function (key) { return Object.prototype.hasOwnProperty.call(value, key); });
+    }
+    var valid = ownKeys(m, ['type', 'documentUri', 'publicationId', 'revision', 'componentId', 'actions'],
+      ['type', 'documentUri', 'publicationId', 'revision', 'componentId', 'actions'])
+      && typeof m.documentUri === 'string' && m.documentUri.indexOf('file:') === 0 && m.documentUri.length <= 8192
+      && !/[\x00-\x1f\x7f]/.test(m.documentUri)
+      && typeof m.publicationId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(m.publicationId)
+      && Number.isSafeInteger(m.revision) && m.revision >= 0
+      && typeof m.componentId === 'string' && /^(?:this|[A-Za-z_][A-Za-z0-9_]{0,127})$/.test(m.componentId)
+      && m.componentId === current && selection.length === 1
+      && Array.isArray(m.actions) && m.actions.length <= 32;
+    if (valid && adapterCanvasBinding) valid = m.documentUri === adapterCanvasBinding.documentUri
+      && m.revision === adapterCanvasBinding.revision;
+    var ids = Object.create(null), actions = [];
+    if (valid) for (var i = 0; i < m.actions.length; i++) {
+      var action = m.actions[i];
+      if (!ownKeys(action, ['id', 'title', 'disabledReasonCode', 'commandId', 'keyboardCommandId'],
+        ['id', 'title', 'commandId', 'keyboardCommandId'])
+        || typeof action.id !== 'string' || !/^[a-z][a-z0-9.-]{2,95}$/.test(action.id) || ids[action.id]
+        || typeof action.title !== 'string' || action.title.length < 1 || action.title.length > 120 || /[\x00-\x1f\x7f]/.test(action.title)
+        || action.commandId !== adapterCommandId || action.keyboardCommandId !== adapterCommandId
+        || (Object.prototype.hasOwnProperty.call(action, 'disabledReasonCode')
+          && (typeof action.disabledReasonCode !== 'string' || !/^[A-Z][A-Z0-9_]{2,95}$/.test(action.disabledReasonCode)))) { valid = false; break; }
+      ids[action.id] = true;
+      actions.push({ id: action.id, title: action.title, disabledReasonCode: action.disabledReasonCode });
+    }
+    if (valid && adapterActionsState && adapterActionsState.publicationId === m.publicationId
+      && adapterActionsState.componentId === m.componentId && adapterActionsState.documentUri === m.documentUri
+      && adapterActionsState.revision === m.revision && JSON.stringify(adapterActionsState.actions) === JSON.stringify(actions)) return;
+    clearAdapterActions();
+    if (valid) adapterActionsState = { publicationId: m.publicationId, documentUri: m.documentUri,
+      revision: m.revision, componentId: m.componentId, actions: actions };
+    renderSmartTag();
+  }
+  function bindAdapterCanvas(m) {
+    if (typeof m.documentUri === 'string' && Number.isSafeInteger(m.revision) && m.revision >= 0)
+      adapterCanvasBinding = { documentUri: m.documentUri, revision: m.revision };
+  }
   var smartTagEl = null;
   var flyoutEl = null;
   var flyoutOwner = null;  // the control id the open flyout edits
@@ -1540,15 +1595,25 @@
     var comp = (tasksState && tasksState.id === current) ? tasksState.comp : null;
     var c = current ? findControl(current) : null;
     var show = !tabOrderMode && !drag && selection.length === 1 && !!c && !!comp &&
-      (taskListFor(comp).length > 0 || commandListFor(comp).length > 0 || vendorTagsNow().length > 0);
+      (taskListFor(comp).length > 0 || commandListFor(comp).length > 0 || vendorTagsNow().length > 0 || adapterActionsNow().length > 0);
     if (!smartTagEl) {
       smartTagEl = document.createElement('div'); smartTagEl.className = 'smarttag'; smartTagEl.textContent = '▸'; // ▸
-      smartTagEl.title = 'Tasks';
+      smartTagEl.title = T('designer.smartTag.title', { type: comp ? shortType(comp.type) : '' });
+      smartTagEl.tabIndex = 0; smartTagEl.setAttribute('role', 'button'); smartTagEl.setAttribute('aria-haspopup', 'true');
+      smartTagEl.setAttribute('aria-label', smartTagEl.title);
+      smartTagEl.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault(); e.stopPropagation();
+        if (!e.repeat) { if (flyoutEl) closeFlyout(); else openFlyout(true); }
+      });
       smartTagEl.addEventListener('mousedown', function (e) { e.stopPropagation(); });
       smartTagEl.addEventListener('click', function (e) { e.stopPropagation(); if (flyoutEl) closeFlyout(); else openFlyout(); });
       surfaceWrap.appendChild(smartTagEl);
     }
     if (!show) { smartTagEl.style.display = 'none'; if (flyoutEl) closeFlyout(); return; }
+    smartTagEl.title = T('designer.smartTag.title', { type: shortType(comp.type) });
+    smartTagEl.setAttribute('aria-label', smartTagEl.title);
+    smartTagEl.setAttribute('aria-expanded', flyoutEl ? 'true' : 'false');
     smartTagEl.style.display = 'block';
     smartTagEl.style.left = Math.round((c.x + c.width) * zoom - 16) + 'px';
     smartTagEl.style.top = Math.round(c.y * zoom + 1) + 'px';
@@ -1557,6 +1622,7 @@
   function closeFlyout() {
     if (flyoutEl && flyoutEl.parentNode) flyoutEl.parentNode.removeChild(flyoutEl);
     flyoutEl = null; flyoutOwner = null;
+    if (smartTagEl) smartTagEl.setAttribute('aria-expanded', 'false');
     document.removeEventListener('mousedown', onFlyoutOutside, true);
     document.removeEventListener('keydown', onFlyoutKey, true);
   }
@@ -1566,7 +1632,7 @@
     if (smartTagEl && smartTagEl.contains(e.target)) return;
     closeFlyout();
   }
-  function onFlyoutKey(e) { if (e.key === 'Escape' && flyoutEl) { e.stopPropagation(); closeFlyout(); } }
+  function onFlyoutKey(e) { if (e.key === 'Escape' && flyoutEl) { e.stopPropagation(); closeFlyout(); if (smartTagEl) smartTagEl.focus(); } }
   function positionFlyout() {
     if (!flyoutEl || !smartTagEl) return;
     var r = smartTagEl.getBoundingClientRect();
@@ -1576,7 +1642,7 @@
     flyoutEl.style.left = Math.round(left) + 'px';
     flyoutEl.style.top = Math.round(top) + 'px';
   }
-  function openFlyout() {
+  function openFlyout(focusActions) {
     var comp = (tasksState && tasksState.id === current) ? tasksState.comp : null;
     var c = current ? findControl(current) : null;
     if (!comp || !c) return;
@@ -1589,15 +1655,17 @@
     // the vendor's own verbs first (as its panel orders them), then our curated property rows
     var vtags = vendorTagsNow();
     var commands = commandListFor(comp);
-    if (vtags.length || commands.length) {
+    var adapterActions = adapterActionsNow();
+    if (vtags.length || commands.length || adapterActions.length) {
       var vbox = document.createElement('div'); vbox.className = 'tfVerbs';
       for (var vi = 0; vi < vtags.length; vi++) vbox.appendChild(vendorRow(vtags[vi]));
       for (var ci = 0; ci < commands.length; ci++) vbox.appendChild(commandRow(commands[ci]));
+      for (var si = 0; si < adapterActions.length; si++) vbox.appendChild(adapterActionRow(adapterActions[si]));
       flyoutEl.appendChild(vbox);
     }
     var tasks = taskListFor(comp);
     if (!tasks.length) {
-      if (!vtags.length && !commands.length) {
+      if (!vtags.length && !commands.length && !adapterActions.length) {
         var note = document.createElement('div'); note.className = 'tfNote'; note.textContent = T('designer.smartTag.noTasks'); flyoutEl.appendChild(note);
       }
     } else {
@@ -1614,8 +1682,35 @@
     links.appendChild(learn);
     flyoutEl.appendChild(links);
     document.body.appendChild(flyoutEl);
+    if (smartTagEl) smartTagEl.setAttribute('aria-expanded', 'true');
     positionFlyout();
+    if (focusActions) {
+      var focusTarget = flyoutEl.querySelector('.tfAdapterAction:not(:disabled),input,select,button:not(:disabled)');
+      if (focusTarget) focusTarget.focus();
+    }
     setTimeout(function () { document.addEventListener('mousedown', onFlyoutOutside, true); document.addEventListener('keydown', onFlyoutKey, true); }, 0);
+  }
+  function adapterActionRow(action) {
+    var publication = adapterActionsState, owner = current;
+    var row = document.createElement('button'); row.type = 'button'; row.className = 'tfVerb tfAdapterAction';
+    row.textContent = action.title + (action.disabledReasonCode ? ' — ' + action.disabledReasonCode : '');
+    row.title = row.textContent; row.disabled = !!action.disabledReasonCode;
+    row.setAttribute('data-adapter-contribution', action.id);
+    row.setAttribute('data-adapter-publication', publication.publicationId);
+    row.setAttribute('aria-disabled', row.disabled ? 'true' : 'false');
+    function invoke() {
+      if (row.disabled || !publication || publication !== adapterActionsState || owner !== current
+        || adapterActionsNow().indexOf(action) < 0 || action.disabledReasonCode) { closeFlyout(); return; }
+      closeFlyout();
+      postGenerationBoundCanvasIntent({ type: 'adapterAction', publicationId: publication.publicationId,
+        componentId: owner, contributionId: action.id });
+    }
+    row.addEventListener('click', function (e) { e.stopPropagation(); invoke(); });
+    row.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault(); e.stopPropagation(); if (!e.repeat) invoke();
+    });
+    return row;
   }
   /** One vendor-declared verb row. The label is the vendor's; clicking runs OUR source-first equivalent (the same
    *  message the canvas context menu sends). A verb we can't express — or can't right now (no tab page to remove) —
@@ -2911,13 +3006,17 @@
     } else if (m.type === 'toolboxSelection') {
       selectedToolboxControl = m.controlType || null;
       clearToolboxBand();
+    } else if (m.type === 'adapterActions') {
+      receiveAdapterActions(m);
     } else if (m.type === 'render') {
+      clearAdapterActions(); bindAdapterCanvas(m);
       // A host render can be the result of native Undo while a keyboard nudge is still inside its debounce window.
       // The incoming document state wins: never let the stale timer post its optimistic coordinates afterwards.
       cancelNudge();
       hasRendered = true; hideOverlay();
       drawPng(m.png, 0, 0, m.width, m.height, true, m.gen);
     } else if (m.type === 'layout') {
+      clearAdapterActions(); bindAdapterCanvas(m);
       // strip/item geometry may have moved → dismiss a drifting inline add-editor and the synthetic submenu flyout
       // (its anchor item may have moved/vanished). Done HERE (and in setZoom), NOT in renderSelection: a 'manip'/'select'
       // push re-renders selection WITHOUT moving the slot/flyout, and must not eat typed text or snap the menu shut.
@@ -2973,6 +3072,7 @@
     } else if (m.type === 'manip') {
       if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; renderSelection(); }
     } else if (m.type === 'tasks') {
+      clearAdapterActions(); bindAdapterCanvas(m);
       // the selected control's property descriptors + the vendor's own declared Tasks menu (net48 only; [] elsewhere,
       // which also clears a stale vendor menu when selection moves to a framework control) — feeds the smart-tag flyout
       tasksState = m.component ? { id: m.id, comp: m.component, vendorTags: m.vendorTags || [] } : null;
@@ -2986,6 +3086,8 @@
         ae.classList.remove('pending'); ae.classList.toggle('hit', m.ok === true && m.hit === true);
       }
     } else if (m.type === 'loading') {
+      clearAdapterActions(); bindAdapterCanvas(m);
+      renderSmartTag();
       // hide the align tools while (re)loading — the retained-context DOM can still show them from a prior
       // multi-selection; they'll reappear via renderSelection only if a 2+ selection survives the render
       if (alignEl) alignEl.style.display = 'none';

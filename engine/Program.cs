@@ -1551,6 +1551,12 @@ namespace WinFormsDesigner.Engine
             }
         }
 
+        /// <summary>Inspect the closed framework-only Preview service registry and call-through data. The public
+        /// RPC thread may be MTA; creation, toolbox, type lookup and serialization stay on the engine-owned STA.</summary>
+        public HostedServiceKernelCapabilitiesResult InspectHostedPreviewServices(
+            string rootKind = "Form", CancellationToken cancellationToken = default) =>
+            _sta.Invoke(() => HostedServiceKernelProductBroker.InspectPreviewServices(rootKind, cancellationToken));
+
         /// <summary>Inspect the complete/incomplete service advertisement of the exact repository-certified hosted
         /// designer. All component/designer callbacks stay on the engine STA and mutate only a disposable graph.</summary>
         public HostedServiceKernelProductResult InspectCertifiedHostedServiceKernel(
@@ -1738,12 +1744,14 @@ namespace WinFormsDesigner.Engine
             string designerFilePath,
             string[] projectPaths,
             string? designerSourceText = null,
-            string? codeBehindSourceText = null) =>
+            string? codeBehindSourceText = null,
+            string? preferredProjectPath = null) =>
             ProjectResolver.ResolveDesignerDocumentOwner(
                 designerFilePath,
                 projectPaths ?? Array.Empty<string>(),
                 designerSourceText,
-                codeBehindSourceText);
+                codeBehindSourceText,
+                preferredProjectPath);
 
         /// <summary>
         /// Render a .Designer.cs to PNG bytes (base64 over JSON-RPC). controlAssemblyPath is an optional
@@ -1934,6 +1942,39 @@ namespace WinFormsDesigner.Engine
                 PropertyName = propertyName ?? "",
                 ValueExpression = newValueExpr ?? "",
             }, retainedCoverage);
+        }
+
+        /// <summary>Preview an owned-region property reset only after explicit opt-in and an exact source proof.
+        /// The source-first reset remains the independent reference; no files or live components are changed.</summary>
+        public DesignerOwnedRegionPlanResult PreviewOwnedRegionPropertyReset(
+            string designerFilePath,
+            string expectedSourceSha256,
+            string componentName,
+            string propertyName,
+            string? sourceText = null,
+            bool optIn = false)
+        {
+            string source = sourceText ?? File.ReadAllText(designerFilePath);
+            if (!optIn)
+            {
+                return new DesignerOwnedRegionPlanResult
+                {
+                    Safe = false,
+                    Reason = "owned-region Lane B preview requires explicit opt-in",
+                    ExpectedSourceSha256 = expectedSourceSha256 ?? "",
+                    ActualSourceSha256 = DesignerOwnedRegionSerializer.Sha256Hex(source),
+                    ComponentName = componentName ?? "",
+                    PropertyName = propertyName ?? "",
+                    Mode = EditMode.Failed,
+                };
+            }
+            return DesignerOwnedRegionSerializer.PlanPropertyReset(new DesignerOwnedRegionPlanRequest
+            {
+                SourceText = source,
+                ExpectedSourceSha256 = expectedSourceSha256 ?? "",
+                ComponentName = componentName ?? "",
+                PropertyName = propertyName ?? "",
+            });
         }
 
         /// <summary>Token-checked derived-source override for an inherited public/protected framework control.

@@ -1,4 +1,11 @@
 {
+  "command.reloadDesignerFromDisk.title": "WinForms: Designer vom Datenträger neu laden",
+  "command.undoDesignerHistory.title": "WinForms: Designeraktion rückgängig",
+  "command.redoDesignerHistory.title": "WinForms: Designeraktion wiederholen",
+  "command.undoRecoveredAction.title": "WinForms: Wiederhergestellte Aktion rückgängig",
+  "command.redoRecoveredAction.title": "WinForms: Wiederhergestellte Aktion wiederholen",
+  "command.showRecoveryTimeline.title": "WinForms: Wiederherstellungsverlauf anzeigen",
+  "command.ownerContext.title": "WinForms: Projektkontext auswählen…",
   "description": "WinForms-.Designer.cs-Formulare live in VS Code visualisieren und bearbeiten — eine Designeroberfläche im Visual-Studio-Stil, Eigenschaftenraster, Toolbox und Ereignisverknüpfung, angetrieben von einer .NET 10-Rendering-Engine.",
   "editor.displayName": "WinForms Designer",
   "viewsContainers.title": "WinForms Designer",
@@ -42,5 +49,12 @@
   "command.rebuildToolboxCache.title": "WinForms: Toolbox-Cache neu erstellen",
   "command.refreshToolbox.title": "WinForms: Toolbox aktualisieren",
   "command.requestToolboxItems.title": "WinForms: Toolboxelemente auswählen",
-  "config.workers.maximumResidentProcesses.description": "Maximale Anzahl gleichzeitig laufender Vorschau-Worker für verschiedene Projekte (1–16; Standard: 4). Ein .NET Framework-Worker umfasst einen Starter und einen isolierten Renderprozess. Ein beschäftigter Worker wird nicht für ein anderes Projekt beendet. Versuchen Sie es nach Abschluss der Anfrage erneut oder schließen Sie einen Designer."
+  "config.workers.maximumResidentProcesses.description": "Maximale Anzahl gleichzeitig laufender Vorschau-Worker für verschiedene Projekte (1–16; Standard: 4). Ein .NET Framework-Worker umfasst einen Starter und einen isolierten Renderprozess. Ein beschäftigter Worker wird nicht für ein anderes Projekt beendet. Versuchen Sie es nach Abschluss der Anfrage erneut oder schließen Sie einen Designer.",
+  "command.inspectAdapterPackage": "WinForms: Adapterpaket untersuchen…",
+  "command.enableAdapterDevelopment": "WinForms: Lokale Adapterentwicklung aktivieren…",
+  "command.disableAdapter": "WinForms: Adapter deaktivieren…",
+  "command.invokeAdapterAction": "WinForms: Adapteraktion ausführen…",
+  "command.editAdapterProperty": "WinForms: Eigenschaft mit Adapter bearbeiten…",
+  "command.inspectHostedServices": "WinForms: Gehostete Dienste untersuchen",
+  "command.inspectDocument": "WinForms: Designer-Dokument untersuchen"
 }

@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "v2-scenario-evidence.2",
+  "suite": "e2e",
+  "invocation": "compare-visual-studio-reference-renders.ps1",
+  "generatedAtUtc": "2026-10-27T03:12:46.9493793Z",
+  "completed": true,
+  "sourceRoot": ".",
+  "provenance": {
+    "schemaVersion": "v2-evidence-provenance.1",
+    "runId": "combined23-467d3cef-14d1-449e-8250-4a743dc96f91",
+    "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+    "productTreeSha256": "2366020f6200d8e82c05000621cc608fc1f9d021048122a16c0038e0447aee32",
+    "productFileCount": 258,
+    "producer": "visual-reference",
+    "sourceArtifact": null
+  },
+  "results": [
+    {
+      "scenarioId": "V2-FND-001-S011",
+      "status": "PASS",
+      "assertionCount": 3,
+      "assertions": [
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 180,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "98a75ea72b6cea48afe1bf9c4a64cc50715bfe9a81f3cf5d30a26c2c95e28baa"
+        },
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 181,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "ee76ed77148d3fba2086b0cb6150e2d558de3b010af64176834a5a524f006548"
+        },
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 182,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "223f6e4a1d29e7a7ba75835e61c2313fcba4480f7343f0dc4e2cc3cc4975b430"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S013",
+      "status": "PASS",
+      "assertionCount": 3,
+      "assertions": [
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 180,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "98a75ea72b6cea48afe1bf9c4a64cc50715bfe9a81f3cf5d30a26c2c95e28baa"
+        },
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 181,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "ee76ed77148d3fba2086b0cb6150e2d558de3b010af64176834a5a524f006548"
+        },
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 182,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "223f6e4a1d29e7a7ba75835e61c2313fcba4480f7343f0dc4e2cc3cc4975b430"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S014",
+      "status": "PASS",
+      "assertionCount": 3,
+      "assertions": [
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 180,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "98a75ea72b6cea48afe1bf9c4a64cc50715bfe9a81f3cf5d30a26c2c95e28baa"
+        },
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 181,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "ee76ed77148d3fba2086b0cb6150e2d558de3b010af64176834a5a524f006548"
+        },
+        {
+          "file": "scripts/compare-visual-studio-reference-renders.ps1",
+          "line": 182,
+          "kind": "powershell.condition",
+          "executions": 1,
+          "fileSha256": "3a316c96f5ae0cf13eba87a8b12afa80f5715a842eae58637a0508b3b1c92efc",
+          "lineSha256": "223f6e4a1d29e7a7ba75835e61c2313fcba4480f7343f0dc4e2cc3cc4975b430"
+        }
+      ],
+      "error": null
+    }
+  ]
+}

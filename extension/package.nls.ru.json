@@ -1,4 +1,11 @@
 {
+  "command.reloadDesignerFromDisk.title": "WinForms: Перезагрузить конструктор с диска",
+  "command.undoDesignerHistory.title": "WinForms: Отменить действие конструктора",
+  "command.redoDesignerHistory.title": "WinForms: Повторить действие конструктора",
+  "command.undoRecoveredAction.title": "WinForms: Отменить восстановленное действие",
+  "command.redoRecoveredAction.title": "WinForms: Повторить восстановленное действие",
+  "command.showRecoveryTimeline.title": "WinForms: История восстановления",
+  "command.ownerContext.title": "WinForms: Выбрать контекст проекта…",
   "description": "Просматривайте и редактируйте формы WinForms .Designer.cs вживую прямо в VS Code — поверхность конструктора в стиле Visual Studio, сетка свойств, панель элементов и привязка событий на базе движка отрисовки .NET 10.",
   "editor.displayName": "WinForms Designer",
   "viewsContainers.title": "WinForms Designer",
@@ -42,5 +49,12 @@
   "command.rebuildToolboxCache.title": "WinForms: Пересоздать кэш панели элементов",
   "command.refreshToolbox.title": "WinForms: Обновить панель элементов",
   "command.requestToolboxItems.title": "WinForms: Выбрать элементы панели",
-  "config.workers.maximumResidentProcesses.description": "Максимальное число одновременно работающих движков предпросмотра для разных проектов (1–16; по умолчанию 4). Движок .NET Framework включает процесс запуска и изолированный процесс рендера. Занятый движок не выгружается ради другого проекта; повторите запрос после завершения текущего или закройте дизайнер."
+  "config.workers.maximumResidentProcesses.description": "Максимальное число одновременно работающих движков предпросмотра для разных проектов (1–16; по умолчанию 4). Движок .NET Framework включает процесс запуска и изолированный процесс рендера. Занятый движок не выгружается ради другого проекта; повторите запрос после завершения текущего или закройте дизайнер.",
+  "command.inspectAdapterPackage": "WinForms: Проверить пакет адаптера…",
+  "command.enableAdapterDevelopment": "WinForms: Включить локальную разработку адаптера…",
+  "command.disableAdapter": "WinForms: Отключить адаптер…",
+  "command.invokeAdapterAction": "WinForms: Выполнить действие адаптера…",
+  "command.editAdapterProperty": "WinForms: Изменить свойство через адаптер…",
+  "command.inspectHostedServices": "WinForms: Проверить размещённые службы",
+  "command.inspectDocument": "WinForms: Проверить документ конструктора"
 }

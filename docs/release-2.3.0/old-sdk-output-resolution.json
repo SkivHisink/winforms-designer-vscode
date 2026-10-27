@@ -1,0 +1,18 @@
+{
+  "version": "2.3.0",
+  "passed": true,
+  "completedAt": "2026-10-22T14:08:07.149Z",
+  "scope": "Actual output-assembly resolution under SDK 6.0.407/MSBuild older than 17.8; no form preview or custom-output TargetPath claim.",
+  "sdk": "6.0.407",
+  "msbuild": "17.3.2.46306",
+  "invocation": "WinFormsDesigner.Engine.exe --resolve <fixture>/Form1.Designer.cs",
+  "stdout": "== engine resolve (project output assembly via MSBuild design-time eval)\r\n   designer : <repo>\\.tmp\\release23-old-sdk-probe\\Form1.Designer.cs\r\n   csproj   : <repo>\\.tmp\\release23-old-sdk-probe\\Probe.csproj\r\n   assembly : <repo>\\.tmp\\release23-old-sdk-probe\\bin\\Release\\net6.0-windows\\Probe.dll\r\nRESULT: PASS\r\n",
+  "stderr": "[project-evaluation] {\"code\":\"MSBUILD_GETPROPERTY_UNSUPPORTED\",\"projectPath\":\"<repo>\\\\.tmp\\\\release23-old-sdk-probe\\\\Probe.csproj\"}\r\n",
+  "hashes": {
+    "global.json": "2a6ae81ff6265dc17d850124789260db061be241455a1c204a2a214e6109d60d",
+    "Probe.csproj": "9f5393a24721311df91672b00c6738b9a928293de653a8fa1dda9e6948df928c",
+    "Form1.Designer.cs": "e8c54da4c26920a270f0800eedf2b00e06a99ee05621bd45fe62eeb97fc17de7"
+  },
+  "engineSha256": "eff605b1a07a27652f1c68b0d5d01e7688d8c7d097bc89747cf731dd83d265f6",
+  "resolvedOutputSha256": "2bdaa79ed3fd0f513a67ed3a18085325430b1968a104753915728836016107a9"
+}

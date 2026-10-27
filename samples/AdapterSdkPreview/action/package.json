@@ -1,0 +1,8 @@
+{
+  "name": "winforms-designer-sample-action",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent SDK Preview designer action sample",
+  "scripts": { "build": "node ../build.mjs --sample=action" }
+}

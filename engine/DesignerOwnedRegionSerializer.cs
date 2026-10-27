@@ -144,6 +144,98 @@ namespace WinFormsDesigner.Engine
             };
         }
 
+        /// <summary>
+        /// Plan an actual property reset as an owned-body replacement. The source-first reset is checked independently
+        /// for removal of every target assignment and exact preservation of all other statements in their original
+        /// order. Already-default properties return a refusal/no plan so callers retain their existing no-op behavior.
+        /// </summary>
+        public static DesignerOwnedRegionPlanResult PlanPropertyReset(DesignerOwnedRegionPlanRequest request)
+        {
+            request ??= new DesignerOwnedRegionPlanRequest();
+            string source = request.SourceText ?? "";
+            string componentName = string.IsNullOrEmpty(request.ComponentName) ? "this" : request.ComponentName;
+            string actual = Sha256Hex(source);
+            string expected = (request.ExpectedSourceSha256 ?? "").Trim();
+            if (!IsSha256(expected))
+                return Refused(request, expected, actual, "expected source fingerprint is not a lowercase SHA-256 hex value");
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+                return Refused(request, expected, actual, "stale source fingerprint");
+            if (componentName != "this" && !DesignerControlEditor.IsValidIdentifier(componentName))
+                return Refused(request, expected, actual, "invalid component name");
+            if (!DesignerControlEditor.IsValidIdentifier(request.PropertyName))
+                return Refused(request, expected, actual, "invalid property name");
+
+            var parse = Parse(source);
+            if (!parse.Ok)
+                return Refused(request, expected, actual, parse.Reason);
+            string? originalIr = IrSignature(source, out string originalIrReason);
+            if (originalIr == null)
+                return Refused(request, expected, actual, originalIrReason);
+
+            var laneA = DesignerPropertyEditor.ResetProperty(source, componentName, request.PropertyName);
+            if (!laneA.Ok || !laneA.Changed || string.IsNullOrEmpty(laneA.NewText))
+                return Refused(request, expected, actual, "Lane A reset planner produced no change: " + laneA.Reason);
+            var laneAParse = Parse(laneA.NewText);
+            if (!laneAParse.Ok)
+                return Refused(request, expected, actual, "Lane A reset output is not owned-region safe: " + laneAParse.Reason);
+            if (!DesignerPropertyEditor.OnlyPropertyReset(source, laneA.NewText, componentName, request.PropertyName)
+                || !OnlyPropertyResetPreservesOtherStatements(parse.Body!, laneAParse.Body!, componentName, request.PropertyName))
+                return Refused(request, expected, actual, "Lane A reset planner changed more than the target property");
+            string? plannedIr = IrSignature(laneA.NewText, out string plannedIrReason);
+            if (plannedIr == null)
+                return Refused(request, expected, actual, "Lane A reset output is not semantically representable: " + plannedIrReason);
+
+            string replacement = laneA.NewText.Substring(laneAParse.BodyStart, laneAParse.BodyEnd - laneAParse.BodyStart);
+            string planned = source.Substring(0, parse.BodyStart) + replacement + source.Substring(parse.BodyEnd);
+            bool outsidePreserved = source.AsSpan(0, parse.BodyStart).SequenceEqual(planned.AsSpan(0, parse.BodyStart))
+                && source.AsSpan(parse.BodyEnd).SequenceEqual(planned.AsSpan(parse.BodyStart + replacement.Length));
+            if (!outsidePreserved || !string.Equals(planned, laneA.NewText, StringComparison.Ordinal))
+                return Refused(request, expected, actual, "owned-region reset would change bytes outside InitializeComponent");
+
+            return new DesignerOwnedRegionPlanResult
+            {
+                Safe = true,
+                ExpectedSourceSha256 = expected,
+                ActualSourceSha256 = actual,
+                ComponentName = componentName,
+                PropertyName = request.PropertyName,
+                Mode = EditMode.Replace,
+                OwnedRegionStart = parse.BodyStart,
+                OwnedRegionEnd = parse.BodyEnd,
+                ReplacementText = replacement,
+                PlannedSourceText = planned,
+                LaneASourceText = laneA.NewText,
+                OutsideRegionPreserved = true,
+                SemanticEquivalence = true,
+                NormalizationPreview = "Reset " + componentName + "." + request.PropertyName
+                    + "; remove every explicit target assignment; preserve all other statements byte for byte and in order; "
+                    + Preview(parse.BodyStart, parse.BodyEnd, replacement, originalIr, laneA.NewText)
+                    + "; resetIrHash=" + Sha256Hex(plannedIr)[..12],
+            };
+        }
+
+        private static bool OnlyPropertyResetPreservesOtherStatements(
+            BlockSyntax original,
+            BlockSyntax proposed,
+            string componentName,
+            string propertyName)
+        {
+            bool IsTarget(StatementSyntax statement)
+            {
+                if (statement is not ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax assignment }
+                    || !assignment.IsKind(SyntaxKind.SimpleAssignmentExpression))
+                    return false;
+                var path = Flatten(assignment.Left);
+                return componentName == "this"
+                    ? path.Count == 1 && path[0] == propertyName
+                    : path.Count == 2 && path[0] == componentName && path[1] == propertyName;
+            }
+
+            return original.Statements.Any(IsTarget) && !proposed.Statements.Any(IsTarget)
+                && original.Statements.Where(statement => !IsTarget(statement)).Select(statement => statement.ToFullString())
+                    .SequenceEqual(proposed.Statements.Select(statement => statement.ToFullString()), StringComparer.Ordinal);
+        }
+
         public static DesignerOwnedRegionPlanResult PlanBoundedComponentPatch(DesignerOwnedRegionPatchRequest request)
         {
             request ??= new DesignerOwnedRegionPatchRequest();
@@ -255,6 +347,21 @@ namespace WinFormsDesigner.Engine
             reason = "";
             var originalStatements = InitStatements(original);
             var proposedStatements = InitStatements(proposed);
+            var originalOutside = originalStatements
+                .Where(statement => !StatementBelongsToComponent(statement, componentName))
+                .Select(statement => statement.ToFullString());
+            var proposedOutside = proposedStatements
+                .Where(statement => !StatementBelongsToComponent(statement, componentName))
+                .Select(statement => statement.ToFullString());
+            // A multiset is insufficient here: unrelated assignments can be reordered, and removing whitespace from
+            // statement text also removes meaningful whitespace inside a string literal. Preserve every non-owned
+            // statement byte for byte and in order before considering the declared component's remaining delta.
+            if (!originalOutside.SequenceEqual(proposedOutside, StringComparer.Ordinal))
+            {
+                reason = "statements outside '" + componentName + "' would change or move";
+                return false;
+            }
+
             var proposedCounter = Counter(proposedStatements.Select(NormalizeStatement));
             foreach (var statement in originalStatements)
             {

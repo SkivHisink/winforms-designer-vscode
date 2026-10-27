@@ -1,0 +1,400 @@
+{
+  "schemaVersion": "v2-scenario-evidence.2",
+  "suite": "unit",
+  "invocation": "xunit-modern-net10",
+  "generatedAtUtc": "2026-10-27T03:13:59.877Z",
+  "completed": true,
+  "sourceRoot": ".",
+  "provenance": {
+    "schemaVersion": "v2-evidence-provenance.1",
+    "runId": "combined23-467d3cef-14d1-449e-8250-4a743dc96f91",
+    "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+    "productTreeSha256": "2366020f6200d8e82c05000621cc608fc1f9d021048122a16c0038e0447aee32",
+    "productFileCount": 258,
+    "producer": "test-collector:xunit",
+    "sourceArtifact": {
+      "path": "test-results/modern/modern.trx",
+      "sha256": "973052b20ee369a50fa1c1baee74ed40cd35d58d2d87263799424ce72acef6b8",
+      "bytes": 1157014
+    }
+  },
+  "results": [
+    {
+      "scenarioId": "V2-FND-001-S047",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerActionListProductTests.cs",
+          "line": 119,
+          "kind": "xunit.test-pass",
+          "testId": "e74f4d91-5421-46ab-683e-3678259dd18e",
+          "testName": "V2-FND-001-S047 collectible product graph publishes certified vendor editor metadata",
+          "className": "Engine.UnitTests.DesignerActionListProductTests",
+          "methodName": "ProductGraph_PublishesCertifiedVendorEditorFromCollectibleAssemblyContext",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "c222932c14c23699f7f36a201c6e42d9582ae74b0d215c9f8ee1f6b6c147f5ca",
+          "lineSha256": "2f3a0e8353947ee52c896c1ce0bac42e9a31ae7c43054bcca0fd8e28e8783556"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S048",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerUiTypeEditorBrokerTests.cs",
+          "line": 375,
+          "kind": "xunit.test-pass",
+          "testId": "a6e55a6e-c4f5-cf40-57d5-81ce55b56671",
+          "testName": "V2-FND-001-S048 certified vendor wrong-type result is rejected before mutation",
+          "className": "Engine.UnitTests.DesignerUiTypeEditorBrokerTests",
+          "methodName": "V2_FND_001_S048_CertifiedVendorWrongTypeResult_IsRejectedBeforeMutation",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "6ce5cce9bab28233c70181500de2f73fd26912334b523b9cc542e08019b5d116",
+          "lineSha256": "845b08a83ebd9aade9dbebd04eaa17ff9456659fc58ede5f901f54f00436eeb4"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S071",
+      "status": "PASS",
+      "assertionCount": 2,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerUiTypeEditorBrokerTests.cs",
+          "line": 121,
+          "kind": "xunit.test-pass",
+          "testId": "cf5bf9a9-f5c6-3141-83be-4482e4e22bff",
+          "testName": "V2-FND-001-S071 certified vendor collection editor runs in the actual isolated worker contract",
+          "className": "Engine.UnitTests.DesignerUiTypeEditorBrokerTests",
+          "methodName": "V2_FND_001_S071_CertifiedVendorCollectionEditor_ReturnsValidatedItems",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "6ce5cce9bab28233c70181500de2f73fd26912334b523b9cc542e08019b5d116",
+          "lineSha256": "971622422b17f41fec11cbf0f1d8b173293437262e3fd1bf22b089a889969fbf"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerUiTypeEditorBrokerTests.cs",
+          "line": 271,
+          "kind": "xunit.test-pass",
+          "testId": "2fb22084-b691-8e78-8bd8-25e9545a1856",
+          "testName": "V2-FND-001-S071 live modern metadata publishes the exact certified vendor collection tuple",
+          "className": "Engine.UnitTests.DesignerUiTypeEditorBrokerTests",
+          "methodName": "V2_FND_001_S071_DescribeComponent_PublishesCertifiedFakeVendorCollectionMetadata",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "6ce5cce9bab28233c70181500de2f73fd26912334b523b9cc542e08019b5d116",
+          "lineSha256": "b8f96d0c6ac6c21864f8c2036bb2ec75add4481b1216dcf80a11fd72a47a0c94"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S081",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerDataSourceGeneratorTests.cs",
+          "line": 74,
+          "kind": "xunit.test-pass",
+          "testId": "0857ebce-545c-1ec2-2cdd-2fce428c5e6b",
+          "testName": "V2-FND-001-S081 typed DataSet table maps to DataMember source graph",
+          "className": "Engine.UnitTests.DesignerDataSourceGeneratorTests",
+          "methodName": "TypedDataSet_TableIsDiscoveredAndExistingBindingSourceIsMatchedByDataMember",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "a19d179915db76ddb2c830f9fc76e3da1027b5f86bf53657a48ffb040a2a57e0",
+          "lineSha256": "f473a69e185f98b40c4ccd6bb41f8370e59723bbf9ab2bc46cb5a5d93fed0a07"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S084",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerDataSourceGeneratorTests.cs",
+          "line": 147,
+          "kind": "xunit.test-pass",
+          "testId": "312204f5-f642-a939-8c78-58da19ddece6",
+          "testName": "V2-FND-001-S084 unsupported provider returns a typed no-mutation refusal",
+          "className": "Engine.UnitTests.DesignerDataSourceGeneratorTests",
+          "methodName": "UnsupportedProviderDataSource_IsNotExposedAndCannotGenerate",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "a19d179915db76ddb2c830f9fc76e3da1027b5f86bf53657a48ffb040a2a57e0",
+          "lineSha256": "731ea99f6cafd24bef1675df306d5b2a16dc2b92dbed9724f51ed85d37b648c8"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S089",
+      "status": "PASS",
+      "assertionCount": 3,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerActionListProductTests.cs",
+          "line": 51,
+          "kind": "xunit.test-pass",
+          "testId": "53c3d2bf-d3e0-4043-fec2-20cd86bc9d20",
+          "testName": "V2-FND-001-S089-S092 product graph publishes only the exact certified hosted-service commands",
+          "className": "Engine.UnitTests.DesignerActionListProductTests",
+          "methodName": "ProductDescribe_PublishesCertifiedHostedServiceCommand",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "c222932c14c23699f7f36a201c6e42d9582ae74b0d215c9f8ee1f6b6c147f5ca",
+          "lineSha256": "0cf1882871959bb2e083fb8cbafb89e84f3001363cd05a52f1a9858610b2035a"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 320,
+          "kind": "xunit.test-pass",
+          "testId": "130bf6a1-fbca-574d-feec-9a38def2fd88",
+          "testName": "V2-FND-001-S089 hosted service kernel advertises IDesignerHost only when complete",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "HostedDesigner_CreatesFrameworkDesigner_AndRefusesForeignComponents",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "25d941b9b4defd05998d53863bb6facdba961c5b2b0897bdc598081d35428fb8"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 349,
+          "kind": "xunit.test-pass",
+          "testId": "b4ce3a0f-dfbd-0428-87c9-d0c4e7c1d701",
+          "testName": "V2-FND-001-S089/S090 certified product broker advertises a complete host and returns one transaction proposal set",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "CertifiedProductBroker_ProvesCompleteHostAndOneTwoPropertyTransaction",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "5d33f033eef14e008c5e1d6ccad0ba9a24df6db89c9f541574937b4c50614e10"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S090",
+      "status": "PASS",
+      "assertionCount": 3,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerActionListProductTests.cs",
+          "line": 51,
+          "kind": "xunit.test-pass",
+          "testId": "53c3d2bf-d3e0-4043-fec2-20cd86bc9d20",
+          "testName": "V2-FND-001-S089-S092 product graph publishes only the exact certified hosted-service commands",
+          "className": "Engine.UnitTests.DesignerActionListProductTests",
+          "methodName": "ProductDescribe_PublishesCertifiedHostedServiceCommand",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "c222932c14c23699f7f36a201c6e42d9582ae74b0d215c9f8ee1f6b6c147f5ca",
+          "lineSha256": "0cf1882871959bb2e083fb8cbafb89e84f3001363cd05a52f1a9858610b2035a"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 118,
+          "kind": "xunit.test-pass",
+          "testId": "e3a2b78a-71d3-fce9-e0a9-db221ad8baea",
+          "testName": "V2-FND-001-S090 designer transaction commit produces one undo unit",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "Transactions_RaiseCommitCancelAndRefuseNestedTransactions",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "13912b6c3892f819497b684fb356ff83235cbfd3e8dcf0827edb2d18b76cfc78"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 349,
+          "kind": "xunit.test-pass",
+          "testId": "b4ce3a0f-dfbd-0428-87c9-d0c4e7c1d701",
+          "testName": "V2-FND-001-S089/S090 certified product broker advertises a complete host and returns one transaction proposal set",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "CertifiedProductBroker_ProvesCompleteHostAndOneTwoPropertyTransaction",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "5d33f033eef14e008c5e1d6ccad0ba9a24df6db89c9f541574937b4c50614e10"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S091",
+      "status": "PASS",
+      "assertionCount": 2,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerActionListProductTests.cs",
+          "line": 51,
+          "kind": "xunit.test-pass",
+          "testId": "53c3d2bf-d3e0-4043-fec2-20cd86bc9d20",
+          "testName": "V2-FND-001-S089-S092 product graph publishes only the exact certified hosted-service commands",
+          "className": "Engine.UnitTests.DesignerActionListProductTests",
+          "methodName": "ProductDescribe_PublishesCertifiedHostedServiceCommand",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "c222932c14c23699f7f36a201c6e42d9582ae74b0d215c9f8ee1f6b6c147f5ca",
+          "lineSha256": "0cf1882871959bb2e083fb8cbafb89e84f3001363cd05a52f1a9858610b2035a"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 466,
+          "kind": "xunit.test-pass",
+          "testId": "b48b0cfc-30b6-1735-ecce-0094e88e8e87",
+          "testName": "V2-FND-001-S091 service reentrancy is cancelled without partial mutation",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "HostedDesigner_FailsClosedForCancellationReentrancyCrashAndInvalidReturn",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "5816ae131eec621ee5ff14bd094cc6454d9330fb47ffdb58c41c84b651a1dd7f"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S092",
+      "status": "PASS",
+      "assertionCount": 2,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerActionListProductTests.cs",
+          "line": 51,
+          "kind": "xunit.test-pass",
+          "testId": "53c3d2bf-d3e0-4043-fec2-20cd86bc9d20",
+          "testName": "V2-FND-001-S089-S092 product graph publishes only the exact certified hosted-service commands",
+          "className": "Engine.UnitTests.DesignerActionListProductTests",
+          "methodName": "ProductDescribe_PublishesCertifiedHostedServiceCommand",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "c222932c14c23699f7f36a201c6e42d9582ae74b0d215c9f8ee1f6b6c147f5ca",
+          "lineSha256": "0cf1882871959bb2e083fb8cbafb89e84f3001363cd05a52f1a9858610b2035a"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 18,
+          "kind": "xunit.test-pass",
+          "testId": "e751163b-2908-5bdf-0340-d6eb15a1ae71",
+          "testName": "V2-FND-001-S092 unavailable incomplete service returns explicit refusal",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "FormSession_SitesRootAndCreatedComponents_AndExposesOnlyEnabledCoreServices",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "aa88be7b0658a5e52f8c41a4b882d58a20bd20d5928e409dd2142d11d84ca8db"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S093",
+      "status": "PASS",
+      "assertionCount": 2,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerActionListProductTests.cs",
+          "line": 83,
+          "kind": "xunit.test-pass",
+          "testId": "e87e2db2-ee02-a6cb-7644-22a3820092e8",
+          "testName": "V2-FND-001-S093 product graph publishes and confirms the FakeVendor ControlDesigner adorner",
+          "className": "Engine.UnitTests.DesignerActionListProductTests",
+          "methodName": "ProductGraph_PublishesAndHitTestsHostedDesignerAdornerWithoutMutation",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "c222932c14c23699f7f36a201c6e42d9582ae74b0d215c9f8ee1f6b6c147f5ca",
+          "lineSha256": "e58414f1f00b9b486638e3b4831100a63e95a0dd3d82e73dedd2e380dabcd7cc"
+        },
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 518,
+          "kind": "xunit.test-pass",
+          "testId": "f1b095c7-7582-a4b4-9aa9-fbcaa23a884e",
+          "testName": "V2-FND-001-S093 ControlDesigner adorner descriptor and hit test stay bounded",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "HostedDesigner_DescribesFakeVendorAdornerAndHitTestWithoutUiCreation",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "1426664a3f19ce6c1ae488db151c13fde971eaac59f3c15d42f57e655098e790"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S094",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 551,
+          "kind": "xunit.test-pass",
+          "testId": "57ec1d68-0a19-84da-268b-7694921f20aa",
+          "testName": "V2-FND-001-S094 DesignerActionList property intent commits one kernel transaction",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "HostedDesigner_InvokesFakeVendorActionPropertyThroughOneTransactionAndChangePair",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "66d0d237346467e9d9362473cdd14051755d9053bcea7fdb2e3131b6f59df6da"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S095",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 578,
+          "kind": "xunit.test-pass",
+          "testId": "2e87034e-4145-7b7f-9a9d-d7ab1b053eb1",
+          "testName": "V2-FND-001-S095 designer crash maps to worker-fault quarantine handoff signal",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "HostedDesigner_CreatorCrashReturnsExplicitWorkerFaultAdapterSignal",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "b9a5359bd2dc8a7a95b857951c1af064348d21dce70950bf09de3b60f3614af7"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S096",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.UnitTests/DesignerServiceKernelTests.cs",
+          "line": 598,
+          "kind": "xunit.test-pass",
+          "testId": "200acc5d-e2e1-55db-097d-9d145694867d",
+          "testName": "V2-FND-001-S096 hosted designer path/write intents are rejected before invocation",
+          "className": "Engine.UnitTests.DesignerServiceKernelTests",
+          "methodName": "HostedDesigner_RejectsReturnedWorkspacePathIntentBeforeActionSetter",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "33a1a576904ea4e335ccdca9c68bd16242152852f7854aa9e96f1f173bb7291d",
+          "lineSha256": "2adb86c447eec913c1900e5a19fc07f6883788a2fe6ac3eea4defc86971282b1"
+        }
+      ],
+      "error": null
+    }
+  ]
+}

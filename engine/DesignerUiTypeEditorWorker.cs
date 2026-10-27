@@ -24,6 +24,9 @@ namespace WinFormsDesigner.Engine
         public bool Dismissed { get; init; }
         public string? InvariantValue { get; init; }
         public List<string>? CollectionItems { get; init; }
+        public string? ResultValueTypeName { get; init; }
+        public string? ResultCollectionItemTypeName { get; init; }
+        public string? DismissalReason { get; init; }
         public string? ErrorCode { get; init; }
     }
 
@@ -109,6 +112,7 @@ namespace WinFormsDesigner.Engine
             request != null
             && request.ProtocolVersion == DesignerUiTypeEditorWireProtocol.ProtocolVersion
             && DesignerUiTypeEditorPolicy.IsSafeRequestId(request.RequestId)
+            && DesignerUiTypeEditorPolicy.TryValidateUiContext(request.UiContext, out _)
             && !string.IsNullOrEmpty(request.EditorTypeName)
             && !string.IsNullOrEmpty(request.ValueTypeName)
             && request.EditorTypeName.Length <= DesignerUiTypeEditorPolicy.MaximumTypeNameLength
@@ -120,6 +124,16 @@ namespace WinFormsDesigner.Engine
             DesignerUiTypeEditorRequest request,
             DesignerUiTypeEditorInvocationResult? invocation)
         {
+            if (request.UiContext != null && invocation != null
+                && ((invocation.Applied && (invocation.DismissalReason != null
+                    || !string.Equals(invocation.ResultValueTypeName, request.ValueTypeName, StringComparison.Ordinal)
+                    || (IsCollectionContract(request)
+                        ? !string.Equals(invocation.ResultCollectionItemTypeName, request.CollectionItemTypeName, StringComparison.Ordinal)
+                        : invocation.ResultCollectionItemTypeName != null)))
+                    || (invocation.Dismissed && (!DesignerUiTypeEditorPolicy.IsSafeDismissalReason(invocation.DismissalReason)
+                        || invocation.ResultValueTypeName != null || invocation.ResultCollectionItemTypeName != null))))
+                invocation = new DesignerUiTypeEditorInvocationResult { ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode };
+
             if (invocation?.Applied == true
                 && !invocation.Dismissed
                 && string.IsNullOrEmpty(invocation.ErrorCode)
@@ -130,7 +144,11 @@ namespace WinFormsDesigner.Engine
                 return new DesignerUiTypeEditorWorkerResponse
                 {
                     RequestId = request.RequestId,
+                    OwnerId = request.UiContext?.OwnerId,
+                    FocusToken = request.UiContext?.FocusToken,
                     Status = "applied",
+                    ResultValueTypeName = request.UiContext == null ? null : request.ValueTypeName,
+                    ResultCollectionItemTypeName = request.UiContext == null ? null : request.CollectionItemTypeName,
                     CollectionItems = invocation.CollectionItems,
                 };
             }
@@ -145,7 +163,10 @@ namespace WinFormsDesigner.Engine
                 return new DesignerUiTypeEditorWorkerResponse
                 {
                     RequestId = request.RequestId,
+                    OwnerId = request.UiContext?.OwnerId,
+                    FocusToken = request.UiContext?.FocusToken,
                     Status = "applied",
+                    ResultValueTypeName = request.UiContext == null ? null : request.ValueTypeName,
                     InvariantValue = invocation.InvariantValue,
                 };
             }
@@ -159,13 +180,18 @@ namespace WinFormsDesigner.Engine
                 return new DesignerUiTypeEditorWorkerResponse
                 {
                     RequestId = request.RequestId,
+                    OwnerId = request.UiContext?.OwnerId,
+                    FocusToken = request.UiContext?.FocusToken,
                     Status = "dismissed",
+                    DismissalReason = request.UiContext == null ? null : invocation.DismissalReason,
                 };
             }
 
             string errorCode = invocation?.ErrorCode switch
             {
                 "runtime_unsupported" => "runtime_unsupported",
+                DesignerUiTypeEditorPolicy.NativeEditorUiUnsupportedCode => DesignerUiTypeEditorPolicy.NativeEditorUiUnsupportedCode,
+                "HOST_EDITOR_UI_REQUIRED" => "HOST_EDITOR_UI_REQUIRED",
                 "worker_cancelled" => "worker_cancelled",
                 "conversion_failed" => "conversion_failed",
                 DesignerUiTypeEditorPolicy.InvalidEditorResultCode => DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
@@ -174,6 +200,8 @@ namespace WinFormsDesigner.Engine
             return new DesignerUiTypeEditorWorkerResponse
             {
                 RequestId = request.RequestId,
+                OwnerId = request.UiContext?.OwnerId,
+                FocusToken = request.UiContext?.FocusToken,
                 Status = "error",
                 ErrorCode = errorCode,
             };
@@ -240,69 +268,14 @@ namespace WinFormsDesigner.Engine
                     out _))
                 return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
 
+            if (request.UiContext != null && request.UiContext.Presentation != "headless")
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "HOST_EDITOR_UI_REQUIRED" };
+            if (contract.Kind is DesignerUiTypeEditorContractKind.Framework or DesignerUiTypeEditorContractKind.FrameworkCollection)
+                return new DesignerUiTypeEditorInvocationResult { ErrorCode = DesignerUiTypeEditorPolicy.NativeEditorUiUnsupportedCode };
+
             return contract.Kind == DesignerUiTypeEditorContractKind.CertifiedVendor
                 ? InvokeCertifiedVendor(request, contract)
-                : contract.Kind == DesignerUiTypeEditorContractKind.CertifiedVendorCollection
-                    ? InvokeCertifiedVendorCollection(request, contract)
-                : contract.Kind == DesignerUiTypeEditorContractKind.FrameworkCollection
-                    ? InvokeFrameworkCollection(request)
-                    : InvokeFramework(request);
-        }
-
-        private static DesignerUiTypeEditorInvocationResult InvokeFrameworkCollection(DesignerUiTypeEditorRequest request)
-        {
-            if (!DesignerUiTypeEditorPolicy.IsSafeCollectionItems(request.CollectionItemTypeName, request.CollectionItems))
-                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-            Type? itemType = ResolveCollectionItemType(request.CollectionItemTypeName!);
-            if (itemType == null) return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
-
-            IList current;
-            Type listType;
-            try
-            {
-                listType = typeof(List<>).MakeGenericType(itemType);
-                current = (IList)Activator.CreateInstance(listType)!;
-                TypeConverter converter = TypeDescriptor.GetConverter(itemType);
-                foreach (string invariant in request.CollectionItems!)
-                {
-                    object? value = converter.ConvertFromInvariantString(invariant);
-                    if (value == null || !itemType.IsInstanceOfType(value))
-                        return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-                    current.Add(value);
-                }
-            }
-            catch { return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" }; }
-
-            object? edited;
-            try
-            {
-                Application.EnableVisualStyles();
-                using var service = new FrameworkEditorService();
-                edited = CreateFrameworkCollectionEditor(listType).EditValue(context: null, provider: service, value: current);
-            }
-            catch { return new DesignerUiTypeEditorInvocationResult { ErrorCode = "editor_failed" }; }
-            if (edited is not IList editedItems || editedItems.Count > DesignerUiTypeEditorPolicy.MaximumCollectionItems)
-                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-
-            var invariants = new List<string>(editedItems.Count);
-            try
-            {
-                TypeConverter converter = TypeDescriptor.GetConverter(itemType);
-                foreach (object? value in editedItems)
-                {
-                    if (value == null || !itemType.IsInstanceOfType(value))
-                        return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-                    string? invariant = converter.ConvertToInvariantString(value);
-                    if (invariant == null) return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-                    invariants.Add(invariant);
-                }
-            }
-            catch { return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" }; }
-            if (!DesignerUiTypeEditorPolicy.IsSafeCollectionItems(request.CollectionItemTypeName, invariants))
-                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-            if (invariants.SequenceEqual(request.CollectionItems!, StringComparer.Ordinal))
-                return new DesignerUiTypeEditorInvocationResult { Dismissed = true };
-            return new DesignerUiTypeEditorInvocationResult { Applied = true, CollectionItems = invariants };
+                : InvokeCertifiedVendorCollection(request, contract);
         }
 
         private static DesignerUiTypeEditorInvocationResult InvokeCertifiedVendorCollection(
@@ -348,6 +321,8 @@ namespace WinFormsDesigner.Engine
             {
                 using var service = new FrameworkEditorService();
                 edited = editor.EditValue(context: null, provider: service, value: current);
+                if (service.NativeUiRequested)
+                    return new DesignerUiTypeEditorInvocationResult { ErrorCode = DesignerUiTypeEditorPolicy.NativeEditorUiUnsupportedCode };
             }
             catch
             {
@@ -392,8 +367,12 @@ namespace WinFormsDesigner.Engine
                     ErrorCode = DesignerUiTypeEditorPolicy.InvalidEditorResultCode,
                 };
             if (invariants.SequenceEqual(request.CollectionItems!, StringComparer.Ordinal))
-                return new DesignerUiTypeEditorInvocationResult { Dismissed = true };
-            return new DesignerUiTypeEditorInvocationResult { Applied = true, CollectionItems = invariants };
+                return new DesignerUiTypeEditorInvocationResult { Dismissed = true, DismissalReason = "unchanged" };
+            return new DesignerUiTypeEditorInvocationResult
+            {
+                Applied = true, CollectionItems = invariants,
+                ResultValueTypeName = request.ValueTypeName, ResultCollectionItemTypeName = request.CollectionItemTypeName,
+            };
         }
 
         internal static UITypeEditor CreateFrameworkCollectionEditor(Type collectionType)
@@ -423,54 +402,6 @@ namespace WinFormsDesigner.Engine
             catch { return null; }
         }
 
-        private static DesignerUiTypeEditorInvocationResult InvokeFramework(DesignerUiTypeEditorRequest request)
-        {
-            UITypeEditor editor;
-            Type valueType;
-            if (request.EditorTypeName == "System.Drawing.Design.ColorEditor"
-                && request.ValueTypeName == "System.Drawing.Color")
-            {
-                editor = new ColorEditor();
-                valueType = typeof(Color);
-            }
-            else if (request.EditorTypeName == "System.Drawing.Design.FontEditor"
-                && request.ValueTypeName == "System.Drawing.Font")
-            {
-                editor = new FontEditor();
-                valueType = typeof(Font);
-            }
-            else
-            {
-                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "runtime_unsupported" };
-            }
-
-            TypeConverter converter = TypeDescriptor.GetConverter(valueType);
-            object? current;
-            try { current = converter.ConvertFromInvariantString(request.InvariantValue); }
-            catch { return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" }; }
-            if (current == null || !valueType.IsInstanceOfType(current))
-                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-
-            try
-            {
-                Application.EnableVisualStyles();
-                using var service = new FrameworkEditorService();
-                object? edited = editor.EditValue(context: null, provider: service, value: current);
-                if (edited == null || !valueType.IsInstanceOfType(edited))
-                    return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-                string? invariant = converter.ConvertToInvariantString(edited);
-                if (invariant == null || !DesignerUiTypeEditorPolicy.IsSafeInvariantValue(request.ValueTypeName, invariant))
-                    return new DesignerUiTypeEditorInvocationResult { ErrorCode = "conversion_failed" };
-                if (string.Equals(invariant, request.InvariantValue, StringComparison.Ordinal))
-                    return new DesignerUiTypeEditorInvocationResult { Dismissed = true };
-                return new DesignerUiTypeEditorInvocationResult { Applied = true, InvariantValue = invariant };
-            }
-            catch
-            {
-                return new DesignerUiTypeEditorInvocationResult { ErrorCode = "editor_failed" };
-            }
-        }
-
         private static DesignerUiTypeEditorInvocationResult InvokeCertifiedVendor(
             DesignerUiTypeEditorRequest request,
             DesignerUiTypeEditorContract contract)
@@ -497,6 +428,8 @@ namespace WinFormsDesigner.Engine
             {
                 using var service = new FrameworkEditorService();
                 edited = editor.EditValue(context: null, provider: service, value: request.InvariantValue);
+                if (service.NativeUiRequested)
+                    return new DesignerUiTypeEditorInvocationResult { ErrorCode = DesignerUiTypeEditorPolicy.NativeEditorUiUnsupportedCode };
             }
             catch
             {
@@ -511,62 +444,26 @@ namespace WinFormsDesigner.Engine
                 };
 
             if (string.Equals(invariant, request.InvariantValue, StringComparison.Ordinal))
-                return new DesignerUiTypeEditorInvocationResult { Dismissed = true };
-            return new DesignerUiTypeEditorInvocationResult { Applied = true, InvariantValue = invariant };
+                return new DesignerUiTypeEditorInvocationResult { Dismissed = true, DismissalReason = "unchanged" };
+            return new DesignerUiTypeEditorInvocationResult
+            {
+                Applied = true, InvariantValue = invariant, ResultValueTypeName = request.ValueTypeName,
+            };
         }
 
-        private sealed class FrameworkEditorService : IWindowsFormsEditorService, IServiceProvider, IDisposable
+        private sealed class FrameworkEditorService : IServiceProvider, IDisposable
         {
-            private Form? _dropDownHost;
+            public bool NativeUiRequested { get; private set; }
 
-            public object? GetService(Type serviceType) =>
-                serviceType == typeof(IWindowsFormsEditorService) ? this : null;
-
-            public void CloseDropDown()
+            public object? GetService(Type serviceType)
             {
-                if (_dropDownHost != null && !_dropDownHost.IsDisposed) _dropDownHost.Close();
+                if (serviceType == typeof(IWindowsFormsEditorService)) NativeUiRequested = true;
+                // No incomplete native editor service is advertised. The caller returns a named refusal even
+                // when an editor reacts to the unavailable service by returning its unchanged input.
+                return null;
             }
 
-            public void DropDownControl(Control control)
-            {
-                if (control == null) throw new ArgumentNullException(nameof(control));
-                if (_dropDownHost != null) throw new InvalidOperationException("Only one editor drop-down is supported.");
-
-                var host = new Form
-                {
-                    AutoScaleMode = AutoScaleMode.Dpi,
-                    FormBorderStyle = FormBorderStyle.FixedToolWindow,
-                    MaximizeBox = false,
-                    MinimizeBox = false,
-                    ShowInTaskbar = false,
-                    StartPosition = FormStartPosition.CenterScreen,
-                    Text = "Edit value",
-                };
-                _dropDownHost = host;
-                try
-                {
-                    control.Dock = DockStyle.Fill;
-                    host.ClientSize = control.PreferredSize.Width > 0 && control.PreferredSize.Height > 0
-                        ? control.PreferredSize
-                        : control.Size;
-                    host.Controls.Add(control);
-                    host.ShowDialog();
-                }
-                finally
-                {
-                    if (host.Controls.Contains(control)) host.Controls.Remove(control);
-                    host.Dispose();
-                    _dropDownHost = null;
-                }
-            }
-
-            public DialogResult ShowDialog(Form dialog)
-            {
-                if (dialog == null) throw new ArgumentNullException(nameof(dialog));
-                return dialog.ShowDialog();
-            }
-
-            public void Dispose() => CloseDropDown();
+            public void Dispose() { }
         }
     }
 

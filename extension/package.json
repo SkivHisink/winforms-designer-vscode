@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "packageManager": "npm@11.9.0",
   "preview": false,
   "license": "MIT",
@@ -149,6 +149,32 @@
         "title": "%command.showFormStatus.title%"
       },
       {
+        "command": "winformsDesigner.showRecoveryTimeline",
+        "title": "%command.showRecoveryTimeline.title%"
+      },
+      {
+        "command": "winformsDesigner.reloadDesignerFromDisk",
+        "title": "%command.reloadDesignerFromDisk.title%"
+      },
+      {
+        "command": "winformsDesigner.undoRecoveredAction",
+        "title": "%command.undoRecoveredAction.title%"
+      },
+      {
+        "command": "winformsDesigner.redoRecoveredAction",
+        "title": "%command.redoRecoveredAction.title%"
+      },
+      {
+        "command": "winformsDesigner.undoDesignerHistory",
+        "title": "%command.undoDesignerHistory.title%",
+        "enablement": "activeCustomEditorId == winformsDesigner.designer"
+      },
+      {
+        "command": "winformsDesigner.redoDesignerHistory",
+        "title": "%command.redoDesignerHistory.title%",
+        "enablement": "activeCustomEditorId == winformsDesigner.designer"
+      },
+      {
         "command": "winformsDesigner.rebuildToolboxCache",
         "title": "%command.rebuildToolboxCache.title%"
       },
@@ -159,6 +185,10 @@
       {
         "command": "winformsDesigner.requestToolboxItems",
         "title": "%command.requestToolboxItems.title%"
+      },
+      {
+        "command": "winformsDesigner.selectProjectContext",
+        "title": "%command.ownerContext.title%"
       },
       {
         "command": "winformsDesigner.selectControlAssembly",
@@ -202,6 +232,34 @@
       {
         "command": "winformsDesigner.restartEngines",
         "title": "%command.restartEngines.title%"
+      },
+      {
+        "command": "winformsDesigner.inspectAdapterPackage",
+        "title": "%command.inspectAdapterPackage%"
+      },
+      {
+        "command": "winformsDesigner.enableAdapterDevelopment",
+        "title": "%command.enableAdapterDevelopment%"
+      },
+      {
+        "command": "winformsDesigner.disableAdapter",
+        "title": "%command.disableAdapter%"
+      },
+      {
+        "command": "winformsDesigner.invokeAdapterAction",
+        "title": "%command.invokeAdapterAction%"
+      },
+      {
+        "command": "winformsDesigner.editAdapterProperty",
+        "title": "%command.editAdapterProperty%"
+      },
+      {
+        "command": "winformsDesigner.inspectHostedServices",
+        "title": "%command.inspectHostedServices%"
+      },
+      {
+        "command": "winformsDesigner.inspectDocument",
+        "title": "%command.inspectDocument%"
       }
     ],
     "submenus": [
@@ -211,6 +269,21 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "winformsDesigner.undoDesignerHistory",
+        "key": "ctrl+z",
+        "when": "activeCustomEditorId == winformsDesigner.designer"
+      },
+      {
+        "command": "winformsDesigner.redoDesignerHistory",
+        "key": "ctrl+y",
+        "when": "activeCustomEditorId == winformsDesigner.designer"
+      },
+      {
+        "command": "winformsDesigner.redoDesignerHistory",
+        "key": "ctrl+shift+z",
+        "when": "activeCustomEditorId == winformsDesigner.designer"
+      },
       {
         "command": "winformsDesigner.viewCode",
         "key": "f7",
@@ -241,6 +314,10 @@
         },
         {
           "command": "winformsDesigner.viewCode",
+          "when": "activeCustomEditorId == winformsDesigner.designer"
+        },
+        {
+          "command": "winformsDesigner.selectProjectContext",
           "when": "activeCustomEditorId == winformsDesigner.designer"
         },
         {
@@ -502,6 +579,7 @@
     "extension-host-e2e": "node ../scripts/run-extension-host-tests.mjs",
     "release21:extension-host": "node ../scripts/run-release21-extension-host-tests.mjs",
     "release22:extension-host": "node ../scripts/run-release22-extension-host-tests.mjs",
+    "release23:extension-host": "node ../scripts/run-release23-extension-host-tests.mjs",
     "release22:upgrade": "node ../scripts/run-release22-upgrade-tests.mjs",
     "l10n:parity": "node ../scripts/ci-l10n-parity.mjs",
     "mojibake:scan": "node ../scripts/ci-mojibake-scan.mjs",
@@ -516,17 +594,19 @@
     "copy-license": "node -e \"require('fs').copyFileSync('../LICENSE','LICENSE')\"",
     "copy-changelog": "node -e \"require('fs').copyFileSync('../CHANGELOG.md','CHANGELOG.md')\"",
     "copy-notices": "node -e \"require('fs').copyFileSync('../THIRD-PARTY-NOTICES.md','THIRD-PARTY-NOTICES.md')\"",
-    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run bundle-engine-net48 && npm run copy-license && npm run copy-changelog && npm run copy-notices"
+    "vscode:prepublish": "npm run build && npm run bundle-engine && npm run bundle-engine-net48 && npm run copy-license && npm run copy-changelog && npm run copy-notices",
+    "release24:extension-host": "node ../scripts/run-release24-extension-host-tests.mjs"
   },
   "dependencies": {
     "@vscode/codicons": "0.0.45",
     "vscode-jsonrpc": "9.0.1"
   },
   "overrides": {
+    "vite": "8.2.4",
     "nanoid": "3.3.18",
     "postcss": "8.5.26",
     "source-map-js": "1.2.2",
-    "undici": "7.29.1"
+    "undici": "7.30.1"
   },
   "devDependencies": {
     "@types/node": "20.19.43",
@@ -535,6 +615,6 @@
     "esbuild": "0.28.2",
     "jsdom": "29.1.1",
     "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }

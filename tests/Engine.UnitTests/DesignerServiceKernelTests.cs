@@ -378,10 +378,15 @@ public sealed class DesignerServiceKernelTests
             Assert.Contains(nameof(DesignerServiceKernelCapability.Selection), inspected.IncompleteHostReason);
             Assert.True(inspected.UnsupportedServiceRefused);
             Assert.Contains(typeof(IDesignerSerializationService).FullName!, inspected.UnsupportedServiceReason);
-            Assert.Equal(DesignerServiceKernel.ImplementedCapabilities.Count, inspected.Capabilities.Count);
+            var certifiedV1Capabilities = new[]
+            {
+                "ContainerSiting", "Naming", "ComponentChange", "Selection", "Transactions", "MenuCommands",
+            };
+            Assert.Equal(certifiedV1Capabilities, inspected.Capabilities);
             Assert.Empty(inspected.Edits);
 
             Assert.True(invoked.Ok, invoked.Reason);
+            Assert.Equal(certifiedV1Capabilities, invoked.Capabilities);
             Assert.Equal("applied", invoked.Status);
             Assert.True(invoked.ActionInvoked);
             Assert.Equal(HostedServiceKernelProductBroker.CommandId, invoked.ActionId);
@@ -404,6 +409,7 @@ public sealed class DesignerServiceKernelTests
                 });
 
             Assert.False(reentrant.Ok);
+            Assert.Equal(certifiedV1Capabilities, reentrant.Capabilities);
             Assert.Equal("cancelled", reentrant.Status);
             Assert.Equal("REENTRANT_CANCELLED", reentrant.ErrorCode);
             Assert.Equal(HostedServiceKernelProductBroker.ReentrantCommandId, reentrant.ActionId);
@@ -415,6 +421,20 @@ public sealed class DesignerServiceKernelTests
             Assert.Empty(reentrant.Edits);
             Assert.Contains("Nested designer transactions", reentrant.Reason);
         });
+    }
+
+    [Fact]
+    public void CertifiedV1Projection_PreservesExactCoreIdentityWithoutInventingMissingServices()
+    {
+        var allServices = DesignerServiceKernel.ImplementedCapabilities.Select(capability => capability.ToString()).ToArray();
+        Assert.Equal(new[] { "ContainerSiting", "Naming", "ComponentChange", "Selection", "Transactions", "MenuCommands" },
+            HostedServiceKernelV1Contract.ProjectCapabilities(allServices));
+        Assert.Equal(new[] { "ContainerSiting", "Naming", "ComponentChange", "Transactions", "MenuCommands" },
+            HostedServiceKernelV1Contract.ProjectCapabilities(allServices.Where(capability => capability != "Selection")
+                .Concat(new[] { "selection", "Unsupported", "Naming" })));
+        Assert.Empty(HostedServiceKernelV1Contract.ProjectCapabilities(new[] { "ToolboxCatalog", "TypeResolution", "PropertySerialization" }));
+        Assert.Empty(HostedServiceKernelV1Contract.ProjectCapabilities(Array.Empty<string>()));
+        Assert.Throws<ArgumentNullException>(() => HostedServiceKernelV1Contract.ProjectCapabilities(null!));
     }
 
     [Fact]

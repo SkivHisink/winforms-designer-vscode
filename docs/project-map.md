@@ -32,6 +32,9 @@ VS Code extension host (TypeScript, extension/src)
 | `tests/` | `Engine.UnitTests` (modern, xUnit) and `Engine.Net48.UnitTests` (net48, xUnit) |
 | `fixtures/` | Build fixtures for tests: `FakeVendor` (vendor-like controls), `Net48CtxFixture`, `VisualStudioReference` (byte-pinned) |
 | `samples/` | Sample projects: `CustomControls`, `ComplexProject` (multi-target), `DemoApp`, `DevExpressDemo` |
+| `adapter-sdk/` | Public SDK Preview 0.1.0 schema, types, stdio contract, independent tests and package |
+| `samples/AdapterSdkPreview/` | Independently built action/editor packages and public-command conformance |
+| `samples/DesignerSdkAbiProbe/` | Isolated official modern SDK and classic System.Design ABI probes; never product payload |
 | `scripts/` | Bundling, CI gates, evidence collection and release runners |
 | `docs/` | ADRs, release records, roadmaps, the v2 scenario catalog and archived Visual Studio reference traces |
 | `wiki/` | Source of the GitHub wiki (user guide) |
@@ -76,15 +79,16 @@ project output directory) with `ChildDomainConfig.cs` (its configuration and bin
 |---|---|
 | Activation and commands | `extension.ts` |
 | Designer session | `designerEditor.ts` (custom editor provider, `DesignerHub`, per-form session: render, select, edit, save, toolbox) |
-| Engines | `engineClient.ts` (spawn and RPC), `engineTransport.ts` (negotiation and supervised envelope transport), `engineWriter.ts` (stream failure teardown), `engineRegistry.ts` (project graph process ownership), `engineAdmission.ts` (bounded wait for resident capacity), `engineStartup.ts` (shared physical startup with independent document cancellation and confirmed cleanup), `engineRequestContext.ts` / `engineMethodSource.ts` (request identity, workflow leases and source arguments), `engineRecovery.ts` (crash-loop policy), `workerSupervisor.ts`, `workerSelection.ts`, `v2Protocol.ts` (generated) |
-| Documents and save | `documentStore.ts`, `byteLocal.ts` (byte-local save), `atomicFile.ts`, `patchSet.ts`, `mutationOperation.ts` (stable host operation identity, durable commit outcomes and rollback admission), `rollbackPreparation.ts` (Prepare Rollback: freeze, settle, inspect, stop workers), `transactionJournal.ts`, `transactionRunner.ts`, `transactionRecovery.ts`, `resourceTransaction.ts`, `resourceTransactionCoordinator.ts`, `binaryResx.ts`, `localizable.ts`, `inlineDesigner.ts` |
+| Engines | `engineClient.ts` (spawn and RPC), `engineTransport.ts` (negotiation and supervised envelope transport), `engineWriter.ts` (stream failure teardown), `engineRegistry.ts` (project graph process ownership), `engineAdmission.ts` (bounded wait for resident capacity), `engineStartup.ts` (shared physical startup with independent document cancellation and confirmed cleanup), `engineRequestContext.ts` / `engineMethodSource.ts` (request identity, workflow leases and source arguments), `engineRecovery.ts` (crash-loop policy), `engineLifecycle.ts` (intentional exit reasons), `projectEvaluationStatus.ts` (named SDK limitations), `workerSupervisor.ts`, `workerSelection.ts`, `v2Protocol.ts` (generated) |
+| Documents and save | `documentStore.ts`, `documentHistory.ts` (bounded serializable operations and checkpoints), `documentSaveBaselines.ts` (complete companion reads before Save), `companionChangeGuard.ts` (exact admitted handler-buffer notification), `sourceTransactionGuard.ts` (exact transaction-owned source images and revision-aware watcher reads), `byteLocal.ts` (byte-local save), `atomicFile.ts`, `patchSet.ts`, `mutationOperation.ts` (stable host operation identity, durable commit outcomes and rollback admission), `rollbackPreparation.ts` (Prepare Rollback: freeze, settle, inspect, stop workers), `transactionJournal.ts`, `transactionRunner.ts`, `transactionRecovery.ts`, `recoveryTimeline.ts` (source-free operation outcomes), `formSaveAs.ts` (bounded form-copy rename), `resourceTransaction.ts`, `resourceTransactionCoordinator.ts`, `binaryResx.ts`, `localizable.ts`, `inlineDesigner.ts` |
 | Projects and builds | `formProjectMembership.ts`, `solutionProjects.ts`, `projectCompatibility.ts` (architecture evidence: PE images plus MSBuild evaluation), `dependencyGraphIdentity.ts`, `outputDependencyIdentity.ts` (bounded byte fingerprints for worker isolation), `projectResources.ts`, `projectEventSources.ts`, `csprojRef.ts`, `externalBuild.ts`, `taskCoordination.ts`, `formSiblings.ts`, `scaffolding.ts`, `autoOpen.ts` |
 | Diagnostics and status | `designerDiagnostics.ts` (reason catalogue and the redacted report), `formStatusView.ts`, `controlSourceStatus.ts` (active-session output badge without worker startup), `renderDiagnostics.ts`, `renderGate.ts`, `formNotice.ts`, `learnMore.ts` |
 | Toolbox | `toolboxDiscovery.ts`, `toolboxRequest.ts`, `tierDCompatibility.ts` (COM/ActiveX boundary), `vendorTasks.ts` |
 | Persisted state and adapters | `persistedDesignerState.ts`, `v2Migration.ts`, `v2AdapterManifest.ts`, `v2AdapterManifestRegistry.ts` |
+| Adapter SDK Preview | `adapterRuntime.ts` (verified package bytes and bounded stdio child), `adapterCommands.ts` (public commands and persisted hash-bound grants), `adapterActions.ts` (data-only canvas publication), `adapterPropertyContext.ts` (observed invariant scalar metadata) |
 | UI helpers | `selection.ts`, `multiProperty.ts`, `valueExpr.ts`, `dpiScale.ts`, `tabViewState.ts` |
 | Localization | `i18n/en.ts` (source of truth) and `i18n/*.json` (six translations) |
-| Test harnesses | `e2e.ts`, `webview-e2e.ts` + `webviewHarness.ts`, `extension-host-suite.ts`, `release21-extension-host-suite.ts`, `release21-upgrade-suite.ts`, `release22-extension-host-suite.ts`, `release22-upgrade-suite.ts`, `performance-baseline.ts`, `scenarioEvidence.ts`, `v2HeadlessValidate*.ts`, `v2Soak*.ts`, `v2Phase0Performance.ts` |
+| Test harnesses | `e2e.ts`, `webview-e2e.ts` + `webviewHarness.ts`, `extension-host-suite.ts`, `release21-extension-host-suite.ts`, `release21-upgrade-suite.ts`, `release22-extension-host-suite.ts`, `release22-upgrade-suite.ts`, `release23-extension-host-suite.ts`, `release24-extension-host-suite.ts` (separate normal-host public-command driver), `performance-baseline.ts`, `scenarioEvidence.ts`, `v2HeadlessValidate*.ts`, `v2Soak*.ts`, `v2Phase0Performance.ts` |
 
 Unit tests sit next to their modules as `*.test.ts` (vitest, `npm test`).
 
@@ -99,14 +103,14 @@ Webviews (`extension/media/`): `designer.js` (canvas), `panel.js` (Properties, T
 | CI text gates | `ci-l10n-parity.mjs`, `ci-mojibake-scan.mjs`, `release-preflight.mjs`, `generate-v2-protocol.mjs` |
 | Visual Studio reference renders | `capture-visual-studio-reference-traces.ps1`, `compare-visual-studio-reference-renders.ps1` |
 | v2 scenario evidence | `validate-v2-scenario-catalog.ps1`, `collect-v2-test-evidence.mjs`, `validate-v2-execution-evidence.mjs`, `test-v2-execution-evidence-gate.mjs`, `reconcile-v2-catalog-evidence.mjs`, `v2-evidence-provenance.mjs` |
-| Extension Host and release runners | `run-extension-host-tests.mjs`, `run-release21-extension-host-tests.mjs`, `run-release21-upgrade-tests.mjs`, `run-release22-extension-host-tests.mjs`, `run-release22-upgrade-tests.mjs`, `release21-environment.mjs` |
+| Extension Host and release runners | `run-extension-host-tests.mjs`, `run-release21-extension-host-tests.mjs`, `run-release21-upgrade-tests.mjs`, `run-release22-extension-host-tests.mjs`, `run-release22-upgrade-tests.mjs`, `run-release23-extension-host-tests.mjs`, `release21-environment.mjs` |
 
 ## Documents (`docs/`)
 
 | Path | Contents |
 |---|---|
 | `adr/` | Architecture decisions: 0001 net48 live-source interpretation, 0002 edit parity, 0003 hosted services and dual-lane persistence; `adr/evidence/` holds the subsystem maps 0001 was based on |
-| `release-2.0.0-gate-record.md`, `release-2.1.0.md` (+ `release-2.1.0/`), `release-2.2.0.md` (+ `release-2.2.0/`) | Release records with the machine reports they cite |
+| `release-2.0.0-gate-record.md`, `release-2.1.0.md` (+ `release-2.1.0/`), `release-2.2.0.md` (+ `release-2.2.0/`), `release-2.3.0.md` (+ `release-2.3.0/`), `release-2.4.0.md` | Release records: combined R23/R24 acceptance and machine reports in 2.3.0; pending R25 vendor cohort in 2.4.0 |
 | `roadmap-2.0.0-to-3.0.0.md`, `roadmap-v2.0.0-implementation-plan.md`, `roadmap-to-2.0.0.drawio` | Plans; the short public roadmap is the root `ROADMAP.md` |
 | `v2/` | Protocol and adapter-manifest schemas, the scenario catalog (`vs-parity-scenario-catalog.tsv`), archived Visual Studio reference traces and comparisons (byte-pinned) |
 | `TESTING.md`, `arm64-support.md` | Test strategy; ARM64 status |

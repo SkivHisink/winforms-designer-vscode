@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "v2-scenario-evidence.2",
+  "suite": "unit",
+  "invocation": "xunit-net48",
+  "generatedAtUtc": "2026-10-27T03:14:00.108Z",
+  "completed": true,
+  "sourceRoot": ".",
+  "provenance": {
+    "schemaVersion": "v2-evidence-provenance.1",
+    "runId": "combined23-467d3cef-14d1-449e-8250-4a743dc96f91",
+    "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+    "productTreeSha256": "2366020f6200d8e82c05000621cc608fc1f9d021048122a16c0038e0447aee32",
+    "productFileCount": 258,
+    "producer": "test-collector:xunit",
+    "sourceArtifact": {
+      "path": "test-results/net48/net48.trx",
+      "sha256": "2d36c18bac5785ea8a862312df1a1ed2421ed0d2ba56f109f3edab62fb4d963d",
+      "bytes": 132497
+    }
+  },
+  "results": [
+    {
+      "scenarioId": "V2-FND-001-S091",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.Net48.UnitTests/DesignerServiceKernelNet48Tests.cs",
+          "line": 17,
+          "kind": "xunit.test-pass",
+          "testId": "5f73e2b0-2d7e-53ec-18ad-5ac3114e0f68",
+          "testName": "V2-FND-001-S091/S092 shared net48 kernel cancels reentrancy and refuses unsupported service",
+          "className": "Engine.Net48.UnitTests.DesignerServiceKernelNet48Tests",
+          "methodName": "SharedKernel_CancelsNestedTransactionAndRecordsUnsupportedService",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "8bde3f26d8bc2c83181db04dbfde9c593a2102d9eb032e7cb92844406af3615d",
+          "lineSha256": "b5608f206a1304ea1284fb7924e1a50d65ee07c9fee5ed52041ae5f0e5c8e4f7"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S092",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "tests/Engine.Net48.UnitTests/DesignerServiceKernelNet48Tests.cs",
+          "line": 17,
+          "kind": "xunit.test-pass",
+          "testId": "5f73e2b0-2d7e-53ec-18ad-5ac3114e0f68",
+          "testName": "V2-FND-001-S091/S092 shared net48 kernel cancels reentrancy and refuses unsupported service",
+          "className": "Engine.Net48.UnitTests.DesignerServiceKernelNet48Tests",
+          "methodName": "SharedKernel_CancelsNestedTransactionAndRecordsUnsupportedService",
+          "outcome": "Passed",
+          "executions": 1,
+          "fileSha256": "8bde3f26d8bc2c83181db04dbfde9c593a2102d9eb032e7cb92844406af3615d",
+          "lineSha256": "b5608f206a1304ea1284fb7924e1a50d65ee07c9fee5ed52041ae5f0e5c8e4f7"
+        }
+      ],
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,291 @@
+{
+  "schemaVersion": "v2-scenario-evidence.2",
+  "suite": "extension-host",
+  "invocation": "vscode=1.84.0",
+  "generatedAtUtc": "2026-10-27T03:22:00.454Z",
+  "completed": true,
+  "sourceRoot": ".",
+  "provenance": {
+    "schemaVersion": "v2-evidence-provenance.1",
+    "runId": "combined23-467d3cef-14d1-449e-8250-4a743dc96f91",
+    "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+    "productTreeSha256": "2366020f6200d8e82c05000621cc608fc1f9d021048122a16c0038e0447aee32",
+    "productFileCount": 258,
+    "producer": "runtime-recorder:extension-host",
+    "sourceArtifact": null
+  },
+  "results": [
+    {
+      "scenarioId": "V2-FND-001-S003",
+      "status": "PASS",
+      "assertionCount": 20,
+      "assertions": [
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 696,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "cb5c6d42bba10da60e91f0d9946cad89d24168516e27f5a99cf85821f5e4cb39"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 709,
+          "kind": "assert.deepStrictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "412933dfde8c14ff8cef7d9ec464bcc78b91ecfdaf431c767ad344f69c8e029a"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 725,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "d1c9efecbcd360c1e911200864248fbed9c7ed2c92e954e49af1773c969a663b"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 726,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "1bd1cc58f33d7d0964dd3b22396fcdfef18ef68cbfe28f17b4eab60086523338"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 727,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "74d257295a02883f6dfa4dc9c5dc25c11c6ac509e2bf9d49c08433bc8e139f79"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 728,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "d60f871732ed29679383407a8c0595214ecb6b271da5bcb03b1e8d2317132d38"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 729,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "6b6443d1da022a562811fc30fa9e9b800e664de2151d02aa8e99c7b66a9f7b44"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 739,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "d60f871732ed29679383407a8c0595214ecb6b271da5bcb03b1e8d2317132d38"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 740,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "6b6443d1da022a562811fc30fa9e9b800e664de2151d02aa8e99c7b66a9f7b44"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 749,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "d60f871732ed29679383407a8c0595214ecb6b271da5bcb03b1e8d2317132d38"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 750,
+          "kind": "assert.strictEqual",
+          "executions": 2,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "6b6443d1da022a562811fc30fa9e9b800e664de2151d02aa8e99c7b66a9f7b44"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S100",
+      "status": "PASS",
+      "assertionCount": 10,
+      "assertions": [
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 622,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "4d3bf60d544962861027ddcf6b59e615bab3d6ee4e05f0d1b99c6f6abfbef611"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 625,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "6112948685c5ddbf0766f996ad009725818666c6a0745be3ca71a11653bffbec"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 630,
+          "kind": "assert.match",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "a2fd3887f38d0d1449fddd6fb21d5099376726302de80cd7a7e46b092a680dd0"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 631,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "06e87519cffad385f0f2a9848ae20a398c5f3897ed103e8e71889ff2b851f084"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 632,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "143423d77ac021708298981aad8b7a893205181092c78c6c74cbaa142a27f0f6"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 633,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "b12e8aaa6784dec0a721dccf645c528cd376b40151ab2f2eb55875b5039e2a51"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 636,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "db3b3865df0ee154f1c7450532457c4d2001fbb62714ce6dbc21b897109184c1"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 637,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "b4f4815202b3a04f1f990fd06e508b7f28603c352ecc51bd186c235b3581236e"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 639,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "2eab057b9171b3545b34922538fb5d717803fcdcf928ca969dfa72625c1f7f26"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 641,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "da89d183c8fc1efd08fd819fa5d4832b3878f7f7b5bbc8d4110d5890a78b83a1"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S108",
+      "status": "PASS",
+      "assertionCount": 10,
+      "assertions": [
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 622,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "4d3bf60d544962861027ddcf6b59e615bab3d6ee4e05f0d1b99c6f6abfbef611"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 625,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "6112948685c5ddbf0766f996ad009725818666c6a0745be3ca71a11653bffbec"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 630,
+          "kind": "assert.match",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "a2fd3887f38d0d1449fddd6fb21d5099376726302de80cd7a7e46b092a680dd0"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 631,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "06e87519cffad385f0f2a9848ae20a398c5f3897ed103e8e71889ff2b851f084"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 632,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "143423d77ac021708298981aad8b7a893205181092c78c6c74cbaa142a27f0f6"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 633,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "b12e8aaa6784dec0a721dccf645c528cd376b40151ab2f2eb55875b5039e2a51"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 636,
+          "kind": "assert.strictEqual",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "db3b3865df0ee154f1c7450532457c4d2001fbb62714ce6dbc21b897109184c1"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 637,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "b4f4815202b3a04f1f990fd06e508b7f28603c352ecc51bd186c235b3581236e"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 639,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "2eab057b9171b3545b34922538fb5d717803fcdcf928ca969dfa72625c1f7f26"
+        },
+        {
+          "file": "extension/src/extension-host-suite.ts",
+          "line": 641,
+          "kind": "assert.ok",
+          "executions": 1,
+          "fileSha256": "0c31dc7d83f00cee5f916f68e1ae449e44dccc1b06906cd2f60ca90fec5f0a1c",
+          "lineSha256": "da89d183c8fc1efd08fd819fa5d4832b3878f7f7b5bbc8d4110d5890a78b83a1"
+        }
+      ],
+      "error": null
+    }
+  ]
+}

@@ -66,6 +66,72 @@ public sealed class RuntimeProtocolTests
     }
 
     [Fact]
+    public async Task HostedPreviewServices_ReadRpcMarshalsMtaCallerAndReturnsClosedCamelCaseData()
+    {
+        var api = new EngineApi(new StaDispatcher());
+        var negotiation = api.NegotiateProtocol(Handshake());
+        var envelope = Envelope(negotiation.BuildId, "InspectHostedPreviewServices");
+        envelope.CommandId = null!;
+        envelope.PayloadJson = JsonConvert.SerializeObject(new { method = "InspectHostedPreviewServices", args = new object[] { "UserControl" } });
+        envelope.PayloadBytes = V2Protocol.PayloadByteCount(envelope.PayloadJson);
+        var result = await Task.Run(async () =>
+        {
+            Assert.Equal(ApartmentState.MTA, Thread.CurrentThread.GetApartmentState());
+            return await api.ExecuteV2Envelope(JsonConvert.SerializeObject(envelope, Wire), CancellationToken.None);
+        });
+        Assert.Equal(V2ProtocolOutcomeKind.Ok, result.Outcome.Kind);
+        var value = JObject.Parse(result.ResultJson);
+        Assert.True(value["ok"]!.Value<bool>(), value["reason"]!.Value<string>());
+        Assert.Equal("STA", value["apartmentState"]!.Value<string>());
+        Assert.Equal("System.Windows.Forms.UserControl", value["rootType"]!.Value<string>());
+        Assert.Equal("0.1.0", value["serviceProfileVersion"]!.Value<string>());
+        Assert.Equal(9, ((JArray)value["contracts"]!).Count);
+        Assert.Equal(4, ((JArray)value["toolboxItems"]!).Count);
+        Assert.Single((JArray)value["serializedProperties"]!);
+        Assert.Equal(2, ((JArray)value["proposals"]!).Count);
+        Assert.True(value["unsupportedClassicSerializationRefused"]!.Value<bool>());
+        Assert.True(value["incompleteHostWithheld"]!.Value<bool>());
+        Assert.All((JArray)value["contracts"]!, item => Assert.NotEmpty(item["methods"]!));
+    }
+
+    [Fact]
+    public async Task OwnedRegionResetRpc_RequiresOptInFingerprintAndMutationIdentity()
+    {
+        const string source = "partial class Form1 : System.Windows.Forms.Form\r\n{\r\n"
+            + "    private void InitializeComponent()\r\n    {\r\n        this.Text = \"Caption\";\r\n    }\r\n}\r\n";
+        var hash = DesignerOwnedRegionSerializer.Sha256Hex(source);
+        var api = new EngineApi(new StaDispatcher());
+        var disabled = api.PreviewOwnedRegionPropertyReset("missing.Designer.cs", hash, "this", "Text", source);
+        Assert.False(disabled.Safe);
+        Assert.Contains("explicit opt-in", disabled.Reason);
+        var stale = api.PreviewOwnedRegionPropertyReset("missing.Designer.cs", new string('a', 64), "this", "Text", source, true);
+        Assert.False(stale.Safe);
+        Assert.Contains("stale source fingerprint", stale.Reason);
+        var planned = api.PreviewOwnedRegionPropertyReset("missing.Designer.cs", hash, "this", "Text", source, true);
+        Assert.True(planned.Safe, planned.Reason);
+        Assert.Equal(planned.LaneASourceText, planned.PlannedSourceText);
+        Assert.DoesNotContain("this.Text =", planned.PlannedSourceText);
+        Assert.True(planned.OutsideRegionPreserved);
+
+        var negotiation = api.NegotiateProtocol(Handshake());
+        var envelope = Envelope(negotiation.BuildId, "PreviewOwnedRegionPropertyReset");
+        envelope.CommandId = null!;
+        envelope.SourceFingerprint = V2Protocol.Fingerprint("source", hash, Encoding.UTF8.GetByteCount(source));
+        envelope.PayloadJson = JsonConvert.SerializeObject(new
+        {
+            method = "PreviewOwnedRegionPropertyReset",
+            args = new object[] { "missing.Designer.cs", hash, "this", "Text", source, true },
+        });
+        envelope.PayloadBytes = V2Protocol.PayloadByteCount(envelope.PayloadJson);
+        var missingIdentity = await api.ExecuteV2Envelope(JsonConvert.SerializeObject(envelope, Wire), CancellationToken.None);
+        Assert.Equal("COMMAND_ID_REQUIRED", missingIdentity.Outcome.Code);
+        envelope.CommandId = "reset-1";
+        var accepted = await api.ExecuteV2Envelope(JsonConvert.SerializeObject(envelope, Wire), CancellationToken.None);
+        Assert.Equal(V2ProtocolOutcomeKind.Ok, accepted.Outcome.Kind);
+        Assert.True(JObject.Parse(accepted.ResultJson)["safe"]!.Value<bool>());
+    }
+
+    [Fact]
     public async Task NamedPipe_ControlRequestsRemainResponsiveWhileOrdinaryRenderWaitsOnSta()
     {
         var sta = new StaDispatcher();

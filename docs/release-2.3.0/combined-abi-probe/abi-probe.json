@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "probeCompleted": true,
+  "decision": "EXPLICIT_ADAPTER_REQUIRED",
+  "modern": "REJECTED_DIRECT_INTEGRATION",
+  "classic": "PASS_PUBLIC_DESIGN_SURFACE_AND_HEADLESS_EDITOR_REFUSAL",
+  "startedUtc": "2026-10-27T03:13:21.0783027Z",
+  "finishedUtc": "2026-10-27T03:13:26.4381275Z",
+  "sdkPackage": {
+    "id": "Microsoft.WinForms.Designer.SDK",
+    "version": "1.6.0",
+    "nupkgSha256": "5ec59f8b82aa5dbab61fbd84f33137b05a547af8550bd7f68b5dcdb563812296",
+    "licenseSha256": "8c95f1f5c458d2296245618f123e537c3579aee22a4a3ea6b72ec085c062abd8",
+    "payload": "Six reference assemblies only; no lib/ or runtimes/ implementation.",
+    "distribution": "NOT_REDISTRIBUTED; SDK references used only for the isolated compilation/metadata probe.",
+    "audit": "Repository NuGetAudit=true, all, moderate; NU1902/NU1903/NU1904 remain errors. Locked restore succeeded."
+  },
+  "sources": [
+    {
+      "path": "samples/DesignerSdkAbiProbe/ClassicDesigner/ClassicDesigner.csproj",
+      "sha256": "652abe1dfe806bf9aba49c5e985b1b14ffe7a9aad4fa88ad0a43566050444f97"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/ClassicDesigner/Program.cs",
+      "sha256": "de9916fd3b750e1423309b6d4d8da667a1e1f37d36b509fc57354989f08e1ff7"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/MetadataProbe/MetadataProbe.csproj",
+      "sha256": "56c1631989881a0018b058d24813bdad8085fd15a1f04a53c6aa96d54ac1aa93"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/MetadataProbe/Program.cs",
+      "sha256": "de956ec6e2166dcbd2c3cb00585af5bb19a87db384b61cc95689c96e32f8783f"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/ModernDesigner/ModernDesigner.csproj",
+      "sha256": "8408ca6fc6e73b7fa39a0283ae2fb516bf54b1af010815f168b651699cdb12ff"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/ModernDesigner/packages.lock.json",
+      "sha256": "fea6322ff70ac4912c2463762b8833b3b7039b0cc752aff479aeea7924562a9a"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/ModernDesigner/ProbeDesigner.cs",
+      "sha256": "2c5f686d3ac925660108a8b57cc464b7faeb8b7b28ad46585bf384a1e851bd85"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/README.md",
+      "sha256": "fdd685ca8fb2da6610aa028ba27585c68b036602783552fdc9349bb25a22da6d"
+    },
+    {
+      "path": "samples/DesignerSdkAbiProbe/run-probe.ps1",
+      "sha256": "48d0e3111e03b97a368974c56ac214133096daf0590d9a868c688e0e57c156ef"
+    }
+  ],
+  "buildConfiguration": [
+    {
+      "path": "global.json",
+      "sha256": "18303059fe920620f05e25d0157b7ed4a74934841e6a34b0b86d713fbf631444"
+    },
+    {
+      "path": "Directory.Build.props",
+      "sha256": "e77896c9fffd7f968372f7848a2675f2a40456c11a91a4bf4d7f101c31c3764f"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "Independent.ModernDesigner.dll",
+      "sha256": "af513cd27c74b031f4a9a00998067b2272fd7f8074c2273189f7cef079f00938"
+    },
+    {
+      "path": "Independent.ClassicDesigner.exe",
+      "sha256": "5c3528a1e8c369cbcdc833bc678c345bf0f826f745ef4977917166b70943ddf1"
+    },
+    {
+      "path": "MetadataProbe.dll",
+      "sha256": "1425818d95b268c138d4dea9c2eb885c7a446af4b2b82915235f11f1d6f29c14"
+    }
+  ],
+  "reports": [
+    {
+      "path": "modern.json",
+      "sha256": "456e82afdbea9422a4f424abbb9fdb0684ccf0779d7366da17453b54ad55fae8"
+    },
+    {
+      "path": "classic.json",
+      "sha256": "de488a2bac4263a58726fa4bc06c71f10cec3242a8e5cdc8ac1e6ccf5d008687"
+    }
+  ],
+  "commands": [
+    {
+      "name": "modern-locked-restore",
+      "command": "dotnet restore <repo>\\samples\\DesignerSdkAbiProbe\\ModernDesigner\\ModernDesigner.csproj --locked-mode",
+      "exitCode": 0,
+      "log": "modern-locked-restore.log",
+      "logSha256": "2ad9967f2280d0195ad457a92fe6a353a8492625846632386df6dfc446efe4bc"
+    },
+    {
+      "name": "modern-build",
+      "command": "dotnet build <repo>\\samples\\DesignerSdkAbiProbe\\ModernDesigner\\ModernDesigner.csproj -c Release --no-restore",
+      "exitCode": 0,
+      "log": "modern-build.log",
+      "logSha256": "d69d733dd62f6960e8580ffc6f5a7f4cde8b29d6fa48ea32a104757cd1be358f"
+    },
+    {
+      "name": "classic-build",
+      "command": "dotnet build <repo>\\samples\\DesignerSdkAbiProbe\\ClassicDesigner\\ClassicDesigner.csproj -c Release",
+      "exitCode": 0,
+      "log": "classic-build.log",
+      "logSha256": "ee7f983dfb6ad6dca03796d088140010ce4f5b7de4ef1b55a57e7b43900444f9"
+    },
+    {
+      "name": "metadata-build",
+      "command": "dotnet build <repo>\\samples\\DesignerSdkAbiProbe\\MetadataProbe\\MetadataProbe.csproj -c Release",
+      "exitCode": 0,
+      "log": "metadata-build.log",
+      "logSha256": "fca873804979833756cb6fc2338df86ed9e83467085688d890bf388e660766e5"
+    },
+    {
+      "name": "classic-execute",
+      "command": "<repo>\\samples\\DesignerSdkAbiProbe\\ClassicDesigner\\bin\\Release\\net48\\Independent.ClassicDesigner.exe <ci-temp>\\release24-abi-05c7701f69e54799a0e3d762b61d6261\\classic.json",
+      "exitCode": 0,
+      "log": "classic-execute.log",
+      "logSha256": "e525fafbf12011274c0c95bb55ce0c118abb0850c70403b5a56e3677026e26a4"
+    },
+    {
+      "name": "modern-abi-and-refusal",
+      "command": "dotnet <repo>\\samples\\DesignerSdkAbiProbe\\MetadataProbe\\bin\\Release\\net10.0-windows\\MetadataProbe.dll <ci-temp>\\dotnet-home\\.nuget\\packages\\microsoft.winforms.designer.sdk\\1.6.0 <repo>\\samples\\DesignerSdkAbiProbe\\ModernDesigner\\bin\\Release\\net10.0-windows\\Independent.ModernDesigner.dll <ci-temp>\\release24-abi-05c7701f69e54799a0e3d762b61d6261\\modern.json",
+      "exitCode": 0,
+      "log": "modern-abi-and-refusal.log",
+      "logSha256": "695ec77f986bc94cc86f4b34b360daaddc4c22cf50fdf48ad1ad33ea295f4af9"
+    }
+  ],
+  "limits": [
+    "No modern SDK designer runtime invocation: only reference assemblies are available from this pinned SDK.",
+    "No Visual Studio implementation binaries or private DesignToolsServer protocol copied, loaded or emulated.",
+    "Native windows, ownership/focus/Escape and interactive dropdown/modal behavior NOT_EXECUTED.",
+    "Independent samples do not certify compatibility of any existing vendor designer binary.",
+    "Classic DesignSurface service availability is recorded; unavailable services are not faked as complete."
+  ]
+}

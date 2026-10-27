@@ -798,7 +798,10 @@ EXECUTED decisions; repository-side evidence cannot stand in for them.
 
 ## 2.0.0 → 3.0.0 — Planned release sequence
 
-**Status: 2.1.0 implemented, locally verified and packaged; 2.2.0–3.0.0 PLANNED.**
+**Status: 2.1.0, 2.2.0 and 2.3.0 implemented and locally verified; 2.4.0–3.0.0 PLANNED.**
+On 23 October 2026 the former 2.3.0 and 2.4.0 scopes were combined into one 2.3.0 release, and every later minor moved
+one version earlier with its task IDs unchanged; see the
+[revision record](docs/roadmap-2.0.0-to-3.0.0.md#roadmap-revision-2026-10-23).
 The [2.1.0 evidence record](docs/release-2.1.0.md) includes real installed upgrade/downgrade and backup recovery.
 Publication has not been performed. These milestones do not promote historical harness results,
 vendor support, hardware qualification, or publication gates to completed status. Existing source-first editing,
@@ -808,17 +811,16 @@ resource transactions, recovery, project resolution, and bounded hosted routes r
 |---|---|
 | **2.0.0 / 2.0.x** | Reconcile the baseline and maintain the stable workflow with focused fixes and exact release evidence |
 | **2.1.0** | **Implemented and locally verified:** actionable compatibility diagnostics, unsupported-runtime detection, settings migration and workspace recovery; [evidence](docs/release-2.1.0.md) |
-| **2.2.0** | Route ordinary designer commands through the versioned protocol and product worker supervisor |
-| **2.3.0** | Broader multi-artifact transactions, multi-step hot-exit history and conflict-safe document recovery |
-| **2.4.0** | Hosted-service expansion, verified adapter loading, public Adapter SDK Preview and editor contracts |
-| **2.5.0** | First independently certified vendor cohort and useful vendor collection/editor workflows |
-| **2.6.0** | Large-form performance, richer layout tools, navigation and broader incremental updates |
-| **2.7.0** | Culture/resource overview, dependency-aware asset operations, pseudo-localization and native RTL validation |
-| **2.8.0** | Complete bounded data-binding workflows, schema refresh, master-detail and deterministic sample data |
-| **2.9.0** | Reusable templates/snippets, bounded extraction and semantic refactoring, richer project-context UX |
-| **2.10.0** | Consolidated accessibility, physical DPI/ARM64 and clean-machine runtime qualification |
-| **2.11.0** | A supported product CLI, project validation, Problems integration and expanded previewable advisor fixes |
-| **2.12.0** | Contract freeze, SDK RC, real upgrade/rollback rehearsal, beta cohorts and long product soak |
+| **2.2.0** | **Implemented and locally verified:** versioned product protocol and worker supervisor; [evidence](docs/release-2.2.0.md) |
+| **2.3.0** | **Implemented and locally verified:** broader multi-artifact transactions, multi-step hot-exit history and conflict-safe document recovery; hosted-service expansion, verified adapter loading, public Adapter SDK Preview and editor contracts; [evidence](docs/release-2.3.0.md) |
+| **2.4.0** | First independently certified vendor cohort and useful vendor collection/editor workflows |
+| **2.5.0** | Large-form performance, richer layout tools, navigation and broader incremental updates |
+| **2.6.0** | Culture/resource overview, dependency-aware asset operations, pseudo-localization and native RTL validation |
+| **2.7.0** | Complete bounded data-binding workflows, schema refresh, master-detail and deterministic sample data |
+| **2.8.0** | Reusable templates/snippets, bounded extraction and semantic refactoring, richer project-context UX |
+| **2.9.0** | Consolidated accessibility, physical DPI/ARM64 and clean-machine runtime qualification |
+| **2.10.0** | A supported product CLI, project validation, Problems integration and expanded previewable advisor fixes |
+| **2.11.0** | Contract freeze, SDK RC, real upgrade/rollback rehearsal, beta cohorts and long product soak |
 | **3.0.0** | Stable extensible designer platform with SDK 1.0 and an evidence-backed support matrix |
 
 Architecture, accessibility and external qualification begin early and progress alongside feature work. x86/COM/ActiveX

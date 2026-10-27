@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from './engineClient';
 import { currentEngineRequestContext, engineRequestGraphProven, engineRequestScopeActive, releaseEngineForCurrentRequest, retainEngineForCurrentRequest, withEngineRequestContext } from './engineRequestContext';
@@ -38,6 +39,22 @@ function fakeEngine(options: { negotiation?: object; reply?: (envelope: any) => 
 }
 
 describe('ordinary supervised engine transport', () => {
+  it('preserves the residency eviction reason through the physical owner without counting a crash', async () => {
+    const fake = fakeEngine();
+    const handle = await startSupervisedEngine('fake.dll', { expectedBuildId: buildId }, async () => fake.physical);
+    handle.dispose('budgetRecycle');
+    expect(fake.dispose).toHaveBeenCalledWith('budgetRecycle');
+    fake.physical.process.emit('exit', null, 'SIGTERM');
+    expect(handle.wasUnexpectedlyLost!()).toBe(false);
+  });
+
+  it('marks an unrequested null-code exit as unexpected', async () => {
+    const fake = fakeEngine();
+    const handle = await startSupervisedEngine('fake.dll', { expectedBuildId: buildId }, async () => fake.physical);
+    fake.physical.process.emit('exit', null, 'SIGKILL');
+    expect(handle.wasUnexpectedlyLost!()).toBe(true);
+    expect(fake.dispose).toHaveBeenCalledWith('unexpectedExit');
+  });
   it('holds the live authority through an asynchronous converter gap and dispatches foreground reconciliation before optional metadata', async () => {
     const primaryWire = fakeEngine({ negotiation: { runtime: 'net48' } });
     let finishPlanner!: (value: unknown) => void;
@@ -700,6 +717,57 @@ describe('ordinary supervised engine transport', () => {
     expect(ENGINE_SOURCE_ARGUMENTS.modern).toMatchObject({ GenerateEventHandler: 4, SetEventWiring: 4,
       ListHandlerCandidates: 2, FindEventHandlerSourceIndex: 3, ApplyCachedTextPropertyEdit: 5 });
     expect(ENGINE_SOURCE_ARGUMENTS.net48.ApplyInterpretedEditsLive).toBe(3);
+  });
+
+  it('binds owned-region reset envelopes to the supplied source rather than the older session snapshot', async () => {
+    const fake = fakeEngine();
+    const handle = await startSupervisedEngine('fake.dll', { expectedBuildId: buildId }, async () => fake.physical);
+    const source = '\uFEFFpartial class Form1 { string caption = "日本語"; }';
+    const nextSource = source + '\r\n// next revision';
+    const hash = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+    try {
+      await withEngineRequestContext({ ...context, renderGeneration: 15 }, async () => {
+        await handle.connection.sendRequest('PreviewOwnedRegionPropertyReset', context.documentId, hash(source), 'this', 'Text', source, true);
+        await handle.connection.sendRequest('PreviewOwnedRegionPropertyReset', context.documentId, hash(source), 'this', 'Text', source, true);
+        await handle.connection.sendRequest('PreviewOwnedRegionPropertyReset', context.documentId, hash(nextSource), 'this', 'Text', nextSource, true);
+      });
+      const envelopes = fake.sendRequest.mock.calls.filter(([method]) => method === 'ExecuteV2Envelope')
+        .map(([, raw]) => JSON.parse(raw as string));
+      expect(ENGINE_SOURCE_ARGUMENTS.modern.PreviewOwnedRegionPropertyReset).toBe(4);
+      expect(ENGINE_SOURCE_ARGUMENTS.net48.PreviewOwnedRegionPropertyReset).toBeUndefined();
+      expect(envelopes[0]).toMatchObject({
+        documentId: `document:${hash(context.documentId).slice(0, 32)}`,
+        sourceFingerprint: { value: hash(source), byteLength: Buffer.byteLength(source, 'utf8') },
+      });
+      expect(JSON.parse(envelopes[0].payloadJson)).toEqual({ method: 'PreviewOwnedRegionPropertyReset',
+        args: [context.documentId, hash(source), 'this', 'Text', source, true] });
+      expect(envelopes[1].documentId).toBe(envelopes[0].documentId);
+      expect(envelopes[1].documentRevision).toBe(envelopes[0].documentRevision);
+      expect(envelopes[1].commandId).toBe(envelopes[0].commandId);
+      expect(envelopes[1].requestId).not.toBe(envelopes[0].requestId);
+      expect(envelopes[2].documentId).toBe(envelopes[0].documentId);
+      expect(envelopes[2].documentRevision).not.toBe(envelopes[0].documentRevision);
+      expect(envelopes[2].commandId).not.toBe(envelopes[0].commandId);
+      expect(envelopes[2].renderGeneration).toBe(envelopes[0].renderGeneration + 1);
+      expect(envelopes[2].sourceFingerprint).toMatchObject({ value: hash(nextSource), byteLength: Buffer.byteLength(nextSource, 'utf8') });
+    } finally { handle.dispose(); }
+  });
+
+  it.each(['documentId', 'documentRevision'])('rejects an owned-region reset reply bound to another %s', async (field) => {
+    const fake = fakeEngine({ reply: (envelope) => ({
+      sessionId: envelope.sessionId, documentId: envelope.documentId, requestId: envelope.requestId,
+      documentRevision: envelope.documentRevision, generation: envelope.renderGeneration, buildId,
+      outcome: { kind: 'ok', code: 'OK', requestId: envelope.requestId, traceId: envelope.traceId },
+      resultJson: JSON.stringify({ safe: true, plannedSourceText: 'UNRELATED_RESET_SOURCE' }),
+      [field]: 'another-document-or-revision',
+    }) });
+    const handle = await startSupervisedEngine('fake.dll', { expectedBuildId: buildId }, async () => fake.physical);
+    try {
+      await expect(withEngineRequestContext(context, () => handle.connection.sendRequest(
+        'PreviewOwnedRegionPropertyReset', context.documentId, 'expected-hash', 'this', 'Text', context.sourceText, true,
+      ))).rejects.toMatchObject({ code: 'STALE_WORKER_REPLY' });
+      expect(fake.sendRequest.mock.calls.filter(([method]) => method === 'ExecuteV2Envelope')).toHaveLength(1);
+    } finally { handle.dispose(); }
   });
 
   it('increments actual wire generations above a dominating render sequence for successive proposed sources', async () => {

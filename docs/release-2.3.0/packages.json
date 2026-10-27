@@ -1,0 +1,46 @@
+{
+  "version": "2.3.0",
+  "artifacts": [
+    {
+      "path": "extension/winforms-designer-win32-x64.vsix",
+      "bytes": 18359080,
+      "sha256": "90abe633fad8579b7bd14c22c1348fdd220048617cc07a374336ede1dc44176d",
+      "entries": 204,
+      "version": "2.3.0",
+      "modernRuntimeIdentifier": "win-x64",
+      "modernMachine": "0x8664",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "1f5ae7ccc190eff76e133c2a421f2008b9a07aa00a5965dd7fb1a0429cce3775",
+      "modernEngineSha256": "1c84e14eef88eb4cb2763dd52b2520b1d0a4653593e8437845cae8a921c165d2",
+      "net48EngineSha256": "895f71fa251e5356c4252ed6cb85a76862ad7ac82161b90ff2a54101f3ccc1f4",
+      "modernAssemblyVersion": "2.3.0.0",
+      "net48AssemblyVersion": "2.3.0.0",
+      "messagePackModernSha256": "1ebc0c2baec5a89b3738e892d61c92f037dd588db52412e1e3bdf2adc407aa94",
+      "messagePackNet48Sha256": "bb9609eb3dd3c74c86501547b36cff827a13bea7c47483fa3714efc5dcb7d496",
+      "acceptanceSuitesAbsent": true,
+      "physicalArm64Execution": "NOT_APPLICABLE"
+    },
+    {
+      "path": "extension/winforms-designer-win32-arm64.vsix",
+      "bytes": 18346871,
+      "sha256": "583f54b6cbcca34461680832f52fc41978812a0738125a1ac1d5d407f5284a27",
+      "entries": 204,
+      "version": "2.3.0",
+      "modernRuntimeIdentifier": "win-arm64",
+      "modernMachine": "0xAA64",
+      "net48Machine": "0x8664",
+      "extensionBundleSha256": "1f5ae7ccc190eff76e133c2a421f2008b9a07aa00a5965dd7fb1a0429cce3775",
+      "modernEngineSha256": "69eecf2f7eef683eb3934d6988d28f4227bbf50bcd38414c6bd279cee08d821a",
+      "net48EngineSha256": "895f71fa251e5356c4252ed6cb85a76862ad7ac82161b90ff2a54101f3ccc1f4",
+      "modernAssemblyVersion": "2.3.0.0",
+      "net48AssemblyVersion": "2.3.0.0",
+      "messagePackModernSha256": "1ebc0c2baec5a89b3738e892d61c92f037dd588db52412e1e3bdf2adc407aa94",
+      "messagePackNet48Sha256": "bb9609eb3dd3c74c86501547b36cff827a13bea7c47483fa3714efc5dcb7d496",
+      "acceptanceSuitesAbsent": true,
+      "physicalArm64Execution": "NOT_EXECUTED"
+    }
+  ],
+  "bothAssemblyVersions": "2.3.0.0",
+  "assertions": "scripts/assert-vsix.ps1 PASS for both target/RID/PE combinations after freezing; packaging isolation tests PASS",
+  "published": false
+}

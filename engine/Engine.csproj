@@ -4,10 +4,10 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <Version>2.2.0</Version>
-    <AssemblyVersion>2.2.0.0</AssemblyVersion>
-    <FileVersion>2.2.0.0</FileVersion>
-    <InformationalVersion>2.2.0</InformationalVersion>
+    <Version>2.3.0</Version>
+    <AssemblyVersion>2.3.0.0</AssemblyVersion>
+    <FileVersion>2.3.0.0</FileVersion>
+    <InformationalVersion>2.3.0</InformationalVersion>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -18,6 +18,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
     <PackageReference Include="StreamJsonRpc" Version="2.25.29" />
+    <!-- Pin the patched transitive formatter while retaining the existing RPC contract. -->
+    <PackageReference Include="MessagePack" Version="2.5.303" />
   </ItemGroup>
 
   <!-- sample .Designer.cs / .resx files are DATA fixtures to render, not engine source/resources -->

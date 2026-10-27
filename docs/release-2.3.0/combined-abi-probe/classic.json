@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "contract": "classic-System.Design",
+  "runtime": "4.0.30319.42000",
+  "apartment": "STA",
+  "designerBase": "System.Windows.Forms.Design.ControlDesigner, System.Design, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+  "actionListBase": "System.ComponentModel.Design.DesignerActionList, System.Design, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+  "editorBase": "System.Drawing.Design.UITypeEditor, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+  "editorService": "System.Windows.Forms.Design.IWindowsFormsEditorService, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+  "designerActivatedByRealHost": true,
+  "selected": true,
+  "actionCaption": "Classic ABI probe",
+  "changing": 2,
+  "changed": 2,
+  "committed": 1,
+  "editorStyle": "DropDown",
+  "editorRefusal": "NATIVE_UI_NOT_EXECUTED",
+  "nativeDropDownRequests": 1,
+  "nativeWindowsDisplayed": 0,
+  "services": {
+    "System.ComponentModel.Design.IDesignerHost, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089": "System.ComponentModel.Design.DesignerHost, System.Design, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+    "System.ComponentModel.Design.IComponentChangeService, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089": "System.ComponentModel.Design.DesignerHost, System.Design, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+    "System.ComponentModel.Design.ISelectionService, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089": "System.ComponentModel.Design.SelectionService, System.Design, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+    "System.ComponentModel.Design.IMenuCommandService, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089": "UNAVAILABLE",
+    "System.ComponentModel.Design.ITypeResolutionService, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089": "UNAVAILABLE",
+    "System.ComponentModel.Design.Serialization.IDesignerSerializationService, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089": "UNAVAILABLE"
+  },
+  "nativeUiAcceptance": "NOT_EXECUTED: public service request refused headlessly; ownership/focus/Escape remain separate product gates."
+}

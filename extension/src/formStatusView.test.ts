@@ -13,7 +13,7 @@ const labels: FormStatusLabels = {
   details: 'Details', target: 'Affected item', loading: 'Loading status', loadFailed: 'Status unavailable',
   actionFailed: 'Action failed', severity: { info: 'Information', warning: 'Warning', error: 'Error' },
   actions: {
-    retry: 'Retry render', rebuild: 'Rebuild', chooseAssembly: 'Choose assembly', viewCode: 'View code',
+    retry: 'Retry render', rebuild: 'Rebuild', chooseAssembly: 'Choose assembly', chooseProjectContext: 'Choose project context', viewCode: 'View code',
     clearCache: 'Clear cache', restart: 'Restart worker', reinstall: 'Open extension', refresh: 'Refresh',
   },
 };
@@ -77,6 +77,15 @@ describe('form status action authorization', () => {
     for (const action of malicious.diagnostics[0].actions) {
       expect(authorizeFormStatusAction(message(action, malicious), malicious)).toBeUndefined();
     }
+  });
+
+  it('authorizes project choice only for the current offered owner refusal', () => {
+    const offered = snapshot({ diagnostics: [{ code: 'AMBIGUOUS_OWNER', severity: 'error',
+      message: 'Choose a project context.', actions: ['chooseProjectContext', 'viewCode'] }] });
+    expect(authorizeFormStatusAction(message('chooseProjectContext', offered), offered)).toBe('chooseProjectContext');
+    expect(authorizeFormStatusAction(message('chooseProjectContext'), snapshot())).toBeUndefined();
+    expect(authorizeFormStatusAction(message('chooseProjectContext', snapshot({ revision: 2 })), offered)).toBeUndefined();
+    expect(renderFormStatusHtml(offered, labels, NONCE)).toContain('Choose project context');
   });
 
   it('rejects stale revisions, another document, and malformed messages', () => {

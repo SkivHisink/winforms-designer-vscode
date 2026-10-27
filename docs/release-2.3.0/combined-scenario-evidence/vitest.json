@@ -1,0 +1,1431 @@
+{
+  "schemaVersion": "v2-scenario-evidence.2",
+  "suite": "unit",
+  "invocation": "vitest-4.1.12",
+  "generatedAtUtc": "2026-10-27T03:14:00.362Z",
+  "completed": true,
+  "sourceRoot": ".",
+  "provenance": {
+    "schemaVersion": "v2-evidence-provenance.1",
+    "runId": "combined23-467d3cef-14d1-449e-8250-4a743dc96f91",
+    "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+    "productTreeSha256": "2366020f6200d8e82c05000621cc608fc1f9d021048122a16c0038e0447aee32",
+    "productFileCount": 258,
+    "producer": "test-collector:vitest",
+    "sourceArtifact": {
+      "path": "test-results/vitest.json",
+      "sha256": "abe9a27de0fe323ba404257f999d21b06edd34081c7aba878c27868c2341eabd",
+      "bytes": 338667
+    }
+  },
+  "results": [
+    {
+      "scenarioId": "V2-FND-001-S001",
+      "status": "PASS",
+      "assertionCount": 2,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 62,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "55be431959eaee3c79cafbcda306ba85b2b9059f7eca02bdac857c6a3809cdde"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 63,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "1bdf3ef16a99fe6b8580572352c6d1d048e2a5ba3ed2e34f8997bea1eeae7644"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S002",
+      "status": "PASS",
+      "assertionCount": 4,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 76,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "40a7a16091713eddf8c95a42eaa3df6a9540711fe7a2ce4fc7b3a36a763035b6"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 77,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "2e5c82f5ca0174293f4600fad17b9a7b0a1d475cf83c5ffc7e147104c0ee5039"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 78,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "ea17a62f0b06de5c9957ba653bf299f0fa1dbc09a5d2ffe951bde2251254207e"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 79,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "4036568b9c4dc43e34fcaa385d0bb655d8402c858c4fc1f79149f899381c5598"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S003",
+      "status": "PASS",
+      "assertionCount": 4,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 101,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "1a1d331ce791ad9222dc5d282ca9fe53359666e91f1f306440bf57e5732aac65"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 102,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "cade1f855a615e8ed6535913ec5d958cf7fdda984ed1c358c45ab8dcaa5589fd"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 103,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "0a7066b28cfcb65eaf12defee60c960261b1b65e161f6fa0d81b65bb7fd31b8d"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 104,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "97272e9369c37026b18a6b141bc7af1b81bc18fca813e8cf84bd11d37c82cb96"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S004",
+      "status": "PASS",
+      "assertionCount": 4,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 113,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "573b09d601e928c9b9501a6e2fb795fb2c947a0dc75ba617a688fd19805d1135"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 114,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "ab93db90b633ea0a6b369f4d50ce2341cf5d1cc4d8883d83e32fa8478fe559ab"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 115,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "e6ea60a7f10a4fde02e61ca93ea0078e305373ee8b0757217f8ee3b1919eea4b"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 116,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "dbd7ac8ffe5cb245361b0d0fb76d0f6318a9102e57ebed1768efc91a66195ae1"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S005",
+      "status": "PASS",
+      "assertionCount": 4,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 138,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "581caa49e030163c9b62276b1e152e59b8033e75478fd2f059124d99443e312f"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 139,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "59e00e816a82470f42b175015cb90929bfcc46cc4c54fa3b03df50814022d0ca"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 140,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "d35d979d250bd9eccf3a8d8b95fedb6d09f365129336cfd021f68019b6f1bef6"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 143,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "cfaf67cc44559c20c302366d6aa875e1bae4e2454742c4f15f0a21cfa3f3ef0c"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S006",
+      "status": "PASS",
+      "assertionCount": 5,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 160,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "2a5cc56de7c83842291c80dddcd1374d49dd73e0b2d6b29f1b02df0c427ef16f"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 164,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "cb4ef1519720463df6511a35ff3fe6e59a0b33aff87995f4161ed7088fc64446"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 165,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "4fb1e3427b37bcc31746ae18d8b9ed507805db083ff2c917edbf1eb2af20b988"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 166,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "2e7cab129d82e6f19d98c9aa8b4e1eb4a266dc4891be4074b803bd70a007853c"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 167,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "17d18db6642b05306f31a2138f94877db7103c0d15adf088c3cf649b61678d80"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S007",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 171,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "e17d6b5a9ba6217d98e929024ef2b15d567ad9bff952ae2874f05de6bbd0f3bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S008",
+      "status": "PASS",
+      "assertionCount": 10,
+      "assertions": [
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 195,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "1d6782c1963c8d30a1bcc6eeeadcf148a95f4e9eef9f223e2cb72e7083fd7151"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 204,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "10aa5a5cff64663c0956d72218a148916c448b7d52d27d749dc677d96fbfb337"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 205,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "f95ab9abbcad6cb52b160936b4db40c4e915f0406e73719d8b305a2e6c0780d6"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 206,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "944f14667bf725640d9339c5fabc137286aa917c12571f8cf9195084c9ed39ec"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 207,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "0d4bf4cf5c072f063494ee6382ab399a5092af6aced3c7584c51a8384b2fb950"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 217,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "af190109b88e953c560f48dc976358c1ba82dd51a7b1aac1a19a87f73733a743"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 223,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "806cb13c714884e5276a88fe78cbffec7509191d958c8e328d433ba1392fc177"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 224,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "b5bc2f2bc08962eb20ba1e93a2622ea1fb1ad37676c5fffa13f25030ce03ad2c"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 225,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "3b70c1ef741609e28f637380b3a087351e5cfeccb28b16b4940aa6b5ec89e6a7"
+        },
+        {
+          "file": "extension/src/documentCatalogScenarios.test.ts",
+          "line": 226,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "4ce2149265cf9028ab0d8c4b8954c294e79c538523ef450b4551fc7912b29738",
+          "lineSha256": "0d4bf4cf5c072f063494ee6382ab399a5092af6aced3c7584c51a8384b2fb950"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S009",
+      "status": "PASS",
+      "assertionCount": 1,
+      "assertions": [
+        {
+          "file": "extension/src/engineClient.test.ts",
+          "line": 878,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "ef225abf542ebb1cd6a6d19aea6091a021e580205eed717166c758b939d6cf9c",
+          "lineSha256": "104b0f51931b3d2de9ddbeab56b9c9a86ae8542f305906336bf9f6001f6ce490"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S021",
+      "status": "PASS",
+      "assertionCount": 4,
+      "assertions": [
+        {
+          "file": "extension/src/engineClient.test.ts",
+          "line": 235,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "ef225abf542ebb1cd6a6d19aea6091a021e580205eed717166c758b939d6cf9c",
+          "lineSha256": "b703e0a5a54ea043f47aef9b17c4ad9eea80ce04af5936649ff01c5ce8964338"
+        },
+        {
+          "file": "extension/src/engineClient.test.ts",
+          "line": 241,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "ef225abf542ebb1cd6a6d19aea6091a021e580205eed717166c758b939d6cf9c",
+          "lineSha256": "2db80360b7a8dde013c4771aa47367c1ef07ef15a5597861a23fac5272a1a832"
+        },
+        {
+          "file": "extension/src/engineClient.test.ts",
+          "line": 245,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "ef225abf542ebb1cd6a6d19aea6091a021e580205eed717166c758b939d6cf9c",
+          "lineSha256": "bc52d69ae02f0ee8ee0e3558cd17e52034d4e6a260eaf40f8fd2cb180813f7f2"
+        },
+        {
+          "file": "extension/src/engineClient.test.ts",
+          "line": 247,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "ef225abf542ebb1cd6a6d19aea6091a021e580205eed717166c758b939d6cf9c",
+          "lineSha256": "bc52d69ae02f0ee8ee0e3558cd17e52034d4e6a260eaf40f8fd2cb180813f7f2"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S038",
+      "status": "PASS",
+      "assertionCount": 18,
+      "assertions": [
+        {
+          "file": "extension/src/multiProperty.test.ts",
+          "line": 57,
+          "kind": "expect.call",
+          "executions": 3,
+          "fileSha256": "3795eb4dfbb18339d80ebe142babf2b050894e8b1f2edf0fdf812b78db2fd169",
+          "lineSha256": "3e72d5c9b06209e5907f447188622090757df3bb910057081d6f28a15663817c"
+        },
+        {
+          "file": "extension/src/multiProperty.test.ts",
+          "line": 58,
+          "kind": "expect.call",
+          "executions": 3,
+          "fileSha256": "3795eb4dfbb18339d80ebe142babf2b050894e8b1f2edf0fdf812b78db2fd169",
+          "lineSha256": "4f40291ad2ce879e242cdcc3b4ab00a26e56be8aec0dfa938e5048d2bba3b8dd"
+        },
+        {
+          "file": "extension/src/multiProperty.test.ts",
+          "line": 59,
+          "kind": "expect.call",
+          "executions": 3,
+          "fileSha256": "3795eb4dfbb18339d80ebe142babf2b050894e8b1f2edf0fdf812b78db2fd169",
+          "lineSha256": "f1c10bb4fbc433883fd52da00d6a5f0be6f0c503b1b3ecc09a8d132e1aa9772f"
+        },
+        {
+          "file": "extension/src/multiProperty.test.ts",
+          "line": 60,
+          "kind": "expect.call",
+          "executions": 3,
+          "fileSha256": "3795eb4dfbb18339d80ebe142babf2b050894e8b1f2edf0fdf812b78db2fd169",
+          "lineSha256": "d2ebe5ffbc6a740d1310092e6834f2d51f4ed61c182e24bfcb6130b657c957c6"
+        },
+        {
+          "file": "extension/src/multiProperty.test.ts",
+          "line": 74,
+          "kind": "expect.call",
+          "executions": 3,
+          "fileSha256": "3795eb4dfbb18339d80ebe142babf2b050894e8b1f2edf0fdf812b78db2fd169",
+          "lineSha256": "9fbe96e70b7dd18036f666195cc737615854717e9d63783d8416c3c54968c104"
+        },
+        {
+          "file": "extension/src/multiProperty.test.ts",
+          "line": 123,
+          "kind": "expect.call",
+          "executions": 3,
+          "fileSha256": "3795eb4dfbb18339d80ebe142babf2b050894e8b1f2edf0fdf812b78db2fd169",
+          "lineSha256": "2c78fd8d72bb5f08f365d8faa32f4bfa6d7894a193a777e801eff0080060b599"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S053",
+      "status": "PASS",
+      "assertionCount": 20,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 437,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "cd1bab15df72cdcab36b3ba6b873e3de5151e4e6f5c5fa5c24f4af69ca7b3e8d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 447,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "750c44a440ae1664782b3f5eeedad39a17f51a8949c17a6aa3f91fe3575fdf7d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 472,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "7298bf4b4d97e83bb9c2df44594db5a4f840efbc35574f44e6f5d880b83d60a6"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 479,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "cb52f25cc31d4d70983b9aa985a1dd65ac18951ce04d5dc16188ff68f7bdebc6"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 534,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "ff1ee863d90953c116b76c5d21c4a2d96bdb8eb9215ef50572a9802ecd09fb94"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 535,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "b01b29a4657337bff53996548760dcde1d4368a6535594db30ef4203b1e792c1"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 536,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "750c44a440ae1664782b3f5eeedad39a17f51a8949c17a6aa3f91fe3575fdf7d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 541,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "bffcce6e356e4dd4cb334fbfbfc572cd411fb9731dd50ffe6db9fdefb5da71e1"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 542,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "0d620e67c8a1c30f03260833b40e561f8caa7c04d127db2523e05ecaa935784b"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 543,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "0fb9128c6f9ac9c7e4e8a9dd2bea0cd1fac8b817e11a5cf21bae8914542006be"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 552,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "e886d4535d7fefd18f1024ff25c03c5b4fc0784e0f3d9e5b4ddf775db103a5ae"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S054",
+      "status": "PASS",
+      "assertionCount": 13,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 437,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "cd1bab15df72cdcab36b3ba6b873e3de5151e4e6f5c5fa5c24f4af69ca7b3e8d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 447,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "750c44a440ae1664782b3f5eeedad39a17f51a8949c17a6aa3f91fe3575fdf7d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 472,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "7298bf4b4d97e83bb9c2df44594db5a4f840efbc35574f44e6f5d880b83d60a6"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 479,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "cb52f25cc31d4d70983b9aa985a1dd65ac18951ce04d5dc16188ff68f7bdebc6"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 534,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "ff1ee863d90953c116b76c5d21c4a2d96bdb8eb9215ef50572a9802ecd09fb94"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 535,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "b01b29a4657337bff53996548760dcde1d4368a6535594db30ef4203b1e792c1"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 536,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "750c44a440ae1664782b3f5eeedad39a17f51a8949c17a6aa3f91fe3575fdf7d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 541,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "bffcce6e356e4dd4cb334fbfbfc572cd411fb9731dd50ffe6db9fdefb5da71e1"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 542,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "0d620e67c8a1c30f03260833b40e561f8caa7c04d127db2523e05ecaa935784b"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 543,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "0fb9128c6f9ac9c7e4e8a9dd2bea0cd1fac8b817e11a5cf21bae8914542006be"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 552,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "e886d4535d7fefd18f1024ff25c03c5b4fc0784e0f3d9e5b4ddf775db103a5ae"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S055",
+      "status": "PASS",
+      "assertionCount": 4,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 575,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "e421872de0add7523d1b5452d555f9bb350e265732eb6a4cfa4d8d267bab7cd9"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 579,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "e6ca9fb9a8ca04b9855310583f818da868ace89da9a770e8f264a493194e183e"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 580,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "a30d9d358a5da7b48ec221dde4912bdb094ac376cc4e13933a343f7c316ed087"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 581,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "d8ff00b0ce482414354b5ec0bc83dcaac762f15011930d2083c9440038dab16f"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S056",
+      "status": "PASS",
+      "assertionCount": 2,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 599,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "8c448e2c5306ee4f803ae4c684c118378c16f3f81d57aa6ca578978b486639c9"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 611,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "77ab1af3c3e049fd80ad91cb3f290fd349383ddf35cc4383e107152e6e2fb02a"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S057",
+      "status": "PASS",
+      "assertionCount": 16,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 619,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "5b7e34363920b8c3d14e0efc257ab78c1bdc4d46ede9d24f639a607eacbbadcb"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 625,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "b21f958b315fbb8f3cd490c92c187a09bf5bbaf963c2647fcf0c9a6f45fb7338"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 631,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "d80d5d95521722f4bd127e4524aa8deb7bdc9ff751a0cdb838586fdb1325ae0d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 637,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "bacbd3c89eb7ac02f36268c74dbd1aedeb1c9dd106be336d82648c70701eef0c"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S058",
+      "status": "PASS",
+      "assertionCount": 16,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 619,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "5b7e34363920b8c3d14e0efc257ab78c1bdc4d46ede9d24f639a607eacbbadcb"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 625,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "b21f958b315fbb8f3cd490c92c187a09bf5bbaf963c2647fcf0c9a6f45fb7338"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 631,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "d80d5d95521722f4bd127e4524aa8deb7bdc9ff751a0cdb838586fdb1325ae0d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 637,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "bacbd3c89eb7ac02f36268c74dbd1aedeb1c9dd106be336d82648c70701eef0c"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S059",
+      "status": "PASS",
+      "assertionCount": 16,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 619,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "5b7e34363920b8c3d14e0efc257ab78c1bdc4d46ede9d24f639a607eacbbadcb"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 625,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "b21f958b315fbb8f3cd490c92c187a09bf5bbaf963c2647fcf0c9a6f45fb7338"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 631,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "d80d5d95521722f4bd127e4524aa8deb7bdc9ff751a0cdb838586fdb1325ae0d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 637,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "bacbd3c89eb7ac02f36268c74dbd1aedeb1c9dd106be336d82648c70701eef0c"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S060",
+      "status": "PASS",
+      "assertionCount": 16,
+      "assertions": [
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 619,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "5b7e34363920b8c3d14e0efc257ab78c1bdc4d46ede9d24f639a607eacbbadcb"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 625,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "b21f958b315fbb8f3cd490c92c187a09bf5bbaf963c2647fcf0c9a6f45fb7338"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 631,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "d80d5d95521722f4bd127e4524aa8deb7bdc9ff751a0cdb838586fdb1325ae0d"
+        },
+        {
+          "file": "extension/src/toolboxDiscovery.test.ts",
+          "line": 637,
+          "kind": "expect.call",
+          "executions": 4,
+          "fileSha256": "50bf57257a7fd3e5bfe3d8cd62b30e099d2f5fb0cd084cd5eb9de51f3e612378",
+          "lineSha256": "bacbd3c89eb7ac02f36268c74dbd1aedeb1c9dd106be336d82648c70701eef0c"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S076",
+      "status": "PASS",
+      "assertionCount": 3,
+      "assertions": [
+        {
+          "file": "extension/src/projectResources.test.ts",
+          "line": 50,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "360da6fe34f74b106ce76dabb00766b7b46f5030d4e5576dc003a6fc0f8c4fb7",
+          "lineSha256": "680c98abda5fa16b3dd4d91f64f3607683aa32717b368b504741d8367b64fb2b"
+        },
+        {
+          "file": "extension/src/projectResources.test.ts",
+          "line": 51,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "360da6fe34f74b106ce76dabb00766b7b46f5030d4e5576dc003a6fc0f8c4fb7",
+          "lineSha256": "e36aae68795d89b6bd61f72788b2cc0722f1959b70262778af332f34cf18f18c"
+        },
+        {
+          "file": "extension/src/projectResources.test.ts",
+          "line": 53,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "360da6fe34f74b106ce76dabb00766b7b46f5030d4e5576dc003a6fc0f8c4fb7",
+          "lineSha256": "68bc18bd9f40ed0017e2ad577f7a74927b31f9be7a6ba6b1660e65b4b9e1bc64"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S080",
+      "status": "PASS",
+      "assertionCount": 4,
+      "assertions": [
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 293,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "785ed8c8e1309a9b8ddc02dd747fa41dd6496b91a2254650a525cf67f37355f5"
+        },
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 294,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "29bda9dadd763b3b7fd1f0260e596f848277b1093af04a5d3f63c897a9f4e872"
+        },
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 295,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "9432c571604f116e252a574ae6ea57fdd06f0614eae8831c05f889feff484a77"
+        },
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 296,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "23aa0818940795c278b2a3a692b3092d202c024e136c6ae7972cd66dfb57611b"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S103",
+      "status": "PASS",
+      "assertionCount": 44,
+      "assertions": [
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 97,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "0281b97d6ea865a7b8d5fdcd5b25f1212eeb2d5ef5987ce82935b5f77c9f1ef6"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 98,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "bf95b57d8abb354067951fd4c5a61cbcd9dfdec76867f4dd518de94eb191f613"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 115,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "d3dcea7de14152bf24c4d4ef3763041bd3d92b78393b42412e99d5cb33a44843"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 122,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "ce2fe5f67a4cf1ce87a03030ac4b8422a73876bbb0668c0bd4237fc87640d602"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 124,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "259b5483fc375524ad4365c36025712b1d222c56726e2987a8140b3139817b93"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 125,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "6a48b54bfda5bbf61f92a4bf97f889a21128d916fca9da30d248a8980f77f21f"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 126,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "ac7dfcc4ff99c57d47a49688da78f908024461f77cae6088e1cd9d1ef8586736"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 127,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "cd98e7266f75911a2b7c1ecc8e27e830b31a1cc3d9338b712234a5f288bcebaa"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 128,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "6e0f12343f1d0143275b7872da9b80ecb94fe50b9551e8c56eb4ccd2ddc249f8"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 130,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "0985ee8b191d535cc0516776e09c1a83e79a615367fc109d2eae243048114f2d"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 145,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "3ad83fdb6a11be301b5884db3e85159c007ae1689bdeb1c83ea87c196bcf6cc2"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 150,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "7cf7f681b823b3d9c5b858c2aeeb6fdf977d32bf41464c65be404a9c2aa2f0fe"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 151,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "961c41e615b5d0d7d77769ad98238e1bf5c14d31075ae32cde4c493d26408037"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 152,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "65e92c9304c156827462fb304ef16758833386b58a5f8f23703c60985b3326fe"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 153,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "2235e50dd4282df98b9ffb13ce87c381fbcd1fd9ba85137d4826edeb6212edf0"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 458,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "270498ab328e66f99c6f4bd1e39cb9948ff2b49b5a9661ab61639c0a92aabdf1"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 459,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "91b80147a8db8dff246028125307227616d88e5030524bb35580ba1231dd61ac"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 467,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "2743b8866e192ca7069b541b4263c7a9e53df63fcf2ccf7c96ab3a373e713a13"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 474,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "366b86feda17b287a83c1bbf161c90c72e4d8bd65397106fc94e76454b23d51f"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 484,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "20d9f17a1580488563304cc97fa6e70bdee92b582d5a788df90d2399e4e39c69"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 485,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "b3090277b95d57c3c9c097af8dbe736814604b1e8dd689a0d8cd6fa4a133435a"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 493,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "2b9b6d4dd614047bed2c3c39123af0f6eb1e9ec11bb4af17eefefedb223dc38c"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S104",
+      "status": "PASS",
+      "assertionCount": 26,
+      "assertions": [
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 171,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "54dc6f7d87e6a07778961129948afaf64a693882e4be840948b793c2da375a81"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 172,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "d675803dede50468623d2f7c9a3090fadd074c49a74d2d68745baf3c7e530413"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 178,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "29b4c485c6232b2652e0797dc90766991f1fd783b8250b29b9a6627318fcb0bd"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 183,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "6355e21d7aa6eacac080c17201509b051dd91dc8c83b88be60d6ea877ed7a72a"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 586,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "94dc3c16cf9e77fcbb55f564478abca1dd5b0e64eb503dde79d4bab717d46393"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 589,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "3e5949485d73e4488f85023b6e5467934cd1ce5712a0ed6e927066f8b4f63ec0"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 590,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "1334331794dc3726f643d052bd34d0b4d096be965e446ec32e23b1d2de6c89a9"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 598,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "cb4d49f13667527e8c62be67f0cbe7a123efa8f0baab45dd441b09c2984a7220"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 599,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "20d9f17a1580488563304cc97fa6e70bdee92b582d5a788df90d2399e4e39c69"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 607,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "f959083f02536278e8d2ca8511f7ca0201d159fe71bc2d1ec503cf355ed1a261"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 613,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "366b86feda17b287a83c1bbf161c90c72e4d8bd65397106fc94e76454b23d51f"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 616,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "0efb7f255720c614d853a551153a1937953d3e10baa127ac37268ae2055bd486"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 617,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "20d9f17a1580488563304cc97fa6e70bdee92b582d5a788df90d2399e4e39c69"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S107",
+      "status": "PASS",
+      "assertionCount": 30,
+      "assertions": [
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 223,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "768361a5d2361acbe692a7a6e8b5dc242c7aef9ec1ba94d50ce8cc835fa9ebe0"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 230,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "ed5bb3bd08ce6202b5feb47b29b2521153c6a67238b06adc04562a1de474c4dd"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 231,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "2188e52be11d38223570e12b4d96c7fa0490ab221ab7c99b7b9632d46e596522"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 246,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "3ad83fdb6a11be301b5884db3e85159c007ae1689bdeb1c83ea87c196bcf6cc2"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 251,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "4b7bcf7e0bf564574597c03436c675dda5dbfbd2dc1b9c9e851cf28e1719ef7e"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 252,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "842422e1f4a794f19bf82760667f74abc41100fef1435857a06e089eecb31d77"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 254,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "d4ebf37fca2bc7f8071519cd28f81570629c17127cd11e07a93a2510c5807ba0"
+        },
+        {
+          "file": "extension/src/v2RuntimeLifecycle.test.ts",
+          "line": 255,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "e2039381c6afc1f2485cd93bcad65c44582c94b2512f71c459d7b40128da62e6",
+          "lineSha256": "d0d2d879d20a786779b0801fc80d2a365df84a6aae50b2c161d17c694410d233"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 525,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "fca841e6b6e1a1fd4c59f17818eb57117dd2a5e7428250f6edddf8a40c893cb6"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 527,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "4bc0e11b65fa09ada41ad2dea9f804516dc26e9665a1b95c1ae2f40b524dcfe3"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 535,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "2743b8866e192ca7069b541b4263c7a9e53df63fcf2ccf7c96ab3a373e713a13"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 549,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "b3090277b95d57c3c9c097af8dbe736814604b1e8dd689a0d8cd6fa4a133435a"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 550,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "6ecb17509da4a77317b124b34ac3666b8a9a2dfee3e5df4f72ce4db1be86637f"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 551,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "9838e4529e11f91a25050cab4b3261a82c410afd6c7562d8d4eaa51d853aa249"
+        },
+        {
+          "file": "extension/src/workerSupervisor.test.ts",
+          "line": 560,
+          "kind": "expect.call",
+          "executions": 2,
+          "fileSha256": "427eb27f88da38bc4cb855330b6b4cf80ce08b96c83c59c4207bdc13ba9f88e4",
+          "lineSha256": "c8274d2fcf158162ef492f3c812abb58ad4b0c586db5ddeaf59356313eb30de6"
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "V2-FND-001-S118",
+      "status": "PASS",
+      "assertionCount": 5,
+      "assertions": [
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 164,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "229f4a349313f8d3c5b5da9a146785df5f800aad2e8240c0562400eeff9ccb80"
+        },
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 165,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "e2014428cb268b3c4f3ebc777b50c046a0e27922b78966c8f1907b97ebdef6bb"
+        },
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 166,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "9fc6fe2409013b8fa95a4d0e7f0916ea2d73b17d52f5d48d43165d957d5b8b31"
+        },
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 167,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "1545eaf3b800612ba2bc25cd70d148a068d2b257b07ad2348ba79f9235c02736"
+        },
+        {
+          "file": "extension/src/transactionIntegration.test.ts",
+          "line": 168,
+          "kind": "expect.call",
+          "executions": 1,
+          "fileSha256": "fd40eb069f4752d2ea5a73fb5d4ad33251f825dbe3cba78e2460ab1084e99388",
+          "lineSha256": "ee51d17f2d4a5375d0b4799764422787a6142e90179e272c52de98c500e35d97"
+        }
+      ],
+      "error": null
+    }
+  ]
+}

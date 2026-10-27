@@ -1,0 +1,13 @@
+{
+  "name": "@winforms-designer/adapter-sdk",
+  "version": "0.1.0",
+  "description": "WinForms Designer Adapter SDK Preview contract and authoring tools",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24" },
+  "exports": { ".": { "types": "./index.d.mts", "import": "./index.mjs" } },
+  "files": ["index.mjs", "index.d.mts", "adapter-package.schema.json", "README.md"],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

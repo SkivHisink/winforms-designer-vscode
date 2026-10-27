@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "status": "REJECTED_DIRECT_INTEGRATION",
+  "probeCompleted": true,
+  "contract": "official-Microsoft.WinForms.Designer.SDK-1.6.0",
+  "compiledSample": {
+    "identity": "Independent.ModernDesigner, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+    "sha256": "af513cd27c74b031f4a9a00998067b2272fd7f8074c2273189f7cef079f00938"
+  },
+  "designerBase": "Microsoft.DotNet.DesignTools.Designers.ControlDesigner, Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+  "actionListBase": "Microsoft.DotNet.DesignTools.Designers.Actions.DesignerActionList, Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+  "editorBase": "Microsoft.DotNet.DesignTools.Editors.CollectionEditor, Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+  "editorBaseChain": [
+    "Microsoft.DotNet.DesignTools.Editors.CollectionEditor, Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+    "System.Object, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e"
+  ],
+  "editorPublicConstructors": [
+    "System.Void .ctor(System.IServiceProvider, System.Type)"
+  ],
+  "editorPublicMethods": [],
+  "requiredServices": [
+    "System.ComponentModel.Design.IDesignerHost",
+    "System.ComponentModel.Design.IComponentChangeService"
+  ],
+  "requiredServicesExecution": "NOT_EXECUTED: reference-only SDK does not supply an executable host.",
+  "commonHostService": "System.ComponentModel.Design.IDesignerHost, System.ComponentModel.TypeConverter, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+  "publicInitialization": "System.Void Initialize(System.ComponentModel.IComponent)",
+  "referenceOnly": true,
+  "runtimeResult": "REFERENCE_ASSEMBLY_RUNTIME_REFUSED",
+  "runtimeException": "System.BadImageFormatException: Could not load file or assembly 'Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'. Reference assemblies cannot be loaded for execution. (0x80131058)",
+  "nativeUiAcceptance": "NOT_EXECUTED: SDK contains compilation references; executable Visual Studio/DesignToolsServer host is not redistributed or emulated.",
+  "decision": "EXPLICIT_ADAPTER_REQUIRED: the product does not execute existing Microsoft.DotNet.DesignTools.Server designer binaries.",
+  "inventories": [
+    {
+      "path": "ref/net472/Microsoft.DotNet.DesignTools.Client.dll",
+      "identity": "Microsoft.DotNet.DesignTools.Client, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "sha256": "c55d61a1bc48e08b31abaa3ed7d8e09c21534009e80763003d08e3d02aa7c374"
+    },
+    {
+      "path": "ref/net472/Microsoft.DotNet.DesignTools.Protocol.dll",
+      "identity": "Microsoft.DotNet.DesignTools.Protocol, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "sha256": "f4071f9ab3e9d7f3412d0ef32e1b4e1f8c775d7a6a70790ae5cd4d76d25ef214"
+    },
+    {
+      "path": "ref/net472/Microsoft.WinForms.Utilities.Shared.dll",
+      "identity": "Microsoft.WinForms.Utilities.Shared, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "sha256": "2ca15a8f0df96ea79ce740a6133e1c0cdf061d3d5967af80369c5aeb5e524dfb"
+    },
+    {
+      "path": "ref/netcoreapp3.1/Microsoft.DotNet.DesignTools.Protocol.dll",
+      "identity": "Microsoft.DotNet.DesignTools.Protocol, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "sha256": "51288fed01b42eb38a42312a9c034c55133e9c1368b1c23de39c634fd2675170"
+    },
+    {
+      "path": "ref/netcoreapp3.1/Microsoft.DotNet.DesignTools.Server.dll",
+      "identity": "Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "sha256": "c27de0609f22bc406fd3f0424518c02029cefbfe632e07c217579e8fcb81a4c6"
+    },
+    {
+      "path": "ref/netcoreapp3.1/Microsoft.WinForms.Utilities.Shared.dll",
+      "identity": "Microsoft.WinForms.Utilities.Shared, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "sha256": "d91805dbc10b0f46a3866f4da2ab619619576201cf054d9eac8e62e76477d231"
+    }
+  ]
+}

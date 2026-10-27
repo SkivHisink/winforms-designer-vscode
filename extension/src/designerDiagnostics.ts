@@ -1,6 +1,7 @@
 import type { RenderDiagItem } from './renderDiagnostics';
+import { ENGINE_EXIT_REASONS, EngineExitReason } from './engineLifecycle';
 
-export type RecoveryActionId = 'retry' | 'rebuild' | 'chooseAssembly' | 'viewCode' | 'clearCache' | 'restart' | 'reinstall';
+export type RecoveryActionId = 'retry' | 'rebuild' | 'chooseAssembly' | 'chooseProjectContext' | 'viewCode' | 'clearCache' | 'restart' | 'reinstall';
 export type DesignerDiagnosticSeverity = 'info' | 'warning' | 'error';
 
 interface ReasonDefinition {
@@ -19,6 +20,7 @@ export const DESIGNER_DIAGNOSTIC_REASONS = {
   ENGINE_UNAVAILABLE: { severity: 'error', message: 'The selected design engine is unavailable. Restart it and retry the render.', actions: ['restart', 'retry'] },
   ENGINE_INSTALLATION_INCOMPATIBLE: { severity: 'error', message: 'The engine payload is missing or incompatible with this extension. Reinstall the matching WinForms Designer version, then run Reload Window. Save or back up unsaved documents before reloading.', actions: ['reinstall'] },
   ENGINE_CRASH_LOOP: { severity: 'error', message: 'Automatic engine recovery stopped after repeated failures. Inspect the source before restarting.', actions: ['viewCode', 'restart'] },
+  MSBUILD_GETPROPERTY_UNSUPPORTED: { severity: 'info', message: 'The selected SDK does not support MSBuild property queries. The designer searches built outputs in bin; custom output paths may require a newer SDK or an explicit control assembly.', actions: ['chooseAssembly', 'viewCode'] },
   CACHE_CORRUPT: { severity: 'warning', message: 'The rebuildable control cache is invalid. Clear that cache and discover controls again.', actions: ['clearCache'] },
   CACHE_WRITE_FAILED: { severity: 'warning', message: 'The control cache could not be saved. Rebuild the cache to retry.', actions: ['clearCache'] },
   STATE_MIGRATION_FAILED: { severity: 'warning', message: 'Saved toolbox preferences could not be migrated. Reload the window to retry; the original preferences are retained.', actions: [] },
@@ -28,7 +30,9 @@ export const DESIGNER_DIAGNOSTIC_REASONS = {
   INHERITED_PREVIEW_INCOMPLETE: { severity: 'warning', message: 'Inherited controls may be missing from this preview.', actions: ['viewCode', 'rebuild'] },
   BINARY_RESOURCE_UNSUPPORTED: { severity: 'warning', message: 'A binary resource cannot be represented by the current preview.', actions: ['viewCode'] },
   DOCUMENT_CHANGED: { severity: 'warning', message: 'The source changed while an operation was running. Render the current revision before retrying.', actions: ['retry', 'viewCode'] },
-  AMBIGUOUS_OWNER: { severity: 'error', message: 'More than one candidate owns this designer document. Resolve the source ambiguity.', actions: ['viewCode'] },
+  AMBIGUOUS_OWNER: { severity: 'error', message: 'More than one project owns this designer document. Choose its project context.', actions: ['chooseProjectContext', 'viewCode'] },
+  PROJECT_CONTEXT_ASSEMBLY_OVERRIDE: { severity: 'info', message: 'The preview uses an explicitly selected assembly. The project context selects ownership and event sources.', actions: ['chooseAssembly'] },
+  STALE_PROJECT_CONTEXT: { severity: 'error', message: 'The chosen project no longer compiles this designer document. Choose a current project context.', actions: ['chooseProjectContext', 'viewCode'] },
   NESTED_DESIGNER_UNSUPPORTED: { severity: 'error', message: 'A nested designer class is not supported by this editor.', actions: ['viewCode'] },
   MISSING_INITIALIZE_COMPONENT: { severity: 'error', message: 'The designer initialization method could not be resolved.', actions: ['viewCode'] },
   X86_NOT_SUPPORTED: { severity: 'error', message: 'This project or dependency requires an x86 design process, which is not supported.', actions: ['viewCode', 'chooseAssembly'] },
@@ -122,7 +126,7 @@ export interface DesignerDiagnosticSnapshot {
   workspaceTrusted?: boolean;
   engines?: readonly {
     kind: 'modern' | 'net48'; running?: boolean; starts?: number; recentCrashes?: number;
-    lastStartupMs?: number; lastExitCode?: number | null;
+    lastStartupMs?: number; lastExitCode?: number | null; lastExitReason?: EngineExitReason; lastExitIntentional?: boolean;
   }[];
   session?: {
     engineKind?: 'modern' | 'net48'; net48RenderMode?: string; renderOk?: boolean; dirty?: boolean;
@@ -220,6 +224,7 @@ export function buildDesignerDiagnosticBundle(
       engines.push({
         kind, running: bool(raw.running), starts: numeric(raw.starts, true), recentCrashes: numeric(raw.recentCrashes, true),
         lastStartupMs: numeric(raw.lastStartupMs), lastExitCode: raw.lastExitCode === null ? null : numeric(raw.lastExitCode, true, true),
+        lastExitReason: member(raw.lastExitReason, ENGINE_EXIT_REASONS), lastExitIntentional: bool(raw.lastExitIntentional),
       });
     }
     bundle.engines = engines;

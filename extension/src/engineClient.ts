@@ -10,6 +10,8 @@ import { StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node';
 import { RecoveryDecision } from './engineRecovery';
 import { EngineTransportState, SupervisedEngineOptions, startSupervisedEngine } from './engineTransport';
 import { guardEngineMessageWriter } from './engineWriter';
+import { EngineExitReason, observeEngineProcessExit, terminateEngineProcess } from './engineLifecycle';
+import { captureProjectEvaluationStatus } from './projectEvaluationStatus';
 export { currentEngineRequestContext, withEngineRequestContext } from './engineRequestContext';
 export type { EngineRequestContext } from './engineRequestContext';
 import {
@@ -45,7 +47,7 @@ export interface EngineHandle {
   connection: MessageConnection;
   process: ChildProcess;
   pipeName: string;
-  dispose(): void;
+  dispose(reason?: EngineExitReason): void;
   workerState?(): EngineTransportState;
   /** Protect a retained workflow handle from residency-budget eviction between RPCs. Release in finally. */
   acquireUsageLease?(): () => void;
@@ -54,6 +56,7 @@ export interface EngineHandle {
 }
 
 export interface StartOptions {
+  runtime?: 'modern' | 'net48';
   dotnet?: string; // path to dotnet (default 'dotnet')
   onLog?: (line: string) => void;
   /**
@@ -130,14 +133,28 @@ async function startRawEngine(engineDllPath: string, opts: StartOptions = {}): P
     { stdio: ['ignore', 'pipe', 'pipe'], env },
   );
   const startupOutput: string[] = [];
-  const capture = (d: Buffer): void => {
-    const line = '[engine] ' + d.toString().trimEnd();
-    startupOutput.push(line);
-    log(line);
+  const captureStream = (stream: NodeJS.ReadableStream): void => {
+    let pendingOutput = '';
+    const report = (text: string): void => {
+      if (captureProjectEvaluationStatus(text)) return;
+      const line = '[engine] ' + text;
+      startupOutput.push(line);
+      if (startupOutput.length > 64) startupOutput.shift();
+      log(line);
+    };
+    stream.setEncoding('utf8');
+    stream.on('data', (data: string) => {
+      pendingOutput += data;
+      const lines = pendingOutput.split(/\r?\n/);
+      pendingOutput = lines.pop() ?? '';
+      for (const text of lines) report(text);
+      if (pendingOutput.length > 32_768) { report(pendingOutput.slice(0, 32_768)); pendingOutput = ''; }
+    });
+    proc.once('close', () => { if (pendingOutput) report(pendingOutput); pendingOutput = ''; });
   };
-  proc.stdout.on('data', capture);
-  proc.stderr.on('data', capture);
-  proc.on('exit', (code) => log('[engine] exited ' + code));
+  captureStream(proc.stdout);
+  captureStream(proc.stderr);
+  observeEngineProcessExit(proc, opts.runtime ?? (/net48/i.test(engineDllPath) ? 'net48' : 'modern'), log);
   // MUST handle 'error' (e.g. ENOENT when `dotnet` isn't on PATH): an unhandled ChildProcess 'error'
   // event throws an uncaught exception that can take down the whole extension host (exit code 1). With a
   // handler it's logged instead, and connectWithRetry below then fails cleanly → a surfaced render error.
@@ -156,7 +173,7 @@ async function startRawEngine(engineDllPath: string, opts: StartOptions = {}): P
     try { connection?.dispose(); } catch { /* already disconnected */ }
     try { socket.destroy(); } catch { /* already disconnected */ }
     // dispose suppresses onClose in vscode-jsonrpc; actual exit must also invalidate the live registry owner.
-    try { proc.kill(); } catch { /* already exited */ }
+    terminateEngineProcess(proc, 'transportFailure');
   });
   connection = createMessageConnection(
     new StreamMessageReader(socket),
@@ -168,10 +185,10 @@ async function startRawEngine(engineDllPath: string, opts: StartOptions = {}): P
     connection,
     process: proc,
     pipeName,
-    dispose() {
+    dispose(reason = 'recycle') {
       try { connection.dispose(); } catch { /* ignore */ }
       try { socket.destroy(); } catch { /* ignore */ }
-      try { proc.kill(); } catch { /* ignore */ }
+      terminateEngineProcess(proc, reason);
     },
   };
 }
@@ -198,7 +215,7 @@ function connectWithProcessGuard(
       // Every fail path rejects the whole startEngine(), so no EngineHandle is ever produced and nothing else owns
       // this child. If it is alive-but-not-listening (pipe never opened, retries exhausted), it would be orphaned and
       // keep pinning the user's dll. Kill it here; a no-op when it already exited.
-      try { proc.kill(); } catch { /* already gone */ }
+      terminateEngineProcess(proc, 'startupFailed');
       const details = startupOutput.filter(Boolean).slice(-12).join('\n');
       reject(new Error(`failed to start WinForms designer engine (${engineEntry}): ${reason}${details ? `\n${details}` : ''}`));
     };
@@ -956,6 +973,15 @@ export function inspectCertifiedHostedDesigner(
     'InspectCertifiedHostedDesigner', assemblyPath, componentTypeName, certificationId);
 }
 
+/** Inspect the closed framework-only hosted Preview registry on the selected engine's STA. Only data crosses RPC;
+ * no caller assembly, service instance or source proposal is admitted. */
+export function inspectHostedPreviewServices(
+  engine: EngineHandle,
+  rootKind: 'Form' | 'UserControl' = 'Form',
+): Promise<HostedServiceKernelCapabilitiesResult> {
+  return engine.connection.sendRequest<HostedServiceKernelCapabilitiesResult>('InspectHostedPreviewServices', rootKind);
+}
+
 /** Revalidate complete/incomplete service advertisement for one exact repository-certified ComponentDesigner. */
 export function inspectCertifiedHostedServiceKernel(
   engine: EngineHandle,
@@ -1676,6 +1702,42 @@ export interface HostedDesignerProbeResult {
   privateDesktop: boolean;
 }
 
+export type HostedPreviewCapability = 'ContainerSiting' | 'Naming' | 'ComponentChange' | 'Selection'
+  | 'Transactions' | 'MenuCommands' | 'ToolboxCatalog' | 'TypeResolution' | 'PropertySerialization';
+
+export interface HostedServiceContractDescriptor {
+  capability: HostedPreviewCapability;
+  serviceType: string;
+  methods: string[];
+  threading: string;
+  lifetime: string;
+  cancellation: string;
+  reentrancy: string;
+  refusal: string;
+  scope: string;
+}
+
+export interface HostedServiceKernelCapabilitiesResult {
+  ok: boolean;
+  status: 'ready' | 'refused';
+  errorCode: string;
+  reason: string;
+  serviceProfileVersion: string;
+  apartmentState: string;
+  rootType: string;
+  contracts: HostedServiceContractDescriptor[];
+  toolboxItems: Array<{ id: string; typeName: string }>;
+  resolvedType: string;
+  serializedProperties: Array<{
+    componentName: string; componentType: string; text: string; width: number; height: number;
+  }>;
+  proposals: Array<{
+    componentName: string; componentType: string; propertyName: string; propertyType: string; invariantValue: string;
+  }>;
+  unsupportedClassicSerializationRefused: boolean;
+  incompleteHostWithheld: boolean;
+}
+
 export interface HostedServiceKernelEdit {
   propertyName: string;
   propertyType: string;
@@ -2011,6 +2073,7 @@ export interface DesignerDocumentOwnerResolution {
 * pre-render safety gate: the engine parses InitializeComponent and checks only the project paths the extension
 * supplies. A missing method is accepted only for the Visual Studio-compatible empty read-only surface when the
 * matching code-behind proves a direct framework Form/UserControl; ambiguous or unproven ownership stays refused.
+* A preferred project is rechecked against the same complete candidate set; stale membership never falls back.
 */
 export function resolveDesignerDocumentOwner(
   engine: EngineHandle,
@@ -2018,6 +2081,7 @@ export function resolveDesignerDocumentOwner(
   projectPaths: string[],
   designerSourceText?: string | null,
   codeBehindSourceText?: string | null,
+  preferredProjectPath?: string | null,
 ): Promise<DesignerDocumentOwnerResolution> {
   return engine.connection.sendRequest<DesignerDocumentOwnerResolution>(
     'ResolveDesignerDocumentOwner',
@@ -2025,6 +2089,7 @@ export function resolveDesignerDocumentOwner(
     projectPaths,
     designerSourceText ?? null,
     codeBehindSourceText ?? null,
+    preferredProjectPath ?? null,
   );
 }
 
@@ -2618,6 +2683,21 @@ export function previewOwnedRegionPropertySet(
   ];
   if (retainedGraphToken) args.push(retainedGraphToken);
   return engine.connection.sendRequest<OwnedRegionPropertySetPreview>(...args);
+}
+
+/** Preview a reset through the same opt-in, expected-source proof boundary as owned-region property set. */
+export function previewOwnedRegionPropertyReset(
+  engine: EngineHandle,
+  designerFilePath: string,
+  expectedSourceSha256: string,
+  componentId: string,
+  propertyName: string,
+  sourceText: string,
+  optIn = false,
+): Promise<OwnedRegionPropertySetPreview> {
+  return engine.connection.sendRequest<OwnedRegionPropertySetPreview>(
+    'PreviewOwnedRegionPropertyReset', designerFilePath, expectedSourceSha256, componentId, propertyName, sourceText, optIn,
+  );
 }
 
 /** Validate a complete adapter/editor-proposed source image against one component's statements inside
@@ -3298,6 +3378,51 @@ export function resetProperty(
 ): Promise<EditPreview> {
   const tail = sourceText !== undefined ? [sourceText] : [];
   return engine.connection.sendRequest<EditPreview>('ResetProperty', designerFilePath, componentId, propertyName, ...tail);
+}
+
+/** Prefer an independently proven owned-region reset. Missing proof and already-default properties preserve the
+ * established source-first reset result, including its safe Noop/null contract. The caller owns persistence. */
+export async function resetPropertyViaProvenOwnedRegion(
+  engine: EngineHandle,
+  designerFilePath: string,
+  componentId: string,
+  propertyName: string,
+  sourceText: string,
+): Promise<ProductPropertyEditPreview> {
+  let ownedRegionRefusal: string | null = null;
+  const expectedSourceSha256 = sha256Hex(sourceText);
+  try {
+    const owned = await previewOwnedRegionPropertyReset(
+      engine, designerFilePath, expectedSourceSha256, componentId, propertyName, sourceText, true,
+    );
+    if (owned.safe
+      && owned.semanticEquivalence
+      && owned.outsideRegionPreserved
+      && owned.expectedSourceSha256 === expectedSourceSha256
+      && owned.actualSourceSha256 === expectedSourceSha256
+      && owned.componentName === componentId
+      && owned.propertyName === propertyName
+      && owned.plannedSourceText.length > 0
+      && owned.plannedSourceText !== sourceText
+      && owned.plannedSourceText === owned.laneASourceText) {
+      return {
+        safe: true,
+        mode: owned.mode,
+        text: owned.plannedSourceText,
+        reason: '',
+        persistenceLane: 'ownedRegion',
+        ownedRegionRefusal: null,
+      };
+    }
+    ownedRegionRefusal = owned.reason || 'owned-region reset proof was incomplete';
+  } catch (error) {
+    ownedRegionRefusal = `owned-region reset planner unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return {
+    ...await resetProperty(engine, designerFilePath, componentId, propertyName, sourceText),
+    persistenceLane: 'sourceFirst',
+    ownedRegionRefusal,
+  };
 }
 
 /** Compute one all-or-nothing Reset for a selected component set (no write). */

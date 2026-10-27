@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
+import { EngineExitReason, terminateEngineProcess } from './engineLifecycle';
 
-interface StartupOwner { dispose(): void; acquireUsageLease?(): () => void; }
+interface StartupOwner { dispose(reason?: EngineExitReason): void; acquireUsageLease?(): () => void; }
 
 interface StartupActions<T> {
   start(): Promise<T>;
@@ -117,7 +118,7 @@ export class SharedEngineStartup<T extends StartupOwner> {
   private disposeOwner(): void {
     if (this.disposed || !this.owner) return;
     this.disposed = true;
-    try { this.owner.dispose(); } catch { /* cancelPending plus exit confirmation remain the physical backstop */ }
+    try { this.owner.dispose('startupCancelled'); } catch { /* cancelPending plus exit confirmation remain the physical backstop */ }
   }
 
   private abandon(): void {
@@ -149,6 +150,6 @@ export function confirmEngineStartupExit(proc: ChildProcess | undefined, timeout
     const stopped = (): void => finish();
     const timer = setTimeout(() => finish(Object.assign(new Error('WORKER_PROCESS_RECYCLE_BLOCKED'), { code: 'WORKER_PROCESS_RECYCLE_BLOCKED' })), timeoutMs);
     proc.once('exit', stopped); proc.once('close', stopped);
-    try { proc.kill('SIGKILL'); } catch { /* wait for confirmed facts */ }
+    terminateEngineProcess(proc, 'startupCancelled', 'SIGKILL');
   });
 }

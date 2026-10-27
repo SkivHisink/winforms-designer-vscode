@@ -1,4 +1,11 @@
 {
+  "command.reloadDesignerFromDisk.title": "WinForms: Reload Designer from Disk",
+  "command.undoDesignerHistory.title": "WinForms: Undo Designer Action",
+  "command.redoDesignerHistory.title": "WinForms: Redo Designer Action",
+  "command.undoRecoveredAction.title": "WinForms: Undo Recovered Action",
+  "command.redoRecoveredAction.title": "WinForms: Redo Recovered Action",
+  "command.showRecoveryTimeline.title": "WinForms: Show Recovery Timeline",
+  "command.ownerContext.title": "WinForms: Choose Project Context…",
   "description": "Visualize and edit WinForms .Designer.cs forms live inside VS Code — a Visual Studio-style designer surface, property grid, toolbox and event wiring, powered by a .NET 10 rendering engine.",
   "editor.displayName": "WinForms Designer",
   "viewsContainers.title": "WinForms Designer",
@@ -42,5 +49,12 @@
   "command.rebuildToolboxCache.title": "WinForms: Rebuild Toolbox Cache",
   "command.refreshToolbox.title": "WinForms: Refresh Toolbox",
   "command.requestToolboxItems.title": "WinForms: Choose Toolbox Items",
-  "config.workers.maximumResidentProcesses.description": "Maximum number of resident preview workers across project graphs (1–16; default 4). A .NET Framework worker includes a launcher and an isolated render process. A busy worker is never evicted to admit a different project; retry after the current request completes or close a designer."
+  "config.workers.maximumResidentProcesses.description": "Maximum number of resident preview workers across project graphs (1–16; default 4). A .NET Framework worker includes a launcher and an isolated render process. A busy worker is never evicted to admit a different project; retry after the current request completes or close a designer.",
+  "command.inspectAdapterPackage": "WinForms: Inspect Adapter Package…",
+  "command.enableAdapterDevelopment": "WinForms: Enable Local Adapter Development…",
+  "command.disableAdapter": "WinForms: Disable Adapter…",
+  "command.invokeAdapterAction": "WinForms: Run Adapter Action…",
+  "command.editAdapterProperty": "WinForms: Edit Property with Adapter…",
+  "command.inspectHostedServices": "WinForms: Inspect Hosted Services",
+  "command.inspectDocument": "WinForms: Inspect Designer Document"
 }

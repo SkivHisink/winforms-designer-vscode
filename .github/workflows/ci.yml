@@ -97,6 +97,67 @@ jobs:
           }
           exit 1
 
+      - name: Adapter SDK independent contract tests
+        run: node --test adapter-sdk/test/*.test.mjs
+
+      - name: Adapter SDK public type contract
+        run: node extension/node_modules/typescript/bin/tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext adapter-sdk/test/type-contract.mts
+
+      - name: Build independent Adapter SDK samples
+        run: node samples/AdapterSdkPreview/build.mjs
+
+      - name: Pack independent Adapter SDK artifact
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'release24-sdk-package'
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          $pack = npm pack ./adapter-sdk --pack-destination $destination --json
+          if ($LASTEXITCODE -ne 0) { throw 'Adapter SDK npm pack failed.' }
+          $package = @(($pack -join [Environment]::NewLine) | ConvertFrom-Json)
+          $expected = @('LICENSE', 'README.md', 'adapter-package.schema.json', 'index.d.mts', 'index.mjs', 'package.json') | Sort-Object
+          $actual = @($package[0].files | ForEach-Object { $_.path } | Sort-Object)
+          if ($package.Count -ne 1 -or $package[0].name -ne '@winforms-designer/adapter-sdk' -or $package[0].version -ne '0.1.0' -or (Compare-Object $expected $actual)) {
+            throw 'Adapter SDK package identity or independent six-file payload does not match the public contract.'
+          }
+          $archive = Join-Path $destination $package[0].filename
+          $package[0] | Add-Member -NotePropertyName sha256 -NotePropertyValue (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $package | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $destination 'pack.json') -Encoding utf8
+          $pack | Write-Output
+
+      - name: Upload independent Adapter SDK artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release24-sdk-package
+          path: ${{ runner.temp }}/release24-sdk-package
+          if-no-files-found: error
+
+      - name: Independent Designer SDK ABI probe
+        shell: pwsh
+        run: |
+          $probe = Join-Path $env:RUNNER_TEMP ('release24-abi-' + [Guid]::NewGuid().ToString('N'))
+          try {
+            ./samples/DesignerSdkAbiProbe/run-probe.ps1 -OutputDirectory $probe
+            if ($LASTEXITCODE -ne 0) { throw 'Independent Designer SDK ABI probe failed.' }
+            if (@(Get-ChildItem -LiteralPath $probe -File -Filter '*.log').Count -ne 6 -or @(Get-ChildItem -LiteralPath $probe -File -Filter '*.json').Count -ne 3) {
+              throw 'Independent Designer SDK ABI probe must produce six command logs and three JSON reports.'
+            }
+          } finally {
+            if (Test-Path -LiteralPath $probe) {
+              $destination = Join-Path $env:RUNNER_TEMP 'release24-abi-evidence'
+              New-Item -ItemType Directory -Force -Path $destination | Out-Null
+              Get-ChildItem -LiteralPath $probe -File | Where-Object { $_.Extension -in @('.log', '.json') } | Copy-Item -Destination $destination -Force
+            }
+          }
+
+      - name: Upload independent Designer SDK ABI evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release24-abi-evidence
+          path: ${{ runner.temp }}/release24-abi-evidence
+          if-no-files-found: error
+
       - name: Validate v2 scenario catalog and archived traces
         shell: pwsh
         run: ./scripts/validate-v2-scenario-catalog.ps1 -StaticOnly
@@ -125,7 +186,7 @@ jobs:
         run: |
           node ./scripts/collect-v2-test-evidence.mjs --kind=xunit "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/modern/modern.trx')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/xunit-modern.json')" --invocation=xunit-modern-net10
           node ./scripts/collect-v2-test-evidence.mjs --kind=xunit "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/net48/net48.trx')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/xunit-net48.json')" --invocation=xunit-net48
-          node ./scripts/collect-v2-test-evidence.mjs --kind=vitest "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/vitest.json')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/vitest.json')" --invocation=vitest-4.1.11
+          node ./scripts/collect-v2-test-evidence.mjs --kind=vitest "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/vitest.json')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/vitest.json')" --invocation=vitest-4.1.12
 
       - name: Build extension
         working-directory: extension
@@ -196,6 +257,46 @@ jobs:
           name: release22-product-evidence
           path: ${{ runner.temp }}/release22-product-evidence
           if-no-files-found: warn
+
+      - name: Release 2.3 history and hot exit (VS Code 1.84)
+        working-directory: extension
+        env:
+          WFD_RELEASE23_EVIDENCE_FILE: ${{ runner.temp }}\release23-product-evidence\release23-host-1.84.0.json
+        run: npm run release23:extension-host -- --version=1.84.0
+
+      - name: Release 2.3 history and hot exit (VS Code Stable)
+        working-directory: extension
+        env:
+          WFD_RELEASE23_EVIDENCE_FILE: ${{ runner.temp }}\release23-product-evidence\release23-host-stable.json
+        run: npm run release23:extension-host -- --version=stable
+
+      - name: Upload Release 2.3 history and hot exit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release23-product-evidence
+          path: ${{ runner.temp }}/release23-product-evidence
+          if-no-files-found: warn
+
+      - name: Release 2.3 Adapter SDK Preview (R24) (VS Code 1.84)
+        working-directory: extension
+        env:
+          WFD_RELEASE24_EVIDENCE_FILE: ${{ runner.temp }}\release24-product-evidence\release24-host-1.84.0.json
+        run: npm run release24:extension-host -- --version=1.84.0
+
+      - name: Release 2.3 Adapter SDK Preview (R24) (VS Code Stable)
+        working-directory: extension
+        env:
+          WFD_RELEASE24_EVIDENCE_FILE: ${{ runner.temp }}\release24-product-evidence\release24-host-stable.json
+        run: npm run release24:extension-host -- --version=stable
+
+      - name: Upload Release 2.3 Adapter SDK Preview (R24)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release24-product-evidence
+          path: ${{ runner.temp }}/release24-product-evidence
+          if-no-files-found: error
 
       - name: Validate measured v2 scenario evidence
         shell: pwsh

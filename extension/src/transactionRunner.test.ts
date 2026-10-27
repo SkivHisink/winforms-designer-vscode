@@ -59,6 +59,10 @@ class MemoryTransactionAdapters implements TransactionRunnerAdapters {
   public crashAt: TransactionCrashPoint | null = null;
   public onCrashPoint: ((point: TransactionCrashPoint, record: TransactionJournalRecord) => void) | undefined;
   public verifyPostconditionsResult = true;
+  public cancelled = false;
+  public writeFailureAfterReplace: string | null = null;
+
+  public isCancellationRequested(): boolean { return this.cancelled; }
 
   public constructor(
     private readonly files: Map<string, Uint8Array | null>,
@@ -90,6 +94,10 @@ class MemoryTransactionAdapters implements TransactionRunnerAdapters {
     if (target === this.failWriteTarget) throw new Error(`forced write failure: ${target}`);
     this.files.set(target, Buffer.from(bytes));
     this.writes.push(`write:${target}:${Buffer.from(bytes).toString('utf8')}`);
+    if (target === this.writeFailureAfterReplace) {
+      this.writeFailureAfterReplace = null;
+      throw Object.assign(new Error(`flush failed after replace: ${target}`), { transactionWriteLanded: true });
+    }
   }
 
   public async delete(target: string): Promise<void> {
@@ -118,6 +126,71 @@ class MemoryTransactionAdapters implements TransactionRunnerAdapters {
 }
 
 describe('transaction runner', () => {
+  it('restores bytes when a provider rejects after replacing its target', async () => {
+    const adapters = new MemoryTransactionAdapters(new Map([['A.resx', Buffer.from('old')]]),
+      new Map([['A.resx', Buffer.from('new')]]));
+    adapters.writeFailureAfterReplace = 'A.resx';
+    const result = await runPatchSetTransaction(patchSet(['A.resx']), adapters, { transactionId: 'late-write-error' });
+    expect(result.status).toBe('rolledBack');
+    expect(Buffer.from((await adapters.read('A.resx'))!).toString()).toBe('old');
+  });
+
+  it('preserves an unattempted external create even when its bytes equal the planned forward image', async () => {
+    const adapters = new MemoryTransactionAdapters(new Map([['A.resx', Buffer.from('old-a')]]),
+      new Map([['A.resx', Buffer.from('new-a')], ['B.resx', Buffer.from('new-b')]]));
+    adapters.onCrashPoint = (point) => {
+      if (point === 'targetApplied') adapters.write('B.resx', Buffer.from('new-b'));
+    };
+    const result = await runPatchSetTransaction(patchSet(['A.resx', 'B.resx']), adapters, { transactionId: 'unattempted-external-create' });
+    expect(result.status).toBe('rolledBack');
+    expect(Buffer.from((await adapters.read('A.resx'))!).toString()).toBe('old-a');
+    expect(Buffer.from((await adapters.read('B.resx'))!).toString()).toBe('new-b');
+    expect(adapters.writes).not.toContain('delete:B.resx');
+  });
+
+  it('preserves an exclusive-create EEXIST with identical external bytes', async () => {
+    const adapters = new MemoryTransactionAdapters(new Map([['A.resx', Buffer.from('old-a')]]),
+      new Map([['A.resx', Buffer.from('new-a')], ['B.resx', Buffer.from('new-b')]]));
+    const write = adapters.write.bind(adapters);
+    adapters.write = async (target, bytes) => {
+      if (target === 'B.resx') {
+        await write(target, bytes);
+        throw Object.assign(new Error('external create won'), { code: 'EEXIST', transactionWriteNotApplied: true });
+      }
+      await write(target, bytes);
+    };
+    const result = await runPatchSetTransaction(patchSet(['A.resx', 'B.resx']), adapters, { transactionId: 'exclusive-create-race' });
+    expect(result.status).toBe('rolledBack');
+    expect(Buffer.from((await adapters.read('A.resx'))!).toString()).toBe('old-a');
+    expect(Buffer.from((await adapters.read('B.resx'))!).toString()).toBe('new-b');
+    expect(adapters.writes).not.toContain('delete:B.resx');
+  });
+
+  it('preflights every Undo target before restoring any bytes', async () => {
+    const adapters = new MemoryTransactionAdapters(new Map([['A.resx', Buffer.from('old-a')], ['B.resx', Buffer.from('old-b')]]),
+      new Map([['A.resx', Buffer.from('new-a')], ['B.resx', Buffer.from('new-b')]]));
+    const result = await runPatchSetTransaction(patchSet(['A.resx', 'B.resx']), adapters, { transactionId: 'undo-conflict' });
+    await adapters.write('A.resx', Buffer.from('external-a'));
+    const writes = adapters.writes.length;
+    const undo = await result.undoRegistration!.undo();
+    expect(undo.status).toBe('recoveryRequired');
+    expect(adapters.writes).toHaveLength(writes);
+    expect(Buffer.from((await adapters.read('B.resx'))!).toString()).toBe('new-b');
+  });
+
+  it.each(['preparedPersisted', 'targetApplied', 'appliedPersisted'] as const)(
+    'cancels at %s and preserves a complete baseline', async (point) => {
+      const adapters = new MemoryTransactionAdapters(new Map([['A.resx', Buffer.from('old-a')], ['B.resx', Buffer.from('old-b')]]),
+        new Map([['A.resx', Buffer.from('new-a')], ['B.resx', Buffer.from('new-b')]]));
+      adapters.onCrashPoint = (current) => { if (current === point) adapters.cancelled = true; };
+      const result = await runPatchSetTransaction(patchSet(['A.resx', 'B.resx']), adapters, { transactionId: `cancel-${point}` });
+      expect(result.status).toBe(point === 'preparedPersisted' ? 'aborted' : 'rolledBack');
+      expect(result.error).toContain('cancelled');
+      expect(Buffer.from((await adapters.read('A.resx'))!).toString()).toBe('old-a');
+      expect(Buffer.from((await adapters.read('B.resx'))!).toString()).toBe('old-b');
+      expect(adapters.undoRegistrations).toHaveLength(0);
+    });
+
   it('refuses before the first write when any baseline changes after prepare', async () => {
     const adapters = new MemoryTransactionAdapters(
       new Map([['Form1.resx', Buffer.from('old', 'utf8')]]),

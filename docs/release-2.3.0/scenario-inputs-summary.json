@@ -1,0 +1,1390 @@
+{
+  "scope": "Index of the exact local inputs validated by the measured scenario gate; this summary is not a substitute gate input.",
+  "inputs": [
+    {
+      "name": "catalog-measured-evidence.json",
+      "sha256": "0b250f9a68e703ebba7ad0c77d40e970a461657cb2d920fb4332efc4d301c8f2",
+      "bytes": 794411,
+      "schemaVersion": "v2-catalog-measured-evidence.2",
+      "scenarios": []
+    },
+    {
+      "name": "extension-host-1.84.0-s003.json",
+      "sha256": "49326bcd9fa949372a356bdba3d6750716869c923eff6225e88d6310d20cb97a",
+      "bytes": 11936,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "extension-host",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "runtime-recorder:extension-host",
+        "sourceArtifact": null
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S003",
+          "status": "PASS",
+          "assertionCount": 20
+        },
+        {
+          "scenarioId": "V2-FND-001-S100",
+          "status": "PASS",
+          "assertionCount": 10
+        },
+        {
+          "scenarioId": "V2-FND-001-S108",
+          "status": "PASS",
+          "assertionCount": 10
+        }
+      ]
+    },
+    {
+      "name": "extension-host-1.84.0.json",
+      "sha256": "c986a4644371a7506dcbfa867642c04f852c4bceffa85800cf91ab80b8b6f352",
+      "bytes": 491553,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "extension-host",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "runtime-recorder:extension-host",
+        "sourceArtifact": null
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S001",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S002",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S004",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S005",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S006",
+          "status": "PASS",
+          "assertionCount": 20
+        },
+        {
+          "scenarioId": "V2-FND-001-S007",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S008",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S009",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S010",
+          "status": "PASS",
+          "assertionCount": 63
+        },
+        {
+          "scenarioId": "V2-FND-001-S011",
+          "status": "PASS",
+          "assertionCount": 7
+        },
+        {
+          "scenarioId": "V2-FND-001-S012",
+          "status": "PASS",
+          "assertionCount": 12
+        },
+        {
+          "scenarioId": "V2-FND-001-S016",
+          "status": "PASS",
+          "assertionCount": 45
+        },
+        {
+          "scenarioId": "V2-FND-001-S020",
+          "status": "PASS",
+          "assertionCount": 34
+        },
+        {
+          "scenarioId": "V2-FND-001-S021",
+          "status": "PASS",
+          "assertionCount": 9
+        },
+        {
+          "scenarioId": "V2-FND-001-S022",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S023",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S024",
+          "status": "PASS",
+          "assertionCount": 44
+        },
+        {
+          "scenarioId": "V2-FND-001-S029",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S030",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S031",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S033",
+          "status": "PASS",
+          "assertionCount": 14
+        },
+        {
+          "scenarioId": "V2-FND-001-S034",
+          "status": "PASS",
+          "assertionCount": 14
+        },
+        {
+          "scenarioId": "V2-FND-001-S035",
+          "status": "PASS",
+          "assertionCount": 9
+        },
+        {
+          "scenarioId": "V2-FND-001-S036",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S040",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S045",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S046",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S047",
+          "status": "PASS",
+          "assertionCount": 93
+        },
+        {
+          "scenarioId": "V2-FND-001-S049",
+          "status": "PASS",
+          "assertionCount": 21
+        },
+        {
+          "scenarioId": "V2-FND-001-S050",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S051",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S052",
+          "status": "PASS",
+          "assertionCount": 25
+        },
+        {
+          "scenarioId": "V2-FND-001-S061",
+          "status": "PASS",
+          "assertionCount": 19
+        },
+        {
+          "scenarioId": "V2-FND-001-S062",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S063",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S064",
+          "status": "PASS",
+          "assertionCount": 11
+        },
+        {
+          "scenarioId": "V2-FND-001-S065",
+          "status": "PASS",
+          "assertionCount": 19
+        },
+        {
+          "scenarioId": "V2-FND-001-S066",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S067",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S068",
+          "status": "PASS",
+          "assertionCount": 34
+        },
+        {
+          "scenarioId": "V2-FND-001-S069",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S070",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S071",
+          "status": "PASS",
+          "assertionCount": 63
+        },
+        {
+          "scenarioId": "V2-FND-001-S072",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S073",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S074",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S075",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S076",
+          "status": "PASS",
+          "assertionCount": 20
+        },
+        {
+          "scenarioId": "V2-FND-001-S077",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S078",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S079",
+          "status": "PASS",
+          "assertionCount": 22
+        },
+        {
+          "scenarioId": "V2-FND-001-S080",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S082",
+          "status": "PASS",
+          "assertionCount": 22
+        },
+        {
+          "scenarioId": "V2-FND-001-S083",
+          "status": "PASS",
+          "assertionCount": 12
+        },
+        {
+          "scenarioId": "V2-FND-001-S084",
+          "status": "PASS",
+          "assertionCount": 36
+        },
+        {
+          "scenarioId": "V2-FND-001-S085",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S086",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S087",
+          "status": "PASS",
+          "assertionCount": 25
+        },
+        {
+          "scenarioId": "V2-FND-001-S088",
+          "status": "PASS",
+          "assertionCount": 55
+        },
+        {
+          "scenarioId": "V2-FND-001-S089",
+          "status": "PASS",
+          "assertionCount": 52
+        },
+        {
+          "scenarioId": "V2-FND-001-S091",
+          "status": "PASS",
+          "assertionCount": 47
+        },
+        {
+          "scenarioId": "V2-FND-001-S093",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S095",
+          "status": "PASS",
+          "assertionCount": 42
+        },
+        {
+          "scenarioId": "V2-FND-001-S097",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S098",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S099",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S100",
+          "status": "PASS",
+          "assertionCount": 28
+        },
+        {
+          "scenarioId": "V2-FND-001-S101",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S104",
+          "status": "PASS",
+          "assertionCount": 54
+        },
+        {
+          "scenarioId": "V2-FND-001-S105",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S108",
+          "status": "PASS",
+          "assertionCount": 23
+        },
+        {
+          "scenarioId": "V2-FND-001-S118",
+          "status": "PASS",
+          "assertionCount": 14
+        },
+        {
+          "scenarioId": "V2-FND-001-S120",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S122",
+          "status": "PASS",
+          "assertionCount": 286
+        },
+        {
+          "scenarioId": "V2-FND-001-S124",
+          "status": "PASS",
+          "assertionCount": 29
+        },
+        {
+          "scenarioId": "V2-FND-001-S126",
+          "status": "PASS",
+          "assertionCount": 32
+        },
+        {
+          "scenarioId": "V2-FND-001-S128",
+          "status": "PASS",
+          "assertionCount": 7
+        }
+      ]
+    },
+    {
+      "name": "extension-host-stable-s003.json",
+      "sha256": "c09b236beec12ef443f7609eb20cad8b86bcacdc9fc5d233107cb00fb0dd7457",
+      "bytes": 11936,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "extension-host",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "runtime-recorder:extension-host",
+        "sourceArtifact": null
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S003",
+          "status": "PASS",
+          "assertionCount": 20
+        },
+        {
+          "scenarioId": "V2-FND-001-S100",
+          "status": "PASS",
+          "assertionCount": 10
+        },
+        {
+          "scenarioId": "V2-FND-001-S108",
+          "status": "PASS",
+          "assertionCount": 10
+        }
+      ]
+    },
+    {
+      "name": "extension-host-stable.json",
+      "sha256": "5d2485e6ab98511d6c93315db5048f5b815ea3b6a6e609e090ae05db4f41c62d",
+      "bytes": 491553,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "extension-host",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "runtime-recorder:extension-host",
+        "sourceArtifact": null
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S001",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S002",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S004",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S005",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S006",
+          "status": "PASS",
+          "assertionCount": 20
+        },
+        {
+          "scenarioId": "V2-FND-001-S007",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S008",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S009",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S010",
+          "status": "PASS",
+          "assertionCount": 63
+        },
+        {
+          "scenarioId": "V2-FND-001-S011",
+          "status": "PASS",
+          "assertionCount": 7
+        },
+        {
+          "scenarioId": "V2-FND-001-S012",
+          "status": "PASS",
+          "assertionCount": 12
+        },
+        {
+          "scenarioId": "V2-FND-001-S016",
+          "status": "PASS",
+          "assertionCount": 45
+        },
+        {
+          "scenarioId": "V2-FND-001-S020",
+          "status": "PASS",
+          "assertionCount": 34
+        },
+        {
+          "scenarioId": "V2-FND-001-S021",
+          "status": "PASS",
+          "assertionCount": 9
+        },
+        {
+          "scenarioId": "V2-FND-001-S022",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S023",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S024",
+          "status": "PASS",
+          "assertionCount": 44
+        },
+        {
+          "scenarioId": "V2-FND-001-S029",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S030",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S031",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S033",
+          "status": "PASS",
+          "assertionCount": 14
+        },
+        {
+          "scenarioId": "V2-FND-001-S034",
+          "status": "PASS",
+          "assertionCount": 14
+        },
+        {
+          "scenarioId": "V2-FND-001-S035",
+          "status": "PASS",
+          "assertionCount": 9
+        },
+        {
+          "scenarioId": "V2-FND-001-S036",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S040",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S045",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S046",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S047",
+          "status": "PASS",
+          "assertionCount": 93
+        },
+        {
+          "scenarioId": "V2-FND-001-S049",
+          "status": "PASS",
+          "assertionCount": 21
+        },
+        {
+          "scenarioId": "V2-FND-001-S050",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S051",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S052",
+          "status": "PASS",
+          "assertionCount": 25
+        },
+        {
+          "scenarioId": "V2-FND-001-S061",
+          "status": "PASS",
+          "assertionCount": 19
+        },
+        {
+          "scenarioId": "V2-FND-001-S062",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S063",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S064",
+          "status": "PASS",
+          "assertionCount": 11
+        },
+        {
+          "scenarioId": "V2-FND-001-S065",
+          "status": "PASS",
+          "assertionCount": 19
+        },
+        {
+          "scenarioId": "V2-FND-001-S066",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S067",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S068",
+          "status": "PASS",
+          "assertionCount": 34
+        },
+        {
+          "scenarioId": "V2-FND-001-S069",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S070",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S071",
+          "status": "PASS",
+          "assertionCount": 63
+        },
+        {
+          "scenarioId": "V2-FND-001-S072",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S073",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S074",
+          "status": "PASS",
+          "assertionCount": 15
+        },
+        {
+          "scenarioId": "V2-FND-001-S075",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S076",
+          "status": "PASS",
+          "assertionCount": 20
+        },
+        {
+          "scenarioId": "V2-FND-001-S077",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S078",
+          "status": "PASS",
+          "assertionCount": 24
+        },
+        {
+          "scenarioId": "V2-FND-001-S079",
+          "status": "PASS",
+          "assertionCount": 22
+        },
+        {
+          "scenarioId": "V2-FND-001-S080",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S082",
+          "status": "PASS",
+          "assertionCount": 22
+        },
+        {
+          "scenarioId": "V2-FND-001-S083",
+          "status": "PASS",
+          "assertionCount": 12
+        },
+        {
+          "scenarioId": "V2-FND-001-S084",
+          "status": "PASS",
+          "assertionCount": 36
+        },
+        {
+          "scenarioId": "V2-FND-001-S085",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S086",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S087",
+          "status": "PASS",
+          "assertionCount": 25
+        },
+        {
+          "scenarioId": "V2-FND-001-S088",
+          "status": "PASS",
+          "assertionCount": 55
+        },
+        {
+          "scenarioId": "V2-FND-001-S089",
+          "status": "PASS",
+          "assertionCount": 52
+        },
+        {
+          "scenarioId": "V2-FND-001-S091",
+          "status": "PASS",
+          "assertionCount": 47
+        },
+        {
+          "scenarioId": "V2-FND-001-S093",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S095",
+          "status": "PASS",
+          "assertionCount": 42
+        },
+        {
+          "scenarioId": "V2-FND-001-S097",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S098",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S099",
+          "status": "PASS",
+          "assertionCount": 31
+        },
+        {
+          "scenarioId": "V2-FND-001-S100",
+          "status": "PASS",
+          "assertionCount": 28
+        },
+        {
+          "scenarioId": "V2-FND-001-S101",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S104",
+          "status": "PASS",
+          "assertionCount": 54
+        },
+        {
+          "scenarioId": "V2-FND-001-S105",
+          "status": "PASS",
+          "assertionCount": 6
+        },
+        {
+          "scenarioId": "V2-FND-001-S108",
+          "status": "PASS",
+          "assertionCount": 23
+        },
+        {
+          "scenarioId": "V2-FND-001-S118",
+          "status": "PASS",
+          "assertionCount": 14
+        },
+        {
+          "scenarioId": "V2-FND-001-S120",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S122",
+          "status": "PASS",
+          "assertionCount": 286
+        },
+        {
+          "scenarioId": "V2-FND-001-S124",
+          "status": "PASS",
+          "assertionCount": 29
+        },
+        {
+          "scenarioId": "V2-FND-001-S126",
+          "status": "PASS",
+          "assertionCount": 32
+        },
+        {
+          "scenarioId": "V2-FND-001-S128",
+          "status": "PASS",
+          "assertionCount": 7
+        }
+      ]
+    },
+    {
+      "name": "visual-reference.json",
+      "sha256": "5758708ce7f2888cc6dc8e06c1fb1a403c638b32ca26d0639d5a778f881b35ea",
+      "bytes": 4523,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "e2e",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "visual-reference",
+        "sourceArtifact": null
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S011",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S013",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S014",
+          "status": "PASS",
+          "assertionCount": 3
+        }
+      ]
+    },
+    {
+      "name": "vitest.json",
+      "sha256": "1957419f585851fe500ee3f86550a36c8ac9e98085fd8b3c3930ce409cb06988",
+      "bytes": 57310,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "unit",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "test-collector:vitest",
+        "sourceArtifact": {
+          "path": "test-results/vitest.json",
+          "sha256": "11f8e039ae2cb0fe06c7a07edd1596579c6532b4e4f87fd26a2e2df92f3fb230",
+          "bytes": 280072
+        }
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S001",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S002",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S003",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S004",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S005",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S006",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S007",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S008",
+          "status": "PASS",
+          "assertionCount": 10
+        },
+        {
+          "scenarioId": "V2-FND-001-S009",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S021",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S038",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S053",
+          "status": "PASS",
+          "assertionCount": 20
+        },
+        {
+          "scenarioId": "V2-FND-001-S054",
+          "status": "PASS",
+          "assertionCount": 13
+        },
+        {
+          "scenarioId": "V2-FND-001-S055",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S056",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S057",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S058",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S059",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S060",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S076",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S080",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S103",
+          "status": "PASS",
+          "assertionCount": 44
+        },
+        {
+          "scenarioId": "V2-FND-001-S104",
+          "status": "PASS",
+          "assertionCount": 26
+        },
+        {
+          "scenarioId": "V2-FND-001-S107",
+          "status": "PASS",
+          "assertionCount": 30
+        },
+        {
+          "scenarioId": "V2-FND-001-S118",
+          "status": "PASS",
+          "assertionCount": 5
+        }
+      ]
+    },
+    {
+      "name": "webview.json",
+      "sha256": "c8dd307be9706762249a5724721abe142be6ebd90d9a7fe210c3baeaa68a5fa9",
+      "bytes": 311058,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "webview",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "runtime-recorder:webview",
+        "sourceArtifact": null
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S015",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S017",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S018",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S019",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S020",
+          "status": "PASS",
+          "assertionCount": 7
+        },
+        {
+          "scenarioId": "V2-FND-001-S021",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S025",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S026",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S027",
+          "status": "PASS",
+          "assertionCount": 16
+        },
+        {
+          "scenarioId": "V2-FND-001-S028",
+          "status": "PASS",
+          "assertionCount": 7
+        },
+        {
+          "scenarioId": "V2-FND-001-S029",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S030",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S031",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S032",
+          "status": "PASS",
+          "assertionCount": 55
+        },
+        {
+          "scenarioId": "V2-FND-001-S033",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S034",
+          "status": "PASS",
+          "assertionCount": 441
+        },
+        {
+          "scenarioId": "V2-FND-001-S037",
+          "status": "PASS",
+          "assertionCount": 14
+        },
+        {
+          "scenarioId": "V2-FND-001-S038",
+          "status": "PASS",
+          "assertionCount": 12
+        },
+        {
+          "scenarioId": "V2-FND-001-S039",
+          "status": "PASS",
+          "assertionCount": 5
+        },
+        {
+          "scenarioId": "V2-FND-001-S040",
+          "status": "PASS",
+          "assertionCount": 18
+        },
+        {
+          "scenarioId": "V2-FND-001-S041",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S042",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S043",
+          "status": "PASS",
+          "assertionCount": 27
+        },
+        {
+          "scenarioId": "V2-FND-001-S044",
+          "status": "PASS",
+          "assertionCount": 17
+        },
+        {
+          "scenarioId": "V2-FND-001-S045",
+          "status": "PASS",
+          "assertionCount": 32
+        },
+        {
+          "scenarioId": "V2-FND-001-S046",
+          "status": "PASS",
+          "assertionCount": 32
+        },
+        {
+          "scenarioId": "V2-FND-001-S069",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S070",
+          "status": "PASS",
+          "assertionCount": 37
+        },
+        {
+          "scenarioId": "V2-FND-001-S089",
+          "status": "PASS",
+          "assertionCount": 38
+        },
+        {
+          "scenarioId": "V2-FND-001-S093",
+          "status": "PASS",
+          "assertionCount": 9
+        },
+        {
+          "scenarioId": "V2-FND-001-S094",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S109",
+          "status": "PASS",
+          "assertionCount": 125
+        },
+        {
+          "scenarioId": "V2-FND-001-S110",
+          "status": "PASS",
+          "assertionCount": 9
+        },
+        {
+          "scenarioId": "V2-FND-001-S111",
+          "status": "PASS",
+          "assertionCount": 4
+        },
+        {
+          "scenarioId": "V2-FND-001-S112",
+          "status": "PASS",
+          "assertionCount": 53
+        },
+        {
+          "scenarioId": "V2-FND-001-S122",
+          "status": "PASS",
+          "assertionCount": 25
+        }
+      ]
+    },
+    {
+      "name": "xunit-modern.json",
+      "sha256": "a8d6888e2d676b111b56439c4a721294c94e4e5dd287e4f351606c65ebf95998",
+      "bytes": 18207,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "unit",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "test-collector:xunit",
+        "sourceArtifact": {
+          "path": "test-results/modern/modern.trx",
+          "sha256": "bbcc26b3818c91f4d981fe6c435478146afd5c109e7c1d64fbfbcfaccef422ab",
+          "bytes": 1053647
+        }
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S047",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S048",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S071",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S081",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S084",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S089",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S090",
+          "status": "PASS",
+          "assertionCount": 3
+        },
+        {
+          "scenarioId": "V2-FND-001-S091",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S092",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S093",
+          "status": "PASS",
+          "assertionCount": 2
+        },
+        {
+          "scenarioId": "V2-FND-001-S094",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S095",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S096",
+          "status": "PASS",
+          "assertionCount": 1
+        }
+      ]
+    },
+    {
+      "name": "xunit-net48.json",
+      "sha256": "d23f663d49bd3ad0010ddf361953d425bc5215e4ebf3900bf00fab5137e26742",
+      "bytes": 2571,
+      "schemaVersion": "v2-scenario-evidence.2",
+      "suite": "unit",
+      "completed": true,
+      "provenance": {
+        "schemaVersion": "v2-evidence-provenance.1",
+        "runId": "release23-3145cf79-8de7-48f9-ae85-f449c56324aa",
+        "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
+        "productTreeSha256": "c9c772b37cfce97fb09942c3c83f1eb01c3c1d4b8b716cfe7710312ca894d35d",
+        "productFileCount": 253,
+        "producer": "test-collector:xunit",
+        "sourceArtifact": {
+          "path": "test-results/net48/net48.trx",
+          "sha256": "f174d36aa90c21f00e47b60280de6c1018a37701a98d77abad43a8b2204c936d",
+          "bytes": 96615
+        }
+      },
+      "scenarios": [
+        {
+          "scenarioId": "V2-FND-001-S091",
+          "status": "PASS",
+          "assertionCount": 1
+        },
+        {
+          "scenarioId": "V2-FND-001-S092",
+          "status": "PASS",
+          "assertionCount": 1
+        }
+      ]
+    }
+  ]
+}

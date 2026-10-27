@@ -11,6 +11,8 @@ import { release21Environment } from './release21-environment.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const extensionRoot = path.join(repo, 'extension');
+const currentVersion = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8')).version;
+assert.ok(typeof currentVersion === 'string' && /^\d+\.\d+\.\d+$/.test(currentVersion), 'Current manifest must specify a release version.');
 const requireExtension = createRequire(path.join(extensionRoot, 'package.json'));
 const esbuild = requireExtension('esbuild');
 const arg = (name, fallback) => process.argv.find(value => value.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
@@ -45,9 +47,9 @@ let mementoId;
 const checks = [];
 const phases = [];
 const evidence = { suite: 'release22-installed-upgrade-downgrade', passed: false, startedAt: new Date().toISOString(),
-  vscodeVersion: version, fixtureRoot, baselineRef, baselineProvenance: 'Reconstructed from the exact repository 2.1.0 baseline; not a historical published VSIX.',
+  vscodeVersion: version, extensionVersion: currentVersion, fixtureRoot, baselineRef, baselineProvenance: 'Reconstructed from repository 2.1.0 release sources with MessagePack pinned to 2.5.303 in temporary engine projects; not a byte-identical historical published VSIX.',
   environment: release21Environment(repo), packages: {}, phases, checks,
-  limitations: ['The 2.1.0 package is reconstructed from its exact release commit using current local build tools, not downloaded from a historical feed.',
+  limitations: ['The 2.1.0 package uses release-commit product sources and current local build tools, with only a temporary direct MessagePack 2.5.303 pin added to both engine projects. Historical dependency resolution and published-package byte identity are not covered.',
     'The tested downgrade requires a complete Extension Host restart after workers stop and journals reconcile; no live protocol fallback is claimed.',
     'Tests run only in an isolated local Windows x64 profile; publication, power-loss durability, ARM64 and other operating systems are not covered.'] };
 const reportFile = path.resolve(arg('report', path.join(cachePath, `release22-upgrade-${version}.json`)));
@@ -131,8 +133,9 @@ async function phase(name) {
   await new Promise((resolve, reject) => {
     const child = spawn(code, [workspace, '--new-window', `--user-data-dir=${profile}`, `--shared-data-dir=${sharedData}`, `--extensions-dir=${installed}`,
       `--extensionDevelopmentPath=${harness}`, '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-updates'],
-    { env: { ...env, WFD_RELEASE22_UPGRADE_PHASE: name,
+    { env: { ...env, WFD_RELEASE22_UPGRADE_PHASE: name, WFD_RELEASE22_EXPECTED_CURRENT_VERSION: currentVersion,
       WFD_RELEASE22_UPGRADE_GLOBAL_STORAGE: path.join(profile, 'User', 'globalStorage', productId),
+      ...(name === 'downgrade' ? { WFD_RELEASE22_EXPECTED_BACKUPS: JSON.stringify(evidence.hotExitBackups) } : {}),
       WFD_RELEASE22_EXPECTED_MODERN_BUILD_ID: `sha256-${evidence.packages.new.modernEngineSha256}`,
       WFD_RELEASE22_EXPECTED_NET48_BUILD_ID: `sha256-${evidence.packages.new.classicEngineSha256}` },
       windowsHide: true, stdio: 'inherit' });
@@ -150,6 +153,7 @@ async function phase(name) {
     'product did not load from isolated installed extensions');
   assert.equal(result.vscodeVersion, version, 'cached distribution version drifted');
   const expectedPackage = name === 'upgrade' ? evidence.packages.new : evidence.packages.old;
+  assert.equal(result.extensionVersion, expectedPackage.version, 'installed product version drifted');
   assert.equal(sha(path.join(result.installedExtensionPath, 'dist', 'extension.js')), expectedPackage.bundledEntrySha256);
   assert.equal(sha(path.join(result.installedExtensionPath, 'engine', 'WinFormsDesigner.Engine.dll')), expectedPackage.modernEngineSha256);
   assert.equal(sha(path.join(result.installedExtensionPath, 'engine-net48', 'WinFormsDesigner.Engine.Net48.exe')), expectedPackage.classicEngineSha256);
@@ -170,18 +174,72 @@ try {
   assert.ok(archiveEntries.every(file => !/(?:^|\/)secrets(?:\/|$)|(?:^|\/)\.env(?:\.|$)|\.(?:pfx|key|pem)$/i.test(file)),
     'baseline source selection includes prohibited secret material');
   command('git', ['archive', '--format=tar', `--output=${archive}`, baselineRef, ...selected]);
+  evidence.baselineArchive = { path: archive, sha256: sha(archive) };
   // The Windows tar, by path: a GNU tar earlier on PATH (Git Bash, MSYS) reads `D:\...` as a remote host.
   command(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', archive, '-C', baseline]);
   const oldExtension = path.join(baseline, 'extension');
   const oldManifest = JSON.parse(fs.readFileSync(path.join(oldExtension, 'package.json'), 'utf8'));
   assert.equal(oldManifest.version, '2.1.0');
   mementoId = `${oldManifest.publisher}.${oldManifest.name}`;
+  const engineProjects = [['engine/Engine.csproj', 'engine'], ['engine-net48/Engine.Net48.csproj', 'engine-net48']];
+  const patchedMessagePackVersion = '2.5.303';
+  const packageReferences = text => [...text.matchAll(/<PackageReference\b[^>]*\/>/g)].map(match => ({
+    include: /\bInclude="([^"]+)"/.exec(match[0])?.[1], version: /\bVersion="([^"]+)"/.exec(match[0])?.[1], sourceTag: match[0],
+  }));
+  const sourceImages = () => archiveEntries.filter(file => file.endsWith('.cs')).map(file => ({ path: file, sha256: sha(path.join(baseline, file)) }));
+  const sourceDigest = images => createHash('sha256').update(JSON.stringify(images)).digest('hex');
+  const originalSources = sourceImages();
+  const auditPolicy = path.join(baseline, 'Directory.Build.props');
+  const originalAuditPolicySha256 = sha(auditPolicy);
+  evidence.baselineReconstruction = { dependencyOverride: { package: 'MessagePack', version: patchedMessagePackVersion,
+    scope: 'Direct pin in extracted temporary engine project files only; product sources and audit policy unchanged.' },
+    projects: [], productCSharp: { files: originalSources.length, originalSha256: sourceDigest(originalSources) },
+    auditPolicy: { path: auditPolicy, originalSha256: originalAuditPolicySha256 } };
+  for (const [project] of engineProjects) {
+    const currentProject = path.join(repo, project);
+    const currentPins = packageReferences(fs.readFileSync(currentProject, 'utf8')).filter(reference => reference.include === 'MessagePack');
+    assert.equal(currentPins.length, 1, 'current engine must contain one explicit MessagePack pin');
+    assert.equal(currentPins[0].version, patchedMessagePackVersion, 'current engine MessagePack pin changed; review baseline override explicitly');
+    const projectFile = path.join(baseline, project);
+    assertFixturePath(projectFile);
+    const originalText = fs.readFileSync(projectFile, 'utf8');
+    const originalPackageReferences = packageReferences(originalText);
+    assert.ok(!originalPackageReferences.some(reference => reference.include === 'MessagePack'), 'baseline already has a MessagePack constraint; review it explicitly');
+    const rpc = originalPackageReferences.filter(reference => reference.include === 'StreamJsonRpc');
+    assert.equal(rpc.length, 1, 'baseline must contain one StreamJsonRpc dependency');
+    const eol = originalText.includes('\r\n') ? '\r\n' : '\n';
+    const pinned = originalText.replace(rpc[0].sourceTag, rpc[0].sourceTag + eol + '    <PackageReference Include="MessagePack" Version="' + patchedMessagePackVersion + '" />');
+    const originalSha256 = sha(projectFile);
+    fs.writeFileSync(projectFile, pinned);
+    evidence.baselineReconstruction.projects.push({ project, path: projectFile, originalSha256, reconstructedSha256: sha(projectFile),
+      originalPackageReferences, addedPackageReference: { include: 'MessagePack', version: patchedMessagePackVersion },
+      versionSource: { path: currentProject, sha256: sha(currentProject), packageReference: currentPins[0] } });
+  }
   await esbuild.build({ absWorkingDir: oldExtension, entryPoints: ['src/extension.ts'], outfile: 'dist/extension.js',
     nodePaths: [path.join(extensionRoot, 'node_modules')], bundle: true, platform: 'node', target: 'node18', format: 'cjs', external: ['vscode'] });
-  for (const [project, output] of [['engine/Engine.csproj', 'engine'], ['engine-net48/Engine.Net48.csproj', 'engine-net48']]) {
+  for (const [project, output] of engineProjects) {
     command('dotnet.exe', ['publish', path.join(baseline, project), '-c', 'Release', '--nologo', '-v:q',
       ...(output === 'engine' ? ['-r', 'win-x64', '--self-contained', 'false'] : []), '-o', path.join(oldExtension, output)], { cwd: baseline });
+    const assetsFile = path.join(baseline, path.dirname(project), 'obj', 'project.assets.json');
+    const assets = JSON.parse(fs.readFileSync(assetsFile, 'utf8'));
+    const restoredTargets = Object.entries(assets.targets).map(([target, libraries]) => {
+      const messagePack = Object.keys(libraries).filter(library => library.startsWith('MessagePack/'));
+      assert.deepEqual(messagePack, ['MessagePack/' + patchedMessagePackVersion], 'temporary baseline did not resolve the authorized MessagePack patch');
+      return { target, resolvedMessagePack: messagePack[0], transitiveConstraints: Object.entries(libraries)
+        .filter(([, library]) => library.dependencies?.MessagePack !== undefined)
+        .map(([library, value]) => ({ library, requiredMessagePack: value.dependencies.MessagePack })) };
+    });
+    const projectEvidence = evidence.baselineReconstruction.projects.find(item => item.project === project);
+    projectEvidence.restore = { assetsSha256: sha(assetsFile), targets: restoredTargets };
+    assert.equal(sha(path.join(baseline, project)), projectEvidence.reconstructedSha256, 'publish changed a reconstructed project');
   }
+  const reconstructedSourceSha256 = sourceDigest(sourceImages());
+  assert.equal(reconstructedSourceSha256, evidence.baselineReconstruction.productCSharp.originalSha256, 'baseline product C# changed during reconstruction');
+  evidence.baselineReconstruction.productCSharp.reconstructedSha256 = reconstructedSourceSha256;
+  evidence.baselineReconstruction.productCSharp.unchanged = true;
+  assert.equal(sha(auditPolicy), originalAuditPolicySha256, 'baseline audit policy changed during reconstruction');
+  evidence.baselineReconstruction.auditPolicy.reconstructedSha256 = sha(auditPolicy);
+  evidence.baselineReconstruction.auditPolicy.unchanged = true;
   const stage = path.join(fixtureRoot, 'vsix-stage');
   const stageExtension = path.join(stage, 'extension');
   fs.mkdirSync(stageExtension, { recursive: true });
@@ -195,32 +253,33 @@ try {
   fs.writeFileSync(path.join(stage, 'extension.vsixmanifest'), `<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"><Metadata>
 <Identity Language="en-US" Id="winforms-designer-vscode" Version="2.1.0" Publisher="SkivHisink" TargetPlatform="win32-x64"/>
-<DisplayName>WinForms Designer for VS Code</DisplayName><Description>Reconstructed 2.1.0 baseline for local upgrade acceptance</Description>
+<DisplayName>WinForms Designer for VS Code</DisplayName><Description>Reconstructed 2.1.0 baseline with MessagePack 2.5.303 dependency pin for local upgrade acceptance</Description>
 <Properties><Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.84.0"/><Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace"/></Properties>
 </Metadata><Installation><InstallationTarget Id="Microsoft.VisualStudio.Code"/></Installation><Dependencies/><Assets>
 <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true"/></Assets></PackageManifest>`);
-  const oldVsix = path.join(fixtureRoot, 'baseline-2.1.0-win32-x64.vsix');
+  const oldVsix = path.join(fixtureRoot, 'baseline-2.1.0-messagepack2.5.303-win32-x64.vsix');
   const zipScript = path.join(fixtureRoot, 'package-baseline.ps1');
   fs.writeFileSync(zipScript, 'param([string]$SourceRoot,[string]$OutputVsix)\nAdd-Type -AssemblyName System.IO.Compression.FileSystem\n[System.IO.Compression.ZipFile]::CreateFromDirectory($SourceRoot,$OutputVsix)\n');
   command('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', zipScript, '-SourceRoot', stage, '-OutputVsix', oldVsix]);
-  const oldPackage = { version: '2.1.0', path: oldVsix, sha256: sha(oldVsix),
+  const oldPackage = { version: '2.1.0', dependencyOverride: { MessagePack: patchedMessagePackVersion }, path: oldVsix, sha256: sha(oldVsix),
     bundledEntrySha256: sha(path.join(stageExtension, 'dist', 'extension.js')),
     modernEngineSha256: sha(path.join(stageExtension, 'engine', 'WinFormsDesigner.Engine.dll')),
     classicEngineSha256: sha(path.join(stageExtension, 'engine-net48', 'WinFormsDesigner.Engine.Net48.exe')) };
   if (prepareOnly) {
     evidence.preparation = { passed: true, baselineArchiveSha256: sha(archive), baselinePackage: oldPackage };
     evidence.packages.old = oldPackage;
-    console.log(`Baseline 2.1.0 package prepared: ${oldVsix}`);
+    console.log(`Reconstructed 2.1.0 package (MessagePack ${patchedMessagePackVersion}) prepared: ${oldVsix}`);
   } else {
   const newStage = path.join(fixtureRoot, 'new-vsix');
   const extractScript = path.join(fixtureRoot, 'extract-current.ps1');
   fs.writeFileSync(extractScript, 'param([string]$Vsix,[string]$Destination)\nAdd-Type -AssemblyName System.IO.Compression.FileSystem\n[System.IO.Compression.ZipFile]::ExtractToDirectory($Vsix,$Destination)\n');
   command('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', extractScript, '-Vsix', newVsix, '-Destination', newStage]);
   const newExtension = path.join(newStage, 'extension');
-  assert.equal(JSON.parse(fs.readFileSync(path.join(newExtension, 'package.json'), 'utf8')).version, '2.2.0');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(newExtension, 'package.json'), 'utf8')).version, currentVersion,
+    'new package version does not match the current manifest');
   evidence.packages = {
     old: oldPackage,
-    new: { version: '2.2.0', path: newVsix, sha256: sha(newVsix),
+    new: { version: currentVersion, path: newVsix, sha256: sha(newVsix),
       bundledEntrySha256: sha(path.join(newExtension, 'dist', 'extension.js')),
       modernEngineSha256: sha(path.join(newExtension, 'engine', 'WinFormsDesigner.Engine.dll')),
       classicEngineSha256: sha(path.join(newExtension, 'engine-net48', 'WinFormsDesigner.Engine.Net48.exe')) },
@@ -290,7 +349,7 @@ this.ResumeLayout(false);
   assert.equal(workspaceDbs.length, 1, 'expected one real VS Code workspace memento database');
   const workspaceDb = workspaceDbs[0];
   // Newer hosts persist the (empty) extension memento row on activation; VS Code 1.84 writes it only on first update.
-  // Either way the spelling is proven below: the 2.2 cache-clear command must empty toolboxScanCache in the seeded row.
+  // Either way the spelling is proven below: the current cache-clear command must empty toolboxScanCache in the seeded row.
   const mementoRowAfterBaseline = Boolean(database(workspaceDb, db => db.prepare('SELECT key FROM ItemTable WHERE key = ?').get(mementoId)));
   const caseVariant = database(workspaceDb, db => db.prepare('SELECT key FROM ItemTable WHERE lower(key) = lower(?) AND key <> ?').get(mementoId, mementoId));
   assert.ok(!caseVariant, `the baseline activation persisted its memento under a different spelling: ${caseVariant?.key}`);
@@ -336,7 +395,7 @@ this.ResumeLayout(false);
     assert.deepEqual({ journal: sha(journal), unrelatedBackup: sha(unrelatedBackup) }, sentinelHashes);
   };
   checkPersistentState();
-  checks.push('actual-2.2-activation-preserved-2.1-workspace-keys', 'existing-workspace-curation-preserved',
+  checks.push(`actual-${currentVersion}-activation-preserved-2.1-workspace-keys`, 'existing-workspace-curation-preserved',
     'legacy-global-curation-preserved-for-downgrade', 'cache-clear-persisted-only-disposable-key',
     'unknown-journal-and-backup-bytes-preserved');
   const registries = filesNamed(profile, 'hot-exit-recovery-v1.json');
@@ -351,10 +410,27 @@ this.ResumeLayout(false);
     const text = fs.readFileSync(file, 'utf8');
     assert.ok(text.includes('UPGRADE_UNSAVED_BACKUP_22_modern') || text.includes('UPGRADE_UNSAVED_BACKUP_22_net48'));
     assert.ok(!text.includes('RELEASE22_MUST_NOT_COMMIT'));
-    return { path: file, backupId: backup.backupId, sha256: sha(file), sourceByteFormat: true };
+    const historyFile = file + '.history.json';
+    assertFixturePath(historyFile);
+    assert.ok(fs.existsSync(historyFile), 'current product did not persist its optional logical-history sidecar');
+    const history = JSON.parse(fs.readFileSync(historyFile, 'utf8'));
+    assert.equal(history.format, 'winforms-designer-history-v1');
+    const sourceText = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+    assert.equal(history.currentSourceSha256, createHash('sha256').update(sourceText).digest('hex'),
+      'logical history is not bound to the raw source backup');
+    assert.ok(Array.isArray(history.units) && history.units.length > 0 && history.units.length <= 20);
+    assert.equal(history.activeIndex, history.units.length, 'the dirty backup did not retain its applied logical history');
+    const { sha256: historySignature, ...historyPayload } = history;
+    assert.equal(historySignature, createHash('sha256').update(JSON.stringify(historyPayload)).digest('hex'),
+      'logical history integrity signature does not match');
+    return { path: file, backupId: backup.backupId, sha256: sha(file), sourceByteFormat: true,
+      historySidecar: { path: historyFile, sha256: sha(historyFile), format: history.format,
+        currentSourceSha256: history.currentSourceSha256, unitCount: history.units.length,
+        activeIndex: history.activeIndex, checkpointIndex: history.checkpointIndex } };
   });
   evidence.hotExitRegistry = { path: registries[0], sha256: sha(registries[0]) };
-  checks.push('actual-2.2-modern-and-net48-custom-document-backups-persisted');
+  checks.push(`actual-${currentVersion}-modern-and-net48-custom-document-backups-persisted`,
+    `actual-${currentVersion}-hash-bound-logical-history-sidecars-persisted`);
   evidence.durableRecordsBeforeDowngrade = [
     ...durableRecordImages(path.join(globalStorage, 'v2-transactions')),
     ...durableRecordImages(path.join(globalStorage, 'v2-operations')),
@@ -367,6 +443,16 @@ this.ResumeLayout(false);
   install(oldVsix);
   await phase('downgrade');
   checkPersistentState();
+  // The old product restores the raw source payload and ignores the optional logical history. The host may retire
+  // an entire backup after the restored edit becomes clean; any retained metadata must keep its exact bytes.
+  evidence.historySidecarsAfterDowngrade = evidence.hotExitBackups.map(backup => {
+    const history = backup.historySidecar;
+    const present = fs.existsSync(history.path);
+    if (present) assert.equal(sha(history.path), history.sha256, 'older product modified a logical-history sidecar');
+    else assert.ok(!fs.existsSync(backup.path), 'history metadata disappeared while the raw backup was retained');
+    return { path: history.path, outcome: present ? 'unchanged' : 'retiredWithCleanBackup' };
+  });
+  checks.push('actual-2.1-downgrade-compatible-with-logical-history-sidecars');
   // 2.2.0 operation records are foreign to 2.1.0 and must keep their bytes. Transaction journals share schema 2.0.0
   // with 2.1.0, whose startup recovery removes terminal journals of that schema; one may disappear but never change.
   evidence.durableRecordsAfterDowngrade = evidence.durableRecordsBeforeDowngrade.map(record => {
@@ -377,14 +463,14 @@ this.ResumeLayout(false);
   });
   assert.ok(evidence.durableRecordsAfterDowngrade.some(record => record.schemaVersion === '2.2.0' && record.outcome === 'unchanged'),
     'no new-version operation record survived the downgrade to prove byte preservation');
-  checks.push('actual-2.1-downgrade-activation-preserved-settings', 'actual-2.1-restored-2.2-backup-with-native-undo-redo');
+  checks.push('actual-2.1-downgrade-activation-preserved-settings', `actual-2.1-restored-${currentVersion}-backup-with-native-undo-redo`);
   checks.push('actual-2.1-downgrade-preserved-2.2-operation-bytes-and-only-retired-terminal-journals');
   assert.equal(sha(newVsix), evidence.packages.new.sha256, 'new package changed during installed acceptance');
   assert.equal(sha(oldVsix), evidence.packages.old.sha256);
   assert.equal(sha(path.join(harness, 'suite.cjs')), evidence.testBinary.harnessSha256);
   assert.equal(sha(path.join(extensionRoot, 'src', 'release22-upgrade-suite.ts')), evidence.testBinary.harnessSourceSha256);
   evidence.passed = true;
-  console.log(`Installed 2.1.0 -> 2.2.0 -> 2.1.0 acceptance PASS: ${checks.length} persistent checks and ${phases.length} real host phases.`);
+  console.log(`Installed 2.1.0 -> ${currentVersion} -> 2.1.0 acceptance PASS: ${checks.length} persistent checks and ${phases.length} real host phases.`);
   }
 } catch (error) {
   evidence.error = error instanceof Error ? error.stack : String(error);

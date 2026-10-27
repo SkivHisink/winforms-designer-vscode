@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { CancellationTokenSource, MessageConnection } from 'vscode-jsonrpc/node';
 import type { EngineHandle, StartOptions } from './engineClient';
+import type { EngineExitReason } from './engineLifecycle';
 import { EngineRecoveryPolicy } from './engineRecovery';
 import { currentEngineRequestContext, EngineRequestContext, engineIdentityHash, engineIdentityId, engineRequestGraphProven, engineRequestScopeActive, engineWorkerKey } from './engineRequestContext';
 import { EngineAdmissionGate } from './engineAdmission';
@@ -179,21 +180,21 @@ export async function startSupervisedEngine(
             void handle.connection.sendRequest('CancelV2Request', envelope.sessionId,
               envelope.protocol.cancellationToken).catch(() => undefined);
             if (executing.has(envelope.requestId)) {
-              const grace = setTimeout(() => { if (executing.has(envelope.requestId)) supervisor.recycle(key); }, 2_000);
+              const grace = setTimeout(() => { if (executing.has(envelope.requestId)) supervisor.recycle(key, 'requestDeadline'); }, 2_000);
               grace.unref();
             }
           },
           usage: () => handle.connection.sendRequest<{ memoryBytes: number; handleCount: number }>('GetV2WorkerUsage'),
-          dispose() {
+          dispose(reason: EngineExitReason = 'recycle') {
             if (disposed) return;
             disposed = true;
-            intentionalDisposal = true;
+            intentionalDisposal ||= reason !== 'unexpectedExit' && reason !== 'transportFailure';
             for (const token of attempts.values()) token.cancel();
-            handle.dispose();
+            handle.dispose(reason);
           },
         };
       } catch (error) {
-        handle.dispose();
+        handle.dispose('startupFailed');
         if (physical === handle) physical = undefined; // already released: the startup catch must not release it again
         throw error;
       }
@@ -205,7 +206,7 @@ export async function startSupervisedEngine(
     await Promise.race([supervisor.prepare(key), new Promise<never>((_, reject) => {
       startupTimer = setTimeout(() => reject(new EngineTransportError('ENGINE_START_DEADLINE_EXCEEDED')), 15_000);
     })]);
-  } catch (error) { supervisor.dispose(); physical?.dispose(); throw error; }
+  } catch (error) { supervisor.dispose('startupFailed'); physical?.dispose('startupFailed'); throw error; }
   finally { if (startupTimer) clearTimeout(startupTimer); }
   const handle = physical!;
   const revisionByDocument = new Map<string, { fingerprint: string; revision: string; generation: number }>();
@@ -281,7 +282,7 @@ export async function startSupervisedEngine(
     if (completedRequests.length > 512) completedRequests.shift();
     if (result.status !== 'ok') {
       options.onLog?.(`[engine:v2] ${method}: ${result.reasonCode} (${result.requestId})`);
-      if (result.status === 'deadlineExceeded') supervisor.recycle(key);
+      if (result.status === 'deadlineExceeded') supervisor.recycle(key, 'requestDeadline');
       throw new EngineTransportError(result.reasonCode);
     }
     return result.result as T;
@@ -296,13 +297,13 @@ export async function startSupervisedEngine(
   handle.process.once('exit', () => {
     unexpectedLoss ||= !intentionalDisposal;
     if (unexpectedLoss) supervisor.recordCrash(key);
-    supervisor.dispose();
+    supervisor.dispose(unexpectedLoss ? 'unexpectedExit' : 'recycle');
   });
-  handle.connection.onClose?.(() => { unexpectedLoss ||= !intentionalDisposal; supervisor.dispose(); });
+  handle.connection.onClose?.(() => { unexpectedLoss ||= !intentionalDisposal; supervisor.dispose(unexpectedLoss ? 'transportFailure' : 'recycle'); });
   return {
     ...handle,
     connection,
-    dispose: () => supervisor.dispose(),
+    dispose: (reason: EngineExitReason = 'recycle') => supervisor.dispose(reason),
     workerState: () => ({ key, pid: handle.process.pid ?? -1, generation: supervisor.state(key).generation,
       state: intentionalDisposal || unexpectedLoss ? 'disposed' : supervisor.state(key).state, pending: supervisor.state(key).pendingRequests,
       buildId: negotiation!.buildId, requests: [...audit], delayedReplies,

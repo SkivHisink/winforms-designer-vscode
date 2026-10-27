@@ -11,6 +11,7 @@ export const ENGINE_SOURCE_ARGUMENTS: Record<string, Record<string, number>> = {
     "SetProperty": 4,
     "SetNestedProperty": 4,
     "PreviewOwnedRegionPropertySet": 5,
+    "PreviewOwnedRegionPropertyReset": 4,
     "ApplyInheritedPropertyOverride": 6,
     "RemoveInheritedPropertyOverride": 5,
     "SetProperties": 4,

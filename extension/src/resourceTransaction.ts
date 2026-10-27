@@ -61,15 +61,30 @@ export async function transitionResourceSetAtomic<T>(
       const name = io.describe(tx.target);
       if (!sameResourceState(await io.read(tx.target), source(tx)))
         throw new Error(`resource transaction conflict: ${name} changed before write`);
-      await io.write(tx.target, target(tx));
       applied.push(tx);
+      // A provider may replace its bytes and then reject while flushing. Track the attempt before awaiting it;
+      // compensation below identifies whether the exact source or target image actually landed.
+      await io.write(tx.target, target(tx));
+      if (!sameResourceState(await io.read(tx.target), target(tx)))
+        throw new Error(`resource transaction verification failed: ${name}`);
     }
   } catch (error) {
     const rollbackFailures: string[] = [];
-    for (const tx of applied.reverse()) {
+    for (const tx of applied) {
+      try {
+        const current = await io.read(tx.target);
+        if (!sameResourceState(current, source(tx)) && !sameResourceState(current, target(tx)))
+          rollbackFailures.push(`${io.describe(tx.target)} changed during rollback`);
+      } catch (readError) { rollbackFailures.push(`${io.describe(tx.target)}: ${String(readError)}`); }
+    }
+    // Reject the entire compensation before its first write when any member has a foreign image.
+    const compensation = rollbackFailures.length ? [] : applied.reverse();
+    for (const tx of compensation) {
       const name = io.describe(tx.target);
       try {
-        if (!sameResourceState(await io.read(tx.target), target(tx))) {
+        const current = await io.read(tx.target);
+        if (sameResourceState(current, source(tx))) continue;
+        if (!sameResourceState(current, target(tx))) {
           rollbackFailures.push(`${name} changed during rollback`);
           continue;
         }

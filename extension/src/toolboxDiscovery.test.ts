@@ -22,9 +22,40 @@ function tempDir(): string {
   made.push(dir);
   return dir;
 }
+
+/** Minimal PE headers: enough to prove native/managed status without loading any user assembly. */
+function toolboxPe(managed = true, dll = true): Buffer {
+  const image = Buffer.alloc(1024);
+  image.writeUInt16LE(0x5a4d, 0);
+  image.writeUInt32LE(0x80, 0x3c);
+  image.writeUInt32LE(0x4550, 0x80);
+  image.writeUInt16LE(0x14c, 0x84);
+  image.writeUInt16LE(1, 0x86);
+  image.writeUInt16LE(224, 0x94);
+  image.writeUInt16LE(dll ? 0x2002 : 2, 0x96);
+  image.writeUInt16LE(0x10b, 0x98);
+  image.writeUInt32LE(0x200, 0x98 + 60);
+  image.writeUInt32LE(16, 0x98 + 92);
+  if (managed) {
+    image.writeUInt32LE(0x2000, 0x98 + 96 + 14 * 8);
+    image.writeUInt32LE(72, 0x98 + 96 + 14 * 8 + 4);
+    image.writeUInt32LE(72, 0x200);
+    image.writeUInt32LE(1, 0x210);
+  }
+  const section = 0x98 + 224;
+  image.writeUInt32LE(0x200, section + 8);
+  image.writeUInt32LE(0x2000, section + 12);
+  image.writeUInt32LE(0x200, section + 16);
+  image.writeUInt32LE(0x200, section + 20);
+  return image;
+}
 afterEach(() => {
   for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// Metadata/file-budget tests use a fixed clock so unrelated parallel IO cannot turn them into timing tests.
+// The dedicated time-budget case below supplies advancing ticks and proves the production cutoff.
+const metadataTestClock = () => 0;
 
 describe('toolbox assembly discovery', () => {
   it('finds bounded probe DLLs through common lib/TFM nesting and de-duplicates roots', () => {
@@ -66,6 +97,7 @@ describe('toolbox assembly discovery', () => {
     fs.writeFileSync(path.join(outside, 'Ignored.dll'), 'ignored');
 
     const result = await discoverBuildOutputAssemblies([rootB, rootA, rootB], {
+      now: metadataTestClock,
       yieldNow: async () => undefined
     });
 
@@ -93,6 +125,7 @@ describe('toolbox assembly discovery', () => {
     fs.writeFileSync(path.join(level2, 'Level2.dll'), '');
 
     const result = await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
       maxDepth: 1,
       yieldNow: async () => undefined
     });
@@ -110,6 +143,7 @@ describe('toolbox assembly discovery', () => {
     fs.writeFileSync(path.join(root, 'C.dll'), '');
 
     const result = await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
       maxFiles: 2,
       yieldNow: async () => undefined
     });
@@ -129,6 +163,7 @@ describe('toolbox assembly discovery', () => {
     fs.writeFileSync(path.join(b, 'B.dll'), '');
 
     const result = await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
       maxDirectories: 2,
       yieldNow: async () => undefined
     });
@@ -166,6 +201,7 @@ describe('toolbox assembly discovery', () => {
     let checks = 0;
 
     const result = await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
       shouldCancel: () => ++checks > 1,
       yieldNow: async () => undefined
     });
@@ -183,11 +219,100 @@ describe('toolbox assembly discovery', () => {
     let yields = 0;
 
     await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
       yieldEveryDirectories: 1,
       yieldNow: async () => { yields++; }
     });
 
     expect(yields).toBe(3);
+  });
+
+  it('walks directories once across nested bin, Debug and Release roots without spending their file budget twice', async () => {
+    const root = tempDir();
+    const debug = path.join(root, 'Debug');
+    const release = path.join(root, 'Release');
+    fs.mkdirSync(debug);
+    fs.mkdirSync(release);
+    for (let i = 0; i < 77; i++) {
+      fs.writeFileSync(path.join(i % 2 ? debug : release, `Control${i}.dll`), toolboxPe());
+    }
+
+    const result = await discoverBuildOutputAssemblies([root, debug, release], {
+      now: metadataTestClock,
+      maxFiles: 77, maxDirectories: 3,
+      yieldNow: async () => undefined,
+    });
+
+    expect(result.assemblies).toHaveLength(77);
+    expect(new Set(result.scannedDirectories).size).toBe(3);
+    expect(result.skipped.duplicateDirectories).toBe(2);
+    expect(result.skipped.filesByBudget).toBe(0);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('filters native and satellite images before reflection and checks owner EXE and reference output before third parties', async () => {
+    const root = tempDir();
+    for (let i = 0; i < 30; i++) {
+      fs.writeFileSync(path.join(root, `A${i.toString().padStart(2, '0')}.dll`), toolboxPe(false));
+      fs.writeFileSync(path.join(root, `BVendor${i.toString().padStart(2, '0')}.dll`), toolboxPe());
+    }
+    fs.writeFileSync(path.join(root, 'ZOwner.exe'), toolboxPe(true, false));
+    fs.writeFileSync(path.join(root, 'YReferenced.dll'), toolboxPe());
+    fs.writeFileSync(path.join(root, 'Vendor.resources.dll'), toolboxPe());
+    fs.writeFileSync(path.join(root, 'ZOwnerApphost.exe'), toolboxPe(false, false));
+
+    const result = await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
+      preferredAssemblyNames: ['ZOwner', 'YReferenced'],
+      yieldNow: async () => undefined,
+    });
+
+    const reflected = result.assemblies.slice(0, 24).map((candidate) => path.basename(candidate.path));
+    expect(reflected.slice(0, 2)).toEqual(['ZOwner.exe', 'YReferenced.dll']);
+    expect(reflected).toHaveLength(24);
+    expect(reflected.every((name) => !/^A\d|Apphost|resources/.test(name))).toBe(true);
+    expect(result.skipped.nativeAssemblies).toBe(31);
+    expect(result.skipped.satelliteAssemblies).toBe(1);
+    expect(result.assemblyDiagnostics).toContainEqual({ path: path.join(root, 'A00.dll'), outcome: 'native-image' });
+    expect(result.assemblyDiagnostics).toContainEqual({ path: path.join(root, 'Vendor.resources.dll'), outcome: 'satellite' });
+    expect(result.assemblyDiagnostics).toContainEqual({ path: path.join(root, 'ZOwner.exe'), outcome: 'candidate' });
+    expect(result.truncated).toBe(false);
+  });
+
+  it('prioritizes a known project output before the per-directory metadata file budget', async () => {
+    const root = tempDir();
+    for (const name of ['A.dll', 'B.dll', 'ZOwner.exe']) fs.writeFileSync(path.join(root, name), toolboxPe());
+
+    const result = await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
+      preferredAssemblyNames: ['ZOwner'], maxFiles: 1, yieldNow: async () => undefined,
+    });
+
+    expect(result.assemblies.map((candidate) => path.basename(candidate.path))).toEqual(['ZOwner.exe']);
+    expect(result.skipped.filesByBudget).toBe(2);
+    expect(result.assemblyDiagnostics).toContainEqual({ path: path.join(root, 'A.dll'), outcome: 'file-budget' });
+  });
+
+  it('bounds named diagnostics and counts omitted candidates even when a directory exceeds the file budget', async () => {
+    const root = tempDir();
+    for (let i = 0; i < 260; i++) fs.writeFileSync(path.join(root, `Item${i}.dll`), '');
+
+    const result = await discoverBuildOutputAssemblies([root], {
+      now: metadataTestClock,
+      maxFiles: 1, yieldNow: async () => undefined,
+    });
+
+    expect(result.assemblyDiagnostics).toHaveLength(256);
+    expect(result.assemblyDiagnosticsOmitted).toBe(4);
+    expect(result.skipped.filesByBudget).toBe(259);
+  });
+
+  it('keeps an uncertain or torn PE as a candidate for a named engine diagnostic', async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, 'Building.dll'), toolboxPe().subarray(0, 300));
+    const result = await discoverBuildOutputAssemblies([root], { now: metadataTestClock, yieldNow: async () => undefined });
+    expect(result.assemblies.map((candidate) => path.basename(candidate.path))).toEqual(['Building.dll']);
+    expect(result.skipped.nativeAssemblies).toBe(0);
   });
 });
 
@@ -210,6 +335,19 @@ describe('project-scoped build-output roots', () => {
     expect(result.roots).toEqual([path.resolve(app, 'bin'), path.resolve(controls, 'bin')]);
     expect(result.roots).not.toContain(path.resolve(unrelated, 'bin'));
     expect(result.projectBudgetReached).toBe(false);
+    expect(result.preferredAssemblyNames).toEqual(['App', 'Controls']);
+  });
+
+  it('uses literal AssemblyName declarations as owner-first output hints without evaluating MSBuild', async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, 'bin'));
+    fs.writeFileSync(path.join(root, 'App.csproj'), '<Project><PropertyGroup><AssemblyName>ZOwner</AssemblyName>'
+      + '<AssemblyName Condition="custom">ZAlternate</AssemblyName><AssemblyName>$(Dynamic)</AssemblyName></PropertyGroup>'
+      + '<ItemGroup><ProjectReference Include="Controls.csproj" /></ItemGroup></Project>');
+    fs.writeFileSync(path.join(root, 'Controls.csproj'), '<Project><PropertyGroup><AssemblyName>YWidgets</AssemblyName></PropertyGroup></Project>');
+
+    const result = await discoverProjectBuildOutputRoots(path.join(root, 'App.csproj'), { yieldNow: async () => undefined });
+    expect(result.preferredAssemblyNames).toEqual(['ZOwner', 'ZAlternate', 'App', 'YWidgets', 'Controls']);
   });
 
   it('discovers a concrete BaseOutputPath when a project redirects build products outside bin', async () => {
@@ -364,7 +502,7 @@ describe('v2 toolbox catalog scenarios S053-S060', () => {
     fs.writeFileSync(controlAssembly, 'managed-control-metadata');
 
     const roots = await discoverProjectBuildOutputRoots(appProject, { yieldNow: async () => undefined });
-    const assemblies = await discoverBuildOutputAssemblies(roots.roots, { yieldNow: async () => undefined });
+    const assemblies = await discoverBuildOutputAssemblies(roots.roots, { now: metadataTestClock, yieldNow: async () => undefined });
     const projectItems = assemblies.assemblies.map((assembly) => ({
       name: 'RatingControl',
       fqn: 'Controls.RatingControl',

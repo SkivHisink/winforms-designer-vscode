@@ -1,0 +1,8 @@
+{
+  "name": "winforms-designer-sample-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent SDK Preview scalar property editor sample",
+  "scripts": { "build": "node ../build.mjs --sample=editor" }
+}

@@ -1,4 +1,11 @@
 {
+  "command.reloadDesignerFromDisk.title": "WinForms: Recargar el diseñador desde disco",
+  "command.undoDesignerHistory.title": "WinForms: Deshacer acción del diseñador",
+  "command.redoDesignerHistory.title": "WinForms: Rehacer acción del diseñador",
+  "command.undoRecoveredAction.title": "WinForms: Deshacer acción recuperada",
+  "command.redoRecoveredAction.title": "WinForms: Rehacer acción recuperada",
+  "command.showRecoveryTimeline.title": "WinForms: Mostrar historial de recuperación",
+  "command.ownerContext.title": "WinForms: Elegir contexto del proyecto…",
   "description": "Visualice y edite formularios .Designer.cs de WinForms en vivo dentro de VS Code — una superficie de diseño al estilo de Visual Studio, cuadrícula de propiedades, cuadro de herramientas y vinculación de eventos, con la tecnología de un motor de renderizado de .NET 10.",
   "editor.displayName": "WinForms Designer",
   "viewsContainers.title": "WinForms Designer",
@@ -42,5 +49,12 @@
   "command.rebuildToolboxCache.title": "WinForms: Regenerar caché del cuadro de herramientas",
   "command.refreshToolbox.title": "WinForms: Actualizar cuadro de herramientas",
   "command.requestToolboxItems.title": "WinForms: Elegir elementos del cuadro de herramientas",
-  "config.workers.maximumResidentProcesses.description": "Número máximo de motores de vista previa residentes para distintos proyectos (1–16; valor predeterminado: 4). Cada motor .NET Framework incluye un proceso de inicio y otro de renderizado aislado. Un motor ocupado no se cierra para abrir otro proyecto; vuelva a intentarlo cuando termine la solicitud actual o cierre un diseñador."
+  "config.workers.maximumResidentProcesses.description": "Número máximo de motores de vista previa residentes para distintos proyectos (1–16; valor predeterminado: 4). Cada motor .NET Framework incluye un proceso de inicio y otro de renderizado aislado. Un motor ocupado no se cierra para abrir otro proyecto; vuelva a intentarlo cuando termine la solicitud actual o cierre un diseñador.",
+  "command.inspectAdapterPackage": "WinForms: Inspeccionar paquete del adaptador…",
+  "command.enableAdapterDevelopment": "WinForms: Activar el desarrollo local de adaptadores…",
+  "command.disableAdapter": "WinForms: Desactivar adaptador…",
+  "command.invokeAdapterAction": "WinForms: Ejecutar acción del adaptador…",
+  "command.editAdapterProperty": "WinForms: Editar propiedad con adaptador…",
+  "command.inspectHostedServices": "WinForms: Inspeccionar servicios alojados",
+  "command.inspectDocument": "WinForms: Inspeccionar documento del diseñador"
 }

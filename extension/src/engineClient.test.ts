@@ -20,14 +20,17 @@ import {
   geometryCandidateFromWindow,
   inspectCertifiedHostedDesigner,
   inspectCertifiedHostedServiceKernel,
+  inspectHostedPreviewServices,
   invokeCertifiedHostedServiceAction,
   listProjectImageResources,
   newPipeName,
   planBoundedComponentPatch,
   previewOwnedRegionPropertySet,
+  previewOwnedRegionPropertyReset,
   recordV2EngineProbeCrash,
   requestV2EngineProbe,
   resolveDesignerDocumentOwner,
+  resetPropertyViaProvenOwnedRegion,
   setProjectImageResource,
   setPropertyViaProvenOwnedRegion,
 } from './engineClient';
@@ -584,6 +587,90 @@ describe('v2 owned-region product route', () => {
   });
 });
 
+describe('hosted Preview and owned-region reset routing', () => {
+  const sourceHash = '56ccd012fa61dd4b6697697b49cc06debf68c1876c2fa89750ba35dd2ae875d9';
+  const proof = {
+    safe: true, mode: 'Replace', reason: '',
+    expectedSourceSha256: sourceHash, actualSourceSha256: sourceHash,
+    componentName: 'button1', propertyName: 'Text',
+    semanticEquivalence: true, outsideRegionPreserved: true,
+    plannedSourceText: 'RESET_SOURCE', laneASourceText: 'RESET_SOURCE',
+  };
+
+  test('routes the closed framework-only service probe with an explicit default root', async () => {
+    const inspected = { ok: true, status: 'ready', apartmentState: 'STA', contracts: [], proposals: [] };
+    const sendRequest = vi.fn().mockResolvedValue(inspected);
+    const engine = mockEngine(sendRequest);
+    await expect(inspectHostedPreviewServices(engine)).resolves.toBe(inspected);
+    await expect(inspectHostedPreviewServices(engine, 'UserControl')).resolves.toBe(inspected);
+    expect(sendRequest).toHaveBeenNthCalledWith(1, 'InspectHostedPreviewServices', 'Form');
+    expect(sendRequest).toHaveBeenNthCalledWith(2, 'InspectHostedPreviewServices', 'UserControl');
+  });
+
+  test('requires explicit opt-in at the low-level reset endpoint', async () => {
+    const sendRequest = vi.fn().mockResolvedValue({ safe: false });
+    await previewOwnedRegionPropertyReset(mockEngine(sendRequest), 'C:\\Form.Designer.cs', sourceHash, 'button1', 'Text', 'SOURCE');
+    expect(sendRequest).toHaveBeenCalledWith(
+      'PreviewOwnedRegionPropertyReset', 'C:\\Form.Designer.cs', sourceHash, 'button1', 'Text', 'SOURCE', false,
+    );
+  });
+
+  test('uses only the exact proven reset without calling the source-first planner', async () => {
+    const sendRequest = vi.fn().mockResolvedValue(proof);
+    await expect(resetPropertyViaProvenOwnedRegion(
+      mockEngine(sendRequest), 'C:\\Form.Designer.cs', 'button1', 'Text', 'SOURCE',
+    )).resolves.toEqual({
+      safe: true, mode: 'Replace', text: 'RESET_SOURCE', reason: '', persistenceLane: 'ownedRegion', ownedRegionRefusal: null,
+    });
+    expect(sendRequest).toHaveBeenCalledExactlyOnceWith(
+      'PreviewOwnedRegionPropertyReset', 'C:\\Form.Designer.cs', sourceHash, 'button1', 'Text', 'SOURCE', true,
+    );
+  });
+
+  test.each([
+    { safe: false, reason: 'unmodeled statement' },
+    { semanticEquivalence: false },
+    { outsideRegionPreserved: false },
+    { expectedSourceSha256: 'a'.repeat(64) },
+    { actualSourceSha256: 'b'.repeat(64) },
+    { componentName: 'button2' },
+    { propertyName: 'Size' },
+    { plannedSourceText: 'DIFFERENT' },
+    { plannedSourceText: '', laneASourceText: '' },
+    { plannedSourceText: 'SOURCE', laneASourceText: 'SOURCE' },
+  ])('preserves source-first refusal when reset proof is incomplete: %o', async (override) => {
+    const sendRequest = vi.fn().mockResolvedValueOnce({ ...proof, ...override })
+      .mockResolvedValueOnce({ safe: false, mode: 'Failed', text: null, reason: 'target is not writable' });
+    const result = await resetPropertyViaProvenOwnedRegion(
+      mockEngine(sendRequest), 'C:\\Form.Designer.cs', 'button1', 'Text', 'SOURCE',
+    );
+    expect(result).toMatchObject({
+      safe: false, mode: 'Failed', text: null, reason: 'target is not writable', persistenceLane: 'sourceFirst',
+    });
+    expect(result.ownedRegionRefusal).toBeTruthy();
+    expect(sendRequest).toHaveBeenNthCalledWith(2, 'ResetProperty', 'C:\\Form.Designer.cs', 'button1', 'Text', 'SOURCE');
+  });
+
+  test('already-default reset retains the safe Noop/null contract', async () => {
+    const sendRequest = vi.fn().mockResolvedValueOnce({ ...proof, safe: false, reason: 'Lane A reset planner produced no change' })
+      .mockResolvedValueOnce({ safe: true, mode: 'Noop', text: null, reason: 'already default' });
+    await expect(resetPropertyViaProvenOwnedRegion(
+      mockEngine(sendRequest), 'C:\\Form.Designer.cs', 'button1', 'Text', 'SOURCE',
+    )).resolves.toMatchObject({ safe: true, mode: 'Noop', text: null, persistenceLane: 'sourceFirst' });
+  });
+
+  test('an unavailable owned-region RPC retains the established reset path', async () => {
+    const sendRequest = vi.fn().mockRejectedValueOnce(new Error('method not found'))
+      .mockResolvedValueOnce({ safe: true, mode: 'Replace', text: 'FALLBACK', reason: '' });
+    await expect(resetPropertyViaProvenOwnedRegion(
+      mockEngine(sendRequest), 'C:\\Form.Designer.cs', 'button1', 'Text', 'SOURCE',
+    )).resolves.toMatchObject({
+      safe: true, text: 'FALLBACK', persistenceLane: 'sourceFirst',
+      ownedRegionRefusal: 'owned-region reset planner unavailable: method not found',
+    });
+  });
+});
+
 describe('v2 engine-backed worker probe', () => {
   test('routes a read-only capabilities probe through selected worker supervision', async () => {
     const sendRequest = vi.fn().mockResolvedValue(capabilities({ engine: 'modern-test' }));
@@ -761,6 +848,16 @@ describe('project resource picker client', () => {
 });
 
 describe('v2 document owner client', () => {
+  test('R23-09: sends an explicit context to the engine for membership revalidation', async () => {
+    const sendRequest = vi.fn().mockResolvedValue({ diagnosticCode: 'NONE', typeName: 'Demo.Form1',
+      projectPath: 'C:\\Demo\\Two.csproj', owners: ['C:\\Demo\\One.csproj', 'C:\\Demo\\Two.csproj'] });
+    const engine = mockEngine(sendRequest);
+    await resolveDesignerDocumentOwner(engine, 'C:\\Demo\\Form1.Designer.cs',
+      ['C:\\Demo\\One.csproj', 'C:\\Demo\\Two.csproj'], null, null, 'C:\\Demo\\Two.csproj');
+    expect(sendRequest).toHaveBeenCalledWith('ResolveDesignerDocumentOwner', 'C:\\Demo\\Form1.Designer.cs',
+      ['C:\\Demo\\One.csproj', 'C:\\Demo\\Two.csproj'], null, null, 'C:\\Demo\\Two.csproj');
+  });
+
   test('V2-FND-001-S009: routes bounded owner resolution with host-supplied source', async () => {
     const sendRequest = vi.fn().mockResolvedValue({
       diagnosticCode: 'NONE',
@@ -784,6 +881,7 @@ describe('v2 document owner client', () => {
       ['C:\\Demo\\Demo.csproj'],
       'partial class Form1 { private void InitializeComponent() { } }',
       'partial class Form1 : System.Windows.Forms.Form { }',
+      null,
     );
   });
 });

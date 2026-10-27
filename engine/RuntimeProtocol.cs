@@ -64,7 +64,7 @@ namespace WinFormsDesigner.Engine.Protocol
     public sealed class RuntimeProtocolRouter
     {
         private static readonly HashSet<string> ReadMethods = Names(
-            "Ping GetCapabilities GetV2WorkerUsage ProbeHostedServiceKernel InspectCertifiedHostedServiceKernel " +
+            "Ping GetCapabilities GetV2WorkerUsage ProbeHostedServiceKernel InspectHostedPreviewServices InspectCertifiedHostedServiceKernel " +
             "InspectCertifiedHostedDesigner ResolveAssembly ResolveDesignerDocumentOwner " +
             "RenderDesigner RenderWithLayout RenderControl PreviewSave SerializeDesigner DescribeDesigner " +
             "DescribeComponent DescribeLayout HitTestTab HitTestDesignerAdorner BeginGeometryDrag ListControlTypes " +
@@ -78,7 +78,7 @@ namespace WinFormsDesigner.Engine.Protocol
         private static readonly HashSet<string> MutationMethods = Names(
             "InvokeCertifiedHostedServiceAction EditSupportedUiTypeEditor EditSupportedCollectionEditor " +
             "EditCertifiedVendorCollectionEditor PlanBoundedComponentPatch ApplyCachedTextPropertyEdit SetProperty SetNestedProperty " +
-            "PreviewOwnedRegionPropertySet ApplyInheritedPropertyOverride RemoveInheritedPropertyOverride SetProperties " +
+            "PreviewOwnedRegionPropertySet PreviewOwnedRegionPropertyReset ApplyInheritedPropertyOverride RemoveInheritedPropertyOverride SetProperties " +
             "MakeLocalizable SetLocalizationCulture SetLocalizedResources SetLocalizedImageResource SetModifier " +
             "SetTableCell ResetProperty ResetProperties SetImageResource SetProjectImageResource SetImageList " +
             "SetTableStyle SetCollectionItems SetGenericListItems SetStringArray SetColumns SetDataSource " +

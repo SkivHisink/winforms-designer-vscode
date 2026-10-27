@@ -25,6 +25,12 @@ namespace WinFormsDesigner.Engine.Net48
     /// </summary>
     internal sealed class HostedServiceKernelBroker
     {
+        /// <summary>Called by the RPC entry on its existing STA dispatcher. Only framework controls are created;
+        /// no project/vendor assembly or design-time UI is loaded by this capability inspection.</summary>
+        public HostedServiceKernelCapabilitiesResult InspectPreviewServices(
+            string rootKind = "Form", CancellationToken cancellationToken = default) =>
+            DesignerServiceKernel.InspectPreviewServices(rootKind, cancellationToken);
+
         internal const string CertificationId = "repo.fakevendor.hosted-service-kernel.v1";
         internal const string ComponentTypeName = "FakeVendor.HostedServiceControl";
         internal const string DesignerTypeName = "FakeVendor.HostedServiceControlDesigner";
@@ -438,7 +444,8 @@ namespace WinFormsDesigner.Engine.Net48
             CertificationId = certificationId,
             AssemblySha256 = sha,
             ApartmentState = Thread.CurrentThread.GetApartmentState().ToString(),
-            Capabilities = session.Capabilities.Select(capability => capability.ToString()).ToList(),
+            Capabilities = HostedServiceKernelV1Contract.ProjectCapabilities(
+                session.Capabilities.Select(capability => capability.ToString())),
             CompleteHostAdvertised = completeHostAdvertised,
             IncompleteHostWithheld = incompleteHostWithheld,
             IncompleteHostReason = incompleteHostReason,

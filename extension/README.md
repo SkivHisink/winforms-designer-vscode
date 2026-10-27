@@ -4,13 +4,21 @@
 
 Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered form — click controls, edit properties, drag and resize, wire events, and save minimal changes back into `.Designer.cs`. No round-trip through Visual Studio.
 
-> ✅ **2.2.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
+> ✅ **2.3.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
 
-**New in 2.2:** ordinary designer commands use a negotiated extension/engine protocol and a bounded worker
-supervisor. Separate project graphs use separate workers; late replies and replies from a recycled process
-cannot replace the active document. Mutation identity and durable host outcomes protect source edits and Undo
-from repeat application. **WinForms: Show Form Status** and the recovery commands remain available for
-diagnosing an incompatible installation or restarting preview while retaining unsaved edits.
+**New in 2.3:** Adapter SDK Preview 0.1.0 adds independently built designer actions and scalar property editors.
+Inspect a local package, explicitly enable its exact hashes in a trusted workspace, and invoke its actions from the
+canvas Tasks menu or the command palette. Input and dropdown editors use the host's focus, cancellation and Undo
+workflow. This is trusted author code with no vendor certification or OS sandbox. The public contract and its exact
+limits are in the [SDK guide](https://github.com/SkivHisink/winforms-designer-vscode/blob/v2.3.0/adapter-sdk/README.md).
+
+**Since 2.3:** bounded document history and linked artifacts survive hot exit. Source/resource histories restore native Undo after the last matching saved checkpoint. Histories with
+ordinary code-behind edits use recovered-action Undo/Redo from the designer. The ordinary code editor keeps
+its own Undo stack; a changed companion blocks aggregate operations until reconciled. An existing native Redo branch remains
+recovery data. Choose the owning project explicitly for shared files, inspect the recovery timeline, and review
+named worker and project-evaluation diagnostics. Toolbox discovery prioritizes project controls and managed
+EXE outputs. See the [release record](https://github.com/SkivHisink/winforms-designer-vscode/blob/v2.3.0/docs/release-2.3.0.md)
+for tested behavior and public API limits.
 
 ![WinForms Designer for VS Code](https://raw.githubusercontent.com/SkivHisink/winforms-designer-vscode/master/pictures/main-picture.png)
 

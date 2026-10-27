@@ -10,7 +10,7 @@ Render, click-select, edit and lay out `.Designer.cs` forms — live — without
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code Engine](https://img.shields.io/badge/VS%20Code-%5E1.84-007ACC?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0%20LTS-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![Version 2.2](https://img.shields.io/badge/version-2.2-brightgreen.svg)](#support-matrix)
+[![Version 2.3](https://img.shields.io/badge/version-2.3-brightgreen.svg)](#support-matrix)
 
 </div>
 
@@ -173,10 +173,17 @@ Found a rough edge? **WinForms: Show Form Status** explains the current project/
 actionable diagnostic codes. **Rebuild Toolbox Cache**, **Refresh Toolbox** and **Restart the Designer Preview Engine** help recover
 the session while preserving unsaved source and toolbox customization. See the [2.1.0 support and evidence guide](docs/release-2.1.0.md).
 
-Version 2.2 routes ordinary designer requests through a negotiated protocol and a bounded worker supervisor.
+Since 2.2, ordinary designer requests use a negotiated protocol and a bounded worker supervisor.
 Project graphs have separate workers; requests carry document and generation identity, and the host retains
 source and native Undo ownership. See the [2.2.0 implementation and evidence record](docs/release-2.2.0.md)
 for verification scope and recovery boundaries.
+
+Version 2.3 adds [Adapter SDK Preview 0.1.0](adapter-sdk/README.md): independently built designer actions and
+scalar property editors, exact package hashes, explicit trusted development enablement and revocation, and the same
+source transaction and Undo authority as ordinary edits. The [public commands](docs/adapter-sdk/public-commands.md)
+describe the nonlocalized owned-property scope. The [official SDK ABI probe](docs/adapter-sdk/abi-probe.md) requires
+an explicit adapter; direct execution of modern SDK reference binaries and vendor certification are outside this
+Preview. See the [combined 2.3.0 release record](docs/release-2.3.0.md) for verification and package identities.
 
 Please [file an issue](https://github.com/SkivHisink/winforms-designer-vscode/issues) with the report from
 **WinForms: Export Designer Diagnostics**. Export and Copy Diagnostics exclude source, property values, raw errors

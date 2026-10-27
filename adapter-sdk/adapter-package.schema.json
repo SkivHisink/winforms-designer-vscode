@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "winforms-designer.adapter-package/1",
+  "title": "WinForms Designer Adapter SDK Preview 0.1 package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaId", "schemaVersion", "sdkVersion", "adapter", "cohort", "execution", "integrity", "provenance", "capabilities", "contributions"],
+  "properties": {
+    "schemaId": { "const": "winforms-designer.adapter-package" },
+    "schemaVersion": { "const": 1 },
+    "sdkVersion": { "const": "0.1.0" },
+    "adapter": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version", "displayName"],
+      "properties": { "id": { "$ref": "#/$defs/identity" }, "version": { "$ref": "#/$defs/version" }, "displayName": { "$ref": "#/$defs/title" } }
+    },
+    "cohort": {
+      "type": "object", "additionalProperties": false,
+      "required": ["productId", "minProductVersion", "maxProductVersionExclusive", "runtimes", "architectures"],
+      "properties": {
+        "productId": { "const": "winforms-designer-vscode" },
+        "minProductVersion": { "$ref": "#/$defs/version" },
+        "maxProductVersionExclusive": { "$ref": "#/$defs/version" },
+        "runtimes": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["modern", "net48"] } },
+        "architectures": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["x64", "arm64"] } }
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "entrypoint"],
+      "properties": { "kind": { "const": "node-stdio" }, "entrypoint": { "$ref": "#/$defs/path", "pattern": "\\.mjs$" } }
+    },
+    "integrity": {
+      "type": "object", "additionalProperties": false, "required": ["algorithm", "files"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "files": {
+          "type": "array", "minItems": 1, "maxItems": 16,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+            "properties": { "path": { "$ref": "#/$defs/path", "not": { "const": "adapter-package.json" } }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["policy", "certification"],
+      "properties": { "policy": { "const": "local-development" }, "certification": { "const": "none" } }
+    },
+    "capabilities": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["action.set-property", "editor.scalar"] } },
+    "requiredServices": { "type": "array", "maxItems": 9, "uniqueItems": true, "items": { "enum": ["ContainerSiting", "Naming", "ComponentChange", "Selection", "Transactions", "MenuCommands", "ToolboxCatalog", "TypeResolution", "PropertySerialization"] } },
+    "contributions": {
+      "type": "object", "additionalProperties": false, "required": ["actions", "editors"],
+      "properties": {
+        "actions": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/action" } },
+        "editors": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/editor" } }
+      }
+    }
+  },
+  "$defs": {
+    "identity": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{2,95}$" },
+    "version": { "type": "string", "maxLength": 48, "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "symbol": { "type": "string", "pattern": "^(this|[A-Za-z_][A-Za-z0-9_]{0,127})$" },
+    "propertyType": { "enum": ["System.String", "System.Boolean", "System.Int32"] },
+    "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,95}$" },
+    "path": {
+      "type": "string", "maxLength": 240,
+      "pattern": "^(?!(?:.*\\/)?(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|$))(?:[A-Za-z0-9_-](?:[A-Za-z0-9_.-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_-](?:[A-Za-z0-9_.-]*[A-Za-z0-9_-])?$"
+    },
+    "action": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title", "propertyName", "propertyType"],
+      "properties": { "id": { "$ref": "#/$defs/identity" }, "title": { "$ref": "#/$defs/title" }, "propertyName": { "$ref": "#/$defs/symbol" }, "propertyType": { "$ref": "#/$defs/propertyType" }, "disabledReasonCode": { "$ref": "#/$defs/code" } }
+    },
+    "editor": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title", "propertyName", "propertyType"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identity" }, "title": { "$ref": "#/$defs/title" }, "propertyName": { "$ref": "#/$defs/symbol" }, "propertyType": { "$ref": "#/$defs/propertyType" }, "disabledReasonCode": { "$ref": "#/$defs/code" },
+        "presentation": { "enum": ["input", "dropdown"] }, "choices": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "maxLength": 8192 } }
+      },
+      "allOf": [
+        { "if": { "required": ["presentation"], "properties": { "presentation": { "const": "dropdown" } } }, "then": { "required": ["choices"] }, "else": { "not": { "required": ["choices"] } } },
+        { "if": { "properties": { "propertyType": { "const": "System.Boolean" } } }, "then": { "properties": { "choices": { "items": { "enum": ["True", "False"] } } } } },
+        { "if": { "properties": { "propertyType": { "const": "System.Int32" } } }, "then": { "properties": { "choices": { "items": { "pattern": "^(0|-[1-9][0-9]*|[1-9][0-9]*)$" } } } } }
+      ]
+    }
+  }
+}

@@ -1,4 +1,11 @@
 {
+  "command.reloadDesignerFromDisk.title": "WinForms: डिस्क से डिज़ाइनर फिर लोड करें",
+  "command.undoDesignerHistory.title": "WinForms: डिज़ाइनर कार्रवाई पूर्ववत करें",
+  "command.redoDesignerHistory.title": "WinForms: डिज़ाइनर कार्रवाई फिर करें",
+  "command.undoRecoveredAction.title": "WinForms: पुनर्प्राप्त कार्रवाई पूर्ववत करें",
+  "command.redoRecoveredAction.title": "WinForms: पुनर्प्राप्त कार्रवाई फिर करें",
+  "command.showRecoveryTimeline.title": "WinForms: पुनर्प्राप्ति इतिहास दिखाएँ",
+  "command.ownerContext.title": "WinForms: प्रोजेक्ट संदर्भ चुनें…",
   "description": "WinForms .Designer.cs फ़ॉर्म्स को VS Code के अंदर लाइव विज़ुअलाइज़ और एडिट करें — एक Visual Studio-शैली की डिज़ाइनर सतह, प्रॉपर्टी ग्रिड, टूलबॉक्स और इवेंट वायरिंग, जो .NET 10 रेंडरिंग इंजन द्वारा संचालित है।",
   "editor.displayName": "WinForms Designer",
   "viewsContainers.title": "WinForms Designer",
@@ -42,5 +49,12 @@
   "command.rebuildToolboxCache.title": "WinForms: टूलबॉक्स कैश फिर से बनाएँ",
   "command.refreshToolbox.title": "WinForms: टूलबॉक्स रीफ़्रेश करें",
   "command.requestToolboxItems.title": "WinForms: टूलबॉक्स आइटम चुनें",
-  "config.workers.maximumResidentProcesses.description": "अलग-अलग परियोजनाओं के लिए एक साथ चलने वाले पूर्वावलोकन वर्कर की अधिकतम संख्या (1–16; डिफ़ॉल्ट 4)। प्रत्येक .NET Framework वर्कर में एक लॉन्चर और एक अलग रेंडर प्रक्रिया होती है। दूसरे प्रोजेक्ट को खोलने के लिए व्यस्त वर्कर बंद नहीं होगा; वर्तमान अनुरोध पूरा होने के बाद फिर प्रयास करें या कोई डिज़ाइनर बंद करें।"
+  "config.workers.maximumResidentProcesses.description": "अलग-अलग परियोजनाओं के लिए एक साथ चलने वाले पूर्वावलोकन वर्कर की अधिकतम संख्या (1–16; डिफ़ॉल्ट 4)। प्रत्येक .NET Framework वर्कर में एक लॉन्चर और एक अलग रेंडर प्रक्रिया होती है। दूसरे प्रोजेक्ट को खोलने के लिए व्यस्त वर्कर बंद नहीं होगा; वर्तमान अनुरोध पूरा होने के बाद फिर प्रयास करें या कोई डिज़ाइनर बंद करें।",
+  "command.inspectAdapterPackage": "WinForms: एडाप्टर पैकेज की जाँच करें…",
+  "command.enableAdapterDevelopment": "WinForms: स्थानीय एडाप्टर विकास सक्षम करें…",
+  "command.disableAdapter": "WinForms: एडाप्टर अक्षम करें…",
+  "command.invokeAdapterAction": "WinForms: एडाप्टर क्रिया चलाएँ…",
+  "command.editAdapterProperty": "WinForms: एडाप्टर से गुण संपादित करें…",
+  "command.inspectHostedServices": "WinForms: होस्ट की गई सेवाओं की जाँच करें",
+  "command.inspectDocument": "WinForms: डिज़ाइनर दस्तावेज़ की जाँच करें"
 }

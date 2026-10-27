@@ -1,4 +1,11 @@
 {
+  "command.reloadDesignerFromDisk.title": "WinForms : Recharger le concepteur depuis le disque",
+  "command.undoDesignerHistory.title": "WinForms : Annuler l’action du concepteur",
+  "command.redoDesignerHistory.title": "WinForms : Rétablir l’action du concepteur",
+  "command.undoRecoveredAction.title": "WinForms : Annuler l’action récupérée",
+  "command.redoRecoveredAction.title": "WinForms : Rétablir l’action récupérée",
+  "command.showRecoveryTimeline.title": "WinForms : Afficher la chronologie de récupération",
+  "command.ownerContext.title": "WinForms: Choisir le contexte du projet…",
   "description": "Visualisez et modifiez des formulaires WinForms .Designer.cs en direct dans VS Code — une surface de conception façon Visual Studio, une grille de propriétés, une boîte à outils et le câblage d'événements, propulsés par un moteur de rendu .NET 10.",
   "editor.displayName": "Concepteur WinForms",
   "viewsContainers.title": "Concepteur WinForms",
@@ -42,5 +49,12 @@
   "command.rebuildToolboxCache.title": "WinForms : Reconstruire le cache de la boîte à outils",
   "command.refreshToolbox.title": "WinForms : Actualiser la boîte à outils",
   "command.requestToolboxItems.title": "WinForms : Choisir les éléments de la boîte à outils",
-  "config.workers.maximumResidentProcesses.description": "Nombre maximal de moteurs d’aperçu résidents pour les différents projets (1–16 ; valeur par défaut : 4). Un moteur .NET Framework comprend un lanceur et un processus de rendu isolé. Un moteur occupé ne sera pas arrêté pour ouvrir un autre projet ; réessayez après la requête en cours ou fermez un concepteur."
+  "config.workers.maximumResidentProcesses.description": "Nombre maximal de moteurs d’aperçu résidents pour les différents projets (1–16 ; valeur par défaut : 4). Un moteur .NET Framework comprend un lanceur et un processus de rendu isolé. Un moteur occupé ne sera pas arrêté pour ouvrir un autre projet ; réessayez après la requête en cours ou fermez un concepteur.",
+  "command.inspectAdapterPackage": "WinForms : Inspecter un paquet d’adaptateur…",
+  "command.enableAdapterDevelopment": "WinForms : Activer le développement local d’adaptateur…",
+  "command.disableAdapter": "WinForms : Désactiver un adaptateur…",
+  "command.invokeAdapterAction": "WinForms : Exécuter une action d’adaptateur…",
+  "command.editAdapterProperty": "WinForms : Modifier une propriété avec un adaptateur…",
+  "command.inspectHostedServices": "WinForms : Inspecter les services hébergés",
+  "command.inspectDocument": "WinForms : Inspecter le document du concepteur"
 }

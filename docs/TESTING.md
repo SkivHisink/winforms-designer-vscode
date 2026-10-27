@@ -19,6 +19,14 @@ It complements the dev/test commands in
 
 ## What exists today
 
+- **2.4 Adapter SDK Preview acceptance** — `npm run release24:extension-host -- --version=1.84.0` and
+  `--version=stable` build the public SDK and two author samples outside the extension source tree, then run setup
+  and restore in separate real workbench launches on modern and net48. They use public commands for inspection,
+  enablement, action/editor invocation, Save, Reset and native Undo. Actual QuickInput tests cover acceptance,
+  Escape, nested invocation and owner focus changes. Package tampering, wrong types, incomplete services and revoked
+  grants refuse before source mutation. The independent SDK package/type tests and modern/classic ABI probes are
+  separate required CI steps. See the [public command contract](adapter-sdk/public-commands.md) and
+  [ABI decision](adapter-sdk/abi-probe.md).
 - **2.2 product protocol/lifecycle acceptance** — `npm run release22:extension-host -- --version=1.84.0`
   and `--version=stable` run `release22-extension-host-suite.ts` in disposable modern/net48 projects. These
   scenarios drive ordinary document edits, native Undo/Redo, resource transactions, save, rebuild and worker
@@ -154,6 +162,12 @@ The engine uses `[assembly: InternalsVisibleTo("Engine.UnitTests")]`; allowlists
 
 The full MSBuild design-time evaluation path (filesystem + `dotnet msbuild`) stays in **e2e** (the `ComplexProject` fixture already covers multi-target / custom `OutputPath`).
 
+`ProjectEvaluationPolicyTests` also covers unconditional Framework declarations, localized `MSB1001` switch failures, and suppression by project and selected SDK version across the negative-cache interval. A change to the selected SDK permits a fresh evaluation.
+
+For an SDK older than MSBuild 17.8, the supported modern-project behavior remains the existing `bin` output search. The engine reports `MSBUILD_GETPROPERTY_UNSUPPORTED` once as a named form-status condition and does not inject a target or build a project to obtain `TargetPath`. A conventional built `bin/Release/net6.0-windows` output was resolved with SDK 6.0.407 pinned by `global.json`. Custom output directories outside `bin` need a newer SDK with property queries or an explicit assembly selection; this fallback does not claim canonical `TargetPath` discovery. Microsoft documents property queries as available in [MSBuild 17.8 and later](https://learn.microsoft.com/en-us/visualstudio/msbuild/evaluate-items-and-properties?view=visualstudio).
+
+Worker lifetime coverage verifies that residency-budget eviction, idle cleanup, build-output release, replacement, restart and shutdown carry named reasons to the process log and the same allowlisted fields in the diagnostic bundle. An unrequested signal exit remains abnormal even when its exit code is null. The second-document admission route can recycle an idle resident when the configured process budget is full (`budgetRecycle`); it removes the exact registry owner before disposing it.
+
 ## Extension unit tests (TS)
 
 **Framework:** [Vitest](https://vitest.dev/) (pure, no `vscode`), invoked by `npm test`.
@@ -208,3 +222,39 @@ These stay in their existing tiers (don't try to unit-test them):
 - Full WinForms rendering / `DrawToBitmap` (needs an STA thread + a real host) → **e2e**.
 - MSBuild design-time evaluation (needs the filesystem + `dotnet`) → **e2e**.
 - Webview JavaScript **rendering fidelity** (real PNG blit, `getBoundingClientRect`-dependent drag/marquee geometry, VS Code theming/focus) → **manual F5**. The webview *logic* (event → posted message, DOM state) is now covered headlessly by [`webview-e2e.ts`](../extension/src/webview-e2e.ts) (`npm run webview-e2e`), on top of `node --check` for syntax.
+
+## Release 2.3 document recovery acceptance
+
+Run `npm run release23:extension-host -- --version=1.84.0` and
+`npm run release23:extension-host -- --version=stable` from `extension`. The runner creates an isolated
+workspace and profile, quits the first workbench through the ordinary hot-exit path and reopens its actual
+backup destinations in a second process. It verifies both modern and net48 data, native source/resource callbacks and explicit recovered-action commands for code-behind composites.
+The machine report binds the running extension and engines to SHA-256 hashes; another build during the run
+invalidates that evidence.
+
+The probe distinguishes a source buffer from its saved image, linked source/resource images, logical history
+and the native workbench stack. Save, Save All and auto-save establish matching checkpoints. The retained
+history has at most 20 operations; crossing that retention boundary through a still-live native callback
+rebases the durable history to the resulting current image. It does not invalidate the existing live stack.
+After restart, native Undo is reconstructed only for the applied suffix after a matching saved checkpoint.
+An existing redo branch remains data because the public API cannot import it into the native redo stack.
+Histories containing ordinary code-behind artifacts use the public Undo/Redo Recovered Action commands;
+they do not register a misleading same-URI native chain. A separate editor checkpoint preserves the current
+code buffer after the operation that created it has left the 20-operation window. TextDocument history
+remains separate. The native code-editor Undo probe verifies a companion mismatch refuses aggregate save,
+replay and new mutations while preserving all artifact bytes; native Redo restores the exact image before
+composite replay continues. Multiple custom views stay disabled.
+
+`documentHistory.test.ts` exercises corrupted metadata, a recomputed hash that redirects targets, bounded
+history and byte budgets, checkpoint races and operation order. `documentSaveBaselines.test.ts` forces
+the generated-file missing error to arrive before required companion reads and proves none are skipped. `transactionRunner.test.ts`,
+`transactionRecovery.test.ts` and `resourceTransaction.test.ts` exercise interrupted writes, writes that land
+before rejecting, external changes and compensation. A simulated permission or disk-full error is fault
+injection, not a physical storage-failure qualification. `formSaveAs.test.ts` proves the supported lexical
+copy boundary and explicit refusal of semantic references. Path tests use real filesystem links and refuse
+linked ancestors before reading or writing an artifact.
+
+Recovery actions retain undecided journals. Exporting the current generated source uses a create-only
+operation and remains available when the artifact baseline is unknown. Reloading a source does not clear
+an unresolved multi-file recovery decision. Automatic history replay is limited to the conventional files
+of the owning form; alternate event partials and project edits require a fresh ownership decision.

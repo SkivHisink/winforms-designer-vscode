@@ -1,13 +1,17 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectedOutputDependencyFiles } from './outputDependencyIdentity';
 import { captureDependencyGraphIdentity } from './dependencyGraphIdentity';
 
 const roots: string[] = [];
 const fixturePrefix = path.join(os.tmpdir(), 'wfd-output-graph-');
+const clock = () => 0;
+// Enumeration and content assertions use fixed clocks; the scan deadline has its own advancing-clock case.
+beforeEach(() => { vi.spyOn(Date, 'now').mockImplementation(clock); });
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
     if (!path.resolve(root).startsWith(path.resolve(fixturePrefix))) throw new Error('Invalid test cleanup target');
     fs.rmSync(root, { recursive: true, force: true });
@@ -31,15 +35,16 @@ describe('selected output private dependency graph', () => {
     expect(captured.complete).toBe(true);
     expect(captured.files).toEqual(expect.arrayContaining([assembly, ...files.map((file) => path.join(root, file))]));
     expect(captured.files).toHaveLength(files.length + 1);
-    expect(captureDependencyGraphIdentity(captured.files).mode).toBe('content');
+    expect(captureDependencyGraphIdentity(captured.files, { clock }).mode).toBe('content');
   });
 
   it('changes graph identity after a copied project reference is replaced at the same path', () => {
     const { root, assembly } = fixture(); const dependency = path.join(root, 'ReferencedProject.dll');
     fs.writeFileSync(dependency, 'AAAA');
-    const before = captureDependencyGraphIdentity(selectedOutputDependencyFiles(assembly).files);
+    const before = captureDependencyGraphIdentity(selectedOutputDependencyFiles(assembly).files, { clock });
     const timestamp = fs.statSync(dependency); fs.writeFileSync(dependency, 'BBBB'); fs.utimesSync(dependency, timestamp.atime, timestamp.mtime);
-    const after = captureDependencyGraphIdentity(selectedOutputDependencyFiles(assembly).files);
+    const after = captureDependencyGraphIdentity(selectedOutputDependencyFiles(assembly).files, { clock });
+    expect(before.mode).toBe('content'); expect(after.mode).toBe('content');
     expect(after.fingerprint).not.toBe(before.fingerprint);
   });
 
@@ -52,6 +57,13 @@ describe('selected output private dependency graph', () => {
     fs.unlinkSync(linked);
     fs.mkdirSync(path.join(root, 'secrets'));
     expect(selectedOutputDependencyFiles(assembly)).toMatchObject({ complete: false, reason: 'OUTPUT_DEPENDENCY_SECRET_PATH' });
+  });
+
+  it('marks a scan incomplete when its production deadline expires', () => {
+    const { assembly } = fixture();
+    let elapsed = 0;
+    vi.mocked(Date.now).mockImplementation(() => { const now = elapsed; elapsed = 101; return now; });
+    expect(selectedOutputDependencyFiles(assembly)).toMatchObject({ complete: false, reason: 'OUTPUT_DEPENDENCY_SCAN_BUDGET' });
   });
 
   it('marks over-budget and unavailable scans incomplete rather than attesting partial graphs', () => {
