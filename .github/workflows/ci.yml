@@ -189,6 +189,7 @@ jobs:
           node ./scripts/collect-v2-test-evidence.mjs --kind=vitest "--input=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/test-results/vitest.json')" "--output=$(Join-Path $env:RUNNER_TEMP 'v2-scenario-evidence/vitest.json')" --invocation=vitest-4.1.12
 
       - name: Build extension
+        id: build-extension
         working-directory: extension
         run: npm run build
 
@@ -226,25 +227,31 @@ jobs:
           WFD_SCENARIO_EVIDENCE_FILE: ${{ runner.temp }}\v2-scenario-evidence\webview.json
         run: npm run webview-e2e
 
+      # The Extension Host suites are independent of each other. Each one runs whenever the extension built, so a
+      # failure in one does not hide the results of the rest; any failure still fails the job.
       - name: VS Code 1.84 Extension Host smoke
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_SCENARIO_EVIDENCE_DIR: ${{ runner.temp }}\v2-scenario-evidence
         run: npm run extension-host-e2e -- --version=1.84.0
 
       - name: VS Code Stable Extension Host smoke
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_SCENARIO_EVIDENCE_DIR: ${{ runner.temp }}\v2-scenario-evidence
         run: npm run extension-host-e2e -- --version=stable
 
       - name: Release 2.2 ordinary product acceptance (VS Code 1.84)
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_RELEASE22_EVIDENCE_FILE: ${{ runner.temp }}\release22-product-evidence\release22-host-1.84.0.json
         run: npm run release22:extension-host -- --version=1.84.0
 
       - name: Release 2.2 ordinary product acceptance (VS Code Stable)
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_RELEASE22_EVIDENCE_FILE: ${{ runner.temp }}\release22-product-evidence\release22-host-stable.json
@@ -259,12 +266,14 @@ jobs:
           if-no-files-found: warn
 
       - name: Release 2.3 history and hot exit (VS Code 1.84)
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_RELEASE23_EVIDENCE_FILE: ${{ runner.temp }}\release23-product-evidence\release23-host-1.84.0.json
         run: npm run release23:extension-host -- --version=1.84.0
 
       - name: Release 2.3 history and hot exit (VS Code Stable)
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_RELEASE23_EVIDENCE_FILE: ${{ runner.temp }}\release23-product-evidence\release23-host-stable.json
@@ -279,12 +288,14 @@ jobs:
           if-no-files-found: warn
 
       - name: Release 2.3 Adapter SDK Preview (R24) (VS Code 1.84)
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_RELEASE24_EVIDENCE_FILE: ${{ runner.temp }}\release24-product-evidence\release24-host-1.84.0.json
         run: npm run release24:extension-host -- --version=1.84.0
 
       - name: Release 2.3 Adapter SDK Preview (R24) (VS Code Stable)
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_RELEASE24_EVIDENCE_FILE: ${{ runner.temp }}\release24-product-evidence\release24-host-stable.json
@@ -317,23 +328,31 @@ jobs:
       - name: Package VSIX (Windows x64)
         # `vsce package` runs the `vscode:prepublish` script, which builds, bundles the engine
         # into extension/engine/, and copies the LICENSE — so the artifact is self-contained.
+        # The x64 chain up to the installed upgrade acceptance runs even after a failed suite above, for the same reason.
+        id: package-x64
+        if: ${{ !cancelled() && steps.build-extension.outcome == 'success' }}
         working-directory: extension
         env:
           WFD_BUNDLE_RID: win-x64
         run: npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix
 
       - name: Assert VSIX contains the bundled engines (Windows x64)
+        id: assert-x64
+        if: ${{ !cancelled() && steps.package-x64.outcome == 'success' }}
         working-directory: extension
         shell: pwsh
         run: ../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664
 
       - name: Freeze verified VSIX (Windows x64)
+        id: freeze-x64
+        if: ${{ !cancelled() && steps.assert-x64.outcome == 'success' }}
         working-directory: extension
         shell: pwsh
         run: Copy-Item -LiteralPath winforms-designer-win32-x64.vsix -Destination (Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix') -Force
       - name: Release 2.2 installed upgrade and downgrade (VS Code 1.84 and Stable)
         # Installs the frozen x64 package over a reconstructed 2.1.0 baseline in isolated profiles, prepares the rollback
         # with the product coordinator and downgrades, on the VS Code builds the product acceptance steps cached above.
+        if: ${{ !cancelled() && steps.freeze-x64.outcome == 'success' }}
         working-directory: extension
         shell: pwsh
         run: |

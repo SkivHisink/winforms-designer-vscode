@@ -7,14 +7,15 @@ This is the single combined record for R23-01 through R23-12 and R24-01 through 
 [2.x implementation roadmap](roadmap-2.0.0-to-3.0.0.md#milestones), following the
 [23 October 2026 revision](roadmap-2.0.0-to-3.0.0.md#roadmap-revision-2026-10-23).
 Both task groups ship as product 2.3.0; their task, scenario and suite identifiers remain unchanged.
-The unpublished working tree is based on 2.2.0 commit `b7717b4`. No commit, staging, push, tag or publication
-is part of this local closeout.
+The release work began over 2.2.0 commit `b7717b4` and reached `master` as `34c315f` and `160e28d`; the final run
+below covers the corrections made on top of `160e28d`. No tag or publication is part of this local closeout.
 
 The **22 October 2026 document-scope acceptance was taken on an intermediate tree**. Its measurements and
 package identities below remain historical evidence and are **superseded for release acceptance by the combined run**.
 The [combined acceptance of 27 October 2026](#combined-acceptance-of-27-october-2026-accepted-locally) is that
 single complete acceptance of the final unchanged product tree, covering R23 and R24 together and bound to both frozen
-VSIX hashes. Fixed budgets, assertions, timeouts and gates remained unchanged throughout.
+VSIX hashes. Fixed budgets, assertions and gates remained unchanged throughout; the only timing changes are the
+acceptance-suite waits that section describes.
 
 ## Implementation and combined acceptance plan
 
@@ -258,9 +259,41 @@ crash-loop assertions are unchanged, and the product is unchanged. The suite pas
 one on stable). Because the suite is an acceptance input, that earlier passing run is superseded; its retained evidence
 was replaced by the final run below.
 
-**Final acceptance run.** Run `combined23-467d3cef-14d1-449e-8250-4a743dc96f91`, from **2026-10-27T03:11:26.692Z** to
-**03:45:19.940Z**: all **45 executable steps** exited 0, and the **667 frozen inputs** were unchanged throughout. The tree is
-intentionally uncommitted over `b7717b4`. Temporary paths were a short local directory; no drive alias was used.
+**A passing run superseded by CI findings.** Run `combined23-467d3cef-14d1-449e-8250-4a743dc96f91`
+(2026-10-27T03:11–03:45Z) passed **45/45** and became release commit `34c315f`. Its CI run, and the run on the follow-up
+commit `160e28d`, each failed one minimum-version smoke scenario. CI stopped at the first failed Extension Host suite, so
+neither run reached the later suites.
+
+- `V2-FND-001-S104` timed out its final check that every observed engine PID had left the operating system, after the
+  product had already reported zero live engine processes. The observed set includes PIDs of workers replaced in
+  earlier cycles, and a shared runner can give such a number to an unrelated, newer process. The suite now treats a
+  PID held by a process created after it was first observed as exited, and allows 30 s instead of 10 s for teardown.
+- `V2-FND-001-S048` changed a property immediately after a native Undo. On .NET Framework the certified editor lane is
+  authorized only by property metadata published for the current revision; on a slow host that metadata was not yet
+  republished, and the product correctly declined the setup edit. The suite now selects the control and waits for the
+  republished metadata first, as its modern leg already did. A search of every suite for the same order found it in
+  both legs of `V2-FND-001-S072`, which now wait the same way. Assertions and budgets are unchanged.
+
+**CI reports every Extension Host suite (CI change).** Each Extension Host suite, and the x64 packaging chain that leads
+to the installed upgrade acceptance, now runs whenever the extension built, even after an earlier suite failed. Any
+failure still fails the job.
+
+**A product race found at runner size (product change).** Every Extension Host suite was then run locally with its
+processes limited to four logical processors, the size of the hosted runner. The R24 restore scenario
+`modern.public-reset-owned-region-and-native-undo` failed: after a public Reset, the designer never became ready again.
+Each engine request carries a document generation, and the engine compares it after the request completes. A
+concurrent request on the same document, such as a background palette load, advanced that generation during the
+refresh. The refresh after the edit discarded the resulting `STALE_GENERATION` as a layout failure, so it never reached
+the existing redraw. A redraw that was itself overtaken showed a render-failure message. Both left the designer
+read-only until the next edit. Such a refresh now stays read-only, passes the refusal to the existing redraw, and the
+newest full render repeats itself from the current source up to three times in a row. Under the same limit the scenario
+passed one of three runs before the change and four of four after it (three on stable, one on 1.84.0). The other host
+suites passed under the limit; only the unchanged S016/S122 timing budgets failed, and only when the processes also ran
+at reduced priority.
+
+**Final acceptance run.** Run `combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e`, from **2026-10-27T07:56:08.949Z** to
+**08:33:16.827Z**: all **45 executable steps** exited 0, and the **667 frozen inputs** were unchanged throughout. The tree is
+intentionally uncommitted over `160e28d`. Temporary paths were a short local directory; no drive alias was used.
 
 - Engine suites: modern **797/797**, .NET Framework **89/89**; extension **931/931** in 75 suites, 0 pending.
 - Headless end-to-end: PASS. Webview: **1029 checks across 218 tests**, 0 failed.
@@ -269,7 +302,7 @@ intentionally uncommitted over `b7717b4`. Temporary paths were a short local dir
   VSIX isolation: PASS.
 - Dependency audit: **0 vulnerabilities**, with MessagePack **2.5.303** in the engines and the .NET Framework test project
   and the test-only undici **7.30.1**. Strict localization: **650 runtime and 58 package keys** in every locale.
-  Mojibake scan: 830 tracked text files clean.
+  Mojibake scan: 949 tracked text files clean.
 - Supported-host smoke with its real S003 hot-exit restart: PASS on **1.84.0** and stable **1.143.1**.
 - Ordinary product acceptance **28/28** on each host — [1.84.0](release-2.3.0/combined-ordinary-host-1.84.0.json),
   [stable](release-2.3.0/combined-ordinary-host-stable.json).
@@ -284,16 +317,16 @@ intentionally uncommitted over `b7717b4`. Temporary paths were a short local dir
 
 | Final-run performance (ms) | 1.84.0 modern | 1.84.0 net48 | stable modern | stable net48 | Unchanged budget |
 |---|---:|---:|---:|---:|---:|
-| S016 initial readiness | 3869 | 3816 | 3705 | 3732 | 6500 |
-| S016 commit and reconciliation | 542 | 521 | 394 | 462 | 1000 |
-| S122 standard-300 first use 1: plan+commit / reconciliation | 78 / 85 | 372 / 91 | 62 / 74 | 338 / 71 | 750 per phase |
-| S122 standard-300 first use 2: plan+commit / reconciliation | 79 / 90 | 283 / 77 | 63 / 81 | 266 / 90 | 750 per phase |
-| S122 standard-300 first use 3: plan+commit / reconciliation | 115 / 73 | 300 / 91 | 62 / 77 | 280 / 87 | 750 per phase |
+| S016 initial readiness | 4561 | 4479 | 3752 | 3790 | 6500 |
+| S016 commit and reconciliation | 434 | 506 | 425 | 456 | 1000 |
+| S122 standard-300 first use 1: plan+commit / reconciliation | 102 / 88 | 399 / 109 | 64 / 84 | 377 / 103 | 750 per phase |
+| S122 standard-300 first use 2: plan+commit / reconciliation | 85 / 77 | 292 / 101 | 72 / 65 | 264 / 102 | 750 per phase |
+| S122 standard-300 first use 3: plan+commit / reconciliation | 86 / 69 | 335 / 87 | 68 / 61 | 316 / 78 | 750 per phase |
 
 | Frozen package | Modern RID / PE | .NET Framework PE | VSIX bytes | VSIX SHA-256 |
 |---|---|---|---:|---|
-| Windows x64 | win-x64 / 0x8664 | 0x8664 | 18,405,725 | `628ff96db940a6fdec94b860ec522e74eeb254da5fab3cbcd73949e8751b1e48` |
-| Windows ARM64 | win-arm64 / 0xAA64 | 0x8664 | 18,393,519 | `48add7608d9eaf3a3431c3fda940b57bfe8c1f1a2f40108ad5993cc3347bd68a` |
+| Windows x64 | win-x64 / 0x8664 | 0x8664 | 18,406,023 | `642d67b0c093813adb19e388a56ee435703ce0bad80721cd53eb377413e42039` |
+| Windows ARM64 | win-arm64 / 0xAA64 | 0x8664 | 18,393,824 | `def9c182635383ce0d1c67454f43b4c72a7da53d2c3a3210a5416f46bd46f0d5` |
 
 Both packages carry version **2.3.0**, engine assembly versions **2.3.0.0**, the same extension bundle and the same
 x64 .NET Framework engine, with acceptance suites, the independent samples and the official SDK reference absent.
@@ -308,15 +341,6 @@ controls, and the normal-host evidence validator refused all **25** negative con
 
 The local preflight ran as `npm run release:preflight -- --metadata-only`, the sole local substitution. Git cleanliness
 and tag identity are **NOT ASSERTED** locally; CI checks them on the release commit.
-
-**After local acceptance.** The first CI run on the release commit failed one minimum-version smoke scenario,
-`V2-FND-001-S104`: its final check that every observed engine PID has left the operating system timed out, after the
-product had already reported zero live engine processes. The observed set includes PIDs of workers replaced in earlier
-cycles, and a shared runner can give such a number to an unrelated, newer process. The suite now treats a PID held by a
-process created after it was first observed as exited, and allows 30 s instead of 10 s for teardown. The product is
-unchanged; the smoke passed **18/18** on 1.84.0 and stable locally. This acceptance-suite change postdates the retained
-local evidence, so that one test file's input hash differs from the index; the complete check of the final tree is the
-CI run on the commit that contains it.
 
 ## Document and history contract
 

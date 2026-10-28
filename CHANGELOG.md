@@ -47,6 +47,8 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
   then refreshes the preview after the composite commit. External source changes retain their refusal guards.
 - A repeated file-change notification for code-behind text the designer has already seen no longer makes a reloaded
   designer read-only and refuse the next edit. A real code-behind change still refreshes the preview.
+- A preview refresh after a property edit or Reset that a newer engine generation overtook now redraws from the
+  current source. It no longer leaves the designer read-only, or shows a render failure, until the next edit.
 - Transaction compensation checks every target before Undo and accounts for writes that land before an
   error is reported. Recovery preserves any bytes that no longer match the transaction's own result.
 - Save As validates linked destinations and open buffers before creating files; its supported type rename

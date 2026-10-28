@@ -3304,6 +3304,10 @@ class DesignerSession {
   // can't splice against a graph the designer couldn't load. Set true only at fullRender's clean success exit; set
   // false in every failure branch. Stored (not derived from source — a parseable form can still fail to render).
   private renderOk = false;
+  /** Consecutive renders repeated after a newer engine generation overtook them; see fail(). */
+  private staleRenderRetries = 0;
+  /** The skipReselect of the newest full render, so a repeated render keeps the caller's selection contract. */
+  private lastFullRenderSkipReselect = false;
   /** Last degraded-render report, retained host-side so Copy Diagnostics never trusts webview-supplied text. */
   private lastRenderDiagnostic?: {
     kind: 'partial' | 'failure';
@@ -6695,6 +6699,18 @@ class DesignerSession {
   }
 
   private fail(err: unknown): void {
+    // Every render caller reaches this only as the newest render. STALE_GENERATION there means another request on the
+    // same document (a background palette load, an adapter inspection) advanced the engine's generation while this
+    // render was in flight: not a render failure, and no newer render exists to repaint. Stay read-only and render
+    // again from the current text, a bounded number of times in a row.
+    if ((err as { code?: unknown } | undefined)?.code === 'STALE_GENERATION' && this.staleRenderRetries < 3) {
+      this.staleRenderRetries++;
+      this.renderOk = false;
+      this.output.appendLine('[designer] render was overtaken by a newer engine generation; rendering again');
+      const skipReselect = this.lastFullRenderSkipReselect;
+      void this.withDetachedProductWorkflow(() => this.fullRender(skipReselect)).catch(() => { /* fullRender reports its own failure */ });
+      return;
+    }
     const msg = errMsg(err);
     this.postRenderFailure(msg, this.currentId || 'this', msg);
     this.output.appendLine('designer render failed: ' + msg);
@@ -6724,6 +6740,7 @@ class DesignerSession {
     }
     if (!this.designerFile || this.disposed) return false;
     const seq = ++this.renderSeq;
+    this.lastFullRenderSkipReselect = skipReselect;
     // Claimed before any await, so evidence a previous render is still waiting for cannot cancel this one.
     const compatibilityToken = {};
     this.renderCompatibilityToken = compatibilityToken;
@@ -6964,6 +6981,7 @@ class DesignerSession {
     // must not overwrite a newer failure.
     if (seq === this.renderSeq && !this.disposed) {
     this.renderOk = true; // the canvas faithfully reflects this render → edits allowed (net48 disclosure aside)
+    this.staleRenderRetries = 0;
     this.buildTaskName = undefined; // a fresh picture ends any build suspension, even one this session left via another engine
     DesignerHub.instance.refreshStatus(); // publish the exact selected output even when the modern runtime did not change
     }
@@ -14136,8 +14154,11 @@ class DesignerSession {
       let layout: Awaited<ReturnType<typeof describeLayout>>;
       try {
         layout = await describeLayout(eng, this.designerFile, asm, text);
-      } catch {
+      } catch (error) {
         if (seq === this.renderSeq && !this.disposed) this.renderOk = false; // S5: current source didn't render → read-only
+        // A newer generation overtook this refresh; patchOrRerender redraws from the current text, which restores
+        // editing. Swallowing it here left the committed edit on a canvas that stayed read-only with nothing to redraw.
+        if ((error as { code?: unknown } | undefined)?.code === 'STALE_GENERATION') throw error;
         return false;
       }
       if (seq !== this.renderSeq || this.disposed) return false;
@@ -14178,6 +14199,11 @@ class DesignerSession {
     try {
       frame = await renderWithLayout(eng, this.designerFile, asm, text, this.renderScale, this.tabViewState());
     } catch (err) {
+      // Superseded, not failed: stay read-only and let patchOrRerender redraw from the current text.
+      if ((err as { code?: unknown } | undefined)?.code === 'STALE_GENERATION') {
+        if (seq === this.renderSeq && !this.disposed) this.renderOk = false;
+        throw err;
+      }
       // S5: the full re-render of the current source FAILED → the form isn't renderable right now → read-only
       // (fail-closed; self-recovers when a later render — e.g. after Undo restores a renderable buffer — succeeds).
       if (seq === this.renderSeq && !this.disposed) {

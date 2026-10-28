@@ -218,6 +218,7 @@
     "env": {
       "WFD_SCENARIO_EVIDENCE_DIR": "<ci-temp>\\v2-scenario-evidence"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run extension-host-e2e -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "29-vs-code-1.84-extension-host-smoke.ps1",
@@ -228,6 +229,7 @@
     "env": {
       "WFD_SCENARIO_EVIDENCE_DIR": "<ci-temp>\\v2-scenario-evidence"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run extension-host-e2e -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "30-vs-code-stable-extension-host-smoke.ps1",
@@ -238,6 +240,7 @@
     "env": {
       "WFD_RELEASE22_EVIDENCE_FILE": "<ci-temp>\\release22-product-evidence\\release22-host-1.84.0.json"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run release22:extension-host -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "31-release-2.2-ordinary-product-acceptance-vs-code-1.84-.ps1",
@@ -248,6 +251,7 @@
     "env": {
       "WFD_RELEASE22_EVIDENCE_FILE": "<ci-temp>\\release22-product-evidence\\release22-host-stable.json"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run release22:extension-host -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "32-release-2.2-ordinary-product-acceptance-vs-code-stable-.ps1",
@@ -258,6 +262,7 @@
     "env": {
       "WFD_RELEASE23_EVIDENCE_FILE": "<ci-temp>\\release23-product-evidence\\release23-host-1.84.0.json"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run release23:extension-host -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "33-release-2.3-history-and-hot-exit-vs-code-1.84-.ps1",
@@ -268,6 +273,7 @@
     "env": {
       "WFD_RELEASE23_EVIDENCE_FILE": "<ci-temp>\\release23-product-evidence\\release23-host-stable.json"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run release23:extension-host -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "34-release-2.3-history-and-hot-exit-vs-code-stable-.ps1",
@@ -278,6 +284,7 @@
     "env": {
       "WFD_RELEASE24_EVIDENCE_FILE": "<ci-temp>\\release24-product-evidence\\release24-host-1.84.0.json"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run release24:extension-host -- --version=1.84.0\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "35-release-2.3-adapter-sdk-preview-r24-vs-code-1.84-.ps1",
@@ -288,6 +295,7 @@
     "env": {
       "WFD_RELEASE24_EVIDENCE_FILE": "<ci-temp>\\release24-product-evidence\\release24-host-stable.json"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npm run release24:extension-host -- --version=stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "36-release-2.3-adapter-sdk-preview-r24-vs-code-stable-.ps1",
@@ -312,6 +320,7 @@
     "env": {
       "WFD_BUNDLE_RID": "win-x64"
     },
+    "condition": "${{ !cancelled() && steps.build-extension.outcome == 'success' }}",
     "cwd": "extension",
     "command": "npx --yes @vscode/vsce@3.9.2 package --target win32-x64 --no-dependencies -o winforms-designer-win32-x64.vsix\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "39-package-vsix-windows-x64-.ps1",
@@ -320,6 +329,7 @@
   {
     "name": "Assert VSIX contains the bundled engines (Windows x64)",
     "env": {},
+    "condition": "${{ !cancelled() && steps.package-x64.outcome == 'success' }}",
     "cwd": "extension",
     "command": "../scripts/assert-vsix.ps1 -VsixPath winforms-designer-win32-x64.vsix -ExpectedTarget win32-x64 -ExpectedRuntimeIdentifier win-x64 -ExpectedModernMachine 0x8664 -ExpectedNet48Machine 0x8664\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
     "script": "40-assert-vsix-contains-the-bundled-engines-windows-x64-.ps1",
@@ -328,6 +338,7 @@
   {
     "name": "Freeze verified VSIX (Windows x64)",
     "env": {},
+    "condition": "${{ !cancelled() && steps.assert-x64.outcome == 'success' }}",
     "cwd": "extension",
     "command": "Copy-Item -LiteralPath winforms-designer-win32-x64.vsix -Destination (Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix') -Force",
     "script": "41-freeze-verified-vsix-windows-x64-.ps1",
@@ -336,6 +347,7 @@
   {
     "name": "Release 2.2 installed upgrade and downgrade (VS Code 1.84 and Stable)",
     "env": {},
+    "condition": "${{ !cancelled() && steps.freeze-x64.outcome == 'success' }}",
     "cwd": "extension",
     "command": "$evidence = Join-Path $env:RUNNER_TEMP 'release22-upgrade-evidence'\nNew-Item -ItemType Directory -Force -Path $evidence | Out-Null\n$vsix = Join-Path $env:RUNNER_TEMP 'frozen-win32-x64.vsix'\n$stable = Get-ChildItem .vscode-test -Directory -Filter 'vscode-win32-x64-archive-*' |\n  ForEach-Object { $_.Name -replace '^vscode-win32-x64-archive-', '' } |\n  Where-Object { $_ -ne '1.84.0' } | Sort-Object { [version]$_ } | Select-Object -Last 1\nif (-not $stable) { throw 'No cached VS Code Stable build for the installed upgrade acceptance.' }\nforeach ($version in @('1.84.0', $stable)) {\n  npm run release22:upgrade -- \"--version=$version\" --baseline=18a01c096502039ea913a1e8cc2ad0d320837e35 \"--new-vsix=$vsix\" \"--report=$(Join-Path $evidence \"release22-upgrade-$version.json\")\"\n  if ($LASTEXITCODE -ne 0) { throw \"Installed upgrade/downgrade acceptance failed on VS Code $version\" }\n}",
     "script": "42-release-2.2-installed-upgrade-and-downgrade-vs-code-1.84-and-stable-.ps1",

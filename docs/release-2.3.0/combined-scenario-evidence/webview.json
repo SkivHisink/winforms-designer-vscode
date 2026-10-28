@@ -2,14 +2,14 @@
   "schemaVersion": "v2-scenario-evidence.2",
   "suite": "webview",
   "invocation": "C:\\Program Files\\nodejs\\node.exe <repo>\\extension\\dist\\webview-e2e.cjs",
-  "generatedAtUtc": "2026-10-27T03:15:30.569Z",
+  "generatedAtUtc": "2026-10-27T07:59:57.970Z",
   "completed": true,
   "sourceRoot": ".",
   "provenance": {
     "schemaVersion": "v2-evidence-provenance.1",
-    "runId": "combined23-467d3cef-14d1-449e-8250-4a743dc96f91",
-    "repositoryHead": "b7717b4b4828ab08f390c622d12211ed0ed79729",
-    "productTreeSha256": "2366020f6200d8e82c05000621cc608fc1f9d021048122a16c0038e0447aee32",
+    "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
+    "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+    "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
     "productFileCount": 258,
     "producer": "runtime-recorder:webview",
     "sourceArtifact": null

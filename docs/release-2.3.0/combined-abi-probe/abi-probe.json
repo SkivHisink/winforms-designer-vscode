@@ -4,8 +4,8 @@
   "decision": "EXPLICIT_ADAPTER_REQUIRED",
   "modern": "REJECTED_DIRECT_INTEGRATION",
   "classic": "PASS_PUBLIC_DESIGN_SURFACE_AND_HEADLESS_EDITOR_REFUSAL",
-  "startedUtc": "2026-10-27T03:13:21.0783027Z",
-  "finishedUtc": "2026-10-27T03:13:26.4381275Z",
+  "startedUtc": "2026-10-27T07:57:55.8767246Z",
+  "finishedUtc": "2026-10-27T07:58:01.2927295Z",
   "sdkPackage": {
     "id": "Microsoft.WinForms.Designer.SDK",
     "version": "1.6.0",
@@ -66,21 +66,21 @@
   "artifacts": [
     {
       "path": "Independent.ModernDesigner.dll",
-      "sha256": "af513cd27c74b031f4a9a00998067b2272fd7f8074c2273189f7cef079f00938"
+      "sha256": "baa1f682a82362b8261832ec1011262a8cd9196ec333362265507a87890a3558"
     },
     {
       "path": "Independent.ClassicDesigner.exe",
-      "sha256": "5c3528a1e8c369cbcdc833bc678c345bf0f826f745ef4977917166b70943ddf1"
+      "sha256": "d12e1672e92af43cc1b5eaeedf992392326a2210af109da8bcf1219d5c28d567"
     },
     {
       "path": "MetadataProbe.dll",
-      "sha256": "1425818d95b268c138d4dea9c2eb885c7a446af4b2b82915235f11f1d6f29c14"
+      "sha256": "5983e6a8728230b6ac65eefce5045c3555a530d578eaefa4b60da4d0177b0a09"
     }
   ],
   "reports": [
     {
       "path": "modern.json",
-      "sha256": "456e82afdbea9422a4f424abbb9fdb0684ccf0779d7366da17453b54ad55fae8"
+      "sha256": "5a8351db32bd01fed5b1763520ae090564c0e1711e1d29d7a39602cd2f343279"
     },
     {
       "path": "classic.json",
@@ -100,32 +100,32 @@
       "command": "dotnet build <repo>\\samples\\DesignerSdkAbiProbe\\ModernDesigner\\ModernDesigner.csproj -c Release --no-restore",
       "exitCode": 0,
       "log": "modern-build.log",
-      "logSha256": "d69d733dd62f6960e8580ffc6f5a7f4cde8b29d6fa48ea32a104757cd1be358f"
+      "logSha256": "e715b873db64e0cbc637892d07eee1453f13553ce376f28c49a86ce375d2848a"
     },
     {
       "name": "classic-build",
       "command": "dotnet build <repo>\\samples\\DesignerSdkAbiProbe\\ClassicDesigner\\ClassicDesigner.csproj -c Release",
       "exitCode": 0,
       "log": "classic-build.log",
-      "logSha256": "ee7f983dfb6ad6dca03796d088140010ce4f5b7de4ef1b55a57e7b43900444f9"
+      "logSha256": "88437f4c2c8e966c1736eee28e228ef6eff32e7d29ccdf28bf28d79423050ab4"
     },
     {
       "name": "metadata-build",
       "command": "dotnet build <repo>\\samples\\DesignerSdkAbiProbe\\MetadataProbe\\MetadataProbe.csproj -c Release",
       "exitCode": 0,
       "log": "metadata-build.log",
-      "logSha256": "fca873804979833756cb6fc2338df86ed9e83467085688d890bf388e660766e5"
+      "logSha256": "aee230b52734bf5781972128198ccd2f01aeecd08c50c95883bbed7a22f48819"
     },
     {
       "name": "classic-execute",
-      "command": "<repo>\\samples\\DesignerSdkAbiProbe\\ClassicDesigner\\bin\\Release\\net48\\Independent.ClassicDesigner.exe <ci-temp>\\release24-abi-05c7701f69e54799a0e3d762b61d6261\\classic.json",
+      "command": "<repo>\\samples\\DesignerSdkAbiProbe\\ClassicDesigner\\bin\\Release\\net48\\Independent.ClassicDesigner.exe <ci-temp>\\release24-abi-e0ed5c8125834a7f9abdd03cb063ae6d\\classic.json",
       "exitCode": 0,
       "log": "classic-execute.log",
       "logSha256": "e525fafbf12011274c0c95bb55ce0c118abb0850c70403b5a56e3677026e26a4"
     },
     {
       "name": "modern-abi-and-refusal",
-      "command": "dotnet <repo>\\samples\\DesignerSdkAbiProbe\\MetadataProbe\\bin\\Release\\net10.0-windows\\MetadataProbe.dll <ci-temp>\\dotnet-home\\.nuget\\packages\\microsoft.winforms.designer.sdk\\1.6.0 <repo>\\samples\\DesignerSdkAbiProbe\\ModernDesigner\\bin\\Release\\net10.0-windows\\Independent.ModernDesigner.dll <ci-temp>\\release24-abi-05c7701f69e54799a0e3d762b61d6261\\modern.json",
+      "command": "dotnet <repo>\\samples\\DesignerSdkAbiProbe\\MetadataProbe\\bin\\Release\\net10.0-windows\\MetadataProbe.dll <ci-temp>\\dotnet-home\\.nuget\\packages\\microsoft.winforms.designer.sdk\\1.6.0 <repo>\\samples\\DesignerSdkAbiProbe\\ModernDesigner\\bin\\Release\\net10.0-windows\\Independent.ModernDesigner.dll <ci-temp>\\release24-abi-e0ed5c8125834a7f9abdd03cb063ae6d\\modern.json",
       "exitCode": 0,
       "log": "modern-abi-and-refusal.log",
       "logSha256": "695ec77f986bc94cc86f4b34b360daaddc4c22cf50fdf48ad1ad33ea295f4af9"

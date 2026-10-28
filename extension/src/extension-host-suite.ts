@@ -4996,6 +4996,15 @@ export async function run(): Promise<void> {
       'S071 modern final native Undo did not restore the exact baseline');
 
     // V2-FND-001-S072 — the actual worker succeeds; the product authority alone refuses the cross-component proposal.
+    // The Undo above moved the revision; the editor opens only from metadata published for the current one.
+    await testApi.selectOpenDesignerControl(modernVendorEditorUri, 'vendorEdit1');
+    await waitFor(() => {
+      const property = testApi.openDesignerProperties(modernVendorEditorUri)?.properties
+        .find((candidate) => candidate.name === 'Thresholds');
+      return property?.genericCollection === true
+        && property.uiTypeEditorAssemblySha256 === modernVendorEditorAssemblyHash
+        && property.uiTypeEditorCertificationId === 'repo.fakevendor.thresholds.v1';
+    }, 'S072 modern certified vendor collection metadata was not republished after Undo', 60_000);
     const modernCollectionRefused = await testApi.editOpenDesignerCertifiedVendorCollectionEditor(
       modernVendorEditorUri, 'vendorEdit1', 'Thresholds', true);
     assert.strictEqual(modernCollectionRefused.applied, false,
@@ -5107,11 +5116,25 @@ export async function run(): Promise<void> {
 
     // Set up the certified editor's deterministic wrong-type result through an ordinary product edit. S048 begins at
     // this dirty baseline and must add neither text nor history; one native Undo must therefore remove the setup edit.
+    // The Undo above moved the revision, and the certified lane is authorized only by metadata published for the
+    // current one, so wait for that metadata exactly as a user would see it in the grid before editing.
+    await testApi.selectOpenDesignerControl(vendorEditorUri, 'vendorEdit1');
+    await waitFor(() => {
+      const property = testApi.openDesignerProperties(vendorEditorUri)?.properties
+        .find((candidate) => candidate.name === 'ComplexValue');
+      return property?.value === 'Vendor Alpha'
+        && property.uiTypeEditorAssemblyPath === vendorEditorAssembly
+        && property.uiTypeEditorAssemblySha256 === vendorEditorAssemblyHash
+        && property.uiTypeEditorCertificationId === 'repo.fakevendor.complex-value.v1';
+    }, () => `S048 net48 certified vendor editor metadata was not republished after Undo: ${JSON.stringify(
+      testApi.openDesignerProperties(vendorEditorUri))}`, 60_000);
     await testApi.editOpenDesignerProperty(
       vendorEditorUri, 'vendorEdit1', 'ComplexValue', 'System.String', false, '__invalid_object__');
     await waitFor(() => testApi.openDesignerProperties(vendorEditorUri)?.properties
       .find((candidate) => candidate.name === 'ComplexValue')?.value === '__invalid_object__',
-    'S048 invalid-result setup value was not published');
+    () => `S048 invalid-result setup value was not published: lane=${String(
+      testApi.openDesignerState(vendorEditorUri)?.lastPropertyPersistenceLane)}; renderReady=${String(
+      testApi.openDesignerState(vendorEditorUri)?.renderReady)}; dirty=${String(activeCustomTab(vendorEditorUri)?.isDirty)}`);
     const invalidResultBaseline = testApi.openDesignerState(vendorEditorUri)?.designerText ?? '';
     assert.strictEqual(testApi.openDesignerState(vendorEditorUri)?.lastPropertyPersistenceLane, 'ownedRegion',
       'S048 setup did not retain the certified owned-region lane');
@@ -5199,6 +5222,15 @@ export async function run(): Promise<void> {
     assert.strictEqual(testApi.openDesignerState(vendorEditorUri)?.designerText, vendorEditorDesignerBefore,
       'S071 net48 final native Undo did not restore the exact baseline');
 
+    // The Undo above moved the revision; the editor opens only from metadata published for the current one.
+    await testApi.selectOpenDesignerControl(vendorEditorUri, 'vendorEdit1');
+    await waitFor(() => {
+      const property = testApi.openDesignerProperties(vendorEditorUri)?.properties
+        .find((candidate) => candidate.name === 'Thresholds');
+      return property?.genericCollection === true
+        && property.uiTypeEditorAssemblySha256 === vendorEditorAssemblyHash
+        && property.uiTypeEditorCertificationId === 'repo.fakevendor.thresholds.v1';
+    }, 'S072 net48 certified vendor collection metadata was not republished after Undo', 60_000);
     const net48CollectionRefused = await testApi.editOpenDesignerCertifiedVendorCollectionEditor(
       vendorEditorUri, 'vendorEdit1', 'Thresholds', true);
     assert.strictEqual(net48CollectionRefused.applied, false,
