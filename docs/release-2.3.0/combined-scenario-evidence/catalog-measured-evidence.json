@@ -1,8 +1,8 @@
 {
   "schemaVersion": "v2-catalog-measured-evidence.2",
-  "generatedAtUtc": "2026-10-27T08:28:42.594Z",
-  "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-  "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+  "generatedAtUtc": "2026-10-28T04:50:07.615Z",
+  "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+  "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
   "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
   "productFileCount": 258,
   "reports": [
@@ -11,8 +11,8 @@
       "suite": "extension-host",
       "invocation": "vscode=1.84.0",
       "passScenarios": 3,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -20,8 +20,8 @@
       "suite": "extension-host",
       "invocation": "vscode=1.84.0",
       "passScenarios": 77,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -29,8 +29,8 @@
       "suite": "extension-host",
       "invocation": "vscode=stable",
       "passScenarios": 3,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -38,8 +38,8 @@
       "suite": "extension-host",
       "invocation": "vscode=stable",
       "passScenarios": 77,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -47,8 +47,8 @@
       "suite": "e2e",
       "invocation": "compare-visual-studio-reference-renders.ps1",
       "passScenarios": 3,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -56,8 +56,8 @@
       "suite": "unit",
       "invocation": "vitest-4.1.12",
       "passScenarios": 25,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -65,8 +65,8 @@
       "suite": "webview",
       "invocation": "C:\\Program Files\\nodejs\\node.exe <repo>\\extension\\dist\\webview-e2e.cjs",
       "passScenarios": 36,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -74,8 +74,8 @@
       "suite": "unit",
       "invocation": "xunit-modern-net10",
       "passScenarios": 13,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     },
     {
@@ -83,8 +83,8 @@
       "suite": "unit",
       "invocation": "xunit-net48",
       "passScenarios": 2,
-      "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-      "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+      "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+      "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
       "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f"
     }
   ],

@@ -228,10 +228,13 @@ exports.activate = async function() {
     delete childEnvironment.WFD_EXTENSION_HOST_E2E;
     delete childEnvironment.ELECTRON_RUN_AS_NODE;
     // extensionTestsPath deliberately uses in-memory mementos. Two normal hosts are required to prove SQLite grants.
+    // The sandbox switches are the ones @vscode/test-electron passes: without them the VS Code 1.84 GPU process
+    // crashes on the hosted Windows Server 2025 runner and Electron exits before the window opens.
     await new Promise((resolve, reject) => {
       const child = spawn(executable, [workspacePath, '--new-window', `--user-data-dir=${userDataPath}`, `--shared-data-dir=${sharedDataPath}`,
         `--extensions-dir=${extensionsPath}`, `--extensionDevelopmentPath=${extensionDevelopmentPath}`, `--extensionDevelopmentPath=${harnessPath}`,
-        '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-updates'],
+        '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-updates',
+        '--no-sandbox', '--disable-gpu-sandbox'],
       { env: childEnvironment, windowsHide: true, stdio: 'inherit' });
       const timer = setTimeout(() => { child.kill(); reject(new Error(`Release 2.3 (R24) ${phase} normal VS Code process exceeded 900 seconds.`)); }, 900_000);
       child.once('error', error => { clearTimeout(timer); reject(error); });

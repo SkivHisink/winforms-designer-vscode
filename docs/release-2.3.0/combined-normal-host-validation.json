@@ -1,6 +1,6 @@
 {
   "version": "2.3.0",
-  "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
+  "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
   "positiveBindingValidated": true,
   "negativeControlsRefused": 25,
   "scope": "Pure evidence validator self-test; no product or CI command rerun.",
@@ -18,12 +18,12 @@
       },
       "productMementoKey": "SkivHisink.winforms-designer-vscode",
       "grantKey": "winformsDesigner.adapterDevelopmentGrants.v1",
-      "database": "User/workspaceStorage/76e61d8b8049a6b4f25d45b211048a85/state.vscdb",
+      "database": "User/workspaceStorage/b633fec8eb3ea87b028ae85b72f55cdf/state.vscdb",
       "receipts": [
         {
           "phase": "setup",
-          "databaseSha256": "b17bf68a9c9c830e8df06d32ee494cc5cc8b0a91f5abeb299961dbb9a42e73af",
-          "productMementoSha256": "4028b6b529e88c441b39159187b2fb4560d11dbec1a15ea878be74a1e2e6f3d4",
+          "databaseSha256": "bb5163b99c1c88f9016d4ce3548cdf67127ae3758ca9a4eb6d1301e3cc218a24",
+          "productMementoSha256": "3d84a9b14bd0517cc019c01800a8450c715dac3a00e83d1a45df98bc8be67dc8",
           "readOnlyInspection": true,
           "grants": [
             {
@@ -38,8 +38,8 @@
         },
         {
           "phase": "restore",
-          "databaseSha256": "7aad7354cdf9ba017a0f43b0206ee37e191e1b90a867062c399f8896733a7835",
-          "productMementoSha256": "6e6c2b2952480beb1f639a68774c67e97a4e91010a9ec714ab405562fa398831",
+          "databaseSha256": "f50b9c5e98fa31dc9f424f864cca3bbdafde94f947108a65994aa5de7aeb4735",
+          "productMementoSha256": "e847e540e70bbb7daab8130db9888a9aeb4b4e956192eefcc1470c9616daf8dc",
           "readOnlyInspection": true,
           "grants": [
             {
@@ -75,12 +75,12 @@
       },
       "productMementoKey": "SkivHisink.winforms-designer-vscode",
       "grantKey": "winformsDesigner.adapterDevelopmentGrants.v1",
-      "database": "User/workspaceStorage/bfb1f2ae06e692a81c1775e22d0dd442/state.vscdb",
+      "database": "User/workspaceStorage/55b0c50ffce479dfbefed42f2a0c3e71/state.vscdb",
       "receipts": [
         {
           "phase": "setup",
-          "databaseSha256": "a0f54614f45c7d10b4502c6a08db2c465236b01cef838c0621789e2c94ec4f14",
-          "productMementoSha256": "004ecfcf3037107a40cb82393611c45d0476baecb9b48741610e92d4ef7d5efd",
+          "databaseSha256": "39090fcbd587909c67355c2f61a00e1da4ed77173255f327b53ad8f6333e3f74",
+          "productMementoSha256": "632a6da12e587fa914b3b73880fc0acc16a24c2fa0a49a8609b292892446fd9f",
           "readOnlyInspection": true,
           "grants": [
             {
@@ -95,8 +95,8 @@
         },
         {
           "phase": "restore",
-          "databaseSha256": "5332c4fadd9b60eff8c091186387ec705b03a4a327d3345ef3003e1ccb8ce747",
-          "productMementoSha256": "0529da16ce82e25616e22edb4d0aa2b3b5ef5911e78bed40620fa28b5eb3f912",
+          "databaseSha256": "69157d7ce7a5899b1115bae3248298bd9972f2c2d905510ea05494d9b8676eaa",
+          "productMementoSha256": "e1772ee4c183e86ade20342bb73f957c24f9cb31684732ff331fd54ba5b15398",
           "readOnlyInspection": true,
           "grants": [
             {

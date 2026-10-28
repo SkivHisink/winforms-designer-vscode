@@ -2,20 +2,20 @@
   "schemaVersion": "v2-scenario-evidence.2",
   "suite": "unit",
   "invocation": "xunit-modern-net10",
-  "generatedAtUtc": "2026-10-27T07:58:31.992Z",
+  "generatedAtUtc": "2026-10-28T04:18:10.274Z",
   "completed": true,
   "sourceRoot": ".",
   "provenance": {
     "schemaVersion": "v2-evidence-provenance.1",
-    "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-    "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+    "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+    "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
     "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
     "productFileCount": 258,
     "producer": "test-collector:xunit",
     "sourceArtifact": {
       "path": "test-results/modern/modern.trx",
-      "sha256": "2c20a9cb6f3f21eb3b10b31a699f93c6d179ca8c323ac3d323d53e6ea002c989",
-      "bytes": 1157302
+      "sha256": "fe5ec3d345c09814a65caa9584759e891408cf7c86f56300363de5e1b18ab83c",
+      "bytes": 1157158
     }
   },
   "results": [

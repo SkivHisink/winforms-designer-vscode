@@ -6,10 +6,10 @@
   "realVSCodeLaunches": 2,
   "testedBuild": {
     "requestedVSCodeVersion": "stable",
-    "startedAt": "2026-10-27T08:22:53.609Z",
+    "startedAt": "2026-10-28T04:44:17.015Z",
     "environment": {
-      "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-      "workingTree": "dirty (4 changed or untracked paths)",
+      "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+      "workingTree": "dirty (2 changed or untracked paths)",
       "os": "Windows_NT 10.0.26100 x64",
       "nodeArch": "x64",
       "windowsDesktopRuntime": "10.0.9",
@@ -23,8 +23,8 @@
       "extension/media/designer.js": "e19973b78a7b4c074468ee9d0859893549a31e57301a5e9669009eb011adb968",
       "extension/media/panel.js": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908",
       "extension/media/chooseItems.js": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1",
-      "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-      "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+      "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+      "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
     }
   },
   "backupObservations": [
@@ -32,7 +32,7 @@
       "documentName": "Moderncheckpoint",
       "sha256": "e010e861e9c926a6aea69351416936c0ea13cdff03a332ccd56ef3063f3d0e3d",
       "bytes": 764,
-      "historySha256": "3530f74e5cb8363aa8ae1fdae45a73e43dcc8fd0245eef6d2cb8315e55324caa",
+      "historySha256": "421fb2ba3e3c22d545562b42a3611bcf25897ed6bae0374eff314a3abf5db7a6",
       "historyBytes": 12716,
       "format": "winforms-designer-history-v1",
       "historyLength": 6,
@@ -46,7 +46,7 @@
       "documentName": "Frameworkcheckpoint",
       "sha256": "f9adf520924face36855c0947a0c758516a1368a8538ebb4f4acc2753e201626",
       "bytes": 770,
-      "historySha256": "e0d80d566f5b72b9936fc1f4aceeec568c3baf38b18299eb16d7be49c258b290",
+      "historySha256": "2c573d6d1e73690bcfcc67164a982a0f57376dd993ba472cea08d90f76cd427a",
       "historyBytes": 12779,
       "format": "winforms-designer-history-v1",
       "historyLength": 6,
@@ -60,7 +60,7 @@
       "documentName": "Modernlinked",
       "sha256": "2f6579e77207db083ec0d35f154d56bd6bd335e099ecc120bec1486edae9b22e",
       "bytes": 1081,
-      "historySha256": "d3a5877a93a3722112255ba2eaa7f8546e553e130ec80c47593d60a59e3817ba",
+      "historySha256": "9970eaa6d9aff2a68821d6c691616c75c7285e21c16c66b4ba8f5ef071d3512a",
       "historyBytes": 44533,
       "format": "winforms-designer-history-v1",
       "historyLength": 5,
@@ -79,7 +79,7 @@
       "documentName": "Frameworklinked",
       "sha256": "4b3f4f3e2399f2ff08fb0efff2972e19ab23108589f86db305623d48330370de",
       "bytes": 1087,
-      "historySha256": "1b5d8c75d9581b4a6d5e69672bde41601f50a3d52c4a7c31711ed40ab1c6e45c",
+      "historySha256": "033a5011ca5c700e521b72b47ed1368d9eb2e096f2b9c813b58a8c6a31e8dd5d",
       "historyBytes": 44611,
       "format": "winforms-designer-history-v1",
       "historyLength": 5,
@@ -98,7 +98,7 @@
       "documentName": "Modernbranch",
       "sha256": "be452f93c9f70a29f87504da0edcd23154825de6442fb342a7eb0d22918cf9b1",
       "bytes": 756,
-      "historySha256": "cff742c82cbc091ffedf0c5496c830d16e9b7b039d8179148aa93bcc4c9dfbe8",
+      "historySha256": "48289d708e847f08fd586ffe82370c50e5de0666678c6f2d3a21133e80b846fb",
       "historyBytes": 7035,
       "format": "winforms-designer-history-v1",
       "historyLength": 3,
@@ -112,7 +112,7 @@
       "documentName": "Frameworkbranch",
       "sha256": "47d73d46687d9602221c2ddf423dc2d707af572f682e1086f6cc41e9af5a057e",
       "bytes": 762,
-      "historySha256": "44e169af001733e6d3da625fcd7e99bb53203cfddd4298327447960ab30a0474",
+      "historySha256": "da04e3d4dd8b2dcd98997a80a9be2fe93ae31d96adcb7b265b314540c6a6da01",
       "historyBytes": 7080,
       "format": "winforms-designer-history-v1",
       "historyLength": 3,
@@ -126,7 +126,7 @@
       "documentName": "Modernlocalized",
       "sha256": "6d980dd2452e44e1660e2a02a3ed7bad1a1356ef50a704984cfe175345f9c8b0",
       "bytes": 764,
-      "historySha256": "3cfaa588a4dd8aaa768d63a89e52387f4fb19313acf9d4edbae338c0936bd94f",
+      "historySha256": "c5569ea48c9500a0361f6140ce021db438772ffb62783770f41d09eb1dc82a48",
       "historyBytes": 23812,
       "format": "winforms-designer-history-v1",
       "historyLength": 3,
@@ -140,7 +140,7 @@
       "documentName": "Frameworklocalized",
       "sha256": "d8aa859c3c9b8e4c36aae60e07c90c4bab7e2fcaae68341dfd416a5f4cd2f0c3",
       "bytes": 767,
-      "historySha256": "9720613c37b8975f425e8effe5a3fee3acea08f0d6928023cd4b4f299639bce4",
+      "historySha256": "e266628cd9e0a54b88d4de364ca35948c792ecd9cdd1d4621f06945c5e463b4e",
       "historyBytes": 23866,
       "format": "winforms-designer-history-v1",
       "historyLength": 3,
@@ -154,7 +154,7 @@
       "documentName": "Modernevicted",
       "sha256": "7341c6f35f126fc904c7aa7094cf86e8083d327a94f92ddd25fb171b4e006afb",
       "bytes": 831,
-      "historySha256": "0c4528b9e56482b8f6b01f5dc8f15837eff166b381eccc3052daaae99145cb87",
+      "historySha256": "6d468877da29d26197c0bf26efbfd40119317bcaea900cad5a1c36646c898cc4",
       "historyBytes": 42709,
       "format": "winforms-designer-history-v1",
       "historyLength": 20,
@@ -173,7 +173,7 @@
       "documentName": "Frameworkevicted",
       "sha256": "1ada688c3d0c5c69b0d54e1baada48467b40a6ceef1d70509e321c3babd66729",
       "bytes": 837,
-      "historySha256": "021ab138691353533d8fbac7e6a6d514b443765d02b00f92703ceb6688c74fab",
+      "historySha256": "1ed6193f37d725a13ac5b3be20ea3f5a59b0f17291a6008fc44e4ec2b7053516",
       "historyBytes": 42961,
       "format": "winforms-designer-history-v1",
       "historyLength": 20,
@@ -345,7 +345,7 @@
       "phase": "setup",
       "vscodeVersion": "1.143.1",
       "extensionVersion": "2.3.0",
-      "completedAt": "2026-10-27T08:24:31.624Z",
+      "completedAt": "2026-10-28T04:46:11.314Z",
       "focusedScenario": null,
       "expectedScenarioCount": 15,
       "failed": 0,
@@ -353,77 +353,77 @@
         {
           "id": "R23-HOST-setup-four-worker-capacity",
           "passed": true,
-          "elapsedMs": 27857
+          "elapsedMs": 33572
         },
         {
           "id": "R23-HOST-setup-modern-native-history-above-20",
           "passed": true,
-          "elapsedMs": 13314
+          "elapsedMs": 18202
         },
         {
           "id": "R23-HOST-setup-modern-save-saveAll-autoSave",
           "passed": true,
-          "elapsedMs": 696
+          "elapsedMs": 798
         },
         {
           "id": "R23-HOST-setup-net48-native-history-above-20",
           "passed": true,
-          "elapsedMs": 11375
+          "elapsedMs": 12148
         },
         {
           "id": "R23-HOST-setup-net48-save-saveAll-autoSave",
           "passed": true,
-          "elapsedMs": 648
+          "elapsedMs": 600
         },
         {
           "id": "R23-HOST-setup-modern-checkpoint",
           "passed": true,
-          "elapsedMs": 650
+          "elapsedMs": 612
         },
         {
           "id": "R23-HOST-setup-net48-checkpoint",
           "passed": true,
-          "elapsedMs": 500
+          "elapsedMs": 509
         },
         {
           "id": "R23-HOST-setup-modern-linked",
           "passed": true,
-          "elapsedMs": 5275
+          "elapsedMs": 5434
         },
         {
           "id": "R23-HOST-setup-net48-linked",
           "passed": true,
-          "elapsedMs": 4048
+          "elapsedMs": 4480
         },
         {
           "id": "R23-HOST-setup-modern-branch",
           "passed": true,
-          "elapsedMs": 3826
+          "elapsedMs": 4027
         },
         {
           "id": "R23-HOST-setup-net48-branch",
           "passed": true,
-          "elapsedMs": 2082
+          "elapsedMs": 2395
         },
         {
           "id": "R23-HOST-setup-modern-localized",
           "passed": true,
-          "elapsedMs": 4540
+          "elapsedMs": 5024
         },
         {
           "id": "R23-HOST-setup-net48-localized",
           "passed": true,
-          "elapsedMs": 2599
+          "elapsedMs": 3129
         },
         {
           "id": "R23-HOST-setup-modern-evicted",
           "passed": true,
-          "elapsedMs": 8717
+          "elapsedMs": 10122
         },
         {
           "id": "R23-HOST-setup-net48-evicted",
           "passed": true,
-          "elapsedMs": 7890
+          "elapsedMs": 8802
         }
       ],
       "observations": [
@@ -1177,7 +1177,7 @@
       "phase": "restore",
       "vscodeVersion": "1.143.1",
       "extensionVersion": "2.3.0",
-      "completedAt": "2026-10-27T08:25:49.366Z",
+      "completedAt": "2026-10-28T04:47:49.219Z",
       "focusedScenario": null,
       "expectedScenarioCount": 10,
       "failed": 0,
@@ -1185,52 +1185,52 @@
         {
           "id": "R23-HOST-restore-modern-checkpoint",
           "passed": true,
-          "elapsedMs": 6485
+          "elapsedMs": 6520
         },
         {
           "id": "R23-HOST-restore-net48-checkpoint",
           "passed": true,
-          "elapsedMs": 4550
+          "elapsedMs": 4737
         },
         {
           "id": "R23-HOST-restore-modern-linked",
           "passed": true,
-          "elapsedMs": 7099
+          "elapsedMs": 7462
         },
         {
           "id": "R23-HOST-restore-net48-linked",
           "passed": true,
-          "elapsedMs": 6562
+          "elapsedMs": 8346
         },
         {
           "id": "R23-HOST-restore-modern-branch",
           "passed": true,
-          "elapsedMs": 4958
+          "elapsedMs": 7271
         },
         {
           "id": "R23-HOST-restore-net48-branch",
           "passed": true,
-          "elapsedMs": 4207
+          "elapsedMs": 7083
         },
         {
           "id": "R23-HOST-restore-modern-localized",
           "passed": true,
-          "elapsedMs": 7864
+          "elapsedMs": 11766
         },
         {
           "id": "R23-HOST-restore-net48-localized",
           "passed": true,
-          "elapsedMs": 7118
+          "elapsedMs": 7665
         },
         {
           "id": "R23-HOST-restore-modern-evicted",
           "passed": true,
-          "elapsedMs": 10608
+          "elapsedMs": 16870
         },
         {
           "id": "R23-HOST-restore-net48-evicted",
           "passed": true,
-          "elapsedMs": 9401
+          "elapsedMs": 10966
         }
       ],
       "observations": [

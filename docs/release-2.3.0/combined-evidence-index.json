@@ -2,9 +2,9 @@
   "version": "2.3.0",
   "status": "RELEASE_READY",
   "acceptedLocally": true,
-  "retainedAt": "2026-10-27T08:33:16.827Z",
-  "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-  "basedOnCommit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+  "retainedAt": "2026-10-28T04:54:32.444Z",
+  "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+  "basedOnCommit": "5f9646bce8230aa7f4c692032c7524af80179c96",
   "workingTree": "intentionally uncommitted",
   "ciComplete": true,
   "ciPassed": true,
@@ -639,9 +639,9 @@
     "scripts/run-release21-extension-host-tests.mjs": "0e63ee6ef837e8b677b4063dd7910b223739055b29caafaf68d3cbde81ddd9d3",
     "scripts/run-release21-upgrade-tests.mjs": "3963110de42e03cce4edd9234b1cd4f0ebcd8a9b7e0e7709106ea1278a544da9",
     "scripts/run-release22-extension-host-tests.mjs": "4e2689d661cea9bbda2f305ec4b4d94d20d72d4758586f9f911d2924655c4e00",
-    "scripts/run-release22-upgrade-tests.mjs": "f70adcdd2d9e47d41a06b9e5a78ef2af4c03e2eb9bbe4cf925f73d2a6fa04e40",
+    "scripts/run-release22-upgrade-tests.mjs": "ab97ecaba62a5510b23e54e1f95446bbdbce5fb4da208d203caf2d46616ee162",
     "scripts/run-release23-extension-host-tests.mjs": "1f1b6b0783994606feb393dda62a8851f1ff12a7fc625e771820af855717c8e5",
-    "scripts/run-release24-extension-host-tests.mjs": "125a38f1dba0d86891af1d3e00dd7b01db5a62514333a0413742d6836521e68a",
+    "scripts/run-release24-extension-host-tests.mjs": "1412aaceacea680d5570eccdace64eac2d6b2088eece5c26bf705cce3bdc0f67",
     "scripts/test-v2-execution-evidence-gate.mjs": "e2c957e500ce50d5e6e47732e35805c86e630a0a3a74c4b1bba2df8f379a91a3",
     "scripts/test-vsix-isolation.ps1": "6780f65a2607fd6ef92fdc3cdc1969f3c0d2269e3cdfc60f7fa514fde75fea36",
     "scripts/v2-evidence-provenance.mjs": "3e3dbc224dd26fb0de3b981ea6660f1dafaf1f323e1f7eb5acb9e0dac3655890",
@@ -730,155 +730,155 @@
     "tests/Engine.UnitTests/VendorDesignerSourceTests.cs": "14f5566071ccc65092efc42669b6f400882050a5fd0b481a5919547c9bc8ee16"
   },
   "packageSha256": {
-    "extension/winforms-designer-win32-x64.vsix": "642d67b0c093813adb19e388a56ee435703ce0bad80721cd53eb377413e42039",
-    "extension/winforms-designer-win32-arm64.vsix": "def9c182635383ce0d1c67454f43b4c72a7da53d2c3a3210a5416f46bd46f0d5"
+    "extension/winforms-designer-win32-x64.vsix": "24d7779ebbc19feada256335eeca587c924235b48c575dadc9d9ae14ca983458",
+    "extension/winforms-designer-win32-arm64.vsix": "9a47792565a40aaae67c63fc392e4c94cf678c12fb799fe9c7dcb9e40181a3e0"
   },
   "reports": [
     {
       "source": "checks.json",
       "path": "combined-ci-checks.json",
-      "rawSha256": "7bff7f1df6f4cbbf697df852bf4dcbf3a987fc79390b0cf12a19a4d9b46e20d6",
-      "retainedSha256": "7bff7f1df6f4cbbf697df852bf4dcbf3a987fc79390b0cf12a19a4d9b46e20d6",
+      "rawSha256": "8fa7bda20db9f8a7ec0f430e698af623cac1eecdd4e54933bd2fbfd89726c335",
+      "retainedSha256": "8fa7bda20db9f8a7ec0f430e698af623cac1eecdd4e54933bd2fbfd89726c335",
       "bytes": 113318
     },
     {
       "source": "execution-plan.json",
       "path": "combined-execution-plan.json",
-      "rawSha256": "e04dd9ba9b786e6f068fb1611d17da7a9804d5357d8925470958314aad0a6803",
+      "rawSha256": "f9999ca363a7db0274b4c07862c9dc6a9c2571ae339fe4edff9e610bf63cce19",
       "retainedSha256": "74315b9a3317f58ee2d19352194f1fabb630edfd22f23d23d5c74771f9e619f9",
       "bytes": 22570
     },
     {
       "source": "initial-sources.json",
       "path": "combined-initial-sources.json",
-      "rawSha256": "37deb8adffe218a8ffc96e78199469d41cf4ee5e8888702b784352a759405813",
-      "retainedSha256": "37deb8adffe218a8ffc96e78199469d41cf4ee5e8888702b784352a759405813",
+      "rawSha256": "cdc5a251985c3997cc0d6a6029c4f43d3a561e4335cac73ac216a700f328e08d",
+      "retainedSha256": "cdc5a251985c3997cc0d6a6029c4f43d3a561e4335cac73ac216a700f328e08d",
       "bytes": 77423
     },
     {
       "source": "release23-product-evidence/release23-host-1.84.0.json",
       "path": "combined-history-host-1.84.0.json",
-      "rawSha256": "f74743963fb709aafaf8381b51b99975eb69d7cf55c7006859dcf335fed926d7",
-      "retainedSha256": "f74743963fb709aafaf8381b51b99975eb69d7cf55c7006859dcf335fed926d7",
-      "bytes": 85481
+      "rawSha256": "993d56b97fd6492b9fef68e5a589934360536888effbf09053e6fdbaf7a613c4",
+      "retainedSha256": "993d56b97fd6492b9fef68e5a589934360536888effbf09053e6fdbaf7a613c4",
+      "bytes": 85482
     },
     {
       "source": "release23-product-evidence/release23-host-stable.json",
       "path": "combined-history-host-stable.json",
-      "rawSha256": "3858b3f897e83814dd2d8465d74935370006792874811ffd0724da6515dd1676",
-      "retainedSha256": "3858b3f897e83814dd2d8465d74935370006792874811ffd0724da6515dd1676",
-      "bytes": 85483
+      "rawSha256": "4f8c5d29b3576b79b2f7ed98d501dab3eb21aeaefd58e7cefb20b152be86aa6b",
+      "retainedSha256": "4f8c5d29b3576b79b2f7ed98d501dab3eb21aeaefd58e7cefb20b152be86aa6b",
+      "bytes": 85486
     },
     {
       "source": "release22-product-evidence/release22-host-1.84.0.json",
       "path": "combined-ordinary-host-1.84.0.json",
-      "rawSha256": "624a2b671c5e5426d02b54ae28bd086812eb2f6e733afbc680d4c1a9ede89102",
-      "retainedSha256": "3c8cd7fc6131c1590d72dd4e7a6c30aefdc5fcf58f461ed9e0ff47bacdeb5b21",
-      "bytes": 1078271
+      "rawSha256": "61f154dc9cf68b0c05cd22f6d84ae95106f69e9d78913e3cfacef2e56426a52a",
+      "retainedSha256": "eeca94723dfcf5011a318a641d569e88ba8427981e0f4b664e5502deacff5133",
+      "bytes": 1099909
     },
     {
       "source": "release22-product-evidence/release22-host-stable.json",
       "path": "combined-ordinary-host-stable.json",
-      "rawSha256": "307b47b2074e090ecfcf6eeec5cb815324494f2a3a8848c22074d041ae27db8b",
-      "retainedSha256": "0acdb0d47641f2366d4980944f62e6ee821813807808e3758928bfccad6b4140",
-      "bytes": 1098467
+      "rawSha256": "6bf44e76276cffb3ae8db6c4b511e032cb27e2bfc535d407233d0923b2516739",
+      "retainedSha256": "071ee8949d18c39f3226246a5199fca312cf334cbb6000f9c8b7fbbdfe0f12be",
+      "bytes": 1080064
     },
     {
       "source": "release24-product-evidence/release24-host-1.84.0.json",
       "path": "combined-adapter-host-1.84.0.json",
-      "rawSha256": "5b234ff9f941199cedc0da8e7aa015b1e8a3f46257d235553b637390ad65bc6b",
-      "retainedSha256": "354096df9abe987d556abd4deb77ca0bb97d3d3ffba8e80d758d290735df01c6",
-      "bytes": 116480
+      "rawSha256": "8d7fe662037514a1edbedc77a628988a6d550b6ee3e705178b10c1c73fae5ab5",
+      "retainedSha256": "6fa7407e06190a17084aa856edb4c86b0d3cd3bbbb8036267cb1edd549f47a42",
+      "bytes": 116481
     },
     {
       "source": "release24-product-evidence/release24-host-stable.json",
       "path": "combined-adapter-host-stable.json",
-      "rawSha256": "ad2c0d6456ebad3723d0dcce5675a9590250e42aff2f1987baf875f292ced9f3",
-      "retainedSha256": "8d25dcedeb2ae763cbc411e847cdc171631608d066f4038e5337fc4886e2ce82",
-      "bytes": 116485
+      "rawSha256": "48c46cb5478b385215ddf225fcc92bf7e6f0ef6b86f04770e870cfdaf58077e3",
+      "retainedSha256": "90ada72345c73d704e3b52fc05dcefce0cb0a5d5fbb371b872e744f3790cbb5a",
+      "bytes": 116483
     },
     {
       "source": "release22-upgrade-evidence/release22-upgrade-1.143.1.json",
       "path": "combined-upgrade-downgrade-1.143.1.json",
-      "rawSha256": "423b8949e72da05e6ed7dc79c567375f614211207a86787ae0d23b7ce2fb9775",
-      "retainedSha256": "bfbabf70f3818fc994dd35c3b0ec5cb4ad561c3e9af04ba1de776846d081c396",
-      "bytes": 412587
+      "rawSha256": "622b1e522d388606cc71076766fca3f364d88622b0c4f9d17ad2ddaf2c1649ae",
+      "retainedSha256": "f6e384074aa1deeb1b26d259043724624732e44817059766774fab1dc69396ea",
+      "bytes": 413093
     },
     {
       "source": "release22-upgrade-evidence/release22-upgrade-1.84.0.json",
       "path": "combined-upgrade-downgrade-1.84.0.json",
-      "rawSha256": "f343bb9e4ea22c7351fed1dbeb78d73dc6ed0e257ca7235c02cc2b753c2752a9",
-      "retainedSha256": "94a618d036ba3de5d4c4fbdce835cdc9501d09a15d81693e938625340eaf4bcc",
-      "bytes": 409397
+      "rawSha256": "2d1c1c2059b14e1afdaebb9b85b22fde1780fcfb305b360dfa18ff20835ef48b",
+      "retainedSha256": "d8757e304e9b4ef924a04891d8e918a630adcf8621e288d8aa859583e36ff4db",
+      "bytes": 409583
     },
     {
       "source": "v2-scenario-evidence/catalog-measured-evidence.json",
       "path": "combined-scenario-evidence/catalog-measured-evidence.json",
-      "rawSha256": "4458850cad383155a958689d2f063921789ff916919491ad90b82a61a2d6be22",
-      "retainedSha256": "88c8025cd110d4ce44ec250b4073a0c107e766cbc990707feaf60c600a7bb6bc",
+      "rawSha256": "87d16e70e9c89431d62f2f470a5e22c1f64b20ef2d59f95a399214476cd84a54",
+      "retainedSha256": "9fa0f3d23252d9e14f9552b71a9f4badb1981dbdc689be9bcc48fecc3355d5ce",
       "bytes": 796768
     },
     {
       "source": "v2-scenario-evidence/extension-host-1.84.0-s003.json",
       "path": "combined-scenario-evidence/extension-host-1.84.0-s003.json",
-      "rawSha256": "5ced64830b090d416c609c5317b7fc158c10285d7fbb358e9bcbfea403a34cf7",
-      "retainedSha256": "5ced64830b090d416c609c5317b7fc158c10285d7fbb358e9bcbfea403a34cf7",
+      "rawSha256": "9f3bbf7a57ab0989a9823c9ff1c057777c7646aa8a8ae2048a3ba9409379ed13",
+      "retainedSha256": "9f3bbf7a57ab0989a9823c9ff1c057777c7646aa8a8ae2048a3ba9409379ed13",
       "bytes": 11937
     },
     {
       "source": "v2-scenario-evidence/extension-host-1.84.0.json",
       "path": "combined-scenario-evidence/extension-host-1.84.0.json",
-      "rawSha256": "b53773a1e873a346fabd39ff6a19a24b5b3259ea56fdd11d0ded5b11a27dfc4c",
-      "retainedSha256": "b53773a1e873a346fabd39ff6a19a24b5b3259ea56fdd11d0ded5b11a27dfc4c",
+      "rawSha256": "0e0de30d4a3dd40eb58798382f6c22a7c2c6d3ae43d42b212fe7d25907a13808",
+      "retainedSha256": "0e0de30d4a3dd40eb58798382f6c22a7c2c6d3ae43d42b212fe7d25907a13808",
       "bytes": 491554
     },
     {
       "source": "v2-scenario-evidence/extension-host-stable-s003.json",
       "path": "combined-scenario-evidence/extension-host-stable-s003.json",
-      "rawSha256": "b8e7608cd4017739df7edae2ff08db9e6f2b92f28bf82433ea06a597b9646937",
-      "retainedSha256": "b8e7608cd4017739df7edae2ff08db9e6f2b92f28bf82433ea06a597b9646937",
+      "rawSha256": "350f7fc8ee3905bbc27818102ab703158e2bd4ce7093ac68062e22acda2c9e05",
+      "retainedSha256": "350f7fc8ee3905bbc27818102ab703158e2bd4ce7093ac68062e22acda2c9e05",
       "bytes": 11937
     },
     {
       "source": "v2-scenario-evidence/extension-host-stable.json",
       "path": "combined-scenario-evidence/extension-host-stable.json",
-      "rawSha256": "ff023d7e80240b0107960c8bc40be638e069de155f6fc5561e7c854a2179fc4d",
-      "retainedSha256": "ff023d7e80240b0107960c8bc40be638e069de155f6fc5561e7c854a2179fc4d",
+      "rawSha256": "d3229b494043f5992fa1a7c37acd0a1d0940716b3e23e314515096c0c26f43d9",
+      "retainedSha256": "d3229b494043f5992fa1a7c37acd0a1d0940716b3e23e314515096c0c26f43d9",
       "bytes": 491554
     },
     {
       "source": "v2-scenario-evidence/visual-reference.json",
       "path": "combined-scenario-evidence/visual-reference.json",
-      "rawSha256": "3eb3286647a51ce09dfc1f916283dd28dfdcb80e598ad57ff213be6c6da87e6f",
-      "retainedSha256": "1de568f678fd10b883ddb687c37631087039230289401aebd8ed8999b3bad926",
+      "rawSha256": "6d8611485b3412a8da75efe8f6725bf14c79f243725244ee22dd44d48250fc58",
+      "retainedSha256": "7eea04b3f70416cd6bd273ab67759804418ddb4c3fb32e569adf59e433626ee9",
       "bytes": 4409
     },
     {
       "source": "v2-scenario-evidence/vitest.json",
       "path": "combined-scenario-evidence/vitest.json",
-      "rawSha256": "93930dcbb435a3b661f216d2e54a2670e064da2a75e9cdcfb783c54375108f31",
-      "retainedSha256": "93930dcbb435a3b661f216d2e54a2670e064da2a75e9cdcfb783c54375108f31",
+      "rawSha256": "309734bcb47133a2214320c9ae38a5785b9b8a267c30266aa2125a4d6a7b6587",
+      "retainedSha256": "309734bcb47133a2214320c9ae38a5785b9b8a267c30266aa2125a4d6a7b6587",
       "bytes": 57311
     },
     {
       "source": "v2-scenario-evidence/webview.json",
       "path": "combined-scenario-evidence/webview.json",
-      "rawSha256": "30e2a28e1355d82a6c46d93eca58520d0877b1ae2d3c2d22d2dc052225f067c3",
-      "retainedSha256": "3830de19081debbb7762a4affdbc381b514f258ed0b34b9cce7bc63d72146061",
+      "rawSha256": "63870c055a058c6945d75918923f4afb350dbacf715688b04ba5b9b8985a0e9b",
+      "retainedSha256": "161604b3517c14716568ac2aa8bf06f3697829a56dbf71367b2aadc10a9273b5",
       "bytes": 315408
     },
     {
       "source": "v2-scenario-evidence/xunit-modern.json",
       "path": "combined-scenario-evidence/xunit-modern.json",
-      "rawSha256": "09d9b1644ded2723188cb48a49613f54b0ff3a46fb7d667bf9ea69a87781717f",
-      "retainedSha256": "09d9b1644ded2723188cb48a49613f54b0ff3a46fb7d667bf9ea69a87781717f",
+      "rawSha256": "049b125760ed1650491347310d95fcfb3142a3cf24742375e67255fb7515a0ba",
+      "retainedSha256": "049b125760ed1650491347310d95fcfb3142a3cf24742375e67255fb7515a0ba",
       "bytes": 18208
     },
     {
       "source": "v2-scenario-evidence/xunit-net48.json",
       "path": "combined-scenario-evidence/xunit-net48.json",
-      "rawSha256": "6c78444f17f58e9721a010d8732b8bd7daa4b7f4ec2b84346ff8c09a8476eac4",
-      "retainedSha256": "6c78444f17f58e9721a010d8732b8bd7daa4b7f4ec2b84346ff8c09a8476eac4",
+      "rawSha256": "a7c76844dae98a8231f0e926f5e2d7df4d7841ae0e651cb6bfcd86ab6ea9a565",
+      "retainedSha256": "a7c76844dae98a8231f0e926f5e2d7df4d7841ae0e651cb6bfcd86ab6ea9a565",
       "bytes": 2573
     },
     {
@@ -891,22 +891,22 @@
     {
       "source": "release24-abi-evidence/modern-build.log",
       "path": "combined-abi-probe/modern-build.log",
-      "rawSha256": "e715b873db64e0cbc637892d07eee1453f13553ce376f28c49a86ce375d2848a",
-      "retainedSha256": "9bcbaf9b06b7969d16edd47edb3ded100af922d7b5309dadc7fe5417cf58e7ee",
+      "rawSha256": "1bf604b28f39a202039e8e9fdb9a2879d93cf1560fe8cb83ecc082326ee11770",
+      "retainedSha256": "b28d3a3114dd25adfec10c9e8353eaa8b4c12891d9bfb6c27343a04ef23acb80",
       "bytes": 212
     },
     {
       "source": "release24-abi-evidence/classic-build.log",
       "path": "combined-abi-probe/classic-build.log",
-      "rawSha256": "88437f4c2c8e966c1736eee28e228ef6eff32e7d29ccdf28bf28d79423050ab4",
-      "retainedSha256": "d7dd495bf6c0457a6129e35c602d6c33b2db8df198756bbfc1bc006d03d12a97",
+      "rawSha256": "8c42e9a679f0738cf28d2935dbba3cc4c043a21feb8a08dc4cb8f0e716dde2a9",
+      "retainedSha256": "f8a83a50987f06596bf77442933228308f8d84106c8af83664b068ec32c888b4",
       "bytes": 287
     },
     {
       "source": "release24-abi-evidence/metadata-build.log",
       "path": "combined-abi-probe/metadata-build.log",
-      "rawSha256": "aee230b52734bf5781972128198ccd2f01aeecd08c50c95883bbed7a22f48819",
-      "retainedSha256": "c9db60acfa62a3b8777417f52d1607ea76bb974c3e67d076658f6c900a45ea7c",
+      "rawSha256": "9d53557b60ee3ee0e4f6ffffd0d7c8cf0e41f01746a14c63b2f60168036ee43e",
+      "retainedSha256": "e8d681b9b93ae2c3459aa357d194b16cce41368189d0e2d1b683e7c2d01f26ef",
       "bytes": 279
     },
     {
@@ -926,15 +926,15 @@
     {
       "source": "release24-abi-evidence/abi-probe.json",
       "path": "combined-abi-probe/abi-probe.json",
-      "rawSha256": "8d2575f93b57f612a514b385ebd6033ee7c37e814c82699e30be6c939bb13051",
-      "retainedSha256": "fde195451d021189adc4de1d542bfd4c2b1948d9e0247219454109189b01c8aa",
+      "rawSha256": "fccf3a51f3c306d263bc87c052c689607d82a05c4f0438f02e3bda3b2aa67adb",
+      "retainedSha256": "1dc2fede966945bb04b111ac3adcda35c285637d4420bd7c005f53f46cbbebe8",
       "bytes": 6247
     },
     {
       "source": "release24-abi-evidence/modern.json",
       "path": "combined-abi-probe/modern.json",
-      "rawSha256": "5a8351db32bd01fed5b1763520ae090564c0e1711e1d29d7a39602cd2f343279",
-      "retainedSha256": "606afdfda55fbbebf90af108727a0b7ee81202958d73080906f6658cfff3010a",
+      "rawSha256": "757d9dedc75793b88830a4f1944b8cc5b55fe1ec90ca4bc53b8f54b206e5cdcb",
+      "retainedSha256": "62c29f5803956172513675b5bf0b1d2009a169a520b16e681dcdeb5b32438845",
       "bytes": 4271
     },
     {
@@ -954,78 +954,78 @@
     {
       "source": "package-inspection",
       "path": "combined-packages.json",
-      "rawSha256": "db5529a5fe900f63e868bd7f6e8f2401d69b735f0bf128c3e526042929b6d1ef",
-      "retainedSha256": "db5529a5fe900f63e868bd7f6e8f2401d69b735f0bf128c3e526042929b6d1ef",
+      "rawSha256": "099a4053541bfa53e096bbcf57bde407d7d0ac46ff2804de418eae1382b309cc",
+      "retainedSha256": "099a4053541bfa53e096bbcf57bde407d7d0ac46ff2804de418eae1382b309cc",
       "bytes": 90265
     },
     {
       "source": "v2-scenario-evidence/test-results/vitest.json",
       "path": "combined-raw-test-results/vitest.json",
-      "rawSha256": "1fd07d215d70d43b07fd60a0f6b0007e089736bf02915d2815d48d229e09ec13",
-      "retainedSha256": "ea965d96f03d7284990d040f8e3c086c8c906f567106aa6d24f268ccab3e7088",
-      "bytes": 469874
+      "rawSha256": "aeb1c1fd37b1d8dc31e6991df7af604c0709a4fc05238680674ddf2a7872d796",
+      "retainedSha256": "0662c75dffb99fad3e21627d3cab3c8fcbaa37b74a49617776133570025a85f0",
+      "bytes": 469821
     },
     {
       "source": "v2-scenario-evidence/test-results/modern/modern.trx",
       "path": "combined-raw-test-results/modern.trx",
-      "rawSha256": "2c20a9cb6f3f21eb3b10b31a699f93c6d179ca8c323ac3d323d53e6ea002c989",
-      "retainedSha256": "b30b077d101bb5e3eb778406a077fb475e357858976b30aae66a5beb4e885a02",
-      "bytes": 1116655
+      "rawSha256": "fe5ec3d345c09814a65caa9584759e891408cf7c86f56300363de5e1b18ab83c",
+      "retainedSha256": "6b6d565322bb0258a336366dc327ef0da2326772d967a46478c4cf9fe4e50b01",
+      "bytes": 1116511
     },
     {
       "source": "v2-scenario-evidence/test-results/net48/net48.trx",
       "path": "combined-raw-test-results/net48.trx",
-      "rawSha256": "4b6e7e0e16ef6cef7c6fce34b6e0bfd06c80b93665a1255a850f571d0e122212",
-      "retainedSha256": "78ffded3f36febb20862d90c86861bbc64b37e64326d5a843f35ab4576b2ad32",
+      "rawSha256": "336e924a327c58a0d24e6a9396158ad01daa61a2956f3117e66cfe229579f396",
+      "retainedSha256": "1306f0e4587315f9d25d1bbc1ee0be1842601587487052ab8e98b823bee91f1e",
       "bytes": 127958
     },
     {
       "source": "scenario-inputs-summary",
       "path": "combined-scenario-inputs-summary.json",
-      "rawSha256": "1aa361672e4f259d34fc472ccca37e56a2c415251a2202c503689c1429b94b44",
-      "retainedSha256": "1aa361672e4f259d34fc472ccca37e56a2c415251a2202c503689c1429b94b44",
+      "rawSha256": "f679b574c29ab8707b30ae442ac4234e6c855fcf3c19b1185de88b2e517ac276",
+      "retainedSha256": "f679b574c29ab8707b30ae442ac4234e6c855fcf3c19b1185de88b2e517ac276",
       "bytes": 37591
     },
     {
       "source": "normal-host-validation",
       "path": "combined-normal-host-validation.json",
-      "rawSha256": "b4776a08d3fc6f374d4c7a04411dd7de60acddf324e20a72300fd6500172352a",
-      "retainedSha256": "b4776a08d3fc6f374d4c7a04411dd7de60acddf324e20a72300fd6500172352a",
+      "rawSha256": "aea79e5d41898694ee6073d4b1fb0692727a97554f1e461b9ba30a81df7d288e",
+      "retainedSha256": "aea79e5d41898694ee6073d4b1fb0692727a97554f1e461b9ba30a81df7d288e",
       "bytes": 5573
     },
     {
       "source": "01-build-engine-release-.log",
       "path": "combined-logs/01-build-engine-release-.log",
-      "rawSha256": "6082f616e18c2787b8f38f5e9da86df6b54e854672ca3ba367676bc6ba5ea134",
-      "retainedSha256": "e5c1e011e2f118edab308c40fc61d48c9777a67ada8007a677713e95ef81ae7d",
-      "bytes": 258
+      "rawSha256": "2c5bc93288f1d9f36668cd768cc114fc845f0d85fee045006a99f0f47b0c4622",
+      "retainedSha256": "67e85f71d68529b97bb4891f7c95fbbe82bf2cbd1cb790c98abf620b302adb7b",
+      "bytes": 256
     },
     {
       "source": "02-build-.net-framework-engine-release-x64-.log",
       "path": "combined-logs/02-build-.net-framework-engine-release-x64-.log",
-      "rawSha256": "f7216cdb8daeea49aa21bd13d6de8f44b414d151f49d58af12b364b8fd799915",
-      "retainedSha256": "738ee2fd06fba834800ef1352a5133a02dc16824efcd344c2f80564bf87b9152",
+      "rawSha256": "7c858c6469d7c094bf20bab958e815cdbbe871828dd3d78f58de869c7fd95ef8",
+      "retainedSha256": "ea84f6ba4330eedd6db15964aff0f805a2d88474fe08c0041b31148c937cdf5b",
       "bytes": 276
     },
     {
       "source": "03-unit-tests-engine-.log",
       "path": "combined-logs/03-unit-tests-engine-.log",
-      "rawSha256": "4e5ee9d3a3d6cebad9adc0ba8c924e969e5b46aa26825912791fe27008adb8ca",
-      "retainedSha256": "cfb31ba7adedad9d26006c4f3625526b297be8da649775f244d48f7a68702271",
+      "rawSha256": "6e23f358b1bf0983794b08d21b19947e3d2725e59a0a2b6f426a27298c6dd373",
+      "retainedSha256": "eb2764a7f2a1634d24f0a24321a22cdb56fbfdeaa87272c0ff73684bc506809a",
       "bytes": 730
     },
     {
       "source": "04-unit-tests-engine-net48-.log",
       "path": "combined-logs/04-unit-tests-engine-net48-.log",
-      "rawSha256": "8fffa92bff1b5a32b7986c3bd69888cc752ef790cc3375f0103fe0706de3e3c5",
+      "rawSha256": "0f122943fccb9d4cd376344cf37bc104c0cd249437d0f33c148dcb732eb3e0ae",
       "retainedSha256": "4d99cedf0a393bc3634c6c98ec71c2e5ed35bcc6cd0b5620a1ad33f5f7ea40b0",
       "bytes": 740
     },
     {
       "source": "05-compare-product-renders-with-archived-visual-studio-references.log",
       "path": "combined-logs/05-compare-product-renders-with-archived-visual-studio-references.log",
-      "rawSha256": "aabbcaf9b6c567117f949c00acc79a622655231d12361bfe785ce542b6f6e063",
-      "retainedSha256": "da59b5bae9d480fbbfe7175e98027bb94be3b91bd7ec169d6378c6b924742584",
+      "rawSha256": "0d23a291a23e17c17ed75cc24478f9a14a27d29c743a3e35bbc34ee6ed251bd3",
+      "retainedSha256": "91555cb0fd493d33c28c51f8d87288cdf1fc9c38984c36464bc7a627363a0895",
       "bytes": 3405
     },
     {
@@ -1038,15 +1038,15 @@
     {
       "source": "07-build-sample-fixtures.log",
       "path": "combined-logs/07-build-sample-fixtures.log",
-      "rawSha256": "3843bcc7149cd6f2bdeac538faf24adba657c95097d0a762c23d7691f1a7d82d",
-      "retainedSha256": "78c6cce11883a3430430d9ecfc03aaf575c484a4f44ee5fd5f52479d691dc471",
+      "rawSha256": "eb045fea18a01310bd4dbe3c9ffd4212a7210da8406da24de42290ff7b01cf73",
+      "retainedSha256": "117cfd5f1a08aca2f4f84152436fc09bebe22b06200e22ac07c602f1593f8df0",
       "bytes": 3627
     },
     {
       "source": "08-install-extension-dependencies.log",
       "path": "combined-logs/08-install-extension-dependencies.log",
-      "rawSha256": "4bbf42153e4429c6ab28a721b41d421c516bf709a6aa943d56927536822aaf59",
-      "retainedSha256": "4bbf42153e4429c6ab28a721b41d421c516bf709a6aa943d56927536822aaf59",
+      "rawSha256": "eca2dc1c0bdbcbdb2081f95923000b391cc88afd40249e916ebd8919b8d8f8dc",
+      "retainedSha256": "eca2dc1c0bdbcbdb2081f95923000b391cc88afd40249e916ebd8919b8d8f8dc",
       "bytes": 143
     },
     {
@@ -1059,9 +1059,9 @@
     {
       "source": "10-adapter-sdk-independent-contract-tests.log",
       "path": "combined-logs/10-adapter-sdk-independent-contract-tests.log",
-      "rawSha256": "50977896ddc7e3fd487948acda0353dbdc0e3dfba07dc6ac5fb175b7ce3ec730",
-      "retainedSha256": "50977896ddc7e3fd487948acda0353dbdc0e3dfba07dc6ac5fb175b7ce3ec730",
-      "bytes": 1385
+      "rawSha256": "810ff2994920018fd382003ebf3f846a538e2a2d177d0c2ba76343c2a66ec056",
+      "retainedSha256": "810ff2994920018fd382003ebf3f846a538e2a2d177d0c2ba76343c2a66ec056",
+      "bytes": 1390
     },
     {
       "source": "11-adapter-sdk-public-type-contract.log",
@@ -1087,8 +1087,8 @@
     {
       "source": "14-independent-designer-sdk-abi-probe.log",
       "path": "combined-logs/14-independent-designer-sdk-abi-probe.log",
-      "rawSha256": "7e3738496bac2344d251ed4167cb31bcbad62b8a9d5d64a3b326291187e5ecea",
-      "retainedSha256": "3765fe79e894ff98ab408a8607bb0f6d86e72bbfbc9b757972ecb70891f6a90f",
+      "rawSha256": "d432caf021682d7a36c44799b5c2809f66e160bcda1f3f4e78557bc648c22586",
+      "retainedSha256": "461f30ca0b3e4be8f53450d8b97f254a08beb50746ec6d6c252f745d70945273",
       "bytes": 236
     },
     {
@@ -1129,7 +1129,7 @@
     {
       "source": "20-unit-tests-extension-.log",
       "path": "combined-logs/20-unit-tests-extension-.log",
-      "rawSha256": "0fb8e9b9a617443cf23a15e7b3b80ed17bb5c821491aa1f2ce5a179cf46713bc",
+      "rawSha256": "8747458d49efaa503e61a02c2013dc6612132e89bed63f28980c773136882440",
       "retainedSha256": "4b77895e5da3528256d592b6587b61062a26615dc1fc92ac64f442f5d1c1a8ce",
       "bytes": 1252
     },
@@ -1143,16 +1143,16 @@
     {
       "source": "22-build-extension.log",
       "path": "combined-logs/22-build-extension.log",
-      "rawSha256": "a157f43b21fbe758c488d76cfcf75dfcb425c2ef92d47a923b3989dc2c02d55c",
-      "retainedSha256": "a157f43b21fbe758c488d76cfcf75dfcb425c2ef92d47a923b3989dc2c02d55c",
-      "bytes": 1290
+      "rawSha256": "4ef99f7f7fe0d35cb1713d6c8926a062c4ac4e7a1a9dacd0831234d02fb3c792",
+      "retainedSha256": "4ef99f7f7fe0d35cb1713d6c8926a062c4ac4e7a1a9dacd0831234d02fb3c792",
+      "bytes": 1291
     },
     {
       "source": "23-performance-baseline.log",
       "path": "combined-logs/23-performance-baseline.log",
-      "rawSha256": "37441cd477cd065a512d29a4c25457c77c5d48d0d46b0dcee18d1fab7f7ee7a0",
-      "retainedSha256": "37441cd477cd065a512d29a4c25457c77c5d48d0d46b0dcee18d1fab7f7ee7a0",
-      "bytes": 597
+      "rawSha256": "db6e54033c116ee8f5f15e1499801bea8e2864dd78f47c429fef07b6513aa0f8",
+      "retainedSha256": "db6e54033c116ee8f5f15e1499801bea8e2864dd78f47c429fef07b6513aa0f8",
+      "bytes": 598
     },
     {
       "source": "24-syntax-check-webview-scripts.log",
@@ -1178,8 +1178,8 @@
     {
       "source": "27-end-to-end-headless-.log",
       "path": "combined-logs/27-end-to-end-headless-.log",
-      "rawSha256": "b3ac07b106f6cedd559e4b50a3c5eca94579ea77011b707fd216296abab5b05a",
-      "retainedSha256": "e241ff05d09a2ea43ecf27c82fdd3b5194e7e2703bc05508f07314383c22a443",
+      "rawSha256": "4825ee524ff88fff6966cc1928ec38a2fe4e5077eba34245701aa9a4a6a25c7e",
+      "retainedSha256": "365e13234df46791b6d4c1080028bdf9655e5d820505906f10e46335662d3f12",
       "bytes": 34831
     },
     {
@@ -1192,64 +1192,64 @@
     {
       "source": "29-vs-code-1.84-extension-host-smoke.log",
       "path": "combined-logs/29-vs-code-1.84-extension-host-smoke.log",
-      "rawSha256": "9c9724754f5c918fb6f3e84a5ff93adba5b6a8fc500886ce093e50ca7a31aaf7",
-      "retainedSha256": "ad9afac0e668c12325fab3a58f6c0a9a231550eaffe2f2e216020df5a793717d",
-      "bytes": 19603
+      "rawSha256": "bdca2c9265d0a0bf9a1cc6585d6b40bca48914447b624efbc2f85fa58c21bf57",
+      "retainedSha256": "d56a290f56d4645b0d732c00768a0b06f25768c339264a84aa90a233ffdfbd52",
+      "bytes": 19464
     },
     {
       "source": "30-vs-code-stable-extension-host-smoke.log",
       "path": "combined-logs/30-vs-code-stable-extension-host-smoke.log",
-      "rawSha256": "f2251f6f119188198e64caffdcbed3cb4bb25b38e97c81fcba110c7c60478bd2",
-      "retainedSha256": "92a4fdca63a5de7f5e823a2f62446028ea576b70ce1739b8618bcaba4b232cb9",
-      "bytes": 67802
+      "rawSha256": "756a4585f97e0dd999a4492c7808844670a648354b79108b8c5d1400405bbfc4",
+      "retainedSha256": "ced0d0099f05ddd78a61b6800c031e555da3b647251781f80a807a442777f12c",
+      "bytes": 66895
     },
     {
       "source": "31-release-2.2-ordinary-product-acceptance-vs-code-1.84-.log",
       "path": "combined-logs/31-release-2.2-ordinary-product-acceptance-vs-code-1.84-.log",
-      "rawSha256": "28f4375f93ec1dc8a938bad0d0f0d4030bd381c167a0df714d4c8831f77685ea",
-      "retainedSha256": "8a181c96473e1e2bb54cdf878a87289cc0de12fec1984f9a65a76705a060059a",
-      "bytes": 7002
+      "rawSha256": "fa5e10799a68ac0c975bdadbed3878cb385676e7c90e7e0c12bf11363ad2d196",
+      "retainedSha256": "3285992829e5d9313ef921336cfba834b4d00d2eed00bc41572e575c2476f47a",
+      "bytes": 7352
     },
     {
       "source": "32-release-2.2-ordinary-product-acceptance-vs-code-stable-.log",
       "path": "combined-logs/32-release-2.2-ordinary-product-acceptance-vs-code-stable-.log",
-      "rawSha256": "587bd3254f4975f20d0185d67a0488238fb6b790dbe3778d0879ff6ec7582679",
-      "retainedSha256": "865565bc68fbc2c05026c240474d259ea0a019c41347ee0757f77e4585735b28",
-      "bytes": 34050
+      "rawSha256": "eca4562b0499e766553d5fd02eb575efc6248a5961002d29b04a0d9ecf085399",
+      "retainedSha256": "566f889edb2dfb06953ba3dad1987f456872f179e2ad3a557243b7a0ac32e5fc",
+      "bytes": 34323
     },
     {
       "source": "33-release-2.3-history-and-hot-exit-vs-code-1.84-.log",
       "path": "combined-logs/33-release-2.3-history-and-hot-exit-vs-code-1.84-.log",
-      "rawSha256": "78dd28f74f6d7bb75b7214b65a4eb9612a0b3e13594fd870b4ee9f7f6a3d0bc7",
-      "retainedSha256": "a2ef8dffba05450b00ebafe725c8940043b437bca830f2c22865ef22ef7f0fb4",
-      "bytes": 13681
+      "rawSha256": "c281e57d302dd9d0149627aef618d79fe6b01ab2455e558f41dea4efc9732d96",
+      "retainedSha256": "bf3bbb0f63fd9bd6697a996deb8763f0efae7907f20eb4d0e5826e792261131d",
+      "bytes": 13679
     },
     {
       "source": "34-release-2.3-history-and-hot-exit-vs-code-stable-.log",
       "path": "combined-logs/34-release-2.3-history-and-hot-exit-vs-code-stable-.log",
-      "rawSha256": "e971746745163cb3abaf029262973b7c068952a07c903c7b7fedb32f7a8196cc",
-      "retainedSha256": "2ee465d181cb9d4bcd242f42c5725b907293151b166b24f3353150091714a7bb",
-      "bytes": 42679
+      "rawSha256": "c9bb99ff4e52ba6b45231b76f57ce5a39902ef1e9c5b3e3355baf37dfb9561f2",
+      "retainedSha256": "c43dcb554bd2fc644922a0b0860247babe6b434ff7b6a09cebb49f2018af5ac4",
+      "bytes": 43883
     },
     {
       "source": "35-release-2.3-adapter-sdk-preview-r24-vs-code-1.84-.log",
       "path": "combined-logs/35-release-2.3-adapter-sdk-preview-r24-vs-code-1.84-.log",
-      "rawSha256": "51a0a1252106bb12af884c7fa5d692568e98b93fd7f0b8341f4543f4164d3631",
-      "retainedSha256": "1ebf15ef1ff94b06bcf4eb9e8179494b4a9c73fa793461af670581d7f407322e",
-      "bytes": 1570
+      "rawSha256": "26f2151db944235f84cb3f690be69ae13ab0db6e89e5703fd0620c5918314df3",
+      "retainedSha256": "9b7c142e676d3f6e39d44e090423c31126ecf0d5a1500410b2c9b2541084c8dd",
+      "bytes": 1567
     },
     {
       "source": "36-release-2.3-adapter-sdk-preview-r24-vs-code-stable-.log",
       "path": "combined-logs/36-release-2.3-adapter-sdk-preview-r24-vs-code-stable-.log",
-      "rawSha256": "1c1cecfd6aa27f7947eb0debb20f9d7608c7a330671336420e18a85fcd9cdd63",
-      "retainedSha256": "3bce66caba900fb891d7498a93b937f186d5aa8c44d509a5b2398375d4ab6ab4",
-      "bytes": 4516
+      "rawSha256": "c3abf82d9c42051e1470a208c0ea70fa03afb46da881144526a455b579e268fe",
+      "retainedSha256": "9c80e94b8b23c9c3f89e9094a950b559ca281ce9222748589f19bdde4d10ee4b",
+      "bytes": 4517
     },
     {
       "source": "37-validate-measured-v2-scenario-evidence.log",
       "path": "combined-logs/37-validate-measured-v2-scenario-evidence.log",
-      "rawSha256": "165dd57642f81ba26c21073be2ed406ca97d80e2be9c023486a4fc4d6d6c0d90",
-      "retainedSha256": "165dd57642f81ba26c21073be2ed406ca97d80e2be9c023486a4fc4d6d6c0d90",
+      "rawSha256": "ce544eba0e86adffd40c324f60231ef954165f5d83bc53f48a323fc7cbc93b9f",
+      "retainedSha256": "ce544eba0e86adffd40c324f60231ef954165f5d83bc53f48a323fc7cbc93b9f",
       "bytes": 1186
     },
     {
@@ -1262,15 +1262,15 @@
     {
       "source": "39-package-vsix-windows-x64-.log",
       "path": "combined-logs/39-package-vsix-windows-x64-.log",
-      "rawSha256": "9cb9fae587754aae2d98592a43af6750e5491ec037193f88ad85790d6623388c",
-      "retainedSha256": "66d171bb731c082bcb4f2d88709e2400da62a23283d44cd48c2b0cca8404aaad",
+      "rawSha256": "68360e97c86162afa1bc27aafaad3e9f657c3eef2c1f4cd9b3ce633ecc5b84ec",
+      "retainedSha256": "fb146227f88bf9cc086d405bf6952e55838329887dfeab50a197b5eef3143f75",
       "bytes": 3639
     },
     {
       "source": "40-assert-vsix-contains-the-bundled-engines-windows-x64-.log",
       "path": "combined-logs/40-assert-vsix-contains-the-bundled-engines-windows-x64-.log",
-      "rawSha256": "f1f73dea4615a44f06e605e1856b131f29029486f89e733e9eab43da2c9a50ca",
-      "retainedSha256": "f1f73dea4615a44f06e605e1856b131f29029486f89e733e9eab43da2c9a50ca",
+      "rawSha256": "a8790c0227ed298f784edaeb2f81272054aa53658d1fa322918b7f752737c4dd",
+      "retainedSha256": "a8790c0227ed298f784edaeb2f81272054aa53658d1fa322918b7f752737c4dd",
       "bytes": 235
     },
     {
@@ -1283,29 +1283,29 @@
     {
       "source": "42-release-2.2-installed-upgrade-and-downgrade-vs-code-1.84-and-stable-.log",
       "path": "combined-logs/42-release-2.2-installed-upgrade-and-downgrade-vs-code-1.84-and-stable-.log",
-      "rawSha256": "658fbc28737afe19254ff62bb3d9dcde54b0c7b10b8361c7565314062f9e3c94",
-      "retainedSha256": "e4a2e88a477bec8f117a56efcdcc7546d4474fe9ebc63e3952b33d919b163f69",
-      "bytes": 7145
+      "rawSha256": "3608d597144016a74224a6b2fb7a37b66cd6bd88e2b71d271f33e6b733e38ecc",
+      "retainedSha256": "9185f17a356e7af90feab48617f2072571ee6088f40dd519d667808bae70819d",
+      "bytes": 7034
     },
     {
       "source": "43-package-vsix-windows-arm64-.log",
       "path": "combined-logs/43-package-vsix-windows-arm64-.log",
-      "rawSha256": "e02297128e1390b1b26dae4d290b8d54935ab08932c657a70b2df9744a2a398a",
-      "retainedSha256": "a8358f15ff39b10b8d5f1b4f4f12a53329bfb5a2588a03ac15b75b86a1223651",
-      "bytes": 3649
+      "rawSha256": "cb30eee2c3512a37ea24360326105b7121c3d3449ee3bdd539f60e05316985bf",
+      "retainedSha256": "2d9a3a7bfb3a44da72d918a50d7bd6304dd04e2a6c7440109b77a0e6f9fb20fe",
+      "bytes": 3647
     },
     {
       "source": "44-assert-vsix-contains-the-bundled-engines-windows-arm64-.log",
       "path": "combined-logs/44-assert-vsix-contains-the-bundled-engines-windows-arm64-.log",
-      "rawSha256": "f60badc742df98fbd0b9af9473dd06a07208c7c2ee8c5b9bae71628504b6c659",
-      "retainedSha256": "f60badc742df98fbd0b9af9473dd06a07208c7c2ee8c5b9bae71628504b6c659",
+      "rawSha256": "633a70da54bff678633d4bf06fd7eb33ee2b66d8d4f9264c5a91d24cb8f92b6c",
+      "retainedSha256": "633a70da54bff678633d4bf06fd7eb33ee2b66d8d4f9264c5a91d24cb8f92b6c",
       "bytes": 239
     },
     {
       "source": "45-freeze-and-re-verify-both-vsix-artifacts.log",
       "path": "combined-logs/45-freeze-and-re-verify-both-vsix-artifacts.log",
-      "rawSha256": "6e4802f58a7e5cb2ff28f37cf970851788121cee21c721e75db6264a414aa20a",
-      "retainedSha256": "6e4802f58a7e5cb2ff28f37cf970851788121cee21c721e75db6264a414aa20a",
+      "rawSha256": "d03144dda2a5d1264475d55597435b8ec8ecbbb6ef33e0ddaed030c4f531fb95",
+      "retainedSha256": "d03144dda2a5d1264475d55597435b8ec8ecbbb6ef33e0ddaed030c4f531fb95",
       "bytes": 474
     }
   ],
@@ -1313,36 +1313,36 @@
     {
       "name": "Build engine (Release)",
       "path": "combined-logs/01-build-engine-release-.log",
-      "rawSha256": "6082f616e18c2787b8f38f5e9da86df6b54e854672ca3ba367676bc6ba5ea134",
-      "sha256": "e5c1e011e2f118edab308c40fc61d48c9777a67ada8007a677713e95ef81ae7d",
+      "rawSha256": "2c5bc93288f1d9f36668cd768cc114fc845f0d85fee045006a99f0f47b0c4622",
+      "sha256": "67e85f71d68529b97bb4891f7c95fbbe82bf2cbd1cb790c98abf620b302adb7b",
       "exitCode": 0
     },
     {
       "name": "Build .NET Framework engine (Release, x64)",
       "path": "combined-logs/02-build-.net-framework-engine-release-x64-.log",
-      "rawSha256": "f7216cdb8daeea49aa21bd13d6de8f44b414d151f49d58af12b364b8fd799915",
-      "sha256": "738ee2fd06fba834800ef1352a5133a02dc16824efcd344c2f80564bf87b9152",
+      "rawSha256": "7c858c6469d7c094bf20bab958e815cdbbe871828dd3d78f58de869c7fd95ef8",
+      "sha256": "ea84f6ba4330eedd6db15964aff0f805a2d88474fe08c0041b31148c937cdf5b",
       "exitCode": 0
     },
     {
       "name": "Unit tests (engine)",
       "path": "combined-logs/03-unit-tests-engine-.log",
-      "rawSha256": "4e5ee9d3a3d6cebad9adc0ba8c924e969e5b46aa26825912791fe27008adb8ca",
-      "sha256": "cfb31ba7adedad9d26006c4f3625526b297be8da649775f244d48f7a68702271",
+      "rawSha256": "6e23f358b1bf0983794b08d21b19947e3d2725e59a0a2b6f426a27298c6dd373",
+      "sha256": "eb2764a7f2a1634d24f0a24321a22cdb56fbfdeaa87272c0ff73684bc506809a",
       "exitCode": 0
     },
     {
       "name": "Unit tests (engine, net48)",
       "path": "combined-logs/04-unit-tests-engine-net48-.log",
-      "rawSha256": "8fffa92bff1b5a32b7986c3bd69888cc752ef790cc3375f0103fe0706de3e3c5",
+      "rawSha256": "0f122943fccb9d4cd376344cf37bc104c0cd249437d0f33c148dcb732eb3e0ae",
       "sha256": "4d99cedf0a393bc3634c6c98ec71c2e5ed35bcc6cd0b5620a1ad33f5f7ea40b0",
       "exitCode": 0
     },
     {
       "name": "Compare product renders with archived Visual Studio references",
       "path": "combined-logs/05-compare-product-renders-with-archived-visual-studio-references.log",
-      "rawSha256": "aabbcaf9b6c567117f949c00acc79a622655231d12361bfe785ce542b6f6e063",
-      "sha256": "da59b5bae9d480fbbfe7175e98027bb94be3b91bd7ec169d6378c6b924742584",
+      "rawSha256": "0d23a291a23e17c17ed75cc24478f9a14a27d29c743a3e35bbc34ee6ed251bd3",
+      "sha256": "91555cb0fd493d33c28c51f8d87288cdf1fc9c38984c36464bc7a627363a0895",
       "exitCode": 0
     },
     {
@@ -1355,15 +1355,15 @@
     {
       "name": "Build sample fixtures",
       "path": "combined-logs/07-build-sample-fixtures.log",
-      "rawSha256": "3843bcc7149cd6f2bdeac538faf24adba657c95097d0a762c23d7691f1a7d82d",
-      "sha256": "78c6cce11883a3430430d9ecfc03aaf575c484a4f44ee5fd5f52479d691dc471",
+      "rawSha256": "eb045fea18a01310bd4dbe3c9ffd4212a7210da8406da24de42290ff7b01cf73",
+      "sha256": "117cfd5f1a08aca2f4f84152436fc09bebe22b06200e22ac07c602f1593f8df0",
       "exitCode": 0
     },
     {
       "name": "Install extension dependencies",
       "path": "combined-logs/08-install-extension-dependencies.log",
-      "rawSha256": "4bbf42153e4429c6ab28a721b41d421c516bf709a6aa943d56927536822aaf59",
-      "sha256": "4bbf42153e4429c6ab28a721b41d421c516bf709a6aa943d56927536822aaf59",
+      "rawSha256": "eca2dc1c0bdbcbdb2081f95923000b391cc88afd40249e916ebd8919b8d8f8dc",
+      "sha256": "eca2dc1c0bdbcbdb2081f95923000b391cc88afd40249e916ebd8919b8d8f8dc",
       "exitCode": 0
     },
     {
@@ -1376,8 +1376,8 @@
     {
       "name": "Adapter SDK independent contract tests",
       "path": "combined-logs/10-adapter-sdk-independent-contract-tests.log",
-      "rawSha256": "50977896ddc7e3fd487948acda0353dbdc0e3dfba07dc6ac5fb175b7ce3ec730",
-      "sha256": "50977896ddc7e3fd487948acda0353dbdc0e3dfba07dc6ac5fb175b7ce3ec730",
+      "rawSha256": "810ff2994920018fd382003ebf3f846a538e2a2d177d0c2ba76343c2a66ec056",
+      "sha256": "810ff2994920018fd382003ebf3f846a538e2a2d177d0c2ba76343c2a66ec056",
       "exitCode": 0
     },
     {
@@ -1404,8 +1404,8 @@
     {
       "name": "Independent Designer SDK ABI probe",
       "path": "combined-logs/14-independent-designer-sdk-abi-probe.log",
-      "rawSha256": "7e3738496bac2344d251ed4167cb31bcbad62b8a9d5d64a3b326291187e5ecea",
-      "sha256": "3765fe79e894ff98ab408a8607bb0f6d86e72bbfbc9b757972ecb70891f6a90f",
+      "rawSha256": "d432caf021682d7a36c44799b5c2809f66e160bcda1f3f4e78557bc648c22586",
+      "sha256": "461f30ca0b3e4be8f53450d8b97f254a08beb50746ec6d6c252f745d70945273",
       "exitCode": 0
     },
     {
@@ -1446,7 +1446,7 @@
     {
       "name": "Unit tests (extension)",
       "path": "combined-logs/20-unit-tests-extension-.log",
-      "rawSha256": "0fb8e9b9a617443cf23a15e7b3b80ed17bb5c821491aa1f2ce5a179cf46713bc",
+      "rawSha256": "8747458d49efaa503e61a02c2013dc6612132e89bed63f28980c773136882440",
       "sha256": "4b77895e5da3528256d592b6587b61062a26615dc1fc92ac64f442f5d1c1a8ce",
       "exitCode": 0
     },
@@ -1460,15 +1460,15 @@
     {
       "name": "Build extension",
       "path": "combined-logs/22-build-extension.log",
-      "rawSha256": "a157f43b21fbe758c488d76cfcf75dfcb425c2ef92d47a923b3989dc2c02d55c",
-      "sha256": "a157f43b21fbe758c488d76cfcf75dfcb425c2ef92d47a923b3989dc2c02d55c",
+      "rawSha256": "4ef99f7f7fe0d35cb1713d6c8926a062c4ac4e7a1a9dacd0831234d02fb3c792",
+      "sha256": "4ef99f7f7fe0d35cb1713d6c8926a062c4ac4e7a1a9dacd0831234d02fb3c792",
       "exitCode": 0
     },
     {
       "name": "Performance baseline",
       "path": "combined-logs/23-performance-baseline.log",
-      "rawSha256": "37441cd477cd065a512d29a4c25457c77c5d48d0d46b0dcee18d1fab7f7ee7a0",
-      "sha256": "37441cd477cd065a512d29a4c25457c77c5d48d0d46b0dcee18d1fab7f7ee7a0",
+      "rawSha256": "db6e54033c116ee8f5f15e1499801bea8e2864dd78f47c429fef07b6513aa0f8",
+      "sha256": "db6e54033c116ee8f5f15e1499801bea8e2864dd78f47c429fef07b6513aa0f8",
       "exitCode": 0
     },
     {
@@ -1495,8 +1495,8 @@
     {
       "name": "End-to-end (headless)",
       "path": "combined-logs/27-end-to-end-headless-.log",
-      "rawSha256": "b3ac07b106f6cedd559e4b50a3c5eca94579ea77011b707fd216296abab5b05a",
-      "sha256": "e241ff05d09a2ea43ecf27c82fdd3b5194e7e2703bc05508f07314383c22a443",
+      "rawSha256": "4825ee524ff88fff6966cc1928ec38a2fe4e5077eba34245701aa9a4a6a25c7e",
+      "sha256": "365e13234df46791b6d4c1080028bdf9655e5d820505906f10e46335662d3f12",
       "exitCode": 0
     },
     {
@@ -1509,64 +1509,64 @@
     {
       "name": "VS Code 1.84 Extension Host smoke",
       "path": "combined-logs/29-vs-code-1.84-extension-host-smoke.log",
-      "rawSha256": "9c9724754f5c918fb6f3e84a5ff93adba5b6a8fc500886ce093e50ca7a31aaf7",
-      "sha256": "ad9afac0e668c12325fab3a58f6c0a9a231550eaffe2f2e216020df5a793717d",
+      "rawSha256": "bdca2c9265d0a0bf9a1cc6585d6b40bca48914447b624efbc2f85fa58c21bf57",
+      "sha256": "d56a290f56d4645b0d732c00768a0b06f25768c339264a84aa90a233ffdfbd52",
       "exitCode": 0
     },
     {
       "name": "VS Code Stable Extension Host smoke",
       "path": "combined-logs/30-vs-code-stable-extension-host-smoke.log",
-      "rawSha256": "f2251f6f119188198e64caffdcbed3cb4bb25b38e97c81fcba110c7c60478bd2",
-      "sha256": "92a4fdca63a5de7f5e823a2f62446028ea576b70ce1739b8618bcaba4b232cb9",
+      "rawSha256": "756a4585f97e0dd999a4492c7808844670a648354b79108b8c5d1400405bbfc4",
+      "sha256": "ced0d0099f05ddd78a61b6800c031e555da3b647251781f80a807a442777f12c",
       "exitCode": 0
     },
     {
       "name": "Release 2.2 ordinary product acceptance (VS Code 1.84)",
       "path": "combined-logs/31-release-2.2-ordinary-product-acceptance-vs-code-1.84-.log",
-      "rawSha256": "28f4375f93ec1dc8a938bad0d0f0d4030bd381c167a0df714d4c8831f77685ea",
-      "sha256": "8a181c96473e1e2bb54cdf878a87289cc0de12fec1984f9a65a76705a060059a",
+      "rawSha256": "fa5e10799a68ac0c975bdadbed3878cb385676e7c90e7e0c12bf11363ad2d196",
+      "sha256": "3285992829e5d9313ef921336cfba834b4d00d2eed00bc41572e575c2476f47a",
       "exitCode": 0
     },
     {
       "name": "Release 2.2 ordinary product acceptance (VS Code Stable)",
       "path": "combined-logs/32-release-2.2-ordinary-product-acceptance-vs-code-stable-.log",
-      "rawSha256": "587bd3254f4975f20d0185d67a0488238fb6b790dbe3778d0879ff6ec7582679",
-      "sha256": "865565bc68fbc2c05026c240474d259ea0a019c41347ee0757f77e4585735b28",
+      "rawSha256": "eca4562b0499e766553d5fd02eb575efc6248a5961002d29b04a0d9ecf085399",
+      "sha256": "566f889edb2dfb06953ba3dad1987f456872f179e2ad3a557243b7a0ac32e5fc",
       "exitCode": 0
     },
     {
       "name": "Release 2.3 history and hot exit (VS Code 1.84)",
       "path": "combined-logs/33-release-2.3-history-and-hot-exit-vs-code-1.84-.log",
-      "rawSha256": "78dd28f74f6d7bb75b7214b65a4eb9612a0b3e13594fd870b4ee9f7f6a3d0bc7",
-      "sha256": "a2ef8dffba05450b00ebafe725c8940043b437bca830f2c22865ef22ef7f0fb4",
+      "rawSha256": "c281e57d302dd9d0149627aef618d79fe6b01ab2455e558f41dea4efc9732d96",
+      "sha256": "bf3bbb0f63fd9bd6697a996deb8763f0efae7907f20eb4d0e5826e792261131d",
       "exitCode": 0
     },
     {
       "name": "Release 2.3 history and hot exit (VS Code Stable)",
       "path": "combined-logs/34-release-2.3-history-and-hot-exit-vs-code-stable-.log",
-      "rawSha256": "e971746745163cb3abaf029262973b7c068952a07c903c7b7fedb32f7a8196cc",
-      "sha256": "2ee465d181cb9d4bcd242f42c5725b907293151b166b24f3353150091714a7bb",
+      "rawSha256": "c9bb99ff4e52ba6b45231b76f57ce5a39902ef1e9c5b3e3355baf37dfb9561f2",
+      "sha256": "c43dcb554bd2fc644922a0b0860247babe6b434ff7b6a09cebb49f2018af5ac4",
       "exitCode": 0
     },
     {
       "name": "Release 2.3 Adapter SDK Preview (R24) (VS Code 1.84)",
       "path": "combined-logs/35-release-2.3-adapter-sdk-preview-r24-vs-code-1.84-.log",
-      "rawSha256": "51a0a1252106bb12af884c7fa5d692568e98b93fd7f0b8341f4543f4164d3631",
-      "sha256": "1ebf15ef1ff94b06bcf4eb9e8179494b4a9c73fa793461af670581d7f407322e",
+      "rawSha256": "26f2151db944235f84cb3f690be69ae13ab0db6e89e5703fd0620c5918314df3",
+      "sha256": "9b7c142e676d3f6e39d44e090423c31126ecf0d5a1500410b2c9b2541084c8dd",
       "exitCode": 0
     },
     {
       "name": "Release 2.3 Adapter SDK Preview (R24) (VS Code Stable)",
       "path": "combined-logs/36-release-2.3-adapter-sdk-preview-r24-vs-code-stable-.log",
-      "rawSha256": "1c1cecfd6aa27f7947eb0debb20f9d7608c7a330671336420e18a85fcd9cdd63",
-      "sha256": "3bce66caba900fb891d7498a93b937f186d5aa8c44d509a5b2398375d4ab6ab4",
+      "rawSha256": "c3abf82d9c42051e1470a208c0ea70fa03afb46da881144526a455b579e268fe",
+      "sha256": "9c80e94b8b23c9c3f89e9094a950b559ca281ce9222748589f19bdde4d10ee4b",
       "exitCode": 0
     },
     {
       "name": "Validate measured v2 scenario evidence",
       "path": "combined-logs/37-validate-measured-v2-scenario-evidence.log",
-      "rawSha256": "165dd57642f81ba26c21073be2ed406ca97d80e2be9c023486a4fc4d6d6c0d90",
-      "sha256": "165dd57642f81ba26c21073be2ed406ca97d80e2be9c023486a4fc4d6d6c0d90",
+      "rawSha256": "ce544eba0e86adffd40c324f60231ef954165f5d83bc53f48a323fc7cbc93b9f",
+      "sha256": "ce544eba0e86adffd40c324f60231ef954165f5d83bc53f48a323fc7cbc93b9f",
       "exitCode": 0
     },
     {
@@ -1579,15 +1579,15 @@
     {
       "name": "Package VSIX (Windows x64)",
       "path": "combined-logs/39-package-vsix-windows-x64-.log",
-      "rawSha256": "9cb9fae587754aae2d98592a43af6750e5491ec037193f88ad85790d6623388c",
-      "sha256": "66d171bb731c082bcb4f2d88709e2400da62a23283d44cd48c2b0cca8404aaad",
+      "rawSha256": "68360e97c86162afa1bc27aafaad3e9f657c3eef2c1f4cd9b3ce633ecc5b84ec",
+      "sha256": "fb146227f88bf9cc086d405bf6952e55838329887dfeab50a197b5eef3143f75",
       "exitCode": 0
     },
     {
       "name": "Assert VSIX contains the bundled engines (Windows x64)",
       "path": "combined-logs/40-assert-vsix-contains-the-bundled-engines-windows-x64-.log",
-      "rawSha256": "f1f73dea4615a44f06e605e1856b131f29029486f89e733e9eab43da2c9a50ca",
-      "sha256": "f1f73dea4615a44f06e605e1856b131f29029486f89e733e9eab43da2c9a50ca",
+      "rawSha256": "a8790c0227ed298f784edaeb2f81272054aa53658d1fa322918b7f752737c4dd",
+      "sha256": "a8790c0227ed298f784edaeb2f81272054aa53658d1fa322918b7f752737c4dd",
       "exitCode": 0
     },
     {
@@ -1600,29 +1600,29 @@
     {
       "name": "Release 2.2 installed upgrade and downgrade (VS Code 1.84 and Stable)",
       "path": "combined-logs/42-release-2.2-installed-upgrade-and-downgrade-vs-code-1.84-and-stable-.log",
-      "rawSha256": "658fbc28737afe19254ff62bb3d9dcde54b0c7b10b8361c7565314062f9e3c94",
-      "sha256": "e4a2e88a477bec8f117a56efcdcc7546d4474fe9ebc63e3952b33d919b163f69",
+      "rawSha256": "3608d597144016a74224a6b2fb7a37b66cd6bd88e2b71d271f33e6b733e38ecc",
+      "sha256": "9185f17a356e7af90feab48617f2072571ee6088f40dd519d667808bae70819d",
       "exitCode": 0
     },
     {
       "name": "Package VSIX (Windows ARM64)",
       "path": "combined-logs/43-package-vsix-windows-arm64-.log",
-      "rawSha256": "e02297128e1390b1b26dae4d290b8d54935ab08932c657a70b2df9744a2a398a",
-      "sha256": "a8358f15ff39b10b8d5f1b4f4f12a53329bfb5a2588a03ac15b75b86a1223651",
+      "rawSha256": "cb30eee2c3512a37ea24360326105b7121c3d3449ee3bdd539f60e05316985bf",
+      "sha256": "2d9a3a7bfb3a44da72d918a50d7bd6304dd04e2a6c7440109b77a0e6f9fb20fe",
       "exitCode": 0
     },
     {
       "name": "Assert VSIX contains the bundled engines (Windows ARM64)",
       "path": "combined-logs/44-assert-vsix-contains-the-bundled-engines-windows-arm64-.log",
-      "rawSha256": "f60badc742df98fbd0b9af9473dd06a07208c7c2ee8c5b9bae71628504b6c659",
-      "sha256": "f60badc742df98fbd0b9af9473dd06a07208c7c2ee8c5b9bae71628504b6c659",
+      "rawSha256": "633a70da54bff678633d4bf06fd7eb33ee2b66d8d4f9264c5a91d24cb8f92b6c",
+      "sha256": "633a70da54bff678633d4bf06fd7eb33ee2b66d8d4f9264c5a91d24cb8f92b6c",
       "exitCode": 0
     },
     {
       "name": "Freeze and re-verify both VSIX artifacts",
       "path": "combined-logs/45-freeze-and-re-verify-both-vsix-artifacts.log",
-      "rawSha256": "6e4802f58a7e5cb2ff28f37cf970851788121cee21c721e75db6264a414aa20a",
-      "sha256": "6e4802f58a7e5cb2ff28f37cf970851788121cee21c721e75db6264a414aa20a",
+      "rawSha256": "d03144dda2a5d1264475d55597435b8ec8ecbbb6ef33e0ddaed030c4f531fb95",
+      "sha256": "d03144dda2a5d1264475d55597435b8ec8ecbbb6ef33e0ddaed030c4f531fb95",
       "exitCode": 0
     }
   ],
@@ -1631,10 +1631,10 @@
       "report": "combined-history-host-1.84.0.json",
       "testedBuild": {
         "requestedVSCodeVersion": "1.84.0",
-        "startedAt": "2026-10-27T08:19:36.406Z",
+        "startedAt": "2026-10-28T04:40:46.800Z",
         "environment": {
-          "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-          "workingTree": "dirty (4 changed or untracked paths)",
+          "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+          "workingTree": "dirty (2 changed or untracked paths)",
           "os": "Windows_NT 10.0.26100 x64",
           "nodeArch": "x64",
           "windowsDesktopRuntime": "10.0.9",
@@ -1648,8 +1648,8 @@
           "extension/media/designer.js": "e19973b78a7b4c074468ee9d0859893549a31e57301a5e9669009eb011adb968",
           "extension/media/panel.js": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908",
           "extension/media/chooseItems.js": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1",
-          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         }
       }
     },
@@ -1657,10 +1657,10 @@
       "report": "combined-history-host-stable.json",
       "testedBuild": {
         "requestedVSCodeVersion": "stable",
-        "startedAt": "2026-10-27T08:22:53.609Z",
+        "startedAt": "2026-10-28T04:44:17.015Z",
         "environment": {
-          "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-          "workingTree": "dirty (4 changed or untracked paths)",
+          "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+          "workingTree": "dirty (2 changed or untracked paths)",
           "os": "Windows_NT 10.0.26100 x64",
           "nodeArch": "x64",
           "windowsDesktopRuntime": "10.0.9",
@@ -1674,8 +1674,8 @@
           "extension/media/designer.js": "e19973b78a7b4c074468ee9d0859893549a31e57301a5e9669009eb011adb968",
           "extension/media/panel.js": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908",
           "extension/media/chooseItems.js": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1",
-          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         }
       }
     },
@@ -1683,10 +1683,10 @@
       "report": "combined-ordinary-host-1.84.0.json",
       "testedBuild": {
         "requestedVSCodeVersion": "1.84.0",
-        "startedAt": "2026-10-27T08:14:02.792Z",
+        "startedAt": "2026-10-28T04:34:50.770Z",
         "environment": {
-          "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-          "workingTree": "dirty (4 changed or untracked paths)",
+          "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+          "workingTree": "dirty (2 changed or untracked paths)",
           "os": "Windows_NT 10.0.26100 x64",
           "nodeArch": "x64",
           "windowsDesktopRuntime": "10.0.9",
@@ -1698,8 +1698,8 @@
           "extension/media/designer.js": "e19973b78a7b4c074468ee9d0859893549a31e57301a5e9669009eb011adb968",
           "extension/media/panel.js": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908",
           "extension/media/chooseItems.js": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1",
-          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         }
       }
     },
@@ -1707,10 +1707,10 @@
       "report": "combined-ordinary-host-stable.json",
       "testedBuild": {
         "requestedVSCodeVersion": "stable",
-        "startedAt": "2026-10-27T08:16:58.663Z",
+        "startedAt": "2026-10-28T04:37:55.337Z",
         "environment": {
-          "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-          "workingTree": "dirty (4 changed or untracked paths)",
+          "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+          "workingTree": "dirty (2 changed or untracked paths)",
           "os": "Windows_NT 10.0.26100 x64",
           "nodeArch": "x64",
           "windowsDesktopRuntime": "10.0.9",
@@ -1722,8 +1722,8 @@
           "extension/media/designer.js": "e19973b78a7b4c074468ee9d0859893549a31e57301a5e9669009eb011adb968",
           "extension/media/panel.js": "86c169310fbf21c7a54a32427eafc6b62e1b6655ccfebd9ff4cddca7dcac6908",
           "extension/media/chooseItems.js": "1bf0736ec2e8b3c4574c9226cadf506cd84ed053cb9d7b21a4402a6c7fc8bbd1",
-          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         }
       }
     },
@@ -1733,10 +1733,10 @@
         "requestedVSCodeVersion": "1.84.0",
         "resolvedVSCodeVersion": "1.84.0",
         "hostMode": "normal-development-host",
-        "startedAt": "2026-10-27T08:26:00.582Z",
+        "startedAt": "2026-10-28T04:48:01.053Z",
         "environment": {
-          "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-          "workingTree": "dirty (4 changed or untracked paths)",
+          "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+          "workingTree": "dirty (2 changed or untracked paths)",
           "os": "Windows_NT 10.0.26100 x64",
           "nodeArch": "x64",
           "windowsDesktopRuntime": "10.0.9",
@@ -2131,9 +2131,9 @@
           "scripts/run-release21-extension-host-tests.mjs": "0e63ee6ef837e8b677b4063dd7910b223739055b29caafaf68d3cbde81ddd9d3",
           "scripts/run-release21-upgrade-tests.mjs": "3963110de42e03cce4edd9234b1cd4f0ebcd8a9b7e0e7709106ea1278a544da9",
           "scripts/run-release22-extension-host-tests.mjs": "4e2689d661cea9bbda2f305ec4b4d94d20d72d4758586f9f911d2924655c4e00",
-          "scripts/run-release22-upgrade-tests.mjs": "f70adcdd2d9e47d41a06b9e5a78ef2af4c03e2eb9bbe4cf925f73d2a6fa04e40",
+          "scripts/run-release22-upgrade-tests.mjs": "ab97ecaba62a5510b23e54e1f95446bbdbce5fb4da208d203caf2d46616ee162",
           "scripts/run-release23-extension-host-tests.mjs": "1f1b6b0783994606feb393dda62a8851f1ff12a7fc625e771820af855717c8e5",
-          "scripts/run-release24-extension-host-tests.mjs": "125a38f1dba0d86891af1d3e00dd7b01db5a62514333a0413742d6836521e68a",
+          "scripts/run-release24-extension-host-tests.mjs": "1412aaceacea680d5570eccdace64eac2d6b2088eece5c26bf705cce3bdc0f67",
           "scripts/test-v2-execution-evidence-gate.mjs": "e2c957e500ce50d5e6e47732e35805c86e630a0a3a74c4b1bba2df8f379a91a3",
           "scripts/test-vsix-isolation.ps1": "6780f65a2607fd6ef92fdc3cdc1969f3c0d2269e3cdfc60f7fa514fde75fea36",
           "scripts/v2-evidence-provenance.mjs": "3e3dbc224dd26fb0de3b981ea6660f1dafaf1f323e1f7eb5acb9e0dac3655890",
@@ -2141,8 +2141,8 @@
           "scripts/validate-v2-scenario-catalog.ps1": "d245b957ac68b356d5147ef70e451ddec6abbb839f61eec2aadcb5682aa784a2",
           "extension/dist/extension.js": "9f2a90540a0691c31bff60fb41e7b5f0451ad82df80cbf02e6d8fefed718bbb6",
           "extension/dist/release24-extension-host-suite.cjs": "3b41c85465305fe5400dce7ff62c90a998b6a5c9912005da9146fc3e366e58e0",
-          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         }
       }
     },
@@ -2152,10 +2152,10 @@
         "requestedVSCodeVersion": "stable",
         "resolvedVSCodeVersion": "1.143.1",
         "hostMode": "normal-development-host",
-        "startedAt": "2026-10-27T08:27:08.066Z",
+        "startedAt": "2026-10-28T04:49:02.926Z",
         "environment": {
-          "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-          "workingTree": "dirty (4 changed or untracked paths)",
+          "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+          "workingTree": "dirty (2 changed or untracked paths)",
           "os": "Windows_NT 10.0.26100 x64",
           "nodeArch": "x64",
           "windowsDesktopRuntime": "10.0.9",
@@ -2550,9 +2550,9 @@
           "scripts/run-release21-extension-host-tests.mjs": "0e63ee6ef837e8b677b4063dd7910b223739055b29caafaf68d3cbde81ddd9d3",
           "scripts/run-release21-upgrade-tests.mjs": "3963110de42e03cce4edd9234b1cd4f0ebcd8a9b7e0e7709106ea1278a544da9",
           "scripts/run-release22-extension-host-tests.mjs": "4e2689d661cea9bbda2f305ec4b4d94d20d72d4758586f9f911d2924655c4e00",
-          "scripts/run-release22-upgrade-tests.mjs": "f70adcdd2d9e47d41a06b9e5a78ef2af4c03e2eb9bbe4cf925f73d2a6fa04e40",
+          "scripts/run-release22-upgrade-tests.mjs": "ab97ecaba62a5510b23e54e1f95446bbdbce5fb4da208d203caf2d46616ee162",
           "scripts/run-release23-extension-host-tests.mjs": "1f1b6b0783994606feb393dda62a8851f1ff12a7fc625e771820af855717c8e5",
-          "scripts/run-release24-extension-host-tests.mjs": "125a38f1dba0d86891af1d3e00dd7b01db5a62514333a0413742d6836521e68a",
+          "scripts/run-release24-extension-host-tests.mjs": "1412aaceacea680d5570eccdace64eac2d6b2088eece5c26bf705cce3bdc0f67",
           "scripts/test-v2-execution-evidence-gate.mjs": "e2c957e500ce50d5e6e47732e35805c86e630a0a3a74c4b1bba2df8f379a91a3",
           "scripts/test-vsix-isolation.ps1": "6780f65a2607fd6ef92fdc3cdc1969f3c0d2269e3cdfc60f7fa514fde75fea36",
           "scripts/v2-evidence-provenance.mjs": "3e3dbc224dd26fb0de3b981ea6660f1dafaf1f323e1f7eb5acb9e0dac3655890",
@@ -2560,8 +2560,8 @@
           "scripts/validate-v2-scenario-catalog.ps1": "d245b957ac68b356d5147ef70e451ddec6abbb839f61eec2aadcb5682aa784a2",
           "extension/dist/extension.js": "9f2a90540a0691c31bff60fb41e7b5f0451ad82df80cbf02e6d8fefed718bbb6",
           "extension/dist/release24-extension-host-suite.cjs": "3b41c85465305fe5400dce7ff62c90a998b6a5c9912005da9146fc3e366e58e0",
-          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+          "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         }
       }
     }

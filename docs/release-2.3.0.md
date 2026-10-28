@@ -7,8 +7,8 @@ This is the single combined record for R23-01 through R23-12 and R24-01 through 
 [2.x implementation roadmap](roadmap-2.0.0-to-3.0.0.md#milestones), following the
 [23 October 2026 revision](roadmap-2.0.0-to-3.0.0.md#roadmap-revision-2026-10-23).
 Both task groups ship as product 2.3.0; their task, scenario and suite identifiers remain unchanged.
-The release work began over 2.2.0 commit `b7717b4` and reached `master` as `34c315f` and `160e28d`; the final run
-below covers the corrections made on top of `160e28d`. No tag or publication is part of this local closeout.
+The release work began over 2.2.0 commit `b7717b4` and reached `master` as `34c315f`, `160e28d` and `5f9646b`; the
+final run below covers the corrections made on top of `5f9646b`. No tag or publication is part of this local closeout.
 
 The **22 October 2026 document-scope acceptance was taken on an intermediate tree**. Its measurements and
 package identities below remain historical evidence and are **superseded for release acceptance by the combined run**.
@@ -291,9 +291,20 @@ passed one of three runs before the change and four of four after it (three on s
 suites passed under the limit; only the unchanged S016/S122 timing budgets failed, and only when the processes also ran
 at reduced priority.
 
-**Final acceptance run.** Run `combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e`, from **2026-10-27T07:56:08.949Z** to
-**08:33:16.827Z**: all **45 executable steps** exited 0, and the **667 frozen inputs** were unchanged throughout. The tree is
-intentionally uncommitted over `160e28d`. Temporary paths were a short local directory; no drive alias was used.
+**VS Code 1.84 launched directly on the hosted runner (CI change).** Run
+`combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e` (2026-10-27T07:56–08:33Z) passed **45/45** and became commit
+`5f9646b`. Its CI run was the first to run every suite, and it failed only the R24 public adapter acceptance and the
+installed upgrade acceptance on 1.84.0. In both, VS Code exited before its window opened: on the current hosted runner
+image the GPU process of the 1.84.0 runtime crashed repeatedly, and Electron shut down. These two launchers start VS
+Code directly. Every other suite launches it through `@vscode/test-electron`, which always passes `--no-sandbox` and
+`--disable-gpu-sandbox`, and those suites passed on 1.84.0 on the same runner. The two launchers now pass the same two
+switches; nothing else in them changed, and the product is unchanged. Locally, with processes limited to four logical
+processors, both passed on 1.84.0 and stable. Because the launchers are acceptance inputs, that passing run is
+superseded; its retained evidence was replaced by the final run below.
+
+**Final acceptance run.** Run `combined23-c80b4114-8a46-4053-859a-a89bafdff65a`, from **2026-10-28T04:15:43.986Z** to
+**04:54:32.444Z**: all **45 executable steps** exited 0, and the **667 frozen inputs** were unchanged throughout. The tree is
+intentionally uncommitted over `5f9646b`. Temporary paths were a short local directory; no drive alias was used.
 
 - Engine suites: modern **797/797**, .NET Framework **89/89**; extension **931/931** in 75 suites, 0 pending.
 - Headless end-to-end: PASS. Webview: **1029 checks across 218 tests**, 0 failed.
@@ -317,16 +328,16 @@ intentionally uncommitted over `160e28d`. Temporary paths were a short local dir
 
 | Final-run performance (ms) | 1.84.0 modern | 1.84.0 net48 | stable modern | stable net48 | Unchanged budget |
 |---|---:|---:|---:|---:|---:|
-| S016 initial readiness | 4561 | 4479 | 3752 | 3790 | 6500 |
-| S016 commit and reconciliation | 434 | 506 | 425 | 456 | 1000 |
-| S122 standard-300 first use 1: plan+commit / reconciliation | 102 / 88 | 399 / 109 | 64 / 84 | 377 / 103 | 750 per phase |
-| S122 standard-300 first use 2: plan+commit / reconciliation | 85 / 77 | 292 / 101 | 72 / 65 | 264 / 102 | 750 per phase |
-| S122 standard-300 first use 3: plan+commit / reconciliation | 86 / 69 | 335 / 87 | 68 / 61 | 316 / 78 | 750 per phase |
+| S016 initial readiness | 4845 | 4120 | 4667 | 3946 | 6500 |
+| S016 commit and reconciliation | 487 | 507 | 452 | 522 | 1000 |
+| S122 standard-300 first use 1: plan+commit / reconciliation | 88 / 96 | 439 / 86 | 76 / 104 | 412 / 107 | 750 per phase |
+| S122 standard-300 first use 2: plan+commit / reconciliation | 119 / 92 | 285 / 104 | 74 / 89 | 261 / 108 | 750 per phase |
+| S122 standard-300 first use 3: plan+commit / reconciliation | 88 / 89 | 323 / 81 | 73 / 77 | 321 / 107 | 750 per phase |
 
 | Frozen package | Modern RID / PE | .NET Framework PE | VSIX bytes | VSIX SHA-256 |
 |---|---|---|---:|---|
-| Windows x64 | win-x64 / 0x8664 | 0x8664 | 18,406,023 | `642d67b0c093813adb19e388a56ee435703ce0bad80721cd53eb377413e42039` |
-| Windows ARM64 | win-arm64 / 0xAA64 | 0x8664 | 18,393,824 | `def9c182635383ce0d1c67454f43b4c72a7da53d2c3a3210a5416f46bd46f0d5` |
+| Windows x64 | win-x64 / 0x8664 | 0x8664 | 18,406,006 | `24d7779ebbc19feada256335eeca587c924235b48c575dadc9d9ae14ca983458` |
+| Windows ARM64 | win-arm64 / 0xAA64 | 0x8664 | 18,393,802 | `9a47792565a40aaae67c63fc392e4c94cf678c12fb799fe9c7dcb9e40181a3e0` |
 
 Both packages carry version **2.3.0**, engine assembly versions **2.3.0.0**, the same extension bundle and the same
 x64 .NET Framework engine, with acceptance suites, the independent samples and the official SDK reference absent.

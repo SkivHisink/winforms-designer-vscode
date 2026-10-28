@@ -1,29 +1,29 @@
 {
   "version": "2.3.0",
-  "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-  "generatedAt": "2026-10-27T08:33:16.827Z",
+  "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+  "generatedAt": "2026-10-28T04:54:32.444Z",
   "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
   "productFileCount": 258,
   "measuredPassCount": 111,
   "reports": [
     {
       "name": "catalog-measured-evidence.json",
-      "rawSha256": "4458850cad383155a958689d2f063921789ff916919491ad90b82a61a2d6be22",
+      "rawSha256": "87d16e70e9c89431d62f2f470a5e22c1f64b20ef2d59f95a399214476cd84a54",
       "bytes": 796800,
       "schemaVersion": "v2-catalog-measured-evidence.2",
       "scenarios": []
     },
     {
       "name": "extension-host-1.84.0-s003.json",
-      "rawSha256": "5ced64830b090d416c609c5317b7fc158c10285d7fbb358e9bcbfea403a34cf7",
+      "rawSha256": "9f3bbf7a57ab0989a9823c9ff1c057777c7646aa8a8ae2048a3ba9409379ed13",
       "bytes": 11937,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "extension-host",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "runtime-recorder:extension-host",
@@ -49,15 +49,15 @@
     },
     {
       "name": "extension-host-1.84.0.json",
-      "rawSha256": "b53773a1e873a346fabd39ff6a19a24b5b3259ea56fdd11d0ded5b11a27dfc4c",
+      "rawSha256": "0e0de30d4a3dd40eb58798382f6c22a7c2c6d3ae43d42b212fe7d25907a13808",
       "bytes": 491554,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "extension-host",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "runtime-recorder:extension-host",
@@ -453,15 +453,15 @@
     },
     {
       "name": "extension-host-stable-s003.json",
-      "rawSha256": "b8e7608cd4017739df7edae2ff08db9e6f2b92f28bf82433ea06a597b9646937",
+      "rawSha256": "350f7fc8ee3905bbc27818102ab703158e2bd4ce7093ac68062e22acda2c9e05",
       "bytes": 11937,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "extension-host",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "runtime-recorder:extension-host",
@@ -487,15 +487,15 @@
     },
     {
       "name": "extension-host-stable.json",
-      "rawSha256": "ff023d7e80240b0107960c8bc40be638e069de155f6fc5561e7c854a2179fc4d",
+      "rawSha256": "d3229b494043f5992fa1a7c37acd0a1d0940716b3e23e314515096c0c26f43d9",
       "bytes": 491554,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "extension-host",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "runtime-recorder:extension-host",
@@ -891,15 +891,15 @@
     },
     {
       "name": "visual-reference.json",
-      "rawSha256": "3eb3286647a51ce09dfc1f916283dd28dfdcb80e598ad57ff213be6c6da87e6f",
+      "rawSha256": "6d8611485b3412a8da75efe8f6725bf14c79f243725244ee22dd44d48250fc58",
       "bytes": 4524,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "e2e",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "visual-reference",
@@ -925,22 +925,22 @@
     },
     {
       "name": "vitest.json",
-      "rawSha256": "93930dcbb435a3b661f216d2e54a2670e064da2a75e9cdcfb783c54375108f31",
+      "rawSha256": "309734bcb47133a2214320c9ae38a5785b9b8a267c30266aa2125a4d6a7b6587",
       "bytes": 57311,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "unit",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "test-collector:vitest",
         "sourceArtifact": {
           "path": "test-results/vitest.json",
-          "sha256": "1fd07d215d70d43b07fd60a0f6b0007e089736bf02915d2815d48d229e09ec13",
-          "bytes": 338792
+          "sha256": "aeb1c1fd37b1d8dc31e6991df7af604c0709a4fc05238680674ddf2a7872d796",
+          "bytes": 338739
         }
       },
       "scenarios": [
@@ -1073,15 +1073,15 @@
     },
     {
       "name": "webview.json",
-      "rawSha256": "30e2a28e1355d82a6c46d93eca58520d0877b1ae2d3c2d22d2dc052225f067c3",
+      "rawSha256": "63870c055a058c6945d75918923f4afb350dbacf715688b04ba5b9b8985a0e9b",
       "bytes": 315440,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "webview",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "runtime-recorder:webview",
@@ -1272,22 +1272,22 @@
     },
     {
       "name": "xunit-modern.json",
-      "rawSha256": "09d9b1644ded2723188cb48a49613f54b0ff3a46fb7d667bf9ea69a87781717f",
+      "rawSha256": "049b125760ed1650491347310d95fcfb3142a3cf24742375e67255fb7515a0ba",
       "bytes": 18208,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "unit",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "test-collector:xunit",
         "sourceArtifact": {
           "path": "test-results/modern/modern.trx",
-          "sha256": "2c20a9cb6f3f21eb3b10b31a699f93c6d179ca8c323ac3d323d53e6ea002c989",
-          "bytes": 1157302
+          "sha256": "fe5ec3d345c09814a65caa9584759e891408cf7c86f56300363de5e1b18ab83c",
+          "bytes": 1157158
         }
       },
       "scenarios": [
@@ -1360,21 +1360,21 @@
     },
     {
       "name": "xunit-net48.json",
-      "rawSha256": "6c78444f17f58e9721a010d8732b8bd7daa4b7f4ec2b84346ff8c09a8476eac4",
+      "rawSha256": "a7c76844dae98a8231f0e926f5e2d7df4d7841ae0e651cb6bfcd86ab6ea9a565",
       "bytes": 2573,
       "schemaVersion": "v2-scenario-evidence.2",
       "suite": "unit",
       "completed": true,
       "provenance": {
         "schemaVersion": "v2-evidence-provenance.1",
-        "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-        "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+        "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+        "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
         "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
         "productFileCount": 258,
         "producer": "test-collector:xunit",
         "sourceArtifact": {
           "path": "test-results/net48/net48.trx",
-          "sha256": "4b6e7e0e16ef6cef7c6fce34b6e0bfd06c80b93665a1255a850f571d0e122212",
+          "sha256": "336e924a327c58a0d24e6a9396158ad01daa61a2956f3117e66cfe229579f396",
           "bytes": 132497
         }
       },
@@ -1395,15 +1395,15 @@
   "rawTestResults": [
     {
       "source": "v2-scenario-evidence/test-results/vitest.json",
-      "rawSha256": "1fd07d215d70d43b07fd60a0f6b0007e089736bf02915d2815d48d229e09ec13"
+      "rawSha256": "aeb1c1fd37b1d8dc31e6991df7af604c0709a4fc05238680674ddf2a7872d796"
     },
     {
       "source": "v2-scenario-evidence/test-results/modern/modern.trx",
-      "rawSha256": "2c20a9cb6f3f21eb3b10b31a699f93c6d179ca8c323ac3d323d53e6ea002c989"
+      "rawSha256": "fe5ec3d345c09814a65caa9584759e891408cf7c86f56300363de5e1b18ab83c"
     },
     {
       "source": "v2-scenario-evidence/test-results/net48/net48.trx",
-      "rawSha256": "4b6e7e0e16ef6cef7c6fce34b6e0bfd06c80b93665a1255a850f571d0e122212"
+      "rawSha256": "336e924a327c58a0d24e6a9396158ad01daa61a2956f3117e66cfe229579f396"
     }
   ],
   "archiveScope": "Raw and normalized identities are recorded separately. CI validators consumed original raw test-result bytes; retained text only normalizes absolute path prefixes."

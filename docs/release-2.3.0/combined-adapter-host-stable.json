@@ -7,10 +7,10 @@
     "requestedVSCodeVersion": "stable",
     "resolvedVSCodeVersion": "1.143.1",
     "hostMode": "normal-development-host",
-    "startedAt": "2026-10-27T08:27:08.066Z",
+    "startedAt": "2026-10-28T04:49:02.926Z",
     "environment": {
-      "commit": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
-      "workingTree": "dirty (4 changed or untracked paths)",
+      "commit": "5f9646bce8230aa7f4c692032c7524af80179c96",
+      "workingTree": "dirty (2 changed or untracked paths)",
       "os": "Windows_NT 10.0.26100 x64",
       "nodeArch": "x64",
       "windowsDesktopRuntime": "10.0.9",
@@ -405,9 +405,9 @@
       "scripts/run-release21-extension-host-tests.mjs": "0e63ee6ef837e8b677b4063dd7910b223739055b29caafaf68d3cbde81ddd9d3",
       "scripts/run-release21-upgrade-tests.mjs": "3963110de42e03cce4edd9234b1cd4f0ebcd8a9b7e0e7709106ea1278a544da9",
       "scripts/run-release22-extension-host-tests.mjs": "4e2689d661cea9bbda2f305ec4b4d94d20d72d4758586f9f911d2924655c4e00",
-      "scripts/run-release22-upgrade-tests.mjs": "f70adcdd2d9e47d41a06b9e5a78ef2af4c03e2eb9bbe4cf925f73d2a6fa04e40",
+      "scripts/run-release22-upgrade-tests.mjs": "ab97ecaba62a5510b23e54e1f95446bbdbce5fb4da208d203caf2d46616ee162",
       "scripts/run-release23-extension-host-tests.mjs": "1f1b6b0783994606feb393dda62a8851f1ff12a7fc625e771820af855717c8e5",
-      "scripts/run-release24-extension-host-tests.mjs": "125a38f1dba0d86891af1d3e00dd7b01db5a62514333a0413742d6836521e68a",
+      "scripts/run-release24-extension-host-tests.mjs": "1412aaceacea680d5570eccdace64eac2d6b2088eece5c26bf705cce3bdc0f67",
       "scripts/test-v2-execution-evidence-gate.mjs": "e2c957e500ce50d5e6e47732e35805c86e630a0a3a74c4b1bba2df8f379a91a3",
       "scripts/test-vsix-isolation.ps1": "6780f65a2607fd6ef92fdc3cdc1969f3c0d2269e3cdfc60f7fa514fde75fea36",
       "scripts/v2-evidence-provenance.mjs": "3e3dbc224dd26fb0de3b981ea6660f1dafaf1f323e1f7eb5acb9e0dac3655890",
@@ -415,8 +415,8 @@
       "scripts/validate-v2-scenario-catalog.ps1": "d245b957ac68b356d5147ef70e451ddec6abbb839f61eec2aadcb5682aa784a2",
       "extension/dist/extension.js": "9f2a90540a0691c31bff60fb41e7b5f0451ad82df80cbf02e6d8fefed718bbb6",
       "extension/dist/release24-extension-host-suite.cjs": "3b41c85465305fe5400dce7ff62c90a998b6a5c9912005da9146fc3e366e58e0",
-      "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "b9aad0f86a47abe636cc80c379e287d172a2951618a36486b03a22f41b18e9de",
-      "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+      "engine/bin/Release/net10.0-windows/WinFormsDesigner.Engine.dll": "fa62663e8a102dbff91406a97a13bd924fe71a4d887d09353f16b5eddb4da00c",
+      "engine-net48/bin/Release/net48/WinFormsDesigner.Engine.Net48.exe": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
     }
   },
   "independentSample": {
@@ -567,11 +567,11 @@
   "workspaceGrantPersistence": [
     {
       "phase": "setup",
-      "database": "User/workspaceStorage/bfb1f2ae06e692a81c1775e22d0dd442/state.vscdb",
-      "databaseSha256": "a0f54614f45c7d10b4502c6a08db2c465236b01cef838c0621789e2c94ec4f14",
+      "database": "User/workspaceStorage/55b0c50ffce479dfbefed42f2a0c3e71/state.vscdb",
+      "databaseSha256": "39090fcbd587909c67355c2f61a00e1da4ed77173255f327b53ad8f6333e3f74",
       "productMementoKey": "SkivHisink.winforms-designer-vscode",
       "grantKey": "winformsDesigner.adapterDevelopmentGrants.v1",
-      "productMementoSha256": "004ecfcf3037107a40cb82393611c45d0476baecb9b48741610e92d4ef7d5efd",
+      "productMementoSha256": "632a6da12e587fa914b3b73880fc0acc16a24c2fa0a49a8609b292892446fd9f",
       "grants": [
         {
           "packagePath": "adapters/action/adapter-package.json",
@@ -586,11 +586,11 @@
     },
     {
       "phase": "restore",
-      "database": "User/workspaceStorage/bfb1f2ae06e692a81c1775e22d0dd442/state.vscdb",
-      "databaseSha256": "5332c4fadd9b60eff8c091186387ec705b03a4a327d3345ef3003e1ccb8ce747",
+      "database": "User/workspaceStorage/55b0c50ffce479dfbefed42f2a0c3e71/state.vscdb",
+      "databaseSha256": "69157d7ce7a5899b1115bae3248298bd9972f2c2d905510ea05494d9b8676eaa",
       "productMementoKey": "SkivHisink.winforms-designer-vscode",
       "grantKey": "winformsDesigner.adapterDevelopmentGrants.v1",
-      "productMementoSha256": "0529da16ce82e25616e22edb4d0aa2b3b5ef5911e78bed40620fa28b5eb3f912",
+      "productMementoSha256": "e1772ee4c183e86ade20342bb73f957c24f9cb31684732ff331fd54ba5b15398",
       "grants": [
         {
           "packagePath": "adapters/action/adapter-package.json",
@@ -619,41 +619,41 @@
       "vscodeVersion": "1.143.1",
       "hostMode": "normal-development-host",
       "productExtensionPath": "<repo>\\extension",
-      "harnessExtensionPath": "<test-temp>\\release24-adapters-J8CkO4\\harness",
+      "harnessExtensionPath": "<test-temp>\\release24-adapters-iQVWud\\harness",
       "extensionVersion": "2.3.0",
-      "completedAt": "2026-10-27T08:27:41.290Z",
+      "completedAt": "2026-10-28T04:49:27.357Z",
       "expectedScenarioCount": 6,
       "failed": 0,
       "scenarios": [
         {
           "id": "modern.hosted-services-actual-profile",
           "passed": true,
-          "elapsedMs": 217
+          "elapsedMs": 194
         },
         {
           "id": "modern.independent-packages-inspect",
           "passed": true,
-          "elapsedMs": 108
+          "elapsedMs": 96
         },
         {
           "id": "modern.independent-conformance-setup",
           "passed": true,
-          "elapsedMs": 6873
+          "elapsedMs": 6109
         },
         {
           "id": "net48.hosted-services-actual-profile",
           "passed": true,
-          "elapsedMs": 228
+          "elapsedMs": 170
         },
         {
           "id": "net48.independent-packages-inspect",
           "passed": true,
-          "elapsedMs": 349
+          "elapsedMs": 239
         },
         {
           "id": "net48.independent-conformance-setup",
           "passed": true,
-          "elapsedMs": 6716
+          "elapsedMs": 3705
         }
       ],
       "observations": [
@@ -948,8 +948,8 @@
               "editors": []
             }
           },
-          "manifestPath": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\action\\adapter-package.json",
-          "packageRoot": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\action",
+          "manifestPath": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\action\\adapter-package.json",
+          "packageRoot": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\action",
           "packageSha256": "c8024294bdbfda9e75ab4d6834add46bf70d9e22ecd256c047e437e054b3690c",
           "manifestSha256": "f85e8b60bd7de3b500ca2f7a929285e077771dd09f187f2d86237292d29a7f50",
           "fileHashes": [
@@ -1041,8 +1041,8 @@
               ]
             }
           },
-          "manifestPath": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor\\adapter-package.json",
-          "packageRoot": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor",
+          "manifestPath": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor\\adapter-package.json",
+          "packageRoot": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor",
           "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0",
           "manifestSha256": "52a78e66131f69473a51265998950a5a8e488ca05491e580cc59b4752e3dab8d",
           "fileHashes": [
@@ -1391,8 +1391,8 @@
               "editors": []
             }
           },
-          "manifestPath": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\action\\adapter-package.json",
-          "packageRoot": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\action",
+          "manifestPath": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\action\\adapter-package.json",
+          "packageRoot": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\action",
           "packageSha256": "c8024294bdbfda9e75ab4d6834add46bf70d9e22ecd256c047e437e054b3690c",
           "manifestSha256": "f85e8b60bd7de3b500ca2f7a929285e077771dd09f187f2d86237292d29a7f50",
           "fileHashes": [
@@ -1484,8 +1484,8 @@
               ]
             }
           },
-          "manifestPath": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor\\adapter-package.json",
-          "packageRoot": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor",
+          "manifestPath": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor\\adapter-package.json",
+          "packageRoot": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor",
           "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0",
           "manifestSha256": "52a78e66131f69473a51265998950a5a8e488ca05491e580cc59b4752e3dab8d",
           "fileHashes": [
@@ -1559,131 +1559,131 @@
       "vscodeVersion": "1.143.1",
       "hostMode": "normal-development-host",
       "productExtensionPath": "<repo>\\extension",
-      "harnessExtensionPath": "<test-temp>\\release24-adapters-J8CkO4\\harness",
+      "harnessExtensionPath": "<test-temp>\\release24-adapters-iQVWud\\harness",
       "extensionVersion": "2.3.0",
-      "completedAt": "2026-10-27T08:28:19.392Z",
+      "completedAt": "2026-10-28T04:49:54.139Z",
       "expectedScenarioCount": 24,
       "failed": 0,
       "scenarios": [
         {
           "id": "modern.independent-conformance-restore",
           "passed": true,
-          "elapsedMs": 5693
+          "elapsedMs": 3922
         },
         {
           "id": "modern.public-reset-owned-region-and-native-undo",
           "passed": true,
-          "elapsedMs": 750
+          "elapsedMs": 557
         },
         {
           "id": "modern.real-dropdown-accept-and-native-undo",
           "passed": true,
-          "elapsedMs": 3487
+          "elapsedMs": 1857
         },
         {
           "id": "modern.real-dropdown-escape-preserves-every-artifact",
           "passed": true,
-          "elapsedMs": 496
+          "elapsedMs": 379
         },
         {
           "id": "modern.real-dropdown-nested-invocation-refused",
           "passed": true,
-          "elapsedMs": 484
+          "elapsedMs": 392
         },
         {
           "id": "modern.real-dropdown-focus-change-refused",
           "passed": true,
-          "elapsedMs": 300
+          "elapsedMs": 206
         },
         {
           "id": "modern.unknown-required-service-catalog-refused",
           "passed": true,
-          "elapsedMs": 89
+          "elapsedMs": 66
         },
         {
           "id": "modern.enabled-entry-modification-refused",
           "passed": true,
-          "elapsedMs": 163
+          "elapsedMs": 148
         },
         {
           "id": "modern.wrong-wire-result-type-refused",
           "passed": true,
-          "elapsedMs": 583
+          "elapsedMs": 513
         },
         {
           "id": "modern.revoked-enablement-refused",
           "passed": true,
-          "elapsedMs": 175
+          "elapsedMs": 157
         },
         {
           "id": "modern.editor-cancel-preserves-every-artifact",
           "passed": true,
-          "elapsedMs": 444
+          "elapsedMs": 363
         },
         {
           "id": "modern.adapter-refusal-preserves-every-artifact",
           "passed": true,
-          "elapsedMs": 468
+          "elapsedMs": 422
         },
         {
           "id": "net48.independent-conformance-restore",
           "passed": true,
-          "elapsedMs": 3987
+          "elapsedMs": 2116
         },
         {
           "id": "net48.public-reset-owned-region-and-native-undo",
           "passed": true,
-          "elapsedMs": 512
+          "elapsedMs": 351
         },
         {
           "id": "net48.real-dropdown-accept-and-native-undo",
           "passed": true,
-          "elapsedMs": 2431
+          "elapsedMs": 1636
         },
         {
           "id": "net48.real-dropdown-escape-preserves-every-artifact",
           "passed": true,
-          "elapsedMs": 1481
+          "elapsedMs": 356
         },
         {
           "id": "net48.real-dropdown-nested-invocation-refused",
           "passed": true,
-          "elapsedMs": 486
+          "elapsedMs": 351
         },
         {
           "id": "net48.real-dropdown-focus-change-refused",
           "passed": true,
-          "elapsedMs": 294
+          "elapsedMs": 229
         },
         {
           "id": "net48.unknown-required-service-catalog-refused",
           "passed": true,
-          "elapsedMs": 52
+          "elapsedMs": 44
         },
         {
           "id": "net48.enabled-entry-modification-refused",
           "passed": true,
-          "elapsedMs": 186
+          "elapsedMs": 152
         },
         {
           "id": "net48.wrong-wire-result-type-refused",
           "passed": true,
-          "elapsedMs": 571
+          "elapsedMs": 367
         },
         {
           "id": "net48.revoked-enablement-refused",
           "passed": true,
-          "elapsedMs": 164
+          "elapsedMs": 153
         },
         {
           "id": "net48.editor-cancel-preserves-every-artifact",
           "passed": true,
-          "elapsedMs": 432
+          "elapsedMs": 273
         },
         {
           "id": "net48.adapter-refusal-preserves-every-artifact",
           "passed": true,
-          "elapsedMs": 467
+          "elapsedMs": 368
         }
       ],
       "observations": [
@@ -1791,8 +1791,8 @@
                     ]
                   }
                 },
-                "manifestPath": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor\\adapter-package.json",
-                "packageRoot": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor",
+                "manifestPath": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor\\adapter-package.json",
+                "packageRoot": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor",
                 "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0",
                 "manifestSha256": "52a78e66131f69473a51265998950a5a8e488ca05491e580cc59b4752e3dab8d",
                 "fileHashes": [
@@ -1839,7 +1839,7 @@
           "editor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "c55a4e05-3475-4586-b9d2-d5b7cc779a27"
+            "requestId": "6aeac430-10a3-4584-a4f7-0db4ebdcac42"
           },
           "beforeSha256": "a1983b43da81b419f9640066819f8a7b9b0173a93affd7f47c60cc10c8b94b2f",
           "afterSha256": "6cf7f209b1a91ffb506f7f54181bab4fc95d5364a95a8256aa63ecbc08e88f56"
@@ -1850,12 +1850,12 @@
           "editor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "7b6dbd11-1190-4b2f-b808-b651d9942566"
+            "requestId": "50266c58-a52d-4cb7-9ed7-4c49e28d74b7"
           },
           "cancelled": {
             "protocolId": "winforms-designer.adapter-stdio",
             "protocolVersion": 1,
-            "id": "7b6dbd11-1190-4b2f-b808-b651d9942566",
+            "id": "50266c58-a52d-4cb7-9ed7-4c49e28d74b7",
             "status": "cancelled"
           }
         },
@@ -1865,7 +1865,7 @@
           "firstEditor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "db9efdd5-fb27-4d7a-bd85-568f513f8f18"
+            "requestId": "f84db105-d531-4373-985c-dfc309f52c5a"
           }
         },
         {
@@ -1874,7 +1874,7 @@
           "editor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "e2185a45-b182-4966-942b-72b85e6eba67"
+            "requestId": "86c5b83e-5846-456f-a40e-49436b32b37e"
           },
           "refused": {
             "status": "refused",
@@ -2016,8 +2016,8 @@
                     ]
                   }
                 },
-                "manifestPath": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor\\adapter-package.json",
-                "packageRoot": "<test-temp>\\release24-adapters-J8CkO4\\workspace\\adapters\\editor",
+                "manifestPath": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor\\adapter-package.json",
+                "packageRoot": "<test-temp>\\release24-adapters-iQVWud\\workspace\\adapters\\editor",
                 "packageSha256": "c96636fc3616fd7b3e46f4c27ebd619874e17feba672b43febc5bae56a39f2a0",
                 "manifestSha256": "52a78e66131f69473a51265998950a5a8e488ca05491e580cc59b4752e3dab8d",
                 "fileHashes": [
@@ -2064,7 +2064,7 @@
           "editor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "5740f0ed-16e3-40b3-bc86-efd1bbd270a0"
+            "requestId": "5b55e58a-2474-4d80-bbf5-d4ef185dc48f"
           },
           "beforeSha256": "520af17056727ec5c266cd1c21e17b30c131c9c46fa43a1c0430491bfda6b05e",
           "afterSha256": "913c15b58f71c50624ba05f1058d70d6f6f7e3dbf0dbbbc6916ed34f0f2f1e97"
@@ -2075,12 +2075,12 @@
           "editor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "aa18e112-f9f7-4449-bbd0-bceac8265b05"
+            "requestId": "2274d578-2bf1-4024-b0e4-94241b086f5f"
           },
           "cancelled": {
             "protocolId": "winforms-designer.adapter-stdio",
             "protocolVersion": 1,
-            "id": "aa18e112-f9f7-4449-bbd0-bceac8265b05",
+            "id": "2274d578-2bf1-4024-b0e4-94241b086f5f",
             "status": "cancelled"
           }
         },
@@ -2090,7 +2090,7 @@
           "firstEditor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "01a01454-1d4b-4ae1-b5b5-ad63f128840c"
+            "requestId": "8690d951-7d9f-4b3c-86ff-3f8ca1d8ed6a"
           }
         },
         {
@@ -2099,7 +2099,7 @@
           "editor": {
             "presented": true,
             "presentation": "dropdown",
-            "requestId": "83771475-809b-4c20-ae50-d8f0d07e5859"
+            "requestId": "cf71d165-5257-475c-9563-71c6858d4287"
           },
           "refused": {
             "status": "refused",

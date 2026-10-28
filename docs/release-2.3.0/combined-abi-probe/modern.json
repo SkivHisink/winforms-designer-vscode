@@ -5,7 +5,7 @@
   "contract": "official-Microsoft.WinForms.Designer.SDK-1.6.0",
   "compiledSample": {
     "identity": "Independent.ModernDesigner, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
-    "sha256": "baa1f682a82362b8261832ec1011262a8cd9196ec333362265507a87890a3558"
+    "sha256": "208378649cb5f889ffc6de6b91e2fec74022bc58b9d9b8b5bba64830af2d9366"
   },
   "designerBase": "Microsoft.DotNet.DesignTools.Designers.ControlDesigner, Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
   "actionListBase": "Microsoft.DotNet.DesignTools.Designers.Actions.DesignerActionList, Microsoft.DotNet.DesignTools.Server, Version=1.6.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",

@@ -130,9 +130,12 @@ function install(vsix) {
 async function phase(name) {
   // --extensionTestsPath puts VS Code's mementos in memory. A normal host plus a development-only
   // harness is essential here: the installed product and real SQLite storage must survive all three launches.
+  // The sandbox switches are the ones @vscode/test-electron passes: without them the VS Code 1.84 GPU process
+  // crashes on the hosted Windows Server 2025 runner and Electron exits before the window opens.
   await new Promise((resolve, reject) => {
     const child = spawn(code, [workspace, '--new-window', `--user-data-dir=${profile}`, `--shared-data-dir=${sharedData}`, `--extensions-dir=${installed}`,
-      `--extensionDevelopmentPath=${harness}`, '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-updates'],
+      `--extensionDevelopmentPath=${harness}`, '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-updates',
+      '--no-sandbox', '--disable-gpu-sandbox'],
     { env: { ...env, WFD_RELEASE22_UPGRADE_PHASE: name, WFD_RELEASE22_EXPECTED_CURRENT_VERSION: currentVersion,
       WFD_RELEASE22_UPGRADE_GLOBAL_STORAGE: path.join(profile, 'User', 'globalStorage', productId),
       ...(name === 'downgrade' ? { WFD_RELEASE22_EXPECTED_BACKUPS: JSON.stringify(evidence.hotExitBackups) } : {}),

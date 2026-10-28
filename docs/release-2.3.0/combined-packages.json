@@ -3,8 +3,8 @@
   "artifacts": [
     {
       "path": "extension/winforms-designer-win32-x64.vsix",
-      "bytes": 18406023,
-      "sha256": "642d67b0c093813adb19e388a56ee435703ce0bad80721cd53eb377413e42039",
+      "bytes": 18406006,
+      "sha256": "24d7779ebbc19feada256335eeca587c924235b48c575dadc9d9ae14ca983458",
       "entries": 204,
       "version": "2.3.0",
       "modernRuntimeIdentifier": "win-x64",
@@ -14,8 +14,8 @@
       "changelogSha256": "cecd095d3a8f780bacfe477b5d54feba5a0dba3e834b3568cfd4f6e7ae2e6df6",
       "changelogSourceSha256": "1ff02a20eb47ef3c3f04074a2122df1e8cee6befe643c2c680390f1f0adedd69",
       "packageManifestSha256": "e1751454c7f5d49fa8fb4fb301c8d46cdb91631727bf12ffc8e2da70cd569c8a",
-      "modernEngineSha256": "63a4382c7680cfdc606e70f54a1c281b38cb99493d906df60a7e83aef9dbe73e",
-      "net48EngineSha256": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8",
+      "modernEngineSha256": "06991ad5a14ef8356443a37d0aa0f9e7c6d31db2e2df7b977ce20f0b8e5b4326",
+      "net48EngineSha256": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab",
       "modernRuntimeConfigSha256": "96bc2946dff8790400d652ec7f8de7bb043e954980d59470c112788b68a1fbd3",
       "modernDependencyManifestSha256": "e21024bad33de7e5ffe6ed76d4209b7de836b374600f3c3def35a561bfbeee17",
       "net48RuntimeConfigSha256": "cfe7d84d370da48ffbf8ff0ad7a88e7d5d3c159dc1786bfdca0db14125065636",
@@ -485,7 +485,7 @@
         {
           "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe",
           "bytes": 559616,
-          "sha256": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "sha256": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         },
         {
           "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe.config",
@@ -885,12 +885,12 @@
         {
           "path": "extension/engine/WinFormsDesigner.Engine.dll",
           "bytes": 1174528,
-          "sha256": "63a4382c7680cfdc606e70f54a1c281b38cb99493d906df60a7e83aef9dbe73e"
+          "sha256": "06991ad5a14ef8356443a37d0aa0f9e7c6d31db2e2df7b977ce20f0b8e5b4326"
         },
         {
           "path": "extension/engine/WinFormsDesigner.Engine.exe",
           "bytes": 162816,
-          "sha256": "3ddd4f6af0f0248d48a14ebedbe9cae30b074359cc7acadd6ce93f4a0928cf1d"
+          "sha256": "80995b5b8ab7c912b8f11c7b29a697f480817382b288c11b6f237a34f0233fba"
         },
         {
           "path": "extension/engine/WinFormsDesigner.Engine.runtimeconfig.json",
@@ -1051,8 +1051,8 @@
     },
     {
       "path": "extension/winforms-designer-win32-arm64.vsix",
-      "bytes": 18393824,
-      "sha256": "def9c182635383ce0d1c67454f43b4c72a7da53d2c3a3210a5416f46bd46f0d5",
+      "bytes": 18393802,
+      "sha256": "9a47792565a40aaae67c63fc392e4c94cf678c12fb799fe9c7dcb9e40181a3e0",
       "entries": 204,
       "version": "2.3.0",
       "modernRuntimeIdentifier": "win-arm64",
@@ -1062,8 +1062,8 @@
       "changelogSha256": "cecd095d3a8f780bacfe477b5d54feba5a0dba3e834b3568cfd4f6e7ae2e6df6",
       "changelogSourceSha256": "1ff02a20eb47ef3c3f04074a2122df1e8cee6befe643c2c680390f1f0adedd69",
       "packageManifestSha256": "e1751454c7f5d49fa8fb4fb301c8d46cdb91631727bf12ffc8e2da70cd569c8a",
-      "modernEngineSha256": "e03cd32140e02be59d949204cfd7874c4e0e89241bd716c0202ad31118ceb89e",
-      "net48EngineSha256": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8",
+      "modernEngineSha256": "2ff129313aa3e1f68951b83107a1a366680fc424f7f3b0c301a8122b74a6e754",
+      "net48EngineSha256": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab",
       "modernRuntimeConfigSha256": "96bc2946dff8790400d652ec7f8de7bb043e954980d59470c112788b68a1fbd3",
       "modernDependencyManifestSha256": "c6f866d13c6352c28d79e9c0105452a896a63d4980030510dadad23885aab17d",
       "net48RuntimeConfigSha256": "cfe7d84d370da48ffbf8ff0ad7a88e7d5d3c159dc1786bfdca0db14125065636",
@@ -1533,7 +1533,7 @@
         {
           "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe",
           "bytes": 559616,
-          "sha256": "871b9243e59393d0c78ea3f96f2ee590df8622f312d3664cf2e320a8b3c77eb8"
+          "sha256": "7e0cb52986cd9225001ea5d9481b3add30a9302a95c7d745024b8cae7d67faab"
         },
         {
           "path": "extension/engine-net48/WinFormsDesigner.Engine.Net48.exe.config",
@@ -1933,12 +1933,12 @@
         {
           "path": "extension/engine/WinFormsDesigner.Engine.dll",
           "bytes": 1174528,
-          "sha256": "e03cd32140e02be59d949204cfd7874c4e0e89241bd716c0202ad31118ceb89e"
+          "sha256": "2ff129313aa3e1f68951b83107a1a366680fc424f7f3b0c301a8122b74a6e754"
         },
         {
           "path": "extension/engine/WinFormsDesigner.Engine.exe",
           "bytes": 140288,
-          "sha256": "99e89787d2812fa5efb6879c226008562263439c26072e3cd27f00d13e2d3447"
+          "sha256": "b0eb2fd0f96ca6966f0094a84aa456babcfebbc2ccbb67fae9eb8fd132c4692e"
         },
         {
           "path": "extension/engine/WinFormsDesigner.Engine.runtimeconfig.json",

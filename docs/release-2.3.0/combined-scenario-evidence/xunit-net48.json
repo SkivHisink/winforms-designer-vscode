@@ -2,19 +2,19 @@
   "schemaVersion": "v2-scenario-evidence.2",
   "suite": "unit",
   "invocation": "xunit-net48",
-  "generatedAtUtc": "2026-10-27T07:58:32.166Z",
+  "generatedAtUtc": "2026-10-28T04:18:10.546Z",
   "completed": true,
   "sourceRoot": ".",
   "provenance": {
     "schemaVersion": "v2-evidence-provenance.1",
-    "runId": "combined23-56e85f2a-1769-4abc-871d-8d4e681bbb1e",
-    "repositoryHead": "160e28d6158b71053e088a33dc1791b4a56b2c4b",
+    "runId": "combined23-c80b4114-8a46-4053-859a-a89bafdff65a",
+    "repositoryHead": "5f9646bce8230aa7f4c692032c7524af80179c96",
     "productTreeSha256": "67e764f7af9733ab5867f96758a013cfd8b59a843b84156ff4025551f03abd0f",
     "productFileCount": 258,
     "producer": "test-collector:xunit",
     "sourceArtifact": {
       "path": "test-results/net48/net48.trx",
-      "sha256": "4b6e7e0e16ef6cef7c6fce34b6e0bfd06c80b93665a1255a850f571d0e122212",
+      "sha256": "336e924a327c58a0d24e6a9396158ad01daa61a2956f3117e66cfe229579f396",
       "bytes": 132497
     }
   },
