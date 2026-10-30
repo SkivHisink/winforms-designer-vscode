@@ -90,7 +90,8 @@ export const DESIGNER_SCAFFOLD = `
     <ul id="diagList" style="display:none"></ul>
     <div id="diagActions">
       <button id="diagRetry">Retry</button><button id="diagRebuild">Rebuild</button>
-      <button id="diagChooseAssembly">Choose Assembly</button><button id="diagCopy">Copy</button>
+      <button id="diagChooseAssembly">Choose Assembly</button>
+      <button id="diagChooseProjectContext" style="display:none">Choose Project Context</button><button id="diagCopy">Copy</button>
     </div>
   </div>
   <div id="stage">

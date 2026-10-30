@@ -846,6 +846,34 @@ test('diag actions (1.1.0): Retry/Rebuild/Choose Assembly/Copy post explicit rec
 
   const actions = only(h.posted, 'diagnosticAction').map((m) => m.action);
   eq(actions.join(','), 'retry,rebuild,chooseAssembly,copy', 'all recovery actions are wired in display order');
+  eq(h.el('diagChooseProjectContext').style.display, 'none', 'an ordinary diagnostic does not offer a project context');
+  h.destroy();
+});
+
+test('diag actions: an owner-project refusal offers Choose Project Context instead of Choose Assembly and Rebuild', () => {
+  const h = loadDesigner();
+  for (const cause of ['AMBIGUOUS_OWNER', 'STALE_PROJECT_CONTEXT']) {
+    h.send({ type: 'error', message: `refused (${cause})`, renderFailure: true, target: 'this', cause });
+    ok(h.el('diag').style.display !== 'none', `${cause}: the refusal banner shows`);
+    eq(h.el('diagChooseAssembly').style.display, 'none',
+      `${cause}: another control assembly cannot resolve the owner, so it is not offered`);
+    eq(h.el('diagRebuild').style.display, 'none',
+      `${cause}: a build does not change Compile membership, so it is not offered`);
+    ok(h.el('diagRetry').style.display !== 'none', `${cause}: Retry stays for a project file edited by hand`);
+    const choose = h.el('diagChooseProjectContext');
+    ok(choose.style.display !== 'none', `${cause}: the project-context choice is offered`);
+    ok((choose.getAttribute('aria-label') || '').length > 0, `${cause}: the project-context choice has an accessible name`);
+    h.resetPosted();
+    h.click(choose);
+    eq(only(h.posted, 'diagnosticAction').map((m) => m.action).join(','), 'chooseProjectContext',
+      `${cause}: the button posts the project-context action`);
+  }
+
+  // Any other failure restores the assembly choice.
+  h.send({ type: 'error', message: 'Vendor.Grid missing', renderFailure: true, target: 'this.grid', cause: 'MISSING_TYPE' });
+  ok(h.el('diagChooseAssembly').style.display !== 'none', 'a type failure offers the assembly choice again');
+  ok(h.el('diagRebuild').style.display !== 'none', 'a type failure offers Rebuild again');
+  eq(h.el('diagChooseProjectContext').style.display, 'none', 'a type failure does not offer a project context');
   h.destroy();
 });
 

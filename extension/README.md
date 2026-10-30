@@ -4,7 +4,7 @@
 
 Open a form's `Form1.cs` and get a **live, interactive preview** of the rendered form — click controls, edit properties, drag and resize, wire events, and save minimal changes back into `.Designer.cs`. No round-trip through Visual Studio.
 
-> ✅ **2.3.0.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
+> ✅ **2.3.1.** **Windows x64** · **.NET 10 Desktop Runtime** · trusted workspace. Linux, macOS and WSL are not supported.
 
 **New in 2.3:** Adapter SDK Preview 0.1.0 adds independently built designer actions and scalar property editors.
 Inspect a local package, explicitly enable its exact hashes in a trusted workspace, and invoke its actions from the

@@ -3,7 +3,7 @@
   "displayName": "WinForms Designer for VS Code",
   "description": "%description%",
   "publisher": "SkivHisink",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "packageManager": "npm@11.9.0",
   "preview": false,
   "license": "MIT",

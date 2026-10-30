@@ -9,6 +9,21 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-10-30
+
+### Fixed
+
+- A project-context choice is no longer discarded when another preview render starts while it is made, for example
+  from Retry. The choice is still proven against the current projects and source, and every outcome is written to
+  the WinForms Designer output.
+- A form refused because several projects compile it offers **Choose Project Context…** in the preview banner.
+  The banner previously offered a control-assembly choice and Rebuild, neither of which can select the owner project;
+  both are now withheld for this refusal. Choosing one of those projects as the control source also selects it as
+  the project context once its membership is verified.
+- On .NET Framework, the expandable sub-properties of a component property, such as `Appearance`, no longer vanish
+  from Properties on a busy machine. Their converter queries run on the engine's dedicated converter thread, as the
+  compiled describe already did, instead of the shared thread pool, where a query could time out before it started.
+
 ## [2.3.0] - 2026-10-26
 
 ### Added
@@ -2655,7 +2670,9 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.1...HEAD
+[2.3.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.0...v2.3.1
+[2.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v1.15.0...v2.0.0

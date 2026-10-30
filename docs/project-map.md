@@ -110,7 +110,7 @@ Webviews (`extension/media/`): `designer.js` (canvas), `panel.js` (Properties, T
 | Path | Contents |
 |---|---|
 | `adr/` | Architecture decisions: 0001 net48 live-source interpretation, 0002 edit parity, 0003 hosted services and dual-lane persistence; `adr/evidence/` holds the subsystem maps 0001 was based on |
-| `release-2.0.0-gate-record.md`, `release-2.1.0.md` (+ `release-2.1.0/`), `release-2.2.0.md` (+ `release-2.2.0/`), `release-2.3.0.md` (+ `release-2.3.0/`), `release-2.4.0.md` | Release records: combined R23/R24 acceptance and machine reports in 2.3.0; pending R25 vendor cohort in 2.4.0 |
+| `release-2.0.0-gate-record.md`, `release-2.1.0.md` (+ `release-2.1.0/`), `release-2.2.0.md` (+ `release-2.2.0/`), `release-2.3.0.md` (+ `release-2.3.0/`), `release-2.3.1.md`, `release-2.4.0.md` | Release records: combined R23/R24 acceptance and machine reports in 2.3.0; the 2.3.1 project-context patch; pending R25 vendor cohort in 2.4.0 |
 | `roadmap-2.0.0-to-3.0.0.md`, `roadmap-v2.0.0-implementation-plan.md`, `roadmap-to-2.0.0.drawio` | Plans; the short public roadmap is the root `ROADMAP.md` |
 | `v2/` | Protocol and adapter-manifest schemas, the scenario catalog (`vs-parity-scenario-catalog.tsv`), archived Visual Studio reference traces and comparisons (byte-pinned) |
 | `TESTING.md`, `arm64-support.md` | Test strategy; ARM64 status |

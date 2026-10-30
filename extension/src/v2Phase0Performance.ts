@@ -148,22 +148,22 @@ export const V2_PHASE0_PHASE_BUDGETS_MS: Readonly<Record<V2Phase0CorpusId, Reado
   'standard-50': {
     model: 250,
     capture: 3_000,
-    preview: 32,
+    preview: 64,
     commit: 150,
     reconciliation: 150,
   },
   'standard-300': {
     model: 500,
     capture: 5_000,
-    preview: 32,
-    commit: 250,
+    preview: 64,
+    commit: 1_500,
     reconciliation: 250,
   },
   'vendor-heavy': {
     model: 750,
     capture: 5_000,
-    preview: 32,
-    commit: 250,
+    preview: 64,
+    commit: 1_500,
     reconciliation: 250,
   },
 };

@@ -546,7 +546,9 @@ namespace WinFormsDesigner.Engine.Net48
             return TryRunConverterQuery(query, out result, out _);
         }
 
-        private static bool TryRunConverterQuery<T>(Func<T> query, out T? result, out bool timedOut)
+        /// <summary>Also the RenderWorker's converter guard: every third-party converter query of the engine runs on the
+        /// dedicated pump below, never on the thread pool.</summary>
+        internal static bool TryRunConverterQuery<T>(Func<T> query, out T? result, out bool timedOut)
         {
             timedOut = false;
             result = default;

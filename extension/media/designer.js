@@ -104,7 +104,7 @@
       centerFormH: 'Center horizontally', centerFormV: 'Center vertically',
       tabOrder: 'Tab order', rulerToggle: 'Toggle ruler', deleteCtl: 'Delete selection',
       diagDismiss: 'Dismiss diagnostics', diagRetry: 'Retry render', diagRebuild: 'Rebuild project',
-      diagChooseAssembly: 'Choose assembly', diagCopy: 'Copy diagnostics'
+      diagChooseAssembly: 'Choose assembly', diagChooseProjectContext: 'Choose project context', diagCopy: 'Copy diagnostics'
     };
     for (var id in labels) if (Object.prototype.hasOwnProperty.call(labels, id)) ensureA11yLabel(document.getElementById(id), labels[id]);
     if (!document.getElementById('wfd-designer-a11y-style')) {
@@ -133,6 +133,7 @@
   var diagRetryEl = document.getElementById('diagRetry');
   var diagRebuildEl = document.getElementById('diagRebuild');
   var diagChooseAssemblyEl = document.getElementById('diagChooseAssembly');
+  var diagChooseProjectContextEl = document.getElementById('diagChooseProjectContext');
   var diagCopyEl = document.getElementById('diagCopy');
   var diagSig = '';             // signature of what's currently shown
   var diagDismissedSig = null;  // signature the user dismissed (stay hidden while the next set matches it)
@@ -169,13 +170,19 @@
       diagListEl.appendChild(more);
     }
   }
-  function showDiag(mode, msg, items) {
+  // projectContext: the failure is an owner-project ambiguity, which only a project-context choice resolves. Ownership
+  // comes from the project files' Compile items, so neither another control assembly nor a build can change it: those
+  // actions are withdrawn rather than offered alongside. Retry stays for a project file edited by hand.
+  function showDiag(mode, msg, items, projectContext) {
     if (!diagEl) return;
     var sig = diagSignature(mode, msg, items);
     if (sig === diagDismissedSig) { hideDiag(); return; }   // user dismissed this exact set → stay hidden
     diagSig = sig;
     diagEl.className = mode;                                  // 'warn' | 'err'
     diagMsgEl.textContent = msg;
+    if (diagRebuildEl) diagRebuildEl.style.display = projectContext ? 'none' : '';
+    if (diagChooseAssemblyEl) diagChooseAssemblyEl.style.display = projectContext ? 'none' : '';
+    if (diagChooseProjectContextEl) diagChooseProjectContextEl.style.display = projectContext ? '' : 'none';
     diagExpanded = false;
     if (items.length) { renderDiagList(items); diagToggleEl.textContent = T('designer.diag.details'); diagToggleEl.style.display = ''; }
     else { diagListEl.textContent = ''; diagToggleEl.style.display = 'none'; }
@@ -192,6 +199,7 @@
   if (diagRetryEl) diagRetryEl.addEventListener('click', function () { postDiagAction('retry'); });
   if (diagRebuildEl) diagRebuildEl.addEventListener('click', function () { postDiagAction('rebuild'); });
   if (diagChooseAssemblyEl) diagChooseAssemblyEl.addEventListener('click', function () { postDiagAction('chooseAssembly'); });
+  if (diagChooseProjectContextEl) diagChooseProjectContextEl.addEventListener('click', function () { postDiagAction('chooseProjectContext'); });
   if (diagCopyEl) diagCopyEl.addEventListener('click', function () { postDiagAction('copy'); });
 
   var controls = [];      // innermost-first (engine order)
@@ -3140,7 +3148,8 @@
           text: m.cause || m.message || '',
           detail: m.cause && m.cause !== m.message ? (m.message || '') : '',
         };
-        showDiag('err', T('designer.diag.stalePreview', { message: m.message }), [failureItem]);
+        showDiag('err', T('designer.diag.stalePreview', { message: m.message }), [failureItem],
+          m.cause === 'AMBIGUOUS_OWNER' || m.cause === 'STALE_PROJECT_CONTEXT');
       }
       else if (hasRendered) setStatus(T('designer.status.error', { message: m.message }));
     }

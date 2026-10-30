@@ -1912,6 +1912,7 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
   if (!choice) return;
 
   let dll: string | undefined;
+  let projectPath: string | undefined;
   if (choice === CLEAR) {
     dll = undefined;
   } else if (choice === BROWSE) {
@@ -1946,6 +1947,7 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
         return;
       }
       dll = resolved;
+      projectPath = proj.uri.fsPath;
     } catch (e) {
       void vscode.window.showWarningMessage(t('host.notify.resolveEngine.error', { error: e instanceof Error ? e.message : String(e) }));
       return;
@@ -1957,7 +1959,12 @@ async function selectControlAssembly(context: vscode.ExtensionContext): Promise<
   const priorNet48Output = session.pinnedNet48Output;
   await setControlSource(file, dll);
   void vscode.window.showInformationMessage(dll ? t('host.notify.controlSource.set', { name: path.basename(dll) }) : t('host.notify.controlSource.cleared'));
-  await session.reloadControlSource(priorNet48Output);
+  // While the form is refused because several projects compile it, a project picked here is also the user's project
+  // context. The engine still proves its membership; a refused or failed choice leaves only the control source applied,
+  // and the ordinary reload below reports whatever stops the render.
+  const contextAdopted = projectPath !== undefined && session.isProjectContextCandidate(projectPath)
+    && await session.selectProjectContext(projectPath, priorNet48Output).catch(() => false);
+  if (!contextAdopted) await session.reloadControlSource(priorNet48Output);
   updateControlStatus();
 }
 

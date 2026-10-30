@@ -3509,7 +3509,6 @@ namespace WinFormsDesigner.Engine.Net48
         private const int ExpandableMaxValueChars = 1024;
         private const int ExpandableMaxDescriptionChars = 1024;
         private const int ExpandableMaxCategoryChars = 128;
-        private static readonly TimeSpan ConverterQueryTimeout = TimeSpan.FromMilliseconds(200);
 
         private sealed class ExpandableResult
         {
@@ -3752,45 +3751,10 @@ namespace WinFormsDesigner.Engine.Net48
             return TryRunConverterQuery(query, out result, out _);
         }
 
+        // The same dedicated, bounded pump as the compiled describe. A thread-pool task queued behind a busy pool could
+        // spend its whole budget waiting to start, so an expandable property lost its children on a small machine.
         private static bool TryRunConverterQuery<T>(Func<T> query, out T? result, out bool timedOut)
-        {
-            timedOut = false;
-            Task<T> task;
-            try { task = Task.Run(query); }
-            catch
-            {
-                result = default;
-                return false;
-            }
-
-            try
-            {
-                if (task.Wait(ConverterQueryTimeout))
-                {
-                    result = task.GetAwaiter().GetResult();
-                    return true;
-                }
-            }
-            catch
-            {
-                result = default;
-                return false;
-            }
-
-            ObserveLateConverterFault(task);
-            timedOut = true;
-            result = default;
-            return false;
-        }
-
-        private static void ObserveLateConverterFault(Task task)
-        {
-            _ = task.ContinueWith(
-                completed => { var ignored = completed.Exception; },
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
-                TaskScheduler.Default);
-        }
+            => CompiledDescriber.TryRunConverterQuery(query, out result, out timedOut);
 
         private static bool SourceEditableThroughExistingValueConversion(Type type, string? value, bool readOnly)
         {

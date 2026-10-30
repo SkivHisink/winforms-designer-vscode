@@ -73,14 +73,14 @@ describe('v2 Phase 0 performance spike', () => {
     const report = await runV2Phase0PerformanceSpike({
       capture: ({ corpus }) => ({ durationMs: corpus.id === 'standard-300' ? 4_900 : 100 }),
       preview: () => ({ durationMs: 16 }),
-      commit: ({ corpus }) => ({ durationMs: corpus.id === 'standard-300' ? 260 : 40 }),
+      commit: ({ corpus }) => ({ durationMs: corpus.id === 'standard-300' ? 1_600 : 40 }),
       reconciliation: () => ({ durationMs: 40 }),
     });
 
     const validation = validateV2Phase0PerformanceReport(report);
     expect(validation.status).toBe('FAIL');
-    expect(validation.failures).toContain('standard-300/dpi-100/commit p95 260ms > 250ms');
-    expect(validation.failures).toContain('standard-300/dpi-100 interactive conservative bound 5216ms > 5000ms');
+    expect(validation.failures).toContain('standard-300/dpi-100/commit p95 1600ms > 1500ms');
+    expect(validation.failures).toContain('standard-300/dpi-100 interactive conservative bound 6556ms > 5000ms');
   });
 
   it('allows PASS only for Extension Host-attributed product telemetry', async () => {

@@ -6168,7 +6168,7 @@ class DesignerSession {
     axis?: 'h' | 'v'; direction?: 'left' | 'right'; itemType?: string; text?: string; itemId?: string; parentItemId?: string; targetParentItemId?: string | null; targetIndex?: number; token?: number; reopenToken?: number;
     schemaKey?: string; includeNavigator?: boolean; existingBindingSourceId?: string | null;
     commandId?: string; certificationId?: string; publicationId?: string; componentId?: string; contributionId?: string;
-    dpr?: number; newName?: string; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy';
+    dpr?: number; newName?: string; state?: unknown; action?: 'retry' | 'rebuild' | 'chooseAssembly' | 'chooseProjectContext' | 'copy';
     dropX?: number; dropY?: number; adornerId?: string; gen?: number;
   }): Promise<void> {
     if (!this.hasProductRequestScope()) {
@@ -6681,7 +6681,7 @@ class DesignerSession {
     this.post({ type: 'error', message, renderFailure: true, target, cause });
   }
 
-  private async handleDiagnosticAction(action: 'retry' | 'rebuild' | 'chooseAssembly' | 'copy'): Promise<void> {
+  private async handleDiagnosticAction(action: 'retry' | 'rebuild' | 'chooseAssembly' | 'chooseProjectContext' | 'copy'): Promise<void> {
     if (action === 'retry') {
       await this.fullRender();
       return;
@@ -6692,6 +6692,10 @@ class DesignerSession {
     }
     if (action === 'chooseAssembly') {
       await vscode.commands.executeCommand('winformsDesigner.selectControlAssembly');
+      return;
+    }
+    if (action === 'chooseProjectContext') {
+      await this.selectProjectContext().catch((error) => this.fail(error));
       return;
     }
     await vscode.commands.executeCommand('winformsDesigner.copySafeDiagnostics', this.documentUri.toString());
@@ -7225,24 +7229,46 @@ class DesignerSession {
     return projectPaths;
   }
 
-  /** Choice is authoritative only after the engine proves current membership. Cancelling never changes state. */
-  async selectProjectContext(requestedProjectPath?: string | null): Promise<boolean> {
-    if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.selectProjectContext(requestedProjectPath));
-    if (!this.designerFile || this.disposed || this.projectContextChoiceBusy) return false;
+  /** True while the owner gate refuses this form for an ambiguous or stale project context and `projectPath` is one of
+   * the projects that compile it. Only then does a project picked as the control source also name the owner. */
+  isProjectContextCandidate(projectPath: string): boolean {
+    const owner = this.lastDocumentOwner;
+    return !!owner && ['AMBIGUOUS_OWNER', 'STALE_PROJECT_CONTEXT'].includes(owner.diagnosticCode)
+      && owner.owners.some((candidate) => normalize(candidate) === normalize(projectPath));
+  }
+
+  /** Choice is authoritative only after the engine proves current membership. Cancelling never changes state.
+   * A caller that changed the control-source override first passes the net48 output pinned before that change. */
+  async selectProjectContext(requestedProjectPath?: string | null, priorNet48Output?: string): Promise<boolean> {
+    if (!this.hasProductRequestScope()) {
+      return this.withProductWorkflow(() => this.selectProjectContext(requestedProjectPath, priorNet48Output));
+    }
+    if (!this.designerFile || this.disposed) return false;
+    if (this.projectContextChoiceBusy) {
+      this.output.appendLine(`[designer] project context choice already in progress: ${this.designerFile}`);
+      return false;
+    }
     this.projectContextChoiceBusy = true;
+    // Only a source change invalidates a choice in progress. A render that starts meanwhile (Retry, a control-source
+    // reload, engine recovery) changes no membership evidence: the pick is proven again below against the current
+    // projects and text, and the reload after it supersedes that render. Discarding the pick for it lost the choice.
     const revision = this.doc.rev;
-    const sequence = this.renderSeq;
-    const isCurrent = () => !this.disposed && this.doc.rev === revision && this.renderSeq === sequence;
+    const isCurrent = () => !this.disposed && this.doc.rev === revision;
+    const discard = (): false => {
+      this.output.appendLine(`[designer] project context choice discarded, the source changed: ${this.designerFile}`);
+      this.post({ type: 'status', message: t('designer.ownerContext.changed') });
+      return false;
+    };
     let eng: EngineHandle | undefined;
     try {
       const projectPaths = await this.documentOwnerProjectPaths();
-      if (!isCurrent()) return false;
+      if (!isCurrent()) return discard();
       eng = await this.withTimeout(this.ensureEngine('modern'), 12000, 'engine did not start for project-context selection');
       const source = await this.currentText() ?? this.doc.designerText;
       const code = await this.currentCodeText();
       const discover = () => resolveDesignerDocumentOwner(eng!, this.designerFile!, projectPaths, source, code);
       const available = await this.withTimeout(discover(), 12000, 'project-context discovery timed out');
-      if (!isCurrent()) return false;
+      if (!isCurrent()) return discard();
       let selected = requestedProjectPath;
       if (selected == null) {
         const current = DesignerHub.instance.projectContext(this.designerFile);
@@ -7256,26 +7282,32 @@ class DesignerSession {
             ? t('designer.ownerContext.override', { assembly: path.basename(override) })
             : t('designer.ownerContext.placeholder'),
         });
-        if (!pick) return false;
+        if (!pick) {
+          this.output.appendLine(`[designer] project context choice cancelled: ${this.designerFile}`);
+          return false;
+        }
         selected = pick.projectPath;
       }
-      if (!isCurrent()) { this.post({ type: 'status', message: t('designer.ownerContext.changed') }); return false; }
+      if (!isCurrent()) return discard();
       // The projects may have changed while QuickPick was open. The resolver reads them again; the picker list is
       // never used as membership evidence, and arbitrary/stale choices never gain a fallback owner.
       const currentProjectPaths = await this.documentOwnerProjectPaths();
-      if (!isCurrent()) { this.post({ type: 'status', message: t('designer.ownerContext.changed') }); return false; }
+      if (!isCurrent()) return discard();
       const checked = await this.withTimeout(resolveDesignerDocumentOwner(
         eng, this.designerFile, currentProjectPaths, await this.currentText() ?? this.doc.designerText,
         await this.currentCodeText(), selected), 12000, 'project-context membership validation timed out');
-      if (!isCurrent()) { this.post({ type: 'status', message: t('designer.ownerContext.changed') }); return false; }
+      if (!isCurrent()) return discard();
       if (!isResolvedDocumentOwner(checked)) {
         this.documentOwnerChecked = false;
         this.lastDocumentOwner = checked;
-        this.postRenderFailure(documentOwnerFailureMessage(checked), 'this', checked.diagnosticCode);
+        const message = documentOwnerFailureMessage(checked);
+        this.output.appendLine(`[designer] project context refused: ${this.designerFile}: ${selected}: ${message}`);
+        this.postRenderFailure(message, 'this', checked.diagnosticCode);
         return false;
       }
-      const priorOutput = this.pinnedNet48Output;
+      const priorOutput = priorNet48Output ?? this.pinnedNet48Output;
       await DesignerHub.instance.setProjectContext(this.designerFile, checked.projectPath);
+      this.output.appendLine(`[designer] project context set: ${this.designerFile} → ${checked.projectPath}`);
       if (this.disposed) return false;
       this.documentOwnerChecked = false;
       this.lastDocumentOwner = checked;
@@ -14750,6 +14782,7 @@ ${cspMeta(webview, nonce)}
       <button id="diagRetry">${t('designer.diag.retry')}</button>
       <button id="diagRebuild">${t('designer.diag.rebuild')}</button>
       <button id="diagChooseAssembly">${t('designer.diag.chooseAssembly')}</button>
+      <button id="diagChooseProjectContext" style="display:none">${t('designer.ownerContext.choose')}</button>
       <button id="diagCopy">${t('designer.diag.copy')}</button>
     </div>
   </div>
