@@ -1058,6 +1058,27 @@ namespace WinFormsDesigner.Engine
                 if (seen.Add(ns)) result.Add(ns);
             }
 
+            // The flat, names-only form of SourceScopesOf: every namespace and every namespace import, in the order
+            // C# considers them. The global namespace is left out (the host already tries the bare name), and so are
+            // alias and static usings (see the summary above).
+            foreach (var scope in SourceScopesOf(cls))
+            {
+                if (scope.IsMembers) Add(scope.Namespace);
+                foreach (string import in scope.Imports) Add(import);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// The steps C# takes to bind a simple type name written inside <paramref name="cls"/>, in binding order: each
+        /// enclosing namespace's own members, then the using directives of that namespace declaration, then the
+        /// namespaces its dotted name stands for, and last the global namespace followed by the compilation unit's
+        /// using directives. Both engines read the order from here; only the modern engine binds against the result
+        /// directly (see DesignerTypeScope), while the IR carries the flat <see cref="NamespaceContextOf"/> form.
+        /// Syntax only: nothing is resolved, and the raw directive text is kept (a `global::` prefix included).
+        /// </summary>
+        public static List<SourceNameScope> SourceScopesOf(ClassDeclarationSyntax cls)
+        {
             // Scope by scope, innermost first — and INSIDE each scope the namespace's own members come BEFORE its
             // `using` directives, because that is how C# binds: in
             //     namespace App { using Vendor; class Widget … ; … new Widget(); }
@@ -1066,20 +1087,20 @@ namespace WinFormsDesigner.Engine
             // scopes, so its ancestors are searched after that scope's usings and before the next outer scope.
             // BaseNamespaceDeclarationSyntax, not NamespaceDeclarationSyntax: it also covers the FILE-SCOPED form
             // (`namespace X;`), whose usings and namespace would otherwise be invisible.
-            var scopes = new List<BaseNamespaceDeclarationSyntax>();
+            var declarations = new List<BaseNamespaceDeclarationSyntax>();
             CompilationUnitSyntax? unit = null;
             for (SyntaxNode? node = cls; node != null; node = node.Parent)
             {
-                if (node is BaseNamespaceDeclarationSyntax ns) scopes.Add(ns);
+                if (node is BaseNamespaceDeclarationSyntax ns) declarations.Add(ns);
                 else if (node is CompilationUnitSyntax cu) unit = cu;
             }
-            for (int i = 0; i < scopes.Count; i++)
+            var result = new List<SourceNameScope>();
+            for (int i = 0; i < declarations.Count; i++)
             {
-                string full = FullNamespaceOf(scopes[i]);
-                string outer = i + 1 < scopes.Count ? FullNamespaceOf(scopes[i + 1]) : "";
-                Add(full);
-                foreach (var u in scopes[i].Usings)
-                    if (u.Alias == null && u.StaticKeyword.IsKind(SyntaxKind.None)) Add(u.Name?.ToString());
+                string full = FullNamespaceOf(declarations[i]);
+                string outer = i + 1 < declarations.Count ? FullNamespaceOf(declarations[i + 1]) : "";
+                result.Add(SourceNameScope.Members(full));
+                result.Add(SourceNameScope.Directives(declarations[i].Usings, false, full));
                 // the dotted ancestors this scope stands for, down to (not including) the next scope outward
                 for (string cur = full; ; )
                 {
@@ -1087,13 +1108,39 @@ namespace WinFormsDesigner.Engine
                     if (dot <= 0) break;
                     cur = cur.Substring(0, dot);
                     if (cur == outer) break;
-                    Add(cur);
+                    result.Add(SourceNameScope.Members(cur));
                 }
             }
-            if (unit != null)
-                foreach (var u in unit.Usings)
-                    if (u.Alias == null && u.StaticKeyword.IsKind(SyntaxKind.None)) Add(u.Name?.ToString());
+            result.Add(SourceNameScope.Members(""));
+            result.Add(SourceNameScope.Directives(unit != null ? unit.Usings : Enumerable.Empty<UsingDirectiveSyntax>(), true));
             return result;
+        }
+
+        /// <summary>True when something declared INSIDE <paramref name="scope"/> (a local, a local function, a lambda or
+        /// method parameter, a pattern or foreach variable, a catch variable) carries <paramref name="name"/>. A bare
+        /// call such as <c>SuspendLayout();</c> means <c>this.SuspendLayout();</c> only when nothing like that shadows
+        /// the name.</summary>
+        public static bool DeclaresLocalName(SyntaxNode scope, string name) => DeclaredLocalNames(scope).Contains(name);
+
+        /// <summary>Every name <see cref="DeclaresLocalName"/> looks for inside <paramref name="scope"/>, in one walk.</summary>
+        public static HashSet<string> DeclaredLocalNames(SyntaxNode scope)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var node in scope.DescendantNodesAndSelf())
+            {
+                string? declared = node switch
+                {
+                    VariableDeclaratorSyntax v => v.Identifier.ValueText,
+                    LocalFunctionStatementSyntax f => f.Identifier.ValueText,
+                    ParameterSyntax p => p.Identifier.ValueText,
+                    SingleVariableDesignationSyntax d => d.Identifier.ValueText,
+                    ForEachStatementSyntax fe => fe.Identifier.ValueText,
+                    CatchDeclarationSyntax c => c.Identifier.ValueText,
+                    _ => null,
+                };
+                if (declared != null) names.Add(declared);
+            }
+            return names;
         }
 
         /// <summary>A namespace declaration's FULL name, composed from every enclosing declaration: the inner block of
@@ -1143,5 +1190,39 @@ namespace WinFormsDesigner.Engine
         }
 
         private static string Trim(SyntaxNode n) => n.ToString().Trim();
+    }
+
+    /// <summary>One step of C#'s lookup of a simple type name (see <see cref="DesignerIrBuilder.SourceScopesOf"/>):
+    /// either the members of one namespace, or the using directives written in one declaration. Directive text is
+    /// kept as written; an alias is recorded by its NAME only and is never resolved.</summary>
+    public sealed class SourceNameScope
+    {
+        /// <summary>True for the members of <see cref="Namespace"/> ("" is the global namespace); false for the using
+        /// directives of one namespace declaration or of the compilation unit.</summary>
+        public bool IsMembers { get; private set; }
+        /// <summary>The namespace whose members this step is, or — for directives — the namespace the directives are
+        /// written in ("" for the compilation unit), which is where C# resolves the names they import.</summary>
+        public string Namespace { get; private set; } = "";
+        /// <summary>The compilation unit's directives — the step where project-wide global usings also apply.</summary>
+        public bool IsCompilationUnit { get; private set; }
+        public List<string> Imports { get; } = new List<string>();
+        public List<string> Aliases { get; } = new List<string>();
+        public List<string> StaticImports { get; } = new List<string>();
+
+        public static SourceNameScope Members(string ns) => new SourceNameScope { IsMembers = true, Namespace = ns };
+
+        public static SourceNameScope Directives(IEnumerable<UsingDirectiveSyntax> usings, bool compilationUnit,
+            string declaringNamespace = "")
+        {
+            var scope = new SourceNameScope { IsCompilationUnit = compilationUnit, Namespace = declaringNamespace };
+            foreach (var u in usings)
+            {
+                if (u.Alias != null) scope.Aliases.Add(u.Alias.Name.Identifier.ValueText);
+                else if (u.Name == null) continue;
+                else if (!u.StaticKeyword.IsKind(SyntaxKind.None)) scope.StaticImports.Add(u.Name.ToString());
+                else scope.Imports.Add(u.Name.ToString());
+            }
+            return scope;
+        }
     }
 }

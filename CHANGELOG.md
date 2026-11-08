@@ -9,6 +9,42 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-11-08
+
+### Fixed
+
+- Forms written in the style Visual Studio uses for modern (.NET 6+) projects now render in the modern engine once the
+  project is built ([#8](https://github.com/SkivHisink/winforms-designer-vscode/issues/8)).
+  Such a designer file leaves out `this.` and namespaces (`button1 = new Button();`,
+  `new Size(800, 450)`, `SuspendLayout();`) and relies on the file's `using` directives and on the project's global usings:
+  `ImplicitUsings`, `<Using>` items and `global using` in its sources. Each such name is bound the way the compiler
+  binds it, including the form's own namespace before an imported one. A statement that names a type this way then runs
+  only if the project's build of `InitializeComponent` compiled it to exactly the steps it implies, in the same order —
+  the same constructors, properties, fields, methods, casts and `typeof` types, and the same constants with their
+  values and, wherever the build shows it, their types — and a control only if the build stores that very type into
+  the same field. A name that cannot be bound and confirmed is reported as a missing type with the reason,
+  never guessed — for example before the project is built, after a statement was added by hand since the last build,
+  when two imports supply the name, for a `using` alias of that name, for a name nothing in scope supplies, or when the
+  project imports MSBuild files or compiles sources the designer does not read. Fully qualified names behave as before
+  and need no build.
+  Limitation: the build is the reference, so a statement whose meaning a package, a source generator or a file outside
+  the project changed since the last build renders as that build compiled it, and so does a statement edited by hand in
+  place since then.
+- `SuspendLayout();`, `ResumeLayout(false);` and `PerformLayout();` written without `this.` are replayed like their
+  `this.` forms in the modern engine instead of being listed as unsupported, unless a local, a member of the form or
+  a base form declares that name.
+- A `Font` written with a bare character-set argument, as in
+  `new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point, 0)`, is applied instead of being reported as
+  unrepresentable.
+- An array written with a length and no elements, as in `new string[3]`, has that many elements in the modern engine
+  instead of none. An array of more than one dimension, or a length the engine cannot evaluate or above 65,536, is
+  reported as unrepresentable.
+- A value cast or negated in a designer expression takes the value C# gives it in the modern engine: a floating value
+  cast to an integral type, as in `(int)2.6`, is truncated toward zero instead of rounded; a `char` cast to a number is
+  its code; unary minus negates in the operand's own type before any conversion, so a narrow operand is promoted to
+  `int`, `-2147483648` is an `int` and `(double)(-0)` is a positive zero. A cast that cannot be made is reported as
+  unrepresentable instead of leaving the value unconverted.
+
 ## [2.3.1] - 2026-10-30
 
 ### Fixed
@@ -2670,7 +2706,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.1...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.2...HEAD
+[2.3.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.1.0...v2.2.0

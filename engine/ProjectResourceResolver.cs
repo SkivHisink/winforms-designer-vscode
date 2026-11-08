@@ -405,20 +405,24 @@ namespace WinFormsDesigner.Engine
         {
             if (_projectDirResolved) return _projectDir;
             _projectDirResolved = true;
+            _projectDir = ProjectDirectoryOf(_designerFilePath);
+            return _projectDir;
+        }
+
+        /// <summary>The nearest directory, walking up from <paramref name="designerFilePath"/>, that holds a .csproj;
+        /// null when there is none within the search depth.</summary>
+        internal static string? ProjectDirectoryOf(string designerFilePath)
+        {
             try
             {
-                var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(_designerFilePath)) ?? ".");
+                var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(designerFilePath)) ?? ".");
                 for (int i = 0; dir != null && i < MaxProjectSearchDepth; i++, dir = dir.Parent)
                 {
-                    if (dir.EnumerateFiles("*.csproj").Any())
-                    {
-                        _projectDir = dir.FullName;
-                        break;
-                    }
+                    if (dir.EnumerateFiles("*.csproj").Any()) return dir.FullName;
                 }
             }
-            catch { _projectDir = null; }
-            return _projectDir;
+            catch { /* unreadable → no project */ }
+            return null;
         }
 
         /// <summary>Every .resx of the owning project, found in ONE breadth-first walk per resolver (a form naming several
@@ -431,7 +435,13 @@ namespace WinFormsDesigner.Engine
         /// stops at a total entry budget, so millions of files cannot stall the render. <c>Properties/</c> is listed
         /// before its siblings, so no sibling can spend the budget first. <paramref name="complete"/> is false when
         /// any of that left a directory unread, other than build output, tool folders and nested projects.</summary>
-        private static List<string> FindResx(string root, out bool complete)
+        private static List<string> FindResx(string root, out bool complete) => FindProjectFiles(root, ".resx", out complete);
+
+        /// <summary>The walk <see cref="FindResx"/> describes, for files ending in <paramref name="extension"/>. With
+        /// <paramref name="everySdkSource"/> the walk is a SUPERSET of what the SDK's default Compile glob takes: only dot
+        /// folders are left out, and build output and nested project folders are entered too (the SDK compiles a nested
+        /// folder's sources into the outer project unless the project file removes them).</summary>
+        internal static List<string> FindProjectFiles(string root, string extension, out bool complete, bool everySdkSource = false)
         {
             complete = true;
             var results = new List<string>();
@@ -448,7 +458,7 @@ namespace WinFormsDesigner.Engine
                     bool overflow = entries.Count > MaxEntriesPerDirectory || entriesLeft < 0;
                     // A nested project's folder belongs to that project however large it is, so it is recognized
                     // before an oversized folder can make the walk incomplete.
-                    if (depth > 0 && (entries.Any(e => e is FileInfo && ProjectExtensions.Contains(e.Extension))
+                    if (!everySdkSource && depth > 0 && (entries.Any(e => e is FileInfo && ProjectExtensions.Contains(e.Extension))
                                       || (overflow && HoldsProjectFile(dir)))) continue;
                     if (overflow)
                     {
@@ -459,8 +469,9 @@ namespace WinFormsDesigner.Engine
                     {
                         bool isDirectory = entry is DirectoryInfo;
                         // Build output, tool folders and dot folders hold no resource class of this project.
-                        if (isDirectory && (entry.Name.StartsWith(".", StringComparison.Ordinal) || SkippedDirectories.Contains(entry.Name))) continue;
-                        bool mayDeclare = isDirectory || entry.Name.TrimEnd('.', ' ').EndsWith(".resx", StringComparison.OrdinalIgnoreCase);
+                        if (isDirectory && (entry.Name.StartsWith(".", StringComparison.Ordinal)
+                            || (!everySdkSource && SkippedDirectories.Contains(entry.Name)))) continue;
+                        bool mayDeclare = isDirectory || entry.Name.TrimEnd('.', ' ').EndsWith(extension, StringComparison.OrdinalIgnoreCase);
                         if (entry.Name.EndsWith(".", StringComparison.Ordinal) || entry.Name.EndsWith(" ", StringComparison.Ordinal)
                             || (entry.Attributes & FileAttributes.ReparsePoint) != 0)
                         {
@@ -536,7 +547,13 @@ namespace WinFormsDesigner.Engine
         private byte[]? ReadProjectFile(string path, long maxBytes)
         {
             string? projectDir = ProjectDirectory();
-            if (projectDir == null) return null;
+            return projectDir == null ? null : ReadFileInside(projectDir, path, maxBytes);
+        }
+
+        /// <summary>The bounded, link-refusing read <see cref="ReadProjectFile"/> describes, against an explicit
+        /// project directory.</summary>
+        internal static byte[]? ReadFileInside(string projectDir, string path, long maxBytes)
+        {
             string root = Path.GetFullPath(projectDir).TrimEnd(Path.DirectorySeparatorChar);
             string full = Path.GetFullPath(path);
             // Ordinal: a directory can be case-sensitive, so a case-insensitive match could check one tree and read another.

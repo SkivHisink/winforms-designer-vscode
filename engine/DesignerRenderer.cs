@@ -3855,10 +3855,14 @@ namespace WinFormsDesigner.Engine
                 // resolve resources.GetObject(...) against the form's sibling .resx (image/icon properties).
                 // null when there is no .resx → forms without resources are entirely unaffected.
                 var resx = ResxResolver.TryLoadForDesigner(designerFilePath);
+                // Type names as the file writes them — `new Button()` under the project's implicit usings — bind
+                // through the file's usings, its namespaces and the project's global usings, as the compiler bound them.
+                var typeScope = DesignerTypeScope.For(cls, rootType, ResolveCompiledRoot(cls, userAsms), userAsms,
+                    ProbeAssemblies, name => ResolveType(name, userAsms), designerFilePath);
                 var (total, ok, unrep, explicitMembers, eventWirings, supportInit) = Interpret(
                     cls, host, userAsms, resx, SeedInheritedOverrideComponents((Control)host.RootComponent, beforeInterpret),
                     new ProjectResourceResolver(designerFilePath, NamespaceOf(cls),
-                        DesignerCultureSelection.GetCultureName(designerFilePath), userAsms));
+                        DesignerCultureSelection.GetCultureName(designerFilePath), userAsms), typeScope);
                 foreach (string error in ui.Errors) unrep.Add("the designer disabled a control: " + error);
                 var graph = BuildGraphOwnership(host, (Control)host.RootComponent, beforeInterpret,
                     FormClassResolver.FieldNamesOf(cls), cls.Identifier.Text, rootInfo.BaseTypeName, rootInfo.ResolvedBase);
@@ -4218,6 +4222,48 @@ namespace WinFormsDesigner.Engine
         /// duration of <see cref="Interpret"/>; scoped and thread-static like <see cref="_resx"/>.</summary>
         [ThreadStatic] private static ProjectResourceResolver? _projectResources;
 
+        /// <summary>How type names written in the file bind (its usings, its namespaces, the project's global usings)
+        /// for the duration of <see cref="Interpret"/>; scoped and thread-static like <see cref="_resx"/>. Null outside
+        /// an interpretation, where a written name is looked up exactly as given.</summary>
+        [ThreadStatic] private static DesignerTypeScope? _typeScope;
+
+        /// <summary>The type a name written in the designer file denotes. <paramref name="refusal"/> explains a name the
+        /// scope refused to bind (ambiguous, aliased, or depending on global usings that cannot be proven).</summary>
+        private static Type? ResolveSourceType(string written, IReadOnlyList<Assembly> userAsms, out string? refusal)
+        {
+            refusal = null;
+            var scope = _typeScope;
+            return scope != null ? scope.Resolve(written, out refusal) : ResolveType(written, userAsms);
+        }
+
+        /// <summary>The type the RECEIVER of a member access denotes (<c>Color</c> in <c>Color.Red</c>): like
+        /// <see cref="ResolveSourceType"/>, except that a member of the form or a local with that name is what C#
+        /// reads there (<paramref name="isValue"/>): no type, and no fallback may read it as one.</summary>
+        private static Type? ResolveSourceReceiver(string written, IReadOnlyList<Assembly> userAsms, out string? refusal,
+            out bool isValue)
+        {
+            refusal = null;
+            isValue = false;
+            var scope = _typeScope;
+            return scope != null ? scope.ResolveReceiver(written, out refusal, out isValue) : ResolveType(written, userAsms);
+        }
+
+        /// <summary>The build's confirmation of a binding the type scope inferred (null outside an interpretation, or when
+        /// the name was written qualified); a refusal otherwise.</summary>
+        private static string? VerifyAgainstBuild(Func<DesignerTypeScope, string?> check) =>
+            _typeScope is { } scope ? check(scope) : null;
+
+        private static string RefusalSuffix(string? refusal) => refusal == null ? "" : " (" + refusal + ")";
+
+        /// <summary>The last dotted segment of written receiver text (<c>System.Windows.Forms.AutoScaleMode</c> →
+        /// <c>AutoScaleMode</c>).</summary>
+        private static string LastWrittenSegment(string written)
+        {
+            string compact = DesignerTypeScope.Compact(written);
+            int dot = compact.LastIndexOf('.');
+            return dot < 0 ? compact : compact.Substring(dot + 1);
+        }
+
         private static string NamespaceOf(ClassDeclarationSyntax cls) =>
             string.Join(".", cls.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse().Select(n => n.Name.ToString()));
 
@@ -4246,7 +4292,7 @@ namespace WinFormsDesigner.Engine
         private static (int total, int ok, List<string> unrep, HashSet<(IComponent, string)> explicitMembers, List<string> eventWirings, List<string> supportInit) Interpret(
             ClassDeclarationSyntax cls, IDesignerHost host, IReadOnlyList<Assembly> userAsms, ResxResolver? resx = null,
             IReadOnlyDictionary<string, IComponent>? inheritedOverrideComponents = null,
-            ProjectResourceResolver? projectResources = null)
+            ProjectResourceResolver? projectResources = null, DesignerTypeScope? typeScope = null)
         {
             var root = (Control)host.RootComponent;
             var comps = new Dictionary<string, IComponent>(StringComparer.Ordinal);
@@ -4324,13 +4370,27 @@ namespace WinFormsDesigner.Engine
             var brackets = new BracketReplay();
             var prevResx = _resx;
             var prevProjectResources = _projectResources;
+            var prevTypeScope = _typeScope;
             _resx = (resxVars, resx);
             _projectResources = projectResources;
+            _typeScope = typeScope;
             try
             {
                 foreach (var stmt in init.Body.Statements)
                 {
                     total++;
+                    // A statement that leaves a type name to inference runs only when the project's build compiled it to
+                    // exactly what it says — decided before any part of it runs.
+                    typeScope?.SetStatement(stmt);
+                    if (typeScope?.StatementRefusal(stmt) is { } notConfirmed)
+                    {
+                        unrep.Add(stmt.ToString().Trim() + "  [InvalidOperationException: " + notConfirmed + "]");
+                        // A resource manager the build does not confirm may read other resources than the form's .resx:
+                        // its lookups are not answered from that file either.
+                        if (stmt is LocalDeclarationStatementSyntax refusedLocal)
+                            foreach (var v in refusedLocal.Declaration.Variables) resxVars.Remove(v.Identifier.Text);
+                        continue;
+                    }
                     try
                     {
                         // TreeView.Nodes population (local `new TreeNode(...)` + `.Nodes.Add/AddRange`) is rendered by a
@@ -4388,8 +4448,10 @@ namespace WinFormsDesigner.Engine
             }
             finally
             {
+                typeScope?.SetStatement(null);
                 _resx = prevResx;
                 _projectResources = prevProjectResources;
+                _typeScope = prevTypeScope;
                 // A bracket the source opened but never closed (hand edit, or a Resume statement that failed) must not
                 // leave a control suspended on the design surface: every later drag/resize would defer its layout. What
                 // fails while closing or settling is reported like any failed statement — the surface is incomplete.
@@ -4588,7 +4650,11 @@ namespace WinFormsDesigner.Engine
                 {
                     throw new InvalidOperationException("non-designer object creation (ctor args / initializer) for " + chain[0]);
                 }
-                var t = ResolveType(oc.Type.ToString(), userAsms) ?? throw new InvalidOperationException("unresolved type " + oc.Type);
+                var t = ResolveSourceType(oc.Type.ToString(), userAsms, out string? typeRefusal)
+                    ?? throw new InvalidOperationException("unresolved type " + oc.Type + RefusalSuffix(typeRefusal));
+                // An inferred component type must be the one the project's build stores into this same field.
+                if (VerifyAgainstBuild(s => s.VerifyComponent(chain[0], oc.Type.ToString(), t)) is { } notBuilt)
+                    throw new InvalidOperationException("unresolved type " + oc.Type + RefusalSuffix(notBuilt));
                 if (typeof(IComponent).IsAssignableFrom(t))
                 {
                     comps[chain[0]] = host.CreateComponent(t, chain[0]);
@@ -4726,12 +4792,27 @@ namespace WinFormsDesigner.Engine
             inv.Expression is MemberAccessExpressionSyntax ma
             && ma.Name.Identifier.Text is "BeginInit" or "EndInit"
             && ma.Expression is ParenthesizedExpressionSyntax pe && pe.Expression is CastExpressionSyntax ce
-            && ce.Type.ToString() == "System.ComponentModel.ISupportInitialize";
+            && (ce.Type.ToString() == "System.ComponentModel.ISupportInitialize"
+                // `(ISupportInitialize)` under `using System.ComponentModel;` — the same interface by C#'s binding and in
+                // the project's build, which also keeps an unrelated interface sharing the short name out.
+                || (_typeScope is { } scope && scope.BindsTo(ce.Type.ToString(), typeof(ISupportInitialize))));
 
         private static bool HandleInvocation(InvocationExpressionSyntax inv, Control root,
             Dictionary<string, IComponent> comps, IReadOnlyList<Assembly> userAsms, BracketReplay brackets, out string? why)
         {
             why = null;
+            // `SuspendLayout();` / `ResumeLayout(false);` / `PerformLayout();` with no receiver are how Visual Studio
+            // writes the form's own layout calls in a modern project: the same call as `this.SuspendLayout()` unless
+            // something inside InitializeComponent declares that name, or the designed class or a base below Control
+            // declares a member of that name (it hides Control's, and the replay below calls Control's).
+            if (inv.Expression is IdentifierNameSyntax bare && IsLayoutMethod(bare.Identifier.ValueText)
+                && inv.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault() is { } enclosing
+                && !DesignerIrBuilder.DeclaresLocalName(enclosing, bare.Identifier.ValueText)
+                && _typeScope?.FormHidesMember(bare.Identifier.ValueText) == false)
+            {
+                ReplayLayoutCall(bare.Identifier.ValueText, root, inv, brackets);
+                return true;
+            }
             if (inv.Expression is not MemberAccessExpressionSyntax ma)
             {
                 why = inv.ToString().Trim();
@@ -4746,15 +4827,10 @@ namespace WinFormsDesigner.Engine
             // child — buttons drawn hundreds of pixels away from where the compiled form puts them. ResumeLayout(false)
             // re-takes the anchors against the final size. Representable either way (the serializer regenerates these
             // calls canonically); a shape we cannot bind to a control stays the inert no-op it always was.
-            if (method is "SuspendLayout" or "ResumeLayout" or "PerformLayout")
+            if (IsLayoutMethod(method))
             {
-                if (TryResolveLayoutTarget(Flatten(ma.Expression), root, comps, out var layoutTarget)
-                    && TryLayoutCallArgument(method, inv, out bool performLayout))
-                {
-                    if (method == "SuspendLayout") brackets.Suspend(layoutTarget);
-                    else if (method == "ResumeLayout") brackets.Resume(layoutTarget, performLayout);
-                    else layoutTarget.PerformLayout();
-                }
+                if (TryResolveLayoutTarget(Flatten(ma.Expression), root, comps, out var layoutTarget))
+                    ReplayLayoutCall(method, layoutTarget, inv, brackets);
                 return true;
             }
 
@@ -5007,6 +5083,19 @@ namespace WinFormsDesigner.Engine
             : target is Control { Name.Length: > 0 } control ? control.Name
             : target.GetType().Name;
 
+        private static bool IsLayoutMethod(string method) =>
+            method is "SuspendLayout" or "ResumeLayout" or "PerformLayout";
+
+        /// <summary>Replay one layout call on its resolved target. A shape whose arguments are not the canonical ones
+        /// stays the inert no-op it always was.</summary>
+        private static void ReplayLayoutCall(string method, Control target, InvocationExpressionSyntax inv, BracketReplay brackets)
+        {
+            if (!TryLayoutCallArgument(method, inv, out bool performLayout)) return;
+            if (method == "SuspendLayout") brackets.Suspend(target);
+            else if (method == "ResumeLayout") brackets.Resume(target, performLayout);
+            else target.PerformLayout();
+        }
+
         /// <summary>The control a layout call's receiver names: <c>this</c>, a field, or a read-only hop off a field
         /// (<c>this.splitContainer1.Panel1</c>).</summary>
         private static bool TryResolveLayoutTarget(List<string> chain, Control root,
@@ -5171,7 +5260,12 @@ namespace WinFormsDesigner.Engine
                         object? v = lit.Token.Value;
                         if (targetType != null && v is IConvertible && targetType != typeof(object))
                         {
-                            try { return Convert.ChangeType(v, Nullable.GetUnderlyingType(targetType) ?? targetType); }
+                            var to = Nullable.GetUnderlyingType(targetType) ?? targetType;
+                            // Only an explicit cast takes a floating literal to an integral type, and C# truncates it
+                            // toward zero where Convert rounds. A char literal is its code to a number.
+                            object converted = v is char ch && to != typeof(char) && to != typeof(string) ? (int)ch
+                                : IsIntegralPrimitive(to) ? TruncateFloating(v) : v;
+                            try { return Convert.ChangeType(converted, to); }
                             catch { return v; }
                         }
                         return v;
@@ -5179,31 +5273,49 @@ namespace WinFormsDesigner.Engine
 
                 case PrefixUnaryExpressionSyntax u when u.IsKind(SyntaxKind.UnaryMinusExpression):
                     {
-                        // Negate in the operand's OWN type (Eval already coerced the inner literal to targetType).
-                        // The old int/double/long-only ladder returned every OTHER numeric literal UNNEGATED and
-                        // without complaint: `numericUpDown1.Minimum = -100` (decimal) rendered and described as
-                        // 100, and `new SizeF(-6F, -13F)` lost both signs — a wrong value shown as fact. Anything we
-                        // cannot negate now THROWS, so it surfaces as `unrepresentable` (banner + read-only) rather
-                        // than a plausible wrong number.
-                        object? inner = Eval(u.Operand, targetType, userAsms);
-                        return inner switch
+                        // Negate as C# does, in the operand's own type, and only then convert to the target: an int,
+                        // long, float, double or decimal stays itself; a narrower integral operand is promoted to int
+                        // and a uint to long, so `-(sbyte)(-128)` is 128; `-2147483648` and `-9223372036854775808` are
+                        // the int and long minimum; `-0` is the int 0, so `(double)(-0)` is a positive zero. The old
+                        // int/double/long-only ladder returned every OTHER numeric literal UNNEGATED and without
+                        // complaint: `numericUpDown1.Minimum = -100` (decimal) rendered and described as 100, and
+                        // `new SizeF(-6F, -13F)` lost both signs — a wrong value shown as fact. Anything we cannot
+                        // negate now THROWS, so it surfaces as `unrepresentable` (banner + read-only) rather than a
+                        // plausible wrong number.
+                        object? inner = Eval(u.Operand, null, userAsms);
+                        object negated = (u.Operand, inner) switch
                         {
-                            int i => -i,
-                            long l => -l,
-                            double d => -d,
-                            float f => -f,
-                            decimal m => -m,
-                            short s => (short)-s,
-                            sbyte sb => (sbyte)-sb,
+                            (LiteralExpressionSyntax, uint ui) when ui == 2147483648u => int.MinValue,
+                            (LiteralExpressionSyntax, ulong ul) when ul == 9223372036854775808ul => long.MinValue,
+                            (_, int i) => -i,
+                            (_, long l) => -l,
+                            (_, double d) => -d,
+                            (_, float f) => -f,
+                            (_, decimal m) => -m,
+                            (_, short s) => -(int)s,
+                            (_, sbyte sb) => -(int)sb,
+                            (_, byte b) => -(int)b,
+                            (_, ushort us) => -(int)us,
+                            (_, char c) => -(int)c,
+                            (_, uint ui) => -(long)ui,
                             _ => throw new InvalidOperationException(
                                 "cannot negate literal of type " + (inner?.GetType().FullName ?? "null")),
                         };
+                        var numericTarget = targetType == null ? null : Nullable.GetUnderlyingType(targetType) ?? targetType;
+                        if (numericTarget != null && numericTarget != negated.GetType()
+                            && ((numericTarget.IsPrimitive && numericTarget != typeof(bool) && numericTarget != typeof(char)) || numericTarget == typeof(decimal)))
+                        {
+                            try { return Convert.ChangeType(negated, numericTarget, System.Globalization.CultureInfo.InvariantCulture); }
+                            catch (OverflowException) { throw new InvalidOperationException("negated value out of range: " + u); }
+                        }
+                        return negated;
                     }
 
                 case ObjectCreationExpressionSyntax oc:
                     {
                         // ResolveCastType also maps the keyword alias VS writes for `new decimal(new int[] {...})`.
-                        var t = ResolveCastType(oc.Type, userAsms) ?? throw new InvalidOperationException("unresolved type " + oc.Type);
+                        var t = ResolveCastType(oc.Type, userAsms, out string? typeRefusal)
+                            ?? throw new InvalidOperationException("unresolved type " + oc.Type + RefusalSuffix(typeRefusal));
                         // decimal is not constructable in general — only its closed CodeDom bits form, decoded from
                         // literal syntax (nothing is evaluated), the same form the IR front-end accepts.
                         if (t == typeof(decimal))
@@ -5225,17 +5337,38 @@ namespace WinFormsDesigner.Engine
                         {
                             throw new InvalidOperationException("construction not allowed: " + t.FullName);
                         }
-                        var args = oc.ArgumentList?.Arguments.Select(a => Eval(a.Expression, null, userAsms)).ToArray() ?? Array.Empty<object?>();
-                        return Activator.CreateInstance(t, args);
+                        // An inferred value type must be one the project's build constructs in InitializeComponent.
+                        if (VerifyAgainstBuild(s => s.VerifyConstruction(oc.Type.ToString(), t)) is { } notConstructed)
+                            throw new InvalidOperationException("unresolved type " + oc.Type + RefusalSuffix(notConstructed));
+                        var argExprs = oc.ArgumentList?.Arguments.Select(a => a.Expression).ToList() ?? new List<ExpressionSyntax>();
+                        var args = argExprs.Select(a => Eval(a, null, userAsms)).ToArray();
+                        object?[]? narrowed = null;
+                        try { return Activator.CreateInstance(t, args); }
+                        catch (MissingMethodException) when ((narrowed = NarrowConstantArguments(t, args, argExprs)) != null)
+                        {
+                            return Activator.CreateInstance(t, narrowed);
+                        }
                     }
 
                 case MemberAccessExpressionSyntax ma:
                     {
                         string member = ma.Name.Identifier.Text;
-                        var t = ResolveType(ma.Expression.ToString(), userAsms);
+                        string receiverText = ma.Expression.ToString();
+                        var t = ResolveSourceReceiver(receiverText, userAsms, out string? receiverRefusal, out bool receiverIsValue);
+                        // C# reads a member of the form or a local here, not a type: nothing below may read it as one.
+                        if (receiverIsValue) throw new InvalidOperationException("cannot evaluate member access " + ma);
+                        // A receiver the scope refused to bind is reported as the missing type it is, with the reason —
+                        // never guessed through the target enum below.
+                        if (receiverRefusal != null)
+                            throw new InvalidOperationException("unresolved type " + ma.Expression + RefusalSuffix(receiverRefusal));
                         if (t != null)
                         {
-                            if (t.IsEnum) return Enum.Parse(t, member);
+                            if (t.IsEnum)
+                            {
+                                if (VerifyAgainstBuild(s => s.VerifyEnum(receiverText, t)) is { } enumNotBuilt)
+                                    throw new InvalidOperationException("unresolved type " + ma.Expression + RefusalSuffix(enumNotBuilt));
+                                return Enum.Parse(t, member);
+                            }
                             // SECURITY: reading a public static property/field invokes its getter. Restrict to the
                             // pure, side-effect-free framework value sources the designer/value-converter emit
                             // (Color.Red, SystemColors.Control, Size.Empty, …). Otherwise a getter newly reachable
@@ -5244,17 +5377,23 @@ namespace WinFormsDesigner.Engine
                             // side-effecting static getter would run on open. Anything else stays unrepresentable.
                             if (IsStaticReadAllowed(t))
                             {
+                                // An inferred receiver's static member must be the one the project's build reads.
                                 var p = t.GetProperty(member, BindingFlags.Public | BindingFlags.Static);
+                                MemberInfo? read = p != null ? p : t.GetField(member, BindingFlags.Public | BindingFlags.Static);
+                                if (read != null && VerifyAgainstBuild(s => s.VerifyStaticRead(receiverText, t, read)) is { } readNotBuilt)
+                                    throw new InvalidOperationException("unresolved type " + ma.Expression + RefusalSuffix(readNotBuilt));
                                 if (p != null) return p.GetValue(null);
-                                var fi = t.GetField(member, BindingFlags.Public | BindingFlags.Static);
-                                if (fi != null) return fi.GetValue(null);
+                                if (read is FieldInfo fi) return fi.GetValue(null);
                             }
                         }
-                        if (targetType != null && targetType.IsEnum) return Enum.Parse(targetType, member);
+                        // The receiver names the target's enum (a vendor enum the lookup could not load, for example):
+                        // parse the member in the property's own enum. Any other receiver is not guessed into it.
+                        if (targetType != null && targetType.IsEnum && LastWrittenSegment(receiverText) == targetType.Name)
+                            return Enum.Parse(targetType, member);
                         // `global::App.Properties.Resources.Logo` — read from the project's .resx, never by running the
                         // generated accessor (see ProjectResourceResolver).
                         if (_projectResources is { } projectResources
-                            && projectResources.TryResolve(ma.Expression.ToString(), member, targetType, out var resource))
+                            && projectResources.TryResolve(receiverText, member, targetType, out var resource))
                             return resource;
                         throw new InvalidOperationException("cannot evaluate member access " + ma);
                     }
@@ -5284,7 +5423,12 @@ namespace WinFormsDesigner.Engine
                         if (mai.Name.Identifier.Text == "ToBitmap" && invk.ArgumentList.Arguments.Count == 0
                             && mai.Expression is MemberAccessExpressionSyntax iconRead)
                         {
-                            string iconTypeName = iconRead.Expression.ToString();
+                            // `SystemIcons.Information` under `using System.Drawing;` names the same type; the
+                            // allowlist below is keyed by the full name and re-checks the resolved type itself.
+                            string iconWritten = iconRead.Expression.ToString();
+                            var iconResolved = ResolveSourceReceiver(iconWritten, userAsms, out string? iconRefusal, out bool iconIsValue);
+                            string iconTypeName = !iconIsValue && iconRefusal == null && iconResolved != null
+                                ? iconResolved.FullName ?? iconWritten : iconWritten;
                             string iconMember = iconRead.Name.Identifier.Text;
                             if (DesignerAllowlists.TryGetSystemIconBitmapFactoryName(iconTypeName, iconMember, out string iconFactory))
                             {
@@ -5293,6 +5437,9 @@ namespace WinFormsDesigner.Engine
                                 if (!DesignerAllowlists.TryGetSystemIconBitmapMember(iconType, iconFactory, out string checkedMember))
                                     throw new InvalidOperationException("system icon bitmap factory not allowed: " + iconTypeName + "." + iconMember);
                                 var iconProperty = iconType.GetProperty(checkedMember, BindingFlags.Public | BindingFlags.Static);
+                                if (iconProperty != null
+                                    && VerifyAgainstBuild(s => s.VerifyStaticRead(iconWritten, iconType, iconProperty)) is { } iconNotBuilt)
+                                    throw new InvalidOperationException("unresolved type " + iconWritten + RefusalSuffix(iconNotBuilt));
                                 if (iconProperty?.GetValue(null) is Icon icon) return icon.ToBitmap();
                                 throw new InvalidOperationException("no system icon member " + checkedMember);
                             }
@@ -5300,8 +5447,12 @@ namespace WinFormsDesigner.Engine
 
                         // static factory call: Type.Method(args) — e.g. System.Drawing.Color.FromArgb(64, 128, 255),
                         // which the value-converter emits for non-named colors and real VS designer files contain.
-                        var t = ResolveType(mai.Expression.ToString(), userAsms)
-                                ?? throw new InvalidOperationException("cannot evaluate invocation (unresolved type) " + invk);
+                        string factoryWritten = mai.Expression.ToString();
+                        var t = ResolveSourceReceiver(factoryWritten, userAsms, out string? factoryRefusal, out bool factoryIsValue);
+                        if (factoryIsValue) throw new InvalidOperationException("cannot evaluate invocation " + invk);
+                        if (t == null)
+                            throw new InvalidOperationException("cannot evaluate invocation (unresolved type) " + invk
+                                + RefusalSuffix(factoryRefusal));
                         string methodName = mai.Name.Identifier.Text;
                         // SECURITY: invoking an arbitrary static method on any resolvable type would let a
                         // hand-crafted .Designer.cs run code on open/render. An assembly-wide grant is still
@@ -5316,6 +5467,9 @@ namespace WinFormsDesigner.Engine
                         var args = invk.ArgumentList.Arguments.Select(a => Eval(a.Expression, null, userAsms)).ToArray();
                         var mi = FindStaticMethod(t, methodName, args)
                                  ?? throw new InvalidOperationException("no matching static method " + t.Name + "." + methodName + "(" + args.Length + " args)");
+                        // An inferred receiver's factory must be the method the project's build calls.
+                        if (VerifyAgainstBuild(s => s.VerifyCall(factoryWritten, t, mi)) is { } callNotBuilt)
+                            throw new InvalidOperationException("unresolved type " + factoryWritten + RefusalSuffix(callNotBuilt));
                         var ps = mi.GetParameters();
                         var call = new object?[args.Length];
                         for (int i = 0; i < args.Length; i++) call[i] = CoerceArg(args[i], ps[i].ParameterType);
@@ -5334,12 +5488,32 @@ namespace WinFormsDesigner.Engine
                         // (e.g. the ((byte)(204)) gdiCharSet arg real designer files put in a Font ctor).
                         // Evaluate the operand and convert to the cast's target type — no construction or
                         // invocation involved, so it needs no security gate.
-                        Type? ct = ResolveCastType(cast.Type, userAsms);
+                        Type? ct = ResolveCastType(cast.Type, userAsms, out string? castRefusal);
+                        if (castRefusal != null)
+                            throw new InvalidOperationException("unresolved type " + cast.Type + RefusalSuffix(castRefusal));
+                        if (ct != null && cast.Type is not PredefinedTypeSyntax
+                            && VerifyAgainstBuild(s => s.VerifyTypeUse(cast.Type.ToString(), ct)) is { } castNotBuilt)
+                            throw new InvalidOperationException("unresolved type " + cast.Type + RefusalSuffix(castNotBuilt));
                         object? inner = Eval(cast.Expression, ct, userAsms);
                         if (ct == null || inner == null) return inner;
-                        if (ct.IsEnum && inner is IConvertible) return Enum.ToObject(ct, inner);
-                        if (inner is IConvertible) { try { return Convert.ChangeType(inner, Nullable.GetUnderlyingType(ct) ?? ct); } catch { return inner; } }
-                        return inner;
+                        var to = Nullable.GetUnderlyingType(ct) ?? ct;
+                        if (to.IsInstanceOfType(inner) || inner is not IConvertible) return inner;
+                        // A value conversion as C# makes it: a char is its code; a floating or decimal value goes to an
+                        // integral type (or an enum's) truncated toward zero, where Convert rounds and `(int)2.6` would
+                        // be 3. A conversion that cannot be made is unrepresentable, never the operand left unconverted.
+                        var number = Nullable.GetUnderlyingType(to) ?? (to.IsEnum ? Enum.GetUnderlyingType(to) : to);
+                        object operand = inner is char ch && number != typeof(char) ? (int)ch : inner;
+                        if (IsIntegralPrimitive(number)) operand = TruncateFloating(operand);
+                        if (number == typeof(char) && operand is double or float or decimal) operand = Convert.ToInt64(operand);
+                        try
+                        {
+                            object converted = Convert.ChangeType(operand, number, System.Globalization.CultureInfo.InvariantCulture);
+                            return to.IsEnum ? Enum.ToObject(to, converted) : converted;
+                        }
+                        catch (Exception ex) when (ex is InvalidCastException or OverflowException or FormatException or ArgumentException)
+                        {
+                            throw new InvalidOperationException("unsupported cast of " + inner.GetType().Name + " to " + to.Name + ": " + cast);
+                        }
                     }
 
                 // CodeDom's split of a string longer than 80 characters: `"…" +\r\n "…"`. Literals only (constant folding).
@@ -5368,7 +5542,24 @@ namespace WinFormsDesigner.Engine
                     }
 
                 case ArrayCreationExpressionSyntax arr:
-                    return EvalArray(arr.Type.ElementType, arr.Initializer, targetType, userAsms);
+                    {
+                        // One dimension. A length written without an initializer (`new string[3]`) is that many default
+                        // elements, never none; with an initializer C# makes them agree.
+                        if (arr.Type.RankSpecifiers.Count != 1 || arr.Type.RankSpecifiers[0].Sizes.Count != 1)
+                            throw new InvalidOperationException("unsupported array shape: " + arr.Type);
+                        int? length = null;
+                        if (arr.Initializer == null)
+                        {
+                            object? written = Eval(arr.Type.RankSpecifiers[0].Sizes[0], typeof(int), userAsms);
+                            long n = written is IConvertible c && written is not (string or bool or float or double or decimal)
+                                ? c.ToInt64(System.Globalization.CultureInfo.InvariantCulture)
+                                : throw new InvalidOperationException("unsupported array length: " + arr.Type.RankSpecifiers[0]);
+                            if (n < 0 || n > MaxArrayLength)
+                                throw new InvalidOperationException("unsupported array length: " + arr.Type.RankSpecifiers[0]);
+                            length = (int)n;
+                        }
+                        return EvalArray(arr.Type.ElementType, arr.Initializer, targetType, userAsms, length);
+                    }
 
                 case ImplicitArrayCreationExpressionSyntax iarr:
                     return EvalArray(null, iarr.Initializer, targetType, userAsms);
@@ -5386,14 +5577,21 @@ namespace WinFormsDesigner.Engine
         /// element type (<c>new SomeUserType[]{…}</c>) would widen the reachable surface, so it stays unrepresentable.
         /// A sized-but-uninitialized array (<c>new string[5]</c>) yields an empty array — the editor only ever emits an
         /// explicit initializer, and the read side rejects non-initializer RHS.</summary>
+        /// <summary>The longest array a designer value may allocate when its length is written without elements.</summary>
+        private const int MaxArrayLength = 1 << 16;
+
         private static object? EvalArray(TypeSyntax? elementTypeSyntax, InitializerExpressionSyntax? initializer,
-                                         Type? targetType, IReadOnlyList<Assembly> userAsms)
+                                         Type? targetType, IReadOnlyList<Assembly> userAsms, int? length = null)
         {
             Type elem = typeof(string);
             if (elementTypeSyntax != null)
             {
-                elem = ResolveCastType(elementTypeSyntax, userAsms)
-                    ?? throw new InvalidOperationException("unsupported array element type: " + elementTypeSyntax);
+                elem = ResolveCastType(elementTypeSyntax, userAsms, out string? elementRefusal)
+                    ?? throw new InvalidOperationException("unsupported array element type: " + elementTypeSyntax
+                        + RefusalSuffix(elementRefusal));
+                if (elementTypeSyntax is not PredefinedTypeSyntax
+                    && VerifyAgainstBuild(s => s.VerifyTypeUse(elementTypeSyntax.ToString(), elem)) is { } elementNotBuilt)
+                    throw new InvalidOperationException("unresolved type " + elementTypeSyntax + RefusalSuffix(elementNotBuilt));
             }
             else if (targetType is { IsArray: true } && targetType.GetElementType() is { } inferred)
             {
@@ -5403,9 +5601,9 @@ namespace WinFormsDesigner.Engine
             {
                 throw new InvalidOperationException("unsupported array element type: " + (elem.FullName ?? elem.Name));
             }
-            int n = initializer?.Expressions.Count ?? 0;
+            int n = initializer?.Expressions.Count ?? length ?? 0;
             Array result = Array.CreateInstance(elem, n);
-            for (int i = 0; i < n; i++)
+            for (int i = 0; initializer != null && i < n; i++)
             {
                 result.SetValue(CoerceArg(Eval(initializer!.Expressions[i], elem, userAsms), elem), i);
             }
@@ -5456,6 +5654,19 @@ namespace WinFormsDesigner.Engine
 
         internal static bool IsStaticReadAllowed(Type t) => DesignerAllowlists.IsStaticReadAllowed(t);
 
+        private static bool IsIntegralPrimitive(Type t) =>
+            t.IsPrimitive && t != typeof(bool) && t != typeof(float) && t != typeof(double) && t != typeof(IntPtr) && t != typeof(UIntPtr);
+
+        /// <summary>A floating or decimal value truncated toward zero, as a C# explicit conversion to an integral type takes
+        /// it; anything else as it is.</summary>
+        private static object TruncateFloating(object value) => value switch
+        {
+            double d => Math.Truncate(d),
+            float f => MathF.Truncate(f),
+            decimal m => decimal.Truncate(m),
+            _ => value,
+        };
+
         private static object? CoerceArg(object? v, Type target)
         {
             if (v == null) return null;
@@ -5465,8 +5676,12 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>Resolve the target type of a cast: a predefined keyword (byte/int/…) or a named type.</summary>
-        private static Type? ResolveCastType(TypeSyntax type, IReadOnlyList<Assembly> userAsms)
+        private static Type? ResolveCastType(TypeSyntax type, IReadOnlyList<Assembly> userAsms) =>
+            ResolveCastType(type, userAsms, out _);
+
+        private static Type? ResolveCastType(TypeSyntax type, IReadOnlyList<Assembly> userAsms, out string? refusal)
         {
+            refusal = null;
             if (type is PredefinedTypeSyntax p)
             {
                 return p.Keyword.Kind() switch
@@ -5489,7 +5704,65 @@ namespace WinFormsDesigner.Engine
                     _ => null,
                 };
             }
-            return ResolveType(type.ToString(), userAsms);
+            return ResolveSourceType(type.ToString(), userAsms, out refusal);
+        }
+
+        /// <summary>
+        /// C#'s implicit constant conversion, which reflection's binder does not apply: an int literal argument converts
+        /// to a narrower integral parameter when its value fits, and to long/float/double/decimal. Visual Studio writes
+        /// <c>new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point, 0)</c> for a modern project, with the
+        /// gdiCharSet as a bare <c>0</c> that only the byte parameter accepts. Only literal arguments are converted, the
+        /// type has already passed the construction allowlist, and a shape that more than one public constructor
+        /// accepts is not chosen between (null).
+        /// </summary>
+        private static object?[]? NarrowConstantArguments(Type type, object?[] args, IReadOnlyList<ExpressionSyntax> argExprs)
+        {
+            object?[]? match = null;
+            foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
+            {
+                var parameters = ctor.GetParameters();
+                if (parameters.Length != args.Length) continue;
+                var converted = new object?[args.Length];
+                bool fits = true;
+                for (int i = 0; i < parameters.Length && fits; i++)
+                {
+                    Type pt = parameters[i].ParameterType;
+                    object? arg = args[i];
+                    if (arg == null) fits = !pt.IsValueType || Nullable.GetUnderlyingType(pt) != null;
+                    else if (pt.IsInstanceOfType(arg)) converted[i] = arg;
+                    else if (arg is int value && IsIntegerLiteral(argExprs[i]) && TryConvertIntConstant(value, pt, out object? c))
+                        converted[i] = c;
+                    else fits = false;
+                }
+                if (!fits) continue;
+                if (match != null) return null;
+                match = converted;
+            }
+            return match;
+        }
+
+        private static bool IsIntegerLiteral(ExpressionSyntax expr) => expr switch
+        {
+            LiteralExpressionSyntax lit => lit.IsKind(SyntaxKind.NumericLiteralExpression) && lit.Token.Value is int,
+            PrefixUnaryExpressionSyntax neg when neg.IsKind(SyntaxKind.UnaryMinusExpression) => IsIntegerLiteral(neg.Operand),
+            ParenthesizedExpressionSyntax paren => IsIntegerLiteral(paren.Expression),
+            _ => false,
+        };
+
+        private static bool TryConvertIntConstant(int value, Type target, out object? converted)
+        {
+            converted = null;
+            if (target == typeof(byte) && value is >= byte.MinValue and <= byte.MaxValue) converted = (byte)value;
+            else if (target == typeof(sbyte) && value is >= sbyte.MinValue and <= sbyte.MaxValue) converted = (sbyte)value;
+            else if (target == typeof(short) && value is >= short.MinValue and <= short.MaxValue) converted = (short)value;
+            else if (target == typeof(ushort) && value is >= ushort.MinValue and <= ushort.MaxValue) converted = (ushort)value;
+            else if (target == typeof(uint) && value >= 0) converted = (uint)value;
+            else if (target == typeof(ulong) && value >= 0) converted = (ulong)value;
+            else if (target == typeof(long)) converted = (long)value;
+            else if (target == typeof(float)) converted = (float)value;
+            else if (target == typeof(double)) converted = (double)value;
+            else if (target == typeof(decimal)) converted = (decimal)value;
+            return converted != null;
         }
 
         private static Type? ResolveType(string fullName, IReadOnlyList<Assembly> userAsms)
