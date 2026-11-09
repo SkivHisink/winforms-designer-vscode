@@ -126,6 +126,11 @@ namespace WinFormsDesigner.Engine
             foreach (var stmt in init.Body.Statements)
             {
                 doc.TotalSourceStatements++;
+                if (UnreplayedSyntax(stmt) is { } unreplayed)
+                {
+                    doc.UnrepresentableReasons.Add(Trim(stmt) + "  [" + unreplayed + "]");
+                    continue;
+                }
                 var (nodes, represented, reason) = Classify(stmt, ctx);
                 if (represented)
                 {
@@ -138,6 +143,35 @@ namespace WinFormsDesigner.Engine
                 }
             }
             return doc;
+        }
+
+        /// <summary>
+        /// Why <paramref name="statement"/> must not run at all, or null: the parser had to recover it, or it carries
+        /// syntax neither interpreter replays — a named or ref/out/in argument (C# binds it to another parameter or passes
+        /// a variable), an object or collection initializer (members set after the constructor), or a generic member or
+        /// method name (no member the interpreters read or call takes type arguments). The CodeDom serializer writes none
+        /// of them; a statement with one would otherwise run in a shape other than the one written. Shared by both
+        /// engines, before any of their paths looks at the statement.
+        /// </summary>
+        internal static string? UnreplayedSyntax(StatementSyntax statement)
+        {
+            if (statement.ContainsDiagnostics && statement.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
+                return "the statement does not compile";
+            foreach (var node in statement.DescendantNodes())
+            {
+                switch (node)
+                {
+                    case ArgumentSyntax argument when argument.NameColon != null || !argument.RefKindKeyword.IsKind(SyntaxKind.None):
+                        return "unsupported argument " + argument;
+                    case BaseObjectCreationExpressionSyntax { Initializer: not null } creation:
+                        return "unsupported object initializer: " + creation;
+                    case MemberAccessExpressionSyntax { Name: GenericNameSyntax } generic:
+                        return "unsupported generic member: " + generic;
+                    case InvocationExpressionSyntax { Expression: GenericNameSyntax } call:
+                        return "unsupported generic method: " + call;
+                }
+            }
+            return null;
         }
 
         /// <summary>Whether a ComponentResourceManager local's `typeof(X)` target IS this form — only then does the
@@ -835,7 +869,9 @@ namespace WinFormsDesigner.Engine
 
         private static bool AppendStringLiteral(ExpressionSyntax e, System.Text.StringBuilder sb)
         {
-            if (Unparen(e) is not LiteralExpressionSyntax lit || !lit.IsKind(SyntaxKind.StringLiteralExpression)) return false;
+            // A literal the compiler rejects (`"\q"`) has only the value the parser recovered: never folded.
+            if (Unparen(e) is not LiteralExpressionSyntax lit || !lit.IsKind(SyntaxKind.StringLiteralExpression)
+                || lit.Token.ContainsDiagnostics) return false;
             sb.Append((string)(lit.Token.Value ?? ""));
             return true;
         }

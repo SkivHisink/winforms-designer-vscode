@@ -377,15 +377,34 @@ public sealed class SimplifiedDesignerStyleTests
         }
         """;
 
+    // The form's .resx: ApplyResources reads it (with none, the compiled form throws MissingManifestResourceException).
+    private const string ResourceResx = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <root>
+          <data name="$this.Text" xml:space="preserve"><value>From resources</value></data>
+        </root>
+        """;
+
     [Fact]
     public void AResourceManagerTheBuildConfirms_Renders()
+    {
+        string designer = ResourceDesigner.Replace("TYPE", "Button");
+        using var project = new TempProject(PlainProject, ("Form1.resx", ResourceResx));
+        project.Build(designer);
+        var layout = project.Render(designer);
+
+        Assert.Empty(layout.Unrepresentable);
+    }
+
+    [Fact]
+    public void ApplyResources_WithoutAResx_IsUnrepresentable()
     {
         string designer = ResourceDesigner.Replace("TYPE", "Button");
         using var project = new TempProject(PlainProject);
         project.Build(designer);
         var layout = project.Render(designer);
 
-        Assert.Empty(layout.Unrepresentable);
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("ApplyResources has no .resx to read", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -399,7 +418,7 @@ public sealed class SimplifiedDesignerStyleTests
     public void AResourceManagerAnUnseenAliasRedirects_IsRefused_AndSoAreItsLookups(string type, string unseen)
     {
         string designer = ResourceDesigner.Replace("TYPE", type);
-        using var project = new TempProject(PlainProject);
+        using var project = new TempProject(PlainProject, ("Form1.resx", ResourceResx));
         project.Build(designer, unseen);
         var layout = project.Render(designer);
 
@@ -624,6 +643,269 @@ public sealed class SimplifiedDesignerStyleTests
         var info = Sta.Invoke(() => DesignerRenderer.DescribeComponent(file, "textBox1", sourceText: designer));
         Assert.NotNull(info);
         Assert.Equal(expected, info!.Properties.Single(p => p.Name == property).Value);
+    }
+
+    [Theory]
+    // operators, folded as the compiler folds them; the build compiled each to the one constant it stores
+    [InlineData("this.textBox1.Tag = (Int32)(1 << 4 | 1);", "Tag", "17")]
+    [InlineData("this.textBox1.Tag = (Int64)unchecked(2147483647 + 1);", "Tag", "-2147483648")]
+    [InlineData("this.textBox1.Tag = (Int32)('A' + 1);", "Tag", "66")]
+    [InlineData("this.textBox1.Tag = unchecked((Byte)~1);", "Tag", "254")]
+    [InlineData("this.textBox1.Location = new Point(10 + 5, 2 * 10);", "Location", "15, 20")]
+    // a negated floating value cast to an integer is truncated toward zero, not rounded
+    [InlineData("this.textBox1.Tag = (Int32)(-2.6);", "Tag", "-2")]
+    [InlineData("this.textBox1.Tag = (Int32)(-2.6m);", "Tag", "-2")]
+    // a float converts to decimal with its own seven digits, not through double
+    [InlineData("this.textBox1.Tag = (Decimal)0.1F;", "Tag", "0.1")]
+    public void AConstantExpressionTheBuildConfirms_IsTheValueThePreviewTakes(string statement, string property, string expected)
+    {
+        string designer = """
+            using System;
+            using System.Drawing;
+            namespace WfdTest;
+            partial class Form1 {
+                private System.Windows.Forms.TextBox textBox1;
+                private void InitializeComponent() {
+                    this.textBox1 = new System.Windows.Forms.TextBox();
+                    STATEMENT
+                    this.Controls.Add(this.textBox1);
+                }
+            }
+            """.Replace("STATEMENT", statement);
+        using var project = new TempProject(PlainProject);
+        project.Build(designer);
+        var layout = project.Render(designer);
+        Assert.Empty(layout.Unrepresentable);
+
+        string file = Path.Combine(project.Dir, "Form1.Designer.cs");
+        var info = Sta.Invoke(() => DesignerRenderer.DescribeComponent(file, "textBox1", sourceText: designer));
+        Assert.NotNull(info);
+        Assert.Equal(expected, info!.Properties.Single(p => p.Name == property).Value);
+    }
+
+    [Theory]
+    // fully qualified: no name is inferred and no build is needed
+    [InlineData("this.textBox1.MaxLength = 100 + 20 * 2;", "MaxLength", "140")]
+    [InlineData("this.textBox1.MaxLength = unchecked((int)0x8000_0000) >>> 24;", "MaxLength", "128")]
+    [InlineData("this.textBox1.Anchor = (System.Windows.Forms.AnchorStyles)(System.Windows.Forms.AnchorStyles.Top + 4);", "Anchor", "Top, Left")]
+    [InlineData("this.textBox1.Tag = (int)-2.6;", "Tag", "-2")]
+    // a run-time cast by type: unboxing to the exact type, a nullable included, and an enum from its underlying value
+    [InlineData("this.textBox1.Tag = (int?)(object)42;", "Tag", "42")]
+    [InlineData("this.textBox1.Anchor = (System.Windows.Forms.AnchorStyles)(object)5;", "Anchor", "Top, Left")]
+    // arguments chosen by their static types: an unboxed int, a folded constant, a zero for an enum, a default struct
+    [InlineData("this.textBox1.Location = new System.Drawing.Point((int)(object)12, 3 * 2);", "Location", "12, 6")]
+    [InlineData("this.textBox1.Location = new System.Drawing.Point();", "Location", "0, 0")]
+    [InlineData("this.textBox1.BackColor = System.Drawing.Color.FromArgb(100 + 28, 0, (int)(byte)255);", "BackColor", "128, 0, 255")]
+    [InlineData("this.textBox1.Lines = new[] { \"a\", null, \"b\" };", "Text", "a\r\n\r\nb")]
+    [InlineData("this.textBox1.Lines = new string[2L];", "Text", "\r\n")]
+    // a number of a known type converts as C# converts it, after it was unboxed
+    [InlineData("this.textBox1.Tag = (long)(int)(object)2;", "Tag", "2")]
+    [InlineData("this.textBox1.Tag = (double)(float)(object)2F;", "Tag", "2")]
+    public void AConstantExpression_IsFoldedWithoutABuild(string statement, string property, string expected)
+    {
+        string designer = """
+            namespace WfdTest {
+                partial class Form1 {
+                    private System.Windows.Forms.TextBox textBox1;
+                    private void InitializeComponent() {
+                        this.textBox1 = new System.Windows.Forms.TextBox();
+                        STATEMENT
+                        this.Controls.Add(this.textBox1);
+                    }
+                }
+            }
+            """.Replace("STATEMENT", statement);
+        using var project = new TempProject(PlainProject);
+        var layout = project.Render(designer);
+        Assert.Empty(layout.Unrepresentable);
+
+        string file = Path.Combine(project.Dir, "Form1.Designer.cs");
+        var info = Sta.Invoke(() => DesignerRenderer.DescribeComponent(file, "textBox1", sourceText: designer));
+        Assert.NotNull(info);
+        Assert.Equal(expected, info!.Properties.Single(p => p.Name == property).Value);
+    }
+
+    [Theory]
+    // what the compiler rejects is listed with the reason, never applied as a guessed value
+    [InlineData("this.textBox1.MaxLength = 2147483647 + 1;", "overflows in a checked context")]
+    [InlineData("this.textBox1.MaxLength = 1 / 0;", "divides by the constant zero")]
+    [InlineData("this.textBox1.MaxLength = (int)1e10;", "cannot be converted to int")]
+    [InlineData("this.textBox1.MaxLength = 1UL + -1;", "is ambiguous")]
+    [InlineData("this.textBox1.MaxLength = 1.5;", "does not convert to int")]
+    // only an implicit conversion: one that would keep the value still needs a cast in the source
+    [InlineData("this.textBox1.MaxLength = 1L + 1L;", "does not convert to int")]
+    // a literal the compiler rejects is not folded with the value the parser recovered, nor is recovered syntax
+    [InlineData("this.textBox1.Text = \"\\q\" + \"x\";", "does not compile")]
+    [InlineData("this.textBox1.MaxLength = (1 + 1;", "the statement does not compile")]
+    // null is no value of a value type
+    [InlineData("this.textBox1.MaxLength = null;", "null does not convert to int")]
+    // a length written with elements must be their count
+    [InlineData("this.textBox1.Lines = new string[3] { \"a\", \"b\" };", "unsupported array length")]
+    // a factory argument converts only implicitly
+    [InlineData("this.textBox1.BackColor = System.Drawing.Color.FromArgb(1L + 1L, 0, 0);", "no matching static method")]
+    // a value of a class or interface type does not go to a value type without a cast, and a run-time cast is by type
+    [InlineData("this.textBox1.MaxLength = (object)(1 + 1);", "without a cast")]
+    [InlineData("this.textBox1.Text = (string)(object)2;", "unsupported cast")]
+    [InlineData("this.textBox1.Tag = (long)(object)2;", "unsupported cast")]
+    [InlineData("this.textBox1.MaxLength = (long)(object)2;", "without a cast")]
+    [InlineData("this.textBox1.Text = (object)(\"a\" + \"b\");", "without a cast")]
+    [InlineData("this.textBox1.Tag = (int?)(object)42L;", "unsupported cast")]
+    [InlineData("this.textBox1.Tag = (int?)(object)System.Windows.Forms.AnchorStyles.Bottom;", "unsupported cast")]
+    [InlineData("this.textBox1.Tag = (System.Windows.Forms.AnchorStyles?)(object)2;", "unsupported cast")]
+    [InlineData("this.textBox1.MaxLength = (Missing.Type)(object)42;", "unresolved type Missing.Type")]
+    // a null that unboxes to a value type, or a typed null for a struct, has no value
+    [InlineData("this.textBox1.MaxLength = (int)(object)null;", "no value of type Int32")]
+    [InlineData("this.textBox1.Location = (string)null;", "null does not convert")]
+    // a receiver that only ends with the target enum's name is not read as that enum
+    [InlineData("this.textBox1.Anchor = Missing.Vendor.AnchorStyles.Top;", "cannot evaluate member access")]
+    // an argument goes by its static type, whatever value it boxes
+    [InlineData("this.textBox1.BackColor = System.Drawing.Color.FromArgb((object)12, 0, 0);", "no matching static method")]
+    [InlineData("this.textBox1.BackColor = System.Drawing.Color.FromArgb((int?)12, 0, 0);", "no matching static method")]
+    [InlineData("this.textBox1.BackColor = System.Drawing.Color.FromName((object)\"Red\");", "no matching static method")]
+    [InlineData("this.textBox1.Location = new System.Drawing.Point((object)12, 0);", "no matching constructor")]
+    [InlineData("this.textBox1.Lines = new string[(object)2];", "unsupported array length")]
+    [InlineData("this.textBox1.Lines = new string[(int?)2];", "unsupported array length")]
+    // a length written with elements is a constant
+    [InlineData("this.textBox1.Lines = new string[(int)(object)2] { \"a\", \"b\" };", "unsupported array length")]
+    // syntax the interpreter does not replay is not dropped
+    [InlineData("this.textBox1.Location = new System.Drawing.Point(1, 2) { X = 99 };", "unsupported object initializer")]
+    [InlineData("this.textBox1.Location = new System.Drawing.Point(y: 1, x: 2);", "unsupported argument")]
+    // an operator of a value that is not a constant
+    [InlineData("this.textBox1.Tag = -((object)2);", "unsupported expression")]
+    [InlineData("this.textBox1.Tag = (object)System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left;", "unsupported expression")]
+    // `new[] { … }` takes its type from its elements, and the array goes only where that type goes
+    [InlineData("this.textBox1.Tag = new[] { null };", "unsupported implicitly typed array")]
+    [InlineData("this.textBox1.Lines = new[] { 1, 2 };", "does not convert to String[]")]
+    [InlineData("this.textBox1.Lines = new int[] { 1, 2 };", "does not convert to String[]")]
+    // a member or a method with type arguments, and casts between unrelated types
+    [InlineData("this.textBox1.Anchor = System.Windows.Forms.AnchorStyles.Top<int>;", "unsupported generic member")]
+    [InlineData("this.textBox1.BackColor = System.Drawing.Color.Red<int>;", "unsupported generic member")]
+    [InlineData("this.textBox1.Text = (string)(System.Drawing.Font)null;", "cannot be cast")]
+    // and so is what C# leaves unspecified
+    [InlineData("this.textBox1.MaxLength = unchecked((int)1e10);", "is unspecified")]
+    public void AConstantExpressionTheCompilerRejects_IsUnrepresentable(string statement, string reason)
+    {
+        string designer = """
+            namespace WfdTest {
+                partial class Form1 {
+                    private System.Windows.Forms.TextBox textBox1;
+                    private void InitializeComponent() {
+                        this.textBox1 = new System.Windows.Forms.TextBox();
+                        STATEMENT
+                        this.Controls.Add(this.textBox1);
+                    }
+                }
+            }
+            """.Replace("STATEMENT", statement);
+        using var project = new TempProject(PlainProject);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.StartsWith(statement, StringComparison.Ordinal)
+            && u.Contains(reason, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    // `Top` is the form's constant (AnchorStyles.Bottom): never read as the target enum's member of that spelling
+    [InlineData("this.textBox1.Anchor = Top;")]
+    [InlineData("this.textBox1.Anchor = Top + 4;")]
+    [InlineData("this.textBox1.Anchor = Top | System.Windows.Forms.AnchorStyles.Left;")]
+    public void ABareName_IsNotGuessedAsAMemberOfTheTargetEnum(string statement)
+    {
+        string designer = """
+            namespace WfdTest {
+                partial class Form1 {
+                    private const System.Windows.Forms.AnchorStyles Top = System.Windows.Forms.AnchorStyles.Bottom;
+                    private System.Windows.Forms.TextBox textBox1;
+                    private void InitializeComponent() {
+                        this.textBox1 = new System.Windows.Forms.TextBox();
+                        STATEMENT
+                        this.Controls.Add(this.textBox1);
+                    }
+                }
+            }
+            """.Replace("STATEMENT", statement);
+        using var project = new TempProject(PlainProject);
+        project.Build(designer);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.StartsWith(statement, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    // a tree node is built as written or not at all: no initializer dropped, no constructor guessed, no node made up
+    [InlineData("System.Windows.Forms.TreeNode treeNode1 = new System.Windows.Forms.TreeNode(\"Apple\") { Text = \"X\" };")]
+    [InlineData("System.Windows.Forms.TreeNode treeNode1 = new System.Windows.Forms.TreeNode(\"Apple\", 1, 2, 3);")]
+    [InlineData("System.Windows.Forms.TreeNode treeNode1 = new System.Drawing.Font(\"Apple\", 12);")]
+    [InlineData("System.Windows.Forms.TreeNode treeNode1 = null;")]
+    [InlineData("System.Windows.Forms.TreeNode treeNode1 = new System.Windows.Forms.TreeNode(\"Apple\", new System.Windows.Forms.TreeNode[] { nowhere });")]
+    public void ATreeNodeNotBuiltAsWritten_IsUnrepresentable(string declaration)
+    {
+        string designer = """
+            namespace WfdTest {
+                partial class Form1 {
+                    private System.Windows.Forms.TreeView treeView1;
+                    private void InitializeComponent() {
+                        DECLARATION
+                        this.treeView1 = new System.Windows.Forms.TreeView();
+                        this.Controls.Add(this.treeView1);
+                    }
+                }
+            }
+            """.Replace("DECLARATION", declaration);
+        using var project = new TempProject(PlainProject);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.StartsWith(declaration, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AClassNamedLikeTheTargetEnum_IsNotReadAsThatEnum()
+    {
+        // WfdTest.AnchorStyles.Top is the project's constant (Bottom), not System.Windows.Forms.AnchorStyles.Top.
+        const string limits = """
+            namespace WfdTest {
+                public static class AnchorStyles {
+                    public const System.Windows.Forms.AnchorStyles Top = System.Windows.Forms.AnchorStyles.Bottom;
+                }
+            }
+            """;
+        const string designer = """
+            namespace WfdTest {
+                partial class Form1 {
+                    private System.Windows.Forms.TextBox textBox1;
+                    private void InitializeComponent() {
+                        this.textBox1 = new System.Windows.Forms.TextBox();
+                        this.textBox1.Anchor = WfdTest.AnchorStyles.Top;
+                        this.Controls.Add(this.textBox1);
+                    }
+                }
+            }
+            """;
+        using var project = new TempProject(PlainProject, ("Limits.cs", limits));
+        project.Build(designer);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.StartsWith("this.textBox1.Anchor = WfdTest.AnchorStyles.Top;", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    // the character set an int constant takes when it fits the byte parameter, however it is written
+    [InlineData("204")]
+    [InlineData("(204)")]
+    [InlineData("200 + 4")]
+    [InlineData("unchecked((int)204L)")]
+    [InlineData("(byte)(200 + 4)")]
+    public void AFontCharacterSet_TakesAnIntConstantThatFits(string charset)
+    {
+        var eval = typeof(DesignerRenderer).GetMethod("Eval", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var font = (System.Drawing.Font)eval.Invoke(null, new object?[]
+        {
+            SyntaxFactory.ParseExpression("new System.Drawing.Font(\"Segoe UI\", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, "
+                + charset + ")"),
+            null, Array.Empty<System.Reflection.Assembly>(),
+        })!;
+
+        Assert.Equal(204, font.GdiCharSet);
     }
 
     [Theory]
@@ -1177,7 +1459,7 @@ public sealed class SimplifiedDesignerStyleTests
             }
             """);
 
-        Assert.Contains(layout.Unrepresentable, u => u.Contains("MissingMethodException", StringComparison.Ordinal));
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("no matching constructor of System.Drawing.Font", StringComparison.Ordinal));
     }
 
     // ------------------------------------------------------------- the security gates hold --------------------------

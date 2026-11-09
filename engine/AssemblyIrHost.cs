@@ -128,6 +128,10 @@ namespace WinFormsDesigner.Engine
 
         public bool WasResourceRefused(string key) => _resx.WasRefused(key);
 
+        public bool HasResource(string key) => _resx.HasResource(key);
+
+        public bool HasResourceSet => _resx.HasResourceSet;
+
         public bool ApplyResources(object target, string key, out string? error) => _resx.ApplyResources(target, key, out error);
 
         /// <summary>The `new T(this.components)` provider/tray shape: pass the design-time container to a ctor that

@@ -316,7 +316,7 @@ namespace WinFormsDesigner.Engine
         /// constants with their values (literals, enum members, constant fields and expressions of them, folded as the
         /// compiler folds them), constructions, static and instance members, arrays, casts and delegates. A shape
         /// outside what a designer writes makes the statement incomparable (false).</summary>
-        private sealed class OpWalker
+        private sealed class OpWalker : IDesignerConstantNames
         {
             private readonly DesignerTypeScope _scope;
             private readonly List<DesignerOp> _ops;
@@ -609,134 +609,111 @@ namespace WinFormsDesigner.Engine
 
             private bool Constant(ExpressionSyntax expression, out object? value) => Constant(expression, out value, out _);
 
-            /// <summary>The value of a compile-time constant, folded as the compiler folds it — integral values as long,
-            /// floating ones as double, decimals, strings, null — and its C# type (null for null, or when it cannot be
-            /// told). A decimal the designer constructs from constants (<c>new decimal(new int[] { … })</c>) is one too.
-            /// Names it binds are noted like any other.</summary>
+            /// <summary>The value of a compile-time constant as the build reading sees it — integral values as long,
+            /// floating ones as double, decimals, strings, null — and its C# type (null for null). It is folded by
+            /// <see cref="DesignerConstantFolder"/>, the folder whose value the interpreter applies, so the value confirmed
+            /// is the value shown. A decimal the designer constructs from constants (<c>new decimal(new int[] { … })</c>)
+            /// is compared as a constant too. Names it binds are noted like any other.</summary>
             private bool Constant(ExpressionSyntax expression, out object? value, out Type? type)
             {
                 value = null;
                 type = null;
-                switch (expression)
+                if (DesignerConstantFolder.Fold(expression, this, null, out var constant, out _) == ConstantFold.Folded)
                 {
-                    case LiteralExpressionSyntax literal:
-                        if (literal.IsKind(SyntaxKind.NullLiteralExpression)) return true;
-                        if (literal.IsKind(SyntaxKind.DefaultLiteralExpression)) return false;
-                        type = literal.Token.Value?.GetType();
-                        return Normalize(literal.Token.Value, out value);
-                    case ParenthesizedExpressionSyntax p:
-                        return Constant(p.Expression, out value, out type);
-                    case PrefixUnaryExpressionSyntax unary:
-                        return Unary(unary, out value, out type);
-                    case BinaryExpressionSyntax binary:
-                        return Binary(binary, out value, out type);
-                    case CastExpressionSyntax cast:
-                        {
-                            if (!Constant(cast.Expression, out var operand, out _) || !TypeName(cast.Type, out var castType) || castType == null)
-                                return false;
-                            type = castType;
-                            if (castType == typeof(decimal))
-                            {
-                                try
-                                {
-                                    if (operand is decimal m) value = m;
-                                    else if (operand is long l) value = new decimal(l);
-                                    else if (operand is double d) value = (decimal)d;
-                                    else return false;
-                                }
-                                catch (OverflowException) { return false; }
-                                return true;
-                            }
-                            if (castType == typeof(string)) { value = operand; return operand is string or null; }
-                            var target = castType.IsEnum ? Enum.GetUnderlyingType(castType) : castType;
-                            // A decimal goes to an integral type truncated toward zero.
-                            if (operand is decimal dm && target.IsPrimitive && target != typeof(float) && target != typeof(double))
-                            {
-                                try { operand = Convert.ToInt64(decimal.Truncate(dm)); }
-                                catch (OverflowException) { return false; }
-                            }
-                            if (operand is not (long or double)) return false;
-                            try
-                            {
-                                if (target == typeof(float) || target == typeof(double))
-                                    value = target == typeof(float) ? (double)(float)Convert.ToDouble(operand) : Convert.ToDouble(operand);
-                                else if (target.IsPrimitive && target != typeof(bool) && target != typeof(IntPtr) && target != typeof(UIntPtr))
-                                    value = Convert.ToInt64(Convert.ChangeType(operand is double od ? Math.Truncate(od) : operand, target,
-                                        System.Globalization.CultureInfo.InvariantCulture));
-                                else return false;
-                            }
-                            catch { return false; }
-                            return true;
-                        }
-                    case ObjectCreationExpressionSyntax creation when creation.Initializer == null && creation.ArgumentList != null:
-                        {
-                            // `new decimal(new int[] { 100, 0, 0, 0 })`, as the designer writes a NumericUpDown value.
-                            if (!TypeName(creation.Type, out var created) || created != typeof(decimal)) return false;
-                            var args = new List<object?>();
-                            foreach (var argument in creation.ArgumentList.Arguments)
-                            {
-                                if (argument.NameColon != null || !argument.RefKindKeyword.IsKind(SyntaxKind.None)) return false;
-                                if (argument.Expression is ArrayCreationExpressionSyntax words)
-                                {
-                                    if (!TypeName(words.Type.ElementType, out var wordType) || wordType != typeof(int)
-                                        || words.Initializer == null) return false;
-                                    var items = new List<int>();
-                                    foreach (var item in words.Initializer.Expressions)
-                                    {
-                                        if (!Constant(item, out var word, out _) || word is not long w || w < int.MinValue || w > int.MaxValue) return false;
-                                        items.Add((int)w);
-                                    }
-                                    args.Add(items.ToArray());
-                                }
-                                else if (Constant(argument.Expression, out var arg, out var argType)) args.Add(argType == typeof(float) ? (object?)(float)(double)arg! : arg);
-                                else return false;
-                            }
-                            try
-                            {
-                                value = args switch
-                                {
-                                    [int[] bits] => new decimal(bits),
-                                    [long l] => new decimal(l),
-                                    [double d] => new decimal(d),
-                                    [float f] => new decimal(f),
-                                    [long lo, long mid, long hi, long negative, long scale] when scale is >= 0 and <= 28 =>
-                                        new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative != 0, (byte)scale),
-                                    _ => null,
-                                };
-                            }
-                            catch (ArgumentException) { return false; }
-                            catch (OverflowException) { return false; }
-                            type = typeof(decimal);
-                            return value != null;
-                        }
-                    case MemberAccessExpressionSyntax access when access.Expression is not ThisExpressionSyntax:
-                        {
-                            if (access.Expression is IdentifierNameSyntax head && _scope.IsFieldOrLocal(head.Identifier.ValueText)) return false;
-                            string written = access.Expression.ToString();
-                            var owner = _scope.ResolveReceiver(written, out string? refusal, out _);
-                            if (refusal != null || owner == null) return false;
-                            var field = owner.GetField(access.Name.Identifier.ValueText,
-                                BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-                            if (field == null) return false;
-                            if (field.IsLiteral)
-                            {
-                                Note(written, owner);
-                                type = field.FieldType;
-                                return Normalize(field.GetRawConstantValue(), out value);
-                            }
-                            // A decimal constant is a static readonly field carrying its value in metadata.
-                            if (field.FieldType == typeof(decimal) && field.IsInitOnly && DecimalConstantOf(field) is { } known)
-                            {
-                                Note(written, owner);
-                                type = typeof(decimal);
-                                value = known;
-                                return true;
-                            }
-                            return false;
-                        }
-                    default:
-                        return false;
+                    type = constant.Type;
+                    return Normalize(constant.Value, out value);
                 }
+                var unwrapped = expression;
+                while (unwrapped is ParenthesizedExpressionSyntax p) unwrapped = p.Expression;
+                return unwrapped is ObjectCreationExpressionSyntax { Initializer: null, ArgumentList: not null } creation
+                    && DecimalCreation(creation, out value, out type);
+            }
+
+            /// <summary>`new decimal(new int[] { 100, 0, 0, 0 })`, as the designer writes a NumericUpDown value, and the
+            /// other decimal constructors over constants.</summary>
+            private bool DecimalCreation(ObjectCreationExpressionSyntax creation, out object? value, out Type? type)
+            {
+                value = null;
+                type = null;
+                if (!TypeName(creation.Type, out var created) || created != typeof(decimal)) return false;
+                var args = new List<object?>();
+                foreach (var argument in creation.ArgumentList!.Arguments)
+                {
+                    if (argument.NameColon != null || !argument.RefKindKeyword.IsKind(SyntaxKind.None)) return false;
+                    if (argument.Expression is ArrayCreationExpressionSyntax words)
+                    {
+                        if (!TypeName(words.Type.ElementType, out var wordType) || wordType != typeof(int)
+                            || words.Initializer == null) return false;
+                        var items = new List<int>();
+                        foreach (var item in words.Initializer.Expressions)
+                        {
+                            if (!Constant(item, out var word, out _) || word is not long w || w < int.MinValue || w > int.MaxValue) return false;
+                            items.Add((int)w);
+                        }
+                        args.Add(items.ToArray());
+                    }
+                    else if (Constant(argument.Expression, out var arg, out var argType)) args.Add(argType == typeof(float) ? (object?)(float)(double)arg! : arg);
+                    else return false;
+                }
+                try
+                {
+                    value = args switch
+                    {
+                        [int[] bits] => new decimal(bits),
+                        [long l] => new decimal(l),
+                        [double d] => new decimal(d),
+                        [float f] => new decimal(f),
+                        [long lo, long mid, long hi, long negative, long scale] when scale is >= 0 and <= 28 =>
+                            new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative != 0, (byte)scale),
+                        _ => null,
+                    };
+                }
+                catch (ArgumentException) { return false; }
+                catch (OverflowException) { return false; }
+                type = typeof(decimal);
+                return value != null;
+            }
+
+            /// <summary>A name inside a constant expression, as the build reading binds it: an enum member or a constant
+            /// field (a decimal constant included) of a type the scope binds. Anything else is not a constant here, and is
+            /// walked as the step it is.</summary>
+            ConstantFold IDesignerConstantNames.Name(ExpressionSyntax name, Type? hint, out DesignerConstant constant, out string? refusal)
+            {
+                constant = default;
+                refusal = null;
+                if (name is not MemberAccessExpressionSyntax access || access.Expression is ThisExpressionSyntax
+                    || access.Name is not IdentifierNameSyntax) return ConstantFold.NotConstant;
+                if (access.Expression is IdentifierNameSyntax head && _scope.IsFieldOrLocal(head.Identifier.ValueText)) return ConstantFold.NotConstant;
+                string written = access.Expression.ToString();
+                var owner = _scope.ResolveReceiver(written, out string? why, out _);
+                if (why != null || owner == null) return ConstantFold.NotConstant;
+                var field = owner.GetField(access.Name.Identifier.ValueText,
+                    BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+                if (field == null) return ConstantFold.NotConstant;
+                if (field.IsLiteral)
+                {
+                    object? raw = field.GetRawConstantValue();
+                    Note(written, owner);
+                    constant = new DesignerConstant(field.FieldType.IsEnum && raw != null ? Enum.ToObject(field.FieldType, raw) : raw, field.FieldType);
+                    return ConstantFold.Folded;
+                }
+                // A decimal constant is a static readonly field carrying its value in metadata.
+                if (field.FieldType == typeof(decimal) && field.IsInitOnly && DecimalConstantOf(field) is { } known)
+                {
+                    Note(written, owner);
+                    constant = new DesignerConstant(known, typeof(decimal));
+                    return ConstantFold.Folded;
+                }
+                return ConstantFold.NotConstant;
+            }
+
+            /// <summary>The type a cast names, bound (and reported when unbound) as any type name the walk meets.</summary>
+            Type? IDesignerConstantNames.CastType(TypeSyntax type, out string? refusal)
+            {
+                refusal = null;
+                if (TypeName(type, out var bound)) return bound;
+                refusal = "the type " + type + " is not bound";
+                return null;
             }
 
             /// <summary>The value a <c>[DecimalConstant]</c> field records, read from its metadata; nothing is run.</summary>
@@ -756,177 +733,6 @@ namespace WinFormsDesigner.Engine
                 catch { }
                 return null;
             }
-
-            private bool Unary(PrefixUnaryExpressionSyntax unary, out object? value, out Type? type)
-            {
-                value = null;
-                type = null;
-                if (!Constant(unary.Operand, out var operand, out var operandType) || operandType == null) return false;
-                switch (unary.Kind())
-                {
-                    case SyntaxKind.UnaryMinusExpression:
-                        if (operand is decimal m) { value = -m; type = typeof(decimal); return true; }
-                        if (operand is double d) { value = -d; type = operandType; return true; }
-                        if (operand is not long l || operandType.IsEnum) return false;
-                        value = unchecked(-l);
-                        // `-2147483648` and `-9223372036854775808` are int and long; -uint is long.
-                        if (operandType == typeof(uint)) type = l == 2147483648L && unary.Operand is LiteralExpressionSyntax ? typeof(int) : typeof(long);
-                        else if (operandType == typeof(ulong)) { if (l != long.MinValue || unary.Operand is not LiteralExpressionSyntax) return false; type = typeof(long); }
-                        else type = Promoted(operandType);
-                        return type != null;
-                    case SyntaxKind.UnaryPlusExpression:
-                        if (operand is not (long or double or decimal) || operandType.IsEnum) return false;
-                        value = operand;
-                        type = Promoted(operandType);
-                        return type != null;
-                    case SyntaxKind.BitwiseNotExpression:
-                        {
-                            if (operand is not long n) return false;
-                            type = operandType.IsEnum ? operandType : Promoted(operandType);
-                            if (type == null) return false;
-                            value = Wrap(type.IsEnum ? Enum.GetUnderlyingType(type) : type, ~n);
-                            return true;
-                        }
-                    case SyntaxKind.LogicalNotExpression:
-                        if (operand is not long b || operandType != typeof(bool)) return false;
-                        value = b == 0 ? 1L : 0L;
-                        type = typeof(bool);
-                        return true;
-                    default:
-                        return false;
-                }
-            }
-
-            private bool Binary(BinaryExpressionSyntax binary, out object? value, out Type? type)
-            {
-                value = null;
-                type = null;
-                if (!Constant(binary.Left, out var left, out var lt) || !Constant(binary.Right, out var right, out var rt)) return false;
-                var kind = binary.Kind();
-                if (kind == SyntaxKind.AddExpression && (left is string || right is string))
-                {
-                    if (left is not (string or null) || right is not (string or null)) return false;
-                    value = (string?)left + (string?)right;
-                    type = typeof(string);
-                    return true;
-                }
-                if (left is not long a || right is not long c)
-                {
-                    // Floating arithmetic the designer writes is folded by its own code; decimal arithmetic is not.
-                    if (left is not (long or double) || right is not (long or double) || lt == null || rt == null || lt.IsEnum || rt.IsEnum) return false;
-                    type = lt == typeof(double) || rt == typeof(double) ? typeof(double) : lt == typeof(float) || rt == typeof(float) ? typeof(float) : null;
-                    if (type == null) return false;
-                    double x = Convert.ToDouble(left), y = Convert.ToDouble(right);
-                    double r = kind switch
-                    {
-                        SyntaxKind.AddExpression => x + y,
-                        SyntaxKind.SubtractExpression => x - y,
-                        SyntaxKind.MultiplyExpression => x * y,
-                        _ => double.NaN,
-                    };
-                    if (double.IsNaN(r)) return false;
-                    value = type == typeof(float) ? (double)(float)r : r;
-                    return true;
-                }
-                if (lt == null || rt == null) return false;
-                if (lt.IsEnum || rt.IsEnum)
-                {
-                    // E | E, E & E, E ^ E stay E (literal 0 converts to E); E + n, n + E, E - n are E; E - E is its
-                    // underlying type.
-                    bool zeroLeft = !lt.IsEnum && a == 0 && binary.Left is LiteralExpressionSyntax;
-                    bool zeroRight = !rt.IsEnum && c == 0 && binary.Right is LiteralExpressionSyntax;
-                    switch (kind)
-                    {
-                        case SyntaxKind.BitwiseOrExpression: case SyntaxKind.BitwiseAndExpression: case SyntaxKind.ExclusiveOrExpression:
-                            if (lt.IsEnum && rt.IsEnum && lt != rt) return false;
-                            if (!(lt.IsEnum && rt.IsEnum) && !zeroLeft && !zeroRight) return false;
-                            type = lt.IsEnum ? lt : rt;
-                            value = kind == SyntaxKind.BitwiseOrExpression ? a | c : kind == SyntaxKind.BitwiseAndExpression ? a & c : a ^ c;
-                            return true;
-                        case SyntaxKind.AddExpression:
-                            if (lt.IsEnum && rt.IsEnum) return false;
-                            type = lt.IsEnum ? lt : rt;
-                            value = unchecked(a + c);
-                            return true;
-                        case SyntaxKind.SubtractExpression:
-                            if (!lt.IsEnum) return false;
-                            type = rt.IsEnum ? (rt == lt ? Enum.GetUnderlyingType(lt) : null) : lt;
-                            value = unchecked(a - c);
-                            return type != null;
-                        default:
-                            return false;
-                    }
-                }
-                if (lt == typeof(bool) || rt == typeof(bool))
-                {
-                    if (lt != rt) return false;
-                    type = typeof(bool);
-                    switch (kind)
-                    {
-                        case SyntaxKind.BitwiseOrExpression: value = a | c; return true;
-                        case SyntaxKind.BitwiseAndExpression: value = a & c; return true;
-                        case SyntaxKind.ExclusiveOrExpression: value = a ^ c; return true;
-                        default: return false;
-                    }
-                }
-                if (kind is SyntaxKind.LeftShiftExpression or SyntaxKind.RightShiftExpression)
-                {
-                    type = Promoted(lt);
-                    if (type == null || !IsIntegral(rt)) return false;
-                    int count = (int)(c & (type == typeof(long) || type == typeof(ulong) ? 63 : 31));
-                    value = kind == SyntaxKind.LeftShiftExpression
-                        ? Wrap(type, a << count)
-                        : type == typeof(uint) ? (long)((uint)a >> count) : type == typeof(ulong) ? unchecked((long)((ulong)a >> count)) : a >> count;
-                    return true;
-                }
-                type = Promoted(lt, rt);
-                if (type == null) return false;
-                long result;
-                switch (kind)
-                {
-                    case SyntaxKind.BitwiseOrExpression: result = a | c; break;
-                    case SyntaxKind.BitwiseAndExpression: result = a & c; break;
-                    case SyntaxKind.ExclusiveOrExpression: result = a ^ c; break;
-                    case SyntaxKind.AddExpression: result = unchecked(a + c); break;
-                    case SyntaxKind.SubtractExpression: result = unchecked(a - c); break;
-                    case SyntaxKind.MultiplyExpression: result = unchecked(a * c); break;
-                    default: return false;
-                }
-                value = Wrap(type, result);
-                return true;
-            }
-
-            private static bool IsIntegral(Type t) =>
-                t == typeof(sbyte) || t == typeof(byte) || t == typeof(short) || t == typeof(ushort) || t == typeof(int)
-                || t == typeof(uint) || t == typeof(long) || t == typeof(ulong) || t == typeof(char);
-
-            /// <summary>The type an integral operand is promoted to (C# unary numeric promotion), or null.</summary>
-            private static Type? Promoted(Type t)
-            {
-                if (t == typeof(double) || t == typeof(float) || t == typeof(decimal)) return t;
-                if (!IsIntegral(t)) return null;
-                return t == typeof(uint) || t == typeof(long) || t == typeof(ulong) ? t : typeof(int);
-            }
-
-            /// <summary>C# binary numeric promotion of two integral operands, or null.</summary>
-            private static Type? Promoted(Type l, Type r)
-            {
-                if (!IsIntegral(l) || !IsIntegral(r)) return null;
-                if (l == typeof(ulong) || r == typeof(ulong))
-                    return l == typeof(sbyte) || l == typeof(short) || l == typeof(int) || l == typeof(long)
-                        || r == typeof(sbyte) || r == typeof(short) || r == typeof(int) || r == typeof(long) ? null : typeof(ulong);
-                if (l == typeof(long) || r == typeof(long)) return typeof(long);
-                if (l == typeof(uint) || r == typeof(uint))
-                    return l == typeof(sbyte) || l == typeof(short) || l == typeof(int)
-                        || r == typeof(sbyte) || r == typeof(short) || r == typeof(int) ? typeof(long) : typeof(uint);
-                return typeof(int);
-            }
-
-            /// <summary>An integral result as the build reading sees it, in the width of <paramref name="type"/>.</summary>
-            private static long Wrap(Type type, long value) => unchecked(
-                type == typeof(int) ? (int)value : type == typeof(uint) ? (uint)value : type == typeof(short) ? (short)value
-                : type == typeof(ushort) ? (ushort)value : type == typeof(sbyte) ? (sbyte)value : type == typeof(byte) ? (byte)value
-                : type == typeof(char) ? (char)value : value);
 
             private static bool IsDefault(object? value, Type element) =>
                 !element.IsValueType ? value == null
@@ -952,9 +758,9 @@ namespace WinFormsDesigner.Engine
                         value = c.ToInt64(System.Globalization.CultureInfo.InvariantCulture);
                         return true;
                     case Enum e:
-                        value = Convert.ToInt64(Convert.ChangeType(e, Enum.GetUnderlyingType(e.GetType()), System.Globalization.CultureInfo.InvariantCulture),
-                            System.Globalization.CultureInfo.InvariantCulture);
-                        return true;
+                        // The underlying value, a ulong one as its bit pattern like any other ulong.
+                        return Normalize(Convert.ChangeType(e, Enum.GetUnderlyingType(e.GetType()), System.Globalization.CultureInfo.InvariantCulture),
+                            out value);
                     default: return false;
                 }
             }

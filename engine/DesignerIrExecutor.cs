@@ -49,6 +49,12 @@ namespace WinFormsDesigner.Engine
         /// <summary>True when the safe resolver deliberately REFUSED the key (a binary/SOAP/typed/file-ref node) — lets
         /// the executor emit the precise unsafeBinaryResource fallback instead of silently assigning null.</summary>
         bool WasResourceRefused(string key);
+        /// <summary>True when the resources hold the key at all (served or refused): a GetString that resolves to null
+        /// for a key that is present read an entry of another type, which ResourceManager rejects.</summary>
+        bool HasResource(string key);
+        /// <summary>True when the form has a well-formed resource set (a .resx was read): only there is a missing key a
+        /// null, as ResourceManager returns it.</summary>
+        bool HasResourceSet { get; }
         /// <summary>Apply `resources.ApplyResources(target, key)` through the SAFE resolver. Returns false with a
         /// reason when a matching resource node was refused, a target property is invalid, or conversion is not
         /// allowlisted. No arbitrary ResourceManager or binary deserialization is allowed here.</summary>
@@ -668,8 +674,22 @@ namespace WinFormsDesigner.Engine
                             err = "UNSAFE_RESOURCE: '" + rr.Key + "' is a refused binary/SOAP/file-ref resource";
                             return false;
                         }
+                        // GetObject returns an object and GetString a string: what takes another type needs a cast
+                        // (`this.ImeMode = resources.GetObject(…)` does not compile, whatever the entry holds).
+                        var staticType = rr.IsString ? typeof(string) : typeof(object);
+                        if (target != null && !target.IsAssignableFrom(staticType))
+                        {
+                            err = "a value of type " + staticType.Name + " does not convert to " + target.Name + " without a cast: '" + rr.Key + "'";
+                            return false;
+                        }
                         value = host.ResolveResource(rr.Key, rr.IsString);
                         if (value == null && !rr.IsString) { err = "resource '" + rr.Key + "' unavailable"; return false; }
+                        // GetString of a present entry that is no readable string: ResourceManager throws, so no empty
+                        // text is shown in its place. A missing key is null, as ResourceManager returns it.
+                        if (value == null && host.HasResource(rr.Key)) { err = "resource '" + rr.Key + "' is not a readable string"; return false; }
+                        // ...but only in a resource set that exists: without one (or with a broken one) the compiled form
+                        // throws MissingManifestResourceException, or the project does not build.
+                        if (value == null && !host.HasResourceSet) { err = "resource '" + rr.Key + "' has no resource set to come from"; return false; }
                         return true;
                     }
 
@@ -678,6 +698,46 @@ namespace WinFormsDesigner.Engine
                         if (!TryMaterialize(cast.Inner, typeof(object), inst, host, out var inner, out err)) return false;
                         var ct = host.ResolveType(cast.TargetTypeName);
                         if (ct == null) { err = "unresolved cast type " + cast.TargetTypeName; return false; }
+                        // The operand's static type decides the cast. A resource is an object (GetObject) or a string
+                        // (GetString), and a cast gives its own type (`(object)resources.GetObject(…)` stays an object):
+                        // C# casts such a value by type — an instance of the target, an unboxing to exactly its type or
+                        // between an enum and its underlying type — never by converting it (`(long)resources.GetObject(…)`
+                        // of a Keys entry, or `(long)(object)…` of an int, throws). A number converts as before.
+                        Type? operandType = cast.Inner switch
+                        {
+                            IrResourceRef resource => resource.IsString ? typeof(string) : typeof(object),
+                            IrCast nested => host.ResolveType(nested.TargetTypeName),
+                            _ => null,
+                        };
+                        if (operandType != null && !operandType.IsValueType)
+                        {
+                            // A string converts by a cast only to a type a string is (`(Font)resources.GetString(…)` does
+                            // not compile, null or not).
+                            if (operandType == typeof(string) && !ct.IsAssignableFrom(typeof(string)))
+                            {
+                                err = "a string does not convert to " + cast.TargetTypeName;
+                                return false;
+                            }
+                            if (!TryCastByType(inner, ct, out value))
+                            {
+                                err = "cast of resource value " + (inner?.GetType().Name ?? "null") + " to " + cast.TargetTypeName + " does not hold";
+                                return false;
+                            }
+                            return true;
+                        }
+                        // A number converts as C#'s explicit conversion converts it: a floating or decimal value toward zero
+                        // (`(int)(double)…` of 300.6 is 300, where Convert would round to 301); a value out of the target's
+                        // range is refused rather than wrapped.
+                        var numericTarget = Nullable.GetUnderlyingType(ct) ?? ct;
+                        if (IsNumber(inner) && IsNumberType(numericTarget))
+                        {
+                            if (!TryNumericCast(inner!, numericTarget, out value))
+                            {
+                                err = "cast of " + inner!.GetType().Name + " to " + cast.TargetTypeName + " is out of range";
+                                return false;
+                            }
+                            return true;
+                        }
                         value = Coerce(inner, ct);
                         // Coerce returns the ORIGINAL value when it can't convert — for a cast that is a SILENT no-op, so
                         // fail closed unless the value is genuinely the target type. Handle the one designer cast Coerce
@@ -894,6 +954,65 @@ namespace WinFormsDesigner.Engine
                 return true;
             }
             catch (Exception ex) { err = "bad numeric literal '" + t + "' (" + ex.GetType().Name + ")"; return false; }
+        }
+
+        private static bool IsNumberType(Type t) =>
+            t.IsEnum || t == typeof(char) || t == typeof(decimal) || (t.IsPrimitive && t != typeof(bool) && t != typeof(IntPtr) && t != typeof(UIntPtr));
+
+        private static bool IsNumber(object? value) => value != null && IsNumberType(value.GetType());
+
+        /// <summary>C#'s explicit numeric conversion of <paramref name="value"/> to <paramref name="to"/> (a numeric
+        /// type, char or an enum), checked: a floating or decimal value is truncated toward zero for an integral target,
+        /// and a value out of range, a NaN or an infinity going to an integral type, fails.</summary>
+        private static bool TryNumericCast(object value, Type to, out object? result)
+        {
+            result = null;
+            var target = to.IsEnum ? Enum.GetUnderlyingType(to) : to;
+            object source = value is Enum e ? Convert.ChangeType(e, Enum.GetUnderlyingType(e.GetType()), CultureInfo.InvariantCulture) : value;
+            try
+            {
+                bool integral = target != typeof(float) && target != typeof(double) && target != typeof(decimal);
+                if (integral)
+                {
+                    if (source is float or double)
+                    {
+                        double d = Convert.ToDouble(source, CultureInfo.InvariantCulture);
+                        if (double.IsNaN(d) || double.IsInfinity(d)) return false;
+                        source = Math.Truncate(d);
+                    }
+                    else if (source is decimal m) source = decimal.Truncate(m);
+                    if (target == typeof(char) && source is double or decimal) source = Convert.ToInt64(source, CultureInfo.InvariantCulture);
+                    else if (source is char c && target != typeof(char)) source = (int)c;
+                }
+                else if (source is char c) source = (int)c;
+                object converted = Convert.ChangeType(source, target, CultureInfo.InvariantCulture);
+                result = to.IsEnum ? Enum.ToObject(to, converted) : converted;
+                return true;
+            }
+            catch (Exception ex) when (ex is OverflowException or InvalidCastException or FormatException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>A cast of a value of static type object as C# makes it: null to a class, an interface or a nullable;
+        /// an instance of the target; to a value type, unboxing exactly that type, or an enum from its underlying type and
+        /// back (not for a nullable, which unboxes only its own type).</summary>
+        private static bool TryCastByType(object? value, Type cast, out object? result)
+        {
+            result = null;
+            var underlying = Nullable.GetUnderlyingType(cast);
+            if (value == null) return !cast.IsValueType || underlying != null;
+            var to = underlying ?? cast;
+            if (to.IsInstanceOfType(value)) { result = value; return true; }
+            if (underlying != null) return false;
+            if (to.IsEnum && value.GetType() == Enum.GetUnderlyingType(to)) { result = Enum.ToObject(to, value); return true; }
+            if (value is Enum && Enum.GetUnderlyingType(value.GetType()) == to)
+            {
+                result = Convert.ChangeType(value, to, CultureInfo.InvariantCulture);
+                return true;
+            }
+            return false;
         }
 
         private static object? Coerce(object? v, Type target)

@@ -55,6 +55,15 @@ namespace WinFormsDesigner.Engine
             ["Text"] = "System.String",
         };
 
+        /// <summary>Whether the form already reads its values from resources: an <c>ApplyResources</c> call in
+        /// <c>InitializeComponent</c>, or a resource manager anywhere in the source.</summary>
+        internal static bool IsAlreadyLocalizable(string src)
+        {
+            if (src.Contains("ComponentResourceManager", StringComparison.Ordinal)) return true;
+            var init = FormClassResolver.InitMethodOf(DesignerControlEditor.FindClassWithICShared(CSharpSyntaxTree.ParseText(src).GetRoot()));
+            return init?.Body != null && init.Body.Statements.Any(IsApplyResourcesCall);
+        }
+
         /// <summary>Compose the rewritten source + .resx. <paramref name="values"/> is the live-graph inventory of
         /// localizable properties the source assigns, gathered by the caller (which owns the design surface).</summary>
         public static LocalizeFormResult Apply(string src, string className, IReadOnlyList<LocalizableValue> values,
@@ -67,8 +76,7 @@ namespace WinFormsDesigner.Engine
             var cls = DesignerControlEditor.FindClassWithICShared(root);
             var init = FormClassResolver.InitMethodOf(cls);
             if (cls == null || init?.Body == null) return Refuse("InitializeComponent not found");
-            if (init.Body.Statements.Any(IsApplyResourcesCall) || src.Contains("ComponentResourceManager", StringComparison.Ordinal))
-                return Refuse("the form is already localizable");
+            if (IsAlreadyLocalizable(src)) return Refuse("the form is already localizable");
             if (values.Count == 0) return Refuse("the form assigns no localizable properties");
 
             // Index the inventory so a statement can be matched to the value it carries.

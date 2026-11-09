@@ -164,4 +164,162 @@ namespace Demo {
         Assert.False(res.Ok);
         Assert.Contains("UNSAFE_RESOURCE", res.FailureReason);
     }
+
+    [Theory]
+    // GetObject is an object: a property of another type takes it only through a cast
+    [InlineData("this.ImeMode = resources.GetObject(\"k\");", "without a cast")]
+    // a cast of a resource is by type: the compiled form throws for these
+    [InlineData("this.Tag = (long)resources.GetObject(\"keys\");", "does not hold")]
+    [InlineData("this.Tag = (string)resources.GetObject(\"keys\");", "does not hold")]
+    [InlineData("this.Font = (System.Drawing.Font)resources.GetString(\"missing\");", "does not convert")]
+    // a cast to object keeps the operand an object: the outer cast is by type too
+    [InlineData("this.Tag = (long)(object)resources.GetObject(\"n\");", "does not hold")]
+    [InlineData("this.Tag = (string)(object)resources.GetObject(\"n\");", "does not hold")]
+    // GetString of an entry of another type throws in the compiled form
+    [InlineData("this.Text = resources.GetString(\"k\");", "not a readable string")]
+    public void AResourceTheCompiledFormCannotRead_FailsTheSharedExecution(string statement, string reason)
+    {
+        string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      STATEMENT
+    }
+  }
+}".Replace("STATEMENT", statement);
+        const string resx = @"<root>
+  <data name='k' type='System.Windows.Forms.ImeMode, System.Windows.Forms'><value>Hiragana</value></data>
+  <data name='keys' type='System.Windows.Forms.Keys, System.Windows.Forms'><value>Ctrl+A</value></data>
+  <data name='n' type='System.Int32, mscorlib'><value>3</value></data>
+</root>";
+
+        var doc = DesignerIrBuilder.Build(source);
+        Assert.NotNull(doc);
+        if (!doc!.FullCoverage) return; // refused by the front end is refused too
+        var res = DesignerIrExecutor.Execute(doc, new Form(), Host(resx));
+        Assert.False(res.Ok, statement);
+        Assert.Contains(reason, res.FailureReason);
+    }
+
+    [Fact]
+    public void AResourceCast_ConvertsANumberOfAKnownType_AndGetStringOfAMissingKeyIsNull()
+    {
+        const string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      this.Tag = (long)(int)resources.GetObject(""n"");
+      this.Width = (int)(double)resources.GetObject(""d"");
+      this.Height = (int)(decimal)resources.GetObject(""m"");
+      this.Text = resources.GetString(""absent"");
+    }
+  }
+}";
+        var doc = DesignerIrBuilder.Build(source);
+        Assert.True(doc!.FullCoverage, string.Join(" | ", doc.UnrepresentableReasons));
+        var form = new Form { Text = "Before" };
+        var res = DesignerIrExecutor.Execute(doc, form, Host("<root><data name='n' type='System.Int32, mscorlib'><value>3</value></data>"
+            + "<data name='d' type='System.Double, mscorlib'><value>300.6</value></data>"
+            + "<data name='m' type='System.Decimal, mscorlib'><value>200.6</value></data></root>"));
+
+        Assert.True(res.Ok, res.FailureReason);
+        Assert.Equal(3L, form.Tag);
+        // a floating or decimal value cast to an integer is truncated, as C# does
+        Assert.Equal(300, form.Width);
+        Assert.Equal(200, form.Height);
+        Assert.Equal("", form.Text);
+    }
+
+    [Fact]
+    public void ACultureWithoutTheNeutralResx_ServesItsOwnKeys_AndNoOther()
+    {
+        const string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      this.Text = resources.GetString(""KEY"");
+    }
+  }
+}";
+        var cultureOnly = SafeResxResolver.ParseChain(new[] { null, "<root><data name='existing'><value>localized</value></data></root>" }, allowByteArrays: false);
+        AssemblyIrHost HostOf() => new(Probe, new DesignTimeContainer(), cultureOnly);
+
+        var existing = DesignerIrBuilder.Build(source.Replace("KEY", "existing"))!;
+        var form = new Form();
+        Assert.True(DesignerIrExecutor.Execute(existing, form, HostOf()).Ok);
+        Assert.Equal("localized", form.Text);
+
+        // ResourceManager ends a lookup in the neutral set: without it, a key no culture holds throws.
+        var absent = DesignerIrBuilder.Build(source.Replace("KEY", "absent"))!;
+        Assert.False(DesignerIrExecutor.Execute(absent, new Form(), HostOf()).Ok);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("<root><data")]
+    public void GetString_WithoutAResourceSet_FailsTheSharedExecution(string resx)
+    {
+        const string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      this.Text = resources.GetString(""absent"");
+    }
+  }
+}";
+        var doc = DesignerIrBuilder.Build(source);
+        Assert.True(doc!.FullCoverage, string.Join(" | ", doc.UnrepresentableReasons));
+        var res = DesignerIrExecutor.Execute(doc, new Form(), Host(resx));
+
+        Assert.False(res.Ok);
+        Assert.Contains("no resource set", res.FailureReason);
+    }
+
+    [Fact]
+    public void ApplyResources_WithoutResources_FailsTheSharedExecution()
+    {
+        const string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      resources.ApplyResources(this, ""$this"");
+    }
+  }
+}";
+        var doc = DesignerIrBuilder.Build(source);
+        Assert.True(doc!.FullCoverage, string.Join(" | ", doc.UnrepresentableReasons));
+
+        var none = DesignerIrExecutor.Execute(doc, new Form(), Host(""));
+        Assert.False(none.Ok);
+        Assert.Contains("has no .resx", none.FailureReason);
+        var broken = DesignerIrExecutor.Execute(doc, new Form(), Host("<root><data"));
+        Assert.False(broken.Ok);
+        Assert.Contains("not well formed", broken.FailureReason);
+    }
+
+    [Theory]
+    [InlineData("resources.ApplyResources(objectName: this, value: \"$this\");")]
+    [InlineData("this.Tag = System.Windows.Forms.AnchorStyles.Top<int>;")]
+    [InlineData("this.Location = new System.Drawing.Point(1, 2) { X = 99 };")]
+    public void SyntaxNoPathReplays_IsAGapOfTheSharedFrontEnd(string statement)
+    {
+        string source = @"
+namespace Demo {
+  partial class F : System.Windows.Forms.Form {
+    private void InitializeComponent() {
+      System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(F));
+      STATEMENT
+    }
+  }
+}".Replace("STATEMENT", statement);
+        var doc = DesignerIrBuilder.Build(source);
+
+        Assert.False(doc!.FullCoverage);
+        Assert.Contains(doc.UnrepresentableReasons, r => r.StartsWith(statement, StringComparison.Ordinal));
+    }
 }

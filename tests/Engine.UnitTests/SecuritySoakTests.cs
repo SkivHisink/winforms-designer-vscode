@@ -61,6 +61,8 @@ public sealed class SecuritySoakTests
         public object CreateComponent(Type t, string name, bool withContainer) => Activator.CreateInstance(t)!;
         public object? ResolveResource(string k, bool s) => null;
         public bool WasResourceRefused(string key) => false;
+        public bool HasResource(string key) => false;
+        public bool HasResourceSet => false;
         public bool ApplyResources(object target, string key, out string? error) { error = "no test resources"; return false; }
     }
 

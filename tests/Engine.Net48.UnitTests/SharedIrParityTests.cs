@@ -52,6 +52,8 @@ namespace Demo {
             public object CreateComponent(Type type, string name, bool withContainer) => Activator.CreateInstance(type);
             public object ResolveResource(string key, bool isString) => null;
             public bool WasResourceRefused(string key) => false;
+            public bool HasResource(string key) => false;
+            public bool HasResourceSet => false;
             public bool ApplyResources(object target, string key, out string error) { error = "no test resources"; return false; }
         }
 
@@ -177,6 +179,8 @@ namespace Demo {
             }
             public object ResolveResource(string key, bool isString) => null;
             public bool WasResourceRefused(string key) => false;
+            public bool HasResource(string key) => false;
+            public bool HasResourceSet => false;
             public bool ApplyResources(object target, string key, out string error) { error = "no test resources"; return false; }
         }
 

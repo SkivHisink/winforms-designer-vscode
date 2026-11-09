@@ -495,33 +495,6 @@ namespace WinFormsDesigner.Engine.Net48
             catch { return null; }
         }
 
-        private static string MergedSiblingResxXml(string designerFilePath, string cultureName)
-        {
-            var effectiveData = new Dictionary<string, XmlNode>(StringComparer.Ordinal);
-            foreach (var candidate in ResxCandidates(designerFilePath, cultureName))
-            {
-                var xml = TryReadResxXml(candidate.Path);
-                if (string.IsNullOrEmpty(xml)) continue;
-                var source = new XmlDocument { XmlResolver = null };
-                try { source.LoadXml(xml); }
-                catch { continue; }
-                foreach (XmlNode node in source.GetElementsByTagName("data"))
-                {
-                    var name = node.Attributes?["name"]?.Value;
-                    if (string.IsNullOrEmpty(name)) continue;
-                    effectiveData[name!] = node.CloneNode(true);
-                }
-            }
-
-            if (effectiveData.Count == 0) return "";
-            var merged = new XmlDocument { XmlResolver = null };
-            var root = merged.CreateElement("root");
-            merged.AppendChild(root);
-            foreach (var node in effectiveData.Values)
-                root.AppendChild(merged.ImportNode(node, true));
-            return merged.OuterXml;
-        }
-
         private static string ResxStamp(string designerFilePath, string cultureName)
         {
             var parts = new List<string> { "culture=" + NormalizeDesignerCulture(cultureName) };
@@ -952,9 +925,16 @@ namespace WinFormsDesigner.Engine.Net48
             typeof(ISupportInitialize).Assembly, typeof(object).Assembly,
         };
 
+        /// <summary>The form's resources as the modern engine reads them: each existing .resx of the culture chain overlays
+        /// the ones before it by key. No .resx is no resource set, and a document that is not well formed makes the set
+        /// invalid, so ApplyResources refuses either rather than succeed with nothing applied.</summary>
         private static SafeResxResolver LoadSiblingResx(string designerFilePath, string cultureName)
         {
-            return SafeResxResolver.Parse(MergedSiblingResxXml(designerFilePath, cultureName));
+            // Neutral first; a .resx that does not exist keeps its place as null.
+            var chain = new List<string>();
+            foreach (var candidate in ResxCandidates(designerFilePath, cultureName))
+                chain.Add(TryReadResxXml(candidate.Path));
+            return SafeResxResolver.ParseChain(chain, allowByteArrays: false);
         }
 
         /// <summary>Apply transient tab VIEW STATE so a tab click survives the next interpreted render. Standard

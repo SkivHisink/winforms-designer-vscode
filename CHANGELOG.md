@@ -9,6 +9,85 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-11-09
+
+### Security
+
+- A localized form's `.resx` is read without running anything the file chooses. The modern engine previously handed a
+  typed entry to the framework's resource reader, which resolved the type from the name and assembly the file gives
+  and ran that type's converter: an entry typed as `System.Drawing.Point` from another assembly could run a project
+  type's code when the form was opened. Both engines now serve a typed entry only for a fixed list of framework types,
+  written with the assembly that type comes from, and make its value from the text with that framework type's own
+  converter. `ApplyResources` no longer converts a value through the converter of the property's type either.
+
+### Fixed
+
+- Constant expressions in a designer file take the value and type the C# compiler gives them in the modern engine
+  ([#9](https://github.com/SkivHisink/winforms-designer-vscode/issues/9)). The preview and the check against the
+  project's build fold constants with one implementation, so the value the build confirms is the value shown.
+  The preview now applies these instead of reporting them as unsupported: arithmetic, shift, bitwise, comparison and
+  logical operators, `checked(…)` and `unchecked(…)`, unary `+`, `~` and `!`, and the enum operators. Examples are
+  `100 + 20 * 2`, `1 << 4 | 1`, `unchecked((int)0x80000000)` and `(AnchorStyles)(AnchorStyles.Top + 4)`. Operators
+  are chosen as the compiler chooses them, so `1u + 1` is a `uint`. Conversions keep the compiled value and type at the
+  edges of each numeric range, for NaN, infinity and negative zero, and for decimals: `(decimal)0.1F` is `0.1`. What the
+  compiler rejects (an overflow, a division by zero, an operator that does not apply or is ambiguous) is reported as
+  unrepresentable with the reason. So is a floating value cast in an `unchecked` context to an integral type it does
+  not fit, whose result C# leaves unspecified.
+- A negated floating or decimal value cast to an integral type, as in `(int)-2.6`, is truncated toward zero (`-2`)
+  instead of rounded (`-3`).
+- Localized values of the types Windows Forms marks localizable render in both engines: `PasswordChar` and other
+  `char` values, `LinkArea`, `ShortcutKeys` written as `Ctrl+A`, `BackgroundImageLayout`, `StartPosition`,
+  `TextImageRelation`, `Orientation`, `ImeMode`, `ScrollBars`, `TextAlign` and the other localizable enums. A
+  `((char)(resources.GetObject(…)))` previously set the property to its default value.
+- `ApplyResources` applies a resource only to a property that takes its value as it is, as the compiled form does, and
+  checks every resource of the component before setting any. A resource of another type, such as an untyped `Fill` for
+  `Dock`, is reported as unrepresentable instead of being converted. In both engines, `ApplyResources` of a form without
+  a `.resx` (the compiled form throws) or with a `.resx` that is not well formed (the project does not build) is
+  reported as unrepresentable instead of succeeding with nothing applied. A modern-project byte array resource, which
+  the resource writer stores without a MIME type, is read again, an empty one included.
+- `resources.GetString` of an entry that is not a string, which throws in the compiled form, is reported as
+  unrepresentable in both engines instead of showing empty text, and so is a key that only a culture's `.resx` could
+  hold when the form has no neutral `.resx` (the compiled form throws `MissingManifestResourceException`).
+  `resources.GetObject` given without a cast to a property of another type is reported as unrepresentable, and a
+  resource cast to an integer in the .NET Framework engine, as in `(int)(double)resources.GetObject(…)`, is truncated
+  as C# truncates it instead of rounded.
+- The arguments of `Color.FromArgb`, `Color.FromName`, `Color.FromKnownColor` and of a constructor such as `new Point`
+  or `new Font` select the overload by their types as the compiler does, and that overload is called. A value cast to
+  `object`, as in `FromArgb((object)12, 0, 0)`, is reported as unrepresentable; a constant that fits, such as a
+  character set of `200 + 4` or `FromKnownColor(0)`, is taken.
+- Syntax the preview does not replay is reported as unrepresentable in both engines instead of being dropped: an object
+  initializer (`new Point(1, 2) { X = 99 }` showed 1, 2), named arguments (`new Point(y: 1, x: 2)` showed 1, 2),
+  `ref`/`out`/`in` arguments, and a member or method written with type arguments (`AnchorStyles.Top<int>`). A tree node
+  is built only by a constructor `TreeNode` has, from the arguments written and from nodes built before it; a node built
+  otherwise is reported as unrepresentable instead of being made up.
+- An array takes C#'s rules for its length and type: `new[] { … }` has the type of its elements, never the type of the
+  property it is given to; a length written with elements must be an `int` constant equal to their number; a length
+  cast to `object` or written as a nullable is reported as unrepresentable, and so is an array given to a property of
+  another array type.
+- A constant given to a property only takes the property's type through the conversion the compiler makes implicitly.
+  `1.5` or `1L + 1L` for an `int` property does not compile and is reported as unrepresentable instead of being
+  truncated or converted. `default` assigned to a property leaves it at its default value instead of setting the text
+  `default`.
+- A bare name such as `Top` is no longer read as a member of the property's enum just because the names match. In C#
+  it binds to a member of the form, a local or a `using static` import, so it is reported as unrepresentable instead of
+  guessed.
+- A string the compiler rejects, such as `"\q"`, is no longer folded into a split string with the value the parser
+  recovered.
+- Other statements the compiler rejects are reported as unrepresentable instead of being applied. These include a
+  statement the parser had to recover, such as a missing `)`; `null` for a property of a value type, which previously
+  set the property to its default; a negation or an `|` of a value that is not a constant; and a value cast to
+  `object` given to a property of a value type.
+- A cast of a value read at run time, such as a resource or a value cast to `object`, converts the value as C# does:
+  only by its type. `(string)(object)2` and `(long)(object)2`, which throw in C#, are reported as unrepresentable
+  instead of being converted. A cast to a type that does not resolve is reported as a missing type instead of being
+  ignored. A resource cast to a value type that the resource reader cannot supply is reported as unrepresentable
+  instead of setting the property to the type's default value, and so is a resource whose text makes no value of its
+  type. A cast whose type the property does not take implicitly, such as `Text = (object)"a"`, or a cast between types
+  C# has no conversion between, such as `(string)(Font)null`, is reported as unrepresentable.
+- An enum member written through a receiver that does not resolve is read in the property's own enum only when the
+  receiver is that enum's full name, not when it merely ends with the same name. An enum is taken as the property's
+  enum only when it is that enum, not a different enum with the same full name from another assembly.
+
 ## [2.3.2] - 2026-11-08
 
 ### Fixed
@@ -2706,7 +2785,8 @@ VS Code, backed by a headless .NET 9 rendering/editing engine.
 - Interpreter **allowlists** (construction / static-invocation / static-read) and
   **identifier validation** to keep rendering a crafted `.Designer.cs` safe.
 
-[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.2...HEAD
+[Unreleased]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.3...HEAD
+[2.3.3]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/SkivHisink/winforms-designer-vscode/compare/v2.2.0...v2.3.0

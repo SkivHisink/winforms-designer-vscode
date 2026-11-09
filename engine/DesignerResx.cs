@@ -13,38 +13,44 @@ using System.Xml.Linq;
 namespace WinFormsDesigner.Engine
 {
     /// <summary>
-    /// Safe read-side resolver for sibling WinForms .resx files. It never materializes nodes during load, overlays the
-    /// neutral -> parent culture -> exact culture chain by key, and materializes only a narrow allowlist of values.
+    /// Safe read-side resolver for sibling WinForms .resx files, for the modern engine. It overlays the neutral -> parent
+    /// culture -> exact culture chain by key and serves values only through <see cref="SafeResxResolver"/>: pure XML, a
+    /// fixed registry of trusted types, never a type or converter the input names.
     /// </summary>
     public sealed class ResxResolver
     {
         private const long MaxBytes = 64L * 1024 * 1024;
         private const int MaxNodes = 20000;
         private const int MaxScanNodes = 200000;
-        private const long MaxImagePixels = 4096L * 4096L;
-        private const int MaxImageDimension = 20000;
 
-        private readonly Dictionary<string, ResXDataNode> _nodes = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _binaryKeys = new(StringComparer.Ordinal);
+        private readonly SafeResxResolver _core;
 
-        private ResxResolver() { }
+        private ResxResolver(SafeResxResolver core) => _core = core;
 
         public static ResxResolver? TryLoadForDesigner(string designerFilePath)
             => TryLoadForDesigner(designerFilePath, DesignerCultureSelection.GetCultureName(designerFilePath));
 
+        /// <summary>The form's resources, or null when it has no .resx (or one that cannot be read within the limits).
+        /// An existing .resx without entries is an empty resource set, not a missing one.</summary>
         public static ResxResolver? TryLoadForDesigner(string designerFilePath, string? cultureName)
         {
             try
             {
-                var r = new ResxResolver();
+                // Neutral first; a culture without its own .resx keeps its place as null, so the core knows whether the
+                // neutral set a lookup ends in exists.
+                var chain = new List<string?>();
+                bool any = false;
                 foreach (string path in ResxChainFor(designerFilePath, cultureName))
                 {
-                    if (!File.Exists(path)) continue;
+                    if (!File.Exists(path)) { chain.Add(null); continue; }
                     if (new FileInfo(path).Length > MaxBytes) return null;
-                    r.LoadIntoOverlay(path);
-                    if (r._nodes.Count >= MaxNodes) break;
+                    chain.Add(File.ReadAllText(path));
+                    any = true;
                 }
-                return r._nodes.Count > 0 ? r : null;
+                if (!any) return null;
+                var core = SafeResxResolver.ParseChain(chain, allowByteArrays: true, MaxNodes);
+                // A .resx that is not well formed is no resource set: nothing is read from it, and nothing applied.
+                return core.IsValid ? new ResxResolver(core) : null;
             }
             catch { return null; }
         }
@@ -107,55 +113,8 @@ namespace WinFormsDesigner.Engine
             catch { return null; }
         }
 
-        private static bool IsUnrenderableMeta(string? mimetype, string? type)
-        {
-            if (mimetype != null && (mimetype.IndexOf("binary.base64", StringComparison.OrdinalIgnoreCase) >= 0
-                                  || mimetype.IndexOf("soap.base64", StringComparison.OrdinalIgnoreCase) >= 0)) return true;
-            if (type == null) return false;
-            string shortName = type.Split(',')[0].Trim();
-            if (shortName == "System.Resources.ResXFileRef") return true;
-            return !SafeTypes.Contains(shortName) && !IsSafeEnum(shortName);
-        }
-
-        private void LoadIntoOverlay(string path)
-        {
-            var binaryKeys = ScanBinaryKeys(path);
-            using var reader = new ResXResourceReader(path) { UseResXDataNodes = true };
-            foreach (DictionaryEntry e in reader)
-            {
-                if (e.Key is string k && e.Value is ResXDataNode node)
-                {
-                    _nodes[k] = node;
-                    if (binaryKeys.Contains(k)) _binaryKeys.Add(k);
-                    else _binaryKeys.Remove(k);
-                }
-                if (_nodes.Count >= MaxNodes) break;
-            }
-        }
-
-        private static HashSet<string> ScanBinaryKeys(string path)
-        {
-            var keys = new HashSet<string>(StringComparer.Ordinal);
-            try
-            {
-                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
-                using var xr = XmlReader.Create(path, settings);
-                var doc = XDocument.Load(xr);
-                foreach (var data in doc.Descendants().Where(e => e.Name.LocalName == "data"))
-                {
-                    string? name = (string?)data.Attribute("name");
-                    string? mime = (string?)data.Attribute("mimetype");
-                    if (name != null && mime != null &&
-                        (mime.IndexOf("binary.base64", StringComparison.OrdinalIgnoreCase) >= 0
-                         || mime.IndexOf("soap.base64", StringComparison.OrdinalIgnoreCase) >= 0))
-                    {
-                        keys.Add(name);
-                    }
-                }
-            }
-            catch { }
-            return keys;
-        }
+        private static bool IsUnrenderableMeta(string? mimetype, string? type) =>
+            !SafeResxResolver.IsServable(mimetype, type, allowByteArrays: true);
 
         private static string? ResxPathFor(string designerFilePath)
         {
@@ -190,141 +149,14 @@ namespace WinFormsDesigner.Engine
             }
         }
 
-        private static readonly HashSet<string> SafeTypes = new(StringComparer.Ordinal)
-        {
-            "System.Drawing.Bitmap",
-            "System.Drawing.Image",
-            "System.Drawing.Icon",
-            "System.String",
-            "System.Byte[]",
-            "System.Drawing.Color",
-            "System.Drawing.Point",
-            "System.Drawing.Size",
-            "System.Drawing.SizeF",
-            "System.Drawing.Rectangle",
-            "System.Drawing.Font",
-            "System.Boolean",
-            "System.Byte",
-            "System.SByte",
-            "System.Int16",
-            "System.UInt16",
-            "System.Int32",
-            "System.UInt32",
-            "System.Int64",
-            "System.UInt64",
-            "System.Single",
-            "System.Double",
-            "System.Decimal",
-            "System.Windows.Forms.Padding",
-            "System.Windows.Forms.RightToLeft",
-            "System.Windows.Forms.AnchorStyles",
-            "System.Windows.Forms.DockStyle",
-            "System.Windows.Forms.FlatStyle",
-            "System.Drawing.ContentAlignment",
-        };
+        /// <summary>What `resources.GetObject(name)` (or, with <paramref name="asString"/>, `GetString`) finds.</summary>
+        public ResourceLookup Lookup(string name, bool asString, out object? value, out string? error)
+            => _core.Lookup(name, asString, out value, out error);
 
-        public object? GetObject(string name) => TryGetObject(name, out var value) ? value : null;
+        public object? GetObject(string name) => _core.Resolve(name, isString: false);
 
-        private bool TryGetObject(string name, out object? value)
-        {
-            value = null;
-            if (!_nodes.TryGetValue(name, out var node)) return false;
-            return TryMaterialize(name, node, out value);
-        }
+        public string? GetString(string name) => _core.Resolve(name, isString: true) as string;
 
-        private bool TryMaterialize(string name, ResXDataNode node, out object? value)
-        {
-            value = null;
-            if (_binaryKeys.Contains(name)) return false;
-            try
-            {
-                if (node.FileRef != null) return false;
-                string? typeName = node.GetValueTypeName((ITypeResolutionService?)null);
-                if (typeName == null) return false;
-                string shortName = typeName.Split(',')[0].Trim();
-                if (!SafeTypes.Contains(shortName) && !IsSafeEnum(shortName)) return false;
-                value = node.GetValue((ITypeResolutionService?)null);
-                if (value is System.Drawing.Image img
-                    && ((long)img.Width * img.Height > MaxImagePixels || img.Width > MaxImageDimension || img.Height > MaxImageDimension))
-                {
-                    img.Dispose();
-                    value = null;
-                    return false;
-                }
-                if (value is System.Drawing.Icon ico
-                    && ((long)ico.Width * ico.Height > MaxImagePixels || ico.Width > MaxImageDimension || ico.Height > MaxImageDimension))
-                {
-                    ico.Dispose();
-                    value = null;
-                    return false;
-                }
-                return true;
-            }
-            catch { value = null; return false; }
-        }
-
-        private static bool IsSafeEnum(string shortName) =>
-            shortName == "System.Windows.Forms.RightToLeft"
-            || shortName == "System.Windows.Forms.AnchorStyles"
-            || shortName == "System.Windows.Forms.DockStyle"
-            || shortName == "System.Windows.Forms.FlatStyle"
-            || shortName == "System.Drawing.ContentAlignment";
-
-        public string? GetString(string name) => GetObject(name) as string;
-
-        public bool ApplyResources(object target, string key)
-        {
-            string prefix = key + ".";
-            var pending = new List<(PropertyDescriptor pd, object? value)>();
-            foreach (var kv in _nodes.Where(kv => kv.Key.StartsWith(prefix, StringComparison.Ordinal)))
-            {
-                string prop = kv.Key.Substring(prefix.Length);
-                if (prop.Length == 0 || prop.IndexOf('.') >= 0) return false;
-                if (!TryMaterialize(kv.Key, kv.Value, out var value)) return false;
-                var pd = TypeDescriptor.GetProperties(target)[prop];
-                if (pd == null || pd.IsReadOnly) return false;
-                if (!TryCoerceForProperty(value, pd.PropertyType, out var coerced)) return false;
-                pending.Add((pd, coerced));
-            }
-
-            foreach (var item in pending)
-            {
-                try { item.pd.SetValue(target, item.value); }
-                catch { return false; }
-            }
-            return true;
-        }
-
-        private static bool TryCoerceForProperty(object? value, Type propertyType, out object? coerced)
-        {
-            coerced = value;
-            if (value == null) return !propertyType.IsValueType || Nullable.GetUnderlyingType(propertyType) != null;
-            if (propertyType.IsInstanceOfType(value)) return true;
-            try
-            {
-                var target = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
-                if (value is string s)
-                {
-                    if (target.IsEnum)
-                    {
-                        coerced = Enum.Parse(target, s);
-                        return true;
-                    }
-                    var converter = TypeDescriptor.GetConverter(target);
-                    if (converter.CanConvertFrom(typeof(string)))
-                    {
-                        coerced = converter.ConvertFromInvariantString(s);
-                        return true;
-                    }
-                }
-                if (value is IConvertible)
-                {
-                    coerced = Convert.ChangeType(value, target, CultureInfo.InvariantCulture);
-                    return true;
-                }
-            }
-            catch { return false; }
-            return false;
-        }
+        public bool ApplyResources(object target, string key) => _core.ApplyResources(target, key, out _);
     }
 }

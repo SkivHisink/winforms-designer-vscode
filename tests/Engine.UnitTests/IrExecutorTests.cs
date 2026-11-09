@@ -48,6 +48,8 @@ public sealed class IrExecutorTests
 
         public object? ResolveResource(string key, bool isString) => null;
         public bool WasResourceRefused(string key) => false;
+        public bool HasResource(string key) => false;
+        public bool HasResourceSet => false;
         public bool ApplyResources(object target, string key, out string? error) { error = "no test resources"; return false; }
     }
 
@@ -67,6 +69,8 @@ public sealed class IrExecutorTests
         }
         public object? ResolveResource(string key, bool isString) => null;
         public bool WasResourceRefused(string key) => false;
+        public bool HasResource(string key) => false;
+        public bool HasResourceSet => false;
         public bool ApplyResources(object target, string key, out string? error) { error = "no test resources"; return false; }
     }
 
