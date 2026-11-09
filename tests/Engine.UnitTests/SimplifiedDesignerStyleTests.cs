@@ -1055,6 +1055,448 @@ public sealed class SimplifiedDesignerStyleTests
             && u.Contains(reason, StringComparison.Ordinal));
     }
 
+    // What such a project file pulls in (an imported props file's Using items, a linked shared source's global usings)
+    // reaches the compiler without any file of the folder showing it. The build's PDB records the usings it compiled
+    // InitializeComponent under; the build's IL still confirms every statement.
+    private const string ImportingProject = """
+        <Project Sdk="Microsoft.NET.Sdk">
+          <Import Project="..\Shared\App.props" />
+          <ItemGroup><Compile Include="..\Shared\LogBox.cs" /></ItemGroup>
+        </Project>
+        """;
+
+    private const string SharedUsings = "global using System.Drawing;\nglobal using System.Windows.Forms;\nglobal using Shared;\n"
+        + "namespace Shared { public class LogBox : System.Windows.Forms.TextBox { } }\n";
+
+    private const string ImportingDesigner = """
+        namespace WfdTest;
+        partial class Form1 {
+            private void InitializeComponent() {
+                button1 = new Button();
+                logBox1 = new LogBox();
+                SuspendLayout();
+                button1.Size = new Size(120, 30);
+                logBox1.Location = new Point(0, 40);
+                Controls.Add(logBox1);
+                Controls.Add(button1);
+                ResumeLayout(false);
+            }
+            private Button button1;
+            private LogBox logBox1;
+        }
+        """;
+
+    [Theory]
+    [InlineData("", "")]
+    // the build records the file's own usings too; the same namespace twice is one import, not an ambiguity
+    [InlineData("using System.Windows.Forms;\nusing System.Drawing;\n", "")]
+    // a using static of a top-level type is read from the build's type reference
+    [InlineData("", "global using static System.Math;\n")]
+    public void AProjectThatImportsItsSettings_BindsThroughTheUsingsItsBuildRecords(string fileUsings, string sharedUsings)
+    {
+        string designer = fileUsings + ImportingDesigner;
+        using var project = new TempProject(ImportingProject);
+        project.Build(designer, sharedUsings + SharedUsings);
+        var layout = project.Render(designer);
+
+        Assert.Empty(layout.Unrepresentable);
+        Assert.Equal(120, Assert.Single(layout.Controls, c => c.Id == "button1").Width);
+        Assert.Single(layout.Controls, c => c.Id == "logBox1");
+    }
+
+    [Fact]
+    public void AProjectThatImportsItsSettings_WithoutAPdb_IsRefused()
+    {
+        using var project = new TempProject(ImportingProject);
+        project.Build(ImportingDesigner, SharedUsings, pdb: false);
+        var layout = project.Render(ImportingDesigner);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("unresolved type Button", StringComparison.Ordinal)
+            && u.Contains("imports MSBuild files", StringComparison.Ordinal) && u.Contains("no portable PDB", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AProjectThatImportsItsSettings_NotBuilt_KeepsItsSourcesUnknown()
+    {
+        // Without the build, a part of the form the project file links in is unseen: a bare layout call may be a member
+        // it declares, so it is not replayed as Control's.
+        const string designer = """
+            namespace WfdTest;
+            partial class Form1 {
+                private void InitializeComponent() {
+                    this.button1 = new System.Windows.Forms.Button();
+                    SuspendLayout();
+                    this.button1.Size = new System.Drawing.Size(120, 30);
+                    this.Controls.Add(this.button1);
+                }
+                private System.Windows.Forms.Button button1;
+            }
+            """;
+        using var project = new TempProject(ImportingProject);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal));
+        Assert.Equal(120, Assert.Single(layout.Controls, c => c.Id == "button1").Width);
+
+        using var plain = new TempProject(PlainProject);
+        Assert.DoesNotContain(plain.Render(designer).Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal));
+    }
+
+    // The build may spell the project folder in another case than the editor does (VS Code writes `d:\`, MSBuild `D:\`).
+    [Fact]
+    public void AProjectThatImportsItsSettings_OpenedThroughAPathInAnotherCase_BindsThroughItsBuild()
+    {
+        using var project = new TempProject(ImportingProject);
+        project.Build(ImportingDesigner, SharedUsings);
+        string designer = Path.Combine(project.Dir.ToUpperInvariant(), "Form1.Designer.cs");
+        var layout = Sta.Invoke(() => DesignerRenderer.RenderWithLayout(designer, sourceText: ImportingDesigner));
+
+        Assert.Empty(layout.Unrepresentable);
+        Assert.Equal(120, Assert.Single(layout.Controls, c => c.Id == "button1").Width);
+    }
+
+    // A source of the folder is current, whatever the build saw: a global alias added since the build is in force.
+    [Fact]
+    public void AProjectThatImportsItsSettings_AGlobalAliasAddedSinceTheBuild_IsRefused()
+    {
+        string designer = "using System.Windows.Forms;\n" + ImportingDesigner;
+        using var project = new TempProject(ImportingProject);
+        project.Build(designer, SharedUsings);
+        File.WriteAllText(Path.Combine(project.Dir, "Aliases.cs"), "global using Button = System.Windows.Forms.CheckBox;\n");
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("a using alias named Button", StringComparison.Ordinal));
+        Assert.DoesNotContain(layout.Controls, c => c.Id == "button1");
+    }
+
+    // The designer file's own usings are its buffer's: the build's record of them is not taken for a global using.
+    [Fact]
+    public void AProjectThatImportsItsSettings_UsingsRemovedFromTheDesignerSinceTheBuild_AreNotTaken()
+    {
+        const string body = """
+            namespace WfdTest;
+            partial class Form1 {
+                private void InitializeComponent() {
+                    button1 = new Button();
+                    button1.Size = new Size(120, 30);
+                    Controls.Add(button1);
+                }
+                private Button button1;
+            }
+            """;
+        const string withUsings = "using System.Windows.Forms;\nusing System.Drawing;\n" + body;
+        using var project = new TempProject(ImportingProject, ("Program.cs", ProgramWithAMethod));
+        project.Build(withUsings, "global using Shared;\nnamespace Shared { public class LogBox : System.Windows.Forms.TextBox { } }\n");
+
+        var current = project.Render(withUsings);
+        Assert.Empty(current.Unrepresentable);
+        Assert.Equal(120, Assert.Single(current.Controls, c => c.Id == "button1").Width);
+
+        var removed = project.Render(body);
+        Assert.Contains(removed.Unrepresentable, u => u.Contains("unresolved type Button", StringComparison.Ordinal));
+        Assert.DoesNotContain(removed.Controls, c => c.Id == "button1");
+    }
+
+    // Without a file the build compiled as it is now, its global usings cannot be told from a file's own.
+    [Fact]
+    public void AProjectThatImportsItsSettings_WithEveryFileChangedSinceTheBuild_IsRefused()
+    {
+        using var project = new TempProject(ImportingProject);
+        project.Build(ImportingDesigner, SharedUsings);
+        var layout = project.Render(ImportingDesigner.Replace("120, 30", "121, 30"));
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("unresolved type Button", StringComparison.Ordinal)
+            && u.Contains("unchanged since that build", StringComparison.Ordinal));
+    }
+
+    // A part of the form linked in from outside the folder is seen only through the build, and the build erases a
+    // partial method without a body together with its calls.
+    [Fact]
+    public void AProjectThatImportsItsSettings_ABodilessPartialLayoutMethodOfALinkedPart_IsNotReplayed()
+    {
+        using var project = new TempProject(ImportingProject);
+        project.Build(ImportingDesigner, SharedUsings + "namespace WfdTest { partial class Form1 { partial void SuspendLayout(); } }\n");
+        var layout = project.Render(ImportingDesigner);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal));
+        Assert.DoesNotContain(layout.Unrepresentable, u => u.Contains("ResumeLayout", StringComparison.Ordinal));
+        Assert.Equal(120, Assert.Single(layout.Controls, c => c.Id == "button1").Width);
+    }
+
+    // `base.SuspendLayout()` has no pairing key but compiles to the piece the erased bare call would pair with.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AProjectThatImportsItsSettings_AnErasedBareLayoutCall_DoesNotTakeTheBuildOfAnotherStatement(bool optimized)
+    {
+        string designer = ImportingDesigner.Replace("ResumeLayout(false);", "base.SuspendLayout();\n        ResumeLayout(false);");
+        using var project = new TempProject(ImportingProject);
+        project.Build(designer, SharedUsings + "namespace WfdTest { partial class Form1 { partial void SuspendLayout(); } }\n", optimized);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal)
+            && !u.Contains("base.", StringComparison.Ordinal));
+    }
+
+    // A statement whose receiver the pairing reads differently from the IL (an inherited field the form's own field
+    // hides) must not lend its call either: the build is asked how often it calls Control's method.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AProjectThatImportsItsSettings_AnErasedBareLayoutCall_DoesNotTakeTheCallOfAnInheritedField(bool optimized)
+    {
+        string designer = ImportingDesigner.Replace("ResumeLayout(false);",
+            "((global::WfdTest.BaseForm)this).button1.SuspendLayout();\n        ResumeLayout(false);");
+        using var project = new TempProject(ImportingProject, ("Form1.cs", "namespace WfdTest;\npublic partial class Form1 : BaseForm { }\n"));
+        project.Build(designer, SharedUsings + """
+            namespace WfdTest
+            {
+                public class LayoutSink { public void SuspendLayout() { } }
+                public class BaseForm : System.Windows.Forms.Form { public LayoutSink button1 = new LayoutSink(); }
+                partial class Form1 { partial void SuspendLayout(); }
+            }
+            """, optimized);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal)
+            && !u.Contains("button1", StringComparison.Ordinal));
+    }
+
+    private const string ContainerDesigner = """
+        namespace WfdTest;
+        partial class Form1 {
+            private void InitializeComponent() {
+                button1 = new Button();
+                panel1 = new Panel();
+                panel1.SuspendLayout();
+                SuspendLayout();
+                button1.Size = new Size(120, 30);
+                panel1.Controls.Add(button1);
+                Controls.Add(panel1);
+                panel1.ResumeLayout(false);
+                ResumeLayout(false);
+                PerformLayout();
+            }
+            private Button button1;
+            private Panel panel1;
+        }
+        """;
+
+    // What Visual Studio writes for a form with a container renders in such a project, in either build.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AProjectThatImportsItsSettings_AFormWithAContainer_ReplaysItsLayoutCalls(bool optimized)
+    {
+        using var project = new TempProject(ImportingProject);
+        project.Build(ContainerDesigner, SharedUsings, optimized);
+        var layout = project.Render(ContainerDesigner);
+
+        Assert.Empty(layout.Unrepresentable);
+        Assert.Equal(120, Assert.Single(layout.Controls, c => c.Id == "button1").Width);
+    }
+
+    // The layout calls of a container removed since the build are not the form's: they cannot vouch for its bare calls.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AProjectThatImportsItsSettings_AContainerRemovedSinceTheBuild_DoesNotVouchForErasedBareCalls(bool optimized)
+    {
+        string withoutPanel = string.Join("\n", ContainerDesigner.Split('\n').Where(l => !l.Contains("panel1", StringComparison.Ordinal)));
+        using var project = new TempProject(ImportingProject, ("Program.cs", ProgramWithAMethod));
+        project.Build(ContainerDesigner, SharedUsings
+            + "namespace WfdTest { partial class Form1 { partial void SuspendLayout(); partial void ResumeLayout(bool performLayout); } }\n",
+            optimized);
+        var layout = project.Render(withoutPanel);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal));
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("ResumeLayout", StringComparison.Ordinal));
+    }
+
+    // A late `base.SuspendLayout()` removed since the build leaves its call where the erased early bare call stood in
+    // neither version: the pieces paired with the statements are no longer in the statements' order.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AProjectThatImportsItsSettings_ALateBaseCallRemovedSinceTheBuild_DoesNotVouchForAnErasedBareCall(bool optimized)
+    {
+        string built = ImportingDesigner.Replace("ResumeLayout(false);", "base.SuspendLayout();\n        ResumeLayout(false);");
+        using var project = new TempProject(ImportingProject, ("Program.cs", ProgramWithAMethod));
+        project.Build(built, SharedUsings + "namespace WfdTest { partial class Form1 { partial void SuspendLayout(); } }\n", optimized);
+        var layout = project.Render(ImportingDesigner);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal));
+    }
+
+    // An optimized build may load a local's value straight from `ldarg.0`: a call through a local of the form is not
+    // told from one on the form itself.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AProjectThatImportsItsSettings_ALayoutCallThroughALocal_DoesNotVouchForAnErasedBareCall(bool optimized)
+    {
+        string designer = ImportingDesigner.Replace("ResumeLayout(false);",
+            "System.Windows.Forms.Control self = this;\n        self.SuspendLayout();\n        ResumeLayout(false);");
+        using var project = new TempProject(ImportingProject);
+        project.Build(designer, SharedUsings + "namespace WfdTest { partial class Form1 { partial void SuspendLayout(); } }\n", optimized);
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal)
+            && !u.Contains("self", StringComparison.Ordinal));
+    }
+
+    // The build may compile code the designer's parse leaves under an inactive #if: the invocations counted would not
+    // be the ones the build compiled.
+    [Fact]
+    public void AProjectThatImportsItsSettings_ABareLayoutCallInADesignerWithAnInactiveIf_IsNotReplayed()
+    {
+        string designer = ImportingDesigner.Replace("ResumeLayout(false);",
+            "#if BUILD_DONOR\n        base.SuspendLayout();\n#endif\n        ResumeLayout(false);");
+        using var project = new TempProject(ImportingProject, ("Program.cs", ProgramWithAMethod));
+        project.Build(designer, SharedUsings + "namespace WfdTest { partial class Form1 { partial void SuspendLayout(); } }\n",
+            symbols: new[] { "BUILD_DONOR" });
+        var layout = project.Render(designer);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal)
+            && !u.Contains("base.", StringComparison.Ordinal));
+    }
+
+    // A file unchanged since the build tells the global usings apart whatever its types are named in metadata.
+    [Theory]
+    [InlineData("using System;\nfile class Witness { public static void M() { } }\n")]
+    [InlineData("namespace @namespace { static class W { static void M() { } } }\n")]
+    [InlineData("namespace N\\u0041 { static class W\\u0041 { static void M() { } } }\n")]
+    // its own usings spelled in any way the compiler reads as the same name
+    [InlineData("using System.@Text;\nstatic class Witness { public static void M() { } }\n")]
+    [InlineData("using System.\\u0054ext;\nstatic class Witness { public static void M() { } }\n")]
+    [InlineData("using System /* comment */ . Text;\nstatic class Witness { public static void M() { } }\n")]
+    [InlineData("using global::System.Text;\nusing static System.@Math;\nstatic class Witness { public static void M() { } }\n")]
+    public void AProjectThatImportsItsSettings_AnUnchangedFileOfAnyDeclaration_TellsTheGlobalUsingsApart(string witness)
+    {
+        using var project = new TempProject(ImportingProject, ("Witness.cs", witness));
+        project.Build(NoLayoutCallsDesigner, SharedUsings);
+        var layout = project.Render(NoLayoutCallsDesigner + "// edited since the build\n");
+
+        Assert.Empty(layout.Unrepresentable);
+        Assert.Equal(120, Assert.Single(layout.Controls, c => c.Id == "button1").Width);
+    }
+
+    // A proof is made for one form's InitializeComponent: it says nothing of another form of the same build.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AProjectThatImportsItsSettings_TheProofOfOneForm_DoesNotVouchForAnother(bool form1First)
+    {
+        string form2 = ImportingDesigner.Replace("partial class Form1", "partial class Form2");
+        using var project = new TempProject(ImportingProject,
+            ("Form2.cs", "namespace WfdTest;\npublic partial class Form2 : System.Windows.Forms.Form { }\n"), ("Form2.Designer.cs", form2));
+        project.Build(ImportingDesigner, SharedUsings + "namespace WfdTest { partial class Form2 { partial void SuspendLayout(); } }\n");
+
+        RenderLayoutResult one, two;
+        if (form1First)
+        {
+            one = project.Render(ImportingDesigner);
+            two = project.Render(form2, "Form2.Designer.cs");
+        }
+        else
+        {
+            two = project.Render(form2, "Form2.Designer.cs");
+            one = project.Render(ImportingDesigner);
+        }
+        Assert.DoesNotContain(one.Unrepresentable, u => u.Contains("Layout", StringComparison.Ordinal));
+        Assert.Contains(two.Unrepresentable, u => u.Contains("SuspendLayout", StringComparison.Ordinal));
+    }
+
+    private const string NoLayoutCallsDesigner = """
+        namespace WfdTest;
+        partial class Form1 {
+            private void InitializeComponent() {
+                button1 = new Button();
+                button1.Size = new Size(120, 30);
+                Controls.Add(button1);
+            }
+            private Button button1;
+        }
+        """;
+
+    // The bare layout calls are proven on the build's own text, so edits since the build, and an optimized build that
+    // keeps a resource manager on the stack across statements, keep them.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AProjectThatImportsItsSettings_ALocalizedForm_KeepsItsLayoutCallsAcrossEdits(bool optimized)
+    {
+        const string designer = """
+            namespace WfdTest;
+            partial class Form1 {
+                private void InitializeComponent() {
+                    System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(global::WfdTest.Form1));
+                    button1 = new System.Windows.Forms.Button();
+                    SuspendLayout();
+                    button1.Size = new System.Drawing.Size(120, 30);
+                    button1.Name = "button1";
+                    resources.ApplyResources(button1, "button1");
+                    Controls.Add(button1);
+                    resources.ApplyResources(this, "$this");
+                    ResumeLayout(false);
+                    PerformLayout();
+                }
+                private System.Windows.Forms.Button button1;
+            }
+            """;
+        using var project = new TempProject(ImportingProject, ("Program.cs", ProgramWithAMethod),
+            ("Form1.resx", "<root><data name=\"button1.Text\"><value>OK</value></data><data name=\"$this.Text\"><value>Form</value></data></root>"));
+        project.Build(designer, SharedUsings, optimized);
+
+        var built = project.Render(designer);
+        Assert.Empty(built.Unrepresentable);
+        var edited = project.Render(designer.Replace("button1.Name = \"button1\";", "button1.Name = \"button1\";\n            button1.TabIndex = 3;"));
+        Assert.DoesNotContain(edited.Unrepresentable, u => u.Contains("Layout", StringComparison.Ordinal));
+        Assert.Equal(120, Assert.Single(edited.Controls, c => c.Id == "button1").Width);
+    }
+
+    // A #line in a linked source attributes its methods, under its own file scope, to a file of the project: that file
+    // does not tell the global usings apart, since its text declares none of those methods' types.
+    [Fact]
+    public void AProjectThatImportsItsSettings_AFileALineDirectiveNamesElsewhere_IsNoWitness()
+    {
+        const string designer = """
+            using System.Windows.Forms;
+            using System.Drawing;
+            namespace WfdTest;
+            partial class Form1 {
+                private void InitializeComponent() {
+                    button1 = new Button();
+                    button1.Size = new Size(120, 30);
+                    Controls.Add(button1);
+                }
+                private Button button1;
+            }
+            """;
+        using var project = new TempProject(ImportingProject, ("Witness.cs", "// no declarations\n"));
+        string linked = "using Noise;\n#line 1 \"" + Path.Combine(project.Dir, "Witness.cs") + "\"\n"
+            + "namespace Generated { static class Extra { public static void M() { } } }\n"
+            + "namespace Noise { public class Button : System.Windows.Forms.Button { } }\n";
+        project.Build(designer, linked);
+        var layout = project.Render(designer);
+
+        Assert.Empty(layout.Unrepresentable);
+        Assert.Equal(120, Assert.Single(layout.Controls, c => c.Id == "button1").Width);
+    }
+
+    private const string ProgramWithAMethod = "namespace WfdTest { static class Program { static void Main() { } } }\n";
+
+    [Fact]
+    public void AnAliasAnImportedSourceDeclares_IsRefused()
+    {
+        using var project = new TempProject(ImportingProject);
+        project.Build(ImportingDesigner, "global using Button = System.Windows.Forms.CheckBox;\n" + SharedUsings);
+        var layout = project.Render(ImportingDesigner);
+
+        Assert.Contains(layout.Unrepresentable, u => u.Contains("a using alias named Button", StringComparison.Ordinal));
+        Assert.DoesNotContain(layout.Controls, c => c.Id == "button1");
+    }
+
     [Theory]
     // a comment between `global` and `using` is still a global using
     [InlineData("GlobalUsings.cs", "global /* shared */ using Button = System.Windows.Forms.CheckBox;\n")]
@@ -1532,17 +1974,28 @@ public sealed class SimplifiedDesignerStyleTests
         /// left out) with <paramref name="designerSource"/> as Form1.Designer.cs — plus <paramref name="unseenSource"/>,
         /// which stands for what a package or a source generator adds without any file in the project showing it.
         /// The assembly goes where the engine's build-output search finds it.</summary>
-        public void Build(string designerSource, string? unseenSource = null, bool optimized = false)
+        public void Build(string designerSource, string? unseenSource = null, bool optimized = false, bool pdb = true,
+            string[]? symbols = null)
         {
-            var trees = new List<SyntaxTree> { CSharpSyntaxTree.ParseText(designerSource, path: "Form1.Designer.cs") };
+            // Read as the compiler reads them: the file's bytes, with their SHA-256 in the PDB.
+            var options = CSharpParseOptions.Default.WithPreprocessorSymbols(symbols ?? Array.Empty<string>());
+            SyntaxTree FromDisk(string file)
+            {
+                using var stream = File.OpenRead(file);
+                return CSharpSyntaxTree.ParseText(Microsoft.CodeAnalysis.Text.SourceText.From(stream,
+                    checksumAlgorithm: Microsoft.CodeAnalysis.Text.SourceHashAlgorithm.Sha256), options, path: file);
+            }
+            string designerPath = Path.Combine(Dir, "Form1.Designer.cs");
+            File.WriteAllText(designerPath, designerSource);
+            var trees = new List<SyntaxTree> { FromDisk(designerPath) };
             foreach (string file in Directory.EnumerateFiles(Dir, "*.cs", SearchOption.AllDirectories))
             {
                 string? folder = Path.GetDirectoryName(file);
                 if (folder != Dir && Directory.EnumerateFiles(folder!, "*.csproj").Any()) continue;
                 if (Path.GetFileName(file) == "Form1.Designer.cs") continue;
-                trees.Add(CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file));
+                trees.Add(FromDisk(file));
             }
-            if (unseenSource != null) trees.Add(CSharpSyntaxTree.ParseText(unseenSource, path: "Unseen.g.cs"));
+            if (unseenSource != null) trees.Add(CSharpSyntaxTree.ParseText(unseenSource, options, encoding: System.Text.Encoding.UTF8, path: "Unseen.g.cs"));
             var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
                 .Split(Path.PathSeparator).Select(p => MetadataReference.CreateFromFile(p));
             var compilation = CSharpCompilation.Create("WfdTest", trees, references,
@@ -1550,8 +2003,12 @@ public sealed class SimplifiedDesignerStyleTests
                     optimizationLevel: optimized ? OptimizationLevel.Release : OptimizationLevel.Debug));
             string output = Path.Combine(Dir, "bin", "Debug", "net10.0-windows", "WfdTest.dll");
             Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+            string pdbPath = Path.ChangeExtension(output, ".pdb");
             using var stream = File.Create(output);
-            var emitted = compilation.Emit(stream);
+            using var pdbStream = pdb ? File.Create(pdbPath) : null;
+            var emitted = compilation.Emit(stream, pdbStream, options: pdb
+                ? new Microsoft.CodeAnalysis.Emit.EmitOptions(debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.PortablePdb, pdbFilePath: pdbPath)
+                : null);
             Assert.True(emitted.Success, string.Join(Environment.NewLine,
                 emitted.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)));
         }

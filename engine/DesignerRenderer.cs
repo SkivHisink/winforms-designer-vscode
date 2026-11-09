@@ -129,33 +129,15 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>Capture the whole root control to a PNG (S1/S4 fast-path) — shared by full-frame render
-        /// (<see cref="RenderDetailed"/>) and the combined render+layout (<see cref="RenderWithLayout"/>).</summary>
+        /// (<see cref="RenderDetailed"/>) and the combined render+layout (<see cref="RenderWithLayout"/>). A high-DPI
+        /// scale repeats each pixel of the capture (<see cref="CapturePixels"/>); the tree is never rescaled.</summary>
         private static byte[] CaptureRootPng(Control root, int w, int h, int scale = 1)
         {
             PrepareForDesignSurfaceCapture(root);
-            if (scale > 1)
-            {
-                // High-DPI capture: scale the control tree UP by an integer factor so text and metrics are drawn at the
-                // higher resolution (crisp) — a plain DrawToBitmap into a bigger bitmap would only upscale (blurry). Scale
-                // mutates the tree, so restore it in finally; an integer factor keeps the up/down scaling exactly reversible.
-                root.Scale(new SizeF(scale, scale));
-                try
-                {
-                    using var big = new Bitmap(w * scale, h * scale, PixelFormat.Format32bppArgb);
-                    root.DrawToBitmap(big, new Rectangle(0, 0, w * scale, h * scale));
-                    OverlayProgressBarState(root, big);
-                    using var msb = new MemoryStream();
-                    big.Save(msb, ImageFormat.Png);
-                    return msb.ToArray();
-                }
-                finally { root.Scale(new SizeF(1f / scale, 1f / scale)); }
-            }
             using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             root.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
             OverlayProgressBarState(root, bmp);
-            using var ms = new MemoryStream();
-            bmp.Save(ms, ImageFormat.Png);
-            return ms.ToArray();
+            return CapturePixels.EncodePng(bmp, scale);
         }
 
         /// <summary>The live Visual Studio designer does not hand keyboard focus to a child merely because it is the
@@ -204,49 +186,17 @@ namespace WinFormsDesigner.Engine
             // backing store using the current physical/logical ratio, exactly as it does for the full-frame PNG.
             var (x, y) = ComputeWindowOffset(ctrl, root);
             PrepareForDesignSurfaceCapture(root);
-            if (scale > 1)
-            {
-                // Retained dirty patches are restricted to a geometry-stable leaf. Scaling the entire 300-control
-                // root just to repaint this one leaf is O(N) and defeats the dirty-region budget; scale only the
-                // invalidated control, then restore its exact logical bounds.
-                Rectangle logicalBounds = ctrl.Bounds;
-                Padding logicalMargin = ctrl.Margin;
-                Padding logicalPadding = ctrl.Padding;
-                Size logicalMinimumSize = ctrl.MinimumSize;
-                Size logicalMaximumSize = ctrl.MaximumSize;
-                Font logicalFont = ctrl.Font;
-                ctrl.Scale(new SizeF(scale, scale));
-                try
-                {
-                    using var scaled = new Bitmap(w * scale, h * scale, PixelFormat.Format32bppArgb);
-                    ctrl.DrawToBitmap(scaled, new Rectangle(0, 0, w * scale, h * scale));
-                    OverlayProgressBarState(ctrl, scaled);
-                    using var scaledStream = new MemoryStream();
-                    scaled.Save(scaledStream, ImageFormat.Png);
-                    return new ControlRenderResult
-                    {
-                        Png = scaledStream.ToArray(), X = x, Y = y, Width = w, Height = h, Found = true,
-                    };
-                }
-                finally
-                {
-                    ctrl.Bounds = logicalBounds;
-                    ctrl.Margin = logicalMargin;
-                    ctrl.Padding = logicalPadding;
-                    ctrl.MinimumSize = logicalMinimumSize;
-                    ctrl.MaximumSize = logicalMaximumSize;
-                    if (!ReferenceEquals(ctrl.Font, logicalFont)) ctrl.Font = logicalFont;
-                }
-            }
             using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             ctrl.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
             OverlayProgressBarState(ctrl, bmp);
-            using var ms = new MemoryStream();
-            bmp.Save(ms, ImageFormat.Png);
 
             // Placement in the FULL-FRAME (window) pixel space, so the host draws the patch directly at
-            // (X,Y) over the cached full frame — see ComputeWindowOffset (shared with DescribeLayout).
-            return new ControlRenderResult { Png = ms.ToArray(), X = x, Y = y, Width = w, Height = h, Found = true };
+            // (X,Y) over the cached full frame — see ComputeWindowOffset (shared with DescribeLayout). At a high-DPI
+            // scale the patch repeats each pixel exactly as the full frame does, so it matches that frame's area.
+            return new ControlRenderResult
+            {
+                Png = CapturePixels.EncodePng(bmp, scale), X = x, Y = y, Width = w, Height = h, Found = true,
+            };
         }
 
         /// <summary>

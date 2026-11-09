@@ -87,6 +87,20 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 - An enum member written through a receiver that does not resolve is read in the property's own enum only when the
   receiver is that enum's full name, not when it merely ends with the same name. An enum is taken as the property's
   enum only when it is that enum, not a different enum with the same full name from another assembly.
+- Forms in the style Visual Studio uses for modern projects render in the modern engine when the project file imports
+  MSBuild files or compiles sources from outside its folder, as projects that share settings through an `<Import>`
+  do ([#8](https://github.com/SkivHisink/winforms-designer-vscode/issues/8)). The global usings of such a project,
+  including those of an imported `.props` file or a linked source, are read from the portable PDB of the build the
+  designer loaded. The designer file's own usings and the sources in the project folder are read as they are now.
+  Every statement is still checked against that build. Without a build, a portable PDB, or a source file unchanged
+  since the build, the names are reported as missing types as before.
+- On a high-DPI display, both engines show the form at its own size
+  ([#8](https://github.com/SkivHisink/winforms-designer-vscode/issues/8)). The preview was drawn by scaling the live
+  form up, which left fonts at their size, so text and auto-sized controls came out at half the size of everything
+  else. A form's title bar and borders did not grow either, so its controls were drawn away from where a click or the
+  selection outline lands. A form the screen fits only at 100% was cut off and laid out again by Windows, and stayed
+  smaller than its serialized size for the rest of the session. The preview is now the form drawn at its own size with
+  each pixel doubled, so text is no sharper than at 100%, but everything is the right size and in the right place.
 
 ## [2.3.2] - 2026-11-08
 

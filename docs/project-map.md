@@ -45,14 +45,14 @@ VS Code extension host (TypeScript, extension/src)
 | Area | Files |
 |---|---|
 | Entry and protocol | `Program.cs` (CLI verbs and the JSON-RPC pipe server), `V2Protocol.cs` (generated, byte-pinned), `RuntimeProtocol.cs` (compile-linked negotiation, binary identity and ordinary RPC envelope dispatch) |
-| Interpretation and render | `DesignerRenderer.cs` (`LoadGraph` → `Interpret` → `HandleAssignment`/`HandleInvocation`/`Eval`, layout and init bracket replay, PNG capture), `DesignerConstantFolder.cs` (C# constant expressions folded as the compiler folds them, for `Eval` and for the build confirmation alike), `DesignerAllowlists.cs` (the security allowlists, shared with net48), `HeadlessDesignerUIService.cs` (designer errors become listed constructs, never dialogs) |
+| Interpretation and render | `DesignerRenderer.cs` (`LoadGraph` → `Interpret` → `HandleAssignment`/`HandleInvocation`/`Eval`, layout and init bracket replay, PNG capture), `CapturePixels.cs` (the high-DPI PNG: the 1x capture with each pixel repeated, shared with net48), `DesignerConstantFolder.cs` (C# constant expressions folded as the compiler folds them, for `Eval` and for the build confirmation alike), `DesignerAllowlists.cs` (the security allowlists, shared with net48), `HeadlessDesignerUIService.cs` (designer errors become listed constructs, never dialogs) |
 | Resources | `DesignerResx.cs`, `SafeResxResolver.cs`, `ProjectResourceResolver.cs` (`Properties.Resources.X` from the project's own `.resx`, bounded decoders), `DesignerProjectResourcePicker.cs` |
 | Properties | `DesignerDescribe.cs`, `DesignerValueConverter.cs`, `DesignerPalette.cs`, `DesignerUiTypeEditorBroker.cs` / `DesignerUiTypeEditorWorker.cs` |
 | Editing and save | `DesignerPropertyEditor.cs`, `DesignerControlEditor.cs` (add/remove/move controls), `DesignerComponentRename.cs`, `DesignerEventEditor.cs`, `DesignerModifiers.cs`, `DesignerSaveSplicer.cs`, `DesignerSerializer.cs`, `DesignerOwnedRegionSerializer.cs`, `SaveSafety.cs` (when whole-file regeneration is refused) |
 | Collection editors | `DesignerCollectionEditor.cs`, `DesignerGenericListEditor.cs`, `DesignerStringArrayEditor.cs`, `DesignerGridColumnEditor.cs`, `DesignerListColumnEditor.cs`, `DesignerTreeNodeEditor.cs`, `DesignerToolStripItemEditor.cs`, `DesignerTableStyleEditor.cs`, `DesignerTableCellEditor.cs`, `DesignerImageEditor.cs`, `DesignerImageListEditor.cs`, `DesignerBindingEditor.cs`, `DesignerExtenderEditor.cs`, `DesignerDataSourceGenerator.cs` |
 | Geometry and layout | `DesignerGeometry.cs`, `DesignerLayout.cs`, `DesignerAdornerInfo.cs` |
 | Localization | `DesignerLocalizeForm.cs`, `DesignerLocalizedResxEditor.cs`, `DesignerCultureSelection.cs` |
-| Projects and types | `ProjectResolver.cs`, `FormClassResolver.cs`, `ControlLoadContext.cs`, `CompiledRootFactory.cs`, `DesignerTypeScope.cs` (unqualified type names bound through the file's usings and the project's sources), `DesignerBuildEvidence.cs` (the project's build of `InitializeComponent`, read as IL, confirming each such binding) |
+| Projects and types | `ProjectResolver.cs`, `FormClassResolver.cs`, `ControlLoadContext.cs`, `CompiledRootFactory.cs`, `DesignerTypeScope.cs` (unqualified type names bound through the file's usings and the project's sources, or the build's portable PDB when the project file pulls in what the folder does not show), `DesignerBuildEvidence.cs` (the project's build of `InitializeComponent`, read as IL, confirming each such binding) |
 | Process lifetime | `EngineProcessJob.cs` (the serving engine's kill-on-close job: helper processes end with the engine) |
 | Shared IR (also net48) | `DesignerIr.cs`, `DesignerIrBuilder.cs` (Roslyn front end), `DesignerIrExecutor.cs`, `InterpretedRenderPlan.cs`, `InterpretedDescribeResolver.cs`, `RenderModeDecision.cs`, `AssemblyIrHost.cs` |
 | Hosted designers | `DesignerServiceKernel.cs`, `HostedServiceKernelProduct*.cs`, `HostedDesignerAdornerContract.cs`, `DesignTimeSite.cs`, `VsNameCreationService.cs`, `DesignerInheritedOverrideEditor.cs` |
@@ -63,7 +63,7 @@ Files compiled into **both** engines (edit with both runtimes in mind): `FormCla
 `InterpretedRenderPlan.cs`, `InterpretedDescribeResolver.cs`, `DesignerInheritedOverrideEditor.cs`,
 `DesignerAdornerInfo.cs`, `HostedDesignerAdornerContract.cs`, `VsNameCreationService.cs`, `DesignerServiceKernel.cs`,
 `HostedServiceKernelProductContract.cs`, `NestedPropertyPath.cs` (the nested-property edit rule: describe offers ⇔ live
-edit accepts).
+edit accepts), `CapturePixels.cs`.
 
 ## .NET Framework engine (`engine-net48/`)
 

@@ -68,6 +68,8 @@
     <Compile Include="../engine/VsNameCreationService.cs" Link="Shared/VsNameCreationService.cs" />
     <Compile Include="../engine/DesignerServiceKernel.cs" Link="Shared/DesignerServiceKernel.cs" />
     <Compile Include="../engine/HostedServiceKernelProductContract.cs" Link="Shared/HostedServiceKernelProductContract.cs" />
+    <!-- The high-DPI capture: one pixel-repeat rule, so both engines draw the same surface at 2x. -->
+    <Compile Include="../engine/CapturePixels.cs" Link="Shared/CapturePixels.cs" />
   </ItemGroup>
 
   <ItemGroup>

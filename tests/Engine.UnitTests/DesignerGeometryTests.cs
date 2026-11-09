@@ -827,6 +827,160 @@ public sealed class DesignerGeometryTests
     }
 
     [Fact]
+    public void TwoXFormFrame_DrawsEveryControlWhereTheHitTestMapPutsIt()
+    {
+        // A Form's title bar and borders do not grow with Scale, so a scaled capture shifted the client area away from
+        // the 2x hit-test rectangles (the hover/selection outline drew offset from the control).
+        const string source = """
+            namespace Demo
+            {
+                partial class Form1 : System.Windows.Forms.Form
+                {
+                    private System.Windows.Forms.Panel marker;
+                    private void InitializeComponent()
+                    {
+                        this.marker = new System.Windows.Forms.Panel();
+                        this.marker.BackColor = System.Drawing.Color.Red;
+                        this.marker.Location = new System.Drawing.Point(20, 20);
+                        this.marker.Name = "marker";
+                        this.marker.Size = new System.Drawing.Size(40, 40);
+                        this.Controls.Add(this.marker);
+                        this.ClientSize = new System.Drawing.Size(300, 200);
+                        this.Name = "Form1";
+                    }
+                }
+            }
+            """;
+        var result = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs", sourceText: source, renderScale: 2));
+        var marker = Assert.Single(result.Controls, c => c.Id == "marker");
+        Assert.True(marker.X > 0 && marker.Y > 0, "expected a framed root with chrome");
+        using var stream = new MemoryStream(result.Png);
+        using var image = new System.Drawing.Bitmap(stream);
+        Assert.Equal(result.Width * 2, image.Width);
+        foreach (var (x, y) in new[] { (marker.X + 3, marker.Y + 3), (marker.X + marker.Width - 4, marker.Y + marker.Height - 4) })
+        {
+            var pixel = image.GetPixel(x * 2 + 1, y * 2 + 1);
+            Assert.True(pixel.R > 200 && pixel.G < 60 && pixel.B < 60, $"({x},{y}) is {pixel}, not the red marker");
+        }
+    }
+
+    // A 2x capture is the 1x design surface at twice the size: text included (scaling the tree left fonts at their
+    // size, so text came out at half the size of everything else), a form's frame included, for every kind of root.
+    [Theory]
+    [InlineData("System.Windows.Forms.Form", "this.ClientSize = new System.Drawing.Size(300, 120);")]
+    [InlineData("System.Windows.Forms.UserControl", "this.Size = new System.Drawing.Size(300, 120);")]
+    public void TwoXCapture_IsTheOneXSurfaceWithEveryPixelRepeated(string baseType, string size)
+    {
+        string source = TwoXSource(baseType, size);
+        var one = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs", sourceText: source));
+        var two = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs", sourceText: source, renderScale: 2));
+
+        Assert.Equal(one.Width, two.Width);
+        Assert.Equal(one.Height, two.Height);
+        Assert.Equal(Layout(one), Layout(two));
+        AssertRepeated(Pixels(one.Png), Pixels(two.Png), 2);
+    }
+
+    // Windows limits a window to the screen's maximum tracking size. A form that fits at 1x but not at 2x was clamped
+    // when the tree was scaled for the capture and laid out again, and scaling back left it smaller than serialized.
+    [Fact]
+    public void TwoXCapture_OfAFormTheScreenFitsOnlyAtOneX_KeepsItsSerializedSize()
+    {
+        var track = SystemInformation.MaxWindowTrackSize;
+        int width = track.Width * 3 / 5, height = track.Height * 3 / 5;
+        string source = TwoXSource("System.Windows.Forms.Form", $"this.ClientSize = new System.Drawing.Size({width}, {height});");
+        var one = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs", sourceText: source));
+        var two = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs", sourceText: source, renderScale: 2));
+
+        Assert.Equal((width, height), (one.ClientWidth, one.ClientHeight));
+        Assert.Equal((width, height), (two.ClientWidth, two.ClientHeight));
+        Assert.Equal(Layout(one), Layout(two));
+        AssertRepeated(Pixels(one.Png), Pixels(two.Png), 2);
+    }
+
+    // A dirty patch repeats its pixels exactly as the full frame does, so compositing it gives the bytes a full 2x
+    // render of the edited form gives.
+    [Fact]
+    public void TwoXRetainedPatch_IsTheSameBytesAsThatAreaOfTheTwoXFrame()
+    {
+        string source = TwoXSource("System.Windows.Forms.Form", "this.ClientSize = new System.Drawing.Size(300, 120);");
+        var initial = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs", sourceText: source, renderScale: 2));
+        var preview = DesignerRenderer.ApplyPropertyEdit("Form1.Designer.cs", "button1", "Text", "\"Edited\"", source);
+        Assert.True(preview.Safe, preview.Reason);
+        string edited = Assert.IsType<string>(preview.NewText);
+        var patch = Sta.Invoke(() => DesignerRenderer.ApplyCachedTextPropertyEdit(
+            initial.GraphToken, "Form1.Designer.cs", "button1", "Text", "\"Edited\"", source, edited));
+        Assert.True(patch.Applied, patch.Reason);
+        Assert.False(patch.FullFrame);
+        var frame = Sta.Invoke(() => DesignerRenderer.RenderWithLayout("Form1.Designer.cs", sourceText: edited, renderScale: 2));
+
+        var (patchPixels, patchWidth, _) = Pixels(patch.Png);
+        var (framePixels, frameWidth, _) = Pixels(frame.Png);
+        var button = Assert.Single(frame.Controls, c => c.Id == "button1");
+        Assert.Equal((button.X, button.Y, button.Width, button.Height), (patch.X, patch.Y, patch.Width, patch.Height));
+        for (int y = 0; y < patch.Height * 2; y++)
+            for (int x = 0; x < patchWidth; x++)
+                Assert.True(patchPixels[y * patchWidth + x] == framePixels[(button.Y * 2 + y) * frameWidth + button.X * 2 + x],
+                    $"patch pixel ({x},{y}) differs from the frame");
+    }
+
+    private static string TwoXSource(string baseType, string size) => $$"""
+        namespace Demo
+        {
+            partial class Form1 : {{baseType}}
+            {
+                private System.Windows.Forms.Label label1;
+                private System.Windows.Forms.Button button1;
+                private void InitializeComponent()
+                {
+                    this.label1 = new System.Windows.Forms.Label();
+                    this.button1 = new System.Windows.Forms.Button();
+                    this.label1.AutoSize = true;
+                    this.label1.Location = new System.Drawing.Point(10, 10);
+                    this.label1.Name = "label1";
+                    this.label1.Text = "Text at its own size";
+                    this.button1.Location = new System.Drawing.Point(150, 60);
+                    this.button1.Name = "button1";
+                    this.button1.Size = new System.Drawing.Size(90, 30);
+                    this.button1.Text = "Button";
+                    this.Controls.Add(this.label1);
+                    this.Controls.Add(this.button1);
+                    {{size}}
+                    this.Name = "Form1";
+                }
+            }
+        }
+        """;
+
+    private static string Layout(RenderLayoutResult result) => string.Join(";", result.Controls.Select(c =>
+        $"{c.Id}:{c.X},{c.Y},{c.Width},{c.Height}")) + $"|{result.ClientWidth}x{result.ClientHeight}";
+
+    private static (int[] Pixels, int Width, int Height) Pixels(byte[] png)
+    {
+        using var stream = new MemoryStream(png);
+        using var image = new System.Drawing.Bitmap(stream);
+        var data = image.LockBits(new System.Drawing.Rectangle(0, 0, image.Width, image.Height),
+            System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            var pixels = new int[image.Width * image.Height];
+            for (int y = 0; y < image.Height; y++)
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0 + y * data.Stride, pixels, y * image.Width, image.Width);
+            return (pixels, image.Width, image.Height);
+        }
+        finally { image.UnlockBits(data); }
+    }
+
+    private static void AssertRepeated((int[] Pixels, int Width, int Height) one, (int[] Pixels, int Width, int Height) scaled, int scale)
+    {
+        Assert.Equal((one.Width * scale, one.Height * scale), (scaled.Width, scaled.Height));
+        for (int y = 0; y < scaled.Height; y++)
+            for (int x = 0; x < scaled.Width; x++)
+                if (scaled.Pixels[y * scaled.Width + x] != one.Pixels[y / scale * one.Width + x / scale])
+                    Assert.Fail($"2x pixel ({x},{y}) is not the 1x pixel ({x / scale},{y / scale})");
+    }
+
+    [Fact]
     public void V2_FND_001_S016_RetainedTextEditWithAutoSizeGeometryChange_FallsBackToFullFrameAndLayout()
     {
         string source = """

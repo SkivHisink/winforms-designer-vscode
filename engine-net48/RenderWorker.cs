@@ -140,7 +140,7 @@ namespace WinFormsDesigner.Engine.Net48
         private readonly StaDispatcher _sta = new StaDispatcher();
 
         // Integer DPI capture scale for the picture (1 = logical, 2 = 4K@200%…). Set by the full-render entry points and
-        // reused by every Snapshot (incl. live-op re-renders) so the whole session stays crisp at the display's ratio.
+        // reused by every Snapshot (incl. live-op re-renders) so the whole session matches the display's ratio.
         private int _renderScale = 1;
         private readonly Dictionary<string, LiveDesign> _cache = new Dictionary<string, LiveDesign>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _designerCultures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -2809,33 +2809,17 @@ namespace WinFormsDesigner.Engine.Net48
             };
         }
 
-        /// <summary>Capture <paramref name="root"/> to a PNG at an integer DPI scale. scale &gt; 1 scales the control tree
-        /// UP so text/metrics draw at the higher resolution (crisp) — a bigger DrawToBitmap alone would only upscale.
-        /// Scale mutates the tree, so it is restored in finally; an integer factor keeps up/down scaling exactly
-        /// reversible, which matters for the CACHED compiled instance (the interpreted tree is fresh each render).</summary>
+        /// <summary>Capture <paramref name="root"/> to a PNG at an integer DPI scale. scale &gt; 1 repeats each pixel of
+        /// the capture (<see cref="CapturePixels"/>); the tree — the CACHED compiled instance included — is never
+        /// rescaled.</summary>
         private static byte[] CaptureScaledPng(Control root, int w, int h, int scale)
         {
             PrepareForDesignSurfaceCapture(root);
-            if (scale > 1)
-            {
-                root.Scale(new SizeF(scale, scale));
-                try
-                {
-                    using (var big = new Bitmap(w * scale, h * scale, PixelFormat.Format32bppArgb))
-                    {
-                        big.SetResolution(96, 96);
-                        root.DrawToBitmap(big, new Rectangle(0, 0, w * scale, h * scale));
-                        OverlayProgressBarState(root, big);
-                        using (var ms = new MemoryStream()) { big.Save(ms, ImageFormat.Png); return ms.ToArray(); }
-                    }
-                }
-                finally { root.Scale(new SizeF(1f / scale, 1f / scale)); }
-            }
             using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
             {
                 root.DrawToBitmap(bmp, new Rectangle(0, 0, w, h));
                 OverlayProgressBarState(root, bmp);
-                using (var ms = new MemoryStream()) { bmp.Save(ms, ImageFormat.Png); return ms.ToArray(); }
+                return CapturePixels.EncodePng(bmp, scale);
             }
         }
 
@@ -2933,54 +2917,13 @@ namespace WinFormsDesigner.Engine.Net48
             var offset = ComputeWindowOffset(target, root);
             int captureScale = live.Scale > 0 ? live.Scale : _renderScale;
             byte[] png;
-            if (captureScale > 1)
+            // A high-DPI patch repeats each pixel exactly as the full frame does (CapturePixels), so it is the same
+            // bytes as that frame's area; the control is never rescaled.
+            using (var bitmap = new Bitmap(patchWidth, patchHeight, PixelFormat.Format32bppArgb))
             {
-                // This fast path is certified only for a geometry-stable leaf. Scale that one invalidated control,
-                // not the complete interpreted/vendor graph, so dirty-region capture stays flat in corpus size.
-                Rectangle logicalBounds = target.Bounds;
-                Padding logicalMargin = target.Margin;
-                Padding logicalPadding = target.Padding;
-                Size logicalMinimumSize = target.MinimumSize;
-                Size logicalMaximumSize = target.MaximumSize;
-                Font logicalFont = target.Font;
-                target.Scale(new SizeF(captureScale, captureScale));
-                try
-                {
-                    using (var scaled = new Bitmap(
-                        patchWidth * captureScale, patchHeight * captureScale, PixelFormat.Format32bppArgb))
-                    {
-                        target.DrawToBitmap(scaled, new Rectangle(
-                            0, 0, patchWidth * captureScale, patchHeight * captureScale));
-                        OverlayProgressBarState(target, scaled);
-                        using (var stream = new MemoryStream())
-                        {
-                            scaled.Save(stream, ImageFormat.Png);
-                            png = stream.ToArray();
-                        }
-                    }
-                }
-                finally
-                {
-                    target.Bounds = logicalBounds;
-                    target.Margin = logicalMargin;
-                    target.Padding = logicalPadding;
-                    target.MinimumSize = logicalMinimumSize;
-                    target.MaximumSize = logicalMaximumSize;
-                    if (!ReferenceEquals(target.Font, logicalFont)) target.Font = logicalFont;
-                }
-            }
-            else
-            {
-                using (var bitmap = new Bitmap(patchWidth, patchHeight, PixelFormat.Format32bppArgb))
-                {
-                    target.DrawToBitmap(bitmap, new Rectangle(0, 0, patchWidth, patchHeight));
-                    OverlayProgressBarState(target, bitmap);
-                    using (var stream = new MemoryStream())
-                    {
-                        bitmap.Save(stream, ImageFormat.Png);
-                        png = stream.ToArray();
-                    }
-                }
+                target.DrawToBitmap(bitmap, new Rectangle(0, 0, patchWidth, patchHeight));
+                OverlayProgressBarState(target, bitmap);
+                png = CapturePixels.EncodePng(bitmap, captureScale);
             }
             return new RenderLayoutResult
             {

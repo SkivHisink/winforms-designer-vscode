@@ -204,6 +204,117 @@ namespace WinFormsDesigner.Engine
             return Bind(Compact(written), expected.Assembly, out _) == expected && Evidence().Verdict(_current) == null;
         }
 
+        // Per build (module id), designed type and designer file: the bare layout calls, as written, that the build
+        // compiled to Control's method in that type's InitializeComponent.
+        private static readonly ConcurrentDictionary<(Guid Build, string Type, string File), HashSet<string>> ProvenBareCallsByBuild = new();
+        private static readonly string[] LayoutMethods = { "SuspendLayout", "ResumeLayout", "PerformLayout" };
+
+        /// <summary>
+        /// Whether the current statement, a bare layout call, is one the build proves to be Control's, where the project's
+        /// usings were read from the build. What a bare call binds to is decided by the declarations of the form, which
+        /// for a part linked in from outside the folder only the build holds; a partial method declared there without a
+        /// body is erased with its calls and leaves nothing in metadata. So it is decided on the build's own text — the
+        /// designer file, when its bytes still have the hash the PDB records — against the build's IL: the build calls
+        /// Control's method on the form itself (<c>ldarg.0</c>) exactly as many times as that text invokes the name on
+        /// the form (bare, or through <c>this</c> or <c>base</c>). An invocation compiles to at most one call, and only an
+        /// invocation on the form calls on <c>ldarg.0</c>, so equal counts mean that none of them was erased or bound to
+        /// another method of that name; each bare call of the text, as written, is then proven for that build, and the
+        /// proof is kept for it. A current call written the same way is replayed. The declarations of a linked part are
+        /// the build's, as for every file outside the project.
+        /// </summary>
+        private bool ProvenBareCall()
+        {
+            if (_simpleNamesUnknown != null || _current is not ExpressionStatementSyntax
+                { Expression: InvocationExpressionSyntax { Expression: IdentifierNameSyntax } current }) return false;
+            return ProvenBareCalls() is { } proven && proven.Contains(CallText(current));
+        }
+
+        private static string CallText(InvocationExpressionSyntax invocation) =>
+            ((IdentifierNameSyntax)invocation.Expression).Identifier.ValueText + "("
+            + string.Join(",", invocation.ArgumentList.Arguments.Select(a => Compact(a.ToString()))) + ")";
+
+        private HashSet<string>? ProvenBareCalls()
+        {
+            if (_compiledDesigned == null) return null;
+            var project = Project();
+            if (project.ProjectDirectory is not { } projectDir || project.DesignerPath is not { } designerPath) return null;
+            var key = (_compiledDesigned.Module.ModuleVersionId, _compiledDesigned.FullName ?? _compiledDesigned.Name,
+                Path.GetFullPath(designerPath).ToUpperInvariant());
+            if (ProvenBareCallsByBuild.TryGetValue(key, out var known)) return known;
+            var evidence = Evidence();
+            if (evidence.Unavailable != null) return null;
+            // Not the build's text (changed since): nothing is proven now, and nothing is kept.
+            if (ProjectSourceFacts.CompiledDesignerText(_compiledDesigned, projectDir, designerPath) is not { } text) return null;
+
+            var proven = new HashSet<string>(StringComparer.Ordinal);
+            var unit = CSharpSyntaxTree.ParseText(text).GetCompilationUnitRoot();
+            var methods = unit.DescendantNodes().OfType<MethodDeclarationSyntax>()
+                .Where(m => m.Identifier.ValueText == "InitializeComponent" && m.ParameterList.Parameters.Count == 0
+                    && m.Parent is ClassDeclarationSyntax cls
+                    && FormClassResolver.QualifiedName(cls) == _compiledDesigned.FullName)
+                .ToList();
+            // The body the build compiled for this type, written here (a partial declaration without one proves nothing).
+            if (methods.Count == 1 && methods[0].Body == null && methods[0].ExpressionBody == null) methods.Clear();
+            // Code under a conditional directive is compiled by the build's symbols, which the PDB does not record.
+            if (methods.Count == 1 && unit.GetFirstDirective(d => d is ConditionalDirectiveTriviaSyntax
+                    or DefineDirectiveTriviaSyntax or UndefDirectiveTriviaSyntax) == null)
+            {
+                var method = methods[0];
+                var locals = DesignerIrBuilder.DeclaredLocalNames(method);
+                foreach (string name in LayoutMethods)
+                {
+                    if (CountOnTheForm(method, name, locals) is not { } written || written == 0) continue;
+                    if (evidence.CallsOnThis(typeof(System.Windows.Forms.Control), name) != written) continue;
+                    foreach (var invocation in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                        if (invocation.Expression is IdentifierNameSyntax bare && bare.Identifier.ValueText == name)
+                            proven.Add(CallText(invocation));
+                }
+            }
+            if (ProvenBareCallsByBuild.Count > 256) ProvenBareCallsByBuild.Clear();
+            ProvenBareCallsByBuild[key] = proven;
+            return proven;
+        }
+
+        private static ExpressionSyntax Unparenthesized(ExpressionSyntax expression)
+        {
+            while (expression is ParenthesizedExpressionSyntax parenthesized) expression = parenthesized.Expression;
+            return expression;
+        }
+
+        /// <summary>How many invocations of <paramref name="method"/> call <paramref name="name"/> on the form: bare, or
+        /// through <c>this</c> or <c>base</c> (parentheses and casts removed). Null when one of that name has a receiver
+        /// that may be the form otherwise (a local, which an optimized build may load straight from <c>ldarg.0</c>, an
+        /// <c>as</c>, a call's result) or is a conditional access; a field, property or type path is loaded by its own
+        /// instruction and never counts.</summary>
+        private static int? CountOnTheForm(SyntaxNode method, string name, ISet<string> locals)
+        {
+            int written = 0;
+            foreach (var invocation in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                switch (Unparenthesized(invocation.Expression))
+                {
+                    case SimpleNameSyntax simple when simple.Identifier.ValueText == name:
+                        written++;
+                        break;
+                    case MemberAccessExpressionSyntax access when access.Name.Identifier.ValueText == name:
+                        var receiver = access.Expression;
+                        while (receiver is ParenthesizedExpressionSyntax or CastExpressionSyntax)
+                            receiver = receiver is CastExpressionSyntax cast ? cast.Expression : ((ParenthesizedExpressionSyntax)receiver).Expression;
+                        switch (receiver)
+                        {
+                            case ThisExpressionSyntax or BaseExpressionSyntax: written++; break;
+                            case IdentifierNameSyntax local when locals.Contains(local.Identifier.ValueText): return null;
+                            case IdentifierNameSyntax or MemberAccessExpressionSyntax: break;
+                            default: return null;
+                        }
+                        break;
+                    case MemberBindingExpressionSyntax binding when binding.Name.Identifier.ValueText == name:
+                        return null;
+                }
+            }
+            return written;
+        }
+
         /// <summary>Whether the designed class, or a base below <see cref="System.Windows.Forms.Control"/>, declares a
         /// member named <paramref name="name"/> — in this file, in another partial of the project, or in a loaded build.
         /// A bare call of that name binds to it, not to the framework method the interpreter would replay.</summary>
@@ -212,6 +323,9 @@ namespace WinFormsDesigner.Engine
             if (_designedMembers.ContainsKey(name)) return true;
             var project = Project();
             if (project.SourcesIncomplete != null || project.PartialMembers(_designedName).Any(m => m.Member == name)) return true;
+            // A part of the form the project file links in is known only through the build, which erases a partial method
+            // declared without a body together with its calls: the bare call is Control's only where the build proves it.
+            if (project.ReadFromBuild && !ProvenBareCall()) return true;
             const BindingFlags all = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic
                 | BindingFlags.DeclaredOnly;
             try
@@ -1151,7 +1265,11 @@ namespace WinFormsDesigner.Engine
         private ProjectSourceFacts Project()
         {
             if (_project != null) return _project;
-            try { _project = _loadProject(); }
+            try
+            {
+                _project = _loadProject();
+                _project.ReadUsingsFromBuild(_compiledDesigned);
+            }
             catch { _project = ProjectSourceFacts.Unknown("the project's sources could not be read"); }
             return _project;
         }
@@ -1247,6 +1365,16 @@ namespace WinFormsDesigner.Engine
         public string? UsingsIncomplete { get; private set; }
         /// <summary>Why the project's sources cannot be proven complete; null when they can.</summary>
         public string? SourcesIncomplete { get; private set; }
+        /// <summary>Why the folder walk cannot see every global using (the project file pulls in what it does not
+        /// read); the usings then come from the build (<see cref="ReadUsingsFromBuild"/>). Null otherwise.</summary>
+        public string? UsingsFromBuild { get; private set; }
+        /// <summary>The global usings were read from the build: what the sources the walk did not read declare is known
+        /// only through that build (<see cref="DesignerTypeScope.FormHidesMember"/>).</summary>
+        public bool ReadFromBuild { get; private set; }
+        private string? _projectDir;
+        internal string? ProjectDirectory => _projectDir;
+        /// <summary>The designer file these facts were read for, where <see cref="UsingsFromBuild"/> is set.</summary>
+        internal string? DesignerPath { get; private set; }
 
         private readonly Dictionary<string, List<string>> _declared = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<PartialMember>> _partialMembers = new(StringComparer.Ordinal);
@@ -1287,6 +1415,376 @@ namespace WinFormsDesigner.Engine
             "DefaultItemExcludes", "DefaultItemExcludesInProjectFolder", "EnableDefaultCompileItems", "EnableDefaultItems",
         };
 
+        /// <summary>
+        /// Add the global usings of <paramref name="compiledDesigned"/>'s build, when <see cref="UsingsFromBuild"/> says
+        /// the folder walk cannot see them all (<see cref="BuildGlobalUsings"/>). What the walk read stays: the current
+        /// sources of the folder are authoritative, and the designer file's own usings are its buffer's. Without that
+        /// build, a portable PDB of it, or a way to tell its global usings from a file's own, the project is unknown
+        /// exactly as before: its usings and its sources.
+        /// </summary>
+        internal void ReadUsingsFromBuild(Type? compiledDesigned)
+        {
+            if (UsingsFromBuild is not { } hidden) return;
+            UsingsFromBuild = null;
+            if (BuildGlobalUsings(compiledDesigned, _projectDir, out var globals) is { } why)
+            {
+                UsingsIncomplete = hidden + ", and " + why;
+                SourcesIncomplete ??= UsingsIncomplete;
+                return;
+            }
+            Imports.AddRange(globals.Imports);
+            Aliases.AddRange(globals.Aliases);
+            StaticImports.AddRange(globals.StaticImports);
+            ReadFromBuild = true;
+        }
+
+        internal sealed record BuildGlobals(IReadOnlyList<string> Imports, IReadOnlyList<string> Aliases,
+            IReadOnlyList<string> StaticImports)
+        {
+            public static readonly BuildGlobals None = new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>());
+        }
+
+        // The global usings of a build are a fact of that build: kept by its module id once one file told them apart.
+        private static readonly ConcurrentDictionary<Guid, BuildGlobals> GlobalsByBuild = new();
+        private static readonly Guid Sha256Algorithm = new("8829d00f-11b8-4213-878b-770e8597ac16");
+        private static readonly Guid Sha1Algorithm = new("ff1816ec-aa5e-4d10-87f7-6f4963833460");
+
+        /// <summary>
+        /// The global usings <paramref name="designed"/>'s build was compiled with, read from its portable PDB, or why
+        /// they cannot be. The PDB gives each file one import scope, whose parent is the build's root scope, holding the
+        /// global usings and the file's own CU-level usings as the compiler resolved them (a namespace's usings are a
+        /// child scope). A file of the project whose bytes still have the hash the PDB records for it is the text the
+        /// build compiled: its own usings, removed from its scope, leave global usings only. Every such file adds what
+        /// it shows; a using a file repeats from the globals may be left out, which only refuses more. The DLL must
+        /// still be the loaded image (its MVID), and the PDB is the one beside it or embedded in it, matched by id.
+        /// </summary>
+        private static string? BuildGlobalUsings(Type? designed, string? projectDir, out BuildGlobals globals)
+        {
+            globals = BuildGlobals.None;
+            if (designed == null) return "the project has not been built; build the project";
+            if (projectDir == null) return "the project folder is not known";
+            string dll = ControlLoadContext.OriginOf(designed.Assembly);
+            if (dll.Length == 0) return "the build's file could not be located";
+            Guid mvid = designed.Module.ModuleVersionId;
+            if (GlobalsByBuild.TryGetValue(mvid, out var known))
+            {
+                globals = known;
+                return null;
+            }
+            const string NoPdb = "its build has no portable PDB to read the global usings from";
+            try
+            {
+                static Stream? Open(string path) => File.Exists(path)
+                    ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete) : null;
+                using var pe = new System.Reflection.PortableExecutable.PEReader(Open(dll) ?? throw new FileNotFoundException());
+                var assembly = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+                if (assembly.GetGuid(assembly.GetModuleDefinition().Mvid) != mvid)
+                    return "the build changed since it was loaded; render again";
+                if (!pe.TryOpenAssociatedPortablePdb(dll, Open, out var provider, out _) || provider == null) return NoPdb;
+                using (provider)
+                {
+                    var pdb = provider.GetMetadataReader();
+                    var root = default(System.Reflection.Metadata.ImportScopeHandle);
+                    foreach (var scope in pdb.ImportScopes)
+                    {
+                        if (!pdb.GetImportScope(scope).Parent.IsNil) continue;
+                        if (!root.IsNil) return "its build records more than one root import scope";
+                        root = scope;
+                    }
+                    if (root.IsNil) return "its build records no import scopes";
+                    // What the root scope imports applies to every file.
+                    var global = ImportEntries(pdb, assembly, root);
+
+                    var fileScopes = new Dictionary<System.Reflection.Metadata.DocumentHandle, System.Reflection.Metadata.ImportScopeHandle?>();
+                    var typesOf = new Dictionary<System.Reflection.Metadata.DocumentHandle, HashSet<string>>();
+                    foreach (var debug in pdb.MethodDebugInformation)
+                    {
+                        var document = pdb.GetMethodDebugInformation(debug).Document;
+                        if (document.IsNil) continue;
+                        var scopes = pdb.GetLocalScopes(debug.ToDefinitionHandle());
+                        if (scopes.Count == 0) continue;
+                        var file = FileScope(pdb, pdb.GetLocalScope(scopes.First()).ImportScope);
+                        if (file.IsNil) continue;
+                        // A document whose methods sit under different file scopes is not one compilation unit.
+                        if (!fileScopes.TryGetValue(document, out var seen)) fileScopes[document] = file;
+                        else if (seen is { } one && one != file) fileScopes[document] = null;
+                        if (!typesOf.TryGetValue(document, out var types)) typesOf[document] = types = new HashSet<string>(StringComparer.Ordinal);
+                        types.Add(TopLevelTypeOf(assembly, debug.ToDefinitionHandle()));
+                    }
+                    int witnesses = 0;
+                    foreach (var (document, scope) in fileScopes)
+                    {
+                        if (scope is not { } file || UnchangedFileUsings(pdb, document, projectDir, typesOf[document]) is not { } own)
+                            continue;
+                        var entries = ImportEntries(pdb, assembly, file);
+                        if (!own.IsSubsetOf(entries)) continue;
+                        entries.ExceptWith(own);
+                        global.UnionWith(entries);
+                        witnesses++;
+                    }
+                    if (witnesses == 0)
+                        return "no source file of the project is unchanged since that build to tell its global usings apart; build the project";
+
+                    var imports = new List<string>();
+                    var aliases = new List<string>();
+                    var statics = new List<string>();
+                    foreach (string entry in global.OrderBy(e => e, StringComparer.Ordinal))
+                    {
+                        if (entry.StartsWith("ns:", StringComparison.Ordinal)) imports.Add("global::" + entry.Substring(3));
+                        else if (entry.StartsWith("alias:", StringComparison.Ordinal)) aliases.Add(entry.Substring(6));
+                        else if (entry.StartsWith("static:", StringComparison.Ordinal)) statics.Add("global::" + entry.Substring(7));
+                        else return "its build imports " + entry.Substring(entry.IndexOf(':') + 1) + " for every file, which the designer does not resolve";
+                    }
+                    globals = new BuildGlobals(imports, aliases, statics);
+                    if (GlobalsByBuild.Count > 64) GlobalsByBuild.Clear();
+                    GlobalsByBuild[mvid] = globals;
+                    return null;
+                }
+            }
+            catch (FileNotFoundException) { return NoPdb; }
+            catch (Exception ex) when (ex is BadImageFormatException or IOException or UnauthorizedAccessException
+                or InvalidOperationException or ArgumentException)
+            {
+                return "its build's PDB could not be read";
+            }
+        }
+
+        /// <summary>The file scope above <paramref name="scope"/>: the one whose parent is the root scope. Nil when
+        /// <paramref name="scope"/> is the root.</summary>
+        private static System.Reflection.Metadata.ImportScopeHandle FileScope(System.Reflection.Metadata.MetadataReader pdb,
+            System.Reflection.Metadata.ImportScopeHandle scope)
+        {
+            for (int depth = 0; !scope.IsNil && depth < 256; depth++)
+            {
+                var parent = pdb.GetImportScope(scope).Parent;
+                if (parent.IsNil) return default;
+                if (pdb.GetImportScope(parent).Parent.IsNil) return scope;
+                scope = parent;
+            }
+            return default;
+        }
+
+        /// <summary>One scope's imports, each as "ns:N", "alias:A", "static:T", or "other:…" for a kind the designer does
+        /// not resolve. Only the fields of each kind are read.</summary>
+        private static HashSet<string> ImportEntries(System.Reflection.Metadata.MetadataReader pdb,
+            System.Reflection.Metadata.MetadataReader assembly, System.Reflection.Metadata.ImportScopeHandle scope)
+        {
+            string Blob(System.Reflection.Metadata.BlobHandle blob) => Encoding.UTF8.GetString(pdb.GetBlobBytes(blob));
+            var entries = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var definition in pdb.GetImportScope(scope).GetImports())
+            {
+                entries.Add(definition.Kind switch
+                {
+                    System.Reflection.Metadata.ImportDefinitionKind.ImportNamespace => "ns:" + Blob(definition.TargetNamespace),
+                    System.Reflection.Metadata.ImportDefinitionKind.AliasNamespace
+                        or System.Reflection.Metadata.ImportDefinitionKind.AliasType => "alias:" + Blob(definition.Alias),
+                    System.Reflection.Metadata.ImportDefinitionKind.ImportType =>
+                        TopLevelTypeName(assembly, definition.TargetType) is { } type ? "static:" + type
+                            : "other:a using static of a nested or generic type",
+                    _ => "other:" + definition.Kind,
+                });
+            }
+            return entries;
+        }
+
+        /// <summary>The name a using directive imports as the PDB records it: identifiers by value, trivia ignored,
+        /// <c>global::</c> dropped. Null for what the PDB records otherwise: a generic name or another alias.</summary>
+        private static string? ImportedName(NameSyntax name) => name switch
+        {
+            QualifiedNameSyntax qualified => ImportedName(qualified.Left) is { } left
+                && ImportedName(qualified.Right) is { } right ? left + "." + right : null,
+            AliasQualifiedNameSyntax alias => alias.Alias.Identifier.IsKind(SyntaxKind.GlobalKeyword)
+                ? ImportedName(alias.Name) : null,
+            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+            _ => null,
+        };
+
+        /// <summary>The metadata names of the top-level types <paramref name="unit"/> declares, as
+        /// <see cref="TopLevelTypeOf"/> reads them: identifiers by value (<c>@namespace</c>, <c>A</c>), a generic
+        /// type with its arity, a file-local type as the compiler names it (<c>&lt;File&gt;F…__Name</c>, matched by its
+        /// own name), and <c>Program</c> for top-level statements.</summary>
+        private static MetadataNames MetadataTypeNames(CompilationUnitSyntax unit)
+        {
+            var names = new MetadataNames();
+            static string Text(NameSyntax name) => name switch
+            {
+                QualifiedNameSyntax qualified => Text(qualified.Left) + "." + qualified.Right.Identifier.ValueText,
+                AliasQualifiedNameSyntax alias => alias.Name.Identifier.ValueText,
+                SimpleNameSyntax simple => simple.Identifier.ValueText,
+                _ => name.ToString(),
+            };
+            void Walk(SyntaxList<MemberDeclarationSyntax> members, string ns)
+            {
+                foreach (var member in members)
+                {
+                    if (member is BaseNamespaceDeclarationSyntax nested)
+                        Walk(nested.Members, ns.Length == 0 ? Text(nested.Name) : ns + "." + Text(nested.Name));
+                    else if (member is BaseTypeDeclarationSyntax type)
+                    {
+                        int arity = (type as TypeDeclarationSyntax)?.TypeParameterList?.Parameters.Count ?? 0;
+                        string name = arity > 0 ? type.Identifier.ValueText + "`" + arity : type.Identifier.ValueText;
+                        if (type.Modifiers.Any(m => m.IsKind(SyntaxKind.FileKeyword))) names.FileLocal.Add((ns, name));
+                        else names.Add(ns.Length == 0 ? name : ns + "." + name);
+                    }
+                }
+            }
+            Walk(unit.Members, "");
+            if (unit.Members.OfType<GlobalStatementSyntax>().Any()) names.Add("Program");
+            return names;
+        }
+
+        private sealed class MetadataNames
+        {
+            private static readonly Regex FileLocalName = new(@"^<[^>]*>F[0-9A-Fa-f]+__(?<name>.+)$", RegexOptions.CultureInvariant);
+            private readonly HashSet<string> _names = new(StringComparer.Ordinal);
+            public readonly HashSet<(string Namespace, string Name)> FileLocal = new();
+
+            public void Add(string name) => _names.Add(name);
+
+            public bool Contains(string item)
+            {
+                if (_names.Contains(item)) return true;
+                int dot = item.LastIndexOf('.');
+                string ns = dot < 0 ? "" : item.Substring(0, dot), last = dot < 0 ? item : item.Substring(dot + 1);
+                var match = FileLocalName.Match(last);
+                return match.Success && FileLocal.Contains((ns, match.Groups["name"].Value));
+            }
+        }
+
+        /// <summary>The metadata name ("Ns.Type", "Type`1") of the outermost type declaring <paramref name="method"/>.</summary>
+        private static string TopLevelTypeOf(System.Reflection.Metadata.MetadataReader assembly,
+            System.Reflection.Metadata.MethodDefinitionHandle method)
+        {
+            var type = assembly.GetTypeDefinition(assembly.GetMethodDefinition(method).GetDeclaringType());
+            for (int depth = 0; !type.GetDeclaringType().IsNil && depth < 256; depth++)
+                type = assembly.GetTypeDefinition(type.GetDeclaringType());
+            string ns = assembly.GetString(type.Namespace);
+            return ns.Length == 0 ? assembly.GetString(type.Name) : ns + "." + assembly.GetString(type.Name);
+        }
+
+        /// <summary>The CU-level usings of the project file <paramref name="document"/> names, as
+        /// <see cref="ImportEntries"/> writes them, when the file is inside the project and its bytes have the hash the
+        /// PDB records — the text the build compiled. Null otherwise, and for a file whose usings the designer cannot
+        /// write exactly (an extern alias, a conditional directive, an alias-qualified name). A <c>#line</c> in another
+        /// file can attribute that file's methods, under that file's scope, to this document: every type whose methods
+        /// the PDB attributes to it (<paramref name="methodTypes"/>) must be one its text declares.</summary>
+        /// <summary>The text of the project file <paramref name="document"/> names, with its path spelled as the
+        /// project folder is, when the file is inside the project and its bytes have the hash the PDB records: the text
+        /// the build compiled. Null otherwise.</summary>
+        private static (string Path, string Text)? CompiledText(System.Reflection.Metadata.MetadataReader pdb,
+            System.Reflection.Metadata.DocumentHandle document, string projectDir)
+        {
+            var doc = pdb.GetDocument(document);
+            string path = pdb.GetString(doc.Name);
+            if (!Path.IsPathRooted(path)) return null;
+            // The build may spell the folder in another case (a drive letter, typically) than the designer's path. Read
+            // through the designer's spelling: the hash below decides whether those bytes are the compiled text.
+            string root;
+            try
+            {
+                root = Path.GetFullPath(projectDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                path = Path.GetFullPath(path);
+            }
+            catch { return null; }
+            if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) path = root + path.Substring(root.Length);
+            Guid algorithm = pdb.GetGuid(doc.HashAlgorithm);
+            if (algorithm != Sha256Algorithm && algorithm != Sha1Algorithm) return null;
+            byte[]? bytes;
+            try { bytes = ProjectResourceResolver.ReadFileInside(projectDir, path, MaxSourceBytes); }
+            catch { return null; }
+            if (bytes == null) return null;
+            byte[] hash = algorithm == Sha256Algorithm
+                ? System.Security.Cryptography.SHA256.HashData(bytes)
+                : System.Security.Cryptography.SHA1.HashData(bytes);
+            if (!hash.AsSpan().SequenceEqual(pdb.GetBlobBytes(doc.Hash))) return null;
+            using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            return (path, reader.ReadToEnd());
+        }
+
+        /// <summary>
+        /// The text of <paramref name="designerPath"/> as <paramref name="designed"/>'s build compiled it, when the file
+        /// still has the bytes the build's PDB records for it; null otherwise, or without that build or PDB.
+        /// </summary>
+        internal static string? CompiledDesignerText(Type designed, string projectDir, string designerPath)
+        {
+            string dll = ControlLoadContext.OriginOf(designed.Assembly);
+            if (dll.Length == 0) return null;
+            try
+            {
+                static Stream? Open(string path) => File.Exists(path)
+                    ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete) : null;
+                using var pe = new System.Reflection.PortableExecutable.PEReader(Open(dll) ?? throw new FileNotFoundException());
+                var assembly = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+                if (assembly.GetGuid(assembly.GetModuleDefinition().Mvid) != designed.Module.ModuleVersionId) return null;
+                if (!pe.TryOpenAssociatedPortablePdb(dll, Open, out var provider, out _) || provider == null) return null;
+                using (provider)
+                {
+                    var pdb = provider.GetMetadataReader();
+                    string designer = Path.GetFullPath(designerPath);
+                    string? found = null;
+                    foreach (var document in pdb.Documents)
+                    {
+                        if (CompiledText(pdb, document, projectDir) is not { } compiled
+                            || !string.Equals(compiled.Path, designer, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (found != null) return null;
+                        found = compiled.Text;
+                    }
+                    return found;
+                }
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or BadImageFormatException or IOException
+                or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+            {
+                return null;
+            }
+        }
+
+        private static HashSet<string>? UnchangedFileUsings(System.Reflection.Metadata.MetadataReader pdb,
+            System.Reflection.Metadata.DocumentHandle document, string projectDir, IReadOnlySet<string> methodTypes)
+        {
+            if (CompiledText(pdb, document, projectDir) is not { } compiled) return null;
+            var unit = CSharpSyntaxTree.ParseText(compiled.Text).GetCompilationUnitRoot();
+            // Which usings a conditional directive keeps depends on the build's symbols, which the PDB does not record.
+            if (unit.Externs.Count > 0 || unit.GetFirstDirective(d => d is ConditionalDirectiveTriviaSyntax
+                    or DefineDirectiveTriviaSyntax or UndefDirectiveTriviaSyntax) != null)
+                return null;
+            if (!methodTypes.All(MetadataTypeNames(unit).Contains)) return null;
+            var own = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var u in unit.Usings)
+            {
+                if (u.GlobalKeyword.IsKind(SyntaxKind.GlobalKeyword)) continue;
+                if (u.Alias != null)
+                {
+                    own.Add("alias:" + u.Alias.Name.Identifier.ValueText);
+                    continue;
+                }
+                if (u.Name == null || ImportedName(u.Name) is not { } written) return null;
+                own.Add((u.StaticKeyword.IsKind(SyntaxKind.StaticKeyword) ? "static:" : "ns:") + written);
+            }
+            return own;
+        }
+
+        /// <summary>Namespace.Name of a non-nested, non-generic-instance type a using static names; null otherwise.</summary>
+        private static string? TopLevelTypeName(System.Reflection.Metadata.MetadataReader reader, System.Reflection.Metadata.EntityHandle handle)
+        {
+            System.Reflection.Metadata.StringHandle ns, name;
+            if (handle.Kind == System.Reflection.Metadata.HandleKind.TypeDefinition)
+            {
+                var def = reader.GetTypeDefinition((System.Reflection.Metadata.TypeDefinitionHandle)handle);
+                if (def.GetDeclaringType().IsNil == false) return null;
+                (ns, name) = (def.Namespace, def.Name);
+            }
+            else if (handle.Kind == System.Reflection.Metadata.HandleKind.TypeReference)
+            {
+                var reference = reader.GetTypeReference((System.Reflection.Metadata.TypeReferenceHandle)handle);
+                if (reference.ResolutionScope.Kind == System.Reflection.Metadata.HandleKind.TypeReference) return null;
+                (ns, name) = (reference.Namespace, reference.Name);
+            }
+            else return null;
+            string n = reader.GetString(ns);
+            return n.Length == 0 ? reader.GetString(name) : n + "." + reader.GetString(name);
+        }
+
         internal static ProjectSourceFacts Unknown(string reason) => new() { UsingsIncomplete = reason, SourcesIncomplete = reason };
 
         internal static ProjectSourceFacts UsingsUnknown(string reason) => new() { UsingsIncomplete = reason };
@@ -1323,7 +1821,9 @@ namespace WinFormsDesigner.Engine
             string projectName = Path.GetFileNameWithoutExtension(projects[0]);
             string? projectText = ReadText(projectDir, projects[0]);
             if (projectText == null) return Unknown("the project file could not be read");
-            if (ProjectFileHides(projectText) is { } hidden) return Unknown(hidden);
+            // What the project file pulls in from elsewhere (an imported props file, a linked source) can add global
+            // usings no file of the folder shows. Their declarations are in the build; their usings are read from it.
+            string? hidden = ProjectFileHides(projectText);
 
             var sources = ProjectResourceResolver.FindProjectFiles(projectDir, ".cs", out bool complete, everySdkSource: true);
             if (!complete) return Unknown("the project's source files could not all be listed");
@@ -1368,7 +1868,13 @@ namespace WinFormsDesigner.Engine
 
             // MSBuild Using items reach the compiler only through the generated file of a build. Absent while the
             // project declares some (or turns ImplicitUsings on) means the project has not been built here.
-            if (generated == 0 && (ImplicitUsingsOn.IsMatch(projectText) || UsingItem.IsMatch(projectText)))
+            if (hidden != null)
+            {
+                result.UsingsFromBuild = hidden;
+                result._projectDir = projectDir;
+                result.DesignerPath = designer;
+            }
+            else if (generated == 0 && (ImplicitUsingsOn.IsMatch(projectText) || UsingItem.IsMatch(projectText)))
                 result.UsingsIncomplete ??= "the project's generated global usings (obj\\…\\" + generatedName
                     + ") were not found; build the project";
             return result;

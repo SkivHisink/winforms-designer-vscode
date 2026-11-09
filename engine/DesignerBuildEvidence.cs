@@ -178,6 +178,14 @@ namespace WinFormsDesigner.Engine
 
         // ------------------------------------------------------------------ judging -------------------------------
 
+        private readonly Dictionary<(Type Declaring, string Name), int> _callsOnThis = new();
+
+        /// <summary>How many <c>call</c>/<c>callvirt</c> instructions of the build's InitializeComponent call an instance
+        /// method <paramref name="name"/> that <paramref name="declaring"/> declares on the form itself: the receiver is
+        /// <c>ldarg.0</c>, not a field, a local or a cast of it.</summary>
+        public int CallsOnThis(Type declaring, string name) =>
+            _callsOnThis.TryGetValue((declaring, name), out int count) ? count : 0;
+
         private void Judge(IReadOnlyList<StatementSyntax> source, ISet<string> fields,
             Func<StatementSyntax, DesignerSourceStatement> describe)
         {
@@ -256,6 +264,9 @@ namespace WinFormsDesigner.Engine
             // itself where it is a constant or a constant array.
             var starts = new List<int>();
             var values = new List<object?>();
+            // Whether the value is the form itself as `ldarg.0` loads it (or a `dup` of it); a field, a cast or anything
+            // else is not.
+            var isThis = new List<bool>();
             int position = 0;
             OpCode previous = OpCodes.Nop;
             Type? previousConstructed = null;
@@ -319,8 +330,10 @@ namespace WinFormsDesigner.Engine
                 if (pops > starts.Count) throw new InvalidOperationException("unbalanced stack");
                 var popped = starts.GetRange(starts.Count - pops, pops);
                 var poppedValues = values.GetRange(values.Count - pops, pops);
+                var poppedThis = isThis.GetRange(isThis.Count - pops, pops);
                 starts.RemoveRange(starts.Count - pops, pops);
                 values.RemoveRange(values.Count - pops, pops);
+                isThis.RemoveRange(isThis.Count - pops, pops);
                 int here = current.Ops.Count;
                 int start = popped.Count > 0 ? Math.Min(popped.Min(), here) : here;
 
@@ -369,6 +382,8 @@ namespace WinFormsDesigner.Engine
                                 current.Ops.Add(declaring == typeof(decimal) ? DesignerOp.Compiled(Unknown, false)
                                     : method.IsStatic ? DesignerOp.Static(declaring, method.Name) : DesignerOp.Instance(method.Name, declaring));
                                 current.Final = MemberKey(method.Name);
+                                if (!method.IsStatic && (op == OpCodes.Call || op == OpCodes.Callvirt) && poppedThis[0])
+                                    _callsOnThis[(declaring, method.Name)] = CallsOnThis(declaring, method.Name) + 1;
                             }
                             break;
                         }
@@ -442,10 +457,12 @@ namespace WinFormsDesigner.Engine
                 }
                 if (IsLocalStore(op)) current.Final = "stloc";
 
+                bool pushedThis = op == OpCodes.Ldarg_0 || (op == OpCodes.Dup && poppedThis.Count == 1 && poppedThis[0]);
                 for (int n = Pushes(op, method); n > 0; n--)
                 {
                     starts.Add(Math.Min(start, current.Ops.Count));
                     values.Add(pushed);
+                    isThis.Add(pushedThis);
                 }
                 position++;
                 previous = op;
