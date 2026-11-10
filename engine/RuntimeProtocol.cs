@@ -298,6 +298,7 @@ namespace WinFormsDesigner.Engine.Protocol
                     catch (Exception ex)
                     {
                         var cancelled = ex.GetBaseException() is OperationCanceledException;
+                        if (!cancelled) ReportFault(method.Name, ex);
                         var failure = Outcome(envelope, cancelled ? V2ProtocolOutcomeKind.Cancelled : V2ProtocolOutcomeKind.Fault,
                             cancelled ? "CANCELLED" : "UNHANDLED_EXCEPTION");
                         if (MutationMethods.Contains(method.Name)) Record(operationKey, envelope, payloadHash, failure, null);
@@ -435,6 +436,32 @@ namespace WinFormsDesigner.Engine.Protocol
             result.Outcome = Outcome(null, V2ProtocolOutcomeKind.Refused, code);
             return result;
         }
+        /// <summary>The outcome carries only its code, so the reason a method threw would otherwise reach nobody. It goes to
+        /// the engine's stderr, which the host copies to the Output channel next to the outcome code; the reply is unchanged.
+        /// One line per fault, invocation wrappers skipped, bounded so a pathological message cannot flood the channel.</summary>
+        private static void ReportFault(string methodName, Exception ex)
+        {
+            try
+            {
+                var parts = new List<string>();
+                for (var current = ex; current != null && parts.Count < 4; current = current.InnerException)
+                {
+                    if (current is TargetInvocationException && current.InnerException != null) continue;
+                    parts.Add(current.GetType().Name + ": " + current.Message);
+                }
+                string frame = (ex.GetBaseException().StackTrace ?? "").Split('\n').Select(line => line.Trim())
+                    .FirstOrDefault(line => line.Length != 0);
+                string text = string.Join(" <- ", parts) + (frame == null ? "" : " [" + frame + "]");
+                text = string.Join(" ", text.Split(new[] { '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries).Select(part => part.Trim()));
+                if (text.Length > 2000) text = text.Substring(0, 2000) + "...";
+                Console.Error.WriteLine("[engine:v2] " + methodName + " threw " + text);
+            }
+            catch
+            {
+                // Reporting is best effort; the fault outcome below is the contract.
+            }
+        }
+
         private static V2ProtocolOutcome Outcome(V2ProtocolEnvelope envelope, V2ProtocolOutcomeKind kind, string code) =>
             new V2ProtocolOutcome
             {

@@ -8,7 +8,8 @@
 // disclosure.
 //
 // Precedence: buildTask (⏳ a build owns the .NET Framework output; the last preview is view-only until it ends) >
-// localizable (the active resource-editing context — 🌐) > net48Preview (ℹ️ unconditional "last build"
+// localizable (the active resource-editing context — 🌐) > partialPreview (⚠️ the .NET Framework partial preview of the
+// source, with placeholders for what could not be built) > net48Preview (ℹ️ unconditional "last build"
 // disclosure on an editable form) > binaryResx (⚠️) > inheritedBase (⚠️). The modern-only flags (inheritedNet9,
 // binaryResx) must ALREADY be gated to the modern engine by the caller; net48Preview is net48-only. Every non-null
 // outcome is non-silent.
@@ -16,15 +17,19 @@
 // Pure (no vscode / no i18n) so the precedence is unit-testable in isolation.
 
 export type FormNoticeKind =
-  | 'localizable' | 'inheritedBase' | 'localizableInherited' | 'binaryResx' | 'compiledPreview' | 'buildTask' | null;
+  | 'localizable' | 'inheritedBase' | 'localizableInherited' | 'binaryResx' | 'compiledPreview' | 'buildTask'
+  | 'partialPreview' | null;
 
 export function chooseFormNoticeKind(
   localizable: boolean, inheritedNet9: boolean, binaryResx = false, net48Preview = false,
-  buildTask = false): FormNoticeKind {
+  buildTask = false, partialPreview = false): FormNoticeKind {
   // A running build is not a failure: it is the one transient reason the canvas is view-only, so it is the message.
   if (buildTask) return 'buildTask';
   if (localizable && inheritedNet9) return 'localizableInherited'; // 🌐 (+ any other clause appended by host)
   if (localizable) return 'localizable';                          // 🌐 selected culture resource editing
+  // ⚠️ the .NET Framework partial preview: parts of the source could not be built and are shown as placeholders.
+  // It must stay visible while the form is shown that way, so it outranks every disclosure below.
+  if (partialPreview) return 'partialPreview';
   if (net48Preview) return 'compiledPreview';                     // ℹ️ 1.0.0 — editable, but the picture is the build
   if (binaryResx) return 'binaryResx';                            // ⚠️ data-loss risk > incomplete preview
   if (inheritedNet9) return 'inheritedBase';                      // ⚠️ incomplete preview

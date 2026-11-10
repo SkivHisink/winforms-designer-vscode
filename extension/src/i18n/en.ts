@@ -133,6 +133,7 @@ export const en: Catalog = {
   'host.tierD.x86Refused': 'Designer open refused: {assembly} requires an x86 process, but this release has no x86 design worker.',
   'host.transactionRecovery.manual': 'WinForms Designer could not safely recover {count} interrupted transaction(s). No conflicting file was overwritten. See the WinForms Designer output for journal paths and manual resolution details.',
   'designer.diag.compiledFallback': '.NET Framework preview fell back to the last compiled build.',
+  'designer.diag.partialPreview': 'Partial .NET Framework preview of the source: neither the full preview nor the last build could be shown.',
   'designer.diag.noDetails': 'No additional details were reported.',
   // 0.10.0 trust-floor — persistent read-only notice for a [Localizable(true)] form.
   'designer.notice.localizationEditable': 'Localizable form — editing {culture}. Values are written to the .resx.',
@@ -161,6 +162,7 @@ export const en: Catalog = {
   // match. This is NOT a lock: net48 forms stay editable, and source safety comes from the byte-local firewall. It is
   // an honest statement of what the canvas is. Independent of dirty/save/build identity/route — purely engine-derived.
   'designer.notice.compiledPreview': '.NET Framework compiled preview — this canvas is based on your last build and may not match .Designer.cs. Live updates are best-effort; rebuild for the authoritative picture. Editing stays enabled and your source edits stay byte-local.',
+  'designer.notice.partialPreview': 'Partial .NET Framework preview of the source — parts that could not be built are shown as read-only placeholders, and what was left out is listed in the details. Edits to the other controls stay byte-local; Retry tries the full preview and the build again.',
   // Same disclosure, strengthened when the buffer has unsaved source changes.
   'designer.notice.compiledPreviewDirty': '.NET Framework compiled preview — this canvas is based on your last build and may not yet reflect all your unsaved changes. Some edits appear only after you rebuild. Editing stays enabled and your source edits stay byte-local.',
   // 1.0.0 — {diag} fallback for a net48 live op whose source committed but the compiled instance didn't reflect it

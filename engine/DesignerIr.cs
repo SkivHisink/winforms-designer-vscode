@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WinFormsDesigner.Engine
 {
@@ -44,7 +45,11 @@ namespace WinFormsDesigner.Engine
         // 4: IrDocument.NamespaceContext — the file's own `using`/namespace scope, so an UNQUALIFIED type name (legal
         //    C#, common in hand-written designer files) resolves instead of dropping the whole form to the compiled
         //    fallback. Same rule: a mismatched producer/executor pair must refuse each other, not half-read a document.
-        public const int SchemaVersion = 4;
+        // 5: IrBuildWitnessedCtor and IrDocument.WitnessCandidates — a value construction the allowlist does not name,
+        //    executable only where the project's build makes the same construction (net48). Same rule as above.
+        public const int SchemaVersion = 5;
+        /// <summary>Max witness candidates one document carries.</summary>
+        public const int MaxWitnessCandidates = 10000;
         /// <summary>Max namespace candidates carried for unqualified type names (usings + enclosing namespace chain).
         /// Generous for real files, bounded so a forged document cannot make resolution quadratic.</summary>
         public const int MaxNamespaceContext = 128;
@@ -104,6 +109,19 @@ namespace WinFormsDesigner.Engine
     {
         public string EnumTypeName { get; set; } = "";
         public List<string> Members { get; set; } = new List<string>();
+    }
+
+    /// <summary>`new T(constants…)` where T is a type the construction allowlist does NOT name — a vendor value such as
+    /// an editor's button. Only constant arguments (null, bool, char, string, number, enum member). It never appears in
+    /// <see cref="IrDocument.Statements"/>, only in a <see cref="IrWitnessCandidate"/>, and the executor constructs it
+    /// only through an <see cref="IIrConstructionWitness"/>: the project's build must make exactly this construction
+    /// (the same constructor with the same constant arguments) in the designed type's InitializeComponent. Without a
+    /// witness it is refused, so an edited argument never reaches a constructor with an input the build never gave it.</summary>
+    [Serializable]
+    public sealed class IrBuildWitnessedCtor : IrValue
+    {
+        public string TypeName { get; set; } = "";
+        public List<IrValue> Args { get; set; } = new List<IrValue>();
     }
 
     /// <summary>`new T(args…)` where T is in the shared construction allowlist (Point/Size/Font/Padding/…-class
@@ -383,6 +401,57 @@ namespace WinFormsDesigner.Engine
         /// <summary>Named reasons for every statement NOT represented (drives the fallback reason codes).</summary>
         public List<string> UnrepresentableReasons { get; set; } = new List<string>();
         public bool FullCoverage => RepresentedStatements == TotalSourceStatements;
+        /// <summary>Statements left out of <see cref="Statements"/> only because they construct a value through
+        /// <see cref="IrBuildWitnessedCtor"/>. They stay gaps for every consumer (coverage, regeneration, the modern
+        /// engine); only <see cref="WithWitnessCandidates"/> puts them back, for an executor that has a witness.</summary>
+        public List<IrWitnessCandidate> WitnessCandidates { get; set; } = new List<IrWitnessCandidate>();
+
+        /// <summary>A copy with the witness candidates <paramref name="admit"/> accepts (all, without one) at their
+        /// source positions, counted as represented and no longer among the reasons; the others stay gaps. The product
+        /// admits a candidate only through <see cref="DesignerIrExecutor.AuthorizeWitnessCandidate"/>. Candidates out
+        /// of source order or out of range, or none admitted, leave the document as it is.</summary>
+        public IrDocument WithWitnessCandidates(Func<IrWitnessCandidate, bool>? admit = null)
+        {
+            if (WitnessCandidates == null || WitnessCandidates.Count == 0 || Statements == null) return this;
+            int previous = 0;
+            foreach (var candidate in WitnessCandidates)
+            {
+                if (candidate == null || candidate.Statements == null || candidate.Position < previous
+                    || candidate.Position > Statements.Count) return this;
+                previous = candidate.Position;
+            }
+            var admitted = WitnessCandidates.Where(candidate => admit == null || admit(candidate)).ToList();
+            if (admitted.Count == 0) return this;
+            var merged = new IrDocument
+            {
+                SchemaVersion = SchemaVersion,
+                DesignedTypeName = DesignedTypeName,
+                BaseTypeSyntaxName = BaseTypeSyntaxName,
+                NamespaceContext = new List<string>(NamespaceContext ?? new List<string>()),
+                TotalSourceStatements = TotalSourceStatements,
+                RepresentedStatements = RepresentedStatements + admitted.Count,
+                UnrepresentableReasons = new List<string>(UnrepresentableReasons ?? new List<string>()),
+            };
+            int next = 0;
+            foreach (var candidate in admitted)
+            {
+                while (next < candidate.Position) merged.Statements.Add(Statements[next++]);
+                merged.Statements.AddRange(candidate.Statements);
+                merged.UnrepresentableReasons.Remove(candidate.Reason);
+            }
+            while (next < Statements.Count) merged.Statements.Add(Statements[next++]);
+            return merged;
+        }
+    }
+
+    /// <summary>One source statement that is a gap only because of an <see cref="IrBuildWitnessedCtor"/>: the nodes it
+    /// maps to, the index in <see cref="IrDocument.Statements"/> before which they go, and its gap reason.</summary>
+    [Serializable]
+    public sealed class IrWitnessCandidate
+    {
+        public int Position { get; set; }
+        public List<IrStatement> Statements { get; set; } = new List<IrStatement>();
+        public string Reason { get; set; } = "";
     }
 
     // -------------------------------------------------------------- validation ------------------------------------
@@ -400,7 +469,7 @@ namespace WinFormsDesigner.Engine
         private static readonly HashSet<Type> Closed = new HashSet<Type>
         {
             typeof(IrNull), typeof(IrBool), typeof(IrChar), typeof(IrString), typeof(IrNumber), typeof(IrEnum),
-            typeof(IrKnownCtor), typeof(IrStaticFactory), typeof(IrStaticRead), typeof(IrComponentRef),
+            typeof(IrKnownCtor), typeof(IrBuildWitnessedCtor), typeof(IrStaticFactory), typeof(IrStaticRead), typeof(IrComponentRef),
             typeof(IrArray), typeof(IrResourceRef), typeof(IrCast),
             typeof(IrConstructComponent), typeof(IrSetProperty), typeof(IrAddControl), typeof(IrAddCollectionItem),
             typeof(IrSetExtender), typeof(IrApplyResources), typeof(IrBeginInit), typeof(IrEndInit), typeof(IrWireEvent), typeof(IrLayoutCall),
@@ -444,6 +513,25 @@ namespace WinFormsDesigner.Engine
             {
                 var err = CheckStatement(s, ref nodes, ref chars);
                 if (err != null) return err;
+                if (!WitnessedValuesInPlainPositions(s)) return "witnessed construction in an unsupported position";
+            }
+            if (doc.WitnessCandidates == null) return "WitnessCandidates is null";
+            if (doc.WitnessCandidates.Count > IrLimits.MaxWitnessCandidates) return "too many witness candidates";
+            if (doc.RepresentedStatements + doc.WitnessCandidates.Count > doc.TotalSourceStatements) return "invalid coverage counts";
+            int position = 0;
+            foreach (var candidate in doc.WitnessCandidates)
+            {
+                if (candidate == null || candidate.Statements == null || candidate.Reason == null) return "invalid witness candidate";
+                if (candidate.Position < position || candidate.Position > doc.Statements.Count) return "witness candidate out of order";
+                position = candidate.Position;
+                if (candidate.Statements.Count == 0 || candidate.Statements.Count > IrLimits.MaxArrayItems) return "invalid witness candidate";
+                if (OverBudget(ref chars, candidate.Reason)) return "string budget exceeded";
+                foreach (var s in candidate.Statements)
+                {
+                    var err = CheckStatement(s, ref nodes, ref chars);
+                    if (err != null) return err;
+                    if (!WitnessedValuesInPlainPositions(s)) return "witnessed construction in an unsupported position";
+                }
             }
             return null;
         }
@@ -555,6 +643,18 @@ namespace WinFormsDesigner.Engine
                     if (OverBudget(ref chars, kc.TypeName)) return "string budget exceeded";
                     foreach (var a in kc.Args) { var e = CheckValue(a, depth + 1, ref nodes, ref chars); if (e != null) return e; }
                     return null;
+                case IrBuildWitnessedCtor w:
+                    if (!ValidTypeName(w.TypeName)) return "invalid witnessed ctor type";
+                    if (w.Args == null || w.Args.Count > IrLimits.MaxCtorArgs) return "invalid witnessed ctor args";
+                    if (OverBudget(ref chars, w.TypeName)) return "string budget exceeded";
+                    foreach (var a in w.Args)
+                    {
+                        // Constants only: the build is matched by constructor and argument VALUES, so no argument may
+                        // depend on anything the replay computes.
+                        if (a is not (IrNull or IrBool or IrChar or IrString or IrNumber or IrEnum)) return "witnessed ctor argument is not a constant";
+                        var e = CheckValue(a, depth + 1, ref nodes, ref chars); if (e != null) return e;
+                    }
+                    return null;
                 case IrStaticFactory f:
                     if (!ValidTypeName(f.TypeName) || !ValidIdent(f.Method)) return "invalid factory";
                     if (f.Args == null || f.Args.Count > IrLimits.MaxCtorArgs) return "invalid factory args";
@@ -584,6 +684,64 @@ namespace WinFormsDesigner.Engine
                 default: return "unhandled value type " + v.GetType().Name; // unreachable while Closed is exact
             }
         }
+
+        /// <summary>Whether every <see cref="IrBuildWitnessedCtor"/> of the statement stands where the replay hands it
+        /// on unconverted: the value of a property assignment or of a collection add, directly or as an element of the
+        /// array that is that value. Under a cast, inside another construction or factory, or in an extender or tree-node
+        /// value, a conversion or an overload choice the replay does not reproduce would stand between the build's value
+        /// and its use.</summary>
+        public static bool WitnessedValuesInPlainPositions(IrStatement statement)
+        {
+            switch (statement)
+            {
+                case IrSetProperty p: return PlainWitnessPosition(p.Value);
+                case IrAddCollectionItem item: return PlainWitnessPosition(item.Item);
+                case IrSetExtender x: return !ContainsWitnessed(x.Value);
+                case IrSetTreeNodeProp tp: return !ContainsWitnessed(tp.Value);
+                default: return true;
+            }
+        }
+
+        /// <summary>Whether a constant argument of a witnessed construction is one the replay reproduces exactly as the
+        /// compiler does: null, bool, char, string, an enum member, or an integer literal that is not a negated unsigned
+        /// one (C# widens `-0U` to a long). Floating and decimal literals are not taken: the .NET Framework's parsing
+        /// differs from the compiler's on some of them, so a value read one way could match a construction of another.</summary>
+        public static bool IsExactWitnessConstant(IrValue? value)
+        {
+            switch (value)
+            {
+                case IrNull: case IrBool: case IrChar: case IrString: case IrEnum: return true;
+                case IrNumber n:
+                    if (string.IsNullOrEmpty(n.InvariantText)) return false;
+                    bool negative = n.InvariantText[0] == '-';
+                    switch (n.Kind)
+                    {
+                        case IrNumericKind.Byte: case IrNumericKind.UInt16: case IrNumericKind.UInt32: case IrNumericKind.UInt64:
+                            return !negative;
+                        case IrNumericKind.Single: case IrNumericKind.Double: case IrNumericKind.Decimal:
+                            return false;
+                        default: return true;
+                    }
+                default: return false;
+            }
+        }
+
+        private static bool PlainWitnessPosition(IrValue? value) => value switch
+        {
+            IrBuildWitnessedCtor => true,
+            IrArray a => a.Items != null && a.Items.All(item => item is IrBuildWitnessedCtor || !ContainsWitnessed(item)),
+            _ => !ContainsWitnessed(value),
+        };
+
+        private static bool ContainsWitnessed(IrValue? value) => value switch
+        {
+            IrBuildWitnessedCtor => true,
+            IrCast c => ContainsWitnessed(c.Inner),
+            IrArray a => a.Items != null && a.Items.Any(ContainsWitnessed),
+            IrKnownCtor k => k.Args != null && k.Args.Any(ContainsWitnessed),
+            IrStaticFactory f => f.Args != null && f.Args.Any(ContainsWitnessed),
+            _ => false,
+        };
 
         /// <summary>Accumulate a string's length into the whole-document aggregate; true when the total is exceeded.</summary>
         private static bool OverBudget(ref long chars, string? s)

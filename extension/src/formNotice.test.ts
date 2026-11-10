@@ -32,6 +32,13 @@ describe('chooseFormNoticeKind', () => {
     expect(chooseFormNoticeKind(true, true, false, false)).toBe('localizableInherited');
   });
 
+  it('the net48 partial preview outranks the compiled-preview disclosure, but not a build or the resource context', () => {
+    expect(chooseFormNoticeKind(false, false, false, true, false, true)).toBe('partialPreview');
+    expect(chooseFormNoticeKind(false, false, false, false, false, true)).toBe('partialPreview');
+    expect(chooseFormNoticeKind(true, false, false, false, false, true)).toBe('localizable');
+    expect(chooseFormNoticeKind(false, false, false, false, true, true)).toBe('buildTask');
+  });
+
   it('pre-existing 2/3-arg call sites are unchanged by the new 4th param defaulting false', () => {
     expect(chooseFormNoticeKind(false, false)).toBeNull();
     expect(chooseFormNoticeKind(false, true)).toBe('inheritedBase');

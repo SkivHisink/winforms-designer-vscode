@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 namespace WinFormsDesigner.Engine
 {
@@ -16,6 +17,10 @@ namespace WinFormsDesigner.Engine
     {
         /// <summary>True only when the IR fully covered the form AND the executor produced a complete live tree.</summary>
         public bool Interpreted { get; private set; }
+        /// <summary>True only for a partial plan (see <see cref="Plan(IrDocument?, IIrHost, Type?, bool)"/>) whose live
+        /// tree left something out: <see cref="Interpreted"/> stays false, so every caller that accepts only a
+        /// complete interpretation keeps refusing it, and <see cref="Execution"/> names what is missing.</summary>
+        public bool Partial { get; private set; }
         public RenderModeDecision Decision { get; private set; } = RenderModeDecision.Fallback(RenderFallbackReason.NoFormClass);
         /// <summary>The live root (a Control) when Interpreted; may be a partly-built root on a late fallback (the
         /// caller disposes it and renders compiled instead).</summary>
@@ -29,12 +34,20 @@ namespace WinFormsDesigner.Engine
         /// designed type's <c>BaseType</c> — the reliable source, since a VS form declares its base in the NON-designer
         /// partial the front-end never sees. Null ⇒ resolve from the source's declared base name (used by unit tests
         /// whose base IS in the parsed source).</param>
-        public static InterpretedRenderPlan Plan(IrDocument? doc, IIrHost host, Type? baseTypeOverride)
+        public static InterpretedRenderPlan Plan(IrDocument? doc, IIrHost host, Type? baseTypeOverride) =>
+            Plan(doc, host, baseTypeOverride, partial: false);
+
+        /// <param name="partial">Replay with the executor's partial model (see
+        /// <see cref="DesignerIrExecutor.Execute(IrDocument, object, IIrHost, bool)"/>): statements the front-end could
+        /// not represent are left out instead of refusing the form, and so are components whose constructors throw.
+        /// Every other refusal stands. A partial replay that left nothing out is an ordinary complete interpretation.</param>
+        public static InterpretedRenderPlan Plan(IrDocument? doc, IIrHost host, Type? baseTypeOverride, bool partial)
         {
             if (host == null) throw new ArgumentNullException(nameof(host));
 
             var coverage = RenderModeClassifier.FromCoverage(doc);
-            if (coverage.Mode == RenderMode.CompiledFallback)
+            if (coverage.Mode == RenderMode.CompiledFallback
+                && !(partial && coverage.FallbackReason == RenderFallbackReason.UnrepresentableStatements))
                 return new InterpretedRenderPlan { Interpreted = false, Decision = coverage, DesignedTypeName = doc?.DesignedTypeName ?? "" };
 
             var designed = doc!.DesignedTypeName;
@@ -57,7 +70,7 @@ namespace WinFormsDesigner.Engine
             IrExecutionResult exec;
             try
             {
-                exec = DesignerIrExecutor.Execute(doc, root, host);
+                exec = DesignerIrExecutor.Execute(doc, root, host, partial);
             }
             catch (Exception ex)
             {
@@ -76,9 +89,15 @@ namespace WinFormsDesigner.Engine
                 };
             }
             var decision = RenderModeClassifier.FromExecution(exec);
+            bool incomplete = decision.Mode == RenderMode.Interpreted && (exec.Partial || !doc.FullCoverage);
+            if (incomplete)
+                decision = RenderModeDecision.Fallback(RenderFallbackReason.PartialInterpretation,
+                    string.Join(" | ", (doc.UnrepresentableReasons ?? new System.Collections.Generic.List<string>())
+                        .Concat(exec.Omissions).Take(5)));
             return new InterpretedRenderPlan
             {
                 Interpreted = decision.Mode == RenderMode.Interpreted,
+                Partial = incomplete,
                 Decision = decision,
                 Root = root,
                 Execution = exec,

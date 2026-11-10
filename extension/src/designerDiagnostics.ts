@@ -234,7 +234,7 @@ export function buildDesignerDiagnosticBundle(
     const s = snapshot.session;
     bundle.session = {
       engineKind: member(s.engineKind, ['modern', 'net48']),
-      net48RenderMode: member(s.net48RenderMode, ['interpreted', 'compiledFallback', 'compiled']),
+      net48RenderMode: member(s.net48RenderMode, ['interpreted', 'interpretedPartial', 'compiledFallback', 'compiled']),
       renderOk: bool(s.renderOk), dirty: bool(s.dirty), revision: numeric(s.revision, true),
       controlCount: numeric(s.controlCount, true), componentCount: numeric(s.componentCount, true),
       representable: numeric(s.representable, true), totalStatements: numeric(s.totalStatements, true), roundTripSafe: bool(s.roundTripSafe),

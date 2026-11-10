@@ -334,6 +334,28 @@ public sealed class RuntimeProtocolTests
     }
 
     [Fact]
+    public async Task FaultReplyKeepsItsCodeAndTheReasonGoesToStandardErrorOnOneLine()
+    {
+        var fake = new FakeApi { Completion = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var router = Ready(fake);
+        fake.Completion.SetException(new InvalidOperationException(
+            "the source could not be interpreted (first\r\n    second)", new NullReferenceException("inner reason")));
+        var original = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(TextWriter.Synchronized(captured));
+        ProtocolExecutionResult result;
+        try { result = await Send(router, Envelope(router.BuildId)); }
+        finally { Console.SetError(original); }
+        Assert.Equal(V2ProtocolOutcomeKind.Fault, result.Outcome.Kind);
+        Assert.Equal("UNHANDLED_EXCEPTION", result.Outcome.Code);
+        Assert.Equal("UNHANDLED_EXCEPTION", result.Outcome.Message);
+        Assert.Null(result.ResultJson);
+        var line = Assert.Single(captured.ToString().Split(Environment.NewLine), text => text.StartsWith("[engine:v2] Ping threw ", StringComparison.Ordinal));
+        Assert.Contains("InvalidOperationException: the source could not be interpreted (first second)", line);
+        Assert.Contains("NullReferenceException: inner reason", line);
+    }
+
+    [Fact]
     public async Task CancellationTokenCannotBeSuppliedThroughPayload()
     {
         var fake = new FakeApi();

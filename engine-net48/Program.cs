@@ -376,6 +376,14 @@ namespace WinFormsDesigner.Engine.Net48
                     Console.WriteLine($"   {(c.IsRoot ? "*" : " ")} id={c.Id} type={c.Type} @({c.X},{c.Y}) {c.Width}x{c.Height} parent={c.ParentId}");
                 if (!string.IsNullOrEmpty(r.Diagnostics)) Console.WriteLine("[render-interpreted] diag: " + r.Diagnostics);
                 if (!string.IsNullOrEmpty(outPng)) { File.WriteAllBytes(outPng!, r.Png); Console.WriteLine("[render-interpreted] wrote " + Path.GetFullPath(outPng!)); }
+                // A partial preview is a picture, not a pass: say what it left out and exit with its own code.
+                if (r.RenderMode == "interpretedPartial")
+                {
+                    foreach (var omission in r.Unrepresentable) Console.WriteLine("[render-interpreted] omitted: " + omission);
+                    foreach (var placeholder in r.Controls.Where(c => c.IsPlaceholder))
+                        Console.WriteLine($"[render-interpreted] placeholder: {placeholder.Id} ({placeholder.Type}) @({placeholder.X},{placeholder.Y}) {placeholder.Width}x{placeholder.Height}");
+                    return r.Png.Length > 0 ? 6 : 2;
+                }
                 bool dropped = WinFormsDesigner.Engine.SaveSafety.DropsControls(r.Unrepresentable);
                 if (dropped) Console.Error.WriteLine("[render-interpreted] refused: a declared control was dropped");
                 return r.Png.Length > 0 && !dropped ? 0 : 2;
@@ -1030,7 +1038,9 @@ namespace WinFormsDesigner.Engine.Net48
             var desc = worker.DescribeInterpretedComponent(designerFilePath, assemblyPath, doc, typeName,
                 string.IsNullOrEmpty(componentId) ? "this" : componentId, width, height,
                 SourceKey(sourceText, codeBehindText), sourceBase);
-            if (desc != null) SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
+            // A placeholder describes nothing of its declared type, so there is no property or event to mark.
+            if (desc != null && !desc.IsPlaceholder)
+                SourceMetadata.Apply(desc, designerFilePath, string.IsNullOrWhiteSpace(sourceText) ? null : sourceText);
             return desc;
         }
 

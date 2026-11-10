@@ -376,6 +376,9 @@ export interface LayoutControl {
   inheritedGeometryOverrideEditable?: boolean;
   /** Opaque engine-issued compiled-base field identity; never client-authored. */
   baseIdentityToken?: string;
+  /** net48 partial preview: the engine's stand-in for a control whose constructor threw. Read-only: never moved,
+   * resized, edited or used as a drop target; `type` is the declared type. */
+  isPlaceholder?: boolean;
 }
 
 /** One top-level ToolStrip/MenuStrip/StatusStrip item's window-space rect (or the trailing "Type Here" slot) for
@@ -1783,6 +1786,8 @@ export interface ComponentDesc {
   readOnlyReason?: string | null;
   inheritedOverrideEditable?: boolean;
   baseIdentityToken?: string;
+  /** net48 partial preview: a stand-in for a control whose constructor threw. It describes nothing of its type. */
+  isPlaceholder?: boolean;
   properties: PropertyDesc[];
   /** Property smart tags read from the live ComponentDesigner/DesignerActionList product path. */
   designerActions?: DesignerActionDesc[];

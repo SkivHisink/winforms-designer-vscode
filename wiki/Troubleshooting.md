@@ -20,6 +20,26 @@ Some statements in `InitializeComponent` fall outside the interpreter's modeled 
 listed constructs simply did not take effect in the preview. Click **Show details** for the exact statements and
 reasons. Everything else on the form remains fully editable.
 
+## Hatched placeholders and a "Partial .NET Framework preview" notice
+
+The form's source could not be fully interpreted and its last build could not be constructed either — usually a
+constructor that asks the running application for a service (`Services.Get<…>()`) and gets nothing in the designer.
+The placeholders stand for the controls whose constructors threw; **Show details** lists them with the exception and
+every statement that was left out. The rest of the form is your live source and stays editable. See
+[.NET Framework and DevExpress → Partial preview](Framework-and-DevExpress#partial-preview).
+
+To get the whole form back, make those constructors safe at design time. `DesignMode` is always `false` inside a
+constructor (the control is sited only afterwards), so test what the constructor actually needs — a service that
+is `null`, or `LicenseManager.UsageMode == LicenseUsageMode.Designtime` — then rebuild and press **Retry**.
+
+## "The generated source is compiled by more than one project"
+
+A shared or linked form belongs to several projects, and the one chosen decides which build renders it. Choose it
+with **Choose Project Context**. Since 2.3.4 that choice also becomes the default for the other forms in the same
+folder and the folders below it: they open with it when it is one of their projects too, and forms already open
+waiting for a choice render at once. A form's own choice always wins, and a choice whose project no longer compiles
+the form is refused rather than guessed.
+
 ## The preview is blank, or shows an old picture
 
 - **Render failed** — the canvas keeps the last good picture and goes read-only until a render succeeds. The

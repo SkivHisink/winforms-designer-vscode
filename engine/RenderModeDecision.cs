@@ -27,6 +27,9 @@ namespace WinFormsDesigner.Engine
         public const string UnsafeBinaryResource = "unsafeBinaryResource"; // binary/SOAP/FileRef resx — fallback
         public const string BaseTypeChanged = "baseTypeChanged"; // live source's base ≠ compiled base (rebuild)
         public const string LicenseRequired = "licenseRequired"; // a vendor control's design-time license gate
+        // Not a fallback to the build: the net48 partial interpretation of the live source, used only when neither the
+        // complete interpretation nor the compiled build could produce a picture. Its omissions are listed by name.
+        public const string PartialInterpretation = "partialInterpretation";
     }
 
     public sealed class RenderModeDecision
@@ -72,6 +75,11 @@ namespace WinFormsDesigner.Engine
         public static RenderModeDecision FromExecution(IrExecutionResult result)
         {
             if (result.Ok) return RenderModeDecision.Interpreted();
+            // A value only the build can confirm, which it did not: the statement is as unrepresented as it was before
+            // the witness existed, and falls back for that same reason.
+            if (result.FailureReason != null && result.FailureReason.StartsWith(DesignerIrExecutor.UnwitnessedPrefix))
+                return RenderModeDecision.Fallback(RenderFallbackReason.UnrepresentableStatements,
+                    result.FailureReason.Substring(DesignerIrExecutor.UnwitnessedPrefix.Length));
             // A design-time license gate is a distinct, precise reason (the executor prefixes it) — not a generic
             // failure. Everything else is executorFailure with the raw reason as detail.
             if (result.FailureReason != null && result.FailureReason.StartsWith("LICENSE:"))

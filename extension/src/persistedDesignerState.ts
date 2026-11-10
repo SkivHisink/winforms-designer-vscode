@@ -70,6 +70,13 @@ export const PERSISTED_DESIGNER_STATE_INVENTORY: readonly PersistedDesignerState
     lifecycle: 'Explicit choice survives cache clearing and reload; a stale choice is refused without automatic fallback.',
   },
   {
+    key: 'designerProjectContextFolder:<folder-path>', storage: 'workspaceMemento', category: 'settings',
+    producer: 'DesignerSession.selectProjectContext via DesignerHub.setFolderProjectContext',
+    consumer: 'DesignerSession.ensureDocumentOwnerBeforeRender via DesignerHub.folderProjectContext',
+    format: 'Per-folder project path; nearest folder wins; applied only to an ambiguous form that lists it as an owner',
+    lifecycle: 'Last explicit choice in the folder; an applied default becomes that form\'s own project context.',
+  },
+  {
     key: 'v2-transactions/<workspace-hash>/*.json', storage: 'globalStorage', category: 'unsavedRecovery',
     producer: 'transactionJournal.writeJournalFile', consumer: 'transactionRecovery.recoverPendingTransactions',
     format: 'TransactionJournalRecord schemaVersion 2.0.0',

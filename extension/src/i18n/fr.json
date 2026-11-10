@@ -191,6 +191,8 @@
   "designer.diag.copy": "Copier le diagnostic",
   "designer.diag.partialCause": "Une ou plusieurs instructions InitializeComponent n’ont pas pu être représentées.",
   "designer.diag.compiledFallback": "L’aperçu .NET Framework utilise la dernière génération compilée.",
+  "designer.diag.partialPreview": "Aperçu partiel du source (.NET Framework) : ni l’aperçu complet ni la dernière génération n’ont pu être affichés.",
+  "designer.notice.partialPreview": "Aperçu partiel du source (.NET Framework) — les parties qui n’ont pas pu être construites apparaissent comme des espaces réservés en lecture seule, et ce qui a été omis est listé dans les détails. Les modifications des autres contrôles restent byte-local ; Réessayer retente l’aperçu complet et la génération.",
   "designer.diag.noDetails": "Aucun détail supplémentaire n’a été signalé.",
   "designer.notice.inheritedBase": "Ce rendu est incomplet — le formulaire hérite de {base}, que l'aperçu .NET ne peut pas charger, les contrôles définis par le type de base ne sont donc pas dessinés. Indiquez au concepteur votre assembly .NET Framework générée pour afficher le type réel.",
   "designer.notice.binaryResx": "Ce rendu est incomplet — le formulaire a {n} ressource(s) binaire(s)/ImageStream que l'aperçu .NET ne peut pas dessiner. Elles sont conservées dans le .resx ; le concepteur ne le régénérera pas.",

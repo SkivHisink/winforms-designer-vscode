@@ -809,6 +809,31 @@ export class DesignerHub {
     await this.workspaceMemento.update('designerProjectContext:' + normalize(file), projectPath);
   }
 
+  /** The project last chosen for a form in this file's folder, or in the nearest parent folder that has one. It is
+   * only a default for a form that has no choice of its own and is refused because several projects compile it; the
+   * session applies it only when the engine lists it among that form's owners, then proves membership again. */
+  folderProjectContext(file: string): string | undefined {
+    if (!this.workspaceMemento) return undefined;
+    for (let dir = path.dirname(normalize(file)); ; ) {
+      const value = this.workspaceMemento.get<unknown>('designerProjectContextFolder:' + dir);
+      if (typeof value === 'string' && path.isAbsolute(value) && !value.includes('\0')) return value;
+      const parent = path.dirname(dir);
+      if (parent === dir) return undefined;
+      dir = parent;
+    }
+  }
+
+  async setFolderProjectContext(file: string, projectPath: string): Promise<void> {
+    if (!this.workspaceMemento) return;
+    await this.workspaceMemento.update('designerProjectContextFolder:' + path.dirname(normalize(file)), projectPath);
+  }
+
+  /** A project was just chosen for `origin`. Other open forms still refused for an ambiguous owner take it when it is
+   * their folder's choice and one of their owners; each proves membership again on its own render. */
+  shareFolderProjectContext(origin: DesignerSession, projectPath: string): void {
+    for (const session of [...this.openSessions]) if (session !== origin) session.adoptFolderProjectContext(projectPath);
+  }
+
   get activeSession(): DesignerSession | null { return this.active; }
 
   /** Fires when the mirrored (focused) designer changes — the status bar reflects the active form's control source. */
@@ -1917,7 +1942,7 @@ export class WinFormsDesignerProvider implements vscode.CustomEditorProvider<Win
     panelActive: boolean;
     renderReady: boolean;
     recoveryConflictOffered: boolean;
-    engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
+    engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'interpretedPartial' | 'compiledFallback' | 'compiled' | null;
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;
@@ -3368,8 +3393,16 @@ class DesignerSession {
   private lastDirtyPosted: boolean | undefined;
   /** The mode of the last net48 render: 'interpreted' (live source via the IR interpreter — no
    * "last build" disclosure, it IS the source), 'compiledFallback' (a form the interpreter can't cover → the compiled
-   * last build WITH the disclosure + reason), or 'compiled'. Drives composeFormNotice. Ignored on the modern engine. */
+   * last build WITH the disclosure + reason), 'interpretedPartial' (neither of those could give a picture: the live
+   * source with placeholders for what could not be built, every omission listed), or 'compiled'. Drives
+   * composeFormNotice. Ignored on the modern engine. */
   private net48RenderMode = 'compiled';
+
+  /** The net48 canvas replays the live source, completely or partially, rather than showing the compiled build: its
+   * describes, tabs and structural edits go through the interpreter, never through a compiled instance. */
+  private get net48LiveSource(): boolean {
+    return this.net48RenderMode === 'interpreted' || this.net48RenderMode === 'interpretedPartial';
+  }
   /** 1.2.x — the exact buffer the CURRENT interpreted picture was built from, so the engine can prove its cached
    * graph still matches before re-snapshotting it instead of re-interpreting. Undefined whenever the picture is not
    * an interpretation of a known buffer (a compiled render, a live compiled op, before the first render). */
@@ -4599,7 +4632,7 @@ class DesignerSession {
       diagnostics.push(diagnostic.code === 'UNKNOWN_REASON' ? createDesignerDiagnostic('RENDER_FAILED') : diagnostic);
     }
     const previewAuthority: 'liveSource' | 'compiled' | 'stale' = !this.renderOk ? 'stale'
-      : this.engineKind === 'net48' && this.net48RenderMode !== 'interpreted' ? 'compiled' : 'liveSource';
+      : this.engineKind === 'net48' && !this.net48LiveSource ? 'compiled' : 'liveSource';
     if (previewAuthority === 'compiled') diagnostics.push(createDesignerDiagnostic('COMPILED_PREVIEW'));
     if (this.designerFile && DesignerHub.instance.projectContext(this.designerFile) && this.getAssemblyOverride(this.designerFile))
       diagnostics.push(createDesignerDiagnostic('PROJECT_CONTEXT_ASSEMBLY_OVERRIDE'));
@@ -4658,7 +4691,7 @@ class DesignerSession {
     /** See openDocumentState.panelActive. Read through the disposed flag: WebviewPanel.active throws once the panel
      * is gone, and this getter is polled by every waitFor predicate. */
     panelActive: boolean;
-    engineKind: EngineKind; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
+    engineKind: EngineKind; net48RenderMode: 'interpreted' | 'interpretedPartial' | 'compiledFallback' | 'compiled' | null;
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;
@@ -4711,7 +4744,7 @@ class DesignerSession {
       renderReady: this.renderOk,
       recoveryConflictOffered: this.conflictNoticeShown,
       panelActive: !this.disposed && this.panel.active,
-      engineKind: this.engineKind, net48RenderMode: this.engineKind === 'net48' ? this.net48RenderMode as 'interpreted' | 'compiledFallback' | 'compiled' : null,
+      engineKind: this.engineKind, net48RenderMode: this.engineKind === 'net48' ? this.net48RenderMode as 'interpreted' | 'interpretedPartial' | 'compiledFallback' | 'compiled' : null,
       ownerDiagnosticCode: this.lastDocumentOwner?.diagnosticCode ?? null,
       ownerTypeName: this.lastDocumentOwner?.typeName ?? null,
       ownerProjectPath: this.lastDocumentOwner?.projectPath ?? null,
@@ -5982,7 +6015,9 @@ class DesignerSession {
     // net48 renders the live compiled INSTANCE (not the text), and that instance still carries the reverted edit's
     // live mutation, so reusing it would keep showing the undone change. Drop it so the next render re-instantiates
     // from the compiled baseline. (net9 interprets the text directly, so it needs no such reconcile.)
-    if (this.engineKind === 'net48') {
+    // A partial preview has no compiled instance and its graph is never edited in place, so it has nothing to drop —
+    // while a discard would also forget that the build cannot be constructed and run that constructor again.
+    if (this.engineKind === 'net48' && this.net48RenderMode !== 'interpretedPartial') {
       const asm = this.asm();
       if (asm && this.designerFile) {
         try { await this.withTimeout(discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, asm),
@@ -6683,6 +6718,14 @@ class DesignerSession {
 
   private async handleDiagnosticAction(action: 'retry' | 'rebuild' | 'chooseAssembly' | 'chooseProjectContext' | 'copy'): Promise<void> {
     if (action === 'retry') {
+      // A partial preview remembers that the build could not be constructed. Retry means try everything again, so
+      // drop that first; there is no compiled instance whose live edits a discard could lose.
+      const asm = this.asm();
+      if (this.engineKind === 'net48' && this.net48RenderMode === 'interpretedPartial' && asm && this.designerFile) {
+        try { await this.withTimeout(discardCompiledLive(await this.ensureEngine('net48'), this.designerFile, asm),
+          2000, 'partial preview reset timed out'); }
+        catch { /* best effort — the render below still runs; it may reuse the remembered failure */ }
+      }
       await this.fullRender();
       return;
     }
@@ -6963,7 +7006,7 @@ class DesignerSession {
     // Kept from the LIVE render so a first control drop can persist the pair this runtime actually scales by —
     // 6,13 on .NET Framework, 7,15 on modern .NET. See addControl's autoScaleDimensions.
     this.renderedAutoScale = result.autoScaleDimensions ?? '';
-    if (this.engineKind === 'modern' || this.net48RenderMode === 'interpreted') this.pruneSelectedTabs(this.controls);
+    if (this.engineKind === 'modern' || this.net48LiveSource) this.pruneSelectedTabs(this.controls);
     this.toolStripItems = result.toolStripItems ?? [];
     this.rootClient = { w: result.clientWidth, h: result.clientHeight };
     this.rootFrame = { w: result.width, h: result.height };
@@ -7057,6 +7100,14 @@ class DesignerSession {
         detail: this.net48FallbackReason || t('designer.diag.noDetails'),
       });
     }
+    if (this.engineKind === 'net48' && this.net48RenderMode === 'interpretedPartial') {
+      diagnostics.unshift({
+        category: 'initError',
+        target: 'this',
+        text: t('designer.diag.partialPreview'),
+        detail: result.diagnostics || t('designer.diag.noDetails'),
+      });
+    }
     this.postRenderDiagnostics(diagnostics);
   // composeFormNotice(result) was already posted synchronously right after the render/layout/tray posts above, so a
   // stalled loadProps can never leave the canvas without its persistent notice.
@@ -7083,7 +7134,8 @@ class DesignerSession {
     // The .NET Framework compiled-preview canvas is BUILD-based (the last build, not the live source) when it did not
     // interpret; that fact goes to the OUTPUT CHANNEL, not a banner (it was previously an always-visible strip). An
     // interpreted net48 render IS the live source (VS model), like the modern engine, so there is nothing to disclose.
-    const net48Preview = this.engineKind === 'net48' && this.net48RenderMode !== 'interpreted';
+    const net48Preview = this.engineKind === 'net48' && !this.net48LiveSource;
+    const partialPreview = this.engineKind === 'net48' && this.net48RenderMode === 'interpretedPartial';
     if (net48Preview) {
       // Log-only, deduped so a render/edit storm doesn't spam the channel.
       const note = this.doc.isDirty ? t('designer.notice.compiledPreviewDirty') : t('designer.notice.compiledPreview');
@@ -7094,15 +7146,19 @@ class DesignerSession {
     // The visible banner covers modern-engine disclosures (⚠️ binaryResx / inheritedBase) and the active localizable
     // resource context (🌐). net48Preview is deliberately NOT passed — it no longer drives a banner (see above).
     const buildTask = this.engineKind === 'net48' && this.buildTaskName !== undefined;
-    const kind = chooseFormNoticeKind(this.localizable, inheritedModern, binaryResx, false, buildTask);
+    const kind = chooseFormNoticeKind(this.localizable, inheritedModern, binaryResx, false, buildTask, partialPreview);
     let payload: { type: 'formNotice'; kind: FormNoticeKind; icon?: string; text?: string };
     if (kind === null) {
     payload = { type: 'formNotice', kind: null }; // clean render → hide
     } else if (kind === 'buildTask') {
       payload = { type: 'formNotice', kind, icon: '⏳', text: t('host.buildTask.running', { name: this.buildTaskName ?? '' }) };
+    } else if (kind === 'partialPreview') {
+      payload = { type: 'formNotice', kind, icon: '⚠️', text: t('designer.notice.partialPreview') };
     } else {
       const parts: string[] = [];
       if (this.localizable) parts.push(t('designer.notice.localizationEditable', { culture: this.localizationCultureLabel() }));
+      // The resource context owns the icon, but a partial preview must still say so while the canvas is one.
+      if (partialPreview) parts.push(t('designer.notice.partialPreview'));
       if (binaryResx) parts.push(t('designer.notice.binaryResx', { n: res.unrenderableResxCount ?? 0 }));
       if (inheritedModern) parts.push(t('designer.notice.inheritedBase', { base: res.baseTypeName ?? '' }));
       const icon = this.localizable ? '🌐' : '⚠️';
@@ -7237,6 +7293,21 @@ class DesignerSession {
       && owner.owners.some((candidate) => normalize(candidate) === normalize(projectPath));
   }
 
+  /** Another open form just chose `projectPath`. Render again when this form is refused only for an ambiguous owner,
+   * has no choice of its own, its nearest folder choice is now that project, and the project is one of its owners. */
+  adoptFolderProjectContext(projectPath: string): void {
+    const owner = this.lastDocumentOwner;
+    if (this.disposed || !this.designerFile || owner?.diagnosticCode !== 'AMBIGUOUS_OWNER') return;
+    if (DesignerHub.instance.projectContext(this.designerFile)) return;
+    const folderChoice = DesignerHub.instance.folderProjectContext(this.designerFile);
+    if (!folderChoice || normalize(folderChoice) !== normalize(projectPath)
+      || !owner.owners.some((candidate) => normalize(candidate) === normalize(projectPath))) return;
+    const priorOutput = this.pinnedNet48Output;
+    void this.withDetachedProductWorkflow(() => this.reloadControlSource(priorOutput)).catch((error) => {
+      if (!this.disposed) this.output.appendLine(`[designer] folder project context render rejected: ${errMsg(error)}`);
+    });
+  }
+
   /** Choice is authoritative only after the engine proves current membership. Cancelling never changes state.
    * A caller that changed the control-source override first passes the net48 output pinned before that change. */
   async selectProjectContext(requestedProjectPath?: string | null, priorNet48Output?: string): Promise<boolean> {
@@ -7307,11 +7378,13 @@ class DesignerSession {
       }
       const priorOutput = priorNet48Output ?? this.pinnedNet48Output;
       await DesignerHub.instance.setProjectContext(this.designerFile, checked.projectPath);
+      await DesignerHub.instance.setFolderProjectContext(this.designerFile, checked.projectPath);
       this.output.appendLine(`[designer] project context set: ${this.designerFile} → ${checked.projectPath}`);
       if (this.disposed) return false;
       this.documentOwnerChecked = false;
       this.lastDocumentOwner = checked;
       await this.reloadControlSource(priorOutput);
+      DesignerHub.instance.shareFolderProjectContext(this, checked.projectPath);
       return true;
     } finally {
       if (eng && !engineRequestGraphProven()) releaseEngineForCurrentRequest(eng);
@@ -7335,19 +7408,36 @@ class DesignerSession {
     try {
       const sourceText = await this.currentText();
       const codeBehindSourceText = await this.currentCodeText();
-      const owner = await this.withTimeout(
+      const resolveOwner = (projectPath: string | undefined) => this.withTimeout(
         resolveDesignerDocumentOwner(
           eng,
-          this.designerFile,
+          this.designerFile!,
           projectPaths,
           sourceText ?? this.doc.designerText,
           codeBehindSourceText,
-          preferred,
+          projectPath,
         ),
         12000,
         'designer document ownership validation timed out',
       );
+      let owner = await resolveOwner(preferred);
       if (!isCurrent()) return false;
+      // A form with no choice of its own takes the one made for its folder, but only when the engine itself lists that
+      // project among the form's owners. The same membership proof then runs with it as the preference, and the result
+      // is kept as this form's own choice, so later renders revalidate it like an explicit pick.
+      const folderChoice = !preferred && owner.diagnosticCode === 'AMBIGUOUS_OWNER'
+        ? DesignerHub.instance.folderProjectContext(this.designerFile) : undefined;
+      if (folderChoice && owner.owners.some((candidate) => normalize(candidate) === normalize(folderChoice))) {
+        const chosen = await resolveOwner(folderChoice);
+        if (!isCurrent()) return false;
+        if (isResolvedDocumentOwner(chosen)) {
+          await DesignerHub.instance.setProjectContext(this.designerFile, chosen.projectPath);
+          if (!isCurrent()) return false;
+          this.output.appendLine(
+            `[designer] project context taken from the folder choice: ${this.designerFile} → ${chosen.projectPath}`);
+          owner = chosen;
+        }
+      }
       this.lastDocumentOwner = owner;
       if (isResolvedDocumentOwner(owner)) {
         this.documentOwnerChecked = true;
@@ -7413,7 +7503,7 @@ class DesignerSession {
   ): Promise<HostedDesignerProbeResult | null> {
     if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.inspectHostedDesignerProduct(component, engine));
     const asm = this.asm();
-    if (this.engineKind !== 'net48' || !asm
+    if (this.engineKind !== 'net48' || !asm || component.isPlaceholder === true
       || component.type !== CERTIFIED_HOSTED_DESIGNER_COMPONENT) return null;
     try {
       const result = await inspectCertifiedHostedDesigner(
@@ -7772,7 +7862,7 @@ class DesignerSession {
         // instance so the panel matches the canvas on an unsaved edit; a null (unknown/inherited/non-interpreted) leaves
         // the panel UNAVAILABLE — it must NEVER fall back to compiled values under an interpreted canvas. Only a
         // compiled/fallback canvas describes the cached compiled instance.
-        const interpreted = this.net48RenderMode === 'interpreted';
+        const interpreted = this.net48LiveSource;
         const descriptionsP = Promise.all(selectionIds.map((selectionId) => interpreted
           ? describeInterpretedComponent(eng48, this.designerFile!, asm48, text ?? '', selectionId,
             undefined, undefined, undefined, undefined, codeBehindText).catch(() => null)
@@ -7801,7 +7891,8 @@ class DesignerSession {
       // An inherited component is the other narrow exception: ordinary component editability remains false, and the
       // canvas receives an affordance only when layout + describe agree on the same engine-issued token AND the net48
       // authority revalidates the live compiled base's geometry gate. Commit repeats this authorization.
-      let manip = (comp === null && this.net48RenderMode === 'interpreted')
+      // A partial preview's placeholder stands for a control that does not exist: nothing about it can be dragged.
+      let manip = (comp === null && this.net48LiveSource) || comp?.isPlaceholder === true
         ? { move: false, resize: false }
       : this.manipFor(id, comp); // single drag/resize is live (net9 splices Location/Size, net48 mutates)
       if (comp?.ownership === 'inherited') {
@@ -7941,7 +8032,7 @@ class DesignerSession {
           const text48 = await this.currentText();
           const codeBehindText48 = await this.currentCodeText();
           const eng48i = await this.ensureEngine('net48');
-          component = this.net48RenderMode === 'interpreted'
+          component = this.net48LiveSource
             ? await describeInterpretedComponent(eng48i, this.designerFile, asm48, text48 ?? '', itemId,
               undefined, undefined, undefined, undefined, codeBehindText48)
             : await describeCompiledComponent(eng48i, this.designerFile, asm48, itemId,
@@ -8115,7 +8206,8 @@ class DesignerSession {
     let c = id ? this.controls.find((x) => x.id === id) : null;
     while (c) {
       if (c.id === 'this' || c.isRoot) return 'this';
-      if (/Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type)) return c.id;
+      // A partial preview's placeholder is never a parent: the control it stands for does not exist to receive one.
+      if (!c.isPlaceholder && /Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type)) return c.id;
       c = c.parentId ? this.controls.find((x) => x.id === c?.parentId) ?? null : null;
     }
     return 'this';
@@ -8703,7 +8795,7 @@ class DesignerSession {
       () => this.applyGroupRemove(ids));
     if (!this.designerFile || this.disposed) return;
     const removable = ids.filter((id) => id && id !== 'this');
-    if (!removable.length) return;
+    if (!removable.length || this.refusePlaceholders(removable)) return;
     if (this.localizable) {
       await this.applyLocalizedStructuralRemove(removable, `Remove ${removable.length} localized controls`);
       return;
@@ -9540,6 +9632,9 @@ class DesignerSession {
       this.post({ type: 'status', message: this.staleReadOnlyReason() });
       return false;
     }
+    // A partial preview has no compiled instance to mirror an edit onto, and the engine refuses to edit its partial
+    // graph in place: the committed source is simply rendered again.
+    if (this.net48RenderMode === 'interpretedPartial') return this.fullRender(interp?.skipReselect ?? false);
     if (interp && this.net48RenderMode === 'interpreted') {
       // 1.2.x — the same edits the compiled path would apply, applied to the cached INTERPRETED graph instead. That
       // keeps the canvas interpreted (this is still the live source) at the cost of a snapshot rather than a full
@@ -9681,7 +9776,7 @@ class DesignerSession {
         const codeBehindTextR = await this.currentCodeText();
         const eng48r = await this.ensureEngine('net48');
         await this.applyEngineLocalizationCulture(eng48r);
-        return this.net48RenderMode === 'interpreted'
+        return this.net48LiveSource
           ? await describeInterpretedComponent(eng48r, this.designerFile, asm, textR ?? '', id,
             undefined, undefined, undefined, undefined, codeBehindTextR)
           : await describeCompiledComponent(eng48r, this.designerFile, asm, id,
@@ -11969,7 +12064,7 @@ class DesignerSession {
     // (which would flip the canvas to the build; the pre-live listToolStripItems could also bail before live48 ever ran)
     // skipReselect keeps the on-canvas item highlight; the returned boolean lets the ADD auto-reopen key on the
     // fresh interpreted forest.
-    if (this.net48RenderMode === 'interpreted') {
+    if (this.net48LiveSource) {
       const rendered = await this.fullRender(true);
       // Arm the ADD auto-reopen ONLY if the render STAYED interpreted — its fresh forest then actually holds the new
       // item. If the add cost the form its coverage (a fallback to the compiled build), the new item is in the source
@@ -13165,6 +13260,12 @@ class DesignerSession {
     if (!currentHostMutationOperationId()) return this.withProductMutation({ type: 'addControl', controlType, parentId, dropX, dropY, width, height },
       () => this.applyAddControl(controlType, parentId, dropX, dropY, width, height));
     if (!this.designerFile || this.disposed) return false;
+    const placeholderParent = this.controls.find((c) => c.id === parentId && c.isPlaceholder);
+    if (placeholderParent) {
+      // The control a partial preview's placeholder stands for does not exist, so nothing can be added into it.
+      this.post({ type: 'status', message: t('status.addRejected', { reason: placeholderParent.readOnlyReason || parentId }) });
+      return false;
+    }
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -13482,10 +13583,20 @@ class DesignerSession {
     this.post({ type: 'status', message: t('status.trayRenamed', { old: oldId, new: res.name }) });
   }
 
+  /** A partial preview's placeholder stands for a control that could not be built, so no structural operation may
+   * take it: not remove, cut, copy, duplicate or z-order. True (with the reason posted) when any id is one. */
+  private refusePlaceholders(ids: readonly string[]): boolean {
+    const placeholder = this.controls.find((control) => control.isPlaceholder === true && ids.includes(control.id));
+    if (!placeholder) return false;
+    this.post({ type: 'status', message: t('status.editRejected', { reason: placeholder.readOnlyReason || placeholder.id }) });
+    return true;
+  }
+
   private async applyRemoveControl(id: string): Promise<void> {
     if (!currentHostMutationOperationId()) return this.withProductMutation({ type: 'removeControl', id },
       () => this.applyRemoveControl(id));
     if (!this.designerFile || this.disposed || id === 'this') return;
+    if (this.refusePlaceholders([id])) return;
     if (this.localizable) {
       await this.applyLocalizedStructuralRemove([id], `Remove localized ${id}`);
       return;
@@ -13519,7 +13630,7 @@ class DesignerSession {
     if (!this.hasProductRequestScope()) return this.withProductWorkflow(() => this.applyCopy(ids));
     if (!this.designerFile || this.disposed) return;
     const copyable = ids.filter((id) => id && id !== 'this');
-    if (!copyable.length) return;
+    if (!copyable.length || this.refusePlaceholders(copyable)) return;
     const eng = await this.ensureEngine();
     const text = await this.currentText();
     const clips: string[] = [];
@@ -13594,7 +13705,7 @@ class DesignerSession {
     this.output.appendLine(`pasted ${applied} control(s) into ${parent} (unsaved)`);
     let net48Stale = false;
     if (this.engineKind === 'net48') {
-      if (this.net48RenderMode === 'interpreted') {
+      if (this.net48LiveSource) {
         // interpreted canvas: the whole paste is committed to source, so re-interpret ONCE. The per-control
         // compiled adds would flip the canvas to the build mid-batch (show48 sets mode='compiled') and can't reach a
         // source-only parent, leaving a partial/wrong mirror.
@@ -13626,7 +13737,7 @@ class DesignerSession {
       () => this.applyDuplicate(ids));
     if (!this.designerFile || this.disposed) return;
     const dupable = ids.filter((id) => id && id !== 'this');
-    if (!dupable.length) return;
+    if (!dupable.length || this.refusePlaceholders(dupable)) return;
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -13661,7 +13772,7 @@ class DesignerSession {
     this.output.appendLine(`duplicated ${applied} control(s) (unsaved)`);
     let net48Stale = false;
     if (this.engineKind === 'net48') {
-      if (this.net48RenderMode === 'interpreted') {
+      if (this.net48LiveSource) {
         // interpreted: re-interpret the committed batch ONCE; fullRender re-selects currentId (= the last
         // clone), so a repeated Ctrl+D still cascades. Skips the mid-batch-flipping per-control compiled adds.
         await this.fullRender();
@@ -13691,7 +13802,7 @@ class DesignerSession {
     const targets = [...new Set(ids)].filter((id) => id && id !== 'this');
     const dx = Math.max(-100000, Math.min(100000, Math.round(rawDx)));
     const dy = Math.max(-100000, Math.min(100000, Math.round(rawDy)));
-    if (!targets.length || !Number.isFinite(rawDx) || !Number.isFinite(rawDy)) return;
+    if (!targets.length || !Number.isFinite(rawDx) || !Number.isFinite(rawDy) || this.refusePlaceholders(targets)) return;
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -13729,7 +13840,7 @@ class DesignerSession {
 
     let net48Stale = false;
     if (this.engineKind === 'net48') {
-      if (this.net48RenderMode === 'interpreted') {
+      if (this.net48LiveSource) {
         await this.fullRender();
       } else if (live48Adds.length && !this.asm()) {
         net48Stale = true;
@@ -13758,7 +13869,7 @@ class DesignerSession {
       () => this.applyZOrder(ids, toFront));
     if (!this.designerFile || this.disposed) return;
     const targets = ids.filter((id) => id && id !== 'this');
-    if (!targets.length) return;
+    if (!targets.length || this.refusePlaceholders(targets)) return;
     const eng = await this.ensureEngine();
     const before = this.doc.designerText;
     const rev = this.doc.rev;
@@ -13801,7 +13912,7 @@ class DesignerSession {
     }
     const asm = this.asm();
     if (!asm) return;
-    if (this.net48RenderMode === 'interpreted') {
+    if (this.net48LiveSource) {
       // under an interpreted canvas, tab navigation is TRANSIENT VIEW STATE (not a source edit):
       // resolve the clicked page on the interpreted geometry, record it, and re-render interpreted with that page
       // selected — the canvas stays interpreted (no compiled mutation, no flip to the build). Off a header → no-op.
@@ -13840,7 +13951,7 @@ class DesignerSession {
       hit = this.engineKind === 'modern'
         ? await hitTestTab(await this.ensureEngine('modern'), this.designerFile, hostId, Math.round(x), Math.round(y),
           asm, (await this.currentText()) ?? '', this.tabViewState())
-        : this.net48RenderMode === 'interpreted'
+        : this.net48LiveSource
           ? await hitTestInterpretedTab(await this.ensureEngine('net48'), this.designerFile, asm!, (await this.currentText()) ?? '', hostId, Math.round(x), Math.round(y), this.tabViewState())
           : await hitTestCompiledTab(await this.ensureEngine('net48'), this.designerFile, asm!, hostId, Math.round(x), Math.round(y));
     }

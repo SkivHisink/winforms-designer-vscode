@@ -191,6 +191,8 @@
   "designer.diag.copy": "Copiar diagnóstico",
   "designer.diag.partialCause": "No se pudieron representar una o varias instrucciones InitializeComponent.",
   "designer.diag.compiledFallback": "La vista previa de .NET Framework usa la última compilación.",
+  "designer.diag.partialPreview": "Vista previa parcial del código fuente (.NET Framework): no se pudo mostrar ni la vista previa completa ni la última compilación.",
+  "designer.notice.partialPreview": "Vista previa parcial del código fuente (.NET Framework): las partes que no se pudieron construir se muestran como marcadores de solo lectura y lo omitido se enumera en los detalles. Las ediciones de los demás controles siguen siendo byte-local; Reintentar vuelve a probar la vista previa completa y la compilación.",
   "designer.diag.noDetails": "No se proporcionaron más detalles.",
   "designer.notice.inheritedBase": "Esta representación está incompleta: el formulario hereda de {base}, que la vista previa de .NET no puede cargar, por lo que los controles que define el tipo base no se dibujan. Apunte el diseñador a su ensamblado .NET Framework compilado para representar el tipo real.",
   "designer.notice.binaryResx": "Esta representación está incompleta: el formulario tiene {n} recurso(s) binario(s)/ImageStream que la vista previa de .NET no puede representar. Se conservan en el .resx; el diseñador no lo regenerará.",

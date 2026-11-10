@@ -125,7 +125,7 @@ export interface ExtensionHostTestApi {
     panelActive: boolean;
     renderReady: boolean;
     recoveryConflictOffered: boolean;
-    engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
+    engineKind: EngineKind | null; net48RenderMode: 'interpreted' | 'interpretedPartial' | 'compiledFallback' | 'compiled' | null;
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;

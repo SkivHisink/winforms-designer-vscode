@@ -188,6 +188,8 @@
   "designer.diag.copy": "Diagnose kopieren",
   "designer.diag.partialCause": "Mindestens eine InitializeComponent-Anweisung konnte nicht dargestellt werden.",
   "designer.diag.compiledFallback": "Die .NET-Framework-Vorschau verwendet den letzten kompilierten Build.",
+  "designer.diag.partialPreview": "Teilvorschau des Quellcodes (.NET Framework): Weder die vollständige Vorschau noch der letzte Build konnten angezeigt werden.",
+  "designer.notice.partialPreview": "Teilvorschau des Quellcodes (.NET Framework) – Teile, die nicht erstellt werden konnten, erscheinen als schreibgeschützte Platzhalter, und was ausgelassen wurde, steht in den Details. Änderungen an den übrigen Steuerelementen bleiben Byte-lokal; Erneut versuchen probiert die vollständige Vorschau und den Build noch einmal.",
   "designer.diag.noDetails": "Es wurden keine weiteren Details gemeldet.",
   "designer.notice.inheritedBase": "Diese Darstellung ist unvollständig – das Formular erbt von {base}, das die .NET-Vorschau nicht laden kann, daher werden die vom Basistyp definierten Steuerelemente nicht gezeichnet. Verweisen Sie den Designer auf Ihre erstellte .NET Framework-Assembly, um den echten Typ zu rendern.",
   "designer.notice.binaryResx": "Diese Darstellung ist unvollständig – das Formular hat {n} binäre/ImageStream-Ressource(n), die die .NET-Vorschau nicht zeichnen kann. Sie bleiben in der .resx erhalten; der Designer generiert sie nicht neu.",

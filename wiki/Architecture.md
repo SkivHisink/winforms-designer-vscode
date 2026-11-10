@@ -48,7 +48,9 @@ that can load those controls: it parses `InitializeComponent`, instantiates the 
 replays the statements onto the *compiled* vendor controls. You get pixel-accurate DevExpress controls drawn from
 your live, unsaved source. A construct the interpreter cannot reproduce falls back to a compiled render of your
 last build with a named, disclosed reason (`unrepresentableStatements`, `unsafeBinaryResource`, `baseTypeChanged`,
-…), never a silent mismatch.
+…), never a silent mismatch. When the last build cannot be constructed either, the source is replayed partially
+(`partialInterpretation`): controls whose constructors throw become read-only placeholders and every omission is
+listed — see [.NET Framework and DevExpress](Framework-and-DevExpress#partial-preview).
 
 Routing is automatic and per form: an explicit control source (a per-form override, or
 `winformsDesigner.assemblyPath`) wins; otherwise the owning `.csproj`'s build output decides — an output with no

@@ -9,6 +9,40 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-11-10
+
+### Changed
+
+- The .NET Framework engine interprets a value of a type no allowlist names — a vendor editor's button, such as
+  `new EditorButton(ButtonPredefines.Combo)` in `Properties.Buttons.AddRange(…)` — when the project's build makes
+  exactly that construction: the form's compiled `InitializeComponent` calls the same constructor with the same
+  constant arguments. Such forms were drawn from the last build; they are now drawn from the source. A construction
+  the build does not make — another constructor, an argument changed since the build, or one made only outside
+  `InitializeComponent` — is not run: it falls back as before, or is listed in a partial preview. The modern engine,
+  the coverage figures and the regeneration checks treat these statements exactly as before.
+- A project chosen for a form that several projects compile also becomes the choice for that form's folder and the
+  folders below it. A form opened later in that folder, with no choice of its own, uses it when that project is one
+  of the projects compiling the form; a form already open and waiting for a choice renders with it at once. Membership
+  is proven again for every form, a form's own choice still wins, and a stale choice is still refused.
+
+### Added
+
+- A partial preview for .NET Framework forms that had no preview at all: forms whose source the engine cannot fully
+  interpret and whose last build cannot be constructed either, typically because a constructor needs services that
+  only the running application provides. Such a form is now drawn from its source, Visual Studio's "Ignore and
+  Continue" way. A control whose constructor throws appears as a read-only placeholder where the source puts it,
+  labelled with its name, declared type and exception. The statements that use it, and the ones the engine cannot
+  represent, are not applied and are listed in the details. A persistent notice marks the canvas as partial. The
+  other controls keep targeted edits; each edit renders the source again, and Save writes the source as it is.
+  Forms that already show a full or last-build preview are unchanged. The build's construction failure is
+  remembered until the next build, so editing does not run that constructor again; Retry tries everything again.
+
+### Fixed
+
+- When an engine method throws, the reason now reaches the Output channel on one line next to the outcome code. Only
+  `UNHANDLED_EXCEPTION` was logged before, which hid, for example, why a .NET Framework form could be neither
+  interpreted nor built from its compiled type.
+
 ## [2.3.3] - 2026-11-09
 
 ### Security

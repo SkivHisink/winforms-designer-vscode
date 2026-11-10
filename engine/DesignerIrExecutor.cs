@@ -61,6 +61,18 @@ namespace WinFormsDesigner.Engine
         bool ApplyResources(object target, string key, out string? error);
     }
 
+    /// <summary>The project's build as the authority for an <see cref="IrBuildWitnessedCtor"/>: a value of a type no
+    /// allowlist names is constructed only when the designed type's compiled InitializeComponent makes exactly that
+    /// construction. A host that is not a witness refuses every such value.</summary>
+    public interface IIrConstructionWitness
+    {
+        /// <summary>Whether the build constructs <paramref name="type"/> through the constructor whose parameter types
+        /// are exactly the argument types, with these same constant values. Runs nothing.</summary>
+        bool CanConstruct(Type type, object?[] args, out string reason);
+        /// <summary>The same decision; when it holds, that constructor is run with these arguments.</summary>
+        bool TryConstruct(Type type, object?[] args, out object? value, out string reason);
+    }
+
     /// <summary>Where a named identity came from — the hybrid model. The
     /// root is the LOGICAL designed type; inherited components come from the compiled BASE (VS instantiates the base,
     /// which runs its own InitializeComponent) and must be surfaced but treated as read-only (their edits would have
@@ -80,9 +92,82 @@ namespace WinFormsDesigner.Engine
         /// to dispose a partially-initialized graph on failure.</summary>
         public List<object> PendingInit { get; } = new List<object>();
 
+        /// <summary>Partial interpretation only: components whose construction threw, by source name, in source order.
+        /// Never in <see cref="Instances"/>.</summary>
+        public List<IrFailedComponent> FailedComponents { get; } = new List<IrFailedComponent>();
+        /// <summary>Partial interpretation only: the engine's stand-in for each failed CONTROL, by source name. Never in
+        /// <see cref="Instances"/>, so no describe, edit or reference route can reach one as the component it stands for.</summary>
+        public Dictionary<string, IrPlaceholderControl> Placeholders { get; } = new Dictionary<string, IrPlaceholderControl>(StringComparer.Ordinal);
+        /// <summary>Partial interpretation only: one line per thing that was not applied, in the shape the host's
+        /// diagnostics list reads (a statement, then an optional "  [ExceptionType: message]").</summary>
+        public List<string> Omissions { get; } = new List<string>();
+        /// <summary>True when a partial interpretation left something out.</summary>
+        public bool Partial => FailedComponents.Count != 0 || Omissions.Count != 0;
+
         public static IrExecutionResult Success(Dictionary<string, object> instances) =>
             new IrExecutionResult { Ok = true, Instances = instances };
         public static IrExecutionResult Fail(string reason) => new IrExecutionResult { Ok = false, FailureReason = reason };
+    }
+
+    /// <summary>A component a partial interpretation could not construct: its source name, the type it declares, and
+    /// what the constructor threw.</summary>
+    public sealed class IrFailedComponent
+    {
+        public string Name { get; set; } = "";
+        public string TypeName { get; set; } = "";
+        public string ExceptionType { get; set; } = "";
+        public string Message { get; set; } = "";
+        public bool IsControl { get; set; }
+        /// <summary>Statements that use this component and were therefore not applied.</summary>
+        public int SkippedStatements { get; set; }
+    }
+
+    /// <summary>The engine's own stand-in for a control whose constructor threw in a partial interpretation. A plain
+    /// framework control: it receives only the geometry and the parent the source gives the failed control, never that
+    /// control's own property replay, and it paints the source name, the declared type and the exception type.</summary>
+    /// <para>It paints no background. The preview is captured with DrawToBitmap, which draws sibling windows in reverse
+    /// z-order, so an opaque stand-in would cover the controls that did build; this one lets them show through.</para>
+    public sealed class IrPlaceholderControl : Control
+    {
+        public IrPlaceholderControl(string sourceName, string declaredTypeName, string exceptionType)
+        {
+            SourceName = sourceName;
+            DeclaredTypeName = declaredTypeName;
+            ExceptionType = exceptionType;
+            Name = sourceName;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, false);
+        }
+
+        public string SourceName { get; }
+        public string DeclaredTypeName { get; }
+        public string ExceptionType { get; }
+
+        protected override void OnPaintBackground(PaintEventArgs pevent)
+        {
+            // Nothing: whatever is already drawn underneath stays visible.
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            var bounds = ClientRectangle;
+            if (bounds.Width <= 0 || bounds.Height <= 0) return;
+            var accent = System.Drawing.Color.FromArgb(200, 64, 64);
+            using (var hatch = new System.Drawing.Drawing2D.HatchBrush(System.Drawing.Drawing2D.HatchStyle.BackwardDiagonal,
+                System.Drawing.Color.FromArgb(48, accent), System.Drawing.Color.Transparent))
+                e.Graphics.FillRectangle(hatch, bounds);
+            using (var pen = new System.Drawing.Pen(accent) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash })
+                e.Graphics.DrawRectangle(pen, 0, 0, bounds.Width - 1, bounds.Height - 1);
+            int dot = DeclaredTypeName.LastIndexOf('.');
+            string shortType = dot >= 0 ? DeclaredTypeName.Substring(dot + 1) : DeclaredTypeName;
+            // The source may place the control partly outside its parent; start the label where it can be seen.
+            var label = System.Drawing.Rectangle.FromLTRB(Math.Max(0, -Left) + 4, Math.Max(0, -Top) + 4,
+                bounds.Right - 4, bounds.Bottom - 4);
+            if (label.Width > 0 && label.Height > 0)
+                TextRenderer.DrawText(e.Graphics, SourceName + "\n" + shortType + "\n" + ExceptionType, Font, label, accent,
+                    TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        }
     }
 
     public static class DesignerIrExecutor
@@ -90,7 +175,17 @@ namespace WinFormsDesigner.Engine
         /// <summary>Replay <paramref name="doc"/> onto <paramref name="root"/> (already constructed by the host as
         /// the immediate BASE type — VS model). Returns Ok with the instance table, or a fail-closed reason. Only
         /// call for a FullCoverage document — a partial IR is a compiled-fallback case, decided by the caller.</summary>
-        public static IrExecutionResult Execute(IrDocument doc, object root, IIrHost host)
+        public static IrExecutionResult Execute(IrDocument doc, object root, IIrHost host) => Execute(doc, root, host, partial: false);
+
+        /// <summary>
+        /// <paramref name="partial"/> = the Visual Studio "Ignore and Continue" model, for a form that has no other
+        /// preview. A component whose constructor throws (a design-time license gate included) is recorded instead of
+        /// ending the replay: a failed CONTROL gets an engine-owned placeholder, which receives only the geometry and
+        /// the parent the source gives it, and every other statement that uses the failed component is not applied and
+        /// is counted or listed. Every other failure stays a hard failure exactly as in the strict replay: validation,
+        /// identity, unresolved types, refused values, a setter or an init call that throws.
+        /// </summary>
+        public static IrExecutionResult Execute(IrDocument doc, object root, IIrHost host, bool partial)
         {
             if (root == null) return IrExecutionResult.Fail("null root");
             if (host == null) return IrExecutionResult.Fail("null host");
@@ -106,11 +201,48 @@ namespace WinFormsDesigner.Engine
             // Tree nodes are LOCAL variables (not sited components), kept in their own side-table (mirrors VS's local
             // `TreeNode treeNodeN = …` serialization). Pure objects — TreeNode ctors/setters run no user code.
             var treeNodes = new Dictionary<string, TreeNode>(StringComparer.Ordinal);
+            var failed = new Dictionary<string, IrFailedComponent>(StringComparer.Ordinal);
+            var failedInOrder = new List<IrFailedComponent>();
+            var placeholders = new Dictionary<string, IrPlaceholderControl>(StringComparer.Ordinal);
+            var omissions = new List<string>();
 
             foreach (var stmt in doc!.Statements)
             {
                 try
                 {
+                    if (partial && stmt is IrConstructComponent construct)
+                    {
+                        var cerr = ConstructComponent(construct, instances, host, failed.ContainsKey(construct.Name), out var thrown, out var type);
+                        if (cerr != null) return Abort(beganInit, cerr);
+                        if (thrown != null)
+                        {
+                            var cause = thrown is TargetInvocationException && thrown.InnerException != null ? thrown.InnerException : thrown;
+                            var failure = new IrFailedComponent
+                            {
+                                Name = construct.Name,
+                                TypeName = type?.FullName ?? construct.TypeName,
+                                ExceptionType = cause.GetType().Name,
+                                Message = cause.Message ?? "",
+                                IsControl = type != null && typeof(Control).IsAssignableFrom(type),
+                            };
+                            failed[construct.Name] = failure;
+                            failedInOrder.Add(failure);
+                            if (failure.IsControl)
+                                placeholders[construct.Name] = new IrPlaceholderControl(construct.Name, failure.TypeName, failure.ExceptionType);
+                        }
+                        continue;
+                    }
+                    string? uses = partial && failed.Count != 0 ? FirstFailedReference(stmt, failed) : null;
+                    if (uses != null)
+                    {
+                        if (!ApplyToPlaceholder(stmt, instances, placeholders, failed, beganInit, treeNodes, host, inheritedOverrideNames))
+                        {
+                            failed[uses].SkippedStatements++;
+                            string? affected = ShapeAffectingHealthy(stmt, failed);
+                            if (affected != null) omissions.Add(affected + "  (not applied: this." + uses + " could not be built)");
+                        }
+                        continue;
+                    }
                     var err = ExecuteStatement(stmt, instances, beganInit, treeNodes, host, inheritedOverrideNames);
                     if (err != null) return Abort(beganInit, err);
                 }
@@ -123,11 +255,306 @@ namespace WinFormsDesigner.Engine
             if (beganInit.Count != 0)
                 return Abort(beganInit, "unbalanced ISupportInitialize: " + beganInit.Count + " BeginInit without EndInit");
 
+            // A placeholder no parent could take (a TabControl takes only tab pages, say) is not on the canvas, and
+            // neither is anything attached to it: name each of them rather than let them vanish.
+            if (placeholders.Count != 0)
+            {
+                var names = new Dictionary<object, string>(IrReferenceEqualityComparer.Instance);
+                foreach (var kv in instances) if (kv.Key.Length != 0 && !names.ContainsKey(kv.Value)) names[kv.Value] = kv.Key;
+                foreach (var kv in placeholders) names[kv.Value] = kv.Key;
+                foreach (var kv in placeholders)
+                {
+                    if (kv.Value.Parent != null) continue;
+                    omissions.Add("this." + kv.Key + "  (not shown: no parent could take its placeholder)");
+                    var pending = new Stack<Control>(kv.Value.Controls.Cast<Control>());
+                    while (pending.Count != 0)
+                    {
+                        var hidden = pending.Pop();
+                        if (names.TryGetValue(hidden, out var hiddenName))
+                            omissions.Add("this." + hiddenName + "  (not shown: inside this." + kv.Key + ", which could not be built)");
+                        foreach (Control child in hidden.Controls) pending.Push(child);
+                    }
+                }
+            }
+
             var result = IrExecutionResult.Success(instances);
-            var idErr = BuildIdentityModel(doc, root, instances, result.Origins, inheritedOverrideNames);
+            // A failed component keeps its name: a compiled base component of the same name is the same hiding
+            // collision it would be had the component built, and is refused the same way.
+            var idErr = BuildIdentityModel(doc, root, instances, result.Origins, inheritedOverrideNames, failed.Keys);
             if (idErr != null) return IrExecutionResult.Fail(idErr);
+            foreach (var failure in failedInOrder)
+            {
+                result.FailedComponents.Add(failure);
+                result.Omissions.Add("this." + failure.Name + " = new " + failure.TypeName + "()"
+                    + (failure.SkippedStatements == 0 ? "" : "; " + failure.SkippedStatements + " statement(s) using it not applied")
+                    + "  [" + failure.ExceptionType + ": " + failure.Message + "]");
+            }
+            foreach (var placeholder in placeholders) result.Placeholders[placeholder.Key] = placeholder.Value;
+            result.Omissions.AddRange(omissions);
             return result;
         }
+
+        /// <summary>Construct one field-backed component, shared by the strict and the partial replay. Returns a hard
+        /// failure reason, or null with <paramref name="thrown"/> set when the component's own construction threw.</summary>
+        private static string? ConstructComponent(IrConstructComponent c, Dictionary<string, object> inst, IIrHost host,
+            bool alreadyFailed, out Exception? thrown, out Type? type)
+        {
+            thrown = null;
+            type = null;
+            if (inst.ContainsKey(c.Name) || alreadyFailed) return "duplicate component name " + c.Name;
+            var t = host.ResolveType(c.TypeName);
+            if (t == null) return "unresolved type " + c.TypeName;
+            if (!typeof(IComponent).IsAssignableFrom(t)) return c.TypeName + " is not an IComponent";
+            type = t;
+            object created;
+            try { created = host.CreateComponent(t, c.Name, c.WithComponentsContainer); }
+            catch (Exception ex)
+            {
+                thrown = ex;
+                return null;
+            }
+            inst[c.Name] = created ?? throw new InvalidOperationException("host returned null component for " + c.Name);
+            return null;
+        }
+
+        /// <summary>The properties a placeholder takes from the source: where the failed control is and how it is laid
+        /// out, nothing that belongs to the failed type itself.</summary>
+        private static readonly HashSet<string> PlaceholderProperties = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Location", "Size", "Dock", "Anchor", "Margin", "MinimumSize", "MaximumSize", "Name", "TabIndex", "Visible",
+        };
+
+        /// <summary>Apply a statement that uses a failed component to its placeholder, when it is one a placeholder can
+        /// honestly take: attaching it (or a child of it) to a parent, or one of its layout properties. False = the
+        /// statement is not applied.</summary>
+        private static bool ApplyToPlaceholder(IrStatement stmt, Dictionary<string, object> inst,
+            Dictionary<string, IrPlaceholderControl> placeholders, Dictionary<string, IrFailedComponent> failed,
+            List<object> beganInit, Dictionary<string, TreeNode> treeNodes, IIrHost host, HashSet<string> inheritedOverrideNames)
+        {
+            switch (stmt)
+            {
+                case IrAddControl a:
+                    {
+                        bool failedParent = !a.ParentIsRoot && failed.ContainsKey(a.ParentName);
+                        if (failedParent && (a.ParentPath.Count != 0 || !placeholders.ContainsKey(a.ParentName))) return false;
+                        if (failed.ContainsKey(a.ChildName) && !placeholders.ContainsKey(a.ChildName)) return false;
+                        try
+                        {
+                            return ExecuteStatement(a, WithPlaceholders(inst, placeholders), beganInit, treeNodes, host, inheritedOverrideNames) == null;
+                        }
+                        catch (ArgumentException)
+                        {
+                            // A parent that takes only children of its own kind refuses a stand-in before adding it
+                            // (a TabControl takes tab pages; a tab page goes only into a TabControl). That statement
+                            // is not applied; the placeholder left without a parent is named after the replay.
+                            return false;
+                        }
+                    }
+                case IrSetProperty p when !p.TargetIsRoot && placeholders.ContainsKey(p.TargetName)
+                        && p.PropertyPath.Count == 1 && PlaceholderProperties.Contains(p.PropertyPath[0])
+                        && FirstFailedReference(p.Value, failed) == null && IrValidate.WitnessedValuesInPlainPositions(p)
+                        && p.Value is not (IrBuildWitnessedCtor or IrArray):
+                    return ExecuteStatement(p, WithPlaceholders(inst, placeholders), beganInit, treeNodes, host, inheritedOverrideNames) == null;
+                case IrApplyResources ar when !ar.TargetIsRoot && placeholders.ContainsKey(ar.TargetName):
+                    // A localized form keeps the failed control's Location and Size in its .resx. They reach the
+                    // stand-in through the same safe resolver as everywhere else, onto the engine's own control.
+                    return ExecuteStatement(ar, WithPlaceholders(inst, placeholders), beganInit, treeNodes, host, inheritedOverrideNames) == null;
+                default:
+                    return false;
+            }
+        }
+
+        private static Dictionary<string, object> WithPlaceholders(Dictionary<string, object> inst,
+            Dictionary<string, IrPlaceholderControl> placeholders)
+        {
+            var view = new Dictionary<string, object>(inst, StringComparer.Ordinal);
+            foreach (var placeholder in placeholders) view[placeholder.Key] = placeholder.Value;
+            return view;
+        }
+
+        /// <summary>The first failed component a statement names, as its receiver, parent, child, provider or in a value.</summary>
+        private static string? FirstFailedReference(IrStatement stmt, Dictionary<string, IrFailedComponent> failed)
+        {
+            string? Named(bool isRoot, string name) => !isRoot && failed.ContainsKey(name) ? name : null;
+            switch (stmt)
+            {
+                case IrSetProperty p: return Named(p.TargetIsRoot, p.TargetName) ?? FirstFailedReference(p.Value, failed);
+                case IrAddControl a: return Named(a.ParentIsRoot, a.ParentName) ?? Named(false, a.ChildName);
+                case IrAddCollectionItem it: return Named(it.TargetIsRoot, it.TargetName) ?? FirstFailedReference(it.Item, failed);
+                case IrSetExtender x:
+                    return Named(false, x.ProviderName) ?? Named(x.TargetIsRoot, x.TargetName) ?? FirstFailedReference(x.Value, failed);
+                case IrApplyResources ar: return Named(ar.TargetIsRoot, ar.TargetName);
+                case IrBeginInit b: return Named(false, b.TargetName);
+                case IrEndInit e: return Named(false, e.TargetName);
+                case IrLayoutCall l: return Named(l.TargetIsRoot, l.TargetName);
+                case IrWireEvent w: return Named(w.TargetIsRoot, w.TargetName);
+                case IrSetTreeNodeProp tp: return FirstFailedReference(tp.Value, failed);
+                case IrAddTreeNodes ta: return Named(ta.TargetIsRoot, ta.TargetName);
+                default: return null;
+            }
+        }
+
+        private static string? FirstFailedReference(IrValue? value, Dictionary<string, IrFailedComponent> failed)
+        {
+            switch (value)
+            {
+                case IrComponentRef r: return !r.IsRoot && failed.ContainsKey(r.Name) ? r.Name : null;
+                case IrCast c: return FirstFailedReference(c.Inner, failed);
+                case IrArray a: return a.Items.Select(item => FirstFailedReference(item, failed)).FirstOrDefault(name => name != null);
+                case IrKnownCtor k: return k.Args.Select(arg => FirstFailedReference(arg, failed)).FirstOrDefault(name => name != null);
+                case IrStaticFactory f: return f.Args.Select(arg => FirstFailedReference(arg, failed)).FirstOrDefault(name => name != null);
+                default: return null;
+            }
+        }
+
+        /// <summary>A statement that was not applied but would have changed a component that DID build — its receiver,
+        /// or the healthy child it attaches — shaped like its source so the diagnostics list can name it. Null for a
+        /// statement about the failed component alone, which is counted on that component's own line.</summary>
+        private static string? ShapeAffectingHealthy(IrStatement stmt, Dictionary<string, IrFailedComponent> failed)
+        {
+            string Receiver(bool isRoot, string name) => isRoot ? "this" : "this." + name;
+            bool Healthy(bool isRoot, string name) => isRoot || !failed.ContainsKey(name);
+            string Path(List<string> hops) => hops.Count == 0 ? "" : "." + string.Join(".", hops);
+            switch (stmt)
+            {
+                case IrSetProperty p when Healthy(p.TargetIsRoot, p.TargetName):
+                    return Receiver(p.TargetIsRoot, p.TargetName) + Path(p.PropertyPath) + " = " + ValueShape(p.Value);
+                case IrAddCollectionItem it when Healthy(it.TargetIsRoot, it.TargetName):
+                    return Receiver(it.TargetIsRoot, it.TargetName) + Path(it.PropertyPath) + ".Add(" + ValueShape(it.Item) + ")";
+                case IrSetExtender x when Healthy(false, x.ProviderName) && Healthy(x.TargetIsRoot, x.TargetName):
+                    return "this." + x.ProviderName + ".Set" + x.PropertyName + "(" + Receiver(x.TargetIsRoot, x.TargetName)
+                        + ", " + ValueShape(x.Value) + ")";
+                case IrAddControl a when Healthy(a.ParentIsRoot, a.ParentName) || Healthy(false, a.ChildName):
+                    return Receiver(a.ParentIsRoot, a.ParentName) + Path(a.ParentPath) + ".Controls.Add(this." + a.ChildName + ")";
+                default:
+                    return null;
+            }
+        }
+
+        private static string ValueShape(IrValue? value)
+        {
+            switch (value)
+            {
+                case IrComponentRef r: return r.IsRoot ? "this" : "this." + r.Name;
+                case IrCast c: return "(" + c.TargetTypeName + ")" + ValueShape(c.Inner);
+                case IrArray a: return "new " + a.ElementTypeName + "[] { " + string.Join(", ", a.Items.Select(ValueShape)) + " }";
+                case IrBuildWitnessedCtor w: return "new " + w.TypeName + "(...)";
+                default: return "...";
+            }
+        }
+
+        /// <summary>
+        /// Whether every <see cref="IrBuildWitnessedCtor"/> of <paramref name="candidate"/> — all its statements, every
+        /// element of every array — is a construction the host's witness admits. Decided before any of it runs: types
+        /// are resolved and checked, the constant arguments materialized, and the witness asked without constructing.
+        /// A candidate is put back into a document only when this holds, so a source statement is replayed whole or
+        /// stays the gap it was; nothing of a refused one — no receiver getter, no constructor — has run.
+        /// </summary>
+        /// <param name="namespaceContext">The document's namespace context: a dotted name that one of these namespaces
+        /// also makes into another type is ambiguous in C#'s eyes and refused.</param>
+        /// <param name="designedType">The compiled designed type: an enum-shaped argument whose first name is one of its
+        /// members (a field, a property, a nested type) is that member in C#, not the enum, and is refused.</param>
+        public static bool AuthorizeWitnessCandidate(IrWitnessCandidate candidate, IIrHost host,
+            IReadOnlyList<string> namespaceContext, Type? designedType, out string reason)
+        {
+            reason = "";
+            if (host is not IIrConstructionWitness witness) { reason = "no build witness"; return false; }
+            // C# binds a dotted name inside a namespace relative to it first; a name another context namespace also
+            // turns into a type is not provably the one resolved here.
+            string? Ambiguous(string name, Type resolved)
+            {
+                var parts = name.Split('.');
+                foreach (var ns in namespaceContext ?? Array.Empty<string>())
+                {
+                    if (string.IsNullOrEmpty(ns)) continue;
+                    var other = host.ResolveType(ns + "." + name);
+                    if (other != null && other != resolved) return name + " may name " + other.FullName + " in this file";
+                    // A type of that namespace named like a leading part of the name takes that part: `Vendor.Kind.One`
+                    // inside a namespace with a type `Vendor` reads its member `Kind`.
+                    for (int length = 1; length < parts.Length; length++)
+                    {
+                        var prefix = host.ResolveType(ns + "." + string.Join(".", parts, 0, length));
+                        if (prefix != null) return name + " may start with the type " + prefix.FullName + " in this file";
+                    }
+                }
+                return null;
+            }
+            // Simple-name lookup finds members before any namespace type: those of the form and of every type enclosing
+            // it, including nested types declared in their base types. `Kind.One` with such a member `Kind` reads it.
+            string? Member(string name)
+            {
+                if (designedType == null) return null;
+                int dot = name.IndexOf('.');
+                string first = dot < 0 ? name : name.Substring(0, dot);
+                const BindingFlags all = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public
+                    | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
+                for (Type? scope = designedType; scope != null; scope = scope.DeclaringType)
+                {
+                    if (scope.GetMember(first, MemberTypes.All, all).Length != 0) return first + " is a member of " + scope.FullName;
+                    for (Type? inherited = scope.BaseType; inherited != null; inherited = inherited.BaseType)
+                        if (inherited.GetNestedType(first, BindingFlags.Public | BindingFlags.NonPublic) != null)
+                            return first + " is a type nested in " + inherited.FullName;
+                }
+                return null;
+            }
+            // Each construction with the array element type it goes into, when it is an element: the value reaches its
+            // use unconverted (IrValidate.WitnessedValuesInPlainPositions), and an element only into an array that holds
+            // it as it is.
+            var constructions = new List<KeyValuePair<IrBuildWitnessedCtor, string?>>();
+            foreach (var stmt in candidate?.Statements ?? new List<IrStatement>())
+            {
+                if (!IrValidate.WitnessedValuesInPlainPositions(stmt)) { reason = "a witnessed construction in an unsupported position"; return false; }
+                IrValue? value = stmt switch { IrSetProperty p => p.Value, IrAddCollectionItem item => item.Item, _ => null };
+                if (value is IrBuildWitnessedCtor direct) constructions.Add(new KeyValuePair<IrBuildWitnessedCtor, string?>(direct, null));
+                else if (value is IrArray array)
+                    foreach (var element in array.Items.OfType<IrBuildWitnessedCtor>())
+                        constructions.Add(new KeyValuePair<IrBuildWitnessedCtor, string?>(element, array.ElementTypeName));
+            }
+            if (constructions.Count == 0) { reason = "no build-witnessed construction"; return false; }
+            var none = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach (var entry in constructions)
+            {
+                var w = entry.Key;
+                try
+                {
+                    var type = host.ResolveType(w.TypeName);
+                    if (type == null) { reason = "unresolved type " + w.TypeName; return false; }
+                    var refusal = WitnessableValueTypeRefusal(type);
+                    if (refusal != null) { reason = "construction not allowed: " + w.TypeName + " (" + refusal + ")"; return false; }
+                    var unbound = Ambiguous(w.TypeName, type) ?? Member(w.TypeName);
+                    if (unbound != null) { reason = unbound; return false; }
+                    foreach (var en in w.Args.OfType<IrEnum>())
+                    {
+                        var enumType = host.ResolveType(en.EnumTypeName);
+                        if (enumType == null) { reason = "unresolved enum type " + en.EnumTypeName; return false; }
+                        var enumUnbound = Ambiguous(en.EnumTypeName, enumType) ?? Member(en.EnumTypeName);
+                        if (enumUnbound != null) { reason = enumUnbound; return false; }
+                    }
+                    if (entry.Value != null)
+                    {
+                        var elementType = host.ResolveType(entry.Value);
+                        if (elementType == null || !elementType.IsAssignableFrom(type))
+                        { reason = w.TypeName + " is not an element of " + entry.Value + " without a conversion"; return false; }
+                    }
+                    var args = new object?[w.Args.Count];
+                    for (int i = 0; i < w.Args.Count; i++)
+                    {
+                        if (w.Args[i] is not (IrNull or IrBool or IrChar or IrString or IrNumber or IrEnum) || !IrValidate.IsExactWitnessConstant(w.Args[i]))
+                        { reason = "a witnessed construction takes exact constant arguments only"; return false; }
+                        if (!TryMaterialize(w.Args[i], typeof(object), none, host, out args[i], out var aerr))
+                        { reason = aerr ?? "argument not materialized"; return false; }
+                    }
+                    if (!witness.CanConstruct(type, args, out reason)) return false;
+                }
+                catch (Exception ex)
+                {
+                    reason = ex.GetType().Name + ": " + ex.Message;
+                    return false;
+                }
+            }
+            return true;
+        }
+
 
         /// <summary>Merge the two identity sources into one origin table. Every IR-created
         /// name is DeclaredInCurrentSource; the root is Root; every OTHER field-backed IComponent reachable by
@@ -136,7 +563,7 @@ namespace WinFormsDesigner.Engine
         /// it read-only. Fail-closed on a HIDING collision: a current-source name that reflection also finds bound to
         /// a DIFFERENT instance is ambiguous and must not be guessed.</summary>
         private static string? BuildIdentityModel(IrDocument doc, object root, Dictionary<string, object> instances,
-            Dictionary<string, IrOrigin> origins, HashSet<string> inheritedOverrideNames)
+            Dictionary<string, IrOrigin> origins, HashSet<string> inheritedOverrideNames, ICollection<string> failedNames)
         {
             origins[""] = IrOrigin.Root;
             foreach (var name in instances.Keys)
@@ -166,6 +593,7 @@ namespace WinFormsDesigner.Engine
                         try { val = fi.GetValue(root); } catch { continue; }
                         if (val == null) continue;
                         string fname = fi.Name;
+                        if (failedNames.Contains(fname)) return "ambiguous identity: '" + fname + "' hides an inherited component";
                         if (instances.TryGetValue(fname, out var existing))
                         {
                             // same name already known: only a DIFFERENT instance is a real hiding collision.
@@ -265,23 +693,14 @@ namespace WinFormsDesigner.Engine
             {
                 case IrConstructComponent c:
                     {
-                        if (inst.ContainsKey(c.Name)) return "duplicate component name " + c.Name;
-                        var t = host.ResolveType(c.TypeName);
-                        if (t == null) return "unresolved type " + c.TypeName;
-                        if (!typeof(IComponent).IsAssignableFrom(t)) return c.TypeName + " is not an IComponent";
-                        object created;
-                        try { created = host.CreateComponent(t, c.Name, c.WithComponentsContainer); }
-                        catch (Exception ex)
-                        {
-                            // A vendor control gated by a design-time license (LicenseException) is a distinct, expected
-                            // outcome — not a crash. Prefix it so the classifier reports `licenseRequired`, mirroring the
-                            // compiled engine's exit-code-3 handling. The compiled fallback hits the same wall,
-                            // so the form is honestly un-previewable, but the REASON is precise.
-                            if (IsLicenseException(ex)) return "LICENSE:" + c.TypeName + " requires a design-time license (" + ex.GetType().Name + ")";
-                            return "cannot construct " + c.TypeName + " (" + ex.GetType().Name + ")";
-                        }
-                        inst[c.Name] = created ?? throw new InvalidOperationException("host returned null component for " + c.Name);
-                        return null;
+                        var cerr = ConstructComponent(c, inst, host, false, out var thrown, out _);
+                        if (cerr != null || thrown == null) return cerr;
+                        // A vendor control gated by a design-time license (LicenseException) is a distinct, expected
+                        // outcome — not a crash. Prefix it so the classifier reports `licenseRequired`, mirroring the
+                        // compiled engine's exit-code-3 handling. The compiled fallback hits the same wall,
+                        // so the form is honestly un-previewable, but the REASON is precise.
+                        if (IsLicenseException(thrown)) return "LICENSE:" + c.TypeName + " requires a design-time license (" + thrown.GetType().Name + ")";
+                        return "cannot construct " + c.TypeName + " (" + thrown.GetType().Name + ")";
                     }
 
                 case IrSetProperty p:
@@ -634,6 +1053,29 @@ namespace WinFormsDesigner.Engine
                         var mi = ResolveStatic(ft, f.Method, fargs);
                         if (mi == null) { err = "no static overload " + f.TypeName + "." + f.Method; return false; }
                         value = mi.Invoke(null, fargs); return true;
+                    }
+
+                case IrBuildWitnessedCtor w:
+                    {
+                        // A candidate reaches the replay only after AuthorizeWitnessCandidate admitted every construction
+                        // in it, so a refusal here means a document merged without that (or a host without the build):
+                        // the statement is the gap it was, a hard failure that the classifier reports as such.
+                        var wt = host.ResolveType(w.TypeName);
+                        if (wt == null) { err = UnwitnessedPrefix + "unresolved type " + w.TypeName; return false; }
+                        var notWitnessable = WitnessableValueTypeRefusal(wt);
+                        if (notWitnessable != null) { err = UnwitnessedPrefix + "construction not allowed: " + w.TypeName + " (" + notWitnessable + ")"; return false; }
+                        var wargs = new object?[w.Args.Count];
+                        for (int i = 0; i < w.Args.Count; i++)
+                        {
+                            if (w.Args[i] is not (IrNull or IrBool or IrChar or IrString or IrNumber or IrEnum))
+                            { err = UnwitnessedPrefix + "a witnessed construction takes constant arguments only"; return false; }
+                            if (!TryMaterialize(w.Args[i], typeof(object), inst, host, out wargs[i], out var aerr))
+                            { err = UnwitnessedPrefix + aerr; return false; }
+                        }
+                        if (host is not IIrConstructionWitness witness)
+                        { err = UnwitnessedPrefix + w.TypeName + " is constructed only where the project's build makes the same construction"; return false; }
+                        if (!witness.TryConstruct(wt, wargs, out value, out var why)) { err = UnwitnessedPrefix + why; return false; }
+                        return true;
                     }
 
                 case IrKnownCtor kc:
@@ -1103,6 +1545,43 @@ namespace WinFormsDesigner.Engine
         }
 
         private static string Describe(IrStatement s) => s.GetType().Name;
+
+        /// <summary>Prefix of every refusal of an <see cref="IrBuildWitnessedCtor"/>. The classifier reads it as the
+        /// unrepresented statement it was before, and a partial replay leaves that statement out.</summary>
+        public const string UnwitnessedPrefix = "UNWITNESSED: ";
+
+        /// <summary>Why <paramref name="type"/> may not be constructed as a build-witnessed value, or null. Framework
+        /// types go only through the construction allowlist; components are constructed as fields; delegates, abstract,
+        /// generic and other non-plain types never.</summary>
+        internal static string? WitnessableValueTypeRefusal(Type type)
+        {
+            if (type.IsAbstract || type.IsInterface) return "abstract";
+            if (type.IsGenericType || type.ContainsGenericParameters) return "generic";
+            if (type.IsArray || type.IsPointer || type.IsByRef || type.IsCOMObject) return "not a plain type";
+            if (typeof(IComponent).IsAssignableFrom(type)) return "a component";
+            if (typeof(Delegate).IsAssignableFrom(type)) return "a delegate";
+            if (DesignerAllowlists.IsTrustedFrameworkType(type) || IsPlatformAssembly(type.Assembly)) return "a framework type";
+            return null;
+        }
+
+        private static readonly HashSet<string> PlatformPublicKeyTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "b77a5c561934e089", "b03f5f7f11d50a3a", "31bf3856ad364e35", "cc7b13ffcd2ddd51", "adb9793829ddae60", "7cec85d7bea7798e",
+        };
+
+        /// <summary>An assembly of the .NET platform itself, by its signing key or its name.</summary>
+        private static bool IsPlatformAssembly(Assembly assembly)
+        {
+            var name = assembly.GetName();
+            string simple = name.Name ?? "";
+            if (simple == "mscorlib" || simple == "netstandard" || simple == "System" || simple == "WindowsBase"
+                || simple == "Accessibility" || simple.StartsWith("System.", StringComparison.Ordinal)
+                || simple.StartsWith("Microsoft.", StringComparison.Ordinal)
+                || simple.StartsWith("Presentation", StringComparison.Ordinal)) return true;
+            var token = name.GetPublicKeyToken();
+            return token != null && token.Length == 8
+                && PlatformPublicKeyTokens.Contains(string.Concat(token.Select(b => b.ToString("x2", CultureInfo.InvariantCulture))));
+        }
 
         /// <summary>Walk the exception chain for a System.ComponentModel.LicenseException (reflection wraps a ctor
         /// throw in TargetInvocationException, so the license failure is usually an inner). Matched by type name so

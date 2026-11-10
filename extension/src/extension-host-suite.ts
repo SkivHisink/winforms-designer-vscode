@@ -213,7 +213,7 @@ interface ExtensionHostTestApi {
      * on, as opposed to the tab model this suite waits on. Recorded in failures so the two can be compared. */
     panelActive: boolean;
     renderReady: boolean;
-    engineKind: 'modern' | 'net48' | null; net48RenderMode: 'interpreted' | 'compiledFallback' | 'compiled' | null;
+    engineKind: 'modern' | 'net48' | null; net48RenderMode: 'interpreted' | 'interpretedPartial' | 'compiledFallback' | 'compiled' | null;
     ownerDiagnosticCode: string | null;
     ownerTypeName: string | null;
     ownerProjectPath: string | null;

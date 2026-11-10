@@ -208,6 +208,9 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>True when this control is a ToolStrip/MenuStrip/StatusStrip — the canvas routes clicks on it into
         /// on-canvas item mode ("Type Here" add / item rename / delete). Mirrors WinFormsDesigner.Engine.LayoutControl.</summary>
         public bool IsStripHost { get; set; }
+        /// <summary>True for a partial interpretation's stand-in for a control whose constructor threw: selectable and
+        /// read-only, never moved, resized, edited or used as a drop target. <see cref="Type"/> is the declared type.</summary>
+        public bool IsPlaceholder { get; set; }
     }
 
     /// <summary>One TOP-LEVEL ToolStrip/MenuStrip/StatusStrip item's window-space rectangle (or the trailing "Type Here"
@@ -471,6 +474,9 @@ namespace WinFormsDesigner.Engine.Net48
         /// <summary>Host-only guard: ToolStripItem properties use the item edit channel and must not receive
         /// control-field Modifiers pseudo-properties.</summary>
         public bool IsToolStripItem { get; set; }
+        /// <summary>True for a partial interpretation's stand-in for a control whose constructor threw. It describes no
+        /// properties, events or actions: there is no instance of the declared type to read them from.</summary>
+        public bool IsPlaceholder { get; set; }
         public List<PropertyDesc> Properties { get; set; } = new List<PropertyDesc>();
         public List<EventDesc> Events { get; set; } = new List<EventDesc>();
         public List<DesignerActionDesc> DesignerActions { get; set; } = new List<DesignerActionDesc>();

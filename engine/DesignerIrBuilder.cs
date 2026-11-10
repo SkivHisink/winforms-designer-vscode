@@ -123,6 +123,12 @@ namespace WinFormsDesigner.Engine
             }
 
             var ctx = new Ctx(fieldNames, containerNames, resxVars, treeNodeLocals, typeCertain, designedMethodNames);
+            // A using alias, a `using static` or an extern alias changes what a name in this file means in ways the
+            // namespace context does not carry; a build-witnessed value must bind exactly as C# binds it, so such a
+            // file gets no witness candidates (Visual Studio writes none of these into a designer file).
+            bool namesBindAsWritten = !root.DescendantNodes().Any(node =>
+                node is ExternAliasDirectiveSyntax
+                || (node is UsingDirectiveSyntax u && (u.Alias != null || !u.StaticKeyword.IsKind(SyntaxKind.None))));
             foreach (var stmt in init.Body.Statements)
             {
                 doc.TotalSourceStatements++;
@@ -139,7 +145,20 @@ namespace WinFormsDesigner.Engine
                 }
                 else
                 {
-                    doc.UnrepresentableReasons.Add(reason ?? Trim(stmt));
+                    string gap = reason ?? Trim(stmt);
+                    doc.UnrepresentableReasons.Add(gap);
+                    if (!namesBindAsWritten) continue;
+                    // The same statement again, now letting a construction the allowlist does not name through as a
+                    // build-witnessed value. It stays a gap here; a net48 render with the project's build may use it.
+                    ctx.WitnessConstructions = true;
+                    try
+                    {
+                        var (witnessed, witnessedOk, _) = Classify(stmt, ctx);
+                        if (witnessedOk && witnessed.Count != 0 && witnessed.Any(HasWitnessedValue)
+                            && witnessed.All(IrValidate.WitnessedValuesInPlainPositions))
+                            doc.WitnessCandidates.Add(new IrWitnessCandidate { Position = doc.Statements.Count, Statements = witnessed, Reason = gap });
+                    }
+                    finally { ctx.WitnessConstructions = false; }
                 }
             }
             return doc;
@@ -202,6 +221,9 @@ namespace WinFormsDesigner.Engine
             /// <summary>Method names the designed class declares in THIS file — a member of the designed class hides
             /// the base's, and the interpreted root (a base instance) cannot carry it.</summary>
             public readonly HashSet<string> DesignedMethodNames;
+            /// <summary>Set only while a gap is classified a second time: a construction the allowlist does not name,
+            /// with constant arguments, then becomes an <see cref="IrBuildWitnessedCtor"/> instead of a gap.</summary>
+            public bool WitnessConstructions;
             public Ctx(HashSet<string> f, HashSet<string> c, HashSet<string> r, HashSet<string> tn, HashSet<string> tc, HashSet<string> dm)
             { Fields = f; Containers = c; ResxVars = r; TreeNodeLocals = tn; TypeCertain = tc; DesignedMethodNames = dm; }
         }
@@ -599,11 +621,18 @@ namespace WinFormsDesigner.Engine
                     elements.Add(inv.ArgumentList.Arguments[0].Expression);
                 }
 
+                // The element type an AddRange array gives its values: a build-witnessed value is taken only when it is
+                // exactly that type, since lowering to one add per element drops the conversion C# applies otherwise.
+                string? rangeElementType = method == "AddRange"
+                    ? QualifiedTypeName(((ArrayCreationExpressionSyntax)inv.ArgumentList.Arguments[0].Expression).Type.ElementType)
+                    : null;
                 var built = new List<IrStatement>();
                 foreach (var e in elements)
                 {
                     var item = ClassifyValue(e, ctx);
                     if (item == null) return Gap(Trim(inv));
+                    if (item is IrBuildWitnessedCtor witnessedItem && rangeElementType != null && witnessedItem.TypeName != rangeElementType)
+                        return Gap(Trim(inv));
                     built.Add(new IrAddCollectionItem { TargetIsRoot = recvIsRoot, TargetName = recvName, PropertyPath = collPath, Item = item });
                 }
                 return built.Count == 0 ? NoOp() : Rep(built); // an empty AddRange adds nothing → represented no-op
@@ -675,7 +704,7 @@ namespace WinFormsDesigner.Engine
                         // decimal is not constructable in general — only its closed CodeDom bits form is.
                         if (tn == "System.Decimal") return DecimalBitsValue(oc);
                         // inline value construction is allowed ONLY for the FullName allowlist (Point/Size/Font/…).
-                        if (!AllowlistHasConstruction(tn)) return null;
+                        if (!AllowlistHasConstruction(tn)) return ctx.WitnessConstructions ? WitnessedConstruction(oc, tn, ctx, depth) : null;
                         if (oc.Initializer != null) return null;
                         var args = new List<IrValue>();
                         foreach (var a in oc.ArgumentList?.Arguments ?? default)
@@ -809,6 +838,43 @@ namespace WinFormsDesigner.Engine
         /// <summary>`new decimal(new int[] { lo, mid, hi, flags })` → a decimal ctor over exactly four Int32 literal
         /// words (see <see cref="DesignerAllowlists.TryCreateDecimalFromBits"/>); any other decimal construction is
         /// unrepresentable.</summary>
+        private static bool HasWitnessedValue(IrStatement statement) => statement switch
+        {
+            IrSetProperty p => HasWitnessedValue(p.Value),
+            IrAddCollectionItem item => HasWitnessedValue(item.Item),
+            IrSetExtender x => HasWitnessedValue(x.Value),
+            IrSetTreeNodeProp tp => HasWitnessedValue(tp.Value),
+            _ => false,
+        };
+
+        private static bool HasWitnessedValue(IrValue? value) => value switch
+        {
+            IrBuildWitnessedCtor => true,
+            IrCast c => HasWitnessedValue(c.Inner),
+            IrArray a => a.Items.Any(HasWitnessedValue),
+            IrKnownCtor k => k.Args.Any(HasWitnessedValue),
+            IrStaticFactory f => f.Args.Any(HasWitnessedValue),
+            _ => false,
+        };
+
+        /// <summary>`new T(constants…)` for a T no allowlist names, as a value only a build witness can construct: no
+        /// initializer, no named argument, and every argument a constant (null, bool, char, string, number, enum member).
+        /// Null for anything else, which stays a gap.</summary>
+        private static IrValue? WitnessedConstruction(ObjectCreationExpressionSyntax oc, string typeName, Ctx ctx, int depth)
+        {
+            if (oc.Initializer != null || !IrValidate.ValidTypeName(typeName)) return null;
+            var args = new List<IrValue>();
+            foreach (var a in oc.ArgumentList?.Arguments ?? default)
+            {
+                if (a.NameColon != null) return null;
+                var av = ClassifyValue(a.Expression, ctx, depth + 1);
+                if (av is not (IrNull or IrBool or IrChar or IrString or IrNumber or IrEnum) || !IrValidate.IsExactWitnessConstant(av)) return null;
+                args.Add(av);
+            }
+            if (args.Count > IrLimits.MaxCtorArgs) return null;
+            return new IrBuildWitnessedCtor { TypeName = typeName, Args = args };
+        }
+
         private static IrValue? DecimalBitsValue(ObjectCreationExpressionSyntax oc)
         {
             if (!TryDecimalBitsSyntax(oc, out int[] bits)) return null;

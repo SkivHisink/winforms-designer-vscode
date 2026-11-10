@@ -185,6 +185,8 @@
   "designer.diag.copy": "复制诊断信息",
   "designer.diag.partialCause": "一个或多个 InitializeComponent 语句无法呈现。",
   "designer.diag.compiledFallback": ".NET Framework 预览已回退到上次编译的版本。",
+  "designer.diag.partialPreview": "源代码的部分 .NET Framework 预览：完整预览和上次生成的结果都无法显示。",
+  "designer.notice.partialPreview": "源代码的部分 .NET Framework 预览 — 无法构建的部分显示为只读占位符，遗漏的内容列在详细信息中。对其他控件的编辑保持字节局部；“重试”会再次尝试完整预览和生成。",
   "designer.diag.noDetails": "未报告其他详细信息。",
   "designer.notice.inheritedBase": "此渲染不完整 — 窗体继承自 {base}，.NET 预览无法加载它，因此基类型定义的控件不会被绘制。请将设计器指向您已生成的 .NET Framework 程序集，以渲染真实类型。",
   "designer.notice.binaryResx": "此渲染不完整 — 窗体有 {n} 个 .NET 预览无法绘制的二进制/ImageStream 资源。它们保留在 .resx 中；设计器不会重新生成它。",

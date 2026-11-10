@@ -50,6 +50,10 @@
     <Compile Include="..\..\engine\DesignerAllowlists.cs" Link="Shared\DesignerAllowlists.cs" />
     <Compile Include="..\..\engine\DesignerIrBuilder.cs" Link="Shared\DesignerIrBuilder.cs" />
     <Compile Include="..\..\engine\DesignerIrExecutor.cs" Link="Shared\DesignerIrExecutor.cs" />
+    <Compile Include="..\..\engine\InterpretedRenderPlan.cs" Link="Shared\InterpretedRenderPlan.cs" />
+    <Compile Include="..\..\engine\RenderModeDecision.cs" Link="Shared\RenderModeDecision.cs" />
+    <Compile Include="..\..\engine\CompiledRootFactory.cs" Link="Shared\CompiledRootFactory.cs" />
+    <Compile Include="..\..\engine-net48\BuildConstructionWitness.cs" Link="Witness\BuildConstructionWitness.cs" />
     <Compile Include="..\..\engine\SafeResxResolver.cs" Link="Shared\SafeResxResolver.cs" />
     <Compile Include="..\..\engine\AssemblyIrHost.cs" Link="Shared\AssemblyIrHost.cs" />
     <Compile Include="..\..\engine\DesignTimeSite.cs" Link="Shared\DesignTimeSite.cs" />

@@ -67,8 +67,14 @@ namespace WinFormsDesigner.Engine.Net48
             /// <summary>How this tree was built: "compiled" (the last build — default), "interpreted"
             /// (the live source via the IR interpreter), or "compiledFallback". Snapshot stamps it on the result.</summary>
             public string Mode = "compiled";
-            /// <summary>Stable RenderFallbackReason when Mode=="compiledFallback"; "" otherwise.</summary>
+            /// <summary>Stable RenderFallbackReason when Mode=="compiledFallback" (or partialInterpretation for a partial
+            /// interpretation); "" otherwise.</summary>
             public string FallbackReason = "";
+            /// <summary>Partial interpretation only: everything the picture leaves out, as the host's diagnostics list
+            /// reads it. Restated on every snapshot of this graph, so a reused graph never loses its disclosure.</summary>
+            public List<string> Omissions = new List<string>();
+            /// <summary>Partial interpretation only: why the compiled build could not be constructed.</summary>
+            public string CompiledFailure = "";
             /// <summary>The LOGICAL designed type name reported as RootType. Null on the compiled path (Type is the
             /// designed type there); set on the interpreted path, where Type is the instantiated BASE type.</summary>
             public string? DesignedTypeName = null;
@@ -241,12 +247,72 @@ namespace WinFormsDesigner.Engine.Net48
                         return Snapshot(cached);
                     EvictInterpreted(reuseKey); // stale, aged out or mutated — not what the caller is asking for
                 }
+                // The order is: the complete interpretation, then the compiled build, then the PARTIAL interpretation,
+                // and the last one only when the build could not even be constructed, so a form that has a picture
+                // today keeps it. The construction failure is remembered for this build: every edit of a partial
+                // preview renders again, and must not run the constructor that already failed each time.
+                string? knownFailure = KnownCompiledConstructionFailure(reuseKey, assemblyPath);
+                if (knownFailure != null)
+                    return RenderInterpretedOnce(designerFilePath, assemblyPath, doc, rootTypeName, reqWidth, reqHeight,
+                        selectedTabs, renderScale, sourceKey, currentSourceBase, cultureName, reuseKey, knownFailure);
+                try
+                {
+                    return RenderInterpretedOnce(designerFilePath, assemblyPath, doc, rootTypeName, reqWidth, reqHeight,
+                        selectedTabs, renderScale, sourceKey, currentSourceBase, cultureName, reuseKey, null);
+                }
+                catch (BothRenderPathsFailedException ex) when (ex.ConstructionFailure != null)
+                {
+                    RememberCompiledConstructionFailure(reuseKey, assemblyPath, ex.ConstructionFailure);
+                    return RenderInterpretedOnce(designerFilePath, assemblyPath, doc, rootTypeName, reqWidth, reqHeight,
+                        selectedTabs, renderScale, sourceKey, currentSourceBase, cultureName, reuseKey, ex.ConstructionFailure);
+                }
+            });
+        }
+
+        /// <summary>The compiled build's construction failure remembered for (designer file, assembly, type), while
+        /// that build is the one on disk. Cleared by a rebuild, by <see cref="DiscardLive"/> and with the worker.
+        /// Read and written on the STA only.</summary>
+        private readonly Dictionary<string, KeyValuePair<string, string>> _compiledConstructionFailures =
+            new Dictionary<string, KeyValuePair<string, string>>(StringComparer.Ordinal);
+
+        private string? KnownCompiledConstructionFailure(string interpretedKey, string assemblyPath)
+        {
+            if (!_compiledConstructionFailures.TryGetValue(interpretedKey, out var known)) return null;
+            if (known.Key == ComputeBuildId(assemblyPath)) return known.Value;
+            _compiledConstructionFailures.Remove(interpretedKey);
+            return null;
+        }
+
+        private void RememberCompiledConstructionFailure(string interpretedKey, string assemblyPath, string failure)
+        {
+            if (_compiledConstructionFailures.Count >= 64) _compiledConstructionFailures.Clear();
+            _compiledConstructionFailures[interpretedKey] = new KeyValuePair<string, string>(ComputeBuildId(assemblyPath), failure);
+        }
+
+        /// <summary>The mode string a partial interpretation reports, beside "interpreted" and "compiledFallback".</summary>
+        private const string PartialMode = "interpretedPartial";
+
+        /// <summary>One interpreted render. <paramref name="compiledFailure"/> null = the complete interpretation, with
+        /// the compiled build as its fallback. Non-null = the compiled build is known not to construct (that is the
+        /// reason given): replay partially, and when even that cannot give a picture, report every reason instead of
+        /// trying the build again.</summary>
+        private RenderLayoutResult RenderInterpretedOnce(string designerFilePath, string assemblyPath, IrDocument? doc,
+            string rootTypeName, int reqWidth, int reqHeight, string[]? selectedTabs, int renderScale, string sourceKey,
+            string currentSourceBase, string cultureName, string reuseKey, string? compiledFailure)
+        {
+                bool partial = compiledFailure != null;
+                RenderLayoutResult Fallback(string reason, string detail)
+                {
+                    if (!partial) return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight, reason, detail);
+                    throw new BothRenderPathsFailedException("the compiled build could not be constructed (" + compiledFailure
+                        + ") and the partial preview of the source could not be built either — " + reason
+                        + (string.IsNullOrEmpty(detail) ? "" : ": " + detail), null);
+                }
                 Assembly asm;
                 try { asm = Assembly.LoadFrom(Path.GetFullPath(assemblyPath)); }
                 catch (Exception ex)
                 {
-                    return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
-                        RenderFallbackReason.ExecutorFailure, "assembly load: " + ex.Message);
+                    return Fallback(RenderFallbackReason.ExecutorFailure, "assembly load: " + ex.Message);
                 }
 
                 // NOTE: `doc` was parsed by Roslyn in the DEFAULT domain and marshaled here (it is [Serializable]) —
@@ -278,7 +344,7 @@ namespace WinFormsDesigner.Engine.Net48
                         baseType = designedType.BaseType;
                         if (baseType != null && !SameBase(currentSourceBase, baseType))
                         {
-                            return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
+                            return Fallback(
                                 RenderFallbackReason.BaseTypeChanged,
                                 (string.IsNullOrWhiteSpace(currentSourceBase)
                                     ? "current source base could not be resolved"
@@ -287,11 +353,11 @@ namespace WinFormsDesigner.Engine.Net48
                         }
                     }
 
-                    plan = InterpretedRenderPlan.Plan(doc, host, baseType);
-                    if (!plan.Interpreted)
+                    var (planDoc, planHost) = WithBuildWitness(doc, host, designedType);
+                    plan = InterpretedRenderPlan.Plan(planDoc, planHost, baseType, partial);
+                    if (!plan.Interpreted && !plan.Partial)
                     {
-                        return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
-                            plan.Decision.FallbackReason ?? RenderFallbackReason.ExecutorFailure, plan.Decision.Detail ?? "");
+                        return Fallback(plan.Decision.FallbackReason ?? RenderFallbackReason.ExecutorFailure, plan.Decision.Detail ?? "");
                     }
 
                     var rootCtl = (Control)plan.Root!;
@@ -310,6 +376,15 @@ namespace WinFormsDesigner.Engine.Net48
                     var fieldNames = new Dictionary<object, string>(ReferenceEqualityComparer.Instance);
                     foreach (var kv in exec.Instances)
                         if (kv.Key.Length != 0 && !fieldNames.ContainsKey(kv.Value)) fieldNames[kv.Value] = kv.Key;
+                    // A placeholder takes its failed control's source name so the canvas can show and select it. It has
+                    // no ownership entry, so every editable route sees it as unresolved and refuses it.
+                    // Only a placeholder that is on the canvas: one no parent took is named in the omissions instead.
+                    foreach (var kv in exec.Placeholders)
+                    {
+                        bool shown = false;
+                        for (Control? up = kv.Value; up != null && !shown; up = up.Parent) shown = ReferenceEquals(up, rootCtl);
+                        if (shown && !fieldNames.ContainsKey(kv.Value)) fieldNames[kv.Value] = kv.Key;
+                    }
                     var byField = BuildControlIndex(fieldNames, out var ambiguousIds);
                     var ownership = new Dictionary<object, string>(ReferenceEqualityComparer.Instance)
                     {
@@ -340,7 +415,12 @@ namespace WinFormsDesigner.Engine.Net48
                         Ownership = ownership,
                         InheritedOverrides = inheritedOverrides,
                         BuildId = ComputeBuildId(assemblyPath),
-                        Mode = "interpreted",
+                        Mode = plan.Partial ? PartialMode : "interpreted",
+                        FallbackReason = plan.Partial ? RenderFallbackReason.PartialInterpretation : "",
+                        Omissions = plan.Partial
+                            ? (planDoc?.UnrepresentableReasons ?? new List<string>()).Concat(exec.Omissions).ToList()
+                            : new List<string>(),
+                        CompiledFailure = plan.Partial ? compiledFailure ?? "" : "",
                         DesignedTypeName = plan.DesignedTypeName,
                         SourceKey = SourceStamp(designerFilePath, cultureName, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
                         PictureKey = SourceStamp(designerFilePath, cultureName, sourceKey, selectedTabs, renderScale, reqWidth, reqHeight),
@@ -369,8 +449,7 @@ namespace WinFormsDesigner.Engine.Net48
                 }
                 catch (Exception ex)
                 {
-                    return CompiledFallback(assemblyPath, rootTypeName, reqWidth, reqHeight,
-                        RenderFallbackReason.ExecutorFailure, "interpreted render: " + ex.Message);
+                    return Fallback(RenderFallbackReason.ExecutorFailure, "interpreted render: " + ex.Message);
                 }
                 finally
                 {
@@ -385,7 +464,6 @@ namespace WinFormsDesigner.Engine.Net48
                         try { container.Dispose(); } catch { /* reverse-order dispose of every sited component */ }
                     }
                 }
-            });
         }
 
         /// <summary>Cache key for the INTERPRETED graph of (assembly, designed type). Prefixed so it can never collide
@@ -587,6 +665,9 @@ namespace WinFormsDesigner.Engine.Net48
                 if (string.IsNullOrEmpty(expectedSourceKey) || string.IsNullOrEmpty(newSourceKey)
                     || !_cache.TryGetValue(key, out var live))
                     return NotApplied("no cached interpreted graph for this form");
+                // A partial graph is shown only as a replay of the source: an edit applied to it could not say which of
+                // the statements it left out the edit depends on. Render the edited source again instead.
+                if (live.Mode == PartialMode) return NotApplied("the cached graph is a partial interpretation");
                 if (!IsFresh(live))
                 {
                     // The same age bound render and describe obey. Without it, "describe (too old → fresh throwaway
@@ -678,19 +759,24 @@ namespace WinFormsDesigner.Engine.Net48
         /// cover this form). Reuses the exact compiled path so a fallback is byte-identical to a plain compiled render.</summary>
         private RenderLayoutResult CompiledFallback(string assemblyPath, string rootTypeName, int w, int h, string reason, string detail)
         {
-            RenderLayoutResult r;
-            try { r = Snapshot(GetOrCreate(assemblyPath, rootTypeName, w, h)); }
+            // BOTH paths failed: the safe interpreted one bailed for `reason`, and constructing the user's real form
+            // then threw too (a constructor that needs runtime services, say). Reporting only the second exception
+            // hides WHY the safe path was abandoned — which is the actionable half, because that is the gap to close
+            // for this form. Carry it into the message the user actually sees.
+            string BothFailed(Exception ex) =>
+                "the source could not be interpreted (" + reason
+                + (string.IsNullOrEmpty(detail) ? "" : ": " + detail)
+                + ") and the compiled fallback could not be built either — " + ex.GetBaseException().Message;
+            LiveDesign built;
+            try { built = GetOrCreate(assemblyPath, rootTypeName, w, h); }
             catch (Exception ex)
             {
-                // BOTH paths failed: the safe interpreted one bailed for `reason`, and constructing the user's real
-                // form then threw too (a constructor that needs runtime services, say). Reporting only the second
-                // exception hides WHY the safe path was abandoned — which is the actionable half, because that is the
-                // gap to close for this form. Carry it into the message the user actually sees.
-                throw new BothRenderPathsFailedException(
-                    "the source could not be interpreted (" + reason
-                    + (string.IsNullOrEmpty(detail) ? "" : ": " + detail)
-                    + ") and the compiled fallback could not be built either — " + ex.GetBaseException().Message, ex);
+                var cause = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
+                throw new BothRenderPathsFailedException(BothFailed(ex), ex) { ConstructionFailure = cause.Message };
             }
+            RenderLayoutResult r;
+            try { r = Snapshot(built); }
+            catch (Exception ex) { throw new BothRenderPathsFailedException(BothFailed(ex), ex); }
             r.RenderMode = "compiledFallback";
             r.FallbackReason = reason ?? "";
             if (!string.IsNullOrEmpty(detail)) r.Diagnostics = detail;
@@ -766,8 +852,12 @@ namespace WinFormsDesigner.Engine.Net48
                     // unavailable), exactly as render falls back rather than describing the wrong graph.
                     if (baseType != null && !SameBase(currentSourceBase, baseType))
                         return null;
-                    plan = InterpretedRenderPlan.Plan(doc, host, baseType);
-                    if (!plan.Interpreted || plan.Execution == null) return null; // not interpreted → panel stays unavailable
+                    // The same plan the canvas got: partial exactly when the render had to be (the build is known not to
+                    // construct), so a describe never answers from a different graph than the picture.
+                    var (planDoc, planHost) = WithBuildWitness(doc, host, designedType);
+                    plan = InterpretedRenderPlan.Plan(planDoc, planHost, baseType,
+                        KnownCompiledConstructionFailure(describeKey, assemblyPath) != null);
+                    if ((!plan.Interpreted && !plan.Partial) || plan.Execution == null) return null; // not interpreted → panel stays unavailable
                     var rootCtl = (Control)plan.Root!;
                     builtForm = HostOffscreen(rootCtl, reqWidth, reqHeight);
                     PumpRealizedGraph(rootCtl);
@@ -808,6 +898,21 @@ namespace WinFormsDesigner.Engine.Net48
             var exec = plan.Execution!;
             componentId = componentId ?? "";
             bool isRoot = componentId == "this" || componentId.Length == 0;
+            if (!isRoot && exec.Placeholders.TryGetValue(componentId, out var placeholder))
+            {
+                // Nothing of the declared type exists to describe: name it, say why, and offer nothing to edit.
+                return new ComponentDesc
+                {
+                    Id = componentId,
+                    Name = componentId,
+                    Type = placeholder.DeclaredTypeName,
+                    Parent = InterpretedIdentityParent(placeholder, root, exec, plan.DesignedTypeName),
+                    Ownership = InheritedOwnershipPolicy.Unresolved,
+                    Editable = false,
+                    ReadOnlyReason = PlaceholderReadOnlyReason(placeholder),
+                    IsPlaceholder = true,
+                };
+            }
             var resolved = InterpretedDescribeResolver.Resolve(exec, plan.DesignedTypeName, root, componentId);
             IComponent? target = resolved?.Target;
             string name = resolved?.Name ?? (isRoot ? InterpretedDescribeResolver.ShortName(plan.DesignedTypeName) : componentId);
@@ -832,6 +937,25 @@ namespace WinFormsDesigner.Engine.Net48
             inheritedOverrides.TryGetValue(target, out var inheritedOverride);
             return StampDescription(desc, ownership, target, inheritedOverride);
         }
+
+        /// <summary>The document and host a replay runs with. A statement left out only for a value of a type no
+        /// allowlist names is put back when the designed type's build makes every such construction in it — checked in
+        /// full before anything runs — and the host then gets the build as its witness. Otherwise both are returned as
+        /// they are, and the statement stays a gap.</summary>
+        private static (IrDocument? doc, IIrHost host) WithBuildWitness(IrDocument? doc, IIrHost host, Type? designedType)
+        {
+            if (doc == null || doc.WitnessCandidates == null || doc.WitnessCandidates.Count == 0) return (doc, host);
+            var witness = BuildConstructionWitness.For(designedType);
+            if (!witness.HasSites) return (doc, host);
+            var witnessed = new WitnessedIrHost(host, witness);
+            var merged = doc.WithWitnessCandidates(candidate => DesignerIrExecutor.AuthorizeWitnessCandidate(
+                candidate, witnessed, doc.NamespaceContext ?? new List<string>(), designedType, out _));
+            return ReferenceEquals(merged, doc) ? (doc, host) : (merged, witnessed);
+        }
+
+        private static string PlaceholderReadOnlyReason(IrPlaceholderControl placeholder) =>
+            placeholder.DeclaredTypeName + " could not be constructed for the preview (" + placeholder.ExceptionType
+            + "). The partial preview shows it where the source places it; it stays read-only until it can be built.";
 
         private static List<KeyValuePair<string, IComponent>> CurrentSourceSiblings(IrExecutionResult exec, IComponent target)
         {
@@ -887,9 +1011,12 @@ namespace WinFormsDesigner.Engine.Net48
                 InterpretedRenderPlan? plan = null;
                 try
                 {
-                    var baseType = asm.GetType(rootTypeName, throwOnError: false)?.BaseType;
-                    plan = InterpretedRenderPlan.Plan(doc, host, baseType);
-                    if (!plan.Interpreted || plan.Execution == null) return new TabHit();
+                    var designedType = asm.GetType(rootTypeName, throwOnError: false);
+                    var baseType = designedType?.BaseType;
+                    var (planDoc, planHost) = WithBuildWitness(doc, host, designedType);
+                    plan = InterpretedRenderPlan.Plan(planDoc, planHost, baseType, KnownCompiledConstructionFailure(
+                        InterpretedKey(designerFilePath, assemblyPath, rootTypeName), assemblyPath) != null);
+                    if ((!plan.Interpreted && !plan.Partial) || plan.Execution == null) return new TabHit();
                     var rootCtl = (Control)plan.Root!;
                     ApplyTabViewState(plan.Execution, selectedTabs);
                     builtForm = HostOffscreen(rootCtl, 0, 0);
@@ -2624,16 +2751,22 @@ namespace WinFormsDesigner.Engine.Net48
                 // host has just reverted, and its key no longer names any buffer the user can produce. The designer
                 // path may be absent (older callers): then drop every interpreted entry for this assembly + type.
                 bool dropped = false;
+                // A discard also forgets that this build failed to construct: the host discards a partial preview only
+                // to start over (Retry, closing the form), and starting over includes trying the build again. Undo of a
+                // partial preview does not discard, so it never runs the failed constructor again.
                 if (!string.IsNullOrEmpty(designerFilePath))
                 {
                     string ik = InterpretedKey(designerFilePath, assemblyPath, rootTypeName);
                     if (_cache.ContainsKey(ik)) { EvictInterpreted(ik); dropped = true; }
+                    if (_compiledConstructionFailures.Remove(ik)) dropped = true;
                 }
                 else
                 {
                     foreach (var k in _cache.Keys.Where(x => x.StartsWith("interpreted|", StringComparison.Ordinal)
                                                              && x.EndsWith("|" + rootTypeName, StringComparison.Ordinal)).ToList())
                     { EvictInterpreted(k); dropped = true; }
+                    foreach (var k in _compiledConstructionFailures.Keys.Where(x => x.EndsWith("|" + rootTypeName, StringComparison.Ordinal)).ToList())
+                    { _compiledConstructionFailures.Remove(k); dropped = true; }
                 }
                 if (!_cache.TryGetValue(key, out var live)) return dropped; // an interpreted-only drop is still a drop
                 _cache.Remove(key);
@@ -3010,9 +3143,27 @@ namespace WinFormsDesigner.Engine.Net48
             var controls = BuildLayoutControls(live, rootClassName, w, h);
             var tray = BuildTray(live);
             var toolStripItems = BuildToolStripItemGeometry(live);
+            bool partial = live.Mode == PartialMode;
+            if (partial)
+            {
+                foreach (var control in controls)
+                {
+                    if (!live.ByField.TryGetValue(control.Id, out var shown) || shown is not IrPlaceholderControl placeholder) continue;
+                    control.IsPlaceholder = true;
+                    control.Type = placeholder.DeclaredTypeName;
+                    control.Ownership = InheritedOwnershipPolicy.Unresolved;
+                    control.Editable = false;
+                    control.InheritedOverrideEditable = false;
+                    control.InheritedGeometryOverrideEditable = false;
+                    control.BaseIdentityToken = "";
+                    control.ReadOnlyReason = PlaceholderReadOnlyReason(placeholder);
+                }
+            }
 
             return new RenderLayoutResult
             {
+                Unrepresentable = partial ? new List<string>(live.Omissions) : new List<string>(),
+                Diagnostics = partial ? live.CompiledFailure : "",
                 RenderMode = live.Mode,
                 FallbackReason = live.FallbackReason,
                 // 1.0.0 fail-closed — stamp EVERY response with the identity of the instance it was drawn from.
@@ -4668,9 +4819,14 @@ namespace WinFormsDesigner.Engine.Net48
     [Serializable]
     public sealed class BothRenderPathsFailedException : InvalidOperationException
     {
-        public BothRenderPathsFailedException(string message, Exception inner) : base(message, inner) { }
+        public BothRenderPathsFailedException(string message, Exception? inner) : base(message, inner) { }
         private BothRenderPathsFailedException(System.Runtime.Serialization.SerializationInfo info,
             System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
+
+        /// <summary>Set when the compiled build could not even be constructed (as opposed to a snapshot of a built
+        /// instance failing): the one case the partial interpretation is for. Read inside the render domain only, so it
+        /// is deliberately not part of the serialized exception.</summary>
+        internal string? ConstructionFailure { get; set; }
     }
 
     /// <summary>Runs all WinForms work on one persistent STA thread inside the child domain. Mirrors the net9

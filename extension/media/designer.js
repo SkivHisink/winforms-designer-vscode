@@ -2007,6 +2007,7 @@
   function isContainerControl(id) {
     if (!id) return false;
     var control = findControl(id);
+    if (control && control.isPlaceholder) return false; // a partial preview's stand-in never takes children
     if (control && (control.isRoot || /Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(control.type || ''))) return true;
     for (var i = 0; i < controls.length; i++) if (controls[i].parentId === id) return true;
     return false;
@@ -2016,7 +2017,7 @@
     var c = id ? findControl(id) : null;
     while (c) {
       if (c.id === 'this' || c.isRoot) return findControl('this') || c;
-      if (/Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type || '')) return c;
+      if (!c.isPlaceholder && /Panel|GroupBox|TabPage|FlowLayoutPanel|TableLayoutPanel/.test(c.type || '')) return c;
       c = c.parentId ? findControl(c.parentId) : null;
     }
     return findControl('this');
