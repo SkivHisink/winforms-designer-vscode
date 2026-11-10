@@ -802,6 +802,11 @@ EXECUTED decisions; repository-side evidence cannot stand in for them.
 On 23 October 2026 the former 2.3.0 and 2.4.0 scopes were combined into one 2.3.0 release, and every later minor moved
 one version earlier with its task IDs unchanged; see the
 [revision record](docs/roadmap-2.0.0-to-3.0.0.md#roadmap-revision-2026-10-23).
+On 10 November 2026 3.0.0 gained a packaging change: the extension becomes a lightweight core, and the .NET
+Framework and .NET engines become separate packages that each user installs for their own projects. A 2.x release
+before it records which engines were used, so the update can offer exactly those. Visual Basic and C++/CLI packages
+follow after 3.0.0 on the same contract; see the
+[revision record](docs/roadmap-2.0.0-to-3.0.0.md#roadmap-revision-2026-11-10).
 The [2.1.0 evidence record](docs/release-2.1.0.md) includes real installed upgrade/downgrade and backup recovery.
 Publication has not been performed. These milestones do not promote historical harness results,
 vendor support, hardware qualification, or publication gates to completed status. Existing source-first editing,
@@ -821,7 +826,7 @@ resource transactions, recovery, project resolution, and bounded hosted routes r
 | **2.9.0** | Consolidated accessibility, physical DPI/ARM64 and clean-machine runtime qualification |
 | **2.10.0** | A supported product CLI, project validation, Problems integration and expanded previewable advisor fixes |
 | **2.11.0** | Contract freeze, SDK RC, real upgrade/rollback rehearsal, beta cohorts and long product soak |
-| **3.0.0** | Stable extensible designer platform with SDK 1.0 and an evidence-backed support matrix |
+| **3.0.0** | Stable extensible designer platform with SDK 1.0 and an evidence-backed support matrix, shipped as a lightweight core with installable .NET Framework and .NET engine packages |
 
 Architecture, accessibility and external qualification begin early and progress alongside feature work. x86/COM/ActiveX
 execution remains a separate conditional program; its feasibility does not block the managed baseline. Breaking public
@@ -852,3 +857,5 @@ hardware/vendor acceptance, release readiness and publication.
   require a documented deprecation period, migration and rollback at the 3.0.0 boundary; they never justify silently
   rewriting existing project sources or resources.
 - “Visual Studio parity” is an evidence-backed release claim tied to the declared support tiers, not an aspirational label.
+- From 3.0.0 the product is a core extension and installable engine packages. A form whose engine package is missing
+  is refused by name with an install action; it is never rendered on the other engine instead.

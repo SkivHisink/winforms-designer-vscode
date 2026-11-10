@@ -2,9 +2,10 @@
 
 **Planning date:** 22 September 2026.  
 **Revised:** 23 October 2026 — the former 2.3.0 and 2.4.0 scopes are combined into one 2.3.0 release and every later minor moves one version earlier; task IDs are unchanged. See [the revision record](#roadmap-revision-2026-10-23).  
+**Revised:** 10 November 2026 — 3.0.0 splits the product into a lightweight core extension and separately installed engine packages for .NET Framework and .NET; Visual Basic and C++/CLI packages follow after 3.0.0 on the same contract. See [the revision record](#roadmap-revision-2026-11-10).  
 **Status:** 2.1.0 and 2.2.0 are implemented, locally verified and packaged. Later milestones use the status recorded in their release sections. Public distribution remains a separate gate.<br>
 **Product:** WinForms Designer for VS Code.  
-**Horizon:** from the bounded, scenario-verified 2.0.0 core to the extensible 3.0.0 platform with published compatibility contracts.
+**Horizon:** from the bounded, scenario-verified 2.0.0 core to the extensible 3.0.0 platform with published compatibility contracts, delivered as a core extension and the engine packages each user installs for their own projects.
 
 This document defines the release outcomes, the order of work and the acceptance criteria. Version numbers are not a calendar promise. A described capability becomes supported only after it is implemented, verified on the declared matrix and reflected in the support documentation.
 
@@ -72,6 +73,8 @@ Three constraints particularly affect the order of work:
 
 **3.0.0 is an everyday WinForms designer inside VS Code for explicitly listed standard, custom and certified third-party controls, with safe editing, extensions and automated project validation.**
 
+It ships as a lightweight core extension. The engines are separate packages, one for .NET Framework and one for .NET, and each user installs the ones their projects need. Packages for Visual Basic and C++/CLI follow after 3.0.0 on the same contract. See [the revision of 10 November 2026](#roadmap-revision-2026-11-10).
+
 ### Application developer
 
 Opens a solution, picks a form, adds controls, edits layout, events, data and cultures, uses the supported smart tags and editors, saves and builds the project. When moving between VS Code and Visual Studio in a declared scenario, the semantics of the form and the unrelated parts of the files are preserved. A designer worker crash does not destroy unsaved work.
@@ -84,6 +87,10 @@ Plugs in the documented SDK, declares exact capabilities and dependencies, check
 
 Has a reproducible support matrix, reports on form problems, a compatibility check when libraries are upgraded and understandable recovery. Diagnostics do not require publishing the source project. CI can check the structure and, on a suitable Windows runner, real loading and render.
 
+### Developer choosing what to install
+
+Opens a workspace with only the core installed and is told which packages its projects need, with one confirmed install action. A team on .NET Framework installs the core and the .NET Framework engine and never downloads or updates the .NET engine; a team on .NET does the opposite, and a solution with both kinds of projects installs both. A user who comes from 2.x is offered the engines their history shows. A form whose engine is missing names that engine instead of rendering on the other one.
+
 ### How reaching the goal is measured
 
 - A key supported workflow completes without mandatory manual fixing of generated code.
@@ -91,6 +98,7 @@ Has a reproducible support matrix, reports on form problems, a compatibility che
 - Certification always names the library, version, runtime, architecture and the list of verified capabilities.
 - The team sees which limitations were found before a runtime or vendor suite upgrade.
 - No feature is included in 3.0.0 merely for the version number: a contract, a product path, tests, documentation and a recovery scenario are mandatory.
+- The core package carries no engine or compiler binaries, and every declared combination of the core and its engine packages passes the same scenarios as the last 2.x package with both engines bundled.
 
 <a id="release-map"></a>
 
@@ -112,7 +120,7 @@ Completed milestones are identified by their acceptance records; later rows rema
 | **2.9.0** | Verified accessibility and an extended runtime matrix | Accumulated UI/runtime features + the lab | Real AT, DPI and hardware checks of the declared set |
 | **2.10.0** | Product CLI, project validation and design advisor | 2.2–2.3 + the relevant capabilities | The CLI calls real product paths and produces a reproducible report |
 | **2.11.0** | Contract freeze, SDK RC and a transition rehearsal | All mandatory tracks | Beta/RC evidence, migration and rollback are ready |
-| **3.0.0** | A stable extensible platform | 2.11 + independent acceptance | All mandatory capabilities of the declared matrix are accepted |
+| **3.0.0** | A stable extensible platform: a lightweight core and installable .NET Framework and .NET engine packages | 2.11 + independent acceptance + the package split ([§3.3](#roadmap-revision-2026-11-10)) | All mandatory capabilities of the declared matrix are accepted for every declared package combination |
 
 ```mermaid
 flowchart LR
@@ -130,7 +138,7 @@ flowchart LR
     Q --> RC["2.11: compatibility and RC"]
     V --> RC
     C --> RC
-    RC --> GA["3.0: platform"]
+    RC --> GA["3.0: core and packages"]
 ```
 
 The arrows denote implementation dependencies, not a need to wait for the whole preceding branch to ship. Research, the accessibility audit, hardware checks and the preparation of vendor fixtures start with 2.1; the corresponding numbers mark the moment the result is consolidated. Independent features can be developed in parallel once the shared contracts have stabilized.
@@ -176,6 +184,40 @@ The acceptance scenarios in section 4 describe the full target variant of each r
 - The 22 October 2026 local acceptance of the document scope was taken on an intermediate tree. It remains a historical record and does not close the combined release.
 - The combined 2.3.0 is closed by one acceptance run of the final tree: every executable CI step, both frozen VSIX packages and artifact-bound evidence for R23 and R24 together. The product version, package identities, the Adapter SDK Preview product cohort, the changelog and the release records move from 2.4.0 to 2.3.0 as part of that closure. The cohort is declared in the sample packages and their tests, so this is a product change and not a documentation rename.
 - The record that was prepared for the former 2.5.0 becomes the 2.4.0 record.
+
+<a id="roadmap-revision-2026-11-10"></a>
+
+### 3.3. Revision of 10 November 2026: a core extension and installable packages in 3.0.0
+
+**Reason:** one package carries both runtime engines to every user. Of the 52 MB that the 2.3.4 `win32-x64` package unpacks to, the .NET Framework engine takes 26.1 MB and the modern engine 22.7 MB; the extension, the webview and the translations take about 3.3 MB. A team with only .NET Framework projects downloads, updates and stores the modern engine with every release, and the other way round. Visual Basic and C++/CLI forms are not supported at all, and adding their front-ends to the single package would make it grow for everyone.
+
+**Decision:** from 3.0.0 the product is a core extension plus separately installed packages. Each user installs the packages for the frameworks their projects use. 3.0.0 ships the core and the two engine packages; packages for further languages follow on the same contract.
+
+| Package | Contents | Who installs it | Ships in |
+|---|---|---|---|
+| **Core** | The custom editor, canvas, Properties, toolbox and outline; documents, history, transactions and recovery; project context; the protocol client and worker supervisor; settings, localization and diagnostics. No engine and no compiler binaries | Everyone. It keeps the current extension identity | 3.0.0 |
+| **.NET Framework engine** | The `net48` x64 engine with its C# front-end, the interpreter, the compiled fallback and the hosted designer routes | C# projects on .NET Framework 4.x, including vendor suites | 3.0.0 |
+| **.NET engine** | Today's modern engine with its C# front-end, per target platform (`win32-x64`, `win32-arm64`) | C# projects on `net6.0-windows` and later; the matrix names each verified target framework, and those Microsoft no longer services stay best-effort ([§5.5](#architecture)) | 3.0.0 |
+| **Visual Basic** | A Visual Basic front-end for `.Designer.vb` forms in `.vbproj` projects, loaded by either engine | Visual Basic projects, together with the engine of the project | After 3.0.0 ([LP-01](#language-packages)) |
+| **C++/CLI** | A C++/CLI front-end for form headers in `.vcxproj` projects with CLR support, loaded by the .NET Framework engine | C++/CLI projects, together with the .NET Framework engine | After 3.0.0, research first ([LP-02](#language-packages)) |
+
+The package names are working names; R30-11 fixes the published names and identities. C# is part of each engine because every existing form is C#: a C# user installs the core and one or both engines and needs nothing else.
+
+**What does not change:**
+
+- The task IDs, scopes, criteria and order of 2.4.0–2.11.0, apart from the engine usage history (R30-13), which ships early in 2.x.
+- The standing rules: source-first editing, fail closed, the interpreter allowlists, the edit-minimality gates and the identifier validation. A later language front-end brings its own identifier validation with new tests and never weakens an existing gate.
+- One repository and one source identity per release. The split is a distribution boundary, not a fork of the engines: the files compiled into both engines stay shared.
+- Project files, user settings and persisted workspace state.
+
+**Rules of the change:**
+
+- 2.x stays one package with both engines. The split ships with 3.0.0 and is offered through the preview channel first, as the [2.11.0 version policy](#release-2-11-0) requires for incompatible changes.
+- The core keeps the extension identity `SkivHisink.winforms-designer-vscode`, so workspace and global state, backups, toolbox curation, the per-form and per-folder project choices and the engine usage history carry over. Each package is a new extension that depends on the core; the core depends on no package. Packages are first-party only.
+- The split adds the tasks R30-09 – R30-15 to [3.0.0](#release-3-0-0). R30-01 – R30-08 are unchanged.
+- The update to 3.0.0 is prepared in 2.x. The engine usage history (R30-13) ships in the next 2.x release, so that it covers as much real use as possible before the update. Other preparation that changes nothing a user installs may land in later 2.x minors: the core reaching the bundled engines only through the package contract (R30-11), and a project context that does not depend on one particular engine (R30-10). 3.0.0 then moves files between packages instead of rewriting the route.
+- Visual Basic and C++/CLI are not part of the 3.0 scope or its acceptance. 3.0.0 only keeps the contract able to carry them ([§5.7](#architecture)); each gets a release number when it is planned.
+- The estimate in [§8.3](#execution) is revised for the split.
 
 <a id="milestones"></a>
 
@@ -333,6 +375,8 @@ The retry boundary is fixed before the migration: the retention period of operat
 - [ ] **R25-07. Cross-tool round trip.** Archive VS Code → Visual Studio → VS Code with the expected semantic/source/resource changes and a normal runtime build.
 - [ ] **R25-08. Adapter management.** Enabling, disabling, upgrading and returning to the previous version preserve the document and give a clear compatibility status.
 
+**Delivered no later than this release, ahead of 3.0.0:** the engine usage history (R30-13), so that it is written for as long as possible before users update to the 3.0 core. If a 2.3.x patch ships first, it may carry the history instead.
+
 **Acceptance:** at least one exact cohort has a complete passport and passes the Tier C threshold. All mandatory scenarios and integrity checks pass in full. Other vendor versions remain generic/best effort or unsupported according to their actual capabilities.
 
 **If the artifacts are unavailable:** ship the general editor improvements under an exact name and leave the certification item `GATED`. `FakeVendor` keeps its role as a test fixture and never substitutes for an independent vendor cohort.
@@ -472,16 +516,18 @@ Parse-only separately passes a fixture with an executable project/toolchain hook
 
 **Boundary:** a parse-only result does not mean that a control actually loaded or rendered. The generic automation API does not accept an arbitrary source patch from a client that bypasses the planner.
 
+<a id="release-2-11-0"></a>
+
 ### 2.11.0 — contract freeze and transition preparation
 
 **Value:** users and adapter authors can check the upgrade to 3.0 in advance, learn about incompatibilities and prepare a rollback.
 
 **Work items:**
 
-- [ ] **R212-01. Freeze the support matrix.** Fix the mandatory runtime/architecture/VS Code/vendor cohorts, scenarios and external acceptance legs. Every exception has a clear reason and an owner.
+- [ ] **R212-01. Freeze the support matrix.** Fix the mandatory runtime/architecture/VS Code/vendor cohorts, scenarios and external acceptance legs, and the declared combinations of the core and its packages ([§3.3](#roadmap-revision-2026-11-10)). Every exception has a clear reason and an owner.
 - [ ] **R212-02. SDK RC.** Release a candidate of the stable API with examples, a capability catalogue, an error taxonomy, a test harness and schema update rules. An independent adapter maintainer goes through the integration.
 - [ ] **R212-03. Deprecation inventory.** List the deprecated commands, settings keys, adapter contracts and transport paths; show the replacement and the support period. Warnings must be targeted and fixable.
-- [ ] **R212-04. Migration rehearsal.** Install the retained supported 2.x versions, create real settings/cache/backup, upgrade to the RC, open forms and roll back. Account for partially installed engines and an offline environment.
+- [ ] **R212-04. Migration rehearsal.** Install the retained supported 2.x versions, create real settings/cache/backup, upgrade to the RC, open forms and roll back. Account for partially installed engines and an offline environment. The rehearsal includes the move from the single 2.x package to the 3.0 core and its engine packages, with and without the engine usage history, and the way back (R30-13, R30-14).
 - [ ] **R212-05. Freeze document compatibility.** Confirm that projects do not need a new proprietary format. Changes to the internal cache must not automatically normalize `.Designer.cs`/`.resx`.
 - [ ] **R212-06. Long-running tests.** At least 8 hours of product workload and 500 open/edit/close cycles for the declared profiles, including several workers, builds, resource edits, cancellation and recovery.
 - [ ] **R212-07. Independent review.** Review the trusted execution boundary, input validation, loader provenance, project writes, diagnostics redaction, update/rollback and the whole matrix of critical scenarios.
@@ -494,9 +540,11 @@ Parse-only separately passes a fixture with an executable project/toolchain hook
 
 RC is a quality stage, not a package version string chosen in advance. Before publication, R212-09 fixes separate stable/pre-release sequences and verifies the transitions of both channels: Marketplace requires a numeric `major.minor.patch`, does not accept the SemVer suffix `-rc.1` and does not allow one version to be used for both pre-release and stable. Source: [Publishing Extensions — Pre-release extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions). Open VSX is checked separately; changing package/release-preflight is not part of preparing this roadmap.
 
+<a id="release-3-0-0"></a>
+
 ### 3.0.0 — a stable extensible platform
 
-**Value:** an application is maintained in VS Code on a known matrix, libraries extend the designer through a stable SDK, and the team validates forms automatically and manages upgrades predictably.
+**Value:** an application is maintained in VS Code on a known matrix, libraries extend the designer through a stable SDK, and the team validates forms automatically and manages upgrades predictably. Each user installs a small core and only the engine packages their projects need.
 
 **Required outcomes:**
 
@@ -509,9 +557,28 @@ RC is a quality stage, not a package version string chosen in advance. Before pu
 - [ ] **R30-07. A confirmed release artifact.** The support matrix, evidence manifest, changelog and packages describe one set of sources. Publication and its smoke are recorded as a result of their own.
 - [ ] **R30-08. Maintenance.** The runtime update policy, adapter API support, the procedure for fixing critical defects and servicing of the last stable 2.x during the transition period are published.
 
-**Why a major version:** 3.0 fixes a stable platform/SDK contract after the preview period. If a deprecated public contract has to be removed, it is done here after the deprecation period. A major version does not require a mandatory change of the wire protocol and does not justify losing compatibility of user files.
+**The core and its packages** ([revision of 10 November 2026](#roadmap-revision-2026-11-10)):
 
-**Final criterion:** all mandatory advertised capabilities pass their scenarios and the supported runtime/architecture legs; published exceptions do not hide the failure of a mandatory workflow. If vendor or hardware acceptance is unavailable, the milestone stays open or its scope is revised explicitly before the freeze, without declaring an unachieved result complete.
+- [ ] **R30-09. A core without engines.** The core package contains no engine, compiler or runtime binaries; its size is measured and recorded in the release record against the 2.x package. With no engine for a form, the form opens as a named refusal that names the missing engine package and offers to install it after confirmation; it is never rendered on the other engine instead. Core features that need no engine keep working, and each one that does names the package it needs.
+- [ ] **R30-10. A project context that does not depend on one engine.** Today the owner validation and the assembly resolution run in the modern engine for every form, .NET Framework forms included (`ensureDocumentOwnerBeforeRender` and `resolveAssembly` in `designerEditor.ts`). Route, owner validation and output resolution must work with only the engine the project needs. The chosen design is either the same owner/assembly contract answered by each engine from shared source, or static project facts the core reads without evaluating the project; the parse-only rules of R211-02 apply to the second. A multi-targeted project routes to an installed engine only when one of its target frameworks matches; otherwise the refusal names the engine to install.
+- [ ] **R30-11. The package contract.** Each package declares, in its manifest and readable without activating it: its kind, runtimes, project kinds and target frameworks, the engine entry point per target platform, the supported protocol range and its build identity. The manifest has room for the language packages planned after 3.0 ([§5.7](#architecture)) without a change of its version. The published package names and identities are fixed here. The core accepts only the first-party package identities it knows; any other contribution is listed in Diagnostics and ignored. The version handshake runs through the existing protocol negotiation, and a mismatch names the package to update. Core N with packages N−1 and core N−1 with packages N are verified on real binaries ([§5.4](#architecture)).
+- [ ] **R30-12. The .NET Framework and .NET engine packages.** The existing engines move into their packages without a change in behavior: every designer file of the repository corpus renders and edits identically through the split as through the last 2.x package, compared form by form. The .NET engine is packaged per target platform; the .NET Framework engine stays x64, with x64 emulation on ARM64 as today.
+- [ ] **R30-13. Engine usage history (ships in 2.x).** Starting with the next 2.x release, the bundled package keeps a small local history of the engines the user's forms were routed to: the engine kind and when it was last used, once for the installation and once per workspace, in the extension's own global and workspace storage, with a format version. It records no project path, file name or source text, and nothing leaves the machine. A failed write is logged and changes no designer behavior. The history is listed in the persisted-state inventory like every other stored state and is visible in Diagnostics. Because the core keeps the extension identity, the 3.0 core reads the same storage.
+- [ ] **R30-14. Install, upgrade and rollback.** A 2.x user who updates to 3.0 receives the core only. On first activation the core reads the engine usage history (R30-13) and, for the open workspace, the project kinds it contains, and offers exactly those engines in one confirmed action; it never installs silently. A missing, unreadable or newer-format history falls back to the workspace projects alone. A pack with both engines restores the 2.x experience for those who want it. Offline installation uses the release VSIX files in a documented order, core first. Going back to the last 2.x restores its bundled engines, and the installed 3.0 packages stay inert under it. Verified on real installations in the R212-04 rehearsal, including an installation with history and one without.
+- [ ] **R30-15. Release and CI for several packages.** One source identity per release; every package is built, its payload is asserted (the core holds no engine binaries, each package holds only its own) and its hash is part of the one release record. Extension Host suites run for each declared combination: the core alone, the core with each engine and the core with both engines. Publication of each package is recorded as a result of its own.
+
+**Why a major version:** 3.0 fixes a stable platform/SDK contract after the preview period. If a deprecated public contract has to be removed, it is done here after the deprecation period. The package split changes what a user installs and updates, which is a distribution break and belongs to a major version. A major version does not require a mandatory change of the wire protocol and does not justify losing compatibility of user files.
+
+**Final criterion:** all mandatory advertised capabilities pass their scenarios and the supported runtime/architecture legs for every declared package combination; published exceptions do not hide the failure of a mandatory workflow. If vendor or hardware acceptance is unavailable, the milestone stays open or its scope is revised explicitly before the freeze, without declaring an unachieved result complete.
+
+<a id="language-packages"></a>
+
+### After 3.0.0 — language packages
+
+These packages use the package contract of 3.0 (R30-11) and are not part of the 3.0 acceptance. Each gets a release number when it is planned. A language front-end is a new front-end, not renamed C#: its declared scope is fixed before acceptance, whatever is outside it is refused by name, and it is never accepted on the strength of the C# corpus.
+
+- [ ] **LP-01. The Visual Basic package.** A Visual Basic front-end produces the same designer IR as C# for `.Designer.vb` files in `.vbproj` projects on both engines, and its writers emit Visual Basic under the same edit-minimality gates. It handles what C# rules do not cover: `Me.`-qualified statements; `Friend WithEvents` fields with events wired through `Handles` clauses in the code-behind instead of `AddHandler`; case-insensitive names, so that identity collisions and identifier validation follow Visual Basic rules; the project root namespace and project-level imports that bind names without a statement in the file; `My.Resources` and `My.Settings`; Visual Basic literals. The declared scope (at least render, selection, Properties, geometry, add/remove/rename, events and resources) is checked against Visual Studio reference traces of Visual Basic forms.
+- [ ] **LP-02. The C++/CLI package.** Research stages with an explicit decision after each: **C0** a corpus of real C++/CLI form projects and the demand for them; **C1** a read-only render of a form header (`InitializeComponent` inside the class body of a `.h` file, `this->`, `gcnew`, `::`-qualified names) from `.vcxproj` projects with CLR support on .NET Framework; **C2** a bounded edit set whose writers change only the designer-generated region, because user code shares the same class and file; **C3** the product decision. There is no Roslyn for C++/CLI, so the front-end parses only the designer subset and refuses anything outside it. Mixed-mode outputs need the matching Visual C++ runtime; Win32 (x86) configurations stay in Tier D ([§7.1](#research)). If C1 shows that the read-only render cannot be reproduced safely, the decision is recorded and the package is not shipped as a guess.
 
 <a id="architecture"></a>
 
@@ -545,6 +612,7 @@ Workers return typed results, not the right to write project files themselves. C
 | Transactions | PatchSet, journal, commit, compensation, recovery | `transactionRunner`, resource coordinator |
 | Project context | Owner project, evaluated configuration/TFM/platform, dependency invalidation | `ProjectResolver`, `csprojRef`, `solutionProjects` |
 | Runtime | Worker identity, startup/reuse/recycle, quotas, crash/build coordination | `getEngine`, `WorkerSupervisor` |
+| Packages (3.0) | Package discovery, manifest validation, version handshake, missing-package refusal and install recommendation | `resolveEngineEntry` (bundled engine paths today) |
 | Protocol | Generated DTO, negotiation, cancellation, correlation and bounded results | `designer-protocol-v2.schema.json`, generated bindings |
 | Design services | Certified services, editors, actions, adorners | `DesignerServiceKernel`, product brokers |
 | Webview | Presentation of state, accessible input, minimal local feedback | `designer.js`, `panel.js`, `chooseItems.js` |
@@ -561,7 +629,7 @@ Module extraction serves specific releases. No separate multi-month rewrite of t
 
 ### 5.4. Contract compatibility
 
-The extension SemVer, engine build identity, wire protocol, adapter SDK, manifest schema, report schema and internal cache/backup formats are versioned separately. For example, the presence of protocol version 2 already in 2.0.0 does not mean that release 3.0 must use protocol version 3.
+The extension SemVer, engine build identity, wire protocol, adapter SDK, manifest schema, report schema, internal cache/backup formats, the engine usage history and, from 3.0, the core-to-package manifest (and later the language front-end contract) are versioned separately. For example, the presence of protocol version 2 already in 2.0.0 does not mean that release 3.0 must use protocol version 3.
 
 For each boundary, the producer/consumer matrix, the minimum supported version, the reaction to future/unknown required fields, the upgrade/downgrade conditions and the deprecation period are published. N/N−1 compatibility is verified where it is promised, on real interacting binaries and states.
 
@@ -569,7 +637,7 @@ For each boundary, the producer/consumer matrix, the minimum supported version, 
 
 As of the planning date, Microsoft's official policy states the end of support for .NET 8 and .NET 9 as **10 November 2026** and for .NET 10 as **14 November 2028**. These dates determine the need to review the host/toolchain; they are not an automatic ban on opening a project with an old TFM. The policy is checked again before every RC. Source: [.NET Support Policy](https://dotnet.microsoft.com/en-us/platform/support/policy).
 
-Target policy: the bundled modern host follows the chosen serviced branch; compatibility of the application's target frameworks is verified by a separate corpus. The next .NET version first goes through a preview matrix and is then added to support based on the results. net48 compatibility is kept as long as it is declared and passes its OS/architecture/vendor matrix.
+Target policy: the modern host (bundled in 2.x, its own package from 3.0) follows the chosen serviced branch; compatibility of the application's target frameworks is verified by a separate corpus. The next .NET version first goes through a preview matrix and is then added to support based on the results. net48 compatibility is kept as long as it is declared and passes its OS/architecture/vendor matrix.
 
 Build/test/restore coordination takes code execution and output locks into account. Changing the application's `TargetFramework`, package references or architecture is not done automatically for the sake of opening the designer.
 
@@ -580,6 +648,20 @@ The existing product is disabled in untrusted workspaces. A possible future pars
 A hosted adapter gets access to the declared SDK services and the right to propose document changes after provenance verification and permission in the specific workspace. This host API contract does not by itself restrict the access of executable code to the file system or the network: the process rights and the trusted-to-execute model remain. Revoking the permission stops new calls and safely completes the current work. The enablement criteria and the restricted-mode behavior are checked against the [Workspace Trust Extension Guide](https://code.visualstudio.com/api/extension-guides/workspace-trust).
 
 Secrets, sources and vendor binaries are not a mandatory part of the diagnostic bundle. Anonymous telemetry is not introduced as a roadmap dependency; the initial performance and reliability data can be collected locally and in CI.
+
+### 5.7. The core and its packages (3.0)
+
+```text
+Core extension (TypeScript: editor, document, transactions, project context, supervisor)
+  → engine process from an engine package (.NET Framework or .NET, C# front-end built in)
+      → after 3.0: a language front-end assembly from a language package (Visual Basic, C++/CLI), loaded into that process
+```
+
+- **Engines are reached through the package contract only** (R30-11). The core starts an engine from the entry point a recognized package declares. Packages are first-party in 3.0 and follow the trusted-to-execute model of [§5.6](#architecture); the package contract is not part of SDK 1.0.
+- **The core decides the route, the engine proves it.** The route chooses an engine from project facts; the engine validates the owner and the output before render (R30-10). A route that needs a missing engine is a named refusal with an install action.
+- **Settings stay in the core.** The `winformsDesigner.*` keys keep their names and owner, so no settings migration is needed; a package contributes no user settings in 3.0.
+- **Each package carries its own payload.** Runtime binaries and compiler libraries live only in the package that needs them; nothing is downloaded at run time.
+- **The IR is the future language boundary.** The 3.0 contract keeps room for the language packages ([LP-01, LP-02](#language-packages)): a front-end will turn a designer file into the shared designer IR with source spans and plan its own text edits, while the interpreter, the allowlists, the compiled fallback, the transaction chain of [§5.1](#architecture) and the minimality checks stay the same for every language. The core will pass an engine only front-end paths from recognized packages, the engine will check each against the identity in the manifest before loading it, and a Visual Basic front-end will name the compiler version it was built against, because it runs on the compiler core its engine carries.
 
 <a id="acceptance"></a>
 
@@ -625,6 +707,8 @@ These are management statuses of the new plan. They do not automatically change 
 | Adapter/editor | Contract suite, provenance, result type, cancel, mutation/undo | For a licensed vendor and native UI |
 | Performance | Reproducible corpus, full action timing, memory/handles | For promises of hardware performance |
 | Packaging/update | Versions, architecture payload, clean install, upgrade/rollback | For the Marketplace/Open VSX publication smoke |
+| Core/package boundary (3.0) | Each declared combination, a missing package, a version mismatch in both directions, an unknown contribution | For platform-specific dependency resolution by the Marketplace |
+| Language front-end (after 3.0) | Its own positive/negative corpus, identifier validation and identity rules of the language, exact diff | For Visual Studio reference traces of that language |
 
 The affected layers are verified. Full regression/package/runtime matrices are run before an RC or when a shared boundary changes, not after every documentation edit.
 
@@ -678,6 +762,8 @@ Usefulness criterion: reducing the available resources is compatible with the re
 - Its own package manager, SQL designer, runtime debugger or database migrations.
 - Mandatory cloud accounts, an adapter marketplace, real-time collaborative editing and a subscription model.
 - AI-based UI generation as a condition of 3.0. If it appears later, the result must use the same preview, planner and transaction contracts.
+- Third-party engine or language packages. The package contract of 3.0 is first-party only and is not part of SDK 1.0.
+- Visual Basic and C++/CLI forms; they are planned as packages after 3.0.0 ([LP-01, LP-02](#language-packages)). Other languages, and C++/CLI forms in Win32 (x86) configurations.
 
 This is the list of boundaries of the current program. Moving a track into the main scope requires a new user outcome, an estimate, an owner and acceptance criteria.
 
@@ -719,9 +805,10 @@ Below is an initial engineering estimate based on the size of the plan and the u
 | Hosted SDK (2.3) and the first cohort (2.4) | 12–24 | Vendor design-time contracts, native UI, licensed fixtures |
 | Productivity, 2.5–2.8 | 16–28 | Complex layouts, references, the resource/data graph and semantic refactoring |
 | Compatibility, CLI and RC, 2.9–3.0 | 12–20 | Devices, AT, update/rollback, independent review |
-| **Total before the reserve** | **50–90** | The scope is refined after 2.1 and 2.3 |
+| Core and engine packages (3.0, added 10 November 2026) | 5–10 | The project-context rework, the package contract, the upgrade path and the CI for several packages |
+| **Total before the reserve** | **55–100** | The scope is refined after 2.1 and 2.3 |
 
-A reserve of 20–30% for integrations, defects and dependency updates gives a guide figure of about **60–117 person-months**. It does not cover a new large vendor suite or a full Tier D added after the freeze.
+A reserve of 20–30% for integrations, defects and dependency updates gives a guide figure of about **66–130 person-months**. It does not cover a new large vendor suite or a full Tier D added after the freeze. The calendar ranges below were set before the revision of 10 November 2026 and do not yet include the package split; they are recalculated from the measured velocity at the 2.8 checkpoint. The language packages after 3.0 are estimated when they are planned.
 
 - **One maintainer:** the full scope is a multi-year program, potentially 5–10 years of full-time work under this model. The practical path is small useful releases and a reduced mandatory matrix, not a promise of every item by a near date.
 - **A team of 3–4 people:** a preliminary calendar range of 24–42 months with combined roles and available external checks.
@@ -751,6 +838,10 @@ Every 4–6 weeks, update the task status, new risks, the required capacity, the
 | Weak lab availability | ARM64/AT/soak remain unavailable by the RC | Book the devices and the external review from the start of the program |
 | A minor that is too large | Several unrelated requirements delay a useful feature | Ship a completed bounded slice, move the rest explicitly |
 | Recovery damages external work | The journal contains a stale fingerprint | Tests of real concurrency, refusing automatic overwrite |
+| An update to 3.0 leaves 2.x users without an engine | The core opens forms with no engine installed | The engine usage history from 2.x, the first-activation recommendation, the pack with both engines, a rehearsed upgrade and rollback (R30-13, R30-14) |
+| The usage history ships too late to help | Few users run a 2.x release that writes it before they update | Ship it in the next 2.x release; keep the fallback to the workspace projects |
+| Package combinations multiply the test matrix | A combination nobody declared is reported broken | Declare the supported combinations, test each on real installations, refuse an undeclared one by name |
+| A later language reuses C# assumptions | A Visual Basic or C++/CLI form passes a check only because the C# corpus does | A corpus and identifier rules of its own for each language; no acceptance by analogy |
 
 ### 8.6. Repeat quality review of the plan — 22 September 2026
 
