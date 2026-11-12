@@ -560,6 +560,9 @@ namespace WinFormsDesigner.Engine
                         .Append(Target(x.TargetIsRoot, x.TargetName)).Append(':').Append(x.PropertyName).Append('=');
                     AppendValue(builder, x.Value);
                     break;
+                case IrSetImageKeyName k:
+                    builder.Append("imageKey:").Append(k.TargetName).Append(':').Append(k.Index).Append('=').Append(k.Key);
+                    break;
                 case IrApplyResources r:
                     builder.Append("resources:").Append(Target(r.TargetIsRoot, r.TargetName)).Append(':').Append(r.ResourceKey);
                     break;

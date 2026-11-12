@@ -26,7 +26,10 @@ namespace WinFormsDesigner.Engine
     // ============================================================================================================
     // The SAFE .resx resolver, shared by the modern engine (through ResxResolver) and the .NET Framework engine. The
     // sibling .resx is repository-controlled input, and BinaryFormatter cannot be made safe for untrusted input on ANY
-    // .NET version, so a binary/SOAP payload or a ResXFileRef is NEVER deserialized: it is recorded as refused.
+    // .NET version, so a binary/SOAP payload or a ResXFileRef is NEVER deserialized: it is recorded as refused. The one
+    // binary payload served (modern engine only) is an ImageList's ImageStream, and not through BinaryFormatter: its
+    // records are parsed as data, the root must be exactly an ImageListStreamer with one byte[] member, and those bytes
+    // must be an image list in Visual Studio's layout before Windows Forms reads them (see "ImageListStreamer" below).
     //
     // Parsing is pure XML; no resource assembly is loaded and no type is resolved from the input. A typed entry is
     // served only when its type attribute names a type of the fixed registry below, in an assembly of that type's own
@@ -44,12 +47,15 @@ namespace WinFormsDesigner.Engine
     public sealed class SafeResxResolver
     {
         private const string ByteArrayBase64Mime = "application/x-microsoft.net.object.bytearray.base64";
+        private const string BinaryFormatterMime = "application/x-microsoft.net.object.binary.base64";
+        // An ImageListStreamer's Data may be run-length compressed; this bounds what it expands to.
+        private const long MaxImageStreamBytes = 64L * 1024 * 1024;
         private const int MaxImageBytes = 16 * 1024 * 1024;
         private const int MaxImageDimension = 20000;
         private const long MaxImagePixels = 4096L * 4096L;
         private const int MaxImageBase64Chars = ((MaxImageBytes + 2) / 3) * 4;
 
-        private enum EntryKind { String, Scalar, Image, Icon, Bytes }
+        private enum EntryKind { String, Scalar, Image, Icon, Bytes, ImageStream }
 
         // name → entry, for the servable <data> entries only. Unsafe entries are recorded as refused so a lookup reports
         // them deterministically rather than as absent.
@@ -124,14 +130,14 @@ namespace WinFormsDesigner.Engine
                 if (!_safeEntries.ContainsKey(name!) && !_refused.Contains(name!) && _safeEntries.Count + _refused.Count >= _maxEntries) break;
                 var mimetype = node.Attributes?["mimetype"]?.Value;
                 var type = node.Attributes?["type"]?.Value;
+                var valueNode = FirstChildElement(node, "value");
 
-                if (!TryClassify(mimetype, type, _allowByteArrays, out var kind, out var declared))
+                if (!TryClassify(mimetype, type, valueNode?.InnerText, _allowByteArrays, out var kind, out var declared))
                 {
                     _safeEntries.Remove(name!);
                     _refused.Add(name!);
                     continue;
                 }
-                var valueNode = FirstChildElement(node, "value");
                 _refused.Remove(name!);
                 _safeEntries[name!] = new ResxEntry(valueNode?.InnerText ?? "", kind, declared);
             }
@@ -139,15 +145,27 @@ namespace WinFormsDesigner.Engine
         }
 
         /// <summary>Whether an entry with this <c>mimetype</c> and <c>type</c> attribute would be served (not refused).
-        /// The count of unrenderable resources uses the same rule.</summary>
-        public static bool IsServable(string? mimetype, string? type, bool allowByteArrays) =>
-            TryClassify(mimetype, type, allowByteArrays, out _, out _);
+        /// The count of unrenderable resources uses the same rule. Only a BinaryFormatter entry needs its
+        /// <paramref name="value"/> text (see <see cref="IsBinaryFormatted"/>).</summary>
+        public static bool IsServable(string? mimetype, string? type, string? value, bool allowByteArrays) =>
+            TryClassify(mimetype, type, value, allowByteArrays, out _, out _);
 
-        private static bool TryClassify(string? mimetype, string? typeAttr, bool allowByteArrays, out EntryKind kind, out Type declared)
+        /// <summary>Whether an entry is a BinaryFormatter payload, whose value decides if it is served.</summary>
+        public static bool IsBinaryFormatted(string? mimetype) => string.Equals(mimetype, BinaryFormatterMime, StringComparison.Ordinal);
+
+        private static bool TryClassify(string? mimetype, string? typeAttr, string? value, bool allowByteArrays, out EntryKind kind, out Type declared)
         {
             kind = EntryKind.String;
             declared = typeof(string);
             bool hasMime = !string.IsNullOrEmpty(mimetype);
+#if NET
+            if (IsBinaryFormatted(mimetype) && IsImageStreamTypeAttr(typeAttr) && TryReadImageStream(value, out _, out _))
+            {
+                kind = EntryKind.ImageStream;
+                declared = typeof(System.Windows.Forms.ImageListStreamer);
+                return true;
+            }
+#endif
             if (string.IsNullOrWhiteSpace(typeAttr)) return !hasMime; // an untyped entry is a string; untyped MIME data is not served
             if (!TryTrustedType(typeAttr!, out var t)) return false;
             declared = t;
@@ -337,6 +355,19 @@ namespace WinFormsDesigner.Engine
                             }
                             return true;
                         }
+#if NET
+                    case EntryKind.ImageStream:
+                        {
+                            if (!TryReadImageStream(entry.Value, out var data, out error)) return false;
+                            if (ImageStreamFromData == null)
+                            {
+                                error = "this Windows Forms has no ImageListStreamer(byte[]) constructor";
+                                return false;
+                            }
+                            value = ImageStreamFromData.Invoke(new object[] { data });
+                            return true;
+                        }
+#endif
                     default:
                         {
                             // The registry's own Type: its framework converter reads the invariant text the resource
@@ -440,6 +471,222 @@ namespace WinFormsDesigner.Engine
             type = trusted.Key;
             return true;
         }
+
+#if NET
+        // ------------------------------------------------------------------ ImageListStreamer -------------------------
+        //
+        // The one BinaryFormatter payload served, because every ImageList Visual Studio writes is one. It is NOT given to
+        // BinaryFormatter: System.Formats.Nrbf only parses the records (it loads no type and runs no code), the root must
+        // be exactly an ImageListStreamer with its single byte[] Data member, and the streamer is then made from those
+        // bytes by Windows Forms' own constructor, the one its .resx reader uses on .NET 9 and later. Data goes to
+        // comctl32's ImageList_Read, as at run time.
+
+        // shortcut: internal constructor through reflection (no public one takes the bytes); a missing one fails closed.
+        private static readonly System.Reflection.ConstructorInfo? ImageStreamFromData =
+            typeof(System.Windows.Forms.ImageListStreamer).GetConstructor(
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+                null, new[] { typeof(byte[]) }, null);
+
+        /// <summary>No type attribute (Visual Studio writes none) or exactly ImageListStreamer of System.Windows.Forms.</summary>
+        private static bool IsImageStreamTypeAttr(string? typeAttr)
+        {
+            if (string.IsNullOrWhiteSpace(typeAttr)) return true;
+            string[] parts = typeAttr!.Split(',');
+            return parts[0].Trim() == "System.Windows.Forms.ImageListStreamer"
+                && (parts.Length == 1 || string.Equals(parts[1].Trim(), "System.Windows.Forms", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>The Data bytes of a serialized ImageListStreamer, or false for any other payload.</summary>
+        private static bool TryReadImageStream(string? text, out byte[] data, out string? error)
+        {
+            data = Array.Empty<byte>();
+            try
+            {
+                if (!TryDecodeImageBytes((text ?? "").Trim(), out var bytes, out error)) return false;
+                using var ms = new MemoryStream(bytes);
+                if (System.Formats.Nrbf.NrbfDecoder.Decode(ms) is not System.Formats.Nrbf.ClassRecord root
+                    || !root.TypeNameMatches(typeof(System.Windows.Forms.ImageListStreamer))
+                    || !System.Linq.Enumerable.SequenceEqual(root.MemberNames, new[] { "Data" })
+                    || root.GetArrayRecord("Data") is not System.Formats.Nrbf.SZArrayRecord<byte> array)
+                {
+                    error = "not a serialized ImageListStreamer";
+                    return false;
+                }
+                data = array.GetArray();
+                if (ExpandedImageStreamLength(data) > MaxImageStreamBytes)
+                {
+                    data = Array.Empty<byte>();
+                    error = "ImageListStreamer data exceeds the expanded-size safety limit";
+                    return false;
+                }
+                if (!TryValidateImageListData(data, out error))
+                {
+                    data = Array.Empty<byte>();
+                    return false;
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                data = Array.Empty<byte>();
+                error = ex.GetType().Name;
+                return false;
+            }
+        }
+
+        private static bool IsRunLengthImageStream(byte[] data) =>
+            data.Length >= 4 && data[0] == 'M' && data[1] == 'S' && data[2] == 'F' && data[3] == 't';
+
+        /// <summary>What Windows Forms' decompression makes of Data: "MSFt" then (count, byte) pairs, else Data itself.</summary>
+        internal static long ExpandedImageStreamLength(byte[] data)
+        {
+            if (!IsRunLengthImageStream(data)) return data.Length;
+            long total = 0;
+            for (int i = 4; i < data.Length; i += 2) total += data[i];
+            return total;
+        }
+
+        // The image list comctl32's ImageList_Read takes, as every ImageList Visual Studio saves it (version 0x101):
+        // a 28-byte header (magic "IL", version, image count, capacity, grow, cx, cy, background colour, ILC_ flags,
+        // four overlay indexes), then the images as one bottom-up BI_RGB bitmap of four cx-wide columns and one cy-high
+        // row per four images of capacity, then, with ILC_MASK, a 1-bit mask bitmap of the same size. Each bitmap is a
+        // BITMAPFILEHEADER, a 40-byte BITMAPINFOHEADER, the palette of a <= 8-bit bitmap and the pixel rows.
+        //
+        // Native code allocates from these numbers before it reads the pixels, so every one is checked first: the
+        // image size Windows Forms allows (1..256), the capacity against the pixel budget, the bitmap size against that
+        // layout, and every bitmap's pixel bytes against the data that is really there. Anything else is refused.
+        private const int ImageListHeaderBytes = 28;
+        private const int BitmapFileHeaderBytes = 14;
+        private const int BitmapInfoHeaderBytes = 40;
+        private const ushort ImageListVersion = 0x101;
+        private const int ImageListColumns = 4;
+        private const int MaxImageListImageSize = 256;
+        private const ushort IlcMask = 0x0001;
+
+        /// <summary>Whether <paramref name="data"/> (the streamer's Data, run-length compressed or not) is an image list
+        /// in exactly the layout above, with every native allocation it implies backed by the bytes that follow.</summary>
+        internal static bool TryValidateImageListData(byte[] data, out string? error)
+        {
+            error = null;
+            bool runLength = IsRunLengthImageStream(data);
+            if (runLength && (data.Length - 4) % 2 != 0)
+            {
+                error = "ImageListStreamer data ends inside a run";
+                return false;
+            }
+            var bytes = new ImageStreamBytes(data, runLength);
+            var header = new byte[ImageListHeaderBytes];
+            if (!bytes.TryRead(0, header))
+            {
+                error = "ImageListStreamer data is shorter than an image list header";
+                return false;
+            }
+            int Short(int at) => BitConverter.ToInt16(header, at);
+            if (header[0] != 'I' || header[1] != 'L' || BitConverter.ToUInt16(header, 2) != ImageListVersion)
+            {
+                error = "ImageListStreamer data is not a version 0x101 image list";
+                return false;
+            }
+            int count = Short(4), capacity = Short(6), grow = Short(8), cx = Short(10), cy = Short(12);
+            ushort flags = BitConverter.ToUInt16(header, 18);
+            if (cx < 1 || cx > MaxImageListImageSize || cy < 1 || cy > MaxImageListImageSize)
+            {
+                error = "ImageListStreamer image size is outside 1..256";
+                return false;
+            }
+            if (count < 1 || capacity < count || grow < 0 || (long)cx * cy * ((long)capacity + grow) > MaxImagePixels)
+            {
+                error = "ImageListStreamer image count or capacity is out of range";
+                return false;
+            }
+            long width = (long)cx * ImageListColumns;
+            long height = (long)cy * ((capacity + ImageListColumns - 1) / ImageListColumns);
+            long offset = ImageListHeaderBytes;
+            if (!TryValidateImageListBitmap(bytes, ref offset, width, height, mask: false, out error)) return false;
+            if ((flags & IlcMask) != 0 && !TryValidateImageListBitmap(bytes, ref offset, width, height, mask: true, out error))
+                return false;
+            return true;
+        }
+
+        private static bool TryValidateImageListBitmap(ImageStreamBytes bytes, ref long offset, long width, long height,
+            bool mask, out string? error)
+        {
+            string which = mask ? "mask" : "image";
+            var headers = new byte[BitmapFileHeaderBytes + BitmapInfoHeaderBytes];
+            if (!bytes.TryRead(offset, headers))
+            {
+                error = "ImageListStreamer " + which + " bitmap is missing";
+                return false;
+            }
+            int biSize = BitConverter.ToInt32(headers, BitmapFileHeaderBytes);
+            int biWidth = BitConverter.ToInt32(headers, BitmapFileHeaderBytes + 4);
+            int biHeight = BitConverter.ToInt32(headers, BitmapFileHeaderBytes + 8);
+            ushort planes = BitConverter.ToUInt16(headers, BitmapFileHeaderBytes + 12);
+            ushort bitCount = BitConverter.ToUInt16(headers, BitmapFileHeaderBytes + 14);
+            int compression = BitConverter.ToInt32(headers, BitmapFileHeaderBytes + 16);
+            int colorsUsed = BitConverter.ToInt32(headers, BitmapFileHeaderBytes + 32);
+            bool knownDepth = mask ? bitCount == 1 : bitCount is 1 or 4 or 8 or 16 or 24 or 32;
+            if (headers[0] != 'B' || headers[1] != 'M' || biSize != BitmapInfoHeaderBytes || planes != 1 || !knownDepth
+                || compression != 0 || biWidth != width || biHeight != height)
+            {
+                error = "ImageListStreamer " + which + " bitmap is not in the image list layout";
+                return false;
+            }
+            long palette = bitCount <= 8 ? (1L << bitCount) * 4 : 0;
+            if (colorsUsed != 0 && colorsUsed != (bitCount <= 8 ? 1 << bitCount : -1))
+            {
+                error = "ImageListStreamer " + which + " bitmap has a partial palette";
+                return false;
+            }
+            long stride = (width * bitCount + 31) / 32 * 4;
+            long end = offset + headers.Length + palette + stride * height;
+            if (end > bytes.Length)
+            {
+                error = "ImageListStreamer " + which + " bitmap is longer than its data";
+                return false;
+            }
+            offset = end;
+            error = null;
+            return true;
+        }
+
+        /// <summary>The bytes ImageList_Read sees, read at an offset without expanding the whole run-length data.</summary>
+        private sealed class ImageStreamBytes
+        {
+            private readonly byte[] _data;
+            private readonly bool _runLength;
+
+            public ImageStreamBytes(byte[] data, bool runLength)
+            {
+                _data = data;
+                _runLength = runLength;
+                Length = ExpandedImageStreamLength(data);
+            }
+
+            public long Length { get; }
+
+            public bool TryRead(long offset, byte[] into)
+            {
+                if (offset < 0 || offset + into.Length > Length) return false;
+                if (!_runLength)
+                {
+                    Array.Copy(_data, offset, into, 0, into.Length);
+                    return true;
+                }
+                long position = 0;
+                int filled = 0;
+                for (int i = 4; i + 1 < _data.Length && filled < into.Length; i += 2)
+                {
+                    long run = _data[i];
+                    long runEnd = position + run;
+                    long from = Math.Max(position, offset + filled);
+                    for (long p = from; p < runEnd && filled < into.Length; p++) into[filled++] = _data[i + 1];
+                    position = runEnd;
+                }
+                return filled == into.Length;
+            }
+        }
+#endif
 
         // ------------------------------------------------------------------ helpers -----------------------------------
 

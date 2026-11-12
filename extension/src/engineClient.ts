@@ -411,6 +411,9 @@ export interface TrayComponent {
   // and an EMPTY strip still gets an add-first-item "Type Here" flyout. Distinguishes an empty strip from a non-strip
   // component (Timer/ImageList/…), whose empty `items` is otherwise identical.
   isStrip?: boolean;
+  // The type is [DesignTimeVisible(false)] (a ColumnHeader, a DataGridViewColumn, a vendor grid view): Visual Studio's
+  // tray shows no chip for it, but its Properties window still lists it. The canvas skips it; the panel lists it.
+  trayHidden?: boolean;
 }
 
 export interface LayoutResult {
@@ -479,6 +482,8 @@ export interface GeometryDragStartResult {
   maximumHeight: number;
   canMove: boolean;
   canResize: boolean;
+  /** A single-line TextBox: only its width can be dragged. */
+  fixedHeight?: boolean;
   /** Present only for an inherited derived-source geometry override. */
   baseIdentityToken?: string;
 }

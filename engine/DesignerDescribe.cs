@@ -963,7 +963,11 @@ namespace WinFormsDesigner.Engine
                     ? GenericCollectionItemType(pd.PropertyType)
                     : null;
                 bool genericCollection = genericCollectionItem != null;
-                bool isCollection = isStringCollection || typedCollectionItem != null || isStringArray || genericCollection;
+                // ImageList.Images is Hidden (VS saves it as the ImageStream resource plus SetKeyName), yet VS lists it
+                // with an "…" editor; the host's ImageList editor writes both.
+                bool imageListImages = c is ImageList && pd.Name == "Images";
+                bool isCollection = isStringCollection || typedCollectionItem != null || isStringArray || genericCollection
+                    || imageListImages;
                 if (!pd.IsBrowsable && !isTableCell && !isCollection) continue;
                 if (vis != null && vis.Visibility == DesignerSerializationVisibility.Hidden && !isTableCell && !isCollection) continue;
 
@@ -1001,7 +1005,7 @@ namespace WinFormsDesigner.Engine
                 bool inheritedPropertyEditable = inheritedPropertySupported
                     && (!DesignerInheritedOverrideEditor.IsGeometryProperty(pd.Name) || inheritedGeometryOverrideEditable);
                 bool readOnly = !(componentEditable || inheritedPropertyEditable)
-                    || (!genericCollection && pd.IsReadOnly) || unhandledCollection; // Content lists use their source-first editor despite a getter-only property.
+                    || (!genericCollection && !imageListImages && pd.IsReadOnly) || unhandledCollection; // Content lists use their source-first editor despite a getter-only property.
                 if (isDataSource && componentEditable) readOnly = false;
                 if (raw is System.Drawing.Font font && (font.GdiCharSet != 1 || font.GdiVerticalFont))
                 {
@@ -1105,7 +1109,8 @@ namespace WinFormsDesigner.Engine
                     ImagePreview = imagePreview,
                     IsCollection = isCollection,
                     GenericCollection = genericCollection,
-                    CollectionItemType = isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : (typedCollectionItem ?? genericCollectionItem)),
+                    CollectionItemType = imageListImages ? "System.Drawing.Image"
+                        : isStringArray ? "System.String[]" : (isStringCollection ? "System.String" : (typedCollectionItem ?? genericCollectionItem)),
                     UiTypeEditor = uiTypeEditor,
                     UiTypeEditorAssemblyPath = uiTypeEditorAssemblyPath,
                     UiTypeEditorAssemblySha256 = uiTypeEditorAssemblySha256,

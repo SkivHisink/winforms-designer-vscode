@@ -47,7 +47,9 @@ namespace WinFormsDesigner.Engine
         //    fallback. Same rule: a mismatched producer/executor pair must refuse each other, not half-read a document.
         // 5: IrBuildWitnessedCtor and IrDocument.WitnessCandidates — a value construction the allowlist does not name,
         //    executable only where the project's build makes the same construction (net48). Same rule as above.
-        public const int SchemaVersion = 5;
+        // 6: IrSetImageKeyName — `this.imageList1.Images.SetKeyName(0, "key")`, which follows every ImageStream
+        //    Visual Studio writes. Same rule as above.
+        public const int SchemaVersion = 6;
         /// <summary>Max witness candidates one document carries.</summary>
         public const int MaxWitnessCandidates = 10000;
         /// <summary>Max namespace candidates carried for unqualified type names (usings + enclosing namespace chain).
@@ -251,6 +253,17 @@ namespace WinFormsDesigner.Engine
         public string TargetName { get; set; } = "";
         public string PropertyName { get; set; } = "";
         public IrValue Value { get; set; } = new IrNull();
+    }
+
+    /// <summary>`this.f.Images.SetKeyName(index, "key")` — names one image of an ImageList, as Visual Studio writes
+    /// after every ImageStream. Constant index and key only; the executor requires the target to be exactly an
+    /// <see cref="System.Windows.Forms.ImageList"/>, so the call is the framework's own.</summary>
+    [Serializable]
+    public sealed class IrSetImageKeyName : IrStatement
+    {
+        public string TargetName { get; set; } = "";
+        public int Index { get; set; }
+        public string Key { get; set; } = "";
     }
 
     /// <summary>`resources.ApplyResources(target, "key")` for the SAME-form ComponentResourceManager only. The
@@ -473,7 +486,7 @@ namespace WinFormsDesigner.Engine
             typeof(IrArray), typeof(IrResourceRef), typeof(IrCast),
             typeof(IrConstructComponent), typeof(IrSetProperty), typeof(IrAddControl), typeof(IrAddCollectionItem),
             typeof(IrSetExtender), typeof(IrApplyResources), typeof(IrBeginInit), typeof(IrEndInit), typeof(IrWireEvent), typeof(IrLayoutCall),
-            typeof(IrConstructTreeNode), typeof(IrSetTreeNodeProp), typeof(IrAddTreeNodes),
+            typeof(IrConstructTreeNode), typeof(IrSetTreeNodeProp), typeof(IrAddTreeNodes), typeof(IrSetImageKeyName),
         };
 
         /// <summary>Validate structure; returns null when valid, else a diagnostic reason (the caller refuses the
@@ -566,6 +579,11 @@ namespace WinFormsDesigner.Engine
                     if (!ValidTarget(x.TargetIsRoot, x.TargetName)) return "invalid extender target";
                     if (!ValidIdent(x.PropertyName)) return "invalid extender property";
                     return CheckValue(x.Value, 0, ref nodes, ref chars);
+                case IrSetImageKeyName k:
+                    if (!ValidIdent(k.TargetName)) return "invalid image-key target";
+                    if (k.Index < 0 || k.Index > IrLimits.MaxArrayItems) return "invalid image index";
+                    if (k.Key == null || k.Key.Length > IrLimits.MaxStringLength) return "invalid image key";
+                    return OverBudget(ref chars, k.TargetName) || OverBudget(ref chars, k.Key) ? "string budget exceeded" : null;
                 case IrApplyResources ar:
                     if (!ValidTarget(ar.TargetIsRoot, ar.TargetName)) return "invalid apply-resources target";
                     if (ar.ResourceKey == null || ar.ResourceKey.Length == 0 || ar.ResourceKey.Length > IrLimits.MaxIdentifierLength)

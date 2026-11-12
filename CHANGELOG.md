@@ -24,6 +24,14 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
   folders below it. A form opened later in that folder, with no choice of its own, uses it when that project is one
   of the projects compiling the form; a form already open and waiting for a choice renders with it at once. Membership
   is proven again for every form, a form's own choice still wins, and a stale choice is still refused.
+- A component whose type is `[DesignTimeVisible(false)]` — a ListView or DataGridView column, a vendor grid's view or
+  column, a repository item, a bar item, a layout item — no longer gets a chip in the component tray, as in Visual
+  Studio. It is not dropped: the component list at the top of the Properties view now lists every non-visual
+  component after the controls, so such a component is selected there, as in Visual Studio's Properties window, and
+  its selection survives a re-layout. This applies to both engines.
+- A multiline text box can be resized on the canvas. A single-line one gets only the left and right grips, since
+  Windows Forms keeps its height at the font's, and none when docked to the top or bottom; the commit refuses that
+  height change too.
 
 ### Added
 
@@ -36,12 +44,33 @@ From **1.0** the core designer loop is stable and follows semantic versioning; t
   other controls keep targeted edits; each edit renders the source again, and Save writes the source as it is.
   Forms that already show a full or last-build preview are unchanged. The build's construction failure is
   remembered until the next build, so editing does not run that constructor again; Retry tries everything again.
+- The modern engine draws an ImageList's images from the `ImageStream` Visual Studio saves in the form's .resx. The
+  entry is not given to BinaryFormatter: its records are read as data, the root must be exactly an
+  `ImageListStreamer` with one byte array, and those bytes must be an image list in Visual Studio's layout — header,
+  image size up to 256, capacity within the image budget, the image and mask bitmaps and every one of their bytes —
+  before Windows Forms reads them. Any other binary resource is still refused. `Images.SetKeyName(index, "key")`,
+  which follows every `ImageStream`, is replayed by both engines, with literal arguments and on an exact `ImageList`
+  only; a key for an image that did not load is listed, not guessed.
+- An ImageList's `Images` is listed in the modern Properties grid with a "…" that opens the ImageList editor, which
+  now shows each image with its thumbnail; picking one offers rename, move up or down, and remove.
 
 ### Fixed
 
 - When an engine method throws, the reason now reaches the Output channel on one line next to the outcome code. Only
   `UNHANDLED_EXCEPTION` was logged before, which hid, for example, why a .NET Framework form could be neither
   interpreted nor built from its compiled type.
+- Selecting a control no longer starts a new engine process on every click when the build output holds large
+  libraries or extra folders. An engine is reused only for the same build output, proven by a digest of every file
+  that output can load. That proof had to read every byte within one request's budget, so a log folder, a publish
+  copy, a `runtimes/<rid>/lib/<tfm>` tree, or hundreds of megabytes of vendor and native libraries left it unproven on
+  every request. It now reads only what the loaders load: the output's own files, the `runtimes` tree, satellite
+  assemblies, and the probing paths and code bases of the application configuration. Each file's digest is kept
+  while the file is unchanged; a file too large for a request is digested in the background, and every kept digest is
+  read again in the background once it is 30 seconds old, while the designer is in use. A write that changes no file
+  time (through a memory-mapped view) is therefore noticed eventually, not at once.
+- Selecting a control no longer loads the whole form twice, for its properties and for its move and resize rights.
+  The last form loaded for each is kept until its source, its .resx files, the build and its PDB, the design culture
+  or any file of the project changes, or another load replaces it.
 
 ## [2.3.3] - 2026-11-09
 

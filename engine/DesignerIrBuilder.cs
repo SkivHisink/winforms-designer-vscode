@@ -638,6 +638,20 @@ namespace WinFormsDesigner.Engine
                 return built.Count == 0 ? NoOp() : Rep(built); // an empty AddRange adds nothing → represented no-op
             }
 
+            // this.imageList1.Images.SetKeyName(0, "key") — Visual Studio's naming of each image of an ImageStream.
+            // Only an int literal index and a string literal key; the executor checks the target is an ImageList.
+            if (method == "SetKeyName")
+            {
+                var keyChain = Flatten(ma.Expression);
+                var kargs = inv.ArgumentList.Arguments;
+                if (keyChain.Count == 2 && keyChain[1] == "Images" && ctx.Fields.Contains(keyChain[0])
+                    && kargs.Count == 2 && PlainArgs(inv)
+                    && kargs[0].Expression is LiteralExpressionSyntax idxLit && idxLit.Token.Value is int idx && idx >= 0
+                    && kargs[1].Expression is LiteralExpressionSyntax keyLit && keyLit.Token.Value is string key)
+                    return One(new IrSetImageKeyName { TargetName = keyChain[0], Index = idx, Key = key });
+                return Gap(Trim(inv));
+            }
+
             // IExtenderProvider.SetX(target, value) — e.g. this.toolTip1.SetToolTip(this.button1, "Save"). The provider
             // is a field, arg0 is the target (a field or `this`), arg1 is the value. The executor validates the provider
             // really is an IExtenderProvider and Set<Prop> is a real 2-arg setter (not any method named Set*).

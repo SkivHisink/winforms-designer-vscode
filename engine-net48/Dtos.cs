@@ -502,6 +502,9 @@ namespace WinFormsDesigner.Engine.Net48
         /// its synthetic items flyout on a chip click, and an EMPTY strip still gets a "Type Here" add-first-item flyout
         /// (a non-strip component's empty Items is otherwise indistinguishable). Mirrors WinFormsDesigner.Engine.TrayComponent.IsStrip.</summary>
         public bool IsStrip { get; set; }
+        /// <summary>The type is [DesignTimeVisible(false)]: no tray chip, still listed in the panel's component list.
+        /// Mirrors WinFormsDesigner.Engine.TrayComponent.TrayHidden.</summary>
+        public bool TrayHidden { get; set; }
     }
 
     /// <summary>Full-frame PNG + hit-test map from one instantiation. Mirrors WinFormsDesigner.Engine.RenderLayoutResult.

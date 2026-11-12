@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { EngineRequestContext, currentEngineRequestContext, withEngineRequestContext, engineRequestScopeActive, engineRequestGraphProven, releaseEngineForCurrentRequest } from './engineRequestContext';
 import { BUILD_TASK_ACTIVE } from './engineTransport';
@@ -301,7 +302,7 @@ const STALE_RENDER_BLOCKED = new Set<string>([
   'designerActionCommand', 'adapterAction',
   // Properties panel (panel.js → resolveWebviewView). 'edit' is shared with the canvas above.
   'editNested', 'importImage', 'pickProjectImageResource', 'clearImage', 'resetProperty', 'setTableCell', 'setCollection', 'setStringArray',
-  'setGenericList', 'uiTypeEditor', 'uiCollectionEditor',
+  'setGenericList', 'uiTypeEditor', 'uiCollectionEditor', 'editImageList',
   'setColumns', 'setTabPages', 'setGridColumns', 'setBindings', 'setDataSource', 'setExtender', 'setTreeNodes', 'setToolStripItems', 'setHandler', 'createHandler',
   'addControl', 'addComponent', 'generateDataSource', 'bindApplicationSetting', 'deleteSelected', 'outlineReparent', 'outlineMoveZOrder',
 ]);
@@ -3131,6 +3132,7 @@ export class DesignerPanelViewProvider implements vscode.WebviewViewProvider {
         else if (m?.type === 'pickProjectImageResource' && m.id && m.prop) { await s?.pickProjectImageResourceFromGrid(m.id, m.prop); }
         else if (m?.type === 'importImage' && m.id && m.prop && m.propType) { await s?.importImageFromGrid(m.id, m.prop, m.propType); }
         else if (m?.type === 'clearImage' && m.id && m.prop) { await s?.clearImageFromGrid(m.id, m.prop); }
+        else if (m?.type === 'editImageList' && m.id) { await s?.editImageListFromGrid(m.id); }
         else if (m?.type === 'resetProperty' && m.id && m.prop) {
           // an `ownerId` marks this as a ToolStripItem reset (the grid is showing item→Properties) → route to the
           // item-reset path (targets the item field, refreshes via itemProps, keeps the canvas item highlight).
@@ -5071,6 +5073,23 @@ class DesignerSession {
     this.post({ type: 'layout', controls, toolStripItems });
     DesignerHub.instance.pushPanel(this, { type: 'layout', controls });
   }
+
+  /** The tray goes to the canvas (its chips) AND the Properties view (its component list, beside the controls). A
+   * [DesignTimeVisible(false)] component (a ColumnHeader, a DataGridViewColumn, a vendor grid view) is sent to both,
+   * marked trayHidden: the canvas draws no chip for it, as Visual Studio's tray, but keeps it selectable (a re-layout
+   * must not drop its selection), and the component list offers it, as Visual Studio's Properties window does. */
+  private postTray(tray: readonly TrayComponent[]): void {
+    this.trayComponents = tray.slice();
+    this.post({ type: 'tray', items: tray });
+    this.pushPanelComponents();
+  }
+
+  private pushPanelComponents(): void {
+    DesignerHub.instance.pushPanel(this, {
+      type: 'components',
+      components: this.trayComponents.map((component) => ({ id: component.id, name: component.name, type: component.type })),
+    });
+  }
   /** Selection goes to the canvas (overlay) AND the Properties view (tree highlight). `token` is echoed to the canvas
    * ONLY when this select is the reply to a canvas-origin `pick` (see pick): it lets the canvas correlate the echo to
    * the exact pick it issued, so it can suppress just that one echo when an add-editor dropped its selection. All the
@@ -5555,6 +5574,7 @@ class DesignerSession {
   refreshProperties(): void {
     if (this.controls.length) {
       DesignerHub.instance.pushPanel(this, { type: 'layout', controls: this.controls });
+      this.pushPanelComponents();
       DesignerHub.instance.pushPanel(this, { type: 'select', id: this.currentId });
       void this.withDetachedProductWorkflow(() => this.loadProps(this.currentId)).catch((error) => {
         if (!this.disposed) this.output.appendLine(`[designer] background property refresh failed: ${errMsg(error)}`);
@@ -7012,8 +7032,7 @@ class DesignerSession {
     this.rootFrame = { w: result.width, h: result.height };
     this.post({ type: 'render', png: result.png.toString('base64'), width: result.width, height: result.height, gen: seq });
     this.postLayout(this.controls, this.toolStripItems);
-    this.trayComponents = result.tray.slice();
-    this.post({ type: 'tray', items: result.tray }); // component tray (canvas strip)
+    this.postTray(result.tray); // component tray (canvas strip) + the panel's component list
     // 1.0.0 — post the persistent notice SYNCHRONOUSLY here, right after the render/layout/
     // tray posts and BEFORE the awaited loadProps below. Composing it only after loadProps let a clean net48 first
     // open (or a modern→net48 excursion) present an editable, build-based canvas with NO "last build" disclosure if
@@ -7950,12 +7969,14 @@ class DesignerSession {
       : (id === 'this' || this.controls.find((c) => c.id === id)?.isRoot)
       ? this.manipFor(id, component)
       : { move: false, resize: false };
+    let fixedHeight = false;
     if (!this.emptyInitializeComponentSurface && id !== 'this' && !this.controls.find((c) => c.id === id)?.isRoot) {
       try {
         const geometry = await beginGeometryDrag(eng, this.designerFile, id, this.asm(), text9);
         if (this.disposed || gen !== this.selectionGen || srcRev !== this.doc.rev) return;
         if (geometry.ok && geometry.componentId === id && geometry.logicalBounds && geometry.windowBounds) {
           manip = { move: geometry.canMove, resize: geometry.canResize };
+          fixedHeight = geometry.fixedHeight === true;
         } else {
           this.output.appendLine(`[designer] geometry unavailable for ${id}: ${geometry.reason || 'invalid engine response'}`);
         }
@@ -7963,7 +7984,7 @@ class DesignerSession {
         this.output.appendLine(`[designer] geometry authorization failed for ${id}: ${(e as Error).message}`);
       }
     }
-    this.post({ type: 'manip', id, move: manip.move, resize: manip.resize });
+    this.post({ type: 'manip', id, move: manip.move, resize: manip.resize, fixedHeight });
   }
 
   /**
@@ -9596,7 +9617,7 @@ class DesignerSession {
     this.rootFrame = { w: res.width, h: res.height };
     this.post({ type: 'render', png: res.png.toString('base64'), width: res.width, height: res.height, gen: seq });
     this.postLayout(res.controls, this.toolStripItems);
-    this.post({ type: 'tray', items: res.tray });
+    this.postTray(res.tray);
     this.composeFormNotice(res); // net48 "last build" disclosure (+ any modern-engine notices)
     if (res.applied === false && notifyOnNotApplied) {
       // Honest diagnostic — the source committed but the live instance didn't reflect it (an unconvertible value, or a
@@ -9728,7 +9749,7 @@ class DesignerSession {
       }
       if (!res.layoutUnchanged) {
         this.postLayout(res.controls, this.toolStripItems);
-        this.post({ type: 'tray', items: res.tray });
+        this.postTray(res.tray);
       }
       onSnapshot?.(res);
       // Deliberately NOT show48: that flips the canvas to 'compiled' (it exists for build-based live ops). This
@@ -10819,6 +10840,12 @@ class DesignerSession {
    * CURRENT images by deserializing the existing .resx ImageStream blob (net48) and pairing them by index with the
    * keys parsed from the designer. Works for ANY project — the bundled net48 engine owns the binary (de)serialization.
    */
+  /** The grid's ImageList.Images "…": the editor acts on the current selection, so refuse a stale grid. */
+  async editImageListFromGrid(id: string): Promise<boolean> {
+    if (id !== this.currentId) return false;
+    return this.editImageListImages();
+  }
+
   async editImageListImages(
     requestedImages?: readonly { imageUri: vscode.Uri; key?: string }[],
   ): Promise<boolean> {
@@ -10963,23 +10990,70 @@ class DesignerSession {
   ): Promise<Array<{ dataBase64: string; key: string; originalIndex: number | null }> | null> {
     const cur = images.slice();
     let changed = false;
+    // Each image is listed with its thumbnail, as in Visual Studio's Images Collection Editor. A quick pick icon is
+    // a URI, so the thumbnails are temp files, removed when the editor closes.
+    const thumbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfd-imagelist-'));
+    const thumbs = new WeakMap<object, vscode.Uri>();
+    const thumbOf = (image: { dataBase64: string }): vscode.Uri | undefined => {
+      let uri = thumbs.get(image);
+      if (uri) return uri;
+      try {
+        const bytes = Buffer.from(image.dataBase64, 'base64');
+        const ext = bytes[0] === 0x89 ? '.png' : bytes[0] === 0xff ? '.jpg' : bytes[0] === 0x47 ? '.gif'
+          : bytes[0] === 0x42 ? '.bmp' : '.ico';
+        const file = path.join(thumbDir, randomUUID() + ext);
+        fs.writeFileSync(file, bytes);
+        uri = vscode.Uri.file(file);
+        thumbs.set(image, uri);
+        return uri;
+      } catch { return undefined; }
+    };
+    try {
     for (; ;) {
-      const menu: Array<vscode.QuickPickItem & { action: string }> = [
+      const menu: Array<vscode.QuickPickItem & { action: string; idx?: number }> = [
         { label: '$(add) ' + t('imageList.add'), action: 'add' },
+        { label: '', kind: vscode.QuickPickItemKind.Separator, action: '' },
+        ...cur.map((im, i) => ({ label: im.key || `#${i}`, description: `#${i}`, iconPath: thumbOf(im), action: 'image', idx: i })),
+        { label: '', kind: vscode.QuickPickItemKind.Separator, action: '' },
+        { label: '$(check) ' + t('imageList.done'), action: 'done' },
       ];
-      if (cur.length) menu.push({ label: '$(trash) ' + t('imageList.remove'), action: 'remove' });
-      if (cur.length) menu.push({ label: '$(edit) ' + t('imageList.rename'), action: 'rename' });
-      if (cur.length > 1) {
-        menu.push({ label: '$(arrow-up) ' + t('imageList.moveUp'), action: 'up' });
-        menu.push({ label: '$(arrow-down) ' + t('imageList.moveDown'), action: 'down' });
-      }
-      menu.push({ label: '$(check) ' + t('imageList.done'), action: 'done' });
       const pick = await vscode.window.showQuickPick(menu, {
         title: t('imageList.title', { id }),
         placeHolder: tn('imageList.count', cur.length, { n: cur.length }),
       });
       if (!pick || pick.action === 'done') break;
-      if (pick.action === 'add') {
+      if (pick.action === 'image' && pick.idx !== undefined) {
+        const idx = pick.idx;
+        const actions: Array<vscode.QuickPickItem & { action: string }> = [
+          { label: '$(edit) ' + t('imageList.rename'), action: 'rename' },
+        ];
+        if (idx > 0) actions.push({ label: '$(arrow-up) ' + t('imageList.moveUp'), action: 'up' });
+        if (idx < cur.length - 1) actions.push({ label: '$(arrow-down) ' + t('imageList.moveDown'), action: 'down' });
+        actions.push({ label: '$(trash) ' + t('imageList.removeOne'), action: 'remove' });
+        const act = await vscode.window.showQuickPick(actions, { title: `${pick.label} (#${idx})` });
+        if (!act) continue;
+        if (act.action === 'remove') { cur.splice(idx, 1); changed = true; }
+        else if (act.action === 'up' || act.action === 'down') {
+          const other = idx + (act.action === 'up' ? -1 : 1);
+          [cur[idx], cur[other]] = [cur[other], cur[idx]];
+          changed = true;
+        } else {
+          const next = await vscode.window.showInputBox({
+            title: t('imageList.renameTitle', { index: idx }),
+            value: cur[idx].key,
+            prompt: t('imageList.renamePrompt'),
+            validateInput: (value) => {
+              const key = value.trim();
+              if (!key) return t('imageList.keyRequired');
+              if (key.length > 256) return t('imageList.keyTooLong');
+              if (cur.some((image, index) => index !== idx && image.key === key)) return t('imageList.keyDuplicate');
+              return null;
+            },
+          });
+          const key = next?.trim();
+          if (key && key !== cur[idx].key) { cur[idx] = { ...cur[idx], key }; changed = true; }
+        }
+      } else if (pick.action === 'add') {
         const files = await vscode.window.showOpenDialog({
           canSelectMany: true, openLabel: t('imageList.add'),
           filters: { Images: ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'ico'] },
@@ -10993,58 +11067,12 @@ class DesignerSession {
             changed = true;
           } catch { /* skip an unreadable file */ }
         }
-      } else if (pick.action === 'remove') {
-        const rmPicks = await vscode.window.showQuickPick(
-          cur.map((im, i) => ({ label: im.key || `#${i}`, description: `#${i}`, idx: i })),
-          { canPickMany: true, title: t('imageList.remove') },
-        );
-        if (rmPicks && rmPicks.length) {
-          const rm = new Set(rmPicks.map((r) => r.idx));
-          for (let i = cur.length - 1; i >= 0; i--) if (rm.has(i)) cur.splice(i, 1);
-          changed = true;
-        }
-      } else if (pick.action === 'rename') {
-        const target = await vscode.window.showQuickPick(
-          cur.map((im, i) => ({ label: im.key || `#${i}`, description: `#${i}`, idx: i })),
-          { title: t('imageList.rename') },
-        );
-        if (!target) continue;
-        const next = await vscode.window.showInputBox({
-          title: t('imageList.renameTitle', { index: target.idx }),
-          value: cur[target.idx].key,
-          prompt: t('imageList.renamePrompt'),
-          validateInput: (value) => {
-            const key = value.trim();
-            if (!key) return t('imageList.keyRequired');
-            if (key.length > 256) return t('imageList.keyTooLong');
-            if (cur.some((image, index) => index !== target.idx && image.key === key))
-              return t('imageList.keyDuplicate');
-            return null;
-          },
-        });
-        if (next !== undefined) {
-          const key = next.trim();
-          if (key && key !== cur[target.idx].key) {
-            cur[target.idx] = { ...cur[target.idx], key };
-            changed = true;
-          }
-        }
-      } else if (pick.action === 'up' || pick.action === 'down') {
-        const delta = pick.action === 'up' ? -1 : 1;
-        const movable = cur
-          .map((im, i) => ({ label: im.key || `#${i}`, description: `#${i}`, idx: i }))
-          .filter((item) => item.idx + delta >= 0 && item.idx + delta < cur.length);
-        const target = await vscode.window.showQuickPick(movable, {
-          title: pick.action === 'up' ? t('imageList.moveUp') : t('imageList.moveDown'),
-        });
-        if (target) {
-          const other = target.idx + delta;
-          [cur[target.idx], cur[other]] = [cur[other], cur[target.idx]];
-          changed = true;
-        }
       }
     }
     return changed ? cur : null;
+    } finally {
+      try { fs.rmSync(thumbDir, { recursive: true, force: true }); } catch { /* temp thumbnails */ }
+    }
   }
 
   /** Per-property Reset (VS grid right-click → "Reset"): delete the property's source assignment via the

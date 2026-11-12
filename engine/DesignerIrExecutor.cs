@@ -390,6 +390,7 @@ namespace WinFormsDesigner.Engine
                 case IrWireEvent w: return Named(w.TargetIsRoot, w.TargetName);
                 case IrSetTreeNodeProp tp: return FirstFailedReference(tp.Value, failed);
                 case IrAddTreeNodes ta: return Named(ta.TargetIsRoot, ta.TargetName);
+                case IrSetImageKeyName k: return Named(false, k.TargetName);
                 default: return null;
             }
         }
@@ -784,6 +785,20 @@ namespace WinFormsDesigner.Engine
                         var add = SingleArgAdd(owner.GetType(), item);
                         if (add == null) return "collection target is neither an IList nor has an Add(item) method";
                         add.Invoke(owner, new[] { item });
+                        return null;
+                    }
+
+                case IrSetImageKeyName k:
+                    {
+                        if (inheritedOverrideNames.Contains(k.TargetName)) return "image key of an inherited ImageList is not supported";
+                        if (!inst.TryGetValue(k.TargetName, out var ilObj)) return "unknown component " + k.TargetName;
+                        // Exactly ImageList: a subclass could hide Images, and then the source's call is not this one.
+                        if (ilObj.GetType() != typeof(ImageList)) return k.TargetName + " is not an ImageList";
+                        var images = ((ImageList)ilObj).Images;
+                        // The keys name the images its ImageStream loaded; one that did not load has nothing to name.
+                        if (k.Index >= images.Count)
+                            return k.TargetName + ".Images has no image #" + k.Index + " to name (" + images.Count + " loaded)";
+                        images.SetKeyName(k.Index, k.Key);
                         return null;
                     }
 

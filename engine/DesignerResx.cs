@@ -106,15 +106,25 @@ namespace WinFormsDesigner.Engine
                         byKey["__scan_cap__"] = true;
                         return byKey;
                     }
-                    byKey[name] = IsUnrenderableMeta(xr.GetAttribute("mimetype"), xr.GetAttribute("type"));
+                    string? mimetype = xr.GetAttribute("mimetype");
+                    string? type = xr.GetAttribute("type");
+                    // A BinaryFormatter entry is served only for what its payload holds (an ImageListStreamer).
+                    string? value = SafeResxResolver.IsBinaryFormatted(mimetype) ? ReadValue(xr) : null;
+                    byKey[name] = !SafeResxResolver.IsServable(mimetype, type, value, allowByteArrays: true);
                 }
                 return byKey;
             }
             catch { return null; }
         }
 
-        private static bool IsUnrenderableMeta(string? mimetype, string? type) =>
-            !SafeResxResolver.IsServable(mimetype, type, allowByteArrays: true);
+        /// <summary>The text of the current &lt;data&gt; element's &lt;value&gt;; the reader is left on that element's end.</summary>
+        private static string? ReadValue(XmlReader xr)
+        {
+            using var sub = xr.ReadSubtree();
+            while (sub.Read())
+                if (sub.NodeType == XmlNodeType.Element && sub.LocalName == "value") return sub.ReadElementContentAsString();
+            return null;
+        }
 
         private static string? ResxPathFor(string designerFilePath)
         {
@@ -128,6 +138,11 @@ namespace WinFormsDesigner.Engine
             else return null;
             return Path.Combine(dir, @base + ".resx");
         }
+
+        /// <summary>The .resx files a load of this form reads for <paramref name="cultureName"/>, neutral first (some
+        /// may not exist).</summary>
+        internal static IEnumerable<string> DesignerResxChain(string designerFilePath, string? cultureName) =>
+            ResxChainFor(designerFilePath, cultureName);
 
         private static IEnumerable<string> ResxChainFor(string designerFilePath, string? cultureName)
         {

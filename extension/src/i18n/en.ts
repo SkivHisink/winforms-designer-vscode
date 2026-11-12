@@ -296,6 +296,8 @@ export const en: Catalog = {
   'panel.grid.noMatchingEvents': 'no matching events',
   'panel.grid.noEvents': 'no events',
   'panel.grid.unset': '(unset)',
+  'panel.grid.editImages': 'Edit images…',
+  'panel.grid.editImagesAria': 'Edit the ImageList images',
   'panel.grid.readOnly': '  (read-only)',
   'panel.grid.mixed': '(mixed values)',
 
@@ -509,7 +511,7 @@ export const en: Catalog = {
   'status.imageListSaved': 'updated {id} — {n} image(s), unsaved (.resx written)',
   'imageList.title': 'Edit images — {id}',
   'imageList.add': 'Add images…',
-  'imageList.remove': 'Remove images…',
+  'imageList.removeOne': 'Remove image',
   'imageList.rename': 'Rename image key…',
   'imageList.renameTitle': 'Rename key for image #{index}',
   'imageList.renamePrompt': 'Enter a unique ImageKey.',

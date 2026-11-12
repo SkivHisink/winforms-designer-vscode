@@ -1105,6 +1105,35 @@ public sealed class SimplifiedDesignerStyleTests
     }
 
     [Fact]
+    public void AKeptDescription_SeesAPdbThatAppearsBesideAnUnchangedBuild_OutsideTheProject()
+    {
+        // The build's global usings come from its PDB, and a build outside the project folder is no part of the
+        // project's stamp: the PDB beside it must still be part of what a kept graph is reused for.
+        using var project = new TempProject(ImportingProject);
+        project.Build(ImportingDesigner, SharedUsings);
+        string built = Path.Combine(project.Dir, "bin", "Debug", "net10.0-windows", "WfdTest.dll");
+        string outside = Path.Combine(Path.GetTempPath(), "wfd-outside-build-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        try
+        {
+            string dll = Path.Combine(outside, "WfdTest.dll");
+            File.Copy(built, dll);
+            string pdbAside = Path.Combine(outside, "WfdTest.pdb.aside");
+            File.Copy(Path.ChangeExtension(built, ".pdb"), pdbAside);
+            Directory.Delete(Path.Combine(project.Dir, "bin"), recursive: true);
+            string designer = Path.Combine(project.Dir, "Form1.Designer.cs");
+            File.WriteAllText(designer, ImportingDesigner);
+            ComponentInfo? Describe() => Sta.Invoke(() => DesignerRenderer.DescribeComponent(designer, "button1", dll, ImportingDesigner));
+
+            Assert.Null(Describe()); // no PDB: Button is not bound, so button1 is not built
+            Assert.Null(Describe());
+            File.Move(pdbAside, Path.Combine(outside, "WfdTest.pdb"));
+            Assert.NotNull(Describe());
+        }
+        finally { try { Directory.Delete(outside, recursive: true); } catch { /* best effort */ } }
+    }
+
+    [Fact]
     public void AProjectThatImportsItsSettings_WithoutAPdb_IsRefused()
     {
         using var project = new TempProject(ImportingProject);

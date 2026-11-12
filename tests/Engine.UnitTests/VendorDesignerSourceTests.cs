@@ -104,6 +104,43 @@ namespace Engine.UnitTests
             });
         }
 
+        [Theory]
+        [InlineData("Resources")]
+        [InlineData(".assets")] // a dot folder: no project walk enters it, but a resource may reference a file there
+        // A selection's kept graph is reused only while the project's files are unchanged: replacing the image a
+        // project resource references must reach the next describe, though the form's source and build are the same.
+        public void ProjectResource_ReplacedReferencedFile_ReachesTheNextDescribe(string folder)
+        {
+            WithProject(dir =>
+            {
+                if (folder != "Resources")
+                {
+                    Directory.CreateDirectory(Path.Combine(dir, folder));
+                    File.Copy(Path.Combine(dir, "Resources", "open.png"), Path.Combine(dir, folder, "open.png"));
+                    string resx = Path.Combine(dir, "Properties", "Resources.resx");
+                    File.WriteAllText(resx, File.ReadAllText(resx).Replace(@"..\Resources\open.png", @"..\" + folder + @"\open.png"));
+                }
+                string file = WriteForm(dir, "global::Demo.Properties.Resources.Logo", "Properties.Resources.OpenImage");
+                string src = File.ReadAllText(file);
+                // A graph is kept only for an assembly the host passes in; any will do for this framework-only form.
+                string build = typeof(FakeVendor.FancyButton).Assembly.Location;
+                string? Preview() => Sta.Invoke(() => DesignerRenderer.DescribeComponent(file, "button2", build, src))!
+                    .Properties.Single(p => p.Name == "Image").ImagePreview;
+
+                string? before = Preview();
+                Assert.NotNull(before);
+                Assert.Equal(before, Preview());
+                string image = Path.Combine(dir, folder, "open.png");
+                using (var bigger = new Bitmap(3, 2))
+                {
+                    bigger.SetPixel(1, 1, Color.Red);
+                    bigger.Save(image, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                File.SetLastWriteTimeUtc(image, DateTime.UtcNow.AddMinutes(1));
+                Assert.NotEqual(before, Preview());
+            });
+        }
+
         [Fact]
         // A file reference is repository input: one that leaves the project (or names another machine) is never read,
         // and the form still renders without that image rather than turning read-only.

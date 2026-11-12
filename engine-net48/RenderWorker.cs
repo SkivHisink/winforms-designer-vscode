@@ -4776,9 +4776,25 @@ namespace WinFormsDesigner.Engine.Net48
                     // synthetic flyout from its tray chip; a non-strip component leaves this empty.
                     Items = kv.Key is ToolStrip strip ? BuildStripItemForest(strip, kv.Value, live) : new List<ToolStripItemBounds>(),
                     IsStrip = kv.Key is ToolStrip, // an EMPTY off-tree strip still opens an add-first-item flyout (Items alone can't distinguish it from a non-strip)
+                    // [DesignTimeVisible(false)] (a ColumnHeader, a DataGridViewColumn, a DevExpress GridView, GridColumn,
+                    // RepositoryItem, BarItem or LayoutControlItem): no chip, as in Visual Studio's tray, but still listed
+                    // so the panel's component list can select it, as Visual Studio's Properties window does.
+                    TrayHidden = IsTrayHidden(kv.Key.GetType()),
                 });
             }
             return tray;
+        }
+
+        /// <summary>True for a <c>[DesignTimeVisible(false)]</c> type. An attribute that cannot be read counts as
+        /// visible: the component keeps its chip, as before.</summary>
+        private static bool IsTrayHidden(Type type)
+        {
+            try
+            {
+                return Attribute.GetCustomAttribute(type, typeof(DesignTimeVisibleAttribute), true) is DesignTimeVisibleAttribute attribute
+                    && !attribute.Visible;
+            }
+            catch { return false; }
         }
 
         /// <summary>The top-level Items of an OFF-TREE ToolStrip (a tray ContextMenuStrip) as a BOUNDS-LESS forest — the

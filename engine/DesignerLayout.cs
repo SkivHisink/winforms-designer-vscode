@@ -158,6 +158,10 @@ namespace WinFormsDesigner.Engine
         /// add-first-item flyout) from a non-strip component (Timer/ImageList/…, whose empty <see cref="Items"/> is
         /// identical). Without this the canvas can't tell them apart, since both serialize an empty Items list.</summary>
         public bool IsStrip { get; init; }
+        /// <summary>The type is <c>[DesignTimeVisible(false)]</c> (a ColumnHeader, a DataGridViewColumn, a vendor grid
+        /// view or layout item). Visual Studio's tray never shows such a component, but its Properties window still
+        /// lists it, so it stays in this list: the canvas draws no chip for it and the panel's component list offers it.</summary>
+        public bool TrayHidden { get; init; }
     }
 
     /// <summary>

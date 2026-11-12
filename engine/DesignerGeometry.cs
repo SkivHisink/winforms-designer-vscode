@@ -61,6 +61,8 @@ namespace WinFormsDesigner.Engine
         public int MaximumHeight { get; init; }
         public bool CanMove { get; init; }
         public bool CanResize { get; init; }
+        /// <summary>A single-line TextBox: WinForms fixes its height, so Visual Studio offers only the left and right grips.</summary>
+        public bool FixedHeight { get; init; }
         /// <summary>Opaque engine-issued base-field identity for inherited geometry. Empty for current-source controls.</summary>
         public string BaseIdentityToken { get; init; } = "";
     }
@@ -121,16 +123,20 @@ namespace WinFormsDesigner.Engine
             var parent = target.Parent;
             var canEdit = refusal.Length == 0;
             bool canMove = canEdit && !ReferenceEquals(target, root) && target.Dock == DockStyle.None;
-            bool canResize = canEdit && !target.AutoSize && target.Dock != DockStyle.Fill;
+            bool fixedHeight = HasFixedHeight(target);
+            bool canResize = canEdit && !SizesItself(target) && target.Dock != DockStyle.Fill
+                && !(fixedHeight && IsDockedTopOrBottom(target));
             string restriction = refusal;
             if (restriction.Length == 0)
             {
-                if (target.AutoSize && target.Dock != DockStyle.None)
+                if (SizesItself(target) && target.Dock != DockStyle.None)
                     restriction = "AutoSize and Dock manage all direct-manipulation axes";
-                else if (target.AutoSize)
+                else if (SizesItself(target))
                     restriction = "AutoSize controls can move but cannot be resized directly";
                 else if (target.Dock == DockStyle.Fill)
                     restriction = "Dock=Fill manages all direct-manipulation axes";
+                else if (fixedHeight && IsDockedTopOrBottom(target))
+                    restriction = FixedHeightDockedReason;
                 else if (target.Dock != DockStyle.None)
                     restriction = "Dock-managed control can resize only on its free axis";
             }
@@ -162,6 +168,7 @@ namespace WinFormsDesigner.Engine
                 // Docked controls retain one user-sized axis in the WinForms designer: Width for Left/Right and
                 // Height for Top/Bottom. The commit path clamps every other axis back to the live layout result.
                 CanResize = canResize,
+                FixedHeight = fixedHeight,
                 BaseIdentityToken = baseIdentityToken,
             };
         }
@@ -459,6 +466,18 @@ namespace WinFormsDesigner.Engine
             return "";
         }
 
+        /// <summary>AutoSize that sizes the control from its content. A TextBox is always AutoSize, but that only fixes a
+        /// single-line box's height, which WinForms enforces itself; Visual Studio sizes it freely.</summary>
+        private static bool SizesItself(Control target) => target.AutoSize && target is not TextBoxBase;
+
+        /// <summary>A single-line text box: WinForms keeps its height at the font's, so only its width is the user's.</summary>
+        private static bool HasFixedHeight(Control target) => target is TextBoxBase { AutoSize: true, Multiline: false };
+
+        private static bool IsDockedTopOrBottom(Control target) => target.Dock is DockStyle.Top or DockStyle.Bottom;
+
+        private const string FixedHeightDockedReason =
+            "a single-line text box keeps its own height, the one axis Dock=Top/Bottom leaves free";
+
         private static bool TryConstrainCandidate(Control target, Rectangle before, GeometryRect requested,
             out GeometryRect constrained, out string reason)
         {
@@ -468,7 +487,13 @@ namespace WinFormsDesigner.Engine
             bool requestedMove = requested.X != before.X || requested.Y != before.Y;
             bool requestedResize = requested.Width != before.Width || requested.Height != before.Height;
 
-            if (target.AutoSize)
+            if (HasFixedHeight(target) && IsDockedTopOrBottom(target))
+            {
+                reason = FixedHeightDockedReason;
+                return false;
+            }
+
+            if (SizesItself(target))
             {
                 if (target.Dock != DockStyle.None)
                 {

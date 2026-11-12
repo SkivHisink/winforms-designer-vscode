@@ -16,7 +16,7 @@
     setExtender: true, setTreeNodes: true, setToolStripItems: true, setHandler: true,
     createHandler: true, renameComponent: true, addControl: true, addComponent: true,
     generateDataSource: true, bindApplicationSetting: true, deleteSelected: true, outlineReparent: true,
-    outlineMoveZOrder: true
+    outlineMoveZOrder: true, editImageList: true
   };
   var mutationIdentitySequence = 0;
   function nextMutationIdentity(kind) {
@@ -516,6 +516,7 @@
   var descEl = document.getElementById('propDesc');
 
   var controls = [];
+  var components = []; // the non-visual components ({id, name, type}), tray chips or not
   var currentId = null;
   var currentComponent = null;
   // item→Properties state (SEPARATE from currentId, which is always the selected CONTROL): when a ToolStrip item is
@@ -678,12 +679,26 @@
   function rebuildTree() {
     var ordered = controls.slice().sort(function (a, b) { return (a.isRoot ? -1 : b.isRoot ? 1 : a.depth - b.depth); });
     treeEl.innerHTML = '';
+    var listed = Object.create(null); // a field may be named constructor, toString or __proto__
     for (var i = 0; i < ordered.length; i++) {
       var c = ordered[i];
       var o = document.createElement('option');
       o.value = c.id;
       o.textContent = (c.isRoot ? c.name + T('panel.tree.formSuffix') : repeat('   ', c.depth) + c.name) + ' : ' + shortType(c.type);
       treeEl.appendChild(o);
+      listed[c.id] = true;
+    }
+    // The non-visual components follow, by name, as in Visual Studio's Properties window — including those its tray
+    // never shows ([DesignTimeVisible(false)]: a ColumnHeader, a DataGridViewColumn, a vendor grid view), which this
+    // list is the way to select.
+    var others = components.filter(function (k) { return k && k.id && !listed[k.id]; })
+      .sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+    for (var j = 0; j < others.length; j++) {
+      var k = others[j];
+      var ko = document.createElement('option');
+      ko.value = k.id;
+      ko.textContent = k.name + ' : ' + shortType(k.type);
+      treeEl.appendChild(ko);
     }
     if (currentId) treeEl.value = currentId;
   }
@@ -1492,6 +1507,20 @@
   }
   // Generic string[] property editor (TextBox/RichTextBox.Lines): same one-item-per-line popup as the string
   // collection, but the value is a single `= new string[]{…}` assignment — routed via the stringArray RPCs.
+  // ImageList.Images: the host's ImageList editor (thumbnails, add/remove/order/keys) writes the ImageStream + keys.
+  var IMAGE_ITEM_TYPE = 'System.Drawing.Image';
+  function imageListEditor(c) {
+    var wrap = document.createElement('div'); wrap.className = 'collectionEd';
+    var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
+    wrap.appendChild(lbl);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'collectionBtn'; btn.textContent = '…';
+    btn.title = T('panel.grid.editImages');
+    btn.setAttribute('aria-label', T('panel.grid.editImagesAria'));
+    btn.addEventListener('click', function () { postMessage({ type: 'editImageList', id: c.id }); });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
   function stringArrayEditor(c, p) {
     var wrap = document.createElement('div'); wrap.className = 'collectionEd';
     var lbl = document.createElement('span'); lbl.className = 'collectionLabel'; lbl.textContent = '(Collection)';
@@ -2432,6 +2461,7 @@
         : p.collectionItemType === TREENODE_ITEM_TYPE ? treeNodesEditor(c, p)
         : p.collectionItemType === TOOLSTRIP_ITEM_TYPE ? toolStripEditor(c, p)
         : p.collectionItemType === STRINGARRAY_ITEM_TYPE ? stringArrayEditor(c, p)
+        : p.collectionItemType === IMAGE_ITEM_TYPE ? imageListEditor(c)
         : collectionEditor(c, p));
     } else if (propEditable) {
       valTd.className = 'val';
@@ -2758,6 +2788,9 @@
       controls = m.controls || [];
       rebuildTree(); renderOutline();
       if (activeMainTab === 'data') renderDataSources();
+    } else if (m.type === 'components') {
+      components = Array.isArray(m.components) ? m.components : [];
+      rebuildTree();
     } else if (m.type === 'select') {
       if (m.id !== currentId) closePopup(); // selection moved to another control → drop any open dropdown
       currentId = m.id;
@@ -2874,7 +2907,7 @@
       }
     } else if (m.type === 'clear') {
       closePopup();
-      controls = []; currentId = null; currentComponent = null; eventCandidates = {}; candFetchedFor = null;
+      controls = []; components = []; currentId = null; currentComponent = null; eventCandidates = {}; candFetchedFor = null;
       currentItemId = null; currentItemOwner = null;
       emptyEl.textContent = T('panel.props.empty'); // restore the default empty text (may have shown the item note)
       toolboxItems = []; renderToolbox();

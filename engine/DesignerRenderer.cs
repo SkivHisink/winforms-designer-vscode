@@ -489,8 +489,8 @@ namespace WinFormsDesigner.Engine
         public static GeometryDragStartResult BeginGeometryDrag(string designerFilePath, string componentId, string? controlAssemblyPath = null, string? sourceText = null)
         {
             string src = sourceText ?? ReadWithEncoding(designerFilePath).text;
-            using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
-            return BeginGeometryDrag(g, componentId, src);
+            using var lease = ReadGraph(ReadGraphUse.Geometry, designerFilePath, controlAssemblyPath, sourceText, src);
+            return BeginGeometryDrag(lease.Graph, componentId, src);
         }
 
         private static GeometryDragStartResult BeginGeometryDrag(LoadedGraph g, string componentId, string sourceText)
@@ -1295,6 +1295,7 @@ namespace WinFormsDesigner.Engine
         /// (BuildLayoutControls) and is skipped here, so the two read-paths never double-list the same component
         /// (BuildLayoutControls skips the off-tree Control in lockstep). The root form and the (unnamed) IContainer
         /// disposal holder are excluded. Pure reads; the host owns lifetime, so this never instantiates anything new.
+        /// A <c>[DesignTimeVisible(false)]</c> component is listed too, marked <see cref="TrayComponent.TrayHidden"/>.
         /// </summary>
         private static List<TrayComponent> BuildTray(LoadedGraph g, Control root)
         {
@@ -1325,11 +1326,18 @@ namespace WinFormsDesigner.Engine
                     // synthetic flyout from its tray chip; a non-strip component leaves this empty.
                     Items = source.Editable && comp is ToolStrip strip ? BuildStripItemForest(strip, id) : new(),
                     IsStrip = source.Editable && comp is ToolStrip, // read-only inherited strips remain selectable tray components, never item-edit hosts
+                    TrayHidden = IsTrayHidden(comp),
                 });
             }
             tray.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             return tray;
         }
+
+        /// <summary>Visual Studio's component tray shows a component only when its type is
+        /// <c>[DesignTimeVisible(true)]</c> (inherited, the default).</summary>
+        internal static bool IsTrayHidden(IComponent comp) =>
+            Attribute.GetCustomAttribute(comp.GetType(), typeof(DesignTimeVisibleAttribute), inherit: true)
+                is DesignTimeVisibleAttribute { Visible: false };
 
         /// <summary>The top-level Items of an OFF-TREE ToolStrip (a tray ContextMenuStrip) as a BOUNDS-LESS forest — the
         /// tray-chip analogue of a top-level item's <see cref="BuildItemChildren"/>. The strip is never on the surface so
@@ -1445,8 +1453,10 @@ namespace WinFormsDesigner.Engine
         /// <summary>Describe one component by edit id ("this" = root) — the bounded per-selection path for a grid.</summary>
         public static ComponentInfo? DescribeComponent(string designerFilePath, string componentId, string? controlAssemblyPath = null, string? sourceText = null)
         {
-            using var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText);
-            var mods = DesignerModifiers.ParseFieldModifiers(sourceText ?? SafeRead(designerFilePath));
+            string src = sourceText ?? SafeRead(designerFilePath);
+            var mods = DesignerModifiers.ParseFieldModifiers(src);
+            using var lease = ReadGraph(ReadGraphUse.Describe, designerFilePath, controlAssemblyPath, sourceText, src);
+            var g = lease.Graph;
             return DesignerDescribe.DescribeComponent(g.Host, g.ClassName, g.ExplicitMembers, componentId, g.EventWirings, mods, g.GraphComponents, g.Ownership, g.ControlAssemblyPath);
         }
 
@@ -3269,6 +3279,9 @@ namespace WinFormsDesigner.Engine
             /// with them round-trips instead of forcing read-only (0.12.0 R1). The CodeDom serializer never produces
             /// them on its own; they're a representable no-op for render (see IsSupportInitBracket).</summary>
             public required List<string> SupportInitStatements { get; init; }
+            /// <summary>The project files the project resource reader read or looked for while this graph loaded (a
+            /// referenced image anywhere in the project included), as they were then.</summary>
+            public IReadOnlyList<ProjectFileRead> ProjectFileReads { get; init; } = Array.Empty<ProjectFileRead>();
             public void Dispose() => Surface.Dispose();
         }
 
@@ -3287,6 +3300,137 @@ namespace WinFormsDesigner.Engine
             public required List<LayoutControl> Controls { get; set; }
             public required int RenderScale { get; init; }
             public long Used { get; set; }
+        }
+
+        /// <summary>The read-only uses of a kept graph. Each has its own graph, because they leave it in different
+        /// states: describing reads it as loaded, while the geometry start creates the window handles (to measure
+        /// window bounds), and a created handle changes what some controls report (a LinkLabel's LinkArea, say).</summary>
+        private enum ReadGraphUse { Describe, Geometry }
+
+        private sealed class ReadGraphEntry
+        {
+            public required string Path { get; init; }
+            public required string Source { get; init; }
+            public required string? Assembly { get; init; }
+            public required string Inputs { get; init; }
+            public required LoadedGraph Graph { get; init; }
+        }
+
+        /// <summary>The last graph loaded for each read-only use (<see cref="ReadGraphUse"/>), never drawn (drawing
+        /// changes some state), so a click's properties and move/resize rights do not reload the whole form each time.
+        /// Reused only for the same document, source text, assembly argument and <see cref="ReadGraphInputs"/> (the
+        /// culture, the form's .resx chain, the assembly and the owning project's files), and only until any other load
+        /// (a render, an edit, a save) drops both. The build output beside the assembly and the project's imports
+        /// outside its folder are part of the worker's own dependency identity: a change there starts another engine.</summary>
+        [ThreadStatic]
+        private static Dictionary<ReadGraphUse, ReadGraphEntry>? _readGraphs;
+
+        /// <summary>A read-only call's graph: kept for the next call, or the call's own, disposed when it ends.</summary>
+        private readonly struct ReadGraphLease : IDisposable
+        {
+            private readonly bool _owned;
+            public ReadGraphLease(LoadedGraph graph, bool owned) { Graph = graph; _owned = owned; }
+            public LoadedGraph Graph { get; }
+            public void Dispose()
+            {
+                if (_owned) Graph.Dispose();
+            }
+        }
+
+        private static ReadGraphLease ReadGraph(ReadGraphUse use, string designerFilePath, string? controlAssemblyPath,
+            string? sourceText, string source)
+        {
+            string canonicalPath = CanonicalDesignerPath(designerFilePath);
+            var graphs = _readGraphs ??= new Dictionary<ReadGraphUse, ReadGraphEntry>();
+            // The inputs are read BEFORE the load, so a file that changes while the form loads never matches again.
+            string? inputs = ReadGraphInputs(designerFilePath, controlAssemblyPath);
+            if (graphs.TryGetValue(use, out var kept))
+            {
+                if (inputs != null
+                    && string.Equals(kept.Path, canonicalPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(kept.Source, source, StringComparison.Ordinal)
+                    && string.Equals(kept.Assembly, controlAssemblyPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(kept.Inputs, inputs, StringComparison.Ordinal)
+                    && kept.Graph.ProjectFileReads.All(read => read.Matches()))
+                    return new ReadGraphLease(kept.Graph, owned: false);
+                graphs.Remove(use);
+                try { kept.Graph.Dispose(); } catch { /* a fresh load follows */ }
+            }
+            var g = LoadGraph(designerFilePath, controlAssemblyPath, sourceText, keepReadGraphs: true);
+            if (inputs == null) return new ReadGraphLease(g, owned: true); // nothing proves a later call the same
+            graphs[use] = new ReadGraphEntry
+            {
+                Path = canonicalPath, Source = source, Assembly = controlAssemblyPath, Inputs = inputs, Graph = g,
+            };
+            return new ReadGraphLease(g, owned: false);
+        }
+
+        /// <summary>Where <c>TryOpenAssociatedPortablePdb</c> looks for an assembly's PDB (an embedded one is the
+        /// assembly's own bytes): the file name its CodeView entry records, beside the assembly — never the recorded
+        /// directory, which may be another machine's share. Also the assembly's own name with .pdb, beside it.</summary>
+        private static IEnumerable<string> PortablePdbCandidates(string assemblyPath)
+        {
+            string directory = Path.GetDirectoryName(assemblyPath) ?? "";
+            var candidates = new List<string> { Path.ChangeExtension(assemblyPath, ".pdb") };
+            using var stream = new FileStream(assemblyPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
+            foreach (var entry in pe.ReadDebugDirectory())
+            {
+                if (entry.Type != System.Reflection.PortableExecutable.DebugDirectoryEntryType.CodeView) continue;
+                // The file name as the runtime takes it from the recorded path: after the last '\', '/' or ':'.
+                string recorded = pe.ReadCodeViewDebugDirectoryData(entry).Path;
+                string name = recorded.Substring(recorded.LastIndexOfAny(new[] { '\\', '/', ':' }) + 1);
+                if (name.Length != 0) candidates.Add(Path.Combine(directory, name));
+            }
+            return candidates;
+        }
+
+        /// <summary>Drop every kept read-only graph (any load that is not one of theirs, or a mutated graph).</summary>
+        private static void DropReadGraphs()
+        {
+            if (_readGraphs is not { Count: > 0 } graphs) return;
+            var entries = graphs.Values.ToList();
+            graphs.Clear();
+            foreach (var entry in entries)
+            {
+                try { entry.Graph.Dispose(); } catch { /* a fresh load follows */ }
+            }
+        }
+
+        /// <summary>What a load reads besides the source text: the design-time culture, the form's .resx chain for it,
+        /// the control assembly passed in and the places its portable PDB is looked for, and everything of the owning
+        /// project a load may read (its sources, which bind type names through their global usings and declarations,
+        /// its resources, its build files; <see cref="ProjectResourceResolver.ProjectInputStamp"/>), each as path, size
+        /// and write time. Null when no assembly is passed in, or any of it cannot be read, so nothing is reused.</summary>
+        private static string? ReadGraphInputs(string designerFilePath, string? controlAssemblyPath)
+        {
+            try
+            {
+                // Without an assembly passed in, a load discovers one by reading the project file. Proving that unchanged
+                // would read the project file again on every click, beside the load's own read, and a project file read
+                // holds off a concurrent save; such a graph is not kept (the host passes the build whenever it has one).
+                if (string.IsNullOrEmpty(controlAssemblyPath)) return null;
+                string assembly = controlAssemblyPath;
+                string culture = DesignerCultureSelection.GetCultureName(designerFilePath);
+                var stamp = new StringBuilder(culture).Append('\n');
+                var paths = ResxResolver.DesignerResxChain(designerFilePath, culture).Prepend(assembly);
+                // The build's global usings are read from its portable PDB, wherever the build put it.
+                if (File.Exists(assembly)) paths = paths.Concat(PortablePdbCandidates(assembly));
+                foreach (string path in paths)
+                {
+                    stamp.Append(path).Append('|');
+                    if (path.Length != 0 && new FileInfo(path) is { Exists: true } file)
+                        stamp.Append(file.Length).Append('|').Append(file.LastWriteTimeUtc.Ticks);
+                    stamp.Append('\n');
+                }
+                if (ProjectResourceResolver.ProjectDirectoryOf(designerFilePath) is { } projectDir)
+                {
+                    if (ProjectResourceResolver.ProjectInputStamp(projectDir) is not { } project) return null;
+                    stamp.Append(project);
+                }
+                return stamp.ToString();
+            }
+            catch { return null; }
         }
 
         [ThreadStatic]
@@ -3714,8 +3858,12 @@ namespace WinFormsDesigner.Engine
             return unchecked((own * 31 + siblingNewest) * 31 + siblingCount);
         }
 
-        private static LoadedGraph LoadGraph(string designerFilePath, string? controlAssemblyPath, string? sourceText = null)
+        private static LoadedGraph LoadGraph(string designerFilePath, string? controlAssemblyPath, string? sourceText = null,
+            bool keepReadGraphs = false)
         {
+            // Any load but a kept read-only graph's own (a render, an edit, a save, a serialize) may follow a change the
+            // kept graphs' key cannot see, so they go.
+            if (!keepReadGraphs) DropReadGraphs();
             // sourceText != null → render the in-memory (unsaved) buffer for a VS-style dirty preview; the
             // path is still used for project/assembly resolution (the file is open in the editor, so it
             // exists on disk even when its buffer differs). null → read the saved file from disk.
@@ -3812,10 +3960,11 @@ namespace WinFormsDesigner.Engine
                 // through the file's usings, its namespaces and the project's global usings, as the compiler bound them.
                 var typeScope = DesignerTypeScope.For(cls, rootType, ResolveCompiledRoot(cls, userAsms), userAsms,
                     ProbeAssemblies, name => ResolveType(name, userAsms), designerFilePath);
+                var projectResources = new ProjectResourceResolver(designerFilePath, NamespaceOf(cls),
+                    DesignerCultureSelection.GetCultureName(designerFilePath), userAsms);
                 var (total, ok, unrep, explicitMembers, eventWirings, supportInit) = Interpret(
                     cls, host, userAsms, resx, SeedInheritedOverrideComponents((Control)host.RootComponent, beforeInterpret),
-                    new ProjectResourceResolver(designerFilePath, NamespaceOf(cls),
-                        DesignerCultureSelection.GetCultureName(designerFilePath), userAsms), typeScope);
+                    projectResources, typeScope);
                 foreach (string error in ui.Errors) unrep.Add("the designer disabled a control: " + error);
                 var graph = BuildGraphOwnership(host, (Control)host.RootComponent, beforeInterpret,
                     FormClassResolver.FieldNamesOf(cls), cls.Identifier.Text, rootInfo.BaseTypeName, rootInfo.ResolvedBase);
@@ -3843,6 +3992,7 @@ namespace WinFormsDesigner.Engine
                     EventWirings = ExtractEventWirings(cls),
                     EventWiringStatements = eventWirings,
                     SupportInitStatements = supportInit,
+                    ProjectFileReads = projectResources.Reads.ToList(),
                 };
             }
             catch
@@ -4850,6 +5000,32 @@ namespace WinFormsDesigner.Engine
                 if (method == "BringToFront") targetControl.BringToFront();
                 else targetControl.SendToBack();
                 return true;
+            }
+
+            // imageList1.Images.SetKeyName(0, "key"): Visual Studio names each image of an ImageStream. Only an exact
+            // ImageList (a subclass could hide Images) and literal arguments, as the IR models it.
+            if (method == "SetKeyName")
+            {
+                var keyArgs = inv.ArgumentList.Arguments;
+                if (targetChain.Count == 2 && targetChain[1] == "Images"
+                    && comps.TryGetValue(targetChain[0], out var ilComp) && ilComp.GetType() == typeof(ImageList)
+                    && keyArgs.Count == 2
+                    && keyArgs[0].Expression is LiteralExpressionSyntax { Token.Value: int index }
+                    && keyArgs[1].Expression is LiteralExpressionSyntax { Token.Value: string key })
+                {
+                    var images = ((ImageList)ilComp).Images;
+                    // The keys name the images its ImageStream loaded; one that did not load has nothing to name.
+                    if (index >= images.Count)
+                    {
+                        why = inv.ToString().Trim() + "  (" + targetChain[0] + ".Images has no image #" + index + ": "
+                            + images.Count + " loaded)";
+                        return false;
+                    }
+                    images.SetKeyName(index, key);
+                    return true;
+                }
+                why = inv.ToString().Trim();
+                return false;
             }
 
             if (method == "ApplyResources"

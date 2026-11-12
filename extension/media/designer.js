@@ -224,6 +224,7 @@
   // ---- direct manipulation (drag-to-move + resize) ----
   var canMove = false;     // can the primary selection be moved (set by the host's 'manip' message)
   var canResize = false;   // can it be resized
+  var fixedHeight = false; // only its width can be resized (a single-line TextBox)
   var drag = null;         // active move/resize gesture
   var band = null;         // active rubber-band selection gesture
   var toolboxBand = null;  // active rectangle placement gesture from a selected toolbox item
@@ -1142,11 +1143,15 @@
   function renderTray() {
     if (!trayEl) return;
     trayEl.innerHTML = '';
-    if (!tray.length) { trayEl.style.display = 'none'; return; }
+    // A [DesignTimeVisible(false)] component (a ColumnHeader, a DataGridViewColumn, a vendor grid view) gets no chip,
+    // as in Visual Studio's tray, yet stays in `tray`: a selection of it (made in the Properties component list) must
+    // survive a re-layout, and Delete, rename and the menus act on it like on any tray component.
+    var chips = tray.filter(function (t) { return !t.trayHidden; });
+    if (!chips.length) { trayEl.style.display = 'none'; return; }
     trayEl.style.display = '';
     trayEl.setAttribute('role', 'list');
     trayEl.setAttribute('aria-label', T('designer.tray.aria'));
-    tray.forEach(function (t) {
+    chips.forEach(function (t) {
       var chip = document.createElement('div');
       chip._trayId = t.id;                       // lets updateTraySelClasses() re-highlight without a rebuild
       chip.className = 'trayItem' + (t.id === current ? ' sel' : '');
@@ -1418,7 +1423,7 @@
     selBox.classList.toggle('locked', locked);
     var showHandles = canResize && selection.length <= 1 && !locked;
     HANDLE_DIRS.forEach(function (dir) {
-      var show = showHandles && (!formOnly || dir === 'e' || dir === 's' || dir === 'se');
+      var show = showHandles && (!formOnly || dir === 'e' || dir === 's' || dir === 'se') && (!fixedHeight || dir === 'e' || dir === 'w');
       handles[dir].style.display = show ? 'block' : 'none';
     });
     // lock glyph pinned to the control's top-left corner (VS-style lock affordance)
@@ -2783,6 +2788,7 @@
     var step = (e.ctrlKey || e.metaKey) ? placementGridSize : 1;
     var dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
     var dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+    if (resize && fixedHeight) dy = 0; // a single-line TextBox: its height is not the user's
     if (!dx && !dy) return;
     var mode = resize ? 'resize' : 'move';
     // a change of mode or selection starts a fresh undo series
@@ -2977,8 +2983,7 @@
     e.preventDefault();
     var chip = e.target; while (chip && chip !== trayEl && chip.className.indexOf('trayItem') < 0) chip = chip.parentNode;
     if (!chip || chip === trayEl) return;
-    var idx = Array.prototype.indexOf.call(trayEl.children, chip);
-    var t = tray[idx]; if (!t) return;
+    var t = chip._trayId ? findTray(chip._trayId) : null; if (!t) return; // by id: hidden components draw no chip
     selectedItem = null;
     selection = [t.id]; current = t.id; canMove = false; canResize = false;
     renderSelection(); updateTraySelClasses(); postPick(t.id);
@@ -3074,12 +3079,12 @@
         if (!(submenuLevels.length && submenuLevels[0].isStripRoot && findTray(m.id))) closeSubmenu();
         if (Array.isArray(m.ids) && m.ids.indexOf(m.id) >= 0) selection = m.ids.slice();
         else if (selection.indexOf(m.id) < 0) selection = [m.id];
-        if (m.id !== current) { canMove = false; canResize = false; }
+        if (m.id !== current) { canMove = false; canResize = false; fixedHeight = false; }
         current = m.id;
         renderSelection(); updateTraySelClasses();
       }
     } else if (m.type === 'manip') {
-      if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; renderSelection(); }
+      if (m.id === current) { canMove = !!m.move; canResize = !!m.resize; fixedHeight = !!m.fixedHeight; renderSelection(); }
     } else if (m.type === 'tasks') {
       clearAdapterActions(); bindAdapterCanvas(m);
       // the selected control's property descriptors + the vendor's own declared Tasks menu (net48 only; [] elsewhere,

@@ -492,6 +492,64 @@ namespace WinFormsDesigner.Engine
             return results;
         }
 
+        private const int MaxStampedDirectories = 2000;
+        private const int MaxStampedEntries = 20_000;
+
+        /// <summary>
+        /// A stamp of everything a load of a form in <paramref name="projectDir"/> may read from its project: the
+        /// sources whose global usings and declarations bind its type names, the .resx files and the files they
+        /// reference, the generated sources and build files, and the Directory.Build files above the project. Each file
+        /// is its name, size and write time; each folder its own write time, which changes when an entry is added,
+        /// removed or renamed. The walk enters what <see cref="FindProjectFiles"/> enters with everySdkSource (all but
+        /// dot folders) and lists a link without following it, as the loads do. Null when it cannot read everything
+        /// within a budget small enough for every click: the caller then reuses nothing.
+        /// </summary>
+        internal static string? ProjectInputStamp(string projectDir)
+        {
+            var stamp = new System.Text.StringBuilder();
+            var pending = new Queue<(DirectoryInfo Dir, int Depth)>();
+            var root = new DirectoryInfo(projectDir);
+            pending.Enqueue((root, 0));
+            int scanned = 0, entriesLeft = MaxStampedEntries;
+            try
+            {
+                while (pending.Count > 0)
+                {
+                    if (++scanned > MaxStampedDirectories) return null;
+                    var (dir, depth) = pending.Dequeue();
+                    dir.Refresh();
+                    stamp.Append('>').Append(dir.FullName).Append('|').Append(dir.LastWriteTimeUtc.Ticks).Append('\n');
+                    var entries = dir.EnumerateFileSystemInfos().Take(entriesLeft + 1).ToList();
+                    entriesLeft -= entries.Count;
+                    if (entriesLeft < 0) return null;
+                    foreach (var entry in entries.OrderBy(e => e.Name, StringComparer.Ordinal))
+                    {
+                        stamp.Append(entry.Name).Append('|');
+                        if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) stamp.Append("link");
+                        else if (entry is FileInfo file) stamp.Append(file.Length).Append('|').Append(file.LastWriteTimeUtc.Ticks);
+                        else if (!entry.Name.StartsWith(".", StringComparison.Ordinal))
+                        {
+                            if (depth >= MaxScanDepth) return null;
+                            pending.Enqueue(((DirectoryInfo)entry, depth + 1));
+                        }
+                        stamp.Append('\n');
+                    }
+                }
+                foreach (string name in new[] { "Directory.Build.props", "Directory.Build.targets" })
+                {
+                    for (var dir = root.Parent; dir != null; dir = dir.Parent)
+                    {
+                        var file = new FileInfo(Path.Combine(dir.FullName, name));
+                        stamp.Append(file.FullName).Append('|');
+                        if (file.Exists) stamp.Append(file.Length).Append('|').Append(file.LastWriteTimeUtc.Ticks);
+                        stamp.Append('\n');
+                    }
+                }
+                return stamp.ToString();
+            }
+            catch { return null; }
+        }
+
         /// <summary>Whether a folder too large to list holds a project file; only names are compared, nothing is opened.</summary>
         private static bool HoldsProjectFile(DirectoryInfo dir) =>
             ProjectExtensions.Any(extension => dir.EnumerateFiles("*" + extension)
@@ -547,37 +605,68 @@ namespace WinFormsDesigner.Engine
         private byte[]? ReadProjectFile(string path, long maxBytes)
         {
             string? projectDir = ProjectDirectory();
-            return projectDir == null ? null : ReadFileInside(projectDir, path, maxBytes);
+            if (projectDir == null) return null;
+            byte[]? bytes = ReadFileInside(projectDir, path, maxBytes, out string state);
+            _reads.Add(new ProjectFileRead(projectDir, path, state));
+            return bytes;
         }
+
+        private readonly List<ProjectFileRead> _reads = new();
+
+        /// <summary>Every project file this resolver read or looked for (a resource's referenced file included, wherever
+        /// in the project it is), as it was just before the read.</summary>
+        internal IReadOnlyList<ProjectFileRead> Reads => _reads;
 
         /// <summary>The bounded, link-refusing read <see cref="ReadProjectFile"/> describes, against an explicit
         /// project directory.</summary>
-        internal static byte[]? ReadFileInside(string projectDir, string path, long maxBytes)
+        internal static byte[]? ReadFileInside(string projectDir, string path, long maxBytes) =>
+            ReadFileInside(projectDir, path, maxBytes, out _);
+
+        /// <summary>The read above; <paramref name="state"/> is what <see cref="InspectInside"/> found, taken before the
+        /// content is read, so a file that changes while it is read never matches it again.</summary>
+        internal static byte[]? ReadFileInside(string projectDir, string path, long maxBytes, out string state)
         {
+            state = InspectInside(projectDir, path, out string? checkedFile);
+            if (checkedFile == null) return null;
+            // Read exactly the name that was checked.
+            var file = new FileInfo(checkedFile);
+            if (file.Length == 0 || file.Length > maxBytes) return null;
+            return File.ReadAllBytes(checkedFile);
+        }
+
+        /// <summary>
+        /// The checks <see cref="ReadFileInside"/> makes before it reads, as a state that changes whenever its outcome
+        /// could: refused outside the project or for a name the OS would normalize (decided by the path alone), the
+        /// first missing entry, the first link, a directory, or the checked file's size and write time. It queries
+        /// exactly what the read queries — entries below the project root, top-down, through their own attributes,
+        /// and nothing beneath a link — so recording it for a later comparison queries nothing a read would not.
+        /// <paramref name="file"/> is the checked file when the read may go ahead.
+        /// </summary>
+        internal static string InspectInside(string projectDir, string path, out string? file)
+        {
+            file = null;
             string root = Path.GetFullPath(projectDir).TrimEnd(Path.DirectorySeparatorChar);
             string full = Path.GetFullPath(path);
             // Ordinal: a directory can be case-sensitive, so a case-insensitive match could check one tree and read another.
-            if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return null;
+            if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return "outside";
 
             string current = root;
             foreach (string part in full.Substring(root.Length + 1).Split(Path.DirectorySeparatorChar))
             {
-                if (part.Length == 0) return null;
+                if (part.Length == 0) return "empty name";
                 current = Path.Combine(current, part);
                 // A name the OS would normalize (a trailing dot or space) checks one entry and opens another.
-                if (!string.Equals(Path.GetFullPath(current), current, StringComparison.Ordinal)) return null;
+                if (!string.Equals(Path.GetFullPath(current), current, StringComparison.Ordinal)) return "normalized name";
                 FileAttributes attributes;
                 try { attributes = File.GetAttributes(current); }
-                catch { return null; }
-                if ((attributes & FileAttributes.ReparsePoint) != 0) return null;
+                catch { return "absent|" + current; }
+                if ((attributes & FileAttributes.ReparsePoint) != 0) return "link|" + current;
                 if (string.Equals(current, full, StringComparison.Ordinal)
-                    && (attributes & FileAttributes.Directory) != 0) return null;
+                    && (attributes & FileAttributes.Directory) != 0) return "directory";
             }
-
-            // Read exactly the name that was checked.
-            var file = new FileInfo(current);
-            if (file.Length == 0 || file.Length > maxBytes) return null;
-            return File.ReadAllBytes(current);
+            var info = new FileInfo(current);
+            file = current;
+            return "file|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
         }
 
         /// <summary>
@@ -873,6 +962,29 @@ namespace WinFormsDesigner.Engine
         {
             using var reader = new StreamReader(new MemoryStream(bytes), new UTF8Encoding(false), detectEncodingFromByteOrderMarks: true);
             return reader.ReadToEnd();
+        }
+    }
+
+    /// <summary>One project file a load read or looked for, as <see cref="ProjectResourceResolver.InspectInside"/>
+    /// found it before the read, to tell whether a new load would find the same.</summary>
+    internal sealed class ProjectFileRead
+    {
+        private readonly string _projectDir;
+        private readonly string _state;
+
+        public ProjectFileRead(string projectDir, string path, string state)
+        {
+            _projectDir = projectDir;
+            Path = path;
+            _state = state;
+        }
+
+        public string Path { get; }
+
+        public bool Matches()
+        {
+            try { return string.Equals(ProjectResourceResolver.InspectInside(_projectDir, Path, out _), _state, StringComparison.Ordinal); }
+            catch { return false; }
         }
     }
 }
